@@ -338,9 +338,10 @@ func newWorkspaceFilesTestServer(store *fakeStore, body []byte) *Server {
 
 func newWorkspaceFilesTestServerWithCAS(store *fakeStore, cas *fakeCAS) *Server {
 	return &Server{
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:  store,
-		cas: cas,
+		log:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		cellID: dbtest.DefaultCellID,
+		db:     store,
+		cas:    cas,
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -27,6 +28,8 @@ type testServerConfig struct {
 	Log                 *slog.Logger
 	DeploymentMode      string
 	CellID              string
+	RegionID            string
+	DefaultRegionID     string
 	DB                  db.Querier
 	DBTX                dbTXBeginner
 	TX                  TxBeginner
@@ -74,8 +77,16 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		cfg.DeploymentMode = testCfg.DeploymentMode
 	}
 	cfg.CellID = "us-east-1-cell-1"
+	cfg.RegionID = "us-east-1"
+	cfg.DefaultRegionID = "us-east-1"
 	if testCfg.CellID != "" {
 		cfg.CellID = testCfg.CellID
+	}
+	if testCfg.RegionID != "" {
+		cfg.RegionID = testCfg.RegionID
+	}
+	if testCfg.DefaultRegionID != "" {
+		cfg.DefaultRegionID = testCfg.DefaultRegionID
 	}
 	if testCfg.DB != nil {
 		cfg.DB = testTransactionalStore{Querier: testCfg.DB}
@@ -85,6 +96,9 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.TelemetryReader != nil {
 		cfg.TelemetryReader = testCfg.TelemetryReader
+	}
+	if cfg.TelemetryReader == nil {
+		cfg.TelemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(cfg.DB), nil)
 	}
 	if testCfg.TX != nil {
 		cfg.TX = testCfg.TX
@@ -109,6 +123,12 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream
+		if cfg.EventStream.cellID == "" {
+			cfg.EventStream.cellID = cfg.CellID
+		}
+		if cfg.EventStream.telemetryReader == nil {
+			cfg.EventStream.telemetryReader = cfg.TelemetryReader
+		}
 	}
 	if testCfg.WorkspaceStreams != nil {
 		cfg.WorkspaceStreams = testCfg.WorkspaceStreams
@@ -311,6 +331,28 @@ func mustParseTestURL(raw string) *url.URL {
 		panic(err)
 	}
 	return parsed
+}
+
+func TestNewServerRejectsMismatchedEventStreamCellID(t *testing.T) {
+	store := &fakeStore{}
+	_, err := NewServer(ServerConfig{
+		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		CellID:          dbtest.DefaultCellID,
+		RegionID:        "us-east-1",
+		DefaultRegionID: "us-east-1",
+		DB:              testTransactionalStore{Querier: store},
+		TX:              panicTxBeginner{},
+		Auth:            fakeAuth{},
+		TelemetryReader: fakeTelemetryReader{store: store},
+		EventStream: &EventStream{
+			log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+			cellID:          "us-east-1-cell-2",
+			telemetryReader: fakeTelemetryReader{store: store},
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "event stream cell id must match control cell id") {
+		t.Fatalf("NewServer err = %v, want event stream cell mismatch", err)
+	}
 }
 
 func TestAPIRejectsOversizedRequestBody(t *testing.T) {

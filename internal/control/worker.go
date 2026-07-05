@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -163,9 +164,9 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.UpsertWorkerInstanceHeartbeat(r.Context(), workerInstanceHeartbeatParams(worker, capabilities)); err != nil {
+	if err := s.recordWorkerInstanceHeartbeat(r.Context(), worker, capabilities); err != nil {
 		s.log.Error("worker activate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("activate worker"))
+		writeError(w, err)
 		return
 	}
 	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
@@ -175,6 +176,7 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
 		ID:     pgvalue.UUID(worker.WorkerInstanceID),
+		CellID: worker.CellID,
 		Status: db.WorkerInstanceStatusActive,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -195,6 +197,7 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
 		ID:     pgvalue.UUID(worker.WorkerInstanceID),
+		CellID: worker.CellID,
 		Status: db.WorkerInstanceStatusDraining,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -216,7 +219,10 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
-	state, err := s.db.GetWorkerInstanceState(r.Context(), pgvalue.UUID(worker.WorkerInstanceID))
+	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
+		ID:     pgvalue.UUID(worker.WorkerInstanceID),
+		CellID: worker.CellID,
+	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -232,6 +238,15 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 		Status:           api.WorkerStatus(state.Status),
 		ActiveExecutions: state.ActiveExecutions,
 	})
+}
+
+func (s *Server) recordWorkerInstanceHeartbeat(ctx context.Context, worker workerActor, capabilities api.WorkerCapabilities) error {
+	if _, err := s.db.UpsertWorkerInstanceHeartbeat(ctx, workerInstanceHeartbeatParams(worker, capabilities)); isNoRows(err) {
+		return forbidden(errors.New("worker instance heartbeat conflicts with this cell or runtime"))
+	} else if err != nil {
+		return errors.New("record worker heartbeat")
+	}
+	return nil
 }
 
 func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCapabilities) db.UpsertWorkerInstanceHeartbeatParams {

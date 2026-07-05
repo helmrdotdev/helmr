@@ -15,15 +15,17 @@ const getDeploymentStreamByName = `-- name: GetDeploymentStreamByName :one
 SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json, metadata, created_at
   FROM deployment_streams
  WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND deployment_id = $4
-   AND name = $5
-   AND direction = $6::stream_direction
+   AND cell_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND deployment_id = $5
+   AND name = $6
+   AND direction = $7::stream_direction
 `
 
 type GetDeploymentStreamByNameParams struct {
 	OrgID         pgtype.UUID     `json:"org_id"`
+	CellID        string          `json:"cell_id"`
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
 	DeploymentID  pgtype.UUID     `json:"deployment_id"`
@@ -34,6 +36,7 @@ type GetDeploymentStreamByNameParams struct {
 func (q *Queries) GetDeploymentStreamByName(ctx context.Context, arg GetDeploymentStreamByNameParams) (DeploymentStream, error) {
 	row := q.db.QueryRow(ctx, getDeploymentStreamByName,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
@@ -140,7 +143,7 @@ VALUES (
     COALESCE($10::jsonb, 'null'::jsonb),
     COALESCE($11::jsonb, '{}'::jsonb)
 )
-ON CONFLICT (org_id, deployment_id, name, direction)
+ON CONFLICT (org_id, cell_id, deployment_id, name, direction)
 DO UPDATE SET
     schema_fingerprint = EXCLUDED.schema_fingerprint,
     schema_json = EXCLUDED.schema_json,

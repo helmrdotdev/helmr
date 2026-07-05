@@ -16,7 +16,7 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 		RootfsDigest:            "sha256:rootfs",
 		CNIProfile:              "helmr/v0",
 		NetworkPolicyJSON:       []byte(`{"internet":false,"deny":["10.0.0.0/8"]}`),
-		PlacementJSON:           []byte(`{"region":"local"}`),
+		PlacementJSON:           []byte(`{"tags":{"pool":"warm"}}`),
 	})
 	if err != nil {
 		t.Fatalf("RunRuntimeRequirementsFromFields() error = %v", err)
@@ -24,8 +24,28 @@ func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 	if requirements.Network.Internet || len(requirements.Network.Deny) != 1 {
 		t.Fatalf("Network = %#v", requirements.Network)
 	}
-	if requirements.Placement.Region != "local" {
-		t.Fatalf("Placement.Region = %q", requirements.Placement.Region)
+	if requirements.Placement.Tags["pool"] != "warm" {
+		t.Fatalf("Placement.Tags = %#v", requirements.Placement.Tags)
+	}
+}
+
+func TestRunRuntimeRequirementsRejectsPlacementRegion(t *testing.T) {
+	_, err := RunRuntimeRequirementsFromFields(RunRuntimeRequirementFields{
+		RequestedMilliCPU:       1000,
+		RequestedMemoryMiB:      512,
+		RequestedDiskMiB:        1024,
+		RequestedExecutionSlots: 1,
+		RuntimeID:               "sha256:runtime",
+		RuntimeArch:             "amd64",
+		RuntimeABI:              "helmr.firecracker.snapshot.v0",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CNIProfile:              "helmr/v0",
+		PlacementJSON:           []byte(`{"region":"local"}`),
+	})
+	if err == nil {
+		t.Fatalf("RunRuntimeRequirementsFromFields() error = nil")
 	}
 }
 

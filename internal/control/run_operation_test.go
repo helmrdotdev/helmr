@@ -222,6 +222,8 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 	return db.CancelRunRow{
 		ID:                   f.run.ID,
 		OrgID:                f.run.OrgID,
+		CellID:               fakeRunCellID(f.run),
+		RouteGeneration:      1,
 		ProjectID:            f.run.ProjectID,
 		EnvironmentID:        f.run.EnvironmentID,
 		DeploymentID:         fakeRunDeploymentID(f.run),

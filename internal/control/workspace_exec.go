@@ -350,6 +350,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
+			CellID:          ws.CellID,
 			ProjectID:       ws.ProjectID,
 			EnvironmentID:   ws.EnvironmentID,
 			WorkspaceID:     ws.ID,

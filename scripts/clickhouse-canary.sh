@@ -23,7 +23,11 @@ for migration in "${migration_dir}"/*.sql; do
   curl "${curl_args[@]}" --data-binary @"${migration}" "${url}/"
 done
 
-cell_id="${HELMR_CELL_ID:-us-east-1-cell-1}"
+cell_id="${HELMR_CELL_ID:-}"
+if [[ -z "${cell_id}" ]]; then
+  echo "HELMR_CELL_ID is required" >&2
+  exit 1
+fi
 org_id="${HELMR_CLICKHOUSE_CANARY_ORG_ID:-00000000-0000-0000-0000-000000000001}"
 project_id="${HELMR_CLICKHOUSE_CANARY_PROJECT_ID:-00000000-0000-0000-0000-000000000002}"
 environment_id="${HELMR_CLICKHOUSE_CANARY_ENVIRONMENT_ID:-00000000-0000-0000-0000-000000000003}"

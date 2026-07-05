@@ -26,6 +26,7 @@ var errSessionRunRequestLost = errors.New("session run request claim lost")
 
 type sessionRunRequestWorkflow struct {
 	log      *slog.Logger
+	cellID   string
 	db       db.Querier
 	tx       TxBeginner
 	enqueuer RunEnqueuer
@@ -34,6 +35,7 @@ type sessionRunRequestWorkflow struct {
 func (s *Server) sessionRunRequestWorkflow() sessionRunRequestWorkflow {
 	return sessionRunRequestWorkflow{
 		log:      s.log,
+		cellID:   s.cellID,
 		db:       s.db,
 		tx:       s.tx,
 		enqueuer: s.runEnqueuer,
@@ -66,6 +68,7 @@ func (w sessionRunRequestWorkflow) reconcileDue(ctx context.Context, orgID pgtyp
 		ClaimTtl:      pgvalue.Interval(sessionRunRequestClaimTTL),
 		ClaimOwner:    claimOwner,
 		OrgID:         orgID,
+		CellID:        w.cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SessionID:     sessionID,
@@ -98,6 +101,7 @@ func (w sessionRunRequestWorkflow) reconcileClaimed(ctx context.Context, request
 	session := db.Session{
 		ID:            request.SessionID,
 		OrgID:         request.OrgID,
+		CellID:        request.CellID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 	}
@@ -105,6 +109,7 @@ func (w sessionRunRequestWorkflow) reconcileClaimed(ctx context.Context, request
 	err := inTxWith(ctx, w.db, w.tx, func(work *txWork) error {
 		record, err := work.q.GetStreamRecord(ctx, db.GetStreamRecordParams{
 			OrgID:         request.OrgID,
+			CellID:        request.CellID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.StreamRecordID,
@@ -112,6 +117,7 @@ func (w sessionRunRequestWorkflow) reconcileClaimed(ctx context.Context, request
 		if isNoRows(err) {
 			if _, markErr := work.q.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
 				OrgID:         request.OrgID,
+				CellID:        request.CellID,
 				ProjectID:     request.ProjectID,
 				EnvironmentID: request.EnvironmentID,
 				ID:            request.ID,
@@ -128,7 +134,7 @@ func (w sessionRunRequestWorkflow) reconcileClaimed(ctx context.Context, request
 			}
 			return nil
 		}
-		createdRunID, status, err := tryCreateContinuationRunForRequest(ctx, work.q, session, request, record)
+		createdRunID, status, err := tryCreateContinuationRunForRequest(ctx, work.q, w.cellID, session, request, record)
 		if err != nil {
 			if errors.Is(err, errSessionRunRequestLost) {
 				return err
@@ -157,6 +163,7 @@ func releaseSessionRunRequestForRetry(ctx context.Context, store db.Querier, req
 		RetryAfter:    pgvalue.Interval(retryAfter),
 		LastError:     lastError,
 		OrgID:         request.OrgID,
+		CellID:        request.CellID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 		ID:            request.ID,
@@ -181,7 +188,7 @@ func sessionRunRequestRetryAfter(request db.SessionRunRequest, status string) ti
 	}
 }
 
-func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, session db.Session, request db.SessionRunRequest, record db.StreamRecord) (pgtype.UUID, string, error) {
+func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, servingCellID string, session db.Session, request db.SessionRunRequest, record db.StreamRecord) (pgtype.UUID, string, error) {
 	if request.Status == "created" && request.RunID.Valid {
 		return request.RunID, "duplicate", nil
 	}
@@ -190,6 +197,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	locked, err := store.LockSession(ctx, db.LockSessionParams{
 		OrgID:         session.OrgID,
+		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -204,6 +212,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		}
 		if _, err := store.MarkSessionRunRequestSkipped(ctx, db.MarkSessionRunRequestSkippedParams{
 			OrgID:         request.OrgID,
+			CellID:        request.CellID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -217,6 +226,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if locked.ExpiresAt.Valid && !locked.ExpiresAt.Time.After(time.Now()) {
 		if _, err := store.MarkSessionRunRequestSkipped(ctx, db.MarkSessionRunRequestSkippedParams{
 			OrgID:         request.OrgID,
+			CellID:        request.CellID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -230,6 +240,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if !locked.CurrentRunID.Valid {
 		if _, err := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
 			OrgID:         request.OrgID,
+			CellID:        request.CellID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -249,6 +260,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	previousSessionRun, err := store.GetSessionRunByRunID(ctx, db.GetSessionRunByRunIDParams{
 		OrgID:         locked.OrgID,
+		CellID:        locked.CellID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		SessionID:     locked.ID,
@@ -257,12 +269,50 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
+	if locked.CellID != servingCellID {
+		if _, err := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+			OrgID:         request.OrgID,
+			CellID:        request.CellID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "session_route_cell_mismatch",
+		}); err != nil {
+			return pgtype.UUID{}, "", err
+		}
+		return pgtype.UUID{}, "failed", nil
+	}
+	if _, err := store.GetEnvironmentCellRouteForRecordGeneration(ctx, db.GetEnvironmentCellRouteForRecordGenerationParams{
+		OrgID:           locked.OrgID,
+		ProjectID:       locked.ProjectID,
+		EnvironmentID:   locked.EnvironmentID,
+		CellID:          locked.CellID,
+		RouteGeneration: locked.RouteGeneration,
+	}); isNoRows(err) {
+		if _, err := store.MarkSessionRunRequestFailed(ctx, db.MarkSessionRunRequestFailedParams{
+			OrgID:         request.OrgID,
+			CellID:        request.CellID,
+			ProjectID:     request.ProjectID,
+			EnvironmentID: request.EnvironmentID,
+			ID:            request.ID,
+			ClaimOwner:    request.ClaimOwner,
+			Reason:        "session_route_unavailable",
+		}); err != nil {
+			return pgtype.UUID{}, "", err
+		}
+		return pgtype.UUID{}, "failed", nil
+	} else if err != nil {
+		return pgtype.UUID{}, "", err
+	}
 	deploymentTask, err := store.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
-		OrgID:         locked.OrgID,
-		ProjectID:     locked.ProjectID,
-		EnvironmentID: locked.EnvironmentID,
-		DeploymentID:  locked.ActiveDeploymentID,
-		TaskID:        locked.TaskID,
+		OrgID:           locked.OrgID,
+		CellID:          locked.CellID,
+		RouteGeneration: locked.RouteGeneration,
+		ProjectID:       locked.ProjectID,
+		EnvironmentID:   locked.EnvironmentID,
+		DeploymentID:    locked.ActiveDeploymentID,
+		TaskID:          locked.TaskID,
 	})
 	if err != nil {
 		return pgtype.UUID{}, "", err
@@ -309,6 +359,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		ID:                    runID,
 		OrgID:                 locked.OrgID,
 		CellID:                locked.CellID,
+		RouteGeneration:       locked.RouteGeneration,
 		ProjectID:             locked.ProjectID,
 		EnvironmentID:         locked.EnvironmentID,
 		DeploymentID:          deploymentTask.DeploymentID,
@@ -335,6 +386,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		TraceID:               pgtype.Text{String: traceID, Valid: true},
 		RootSpanID:            rootSpanID,
 		EventPayload:          createdPayload,
+		AllowDrainingRoute:    true,
 	})
 	if err != nil {
 		return pgtype.UUID{}, "", err
@@ -349,6 +401,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           locked.OrgID,
+		CellID:          locked.CellID,
 		ProjectID:       locked.ProjectID,
 		EnvironmentID:   locked.EnvironmentID,
 		WorkspaceID:     locked.WorkspaceID,
@@ -386,6 +439,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	if _, err := store.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
 		OrgID:         locked.OrgID,
+		CellID:        locked.CellID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		SessionID:     locked.ID,
@@ -395,6 +449,7 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	if _, err := store.MarkSessionRunRequestCreated(ctx, db.MarkSessionRunRequestCreatedParams{
 		OrgID:         request.OrgID,
+		CellID:        request.CellID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 		ID:            request.ID,
@@ -413,6 +468,7 @@ func (w sessionRunRequestWorkflow) consumeByActiveRun(ctx context.Context, sessi
 	return inTxWith(ctx, w.db, w.tx, func(work *txWork) error {
 		if _, err := work.q.LockSession(ctx, db.LockSessionParams{
 			OrgID:         session.OrgID,
+			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -421,6 +477,7 @@ func (w sessionRunRequestWorkflow) consumeByActiveRun(ctx context.Context, sessi
 		}
 		if _, err := work.q.MarkSessionRunRequestConsumedByActiveRun(ctx, db.MarkSessionRunRequestConsumedByActiveRunParams{
 			OrgID:          session.OrgID,
+			CellID:         session.CellID,
 			ProjectID:      session.ProjectID,
 			EnvironmentID:  session.EnvironmentID,
 			ActiveRunID:    activeRunID,

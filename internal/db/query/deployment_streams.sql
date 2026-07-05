@@ -25,7 +25,7 @@ VALUES (
     COALESCE(sqlc.arg(schema_json)::jsonb, 'null'::jsonb),
     COALESCE(sqlc.arg(metadata)::jsonb, '{}'::jsonb)
 )
-ON CONFLICT (org_id, deployment_id, name, direction)
+ON CONFLICT (org_id, cell_id, deployment_id, name, direction)
 DO UPDATE SET
     schema_fingerprint = EXCLUDED.schema_fingerprint,
     schema_json = EXCLUDED.schema_json,
@@ -36,6 +36,7 @@ RETURNING *;
 SELECT *
   FROM deployment_streams
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND deployment_id = sqlc.arg(deployment_id)

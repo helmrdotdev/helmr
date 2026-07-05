@@ -425,6 +425,7 @@ const createWorkspaceExec = `-- name: CreateWorkspaceExec :one
 INSERT INTO workspace_execs (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     workspace_id,
@@ -441,6 +442,7 @@ INSERT INTO workspace_execs (
 )
 SELECT $1,
        workspaces.org_id,
+       workspaces.cell_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
@@ -1708,7 +1710,7 @@ dirtied_mount AS (
        AND workspace_mounts.workspace_id = updated_exec.workspace_id
        AND workspace_mounts.id = updated_exec.workspace_mount_id
        AND workspace_mounts.fencing_generation = workspace_leases.acquired_fencing_generation
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 updated_workspace AS (
     UPDATE workspaces

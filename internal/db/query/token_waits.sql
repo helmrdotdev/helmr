@@ -22,10 +22,12 @@ SELECT sqlc.arg(id),
        END
   FROM run_waits
   JOIN tokens ON tokens.org_id = run_waits.org_id
+             AND tokens.cell_id = run_waits.cell_id
              AND tokens.project_id = run_waits.project_id
              AND tokens.environment_id = run_waits.environment_id
              AND tokens.id = sqlc.arg(token_id)
  WHERE run_waits.org_id = sqlc.arg(org_id)
+   AND run_waits.cell_id = sqlc.arg(cell_id)
    AND run_waits.project_id = sqlc.arg(project_id)
    AND run_waits.environment_id = sqlc.arg(environment_id)
    AND run_waits.id = sqlc.arg(run_wait_id)
@@ -37,10 +39,13 @@ WITH target_wait AS (
     SELECT token_waits.*, tokens.state AS token_state
       FROM token_waits
       JOIN run_waits ON run_waits.org_id = token_waits.org_id
+                    AND run_waits.cell_id = token_waits.cell_id
                     AND run_waits.id = token_waits.run_wait_id
       JOIN tokens ON tokens.org_id = token_waits.org_id
+                 AND tokens.cell_id = token_waits.cell_id
                  AND tokens.id = token_waits.token_id
      WHERE token_waits.org_id = sqlc.arg(org_id)
+       AND token_waits.cell_id = sqlc.arg(cell_id)
        AND token_waits.id = sqlc.arg(id)
        AND token_waits.matched_completion_at IS NOT NULL
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
@@ -55,8 +60,9 @@ resolved_wait AS (
            END,
            resolved_at = CASE WHEN target_wait.token_state IN ('completed', 'expired', 'cancelled') THEN now() ELSE run_waits.resolved_at END,
            updated_at = now()
-      FROM target_wait
+     FROM target_wait
      WHERE run_waits.org_id = target_wait.org_id
+       AND run_waits.cell_id = target_wait.cell_id
        AND run_waits.id = target_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -67,8 +73,9 @@ SELECT target_wait.*
 
 -- name: GetTokenWaitForRunWait :one
 SELECT *
-  FROM token_waits
+ FROM token_waits
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND run_wait_id = sqlc.arg(run_wait_id);

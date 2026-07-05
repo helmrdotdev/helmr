@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -22,20 +23,20 @@ const (
 type ExpirySweepStore interface {
 	ExpirySweepOrgStore
 	ListOrganizationIDsPage(context.Context, db.ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
-	CreateExpiredRuntimeStopCommands(ctx context.Context, expiredBefore pgtype.Timestamptz) ([]db.WorkerCommand, error)
-	MarkExpiredRuntimeInstancesLost(ctx context.Context, expiredBefore pgtype.Timestamptz) ([]db.RuntimeInstance, error)
+	CreateExpiredRuntimeStopCommands(ctx context.Context, arg db.CreateExpiredRuntimeStopCommandsParams) ([]db.WorkerCommand, error)
+	MarkExpiredRuntimeInstancesLost(ctx context.Context, arg db.MarkExpiredRuntimeInstancesLostParams) ([]db.RuntimeInstance, error)
 }
 
 type ExpirySweepOrgStore interface {
-	RequeueExpiredLeasedRunLeases(ctx context.Context, orgID pgtype.UUID) error
-	FailExpiredRunningRunLeases(ctx context.Context, orgID pgtype.UUID) error
-	ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error
-	ExpireDueSessions(ctx context.Context, orgID pgtype.UUID) ([]db.Session, error)
-	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
+	RequeueExpiredLeasedRunLeases(ctx context.Context, arg db.RequeueExpiredLeasedRunLeasesParams) error
+	FailExpiredRunningRunLeases(ctx context.Context, arg db.FailExpiredRunningRunLeasesParams) error
+	ExpireQueuedRuns(ctx context.Context, arg db.ExpireQueuedRunsParams) error
+	ExpireDueSessions(ctx context.Context, arg db.ExpireDueSessionsParams) ([]db.Session, error)
+	ExpireDueTokens(ctx context.Context, arg db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
 	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
-	ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]db.RunWait, error)
+	ExpireDueRunWaits(ctx context.Context, arg db.ExpireDueRunWaitsParams) ([]db.RunWait, error)
 	FailStaleResolvedRunWaits(ctx context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error)
 	RequeueResolvedRunWaits(ctx context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
 }
@@ -52,6 +53,7 @@ type ExpirySweepLockGuard interface {
 type ExpirySweeper struct {
 	store        ExpirySweepStore
 	lock         ExpirySweepLock
+	cellID       string
 	every        time.Duration
 	orgLimit     int32
 	failureLimit int
@@ -84,6 +86,12 @@ func WithExpirySweepLogger(log *slog.Logger) ExpirySweeperOption {
 	}
 }
 
+func WithExpirySweepCellID(cellID string) ExpirySweeperOption {
+	return func(sweeper *ExpirySweeper) {
+		sweeper.cellID = strings.TrimSpace(cellID)
+	}
+}
+
 func WithExpirySweepLock(lock ExpirySweepLock) ExpirySweeperOption {
 	return func(sweeper *ExpirySweeper) {
 		sweeper.lock = lock
@@ -112,6 +120,9 @@ func NewExpirySweeper(store ExpirySweepStore, opts ...ExpirySweeperOption) (*Exp
 	}
 	if sweeper.failureLimit <= 0 {
 		return nil, errors.New("sweep consecutive failure limit must be positive")
+	}
+	if sweeper.cellID == "" {
+		return nil, errors.New("sweeper cell_id is required")
 	}
 	if sweeper.log == nil {
 		sweeper.log = slog.Default()
@@ -168,16 +179,16 @@ func (s *ExpirySweeper) sweep(ctx context.Context) error {
 			}
 		}()
 	}
-	return sweepOnce(ctx, store, s.orgLimit)
+	return sweepOnce(ctx, store, s.cellID, s.orgLimit)
 }
 
-func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) error {
+func sweepOnce(ctx context.Context, store ExpirySweepStore, cellID string, orgLimit int32) error {
 	var problems []error
 	expiredBefore := pgvalue.Timestamptz(time.Now())
-	if _, err := store.CreateExpiredRuntimeStopCommands(ctx, expiredBefore); err != nil {
+	if _, err := store.CreateExpiredRuntimeStopCommands(ctx, db.CreateExpiredRuntimeStopCommandsParams{CellID: cellID, ExpiredBefore: expiredBefore}); err != nil {
 		problems = append(problems, err)
 	}
-	if _, err := store.MarkExpiredRuntimeInstancesLost(ctx, expiredBefore); err != nil {
+	if _, err := store.MarkExpiredRuntimeInstancesLost(ctx, db.MarkExpiredRuntimeInstancesLostParams{CellID: cellID, ExpiredBefore: expiredBefore}); err != nil {
 		problems = append(problems, err)
 	}
 	var afterID pgtype.UUID
@@ -190,7 +201,7 @@ func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) erro
 			return err
 		}
 		for _, orgID := range orgIDs {
-			if err := SweepExpiredForOrg(ctx, store, orgID); err != nil {
+			if err := SweepExpiredForOrg(ctx, store, cellID, orgID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -202,51 +213,56 @@ func sweepOnce(ctx context.Context, store ExpirySweepStore, orgLimit int32) erro
 	return errors.Join(problems...)
 }
 
-func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, orgID pgtype.UUID) error {
-	if err := store.RequeueExpiredLeasedRunLeases(ctx, orgID); err != nil {
+func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, cellID string, orgID pgtype.UUID) error {
+	if err := store.RequeueExpiredLeasedRunLeases(ctx, db.RequeueExpiredLeasedRunLeasesParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
-	if err := store.FailExpiredRunningRunLeases(ctx, orgID); err != nil {
+	if err := store.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
-	if err := store.ExpireQueuedRuns(ctx, orgID); err != nil {
+	if err := store.ExpireQueuedRuns(ctx, db.ExpireQueuedRunsParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueSessions(ctx, orgID); err != nil {
+	if _, err := store.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueTokens(ctx, orgID); err != nil {
+	if _, err := store.ExpireDueTokens(ctx, db.ExpireDueTokensParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
 	if _, err := store.ResolveDueTimerWaits(ctx, db.ResolveDueTimerWaitsParams{
 		OrgID:      orgID,
+		CellID:     cellID,
 		LimitCount: 1000,
 	}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueRunWaits(ctx, orgID); err != nil {
+	if _, err := store.ExpireDueRunWaits(ctx, db.ExpireDueRunWaitsParams{OrgID: orgID, CellID: cellID}); err != nil {
 		return err
 	}
 	if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
 		OrgID:      orgID,
+		CellID:     cellID,
 		LimitCount: 1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
 		OrgID:      orgID,
+		CellID:     cellID,
 		LimitCount: 1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
 		OrgID:      orgID,
+		CellID:     cellID,
 		LimitCount: 1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
 		OrgID:      orgID,
+		CellID:     cellID,
 		LimitCount: 1000,
 	}); err != nil {
 		return err

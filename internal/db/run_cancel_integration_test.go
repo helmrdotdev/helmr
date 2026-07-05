@@ -25,6 +25,7 @@ func TestCancelRunTerminalizesQueuedRunAndLeavesSessionOpen(t *testing.T) {
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
 		OrgID:       pgvalue.UUID(ids.orgID),
+		CellID:      dbtest.DefaultCellID,
 		RunID:       pgvalue.UUID(ids.runID),
 		Reason:      "user requested",
 		Force:       false,
@@ -67,6 +68,7 @@ func TestCancelRunLeavesExecutingSessionForRelease(t *testing.T) {
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
 		OrgID:       pgvalue.UUID(ids.orgID),
+		CellID:      dbtest.DefaultCellID,
 		RunID:       pgvalue.UUID(ids.runID),
 		Reason:      "interrupt",
 		Force:       false,
@@ -115,6 +117,7 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
 		OrgID:       pgvalue.UUID(ids.orgID),
+		CellID:      dbtest.DefaultCellID,
 		RunID:       pgvalue.UUID(ids.runID),
 		Reason:      "interrupt",
 		Force:       false,
@@ -124,6 +127,7 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}
 	if _, err := queries.CancelSession(ctx, db.CancelSessionParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            pgvalue.UUID(sessionID),
@@ -155,6 +159,44 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}
 }
 
+func TestCancelRunAllowsDisabledSourceRouteForControlCancellation(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	sessionID := seedSessionForRun(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
+	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
+	operation := seedCancelOperation(t, ctx, queries, ids, "wrong route")
+	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+
+	_, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:       pgvalue.UUID(ids.orgID),
+		CellID:      dbtest.DefaultCellID,
+		RunID:       pgvalue.UUID(ids.runID),
+		Reason:      "wrong route",
+		Force:       false,
+		OperationID: operation.ID,
+	})
+	if err != nil {
+		t.Fatalf("CancelRun disabled route error = %v, want nil", err)
+	}
+
+	var status db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	if err := pool.QueryRow(ctx, `
+		SELECT status, execution_status
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&status, &executionStatus); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusCancelled || executionStatus != db.RunExecutionStatusFinished {
+		t.Fatalf("run state = status=%s execution_status=%s, want cancelled/finished", status, executionStatus)
+	}
+}
+
 func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -174,7 +216,7 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	}
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -203,7 +245,10 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 
 	if _, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
+		CellID:            dbtest.DefaultCellID,
 		RunID:             pgvalue.UUID(ids.runID),
+		RouteGeneration:   1,
+		QueueClass:        "default",
 		DispatchMessageID: pgtype.Text{String: "dispatch-1", Valid: true},
 		LastError:         "dispatch retries exhausted",
 		EventKind:         "run.dead_lettered",

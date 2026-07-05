@@ -61,11 +61,9 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment events"))
 		return
 	}
-	deployment, err := store.GetDeployment(r.Context(), db.GetDeploymentParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(deploymentID),
+	deployment, err := store.GetDeploymentForOrg(r.Context(), db.GetDeploymentForOrgParams{
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    pgvalue.UUID(deploymentID),
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("deployment not found")))
@@ -75,13 +73,21 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment"))
 		return
 	}
+	if deployment.ProjectID != projectID || deployment.EnvironmentID != environmentID {
+		writeError(w, notFound(errors.New("deployment not found")))
+		return
+	}
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID, deployment.CellID, deployment.RouteGeneration); err != nil {
+		writeError(w, err)
+		return
+	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		s.followDeploymentEvents(w, r, actor.OrgID, deploymentID, cursor)
 		return
 	}
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:       actor.OrgID,
-		CellID:      s.cellID,
+		CellID:      deployment.CellID,
 		SubjectType: string(db.EventSubjectTypeDeployment),
 		SubjectID:   pgvalue.MustUUIDValue(deployment.ID),
 		AfterSeq:    cursor,

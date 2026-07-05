@@ -33,17 +33,19 @@ locked_session AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = $1
+       AND runs.cell_id = $4
        AND runs.id = $2
      FOR UPDATE OF sessions
 ),
 target AS (
-    SELECT runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    SELECT runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
       FROM runs
       JOIN operation ON operation.org_id = runs.org_id
                     AND operation.run_id = runs.id
       LEFT JOIN locked_session
         ON locked_session.id = runs.session_id
      WHERE runs.org_id = $1
+       AND runs.cell_id = $4
        AND runs.id = $2
        AND locked_session.id = runs.session_id
      FOR UPDATE
@@ -52,18 +54,18 @@ updated AS (
     UPDATE runs
        SET status = 'cancelled',
            execution_status = CASE
-             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN 'pending_cancel'::run_execution_status
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN 'pending_cancel'::run_execution_status
              ELSE 'finished'::run_execution_status
            END,
            terminal_outcome = 'cancelled',
            current_run_lease_id = CASE
-             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN runs.current_run_lease_id
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.current_run_lease_id
              ELSE NULL
            END,
-           error_message = COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
            state_version = runs.state_version + 1,
            finished_at = CASE
-             WHEN target.execution_status = 'executing' AND NOT $4::bool THEN runs.finished_at
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.finished_at
              ELSE COALESCE(runs.finished_at, now())
            END,
            updated_at = now()
@@ -75,15 +77,15 @@ updated AS (
            OR (
                target.status = 'cancelled'
                AND target.execution_status = 'pending_cancel'
-               AND $4::bool
+               AND $5::bool
            )
        )
-    RETURNING runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, target.current_run_lease_id AS previous_run_lease_id
+    RETURNING runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, target.current_run_lease_id AS previous_run_lease_id
 ),
 cancelled_attempt AS (
     UPDATE run_attempts
        SET status = 'cancelled',
-           error_message = COALESCE(NULLIF($5::text, ''), 'run cancelled'),
+           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
            finished_at = CASE
              WHEN updated.execution_status = 'pending_cancel' THEN run_attempts.finished_at
              ELSE COALESCE(run_attempts.finished_at, now())
@@ -105,7 +107,7 @@ cancelled_queue AS (
      WHERE run_queue_items.org_id = updated.org_id
        AND run_queue_items.run_id = updated.id
        AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
-       AND (updated.execution_status <> 'pending_cancel' OR $4::bool)
+       AND (updated.execution_status <> 'pending_cancel' OR $5::bool)
     RETURNING run_queue_items.run_id
 ),
 cancelled_run_waits AS (
@@ -123,7 +125,7 @@ terminal_session_runs AS (
     UPDATE session_runs
        SET ended_at = now()
       FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $4::bool)
+     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
        AND session_runs.org_id = updated.org_id
        AND session_runs.project_id = updated.project_id
        AND session_runs.environment_id = updated.environment_id
@@ -134,12 +136,12 @@ terminal_session_runs AS (
 terminal_sessions AS (
     SELECT updated.session_id AS id
       FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $4::bool)
+     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
 ),
 cancelled_session AS (
     UPDATE run_leases
-       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR $4::bool THEN 'cancelled'::run_lease_status ELSE run_leases.status END,
-           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR $4::bool THEN COALESCE(run_leases.released_at, now()) ELSE run_leases.released_at END,
+       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN 'cancelled'::run_lease_status ELSE run_leases.status END,
+           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN COALESCE(run_leases.released_at, now()) ELSE run_leases.released_at END,
            renewed_at = now()
       FROM updated
      WHERE run_leases.org_id = updated.org_id
@@ -155,7 +157,7 @@ released_concurrency AS (
      WHERE run_queue_concurrency_leases.org_id = updated.org_id
        AND run_queue_concurrency_leases.run_id = updated.id
        AND run_queue_concurrency_leases.released_at IS NULL
-       AND (updated.execution_status <> 'pending_cancel' OR $4::bool)
+       AND (updated.execution_status <> 'pending_cancel' OR $5::bool)
     RETURNING run_queue_concurrency_leases.id
 ),
 snapshot AS (
@@ -173,8 +175,8 @@ snapshot AS (
            updated.state_version - 1,
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
            jsonb_build_object(
-               'reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'),
-               'force', $4::bool
+               'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+               'force', $5::bool
            )
       FROM updated
       JOIN cancelled_attempt ON true
@@ -210,8 +212,8 @@ event AS (
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
            jsonb_build_object(
-               'reason', COALESCE(NULLIF($5::text, ''), 'run cancelled'),
-               'force', $4::bool
+               'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+               'force', $5::bool
            ),
            'internal',
            updated.state_version
@@ -250,7 +252,7 @@ operation_applied AS (
        AND run_operations.status = 'requested'
     RETURNING run_operations.id
 )
-SELECT updated.id, updated.org_id, updated.cell_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
+SELECT updated.id, updated.org_id, updated.cell_id, updated.route_generation, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
   FROM updated
   JOIN operation_applied ON true
   JOIN telemetry_outbox ON true
@@ -258,7 +260,7 @@ SELECT updated.id, updated.org_id, updated.cell_id, updated.project_id, updated.
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_sessions) >= 0
 UNION ALL
-SELECT target.id, target.org_id, target.cell_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
+SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
   FROM target
   JOIN operation_applied ON true
  WHERE NOT EXISTS (SELECT 1 FROM updated)
@@ -268,6 +270,7 @@ type CancelRunParams struct {
 	OrgID       pgtype.UUID `json:"org_id"`
 	RunID       pgtype.UUID `json:"run_id"`
 	OperationID pgtype.UUID `json:"operation_id"`
+	CellID      string      `json:"cell_id"`
 	Force       bool        `json:"force"`
 	Reason      string      `json:"reason"`
 }
@@ -276,6 +279,7 @@ type CancelRunRow struct {
 	ID                   pgtype.UUID            `json:"id"`
 	OrgID                pgtype.UUID            `json:"org_id"`
 	CellID               string                 `json:"cell_id"`
+	RouteGeneration      int64                  `json:"route_generation"`
 	ProjectID            pgtype.UUID            `json:"project_id"`
 	EnvironmentID        pgtype.UUID            `json:"environment_id"`
 	DeploymentID         pgtype.UUID            `json:"deployment_id"`
@@ -304,6 +308,7 @@ func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRun
 		arg.OrgID,
 		arg.RunID,
 		arg.OperationID,
+		arg.CellID,
 		arg.Force,
 		arg.Reason,
 	)
@@ -312,6 +317,7 @@ func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRun
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -346,9 +352,26 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
        count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
-WHERE org_id = $1
-  AND project_id = $2
-  AND environment_id = $3
+JOIN environment_cells
+  ON environment_cells.org_id = runs.org_id
+ AND environment_cells.project_id = runs.project_id
+ AND environment_cells.environment_id = runs.environment_id
+ AND environment_cells.cell_id = runs.cell_id
+ AND environment_cells.route_generation = runs.route_generation
+ AND environment_cells.route_state IN ('active', 'draining')
+JOIN cells ON cells.id = environment_cells.cell_id
+          AND cells.region_id = environment_cells.region_id
+          AND cells.state IN ('active', 'draining')
+WHERE runs.org_id = $1
+  AND runs.project_id = $2
+  AND runs.environment_id = $3
+  AND EXISTS (
+      SELECT 1
+        FROM org_cells
+       WHERE org_cells.org_id = environment_cells.org_id
+         AND org_cells.cell_id = environment_cells.cell_id
+         AND org_cells.state = 'active'
+  )
 `
 
 type CountScopedRunsByStatusParams struct {
@@ -484,6 +507,7 @@ created AS (
         id,
         org_id,
         cell_id,
+        route_generation,
         project_id,
         environment_id,
         deployment_id,
@@ -530,10 +554,10 @@ created AS (
            $13,
            $14,
            $15,
-           coalesce($16::jsonb, '{}'::jsonb),
-           coalesce($17::text[], '{}'::text[]),
-           coalesce($18::jsonb, '{"enabled": false}'::jsonb),
-           $19,
+           $16,
+           coalesce($17::jsonb, '{}'::jsonb),
+           coalesce($18::text[], '{}'::text[]),
+           coalesce($19::jsonb, '{"enabled": false}'::jsonb),
            $20,
            $21,
            $22,
@@ -543,34 +567,84 @@ created AS (
            $26,
            $27,
            $28,
+           $29,
            attempt_seed.id,
            1,
-           $29,
            $30,
-           $31
+           $31,
+           $32
       FROM attempt_seed
-     WHERE $30::uuid IS NULL
-        OR EXISTS (
+     WHERE EXISTS (
+            SELECT 1
+              FROM deployment_tasks
+              JOIN deployments
+                ON deployments.org_id = deployment_tasks.org_id
+               AND deployments.cell_id = deployment_tasks.cell_id
+               AND deployments.project_id = deployment_tasks.project_id
+               AND deployments.environment_id = deployment_tasks.environment_id
+               AND deployments.id = deployment_tasks.deployment_id
+               AND deployments.route_generation = $4
+               AND deployments.status = 'deployed'
+              JOIN environment_cells
+                ON environment_cells.org_id = deployment_tasks.org_id
+               AND environment_cells.project_id = deployment_tasks.project_id
+               AND environment_cells.environment_id = deployment_tasks.environment_id
+               AND environment_cells.cell_id = deployment_tasks.cell_id
+               AND environment_cells.route_generation = deployments.route_generation
+               AND (
+                   environment_cells.route_state = 'active'
+                   OR (
+                       $33::boolean
+                       AND environment_cells.route_state = 'draining'
+                   )
+               )
+              JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                            AND org_cells.cell_id = environment_cells.cell_id
+                            AND org_cells.state = 'active'
+              JOIN cells ON cells.id = environment_cells.cell_id
+                        AND cells.region_id = environment_cells.region_id
+                        AND (
+                            cells.state = 'active'
+                            OR (
+                                $33::boolean
+                                AND cells.state = 'draining'
+                            )
+                        )
+              JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+                              AND cell_health.state IN ('healthy', 'degraded')
+                              AND cell_health.routing_fresh_until > now()
+             WHERE deployment_tasks.org_id = $2
+               AND deployment_tasks.cell_id = $3
+               AND deployment_tasks.project_id = $5
+               AND deployment_tasks.environment_id = $6
+               AND deployment_tasks.deployment_id = $7
+               AND deployment_tasks.id = $8
+               AND deployment_tasks.task_id = $14
+        )
+       AND (
+            $31::uuid IS NULL
+            OR EXISTS (
             SELECT 1
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-             WHERE task_schedule_instances.id = $30
-               AND task_schedule_instances.generation = $32
-               AND task_schedule_instances.next_fire_at = $31
-               AND task_schedule_instances.schedule_id = $29
+             WHERE task_schedule_instances.id = $31
+               AND task_schedule_instances.generation = $34
+               AND task_schedule_instances.next_fire_at = $32
+               AND task_schedule_instances.schedule_id = $30
                AND task_schedule_instances.org_id = $2
-               AND task_schedule_instances.project_id = $4
-               AND task_schedule_instances.environment_id = $5
-               AND task_schedule_instances.active
+               AND task_schedule_instances.project_id = $5
+               AND task_schedule_instances.environment_id = $6
+               AND task_schedule_instances.enabled
                AND (
                    task_schedule_instances.retry_after IS NULL
                    OR task_schedule_instances.retry_after <= now()
                )
                AND task_schedules.org_id = $2
-               AND task_schedules.project_id = $4
-               AND task_schedules.active
+               AND task_schedules.project_id = $5
+               AND task_schedules.enabled
         )
-    RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+       )
+    RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
     INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
@@ -594,7 +668,7 @@ created_snapshot AS (
            created.current_attempt_id,
            NULL::uuid,
            'run.created',
-           $33
+           $35
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
     RETURNING run_snapshots.run_id
@@ -627,7 +701,7 @@ created_event AS (
            'control',
            'run.created',
            'run.created',
-           $33,
+           $35,
            'internal',
            created.state_version
       FROM created
@@ -648,7 +722,7 @@ created_telemetry_outbox AS (
       FROM created_event
     RETURNING id
 )
-SELECT created.id, created.org_id, created.cell_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.cell_id, created.route_generation, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
   JOIN created_telemetry_outbox ON true
@@ -658,6 +732,7 @@ type CreateScopedRunParams struct {
 	ID                    pgtype.UUID        `json:"id"`
 	OrgID                 pgtype.UUID        `json:"org_id"`
 	CellID                string             `json:"cell_id"`
+	RouteGeneration       int64              `json:"route_generation"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
 	DeploymentID          pgtype.UUID        `json:"deployment_id"`
@@ -686,6 +761,7 @@ type CreateScopedRunParams struct {
 	ScheduleID            pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID    pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
+	AllowDrainingRoute    bool               `json:"allow_draining_route"`
 	ScheduleGeneration    pgtype.Int8        `json:"schedule_generation"`
 	EventPayload          []byte             `json:"event_payload"`
 }
@@ -694,6 +770,7 @@ type CreateScopedRunRow struct {
 	ID                   pgtype.UUID            `json:"id"`
 	OrgID                pgtype.UUID            `json:"org_id"`
 	CellID               string                 `json:"cell_id"`
+	RouteGeneration      int64                  `json:"route_generation"`
 	ProjectID            pgtype.UUID            `json:"project_id"`
 	EnvironmentID        pgtype.UUID            `json:"environment_id"`
 	DeploymentID         pgtype.UUID            `json:"deployment_id"`
@@ -723,6 +800,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.ID,
 		arg.OrgID,
 		arg.CellID,
+		arg.RouteGeneration,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentID,
@@ -751,6 +829,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
+		arg.AllowDrainingRoute,
 		arg.ScheduleGeneration,
 		arg.EventPayload,
 	)
@@ -759,6 +838,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -795,6 +875,7 @@ WITH locked_sessions AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = $1
+       AND runs.cell_id = $2
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -807,6 +888,7 @@ eligible AS (
       LEFT JOIN locked_sessions
         ON locked_sessions.id = runs.session_id
      WHERE runs.org_id = $1
+       AND runs.cell_id = $2
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -939,8 +1021,13 @@ SELECT expired_event.id, expired_event.subject_type, expired_event.subject_id, e
   JOIN expired_telemetry_outbox ON true
 `
 
-func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, expireQueuedRuns, orgID)
+type ExpireQueuedRunsParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	CellID string      `json:"cell_id"`
+}
+
+func (q *Queries) ExpireQueuedRuns(ctx context.Context, arg ExpireQueuedRunsParams) error {
+	_, err := q.db.Exec(ctx, expireQueuedRuns, arg.OrgID, arg.CellID)
 	return err
 }
 
@@ -960,7 +1047,7 @@ WITH locked_session AS MATERIALIZED (
      FOR UPDATE OF sessions
 ),
 target AS (
-    SELECT runs.id, runs.org_id, runs.cell_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    SELECT runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
       FROM runs
       JOIN locked_session ON locked_session.id = runs.session_id
      WHERE runs.org_id = $1
@@ -1113,7 +1200,7 @@ func (q *Queries) FailQueuedRun(ctx context.Context, arg FailQueuedRunParams) er
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
 WHERE org_id = $1 AND id = $2
 `
 
@@ -1129,6 +1216,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -1218,7 +1306,7 @@ func (q *Queries) GetRunOperation(ctx context.Context, arg GetRunOperationParams
 }
 
 const getRunSummary = `-- name: GetRunSummary :one
-SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2
 `
@@ -1232,6 +1320,7 @@ type GetRunSummaryRow struct {
 	ID                   pgtype.UUID            `json:"id"`
 	OrgID                pgtype.UUID            `json:"org_id"`
 	CellID               string                 `json:"cell_id"`
+	RouteGeneration      int64                  `json:"route_generation"`
 	ProjectID            pgtype.UUID            `json:"project_id"`
 	EnvironmentID        pgtype.UUID            `json:"environment_id"`
 	DeploymentID         pgtype.UUID            `json:"deployment_id"`
@@ -1262,6 +1351,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (G
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -1325,22 +1415,39 @@ func (q *Queries) ListQueuedRunsForWorkspaceMount(ctx context.Context, arg ListQ
 }
 
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
-SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.session_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
 FROM runs
-WHERE org_id = $1
-  AND project_id = $2
-  AND environment_id = $3
+JOIN environment_cells
+  ON environment_cells.org_id = runs.org_id
+ AND environment_cells.project_id = runs.project_id
+ AND environment_cells.environment_id = runs.environment_id
+ AND environment_cells.cell_id = runs.cell_id
+ AND environment_cells.route_generation = runs.route_generation
+ AND environment_cells.route_state IN ('active', 'draining')
+JOIN cells ON cells.id = environment_cells.cell_id
+          AND cells.region_id = environment_cells.region_id
+          AND cells.state IN ('active', 'draining')
+WHERE runs.org_id = $1
+  AND runs.project_id = $2
+  AND runs.environment_id = $3
   AND (
     $4::text = 'all'
-    OR ($4::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR ($4::text = 'running' AND status = 'running')
-    OR status::text = $4::text
+    OR ($4::text = 'live' AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
+    OR ($4::text = 'running' AND runs.status = 'running')
+    OR runs.status::text = $4::text
   )
   AND (
     $5::uuid IS NULL
-    OR session_id = $5::uuid
+    OR runs.session_id = $5::uuid
   )
-ORDER BY created_at DESC, id DESC
+  AND EXISTS (
+      SELECT 1
+        FROM org_cells
+       WHERE org_cells.org_id = environment_cells.org_id
+         AND org_cells.cell_id = environment_cells.cell_id
+         AND org_cells.state = 'active'
+  )
+ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT $6
 `
 
@@ -1357,6 +1464,7 @@ type ListScopedRunSummariesRow struct {
 	ID                   pgtype.UUID            `json:"id"`
 	OrgID                pgtype.UUID            `json:"org_id"`
 	CellID               string                 `json:"cell_id"`
+	RouteGeneration      int64                  `json:"route_generation"`
 	ProjectID            pgtype.UUID            `json:"project_id"`
 	EnvironmentID        pgtype.UUID            `json:"environment_id"`
 	DeploymentID         pgtype.UUID            `json:"deployment_id"`
@@ -1400,6 +1508,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentID,

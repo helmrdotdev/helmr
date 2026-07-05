@@ -344,6 +344,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 		}
 		_, err = store.ResolveStreamWaitForRunWait(ctx, db.ResolveStreamWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
+			CellID:        scope.CellID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     streamWait.RunWaitID,
@@ -355,6 +356,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 	case db.RunWaitKindToken:
 		tokenWait, err := store.GetTokenWaitForRunWait(ctx, db.GetTokenWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
+			CellID:        scope.CellID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     wait.ID,
@@ -365,7 +367,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 		if err != nil {
 			return err
 		}
-		_, err = store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, ID: tokenWait.ID})
+		_, err = store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, CellID: scope.CellID, ID: tokenWait.ID})
 		if isNoRows(err) {
 			return nil
 		}

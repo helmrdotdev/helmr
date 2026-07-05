@@ -2,6 +2,7 @@
 SELECT *
   FROM tasks
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND task_id = sqlc.arg(task_id);
@@ -11,6 +12,7 @@ INSERT INTO sessions (
     id,
     org_id,
     cell_id,
+    route_generation,
     project_id,
     environment_id,
     task_id,
@@ -26,6 +28,7 @@ INSERT INTO sessions (
     sqlc.arg(id),
     sqlc.arg(org_id),
     sqlc.arg(cell_id),
+    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_id),
@@ -73,9 +76,12 @@ RETURNING *;
 -- name: GetWorkspaceForSessionStart :one
 SELECT workspaces.id,
        workspaces.org_id,
+       workspaces.cell_id,
+       workspaces.route_generation,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.deployment_sandbox_id,
+       deployment_sandboxes.deployment_id,
        workspaces.sandbox_id,
        workspaces.sandbox_fingerprint,
        workspaces.state,
@@ -95,6 +101,43 @@ SELECT workspaces.id,
   FROM workspaces
   JOIN deployment_sandboxes
     ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.cell_id = workspaces.cell_id
+   AND deployment_sandboxes.project_id = workspaces.project_id
+   AND deployment_sandboxes.environment_id = workspaces.environment_id
+   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+  JOIN environment_cells
+    ON environment_cells.org_id = workspaces.org_id
+   AND environment_cells.project_id = workspaces.project_id
+   AND environment_cells.environment_id = workspaces.environment_id
+   AND environment_cells.cell_id = workspaces.cell_id
+   AND environment_cells.route_generation = workspaces.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.region_id = environment_cells.region_id
+            AND cells.state IN ('active', 'draining')
+ WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(workspace_id)
+   AND workspaces.deleted_at IS NULL
+ LIMIT 1;
+
+-- name: GetWorkspaceSourceForSessionStart :one
+SELECT workspaces.id,
+       workspaces.org_id,
+       workspaces.cell_id,
+       workspaces.route_generation,
+       workspaces.project_id,
+       workspaces.environment_id,
+       workspaces.deployment_sandbox_id,
+       deployment_sandboxes.deployment_id
+  FROM workspaces
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.cell_id = workspaces.cell_id
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
@@ -110,7 +153,8 @@ UPDATE sessions
    SET current_run_id = sqlc.arg(run_id),
        current_run_version = current_run_version + 1,
        updated_at = now()
- WHERE sessions.org_id = sqlc.arg(org_id)
+WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(session_id)
@@ -205,14 +249,17 @@ SELECT session_start_idempotencies.*,
        runs.updated_at AS run_updated_at
   FROM session_start_idempotencies
   JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
+                    AND sessions.cell_id = session_start_idempotencies.cell_id
                     AND sessions.project_id = session_start_idempotencies.project_id
                     AND sessions.environment_id = session_start_idempotencies.environment_id
                     AND sessions.id = session_start_idempotencies.session_id
   JOIN runs ON runs.org_id = session_start_idempotencies.org_id
+           AND runs.cell_id = session_start_idempotencies.cell_id
            AND runs.project_id = session_start_idempotencies.project_id
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
  WHERE session_start_idempotencies.org_id = sqlc.arg(org_id)
+   AND session_start_idempotencies.cell_id = sqlc.arg(cell_id)
    AND session_start_idempotencies.project_id = sqlc.arg(project_id)
    AND session_start_idempotencies.environment_id = sqlc.arg(environment_id)
    AND session_start_idempotencies.task_id = sqlc.arg(task_id)
@@ -222,6 +269,7 @@ SELECT session_start_idempotencies.*,
 -- name: DeleteExpiredSessionStartIdempotency :exec
 DELETE FROM session_start_idempotencies
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND task_id = sqlc.arg(task_id)
@@ -232,6 +280,7 @@ DELETE FROM session_start_idempotencies
 INSERT INTO session_start_idempotencies (
     id,
     org_id,
+    cell_id,
     project_id,
     environment_id,
     task_id,
@@ -243,6 +292,7 @@ INSERT INTO session_start_idempotencies (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
+    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_id),
@@ -252,7 +302,7 @@ INSERT INTO session_start_idempotencies (
     sqlc.arg(first_run_id),
     sqlc.arg(expires_at)
 )
-ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
+ON CONFLICT (org_id, cell_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
 RETURNING *;
 
 -- name: TouchSessionStartIdempotency :exec
@@ -270,32 +320,178 @@ SELECT *
    AND id = sqlc.arg(id);
 
 -- name: GetSessionActivity :one
-SELECT id, activity, can_close
-  FROM session_activity
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(id);
+SELECT sessions.id,
+       CASE
+         WHEN sessions.status <> 'open' THEN 'idle'
+         WHEN EXISTS (
+             SELECT 1
+               FROM session_run_requests
+              WHERE session_run_requests.org_id = sessions.org_id
+                AND session_run_requests.project_id = sessions.project_id
+                AND session_run_requests.environment_id = sessions.environment_id
+                AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         ) THEN 'queued'
+         WHEN sessions.current_run_id IS NULL THEN 'idle'
+         WHEN runs.id IS NULL THEN 'idle'
+         WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
+         WHEN active_wait.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed') THEN 'waiting'
+         WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
+         WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
+         ELSE 'running'
+       END::text AS activity,
+       (
+         sessions.status = 'open'
+         AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
+         AND (
+             sessions.current_run_id IS NULL
+             OR runs.id IS NULL
+             OR runs.status IN ('succeeded', 'failed', 'cancelled', 'expired')
+         )
+         AND NOT EXISTS (
+             SELECT 1
+               FROM session_run_requests
+              WHERE session_run_requests.org_id = sessions.org_id
+                AND session_run_requests.project_id = sessions.project_id
+                AND session_run_requests.environment_id = sessions.environment_id
+                AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         )
+       )::bool AS can_close
+  FROM sessions
+  LEFT JOIN runs
+    ON runs.org_id = sessions.org_id
+   AND runs.cell_id = sessions.cell_id
+   AND runs.project_id = sessions.project_id
+   AND runs.environment_id = sessions.environment_id
+   AND runs.id = sessions.current_run_id
+  LEFT JOIN LATERAL (
+       SELECT run_waits.state
+         FROM run_waits
+        WHERE run_waits.org_id = sessions.org_id
+          AND run_waits.cell_id = sessions.cell_id
+          AND run_waits.project_id = sessions.project_id
+          AND run_waits.environment_id = sessions.environment_id
+          AND run_waits.run_id = sessions.current_run_id
+          AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming', 'resumed')
+        ORDER BY run_waits.created_at DESC, run_waits.id DESC
+        LIMIT 1
+ ) active_wait ON true
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(id);
 
 -- name: ListSessionActivities :many
-SELECT session_activity.id,
-       session_activity.activity,
-       session_activity.can_close
-  FROM session_activity
+SELECT sessions.id,
+       CASE
+         WHEN sessions.status <> 'open' THEN 'idle'
+         WHEN EXISTS (
+             SELECT 1
+              FROM session_run_requests
+             WHERE session_run_requests.org_id = sessions.org_id
+               AND session_run_requests.cell_id = sessions.cell_id
+               AND session_run_requests.project_id = sessions.project_id
+               AND session_run_requests.environment_id = sessions.environment_id
+               AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         ) THEN 'queued'
+         WHEN sessions.current_run_id IS NULL THEN 'idle'
+         WHEN runs.id IS NULL THEN 'idle'
+         WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
+         WHEN active_wait.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed') THEN 'waiting'
+         WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
+         WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
+         ELSE 'running'
+       END::text AS activity,
+       (
+         sessions.status = 'open'
+         AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
+         AND (
+             sessions.current_run_id IS NULL
+             OR runs.id IS NULL
+             OR runs.status IN ('succeeded', 'failed', 'cancelled', 'expired')
+         )
+         AND NOT EXISTS (
+             SELECT 1
+              FROM session_run_requests
+             WHERE session_run_requests.org_id = sessions.org_id
+               AND session_run_requests.cell_id = sessions.cell_id
+               AND session_run_requests.project_id = sessions.project_id
+               AND session_run_requests.environment_id = sessions.environment_id
+               AND session_run_requests.session_id = sessions.id
+                AND session_run_requests.status IN ('accepted', 'claimed')
+         )
+       )::bool AS can_close
+  FROM sessions
   JOIN unnest(sqlc.arg(session_ids)::uuid[]) AS target(id)
-    ON target.id = session_activity.id
- WHERE session_activity.org_id = sqlc.arg(org_id)
-   AND session_activity.project_id = sqlc.arg(project_id)
-   AND session_activity.environment_id = sqlc.arg(environment_id);
+    ON target.id = sessions.id
+  LEFT JOIN runs
+    ON runs.org_id = sessions.org_id
+   AND runs.cell_id = sessions.cell_id
+   AND runs.project_id = sessions.project_id
+   AND runs.environment_id = sessions.environment_id
+   AND runs.id = sessions.current_run_id
+  LEFT JOIN LATERAL (
+       SELECT run_waits.state
+         FROM run_waits
+        WHERE run_waits.org_id = sessions.org_id
+          AND run_waits.cell_id = sessions.cell_id
+          AND run_waits.project_id = sessions.project_id
+          AND run_waits.environment_id = sessions.environment_id
+          AND run_waits.run_id = sessions.current_run_id
+          AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming', 'resumed')
+        ORDER BY run_waits.created_at DESC, run_waits.id DESC
+        LIMIT 1
+ ) active_wait ON true
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1
+         FROM environment_cells
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.region_id = environment_cells.region_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE environment_cells.org_id = sessions.org_id
+          AND environment_cells.project_id = sessions.project_id
+          AND environment_cells.environment_id = sessions.environment_id
+          AND environment_cells.cell_id = sessions.cell_id
+          AND environment_cells.route_generation = sessions.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+   );
 
 -- name: LockSession :one
 SELECT *
   FROM sessions
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id)
  FOR UPDATE;
+
+-- name: GetSessionByExternalIDInCell :one
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND external_id = sqlc.arg(external_id)
+   AND external_id <> '';
+
+-- name: GetSessionInCell :one
+SELECT *
+  FROM sessions
+ WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id);
 
 -- name: GetSessionByExternalID :one
 SELECT *
@@ -307,24 +503,40 @@ SELECT *
    AND external_id <> '';
 
 -- name: ListSessions :many
-SELECT *
-  FROM sessions
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
+SELECT sessions.*
+ FROM sessions
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1
+         FROM environment_cells
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.region_id = environment_cells.region_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE environment_cells.org_id = sessions.org_id
+          AND environment_cells.project_id = sessions.project_id
+          AND environment_cells.environment_id = sessions.environment_id
+          AND environment_cells.cell_id = sessions.cell_id
+          AND environment_cells.route_generation = sessions.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+   )
    AND (
        sqlc.arg(status_filter)::text = ''
-       OR status::text = sqlc.arg(status_filter)::text
+       OR sessions.status::text = sqlc.arg(status_filter)::text
    )
    AND (
        sqlc.arg(task_id_filter)::text = ''
-       OR task_id = sqlc.arg(task_id_filter)
+       OR sessions.task_id = sqlc.arg(task_id_filter)
    )
    AND (
        sqlc.arg(external_id_filter)::text = ''
-       OR external_id = sqlc.arg(external_id_filter)
+       OR sessions.external_id = sqlc.arg(external_id_filter)
    )
- ORDER BY updated_at DESC, id DESC
+ ORDER BY sessions.updated_at DESC, sessions.id DESC
  LIMIT sqlc.arg(row_limit);
 
 -- name: PatchSession :one
@@ -337,6 +549,7 @@ UPDATE sessions
        END,
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(id)
@@ -359,6 +572,7 @@ UPDATE sessions
        terminal_reason = jsonb_build_object('reason', sqlc.arg(reason)::text, 'origin', 'api'),
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(id)
@@ -399,6 +613,7 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(id)
@@ -440,6 +655,7 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.cell_id = sqlc.arg(cell_id)
    AND sessions.status = 'open'
    AND sessions.expires_at IS NOT NULL
    AND sessions.expires_at <= now()
@@ -447,6 +663,7 @@ UPDATE sessions
        SELECT 1
          FROM runs
         WHERE runs.org_id = sessions.org_id
+          AND runs.cell_id = sessions.cell_id
           AND runs.project_id = sessions.project_id
           AND runs.environment_id = sessions.environment_id
           AND runs.id = sessions.current_run_id
@@ -456,6 +673,7 @@ UPDATE sessions
        SELECT 1
          FROM session_run_requests
         WHERE session_run_requests.org_id = sessions.org_id
+          AND session_run_requests.cell_id = sessions.cell_id
           AND session_run_requests.project_id = sessions.project_id
           AND session_run_requests.environment_id = sessions.environment_id
           AND session_run_requests.session_id = sessions.id
@@ -474,6 +692,7 @@ WITH target_session AS (
     SELECT *
       FROM sessions
      WHERE sessions.org_id = sqlc.arg(org_id)
+       AND sessions.cell_id = sqlc.arg(cell_id)
        AND sessions.project_id = sqlc.arg(project_id)
        AND sessions.environment_id = sqlc.arg(environment_id)
        AND sessions.id = sqlc.arg(id)
@@ -495,6 +714,7 @@ cancelled_session AS (
            updated_at = now()
       FROM target_session
      WHERE sessions.org_id = target_session.org_id
+       AND sessions.cell_id = target_session.cell_id
        AND sessions.id = target_session.id
        AND sessions.status = 'open'
     RETURNING sessions.*
@@ -506,6 +726,7 @@ ended_session_run AS (
       JOIN cancelled_session ON true
      WHERE target_session.current_run_id IS NOT NULL
        AND session_runs.org_id = target_session.org_id
+       AND session_runs.cell_id = target_session.cell_id
        AND session_runs.project_id = target_session.project_id
        AND session_runs.environment_id = target_session.environment_id
        AND session_runs.session_id = target_session.id
@@ -515,6 +736,7 @@ ended_session_run AS (
 SELECT sessions.*
   FROM sessions
   JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
+                        AND cancelled_session.cell_id = sessions.cell_id
                         AND cancelled_session.id = sessions.id;
 
 -- name: ListSessionRuns :many
@@ -539,6 +761,7 @@ SELECT session_runs.*,
 SELECT *
   FROM session_runs
  WHERE org_id = sqlc.arg(org_id)
+   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND session_id = sqlc.arg(session_id)

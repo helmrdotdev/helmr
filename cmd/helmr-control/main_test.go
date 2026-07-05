@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -40,6 +41,9 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:          publicURL,
 		CellID:             "us-east-1-cell-1",
+		RegionID:           "us-east-1",
+		DefaultRegionID:    "us-east-1",
+		TelemetryReader:    telemetry.NewCompositeReader(telemetry.NewHotReader(store), nil),
 		MagicLinkDebugURLs: true,
 		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
@@ -70,6 +74,12 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
+	t.Setenv("HELMR_CELL_ID", "us-east-1-cell-1")
+	t.Setenv("HELMR_REGION_ID", "us-east-1")
+	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
+	t.Setenv("HELMR_PROVIDER", "aws")
+	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
+	t.Setenv("HELMR_CELL_ENVIRONMENT_CLASS", "prod")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "worker-bootstrap-token")
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")

@@ -42,6 +42,17 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 			return
 		}
 	}
+	worker := workerFromContext(r.Context())
+	if _, err := s.db.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
+		ID:            deploymentSandboxID,
+		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+	}); isNoRows(err) {
+		writeError(w, notFound(errors.New("deployment sandbox not found")))
+		return
+	} else if err != nil {
+		writeError(w, errors.New("load deployment sandbox"))
+		return
+	}
 	stat, err := s.cas.Stat(r.Context(), strings.TrimSpace(request.Artifact.Digest))
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("runtime substrate artifact is missing from CAS: %w", err)))
@@ -59,7 +70,6 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		writeError(w, badRequest(fmt.Errorf("runtime substrate artifact media_type must be %s", cas.RuntimeSubstrateMediaType)))
 		return
 	}
-	worker := workerFromContext(r.Context())
 	var row db.RuntimeSubstrateArtifact
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		sandbox, err := work.q.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
@@ -85,6 +95,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     sandbox.OrgID,
 			CellID:                    sandbox.CellID,
+			RouteGeneration:           sandbox.RouteGeneration,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			Digest:                    strings.TrimSpace(request.Artifact.Digest),
@@ -157,6 +168,7 @@ func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *
 	}
 	row, err := s.db.GetRuntimeSubstrateArtifactForSandbox(r.Context(), db.GetRuntimeSubstrateArtifactForSandboxParams{
 		OrgID:               sandbox.OrgID,
+		CellID:              worker.CellID,
 		ProjectID:           sandbox.ProjectID,
 		EnvironmentID:       sandbox.EnvironmentID,
 		DeploymentSandboxID: sandbox.ID,

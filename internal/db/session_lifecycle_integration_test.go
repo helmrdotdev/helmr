@@ -65,7 +65,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expired, err := queries.ExpireDueSessions(ctx, pgvalue.UUID(ids.orgID))
+	expired, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 	}
 
 	markCurrentRunTerminal(t, ctx, pool, ids)
-	expired, err = queries.ExpireDueSessions(ctx, pgvalue.UUID(ids.orgID))
+	expired, err = queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 		t.Fatalf("expired sessions = %+v", expired)
 	}
 
-	again, err := queries.ExpireDueSessions(ctx, pgvalue.UUID(ids.orgID))
+	again, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
 	if err != nil {
 		t.Fatal(err)
 	}

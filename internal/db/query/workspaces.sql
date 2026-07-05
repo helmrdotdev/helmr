@@ -4,6 +4,7 @@ WITH created_workspace AS (
         id,
         org_id,
         cell_id,
+        route_generation,
         project_id,
         environment_id,
         deployment_sandbox_id,
@@ -18,6 +19,7 @@ WITH created_workspace AS (
     SELECT sqlc.arg(id),
            deployment_sandboxes.org_id,
            deployment_sandboxes.cell_id,
+           deployments.route_generation,
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
@@ -29,7 +31,33 @@ WITH created_workspace AS (
            coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
            coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
       FROM deployment_sandboxes
+      JOIN deployments
+        ON deployments.org_id = deployment_sandboxes.org_id
+       AND deployments.cell_id = deployment_sandboxes.cell_id
+       AND deployments.project_id = deployment_sandboxes.project_id
+       AND deployments.environment_id = deployment_sandboxes.environment_id
+       AND deployments.id = deployment_sandboxes.deployment_id
+       AND deployments.route_generation = sqlc.arg(route_generation)
+       AND deployments.status = 'deployed'
+      JOIN environment_cells
+        ON environment_cells.org_id = deployment_sandboxes.org_id
+       AND environment_cells.project_id = deployment_sandboxes.project_id
+       AND environment_cells.environment_id = deployment_sandboxes.environment_id
+       AND environment_cells.cell_id = deployment_sandboxes.cell_id
+       AND environment_cells.route_generation = deployments.route_generation
+       AND environment_cells.route_state = 'active'
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.region_id = environment_cells.region_id
+                AND cells.state = 'active'
+      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+                      AND cell_health.state IN ('healthy', 'degraded')
+                      AND cell_health.routing_fresh_until > now()
      WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
+       AND deployment_sandboxes.cell_id = sqlc.arg(cell_id)
+       AND deployments.route_generation = sqlc.arg(route_generation)
        AND deployment_sandboxes.project_id = sqlc.arg(project_id)
        AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
        AND deployment_sandboxes.id = sqlc.arg(deployment_sandbox_id)
@@ -86,14 +114,33 @@ SELECT deployment_sandboxes.*
   FROM deployment_sandboxes
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
+   AND deployments.cell_id = deployment_sandboxes.cell_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
+   AND deployments.route_generation = sqlc.arg(route_generation)
+  JOIN environment_cells
+    ON environment_cells.org_id = deployment_sandboxes.org_id
+   AND environment_cells.project_id = deployment_sandboxes.project_id
+   AND environment_cells.environment_id = deployment_sandboxes.environment_id
+   AND environment_cells.cell_id = deployment_sandboxes.cell_id
+   AND environment_cells.route_generation = deployments.route_generation
+   AND environment_cells.route_state = 'active'
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.region_id = environment_cells.region_id
+            AND cells.state = 'active'
+  JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+                  AND cell_health.state IN ('healthy', 'degraded')
+                  AND cell_health.routing_fresh_until > now()
   JOIN environments
     ON environments.org_id = deployment_sandboxes.org_id
    AND environments.project_id = deployment_sandboxes.project_id
    AND environments.id = deployment_sandboxes.environment_id
  WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
+   AND deployment_sandboxes.cell_id = sqlc.arg(cell_id)
    AND deployment_sandboxes.project_id = sqlc.arg(project_id)
    AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
    AND deployment_sandboxes.sandbox_id = sqlc.arg(sandbox_id)
@@ -115,16 +162,32 @@ SELECT *
    AND deleted_at IS NULL;
 
 -- name: ListWorkspaces :many
-SELECT *
+SELECT workspaces.*
   FROM workspaces
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND deleted_at IS NULL
-   AND (sqlc.narg(state)::workspace_state IS NULL OR state = sqlc.narg(state)::workspace_state)
-   AND (sqlc.narg(external_id)::text IS NULL OR external_id = sqlc.narg(external_id)::text)
-   AND (sqlc.narg(tag)::text IS NULL OR tags @> ARRAY[sqlc.narg(tag)::text])
- ORDER BY updated_at DESC, id DESC
+WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.project_id = sqlc.arg(project_id)
+   AND workspaces.environment_id = sqlc.arg(environment_id)
+   AND EXISTS (
+       SELECT 1
+         FROM environment_cells
+         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                       AND org_cells.cell_id = environment_cells.cell_id
+                       AND org_cells.state = 'active'
+         JOIN cells ON cells.id = environment_cells.cell_id
+                   AND cells.region_id = environment_cells.region_id
+                   AND cells.state IN ('active', 'draining')
+        WHERE environment_cells.org_id = workspaces.org_id
+          AND environment_cells.project_id = workspaces.project_id
+          AND environment_cells.environment_id = workspaces.environment_id
+          AND environment_cells.cell_id = workspaces.cell_id
+          AND environment_cells.route_generation = workspaces.route_generation
+          AND environment_cells.route_state IN ('active', 'draining')
+   )
+   AND workspaces.deleted_at IS NULL
+   AND (sqlc.narg(state)::workspace_state IS NULL OR workspaces.state = sqlc.narg(state)::workspace_state)
+   AND (sqlc.narg(external_id)::text IS NULL OR workspaces.external_id = sqlc.narg(external_id)::text)
+   AND (sqlc.narg(tag)::text IS NULL OR workspaces.tags @> ARRAY[sqlc.narg(tag)::text])
+ ORDER BY workspaces.updated_at DESC, workspaces.id DESC
  LIMIT sqlc.arg(limit_count);
 
 -- name: PatchWorkspace :one
@@ -133,6 +196,7 @@ UPDATE workspaces
        tags = coalesce(sqlc.narg(tags)::text[], workspaces.tags),
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.cell_id = sqlc.arg(cell_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -144,6 +208,7 @@ UPDATE workspaces
    SET desired_state = 'stopped',
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.cell_id = sqlc.arg(cell_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -159,6 +224,7 @@ UPDATE workspaces
        archived_at = coalesce(workspaces.archived_at, now()),
        updated_at = now()
  WHERE workspaces.org_id = sqlc.arg(org_id)
+   AND workspaces.cell_id = sqlc.arg(cell_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id)
@@ -167,6 +233,7 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_mounts
         WHERE workspace_mounts.org_id = workspaces.org_id
+          AND workspace_mounts.cell_id = workspaces.cell_id
           AND workspace_mounts.project_id = workspaces.project_id
           AND workspace_mounts.environment_id = workspaces.environment_id
           AND workspace_mounts.workspace_id = workspaces.id

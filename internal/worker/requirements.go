@@ -75,9 +75,6 @@ func validateResources(capabilities api.WorkerCapabilities, resources compute.Re
 }
 
 func validatePlacement(capabilities api.WorkerCapabilities, placement compute.Placement) error {
-	if placement.Region != "" && placement.Region != capabilities.Region {
-		return fmt.Errorf("placement region %q does not match worker region %q", placement.Region, capabilities.Region)
-	}
 	for key, value := range placement.Tags {
 		if capabilities.Labels[key] != value {
 			return fmt.Errorf("placement tag %s=%q does not match worker label", key, value)

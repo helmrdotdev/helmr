@@ -7,6 +7,7 @@ created AS (
         id,
         org_id,
         cell_id,
+        route_generation,
         project_id,
         environment_id,
         deployment_id,
@@ -41,6 +42,7 @@ created AS (
     SELECT sqlc.arg(id),
            sqlc.arg(org_id),
            sqlc.arg(cell_id),
+           sqlc.arg(route_generation),
            sqlc.arg(project_id),
            sqlc.arg(environment_id),
            sqlc.arg(deployment_id),
@@ -72,8 +74,56 @@ created AS (
            sqlc.narg(schedule_instance_id),
            sqlc.narg(scheduled_at)
       FROM attempt_seed
-     WHERE sqlc.narg(schedule_instance_id)::uuid IS NULL
-        OR EXISTS (
+     WHERE EXISTS (
+            SELECT 1
+              FROM deployment_tasks
+              JOIN deployments
+                ON deployments.org_id = deployment_tasks.org_id
+               AND deployments.cell_id = deployment_tasks.cell_id
+               AND deployments.project_id = deployment_tasks.project_id
+               AND deployments.environment_id = deployment_tasks.environment_id
+               AND deployments.id = deployment_tasks.deployment_id
+               AND deployments.route_generation = sqlc.arg(route_generation)
+               AND deployments.status = 'deployed'
+              JOIN environment_cells
+                ON environment_cells.org_id = deployment_tasks.org_id
+               AND environment_cells.project_id = deployment_tasks.project_id
+               AND environment_cells.environment_id = deployment_tasks.environment_id
+               AND environment_cells.cell_id = deployment_tasks.cell_id
+               AND environment_cells.route_generation = deployments.route_generation
+               AND (
+                   environment_cells.route_state = 'active'
+                   OR (
+                       sqlc.arg(allow_draining_route)::boolean
+                       AND environment_cells.route_state = 'draining'
+                   )
+               )
+              JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                            AND org_cells.cell_id = environment_cells.cell_id
+                            AND org_cells.state = 'active'
+              JOIN cells ON cells.id = environment_cells.cell_id
+                        AND cells.region_id = environment_cells.region_id
+                        AND (
+                            cells.state = 'active'
+                            OR (
+                                sqlc.arg(allow_draining_route)::boolean
+                                AND cells.state = 'draining'
+                            )
+                        )
+              JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+                              AND cell_health.state IN ('healthy', 'degraded')
+                              AND cell_health.routing_fresh_until > now()
+             WHERE deployment_tasks.org_id = sqlc.arg(org_id)
+               AND deployment_tasks.cell_id = sqlc.arg(cell_id)
+               AND deployment_tasks.project_id = sqlc.arg(project_id)
+               AND deployment_tasks.environment_id = sqlc.arg(environment_id)
+               AND deployment_tasks.deployment_id = sqlc.arg(deployment_id)
+               AND deployment_tasks.id = sqlc.arg(deployment_task_id)
+               AND deployment_tasks.task_id = sqlc.arg(task_id)
+        )
+       AND (
+            sqlc.narg(schedule_instance_id)::uuid IS NULL
+            OR EXISTS (
             SELECT 1
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
@@ -84,16 +134,17 @@ created AS (
                AND task_schedule_instances.org_id = sqlc.arg(org_id)
                AND task_schedule_instances.project_id = sqlc.arg(project_id)
                AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
-               AND task_schedule_instances.active
+               AND task_schedule_instances.enabled
                AND (
                    task_schedule_instances.retry_after IS NULL
                    OR task_schedule_instances.retry_after <= now()
                )
                AND task_schedules.org_id = sqlc.arg(org_id)
                AND task_schedules.project_id = sqlc.arg(project_id)
-               AND task_schedules.active
+               AND task_schedules.enabled
         )
-    RETURNING id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
+       )
+    RETURNING id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, trace_id, root_span_id, state_version, current_attempt_id, current_attempt_number, exit_code, output, created_at, updated_at
 ),
 created_attempt AS (
     INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
@@ -171,7 +222,7 @@ created_telemetry_outbox AS (
       FROM created_event
     RETURNING id
 )
-SELECT created.id, created.org_id, created.cell_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
+SELECT created.id, created.org_id, created.cell_id, created.route_generation, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.session_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.status, created.execution_status, created.terminal_outcome, created.metadata, created.tags, created.locked_retry_policy, created.current_attempt_number, created.exit_code, created.output, created.created_at, created.updated_at
   FROM created
   JOIN created_snapshot ON true
   JOIN created_telemetry_outbox ON true;
@@ -190,6 +241,7 @@ WITH locked_sessions AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.cell_id = sqlc.arg(cell_id)
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -202,6 +254,7 @@ eligible AS (
       LEFT JOIN locked_sessions
         ON locked_sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.cell_id = sqlc.arg(cell_id)
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.queued_expires_at IS NOT NULL
@@ -504,7 +557,7 @@ SELECT failed_event.*
   JOIN failed_telemetry_outbox ON true;
 
 -- name: GetRunSummary :one
-SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
 FROM runs
 WHERE org_id = $1 AND id = $2;
 
@@ -517,27 +570,61 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
        count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id);
+JOIN environment_cells
+  ON environment_cells.org_id = runs.org_id
+ AND environment_cells.project_id = runs.project_id
+ AND environment_cells.environment_id = runs.environment_id
+ AND environment_cells.cell_id = runs.cell_id
+ AND environment_cells.route_generation = runs.route_generation
+ AND environment_cells.route_state IN ('active', 'draining')
+JOIN cells ON cells.id = environment_cells.cell_id
+          AND cells.region_id = environment_cells.region_id
+          AND cells.state IN ('active', 'draining')
+WHERE runs.org_id = sqlc.arg(org_id)
+  AND runs.project_id = sqlc.arg(project_id)
+  AND runs.environment_id = sqlc.arg(environment_id)
+  AND EXISTS (
+      SELECT 1
+        FROM org_cells
+       WHERE org_cells.org_id = environment_cells.org_id
+         AND org_cells.cell_id = environment_cells.cell_id
+         AND org_cells.state = 'active'
+  );
 
 -- name: ListScopedRunSummaries :many
-SELECT id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, session_id, deployment_version, api_version, sdk_version, cli_version, task_id, status, execution_status, terminal_outcome, metadata, tags, locked_retry_policy, current_attempt_number, exit_code, output, created_at, updated_at
+SELECT runs.id, runs.org_id, runs.cell_id, runs.route_generation, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.session_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
 FROM runs
-WHERE org_id = sqlc.arg(org_id)
-  AND project_id = sqlc.arg(project_id)
-  AND environment_id = sqlc.arg(environment_id)
+JOIN environment_cells
+  ON environment_cells.org_id = runs.org_id
+ AND environment_cells.project_id = runs.project_id
+ AND environment_cells.environment_id = runs.environment_id
+ AND environment_cells.cell_id = runs.cell_id
+ AND environment_cells.route_generation = runs.route_generation
+ AND environment_cells.route_state IN ('active', 'draining')
+JOIN cells ON cells.id = environment_cells.cell_id
+          AND cells.region_id = environment_cells.region_id
+          AND cells.state IN ('active', 'draining')
+WHERE runs.org_id = sqlc.arg(org_id)
+  AND runs.project_id = sqlc.arg(project_id)
+  AND runs.environment_id = sqlc.arg(environment_id)
   AND (
     sqlc.arg(status_filter)::text = 'all'
-    OR (sqlc.arg(status_filter)::text = 'live' AND status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR (sqlc.arg(status_filter)::text = 'running' AND status = 'running')
-    OR status::text = sqlc.arg(status_filter)::text
+    OR (sqlc.arg(status_filter)::text = 'live' AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
+    OR (sqlc.arg(status_filter)::text = 'running' AND runs.status = 'running')
+    OR runs.status::text = sqlc.arg(status_filter)::text
   )
   AND (
     sqlc.narg(session_id)::uuid IS NULL
-    OR session_id = sqlc.narg(session_id)::uuid
+    OR runs.session_id = sqlc.narg(session_id)::uuid
   )
-ORDER BY created_at DESC, id DESC
+  AND EXISTS (
+      SELECT 1
+        FROM org_cells
+       WHERE org_cells.org_id = environment_cells.org_id
+         AND org_cells.cell_id = environment_cells.cell_id
+         AND org_cells.state = 'active'
+  )
+ORDER BY runs.created_at DESC, runs.id DESC
 LIMIT sqlc.arg(row_limit);
 
 -- name: CreateRunOperation :one
@@ -624,6 +711,7 @@ locked_session AS MATERIALIZED (
        AND sessions.environment_id = runs.environment_id
        AND sessions.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.cell_id = sqlc.arg(cell_id)
        AND runs.id = sqlc.arg(run_id)
      FOR UPDATE OF sessions
 ),
@@ -635,6 +723,7 @@ target AS (
       LEFT JOIN locked_session
         ON locked_session.id = runs.session_id
      WHERE runs.org_id = sqlc.arg(org_id)
+       AND runs.cell_id = sqlc.arg(cell_id)
        AND runs.id = sqlc.arg(run_id)
        AND locked_session.id = runs.session_id
      FOR UPDATE
@@ -841,7 +930,7 @@ operation_applied AS (
        AND run_operations.status = 'requested'
     RETURNING run_operations.id
 )
-SELECT updated.id, updated.org_id, updated.cell_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
+SELECT updated.id, updated.org_id, updated.cell_id, updated.route_generation, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.session_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at
   FROM updated
   JOIN operation_applied ON true
   JOIN telemetry_outbox ON true
@@ -849,7 +938,7 @@ SELECT updated.id, updated.org_id, updated.cell_id, updated.project_id, updated.
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_sessions) >= 0
 UNION ALL
-SELECT target.id, target.org_id, target.cell_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
+SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.session_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.status, target.execution_status, target.terminal_outcome, target.metadata, target.tags, target.locked_retry_policy, target.current_attempt_number, target.exit_code, target.output, target.created_at, target.updated_at
   FROM target
   JOIN operation_applied ON true
  WHERE NOT EXISTS (SELECT 1 FROM updated);

@@ -23,6 +23,18 @@ CREATE TYPE cell_state AS ENUM (
     'disabled'
 );
 
+CREATE TYPE region_state AS ENUM (
+    'available',
+    'draining',
+    'disabled'
+);
+
+CREATE TYPE region_visibility AS ENUM (
+    'public',
+    'allowlisted',
+    'hidden'
+);
+
 CREATE TYPE cell_health_state AS ENUM (
     'healthy',
     'degraded',
@@ -34,6 +46,11 @@ CREATE TYPE org_cell_role AS ENUM (
     'allowed'
 );
 
+CREATE TYPE org_cell_state AS ENUM (
+    'active',
+    'disabled'
+);
+
 CREATE TYPE environment_cell_route_state AS ENUM (
     'active',
     'draining',
@@ -43,6 +60,12 @@ CREATE TYPE environment_cell_route_state AS ENUM (
 CREATE TYPE worker_trust_tier AS ENUM (
     'helmr_managed',
     'customer_managed'
+);
+
+CREATE TYPE worker_group_state AS ENUM (
+    'active',
+    'draining',
+    'disabled'
 );
 
 CREATE TYPE artifact_grant_operation AS ENUM (
@@ -88,22 +111,28 @@ CREATE TYPE retention_class AS ENUM (
     'archive'
 );
 
-CREATE TABLE cells (
+CREATE TABLE regions (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
-    region TEXT NOT NULL CHECK (btrim(region) <> ''),
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
-    environment_class TEXT NOT NULL CHECK (btrim(environment_class) <> ''),
-    state cell_state NOT NULL DEFAULT 'active',
+    provider_region TEXT NOT NULL CHECK (btrim(provider_region) <> ''),
+    display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
+    state region_state NOT NULL DEFAULT 'available',
+    visibility region_visibility NOT NULL DEFAULT 'public',
+    location TEXT NOT NULL DEFAULT '',
+    static_ips TEXT[] NOT NULL DEFAULT '{}'::text[],
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-INSERT INTO cells (id, region, provider, environment_class)
-VALUES ('us-east-1-cell-1', 'us-east-1', 'aws', 'managed_cloud_dev')
-ON CONFLICT (id) DO UPDATE
-   SET region = EXCLUDED.region,
-       provider = EXCLUDED.provider,
-       environment_class = EXCLUDED.environment_class;
+CREATE TABLE cells (
+    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
+    environment_class TEXT NOT NULL CHECK (btrim(environment_class) <> ''),
+    state cell_state NOT NULL DEFAULT 'active',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (region_id, id)
+);
 
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -154,7 +183,7 @@ CREATE TABLE org_cells (
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     cell_id TEXT NOT NULL REFERENCES cells(id) ON DELETE RESTRICT,
     role org_cell_role NOT NULL,
-    state environment_cell_route_state NOT NULL DEFAULT 'active',
+    state org_cell_state NOT NULL DEFAULT 'active',
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, cell_id, role)
@@ -193,6 +222,7 @@ CREATE TABLE deletion_jobs (
 CREATE TABLE projects (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    default_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     is_default BOOLEAN NOT NULL DEFAULT false,
@@ -205,6 +235,7 @@ CREATE TABLE environments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
+    default_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     slug TEXT NOT NULL CHECK (btrim(slug) <> ''),
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     color_hex TEXT NOT NULL CHECK (color_hex ~ '^#[0-9A-Fa-f]{6}$'),
@@ -221,23 +252,42 @@ CREATE TABLE environment_cells (
     org_id UUID NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
+    region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     cell_id TEXT NOT NULL REFERENCES cells(id) ON DELETE RESTRICT,
     route_state environment_cell_route_state NOT NULL DEFAULT 'active',
     route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, project_id, environment_id),
+    PRIMARY KEY (org_id, project_id, environment_id, region_id, route_generation),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE
+        ON DELETE CASCADE,
+    FOREIGN KEY (region_id, cell_id)
+        REFERENCES cells(region_id, id)
+        ON DELETE RESTRICT
 );
+
+CREATE UNIQUE INDEX environment_cells_active_route_idx
+    ON environment_cells (org_id, project_id, environment_id, region_id)
+    WHERE route_state = 'active';
 
 CREATE TABLE cell_health (
     cell_id TEXT PRIMARY KEY REFERENCES cells(id) ON DELETE CASCADE,
     state cell_health_state NOT NULL DEFAULT 'healthy',
     checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    routing_fresh_until TIMESTAMPTZ NOT NULL DEFAULT now() + interval '5 minutes',
+    routing_fresh_until TIMESTAMPTZ NOT NULL DEFAULT now() - interval '1 second',
     details JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE TABLE cell_component_health (
+    cell_id TEXT NOT NULL REFERENCES cells(id) ON DELETE CASCADE,
+    component TEXT NOT NULL,
+    state cell_health_state NOT NULL DEFAULT 'healthy',
+    checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    routing_fresh_until TIMESTAMPTZ NOT NULL DEFAULT now() - interval '1 second',
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    PRIMARY KEY (cell_id, component),
+    CHECK (component <> '')
 );
 
 CREATE TABLE auth_sessions (
@@ -377,7 +427,7 @@ CREATE TABLE secrets (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     rotated_at TIMESTAMPTZ,
-    UNIQUE (org_id, project_id, environment_id, name),
+    UNIQUE (org_id, cell_id, project_id, environment_id, name),
     UNIQUE (key_id, nonce),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
@@ -420,28 +470,26 @@ CREATE TYPE worker_instance_status AS ENUM (
 
 CREATE TABLE worker_groups (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID,
+    owner_org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
     cell_id TEXT NOT NULL,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
     provider TEXT NOT NULL DEFAULT 'aws' CHECK (btrim(provider) <> ''),
+    state worker_group_state NOT NULL DEFAULT 'active',
     trust_tier worker_trust_tier NOT NULL DEFAULT 'helmr_managed',
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
+    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (cell_id, id),
     UNIQUE (cell_id, name),
-    UNIQUE (org_id, cell_id, name)
+    UNIQUE (owner_org_id, cell_id, name)
 );
 
 CREATE TRIGGER worker_groups_set_updated_at
     BEFORE UPDATE ON worker_groups
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
-
-INSERT INTO worker_groups (id, cell_id, name, description)
-VALUES (uuidv7(), 'us-east-1-cell-1', 'default', 'Default worker group')
-ON CONFLICT (cell_id, name) DO UPDATE
-   SET description = worker_groups.description;
 
 CREATE TABLE runtime_releases (
     runtime_id TEXT PRIMARY KEY CHECK (btrim(runtime_id) <> ''),
@@ -497,8 +545,12 @@ CREATE TABLE worker_instances (
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     drained_at TIMESTAMPTZ,
+    UNIQUE (cell_id, id),
     UNIQUE (worker_group_id, resource_id),
-    UNIQUE (id, worker_group_id)
+    UNIQUE (id, worker_group_id),
+    FOREIGN KEY (cell_id, worker_group_id)
+        REFERENCES worker_groups(cell_id, id)
+        ON DELETE RESTRICT
 );
 
 CREATE TABLE worker_bootstrap_tokens (
@@ -511,7 +563,10 @@ CREATE TABLE worker_bootstrap_tokens (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     last_used_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
-    revoked_at TIMESTAMPTZ
+    revoked_at TIMESTAMPTZ,
+    FOREIGN KEY (cell_id, worker_group_id)
+        REFERENCES worker_groups(cell_id, id)
+        ON DELETE RESTRICT
 );
 
 CREATE TABLE worker_instance_credentials (
@@ -526,13 +581,17 @@ CREATE TABLE worker_instance_credentials (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ,
     revoked_at TIMESTAMPTZ,
-    UNIQUE (worker_instance_id, id)
+    UNIQUE (worker_instance_id, id),
+    FOREIGN KEY (cell_id, worker_instance_id)
+        REFERENCES worker_instances(cell_id, id)
+        ON DELETE CASCADE
 );
 
 CREATE TABLE artifacts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     digest TEXT NOT NULL,
@@ -542,8 +601,11 @@ CREATE TABLE artifacts (
     created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id, digest),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id, digest),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
@@ -906,6 +968,7 @@ CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
@@ -932,22 +995,25 @@ CREATE TABLE deployments (
     deployed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, version),
+    UNIQUE (org_id, cell_id, project_id, environment_id, version),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_source_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_source_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, project_id, environment_id, build_manifest_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, build_manifest_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_manifest_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_manifest_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (build_worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
@@ -976,6 +1042,7 @@ CREATE TABLE deployment_promotions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -986,11 +1053,11 @@ CREATE TABLE deployment_promotions (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, previous_deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, previous_deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (previous_deployment_id)
 );
 
@@ -1011,10 +1078,11 @@ CREATE TABLE tasks (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     archived_at TIMESTAMPTZ,
-    UNIQUE (environment_id, task_id),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, project_id, environment_id, task_id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, task_id),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -1024,6 +1092,7 @@ CREATE TABLE deployment_sandboxes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1048,16 +1117,19 @@ CREATE TABLE deployment_sandboxes (
     fingerprint TEXT NOT NULL CHECK (btrim(fingerprint) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, deployment_id, sandbox_id),
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, deployment_id, sandbox_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id, image_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id, image_digest)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT
 );
 
@@ -1073,8 +1145,9 @@ CREATE TABLE deployment_queues (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_id, name),
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, deployment_id, name),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -1098,14 +1171,18 @@ CREATE TABLE runtime_substrate_artifacts (
     retired_at TIMESTAMPTZ,
     last_referenced_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_sandbox_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi),
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1130,9 +1207,11 @@ CREATE TABLE deployment_tasks (
     requested_milli_cpu BIGINT NOT NULL DEFAULT 2000 CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
     requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
+    requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
     secret_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
     resource_requirements JSONB NOT NULL DEFAULT '{}'::jsonb,
     network_policy JSONB NOT NULL DEFAULT '{"internet": true}'::jsonb,
+    placement JSONB NOT NULL DEFAULT '{}'::jsonb,
     schedule_declarations JSONB NOT NULL DEFAULT '[]'::jsonb,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     queue_concurrency_limit INTEGER,
@@ -1141,23 +1220,27 @@ CREATE TABLE deployment_tasks (
     retry_policy JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, deployment_id, id),
+    UNIQUE (org_id, cell_id, deployment_id, id),
     UNIQUE (org_id, deployment_id, id, task_id),
+    UNIQUE (org_id, cell_id, deployment_id, id, task_id),
     UNIQUE (org_id, deployment_id, task_id),
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
+    UNIQUE (org_id, cell_id, deployment_id, task_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, queue_name)
-        REFERENCES deployment_queues(org_id, project_id, environment_id, deployment_id, name)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id, queue_name)
+        REFERENCES deployment_queues(org_id, cell_id, project_id, environment_id, deployment_id, name)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, bundle_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, bundle_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED
 );
 
@@ -1169,7 +1252,6 @@ CREATE TYPE task_schedule_type AS ENUM (
 CREATE TABLE task_schedules (
     id UUID PRIMARY KEY,
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     schedule_type task_schedule_type NOT NULL DEFAULT 'imperative',
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1178,7 +1260,7 @@ CREATE TABLE task_schedules (
     external_id TEXT,
     cron TEXT NOT NULL CHECK (btrim(cron) <> ''),
     timezone TEXT NOT NULL DEFAULT 'UTC' CHECK (btrim(timezone) <> ''),
-    active BOOLEAN NOT NULL DEFAULT true,
+    enabled BOOLEAN NOT NULL DEFAULT true,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT task_schedules_scope_id_key UNIQUE (org_id, project_id, id),
@@ -1191,12 +1273,11 @@ CREATE TABLE task_schedule_instances (
     id UUID PRIMARY KEY,
     schedule_id UUID NOT NULL,
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     run_options JSONB NOT NULL DEFAULT '{}'::jsonb,
-    active BOOLEAN NOT NULL DEFAULT true,
+    enabled BOOLEAN NOT NULL DEFAULT true,
     generation BIGINT NOT NULL DEFAULT 1 CHECK (generation > 0),
     next_fire_at TIMESTAMPTZ,
     last_fire_at TIMESTAMPTZ,
@@ -1218,9 +1299,6 @@ CREATE TABLE task_schedule_instances (
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE CASCADE
 );
 
@@ -1228,6 +1306,7 @@ CREATE TABLE workspaces (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_sandbox_id UUID NOT NULL,
@@ -1252,15 +1331,17 @@ CREATE TABLE workspaces (
     archived_at TIMESTAMPTZ,
     deleted_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1268,6 +1349,7 @@ CREATE TABLE sessions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1291,19 +1373,21 @@ CREATE TABLE sessions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, project_id, environment_id, id, task_id),
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id, task_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, initial_deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, initial_deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, active_deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, active_deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1311,6 +1395,7 @@ CREATE TABLE runs (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1358,7 +1443,9 @@ CREATE TABLE runs (
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
@@ -1366,20 +1453,20 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
-        REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
+    FOREIGN KEY (org_id, cell_id, deployment_id, deployment_task_id, task_id)
+        REFERENCES deployment_tasks(org_id, cell_id, deployment_id, id, task_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, session_id, task_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id, task_id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id, task_id)
+        REFERENCES sessions(org_id, cell_id, project_id, environment_id, id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (schedule_id)
-        REFERENCES task_schedules(id)
+    FOREIGN KEY (org_id, project_id, schedule_id)
+        REFERENCES task_schedules(org_id, project_id, id)
         ON DELETE SET NULL (schedule_id),
     FOREIGN KEY (org_id, project_id, environment_id, schedule_instance_id)
         REFERENCES task_schedule_instances(org_id, project_id, environment_id, id)
@@ -1388,8 +1475,8 @@ CREATE TABLE runs (
 
 ALTER TABLE sessions
     ADD CONSTRAINT sessions_current_run_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, current_run_id)
-    REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, current_run_id)
+    REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
     ON DELETE SET NULL (current_run_id)
     DEFERRABLE INITIALLY DEFERRED;
 
@@ -1413,9 +1500,11 @@ CREATE TABLE run_operations (
     applied_at TIMESTAMPTZ,
     rejected_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, cell_id, run_id, id),
     UNIQUE (org_id, run_id, id, kind),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, run_id, id, kind),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -1437,19 +1526,19 @@ CREATE TABLE session_runs (
     reason TEXT NOT NULL CHECK (reason IN ('initial', 'input')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ended_at TIMESTAMPTZ,
-    UNIQUE (org_id, session_id, run_id),
-    UNIQUE (org_id, session_id, turn_index),
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, session_id, run_id),
+    UNIQUE (org_id, cell_id, session_id, turn_index),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, previous_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, previous_run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (previous_run_id)
 );
 
@@ -1467,15 +1556,15 @@ CREATE TABLE session_start_idempotencies (
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, project_id, environment_id, task_id, idempotency_key),
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, task_id, idempotency_key),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, task_id)
+        REFERENCES tasks(org_id, cell_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, first_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, first_run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1483,6 +1572,7 @@ CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1527,39 +1617,42 @@ CREATE TABLE workspace_mounts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id, image_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id, image_digest)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_artifact_id, workspace_artifact_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_artifact_id, workspace_artifact_digest)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT
 );
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_workspace_mount_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-    REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+    REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (workspace_mount_id)
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_last_workspace_mount_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, id, last_workspace_mount_id)
-    REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, id, last_workspace_mount_id)
+    REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (last_workspace_mount_id)
     DEFERRABLE INITIALLY DEFERRED;
 
@@ -1590,14 +1683,17 @@ CREATE TABLE workspace_leases (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
     CHECK (num_nonnulls(owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id) = 1),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, owner_run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
@@ -1638,19 +1734,22 @@ CREATE TABLE workspace_execs (
     exited_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (workspace_mount_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, instance_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, instance_lease_id)
+        REFERENCES workspace_leases(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (instance_lease_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, write_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, write_lease_id)
+        REFERENCES workspace_leases(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (write_lease_id)
 );
 
@@ -1685,21 +1784,24 @@ CREATE TABLE workspace_pty_sessions (
 	    CHECK (
 	        (resize_cols IS NULL AND resize_rows IS NULL)
 	        OR (resize_cols IS NOT NULL AND resize_rows IS NOT NULL)
-	    ),
+    ),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (workspace_mount_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, instance_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, instance_lease_id)
+        REFERENCES workspace_leases(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (instance_lease_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, write_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, write_lease_id)
+        REFERENCES workspace_leases(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (write_lease_id)
 );
 
@@ -1728,42 +1830,45 @@ CREATE TABLE workspace_ports (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
     CHECK (num_nonnulls(owner_run_id, owner_exec_id, owner_pty_session_id) = 1),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, owner_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, owner_run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_exec_id)
-        REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_exec_id)
+        REFERENCES workspace_execs(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_pty_session_id)
-        REFERENCES workspace_pty_sessions(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_pty_session_id)
+        REFERENCES workspace_pty_sessions(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE
 );
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_exec_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_exec_id)
-    REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_exec_id)
+    REFERENCES workspace_execs(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_pty_session_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_pty_session_id)
-    REFERENCES workspace_pty_sessions(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_pty_session_id)
+    REFERENCES workspace_pty_sessions(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_port_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_port_id)
-    REFERENCES workspace_ports(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_port_id)
+    REFERENCES workspace_ports(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE CASCADE;
 
 CREATE TABLE workspace_versions (
@@ -1791,28 +1896,33 @@ CREATE TABLE workspace_versions (
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, workspace_id, id),
+    UNIQUE (org_id, cell_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id, state),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id, state),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, workspace_id, parent_version_id)
         REFERENCES workspace_versions(org_id, workspace_id, id)
         ON DELETE SET NULL (parent_version_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, source_workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (source_workspace_mount_id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_write_lease_id)
         REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (source_write_lease_id),
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (artifact_id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, project_id, environment_id, produced_by_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, produced_by_run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (produced_by_run_id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, produced_by_exec_id)
         REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
@@ -1851,15 +1961,15 @@ ALTER TABLE workspace_leases
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_current_version_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id)
-    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, id, current_version_id)
+    REFERENCES workspace_versions(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (current_version_id)
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_current_version_ready_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id, current_version_required_state)
-    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id, state)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, id, current_version_id, current_version_required_state)
+    REFERENCES workspace_versions(org_id, cell_id, project_id, environment_id, workspace_id, id, state)
     DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE workspace_exec_stream_chunks (
@@ -2015,8 +2125,8 @@ CREATE TABLE workspace_operations (
             AND resource_id IS NOT NULL
         )
     ),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, instance_lease_id)
         REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
@@ -2043,10 +2153,11 @@ CREATE TABLE deployment_streams (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, project_id, environment_id, id, name, direction),
-    UNIQUE (org_id, deployment_id, name, direction),
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id, name, direction),
+    UNIQUE (org_id, cell_id, deployment_id, name, direction),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -2065,14 +2176,16 @@ CREATE TABLE streams (
     next_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_sequence > 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, project_id, environment_id, id, session_id, direction),
-    UNIQUE (org_id, session_id, name, direction),
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id, session_id, direction),
+    UNIQUE (org_id, cell_id, session_id, name, direction),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_stream_id, name, direction)
-        REFERENCES deployment_streams(org_id, project_id, environment_id, id, name, direction)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_stream_id, name, direction)
+        REFERENCES deployment_streams(org_id, cell_id, project_id, environment_id, id, name, direction)
         ON DELETE CASCADE
 );
 
@@ -2101,7 +2214,9 @@ CREATE TABLE tokens (
     expired_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -2126,7 +2241,9 @@ CREATE TABLE public_access_tokens (
     max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
     used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     CHECK (max_uses IS NULL OR used_count <= max_uses),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
@@ -2146,7 +2263,9 @@ CREATE TABLE public_access_token_scopes (
     correlation_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     CHECK (
         (
             scope_type = 'token.complete'
@@ -2159,14 +2278,14 @@ CREATE TABLE public_access_token_scopes (
             AND stream_id IS NOT NULL
         )
     ),
-    FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
-        REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, public_access_token_id)
+        REFERENCES public_access_tokens(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, token_id)
-        REFERENCES tokens(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, token_id)
+        REFERENCES tokens(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
-        REFERENCES streams(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -2190,13 +2309,15 @@ CREATE TABLE stream_records (
     public_access_token_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, stream_id, sequence),
-    UNIQUE (org_id, stream_id, id),
+    UNIQUE (org_id, cell_id, stream_id, sequence),
+    UNIQUE (org_id, cell_id, stream_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, stream_id, session_id, direction)
-        REFERENCES streams(org_id, project_id, environment_id, id, session_id, direction)
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, stream_id, session_id, direction)
+        REFERENCES streams(org_id, cell_id, project_id, environment_id, id, session_id, direction)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
-        REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, public_access_token_id)
+        REFERENCES public_access_tokens(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (public_access_token_id)
 );
 
@@ -2221,18 +2342,18 @@ CREATE TABLE session_run_requests (
     error_message TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, project_id, environment_id, stream_record_id),
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, stream_record_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, stream_record_id)
-        REFERENCES stream_records(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, stream_record_id)
+        REFERENCES stream_records(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
-        REFERENCES streams(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE SET NULL (run_id)
 );
 
@@ -2264,22 +2385,24 @@ CREATE TABLE run_attempts (
     started_at TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, cell_id, run_id, id),
     UNIQUE (org_id, run_id, attempt_number),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    UNIQUE (org_id, cell_id, run_id, attempt_number),
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE
 );
 
 ALTER TABLE run_attempts
     ADD CONSTRAINT run_attempts_previous_attempt_id_fkey
-    FOREIGN KEY (org_id, run_id, previous_attempt_id)
-    REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, previous_attempt_id)
+    REFERENCES run_attempts(org_id, cell_id, run_id, id)
     ON DELETE SET NULL;
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_attempt_id_fkey
-    FOREIGN KEY (org_id, id, current_attempt_id)
-    REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, id, current_attempt_id)
+    REFERENCES run_attempts(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (current_attempt_id)
     DEFERRABLE INITIALLY DEFERRED;
 
@@ -2304,11 +2427,12 @@ CREATE TABLE run_runtime_requirements (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id),
+    UNIQUE (org_id, cell_id, run_id),
     FOREIGN KEY (runtime_id)
         REFERENCES runtime_releases(runtime_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE
 );
 
@@ -2316,6 +2440,8 @@ CREATE TABLE run_queue_items (
     run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
+    queue_class TEXT NOT NULL DEFAULT 'default' CHECK (btrim(queue_class) <> ''),
     status run_queue_status NOT NULL DEFAULT 'queued',
     priority INTEGER NOT NULL DEFAULT 0,
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
@@ -2331,11 +2457,12 @@ CREATE TABLE run_queue_items (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    UNIQUE (org_id, cell_id, run_id),
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES run_runtime_requirements(org_id, run_id)
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES run_runtime_requirements(org_id, cell_id, run_id)
         ON DELETE CASCADE,
     FOREIGN KEY (reserved_by_worker_instance_id)
         REFERENCES worker_instances(id)
@@ -2392,14 +2519,14 @@ CREATE TABLE event_hot_payloads (
         (run_id IS NOT NULL AND deployment_id IS NULL)
         OR (deployment_id IS NOT NULL AND run_id IS NULL)
     ),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (attempt_id)
 );
 
@@ -2560,8 +2687,8 @@ CREATE TABLE run_log_hot_chunks (
     expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, run_id, seq),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE
 );
 
@@ -2612,6 +2739,8 @@ CREATE TABLE run_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
+    queue_class TEXT NOT NULL DEFAULT 'default' CHECK (btrim(queue_class) <> ''),
     run_id UUID NOT NULL,
     attempt_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL,
@@ -2635,6 +2764,7 @@ CREATE TABLE run_leases (
     released_at TIMESTAMPTZ,
     lost_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, cell_id, run_id, id),
     UNIQUE (run_id, id),
     FOREIGN KEY (runtime_id)
         REFERENCES runtime_releases(runtime_id)
@@ -2645,11 +2775,11 @@ CREATE TABLE run_leases (
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, cell_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -2670,21 +2800,22 @@ CREATE TABLE run_snapshots (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, version),
     UNIQUE (org_id, run_id, version),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
+    UNIQUE (org_id, cell_id, run_id, version),
+    FOREIGN KEY (org_id, cell_id, run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (attempt_id),
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (run_lease_id)
 );
 
 ALTER TABLE run_snapshots
     ADD CONSTRAINT run_snapshots_operation_id_fkey
-    FOREIGN KEY (org_id, run_id, operation_id)
-    REFERENCES run_operations(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, operation_id)
+    REFERENCES run_operations(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (operation_id);
 
 CREATE TABLE run_retry_decisions (
@@ -2706,17 +2837,18 @@ CREATE TABLE run_retry_decisions (
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id, attempt_id),
+    UNIQUE (org_id, cell_id, run_id, attempt_id),
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, cell_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (run_lease_id),
-    FOREIGN KEY (org_id, run_id, snapshot_version)
-        REFERENCES run_snapshots(org_id, run_id, version)
+    FOREIGN KEY (org_id, cell_id, run_id, snapshot_version)
+        REFERENCES run_snapshots(org_id, cell_id, run_id, version)
         ON DELETE CASCADE
 );
 
@@ -2734,28 +2866,29 @@ CREATE TABLE run_queue_concurrency_leases (
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     released_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, run_lease_id),
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    UNIQUE (org_id, cell_id, run_id, run_lease_id),
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE CASCADE
         DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE run_log_hot_chunks
     ADD CONSTRAINT run_log_hot_chunks_run_lease_id_fkey
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-    REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+    REFERENCES run_leases(org_id, cell_id, run_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE event_hot_payloads
     ADD CONSTRAINT event_hot_payloads_run_lease_id_fkey
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-    REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+    REFERENCES run_leases(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (run_lease_id);
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_current_run_lease_id_fkey
-    FOREIGN KEY (org_id, id, current_run_lease_id)
-    REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, id, current_run_lease_id)
+    REFERENCES run_leases(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (current_run_lease_id);
 
 CREATE TABLE runtime_checkpoints (
@@ -2801,21 +2934,23 @@ CREATE TABLE runtime_checkpoints (
     ready_at TIMESTAMPTZ,
     invalidated_at TIMESTAMPTZ,
     UNIQUE (org_id, run_id, id),
+    UNIQUE (org_id, cell_id, run_id, id),
     UNIQUE (org_id, project_id, environment_id, run_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, run_id, id),
     FOREIGN KEY (runtime_id)
         REFERENCES runtime_releases(runtime_id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_workspace_lease_id)
         REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, base_workspace_version_id)
         REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
@@ -2826,8 +2961,8 @@ CREATE TABLE runtime_checkpoints (
     FOREIGN KEY (owner_worker_instance_id)
         REFERENCES worker_instances(id)
         ON DELETE SET NULL (owner_worker_instance_id),
-    FOREIGN KEY (org_id, project_id, environment_id, runtime_substrate_artifact_id)
-        REFERENCES runtime_substrate_artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, runtime_substrate_artifact_id)
+        REFERENCES runtime_substrate_artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -2854,28 +2989,28 @@ CREATE TABLE runtime_checkpoint_artifacts (
     encrypt_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (encrypt_duration_ms >= 0),
     store_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (store_duration_ms >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, run_id, runtime_checkpoint_id, role, ordinal),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, project_id, environment_id, run_id, id)
+    PRIMARY KEY (org_id, cell_id, run_id, runtime_checkpoint_id, role, ordinal),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id, runtime_checkpoint_id)
+        REFERENCES runtime_checkpoints(org_id, cell_id, project_id, environment_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id, digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, artifact_id, digest)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         DEFERRABLE INITIALLY DEFERRED
 );
 
 ALTER TABLE runs
     ADD CONSTRAINT runs_latest_runtime_checkpoint_id_fkey
-    FOREIGN KEY (org_id, id, latest_runtime_checkpoint_id)
-    REFERENCES runtime_checkpoints(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, id, latest_runtime_checkpoint_id)
+    REFERENCES runtime_checkpoints(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (latest_runtime_checkpoint_id);
 
 ALTER TABLE run_leases
     ADD CONSTRAINT run_leases_restore_runtime_checkpoint_id_fkey
-    FOREIGN KEY (org_id, run_id, restore_runtime_checkpoint_id)
-    REFERENCES runtime_checkpoints(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, restore_runtime_checkpoint_id)
+    REFERENCES runtime_checkpoints(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (restore_runtime_checkpoint_id);
 
 CREATE TABLE usage_facts (
@@ -2904,20 +3039,21 @@ CREATE TABLE usage_facts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (run_id, id),
     UNIQUE (org_id, run_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, run_id, id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
+        REFERENCES run_attempts(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (attempt_id),
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (run_lease_id),
-    FOREIGN KEY (org_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, runtime_checkpoint_id)
+        REFERENCES runtime_checkpoints(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (runtime_checkpoint_id),
-    FOREIGN KEY (org_id, run_id, snapshot_version)
-        REFERENCES run_snapshots(org_id, run_id, version)
+    FOREIGN KEY (org_id, cell_id, run_id, snapshot_version)
+        REFERENCES run_snapshots(org_id, cell_id, run_id, version)
         ON DELETE RESTRICT
         DEFERRABLE INITIALLY DEFERRED
 );
@@ -2962,16 +3098,19 @@ CREATE TABLE run_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
+    UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, run_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, run_id, id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, project_id, environment_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id, runtime_checkpoint_id)
+        REFERENCES runtime_checkpoints(org_id, cell_id, project_id, environment_id, run_id, id)
         ON DELETE SET NULL (runtime_checkpoint_id),
-    FOREIGN KEY (org_id, owner_run_id, owner_run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, owner_run_id, owner_run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (owner_run_lease_id),
     FOREIGN KEY (owner_worker_instance_id)
         REFERENCES worker_instances(id)
@@ -3012,14 +3151,15 @@ CREATE TABLE stream_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_wait_id),
     UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, run_wait_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
-        REFERENCES streams(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, stream_id, matched_record_id)
-        REFERENCES stream_records(org_id, stream_id, id)
+    FOREIGN KEY (org_id, cell_id, stream_id, matched_record_id)
+        REFERENCES stream_records(org_id, cell_id, stream_id, id)
         ON DELETE SET NULL (matched_record_id)
 );
 
@@ -3035,11 +3175,12 @@ CREATE TABLE token_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_wait_id),
     UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, run_wait_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, token_id)
-        REFERENCES tokens(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, token_id)
+        REFERENCES tokens(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -3054,8 +3195,9 @@ CREATE TABLE timer_waits (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_wait_id),
     UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, project_id, environment_id, id)
+    UNIQUE (org_id, cell_id, project_id, environment_id, run_wait_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -3063,6 +3205,7 @@ CREATE TABLE worker_commands (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID,
@@ -3115,17 +3258,17 @@ CREATE TABLE worker_commands (
             AND run_state_version IS NULL
         )
     ),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
+        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_wait_id)
-        REFERENCES run_waits(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -3133,6 +3276,7 @@ CREATE TABLE runtime_checkpoint_restores (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
@@ -3149,14 +3293,15 @@ CREATE TABLE runtime_checkpoint_restores (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, run_id, run_lease_id, runtime_checkpoint_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, project_id, environment_id, run_id, id)
+    UNIQUE (org_id, cell_id, run_id, run_lease_id, runtime_checkpoint_id),
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id, runtime_checkpoint_id)
+        REFERENCES runtime_checkpoints(org_id, cell_id, project_id, environment_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_wait_id)
-        REFERENCES run_waits(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id)
         REFERENCES worker_instances(id)
@@ -3177,6 +3322,7 @@ CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
+    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
@@ -3230,67 +3376,68 @@ CREATE TABLE runtime_instances (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    UNIQUE (org_id, cell_id, id),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, sandbox_image_artifact_id)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id, sandbox_image_artifact_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, sandbox_image_artifact_id, sandbox_image_artifact_digest)
+        REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id, runtime_substrate_artifact_id)
-        REFERENCES runtime_substrate_artifacts(org_id, project_id, environment_id, deployment_sandbox_id, id)
+    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, runtime_substrate_artifact_id)
+        REFERENCES runtime_substrate_artifacts(org_id, cell_id, project_id, environment_id, deployment_sandbox_id, id)
         ON DELETE RESTRICT,
-    CONSTRAINT runtime_instances_workspace_mount_id_fkey FOREIGN KEY (org_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, id)
-        ON DELETE SET NULL,
-    CONSTRAINT runtime_instances_adopting_workspace_mount_id_fkey FOREIGN KEY (org_id, adopting_workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, id)
-        ON DELETE SET NULL,
-    CONSTRAINT runtime_instances_owner_run_id_fkey FOREIGN KEY (org_id, owner_run_id)
-        REFERENCES runs(org_id, id)
+    CONSTRAINT runtime_instances_workspace_mount_id_fkey FOREIGN KEY (org_id, cell_id, workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, id)
+        ON DELETE SET NULL (workspace_mount_id),
+    CONSTRAINT runtime_instances_adopting_workspace_mount_id_fkey FOREIGN KEY (org_id, cell_id, adopting_workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, cell_id, id)
+        ON DELETE SET NULL (adopting_workspace_mount_id),
+    CONSTRAINT runtime_instances_owner_run_id_fkey FOREIGN KEY (org_id, cell_id, owner_run_id)
+        REFERENCES runs(org_id, cell_id, id)
         ON DELETE SET NULL (owner_run_id),
-    CONSTRAINT runtime_instances_owner_run_lease_id_fkey FOREIGN KEY (org_id, owner_run_id, owner_run_lease_id)
-        REFERENCES run_leases(org_id, run_id, id)
+    CONSTRAINT runtime_instances_owner_run_lease_id_fkey FOREIGN KEY (org_id, cell_id, owner_run_id, owner_run_lease_id)
+        REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE SET NULL (owner_run_lease_id),
-    CONSTRAINT runtime_instances_owner_run_wait_id_fkey FOREIGN KEY (org_id, owner_run_wait_id)
-        REFERENCES run_waits(org_id, id)
-        ON DELETE SET NULL,
-    CONSTRAINT runtime_instances_owner_workspace_id_fkey FOREIGN KEY (org_id, project_id, environment_id, owner_workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
-        ON DELETE SET NULL,
-    CONSTRAINT runtime_instances_owner_workspace_version_id_fkey FOREIGN KEY (org_id, project_id, environment_id, owner_workspace_version_id)
-        REFERENCES workspace_versions(org_id, project_id, environment_id, id)
-        ON DELETE SET NULL
+    CONSTRAINT runtime_instances_owner_run_wait_id_fkey FOREIGN KEY (org_id, cell_id, owner_run_wait_id)
+        REFERENCES run_waits(org_id, cell_id, id)
+        ON DELETE SET NULL (owner_run_wait_id),
+    CONSTRAINT runtime_instances_owner_workspace_id_fkey FOREIGN KEY (org_id, cell_id, project_id, environment_id, owner_workspace_id)
+        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
+        ON DELETE SET NULL (owner_workspace_id),
+    CONSTRAINT runtime_instances_owner_workspace_version_id_fkey FOREIGN KEY (org_id, cell_id, project_id, environment_id, owner_workspace_version_id)
+        REFERENCES workspace_versions(org_id, cell_id, project_id, environment_id, id)
+        ON DELETE SET NULL (owner_workspace_version_id)
 );
 
 ALTER TABLE workspace_mounts
     ADD CONSTRAINT workspace_mounts_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, runtime_instance_id)
-    REFERENCES runtime_instances(org_id, id)
+    FOREIGN KEY (org_id, cell_id, runtime_instance_id)
+    REFERENCES runtime_instances(org_id, cell_id, id)
     ON DELETE SET NULL;
 
 ALTER TABLE run_waits
     ADD CONSTRAINT run_waits_owner_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, owner_runtime_instance_id)
-    REFERENCES runtime_instances(org_id, id)
+    FOREIGN KEY (org_id, cell_id, owner_runtime_instance_id)
+    REFERENCES runtime_instances(org_id, cell_id, id)
     ON DELETE SET NULL;
 
 ALTER TABLE worker_commands
     ADD CONSTRAINT worker_commands_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, runtime_instance_id)
-    REFERENCES runtime_instances(org_id, id)
+    FOREIGN KEY (org_id, cell_id, runtime_instance_id)
+    REFERENCES runtime_instances(org_id, cell_id, id)
     ON DELETE CASCADE;
 
 ALTER TABLE runtime_checkpoints
     ADD CONSTRAINT runtime_checkpoints_owner_runtime_instance_id_fkey
-    FOREIGN KEY (org_id, owner_runtime_instance_id)
-    REFERENCES runtime_instances(org_id, id)
-    ON DELETE SET NULL;
+    FOREIGN KEY (org_id, cell_id, owner_runtime_instance_id)
+    REFERENCES runtime_instances(org_id, cell_id, id)
+    ON DELETE SET NULL (owner_runtime_instance_id);
 
 CREATE INDEX runtime_instances_ready_claim_idx
     ON runtime_instances (worker_instance_id, runtime_release_id, deployment_sandbox_id, prepared_at, id)
@@ -3325,66 +3472,6 @@ CREATE INDEX runtime_instances_adoption_expiry_idx
       AND adoption_expires_at IS NOT NULL
       AND state IN ('preparing', 'ready');
 
-CREATE VIEW session_activity AS
-SELECT sessions.org_id,
-       sessions.project_id,
-       sessions.environment_id,
-       sessions.id,
-       CASE
-         WHEN sessions.status <> 'open' THEN 'idle'
-         WHEN EXISTS (
-             SELECT 1
-               FROM session_run_requests
-              WHERE session_run_requests.org_id = sessions.org_id
-                AND session_run_requests.project_id = sessions.project_id
-                AND session_run_requests.environment_id = sessions.environment_id
-                AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
-         ) THEN 'queued'
-         WHEN sessions.current_run_id IS NULL THEN 'idle'
-         WHEN runs.id IS NULL THEN 'idle'
-         WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
-         WHEN active_wait.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed') THEN 'waiting'
-         WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
-         WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
-         ELSE 'running'
-       END::text AS activity,
-       (
-         sessions.status = 'open'
-         AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
-         AND (
-             sessions.current_run_id IS NULL
-             OR runs.id IS NULL
-             OR runs.status IN ('succeeded', 'failed', 'cancelled', 'expired')
-         )
-         AND NOT EXISTS (
-             SELECT 1
-               FROM session_run_requests
-              WHERE session_run_requests.org_id = sessions.org_id
-                AND session_run_requests.project_id = sessions.project_id
-                AND session_run_requests.environment_id = sessions.environment_id
-                AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
-         )
-       )::bool AS can_close
-  FROM sessions
-  LEFT JOIN runs
-    ON runs.org_id = sessions.org_id
-   AND runs.project_id = sessions.project_id
-   AND runs.environment_id = sessions.environment_id
-   AND runs.id = sessions.current_run_id
-  LEFT JOIN LATERAL (
-       SELECT run_waits.state
-         FROM run_waits
-        WHERE run_waits.org_id = sessions.org_id
-          AND run_waits.project_id = sessions.project_id
-          AND run_waits.environment_id = sessions.environment_id
-          AND run_waits.run_id = sessions.current_run_id
-          AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming', 'resumed')
-        ORDER BY run_waits.created_at DESC, run_waits.id DESC
-        LIMIT 1
-  ) active_wait ON true;
-
 CREATE UNIQUE INDEX projects_one_default_idx ON projects(org_id)
     WHERE is_default;
 CREATE UNIQUE INDEX environments_one_default_idx ON environments(org_id, project_id)
@@ -3411,18 +3498,18 @@ CREATE INDEX runs_queued_expiry_idx
 CREATE INDEX runs_queued_queue_scope_idx
     ON runs(org_id, project_id, environment_id, queue_name, priority DESC, queue_timestamp, id)
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
-CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(org_id, status, queue_timestamp, priority DESC, enqueued_at)
+CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(cell_id, queue_class, org_id, status, queue_timestamp, priority DESC, enqueued_at)
     WHERE status IN ('queued', 'published', 'reserved');
 CREATE INDEX run_queue_items_active_scope_idx
-    ON run_queue_items(status, org_id, queue_name, run_id)
+    ON run_queue_items(status, cell_id, queue_class, org_id, queue_name, run_id)
     WHERE status IN ('queued', 'published', 'reserved');
-CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(org_id, queued_expires_at)
+CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(cell_id, org_id, queued_expires_at)
     WHERE status IN ('queued', 'published') AND queued_expires_at IS NOT NULL;
-CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(org_id, reservation_expires_at)
+CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(cell_id, org_id, reservation_expires_at)
     WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
-CREATE INDEX run_queue_concurrency_leases_active_idx ON run_queue_concurrency_leases(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
+CREATE INDEX run_queue_concurrency_leases_active_idx ON run_queue_concurrency_leases(org_id, cell_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
     WHERE released_at IS NULL;
-CREATE UNIQUE INDEX run_queue_concurrency_leases_active_scope_slot_idx ON run_queue_concurrency_leases(org_id, environment_id, queue_name, COALESCE(concurrency_key, ''), slot_ordinal)
+CREATE UNIQUE INDEX run_queue_concurrency_leases_active_scope_slot_idx ON run_queue_concurrency_leases(org_id, cell_id, environment_id, queue_name, COALESCE(concurrency_key, ''), slot_ordinal)
     WHERE released_at IS NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX auth_sessions_user_active_idx ON auth_sessions(user_id) WHERE revoked_at IS NULL;
@@ -3471,7 +3558,7 @@ CREATE INDEX deployment_promotions_deployment_idx
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
-    ON deployments(org_id, project_id, environment_id, worker_group_id, content_hash)
+    ON deployments(org_id, cell_id, route_generation, project_id, environment_id, worker_group_id, content_hash)
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_worker_group_status_idx
     ON deployments(worker_group_id, status, created_at)
@@ -3481,7 +3568,7 @@ CREATE INDEX artifacts_scope_kind_created_idx
 CREATE INDEX artifacts_digest_idx
     ON artifacts(digest);
 CREATE UNIQUE INDEX artifacts_runtime_substrate_digest_uidx
-    ON artifacts(org_id, project_id, environment_id, digest, kind)
+    ON artifacts(org_id, cell_id, project_id, environment_id, digest, kind)
     WHERE kind = 'runtime_substrate';
 CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
@@ -3499,11 +3586,11 @@ CREATE INDEX event_hot_payloads_run_attempt_idx ON event_hot_payloads(org_id, ru
 CREATE INDEX run_attempts_run_status_idx ON run_attempts(org_id, run_id, status, attempt_number);
 CREATE UNIQUE INDEX run_leases_one_active_per_run_idx ON run_leases(run_id)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_leases_attempt_idx ON run_leases(org_id, run_id, attempt_id, leased_at DESC);
-CREATE INDEX run_leases_active_lease_idx ON run_leases(org_id, status, lease_expires_at)
+CREATE INDEX run_leases_attempt_idx ON run_leases(org_id, cell_id, run_id, attempt_id, leased_at DESC);
+CREATE INDEX run_leases_active_lease_idx ON run_leases(org_id, cell_id, status, lease_expires_at)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, worker_instance_id, status);
-CREATE INDEX run_leases_worker_group_idx ON run_leases(worker_group_id);
+CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, cell_id, worker_instance_id, status);
+CREATE INDEX run_leases_worker_group_idx ON run_leases(cell_id, worker_group_id);
 CREATE INDEX run_runtime_requirements_worker_group_idx
     ON run_runtime_requirements(worker_group_id);
 CREATE INDEX run_runtime_requirements_worker_scope_idx
@@ -3521,12 +3608,12 @@ CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_key_id, 
 CREATE INDEX run_waits_run_state_idx ON run_waits(org_id, run_id, state, parked_at DESC);
 CREATE INDEX run_waits_timeout_idx ON run_waits(org_id, timeout_at)
     WHERE state IN ('live_waiting', 'checkpointed_waiting') AND timeout_at IS NOT NULL;
-CREATE INDEX stream_waits_open_idx ON stream_waits(org_id, stream_id, after_sequence, run_wait_id)
+CREATE INDEX stream_waits_open_idx ON stream_waits(org_id, cell_id, stream_id, after_sequence, run_wait_id)
     WHERE matched_record_id IS NULL;
-CREATE INDEX stream_waits_matched_record_idx ON stream_waits(org_id, stream_id, matched_record_id)
+CREATE INDEX stream_waits_matched_record_idx ON stream_waits(org_id, cell_id, stream_id, matched_record_id)
     WHERE matched_record_id IS NOT NULL;
-CREATE INDEX token_waits_token_idx ON token_waits(org_id, token_id, run_wait_id);
-CREATE INDEX timer_waits_fire_idx ON timer_waits(org_id, fire_at, run_wait_id);
+CREATE INDEX token_waits_token_idx ON token_waits(org_id, cell_id, token_id, run_wait_id);
+CREATE INDEX timer_waits_fire_idx ON timer_waits(org_id, cell_id, fire_at, run_wait_id);
 CREATE INDEX tasks_scope_updated_idx ON tasks(org_id, project_id, environment_id, updated_at DESC);
 CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
     ON task_schedules (org_id, project_id, schedule_type, dedup_key);
@@ -3536,15 +3623,15 @@ CREATE UNIQUE INDEX task_schedules_user_dedup_active_idx
 CREATE INDEX task_schedules_scope_created_idx
     ON task_schedules (org_id, project_id, created_at DESC, id DESC);
 CREATE INDEX task_schedule_instances_environment_idx
-    ON task_schedule_instances (org_id, project_id, environment_id, active);
+    ON task_schedule_instances (org_id, project_id, environment_id, enabled);
 CREATE INDEX task_schedule_instances_index_due_idx
     ON task_schedule_instances (coalesce(retry_after, next_fire_at), id)
-    WHERE active AND next_fire_at IS NOT NULL;
+    WHERE enabled AND next_fire_at IS NOT NULL;
 CREATE UNIQUE INDEX sessions_external_id_idx ON sessions(org_id, project_id, environment_id, external_id)
     WHERE external_id <> '';
 CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, environment_id, status, updated_at DESC);
 CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
-CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
+CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, cell_id, project_id, environment_id, expires_at);
 CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
 CREATE INDEX session_run_requests_pending_idx ON session_run_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');
@@ -3609,18 +3696,18 @@ CREATE INDEX workspace_operations_worker_claim_idx
 CREATE UNIQUE INDEX workspace_operations_active_resource_idx
     ON workspace_operations(org_id, project_id, environment_id, workspace_mount_id, operation_kind, resource_kind, resource_id)
     WHERE state IN ('queued', 'claimed', 'running') AND resource_id IS NOT NULL;
-CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, project_id, environment_id, deployment_id, name, direction);
-CREATE UNIQUE INDEX streams_session_name_idx ON streams(org_id, session_id, name, direction);
-CREATE INDEX stream_records_sequence_idx ON stream_records(org_id, stream_id, sequence, id);
-CREATE INDEX stream_records_correlation_sequence_idx ON stream_records(org_id, stream_id, correlation_id, sequence, id)
+CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, cell_id, project_id, environment_id, deployment_id, name, direction);
+CREATE UNIQUE INDEX streams_session_name_idx ON streams(org_id, cell_id, session_id, name, direction);
+CREATE INDEX stream_records_sequence_idx ON stream_records(org_id, cell_id, stream_id, sequence, id);
+CREATE INDEX stream_records_correlation_sequence_idx ON stream_records(org_id, cell_id, stream_id, correlation_id, sequence, id)
     WHERE correlation_id <> '';
-CREATE UNIQUE INDEX stream_records_idempotency_idx ON stream_records(org_id, stream_id, idempotency_key)
+CREATE UNIQUE INDEX stream_records_idempotency_idx ON stream_records(org_id, cell_id, stream_id, idempotency_key)
     WHERE idempotency_key <> '';
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
     WHERE state = 'active';
-CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, token_id, scope_type)
+CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, cell_id, token_id, scope_type)
     WHERE token_id IS NOT NULL;
-CREATE INDEX public_access_token_scopes_stream_idx ON public_access_token_scopes(org_id, stream_id, scope_type)
+CREATE INDEX public_access_token_scopes_stream_idx ON public_access_token_scopes(org_id, cell_id, stream_id, scope_type)
     WHERE stream_id IS NOT NULL;
 
 CREATE TRIGGER organizations_set_updated_at

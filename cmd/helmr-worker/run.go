@@ -129,7 +129,7 @@ func run(log *slog.Logger) error {
 		InitramfsDigest:         runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:            runtimeCapabilities.RootfsDigest,
 		CNIProfile:              runtimeCapabilities.CNIProfile,
-		Region:                  cfg.WorkerRegion,
+		Region:                  cfg.WorkerProviderRegion,
 		Labels:                  cfg.WorkerLabels,
 		MaxVCPUs:                cfg.WorkerCapacityVCPUs,
 		MaxMemoryMiB:            cfg.WorkerCapacityMemoryMiB,

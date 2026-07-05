@@ -47,6 +47,8 @@ module "control" {
   public_url                             = var.public_url
   deployment_mode                        = var.deployment_mode
   cell_id                                = var.cell_id
+  region_id                              = var.region_id
+  default_region_id                      = var.default_region_id
   clickhouse_url                         = var.clickhouse_url
   clickhouse_user                        = var.clickhouse_user
   clickhouse_password_secret_arn         = var.clickhouse_password_secret_arn

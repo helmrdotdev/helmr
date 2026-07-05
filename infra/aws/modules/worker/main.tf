@@ -22,7 +22,7 @@ locals {
   managed_worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
-    HELMR_WORKER_REGION                     = data.aws_region.current.region
+    HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
     HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
     HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE   = local.name
     HELMR_WORKER_FIRECRACKER_PATH           = "/usr/local/bin/firecracker"

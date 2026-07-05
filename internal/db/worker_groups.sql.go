@@ -14,7 +14,7 @@ INSERT INTO worker_groups (cell_id, name, description)
 VALUES ($1, 'default', 'Default worker group')
 ON CONFLICT (cell_id, name) DO UPDATE
    SET description = worker_groups.description
-RETURNING id, org_id, cell_id, name, description, provider, trust_tier, claim_version, deleted_at, created_at, updated_at
+RETURNING id, owner_org_id, cell_id, name, description, provider, state, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
 `
 
 func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (WorkerGroup, error) {
@@ -22,13 +22,15 @@ func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
+		&i.OwnerOrgID,
 		&i.CellID,
 		&i.Name,
 		&i.Description,
 		&i.Provider,
+		&i.State,
 		&i.TrustTier,
 		&i.ClaimVersion,
+		&i.CreatedBy,
 		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -37,7 +39,7 @@ func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, cellID string) (
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, org_id, cell_id, name, description, provider, trust_tier, claim_version, deleted_at, created_at, updated_at
+SELECT id, owner_org_id, cell_id, name, description, provider, state, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
   FROM worker_groups
  WHERE cell_id = $1
  ORDER BY name ASC
@@ -60,13 +62,15 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		var i WorkerGroup
 		if err := rows.Scan(
 			&i.ID,
-			&i.OrgID,
+			&i.OwnerOrgID,
 			&i.CellID,
 			&i.Name,
 			&i.Description,
 			&i.Provider,
+			&i.State,
 			&i.TrustTier,
 			&i.ClaimVersion,
+			&i.CreatedBy,
 			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,

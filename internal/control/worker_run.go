@@ -153,7 +153,10 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	expiresAt := time.Now().Add(workerLeaseDuration)
 	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
 		OrgID:                pgvalue.UUID(leaseIDs.orgID),
+		CellID:               queueLease.Message.CellID,
 		RunID:                pgvalue.UUID(leaseIDs.runID),
+		RouteGeneration:      queueLease.Message.RouteGeneration,
+		QueueClass:           queueLease.Message.QueueClass,
 		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
 		DispatchMessageID:    pgtype.Text{String: leaseRow.DispatchMessageID, Valid: true},
 		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},

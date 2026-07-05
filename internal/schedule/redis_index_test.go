@@ -2,6 +2,8 @@ package schedule
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -9,6 +11,31 @@ import (
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
+
+const redisIndexTestCellID = "us-east-1-cell-1"
+
+type scheduleIndexKeys struct {
+	message       string
+	activeMessage string
+	prefix        string
+}
+
+func (k scheduleIndexKeys) lease(attempt int) string {
+	return k.prefix + ":lease:" + k.messageID() + ":lease:" + strconv.Itoa(attempt)
+}
+
+func (k scheduleIndexKeys) messageID() string {
+	return strings.TrimPrefix(k.message, k.prefix+":message:")
+}
+
+func scheduleIndexMessageKeys(index *RedisIndex, cellID string, messageID string) scheduleIndexKeys {
+	prefix := index.cellPrefix(cellID)
+	return scheduleIndexKeys{
+		message:       prefix + ":message:" + messageID,
+		activeMessage: prefix + ":message_active:" + messageID,
+		prefix:        prefix,
+	}
+}
 
 func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	ctx := context.Background()
@@ -23,6 +50,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 	instanceID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
+		CellID:      redisIndexTestCellID,
 		InstanceID:  instanceID,
 		Generation:  4,
 		ScheduledAt: now,
@@ -33,6 +61,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 
 	leases, err := index.Dequeue(ctx, DequeueRequest{
+		CellID:   redisIndexTestCellID,
 		WorkerID: uuid.Must(uuid.NewV7()),
 		Limit:    1,
 		Now:      now,
@@ -52,6 +81,7 @@ func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
 	}
 
 	leases, err = index.Dequeue(ctx, DequeueRequest{
+		CellID:   redisIndexTestCellID,
 		WorkerID: uuid.Must(uuid.NewV7()),
 		Limit:    1,
 		Now:      now.Add(time.Hour),
@@ -78,6 +108,7 @@ func TestRedisIndexDeleteRemovesReadyEntry(t *testing.T) {
 	}
 	instanceID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
+		CellID:      redisIndexTestCellID,
 		InstanceID:  instanceID,
 		Generation:  4,
 		ScheduledAt: now.Add(time.Hour),
@@ -86,11 +117,12 @@ func TestRedisIndexDeleteRemovesReadyEntry(t *testing.T) {
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.Delete(ctx, instanceID); err != nil {
+	if err := index.Delete(ctx, redisIndexTestCellID, instanceID); err != nil {
 		t.Fatal(err)
 	}
 
 	leases, err := index.Dequeue(ctx, DequeueRequest{
+		CellID:   redisIndexTestCellID,
 		WorkerID: uuid.Must(uuid.NewV7()),
 		Limit:    1,
 		Now:      now.Add(2 * time.Hour),
@@ -103,7 +135,8 @@ func TestRedisIndexDeleteRemovesReadyEntry(t *testing.T) {
 		t.Fatalf("leases after delete = %d, want 0", len(leases))
 	}
 	messageID := indexMessageID(entry)
-	if exists := client.Exists(ctx, index.prefix+":message:"+messageID).Val(); exists != 0 {
+	keys := scheduleIndexMessageKeys(index, redisIndexTestCellID, messageID)
+	if exists := client.Exists(ctx, keys.message).Val(); exists != 0 {
 		t.Fatalf("message key exists = %d, want 0", exists)
 	}
 }
@@ -121,6 +154,7 @@ func TestRedisIndexDeleteRemovesActiveEntry(t *testing.T) {
 	}
 	workerID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
+		CellID:      redisIndexTestCellID,
 		InstanceID:  uuid.Must(uuid.NewV7()),
 		Generation:  1,
 		ScheduledAt: now,
@@ -129,18 +163,18 @@ func TestRedisIndexDeleteRemovesActiveEntry(t *testing.T) {
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 1 {
 		t.Fatalf("leases = %d, want 1", len(leases))
 	}
-	if err := index.Delete(ctx, entry.InstanceID); err != nil {
+	if err := index.Delete(ctx, redisIndexTestCellID, entry.InstanceID); err != nil {
 		t.Fatal(err)
 	}
 
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now.Add(2 * time.Minute), Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now.Add(2 * time.Minute), Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,8 +182,50 @@ func TestRedisIndexDeleteRemovesActiveEntry(t *testing.T) {
 		t.Fatalf("leases after active delete = %d, want 0", len(leases))
 	}
 	messageID := indexMessageID(entry)
-	if exists := client.Exists(ctx, index.prefix+":message:"+messageID, index.prefix+":message_active:"+messageID, index.prefix+":lease:"+messageID+":lease:1").Val(); exists != 0 {
+	keys := scheduleIndexMessageKeys(index, redisIndexTestCellID, messageID)
+	if exists := client.Exists(ctx, keys.message, keys.activeMessage, keys.lease(1)).Val(); exists != 0 {
 		t.Fatalf("deleted keys exist = %d, want 0", exists)
+	}
+}
+
+func TestRedisIndexIsolatesEntriesByCell(t *testing.T) {
+	ctx := context.Background()
+	server := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
+	defer client.Close()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	instanceID := uuid.Must(uuid.NewV7())
+	otherCellID := "us-east-1-cell-2"
+	for _, cellID := range []string{redisIndexTestCellID, otherCellID} {
+		if err := index.Enqueue(ctx, IndexEntry{
+			CellID:      cellID,
+			InstanceID:  instanceID,
+			Generation:  1,
+			ScheduledAt: now,
+			AvailableAt: now,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := index.Delete(ctx, redisIndexTestCellID, instanceID); err != nil {
+		t.Fatal(err)
+	}
+	if leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now, Lease: time.Minute}); err != nil {
+		t.Fatal(err)
+	} else if len(leases) != 0 {
+		t.Fatalf("default cell leases = %d, want 0", len(leases))
+	}
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: otherCellID, WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 1 || leases[0].Entry.CellID != otherCellID || leases[0].Entry.InstanceID != instanceID {
+		t.Fatalf("other cell lease = %+v, want isolated entry", leases)
 	}
 }
 
@@ -166,6 +242,7 @@ func TestRedisIndexNackDelaysRetry(t *testing.T) {
 	}
 	workerID := uuid.Must(uuid.NewV7())
 	entry := IndexEntry{
+		CellID:      redisIndexTestCellID,
 		InstanceID:  uuid.Must(uuid.NewV7()),
 		Generation:  1,
 		ScheduledAt: now,
@@ -174,7 +251,7 @@ func TestRedisIndexNackDelaysRetry(t *testing.T) {
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -186,14 +263,14 @@ func TestRedisIndexNackDelaysRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now.Add(time.Minute), Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now.Add(time.Minute), Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
 		t.Fatalf("early retry leases = %d, want 0", len(leases))
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,11 +292,11 @@ func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	entry := IndexEntry{CellID: redisIndexTestCellID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,14 +308,14 @@ func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
 	if err := index.Nack(ctx, leases[0], retryAt); err != nil {
 		t.Fatal(err)
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
 		t.Fatalf("early retry leases = %d, want 0", len(leases))
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,11 +336,11 @@ func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
 	}
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	entry := IndexEntry{CellID: redisIndexTestCellID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -272,14 +349,14 @@ func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
 	}
 
 	reclaimAt := now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
 		t.Fatalf("reclaim leases = %d, want 0", len(leases))
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,11 +377,11 @@ func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	entry := IndexEntry{CellID: redisIndexTestCellID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,14 +392,14 @@ func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	reclaimAt := now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
 		t.Fatalf("reclaim leases = %d, want 0", len(leases))
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,11 +421,11 @@ func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
+	entry := IndexEntry{CellID: redisIndexTestCellID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +436,7 @@ func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
 	if err := index.Ack(ctx, leases[0]); err != nil {
 		t.Fatal(err)
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,10 +459,10 @@ func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
 	}
 	workerID := uuid.Must(uuid.NewV7())
 	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -394,13 +471,13 @@ func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
 	}
 
 	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
 		t.Fatal(err)
 	}
 	if err := index.Ack(ctx, leases[0]); err != nil {
 		t.Fatal(err)
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,10 +503,10 @@ func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
 	}
 	workerID := uuid.Must(uuid.NewV7())
 	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,13 +515,13 @@ func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
 	}
 
 	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
 		t.Fatal(err)
 	}
 	if err := index.Nack(ctx, leases[0], now.Add(5*time.Minute)); err != nil {
 		t.Fatal(err)
 	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,10 +544,10 @@ func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
 	}
 	workerID := uuid.Must(uuid.NewV7())
 	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
+	leases, err := index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -479,12 +556,12 @@ func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
 	}
 
 	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
+	if err := index.Enqueue(ctx, IndexEntry{CellID: redisIndexTestCellID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
 		t.Fatal(err)
 	}
 	server.FastForward(2 * time.Minute)
 	clock = now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
+	leases, err = index.Dequeue(ctx, DequeueRequest{CellID: redisIndexTestCellID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}

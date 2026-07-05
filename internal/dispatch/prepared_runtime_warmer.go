@@ -257,6 +257,7 @@ func (w *RuntimePreparer) reconcile(ctx context.Context, deploymentSandboxID pgt
 		_, err = store.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 			OrgID:             row.OrgID,
 			CellID:            row.CellID,
+			RouteGeneration:   row.RouteGeneration,
 			ProjectID:         row.ProjectID,
 			EnvironmentID:     row.EnvironmentID,
 			WorkerInstanceID:  row.WorkerInstanceID,
@@ -377,6 +378,7 @@ func (w *RuntimePreparer) prepareSubstrates(ctx context.Context, store RuntimePr
 		_, err = store.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 			OrgID:               row.OrgID,
 			CellID:              row.CellID,
+			RouteGeneration:     row.RouteGeneration,
 			ProjectID:           row.ProjectID,
 			EnvironmentID:       row.EnvironmentID,
 			WorkerInstanceID:    row.WorkerInstanceID,

@@ -231,10 +231,11 @@ WITH due_waits AS (
       JOIN run_waits ON run_waits.org_id = timer_waits.org_id
                     AND run_waits.id = timer_waits.run_wait_id
      WHERE timer_waits.org_id = $1
+       AND timer_waits.cell_id = $2
        AND timer_waits.fire_at <= now()
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
      ORDER BY timer_waits.fire_at ASC, timer_waits.id ASC
-     LIMIT $2
+     LIMIT $3
      FOR UPDATE OF run_waits
 ),
 resolved_wait AS (
@@ -258,6 +259,7 @@ SELECT resolved_wait.id, resolved_wait.org_id, resolved_wait.cell_id, resolved_w
 
 type ResolveDueTimerWaitsParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
+	CellID     string      `json:"cell_id"`
 	LimitCount int32       `json:"limit_count"`
 }
 
@@ -294,7 +296,7 @@ type ResolveDueTimerWaitsRow struct {
 }
 
 func (q *Queries) ResolveDueTimerWaits(ctx context.Context, arg ResolveDueTimerWaitsParams) ([]ResolveDueTimerWaitsRow, error) {
-	rows, err := q.db.Query(ctx, resolveDueTimerWaits, arg.OrgID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, resolveDueTimerWaits, arg.OrgID, arg.CellID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

@@ -79,6 +79,7 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 	if err != nil {
 		return ClaimedRun{}, err
 	}
+	var cleanupErr error
 	for _, lease := range leases {
 		if strings.TrimSpace(lease.MessageID) == "" {
 			_ = c.queue.Nack(ctx, lease, NackReasonInvalid)
@@ -94,11 +95,15 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 		}
 		if exhausted {
 			err := c.deadLetter(ctx, lease)
-			if ackErr := c.queue.Ack(ctx, lease); ackErr != nil {
-				err = errors.Join(err, ackErr)
+			if errors.Is(err, errInvalidLease) || errors.Is(err, pgx.ErrNoRows) {
+				_ = c.queue.Nack(ctx, lease, NackReasonInvalid)
+				continue
 			}
 			if err != nil {
 				return ClaimedRun{}, err
+			}
+			if ackErr := c.queue.Ack(ctx, lease); ackErr != nil {
+				cleanupErr = errors.Join(cleanupErr, ackErr)
 			}
 			continue
 		}
@@ -133,21 +138,23 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 			return ClaimedRun{}, err
 		}
 	}
+	if cleanupErr != nil {
+		return ClaimedRun{}, cleanupErr
+	}
 	return ClaimedRun{}, ErrNoClaim
 }
 
 func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease Lease) (bool, error) {
-	orgID, err := parseUUID("org id", lease.Message.OrgID)
-	if err != nil {
-		return false, err
-	}
-	runID, err := parseUUID("run id", lease.Message.RunID)
+	scope, err := runQueueLeaseScope(lease)
 	if err != nil {
 		return false, err
 	}
 	return c.store.RunLeaseDispatchAttemptsExhausted(ctx, db.RunLeaseDispatchAttemptsExhaustedParams{
-		OrgID:               orgID,
-		RunID:               runID,
+		OrgID:               scope.orgID,
+		CellID:              scope.cellID,
+		RouteGeneration:     scope.routeGeneration,
+		QueueClass:          scope.queueClass,
+		RunID:               scope.runID,
 		MaxDispatchAttempts: c.maxDispatchAttempts,
 	})
 }
@@ -161,6 +168,17 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	if err != nil {
 		return err
 	}
+	cellID := strings.TrimSpace(lease.Message.CellID)
+	if cellID == "" {
+		return fmt.Errorf("%w: cell id is required", errInvalidLease)
+	}
+	if lease.Message.RouteGeneration <= 0 {
+		return fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	}
+	queueClass := strings.TrimSpace(lease.Message.QueueClass)
+	if queueClass == "" {
+		return fmt.Errorf("%w: queue class is required", errInvalidLease)
+	}
 	lastError := fmt.Sprintf("run exceeded max dispatch attempts (%d)", c.maxDispatchAttempts)
 	payload, err := json.Marshal(map[string]any{
 		"reason":                 "max_dispatch_attempts_exceeded",
@@ -172,6 +190,9 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	}
 	_, err = c.store.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
 		OrgID:             orgID,
+		CellID:            cellID,
+		RouteGeneration:   lease.Message.RouteGeneration,
+		QueueClass:        queueClass,
 		RunID:             runID,
 		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 		LastError:         lastError,
@@ -194,8 +215,22 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.RunQueueItem,
 	if err != nil {
 		return db.RunQueueItem{}, err
 	}
+	cellID := strings.TrimSpace(lease.Message.CellID)
+	if cellID == "" {
+		return db.RunQueueItem{}, fmt.Errorf("%w: cell id is required", errInvalidLease)
+	}
+	if lease.Message.RouteGeneration <= 0 {
+		return db.RunQueueItem{}, fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	}
+	queueClass := strings.TrimSpace(lease.Message.QueueClass)
+	if queueClass == "" {
+		return db.RunQueueItem{}, fmt.Errorf("%w: queue class is required", errInvalidLease)
+	}
 	return c.store.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
 		OrgID:                orgID,
+		CellID:               cellID,
+		RouteGeneration:      lease.Message.RouteGeneration,
+		QueueClass:           queueClass,
 		RunID:                runID,
 		WorkerInstanceID:     workerInstanceID,
 		DispatchMessageID:    pgtype.Text{String: lease.MessageID, Valid: true},
@@ -204,19 +239,55 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.RunQueueItem,
 }
 
 func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error) {
-	orgID, err := parseUUID("org id", lease.Message.OrgID)
-	if err != nil {
-		return false, err
-	}
-	runID, err := parseUUID("run id", lease.Message.RunID)
+	scope, err := runQueueLeaseScope(lease)
 	if err != nil {
 		return false, err
 	}
 	return c.store.IsRunQueueLeaseConflict(ctx, db.IsRunQueueLeaseConflictParams{
-		OrgID:             orgID,
-		RunID:             runID,
+		OrgID:             scope.orgID,
+		CellID:            scope.cellID,
+		RouteGeneration:   scope.routeGeneration,
+		QueueClass:        scope.queueClass,
+		RunID:             scope.runID,
 		DispatchMessageID: pgtype.Text{String: lease.MessageID, Valid: true},
 	})
+}
+
+type runQueueScope struct {
+	orgID           pgtype.UUID
+	cellID          string
+	routeGeneration int64
+	queueClass      string
+	runID           pgtype.UUID
+}
+
+func runQueueLeaseScope(lease Lease) (runQueueScope, error) {
+	orgID, err := parseUUID("org id", lease.Message.OrgID)
+	if err != nil {
+		return runQueueScope{}, err
+	}
+	runID, err := parseUUID("run id", lease.Message.RunID)
+	if err != nil {
+		return runQueueScope{}, err
+	}
+	cellID := strings.TrimSpace(lease.Message.CellID)
+	if cellID == "" {
+		return runQueueScope{}, fmt.Errorf("%w: cell id is required", errInvalidLease)
+	}
+	if lease.Message.RouteGeneration <= 0 {
+		return runQueueScope{}, fmt.Errorf("%w: route generation must be positive", errInvalidLease)
+	}
+	queueClass := strings.TrimSpace(lease.Message.QueueClass)
+	if queueClass == "" {
+		return runQueueScope{}, fmt.Errorf("%w: queue class is required", errInvalidLease)
+	}
+	return runQueueScope{
+		orgID:           orgID,
+		cellID:          cellID,
+		routeGeneration: lease.Message.RouteGeneration,
+		queueClass:      queueClass,
+		runID:           runID,
+	}, nil
 }
 
 func parseUUID(label string, value string) (pgtype.UUID, error) {

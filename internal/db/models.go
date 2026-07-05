@@ -578,6 +578,48 @@ func (ns NullOrgCellRole) Value() (driver.Value, error) {
 	return string(ns.OrgCellRole), nil
 }
 
+type OrgCellState string
+
+const (
+	OrgCellStateActive   OrgCellState = "active"
+	OrgCellStateDisabled OrgCellState = "disabled"
+)
+
+func (e *OrgCellState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = OrgCellState(s)
+	case string:
+		*e = OrgCellState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for OrgCellState: %T", src)
+	}
+	return nil
+}
+
+type NullOrgCellState struct {
+	OrgCellState OrgCellState `json:"org_cell_state"`
+	Valid        bool         `json:"valid"` // Valid is true if OrgCellState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullOrgCellState) Scan(value interface{}) error {
+	if value == nil {
+		ns.OrgCellState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.OrgCellState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullOrgCellState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.OrgCellState), nil
+}
+
 type OrgMemberRole string
 
 const (
@@ -706,6 +748,92 @@ func (ns NullPublicAccessTokenState) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.PublicAccessTokenState), nil
+}
+
+type RegionState string
+
+const (
+	RegionStateAvailable RegionState = "available"
+	RegionStateDraining  RegionState = "draining"
+	RegionStateDisabled  RegionState = "disabled"
+)
+
+func (e *RegionState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RegionState(s)
+	case string:
+		*e = RegionState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RegionState: %T", src)
+	}
+	return nil
+}
+
+type NullRegionState struct {
+	RegionState RegionState `json:"region_state"`
+	Valid       bool        `json:"valid"` // Valid is true if RegionState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRegionState) Scan(value interface{}) error {
+	if value == nil {
+		ns.RegionState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RegionState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRegionState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RegionState), nil
+}
+
+type RegionVisibility string
+
+const (
+	RegionVisibilityPublic      RegionVisibility = "public"
+	RegionVisibilityAllowlisted RegionVisibility = "allowlisted"
+	RegionVisibilityHidden      RegionVisibility = "hidden"
+)
+
+func (e *RegionVisibility) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = RegionVisibility(s)
+	case string:
+		*e = RegionVisibility(s)
+	default:
+		return fmt.Errorf("unsupported scan type for RegionVisibility: %T", src)
+	}
+	return nil
+}
+
+type NullRegionVisibility struct {
+	RegionVisibility RegionVisibility `json:"region_visibility"`
+	Valid            bool             `json:"valid"` // Valid is true if RegionVisibility is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullRegionVisibility) Scan(value interface{}) error {
+	if value == nil {
+		ns.RegionVisibility, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.RegionVisibility.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullRegionVisibility) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.RegionVisibility), nil
 }
 
 type RetentionClass string
@@ -1871,6 +1999,49 @@ func (ns NullWorkerCommandKind) Value() (driver.Value, error) {
 	return string(ns.WorkerCommandKind), nil
 }
 
+type WorkerGroupState string
+
+const (
+	WorkerGroupStateActive   WorkerGroupState = "active"
+	WorkerGroupStateDraining WorkerGroupState = "draining"
+	WorkerGroupStateDisabled WorkerGroupState = "disabled"
+)
+
+func (e *WorkerGroupState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WorkerGroupState(s)
+	case string:
+		*e = WorkerGroupState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WorkerGroupState: %T", src)
+	}
+	return nil
+}
+
+type NullWorkerGroupState struct {
+	WorkerGroupState WorkerGroupState `json:"worker_group_state"`
+	Valid            bool             `json:"valid"` // Valid is true if WorkerGroupState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWorkerGroupState) Scan(value interface{}) error {
+	if value == nil {
+		ns.WorkerGroupState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WorkerGroupState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWorkerGroupState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WorkerGroupState), nil
+}
+
 type WorkerInstanceStatus string
 
 const (
@@ -2910,6 +3081,7 @@ type Artifact struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	CellID                    string             `json:"cell_id"`
+	RouteGeneration           int64              `json:"route_generation"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	Digest                    string             `json:"digest"`
@@ -2981,12 +3153,20 @@ type CasObject struct {
 
 type Cell struct {
 	ID               string             `json:"id"`
-	Region           string             `json:"region"`
-	Provider         string             `json:"provider"`
+	RegionID         string             `json:"region_id"`
 	EnvironmentClass string             `json:"environment_class"`
 	State            CellState          `json:"state"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type CellComponentHealth struct {
+	CellID            string             `json:"cell_id"`
+	Component         string             `json:"component"`
+	State             CellHealthState    `json:"state"`
+	CheckedAt         pgtype.Timestamptz `json:"checked_at"`
+	RoutingFreshUntil pgtype.Timestamptz `json:"routing_fresh_until"`
+	Details           []byte             `json:"details"`
 }
 
 type CellHealth struct {
@@ -3019,6 +3199,7 @@ type Deployment struct {
 	ID                           pgtype.UUID        `json:"id"`
 	OrgID                        pgtype.UUID        `json:"org_id"`
 	CellID                       string             `json:"cell_id"`
+	RouteGeneration              int64              `json:"route_generation"`
 	ProjectID                    pgtype.UUID        `json:"project_id"`
 	EnvironmentID                pgtype.UUID        `json:"environment_id"`
 	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
@@ -3050,6 +3231,7 @@ type DeploymentPromotion struct {
 	ID                   pgtype.UUID        `json:"id"`
 	OrgID                pgtype.UUID        `json:"org_id"`
 	CellID               string             `json:"cell_id"`
+	RouteGeneration      int64              `json:"route_generation"`
 	ProjectID            pgtype.UUID        `json:"project_id"`
 	EnvironmentID        pgtype.UUID        `json:"environment_id"`
 	DeploymentID         pgtype.UUID        `json:"deployment_id"`
@@ -3075,6 +3257,7 @@ type DeploymentSandbox struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
+	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	DeploymentID        pgtype.UUID        `json:"deployment_id"`
@@ -3116,32 +3299,34 @@ type DeploymentStream struct {
 }
 
 type DeploymentTask struct {
-	ID                    pgtype.UUID        `json:"id"`
-	OrgID                 pgtype.UUID        `json:"org_id"`
-	CellID                string             `json:"cell_id"`
-	ProjectID             pgtype.UUID        `json:"project_id"`
-	EnvironmentID         pgtype.UUID        `json:"environment_id"`
-	DeploymentID          pgtype.UUID        `json:"deployment_id"`
-	DeploymentSandboxID   pgtype.UUID        `json:"deployment_sandbox_id"`
-	TaskID                string             `json:"task_id"`
-	FilePath              string             `json:"file_path"`
-	ExportName            string             `json:"export_name"`
-	HandlerEntrypoint     string             `json:"handler_entrypoint"`
-	BundleArtifactID      pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleFormatVersion   int32              `json:"bundle_format_version"`
-	RequestedMilliCpu     int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib    int64              `json:"requested_memory_mib"`
-	RequestedDiskMib      int64              `json:"requested_disk_mib"`
-	SecretDeclarations    []byte             `json:"secret_declarations"`
-	ResourceRequirements  []byte             `json:"resource_requirements"`
-	NetworkPolicy         []byte             `json:"network_policy"`
-	ScheduleDeclarations  []byte             `json:"schedule_declarations"`
-	QueueName             string             `json:"queue_name"`
-	QueueConcurrencyLimit pgtype.Int4        `json:"queue_concurrency_limit"`
-	Ttl                   string             `json:"ttl"`
-	MaxActiveDurationMs   int64              `json:"max_active_duration_ms"`
-	RetryPolicy           []byte             `json:"retry_policy"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	CellID                  string             `json:"cell_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentSandboxID     pgtype.UUID        `json:"deployment_sandbox_id"`
+	TaskID                  string             `json:"task_id"`
+	FilePath                string             `json:"file_path"`
+	ExportName              string             `json:"export_name"`
+	HandlerEntrypoint       string             `json:"handler_entrypoint"`
+	BundleArtifactID        pgtype.UUID        `json:"bundle_artifact_id"`
+	BundleFormatVersion     int32              `json:"bundle_format_version"`
+	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
+	RequestedDiskMib        int64              `json:"requested_disk_mib"`
+	RequestedExecutionSlots int32              `json:"requested_execution_slots"`
+	SecretDeclarations      []byte             `json:"secret_declarations"`
+	ResourceRequirements    []byte             `json:"resource_requirements"`
+	NetworkPolicy           []byte             `json:"network_policy"`
+	Placement               []byte             `json:"placement"`
+	ScheduleDeclarations    []byte             `json:"schedule_declarations"`
+	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                     string             `json:"ttl"`
+	MaxActiveDurationMs     int64              `json:"max_active_duration_ms"`
+	RetryPolicy             []byte             `json:"retry_policy"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentVersionCounter struct {
@@ -3173,6 +3358,7 @@ type Environment struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
+	DefaultRegionID     string             `json:"default_region_id"`
 	Slug                string             `json:"slug"`
 	Name                string             `json:"name"`
 	ColorHex            string             `json:"color_hex"`
@@ -3186,6 +3372,7 @@ type EnvironmentCell struct {
 	OrgID           pgtype.UUID               `json:"org_id"`
 	ProjectID       pgtype.UUID               `json:"project_id"`
 	EnvironmentID   pgtype.UUID               `json:"environment_id"`
+	RegionID        string                    `json:"region_id"`
 	CellID          string                    `json:"cell_id"`
 	RouteState      EnvironmentCellRouteState `json:"route_state"`
 	RouteGeneration int64                     `json:"route_generation"`
@@ -3292,12 +3479,12 @@ type MagicLink struct {
 }
 
 type OrgCell struct {
-	OrgID      pgtype.UUID               `json:"org_id"`
-	CellID     string                    `json:"cell_id"`
-	Role       OrgCellRole               `json:"role"`
-	State      EnvironmentCellRouteState `json:"state"`
-	AssignedAt pgtype.Timestamptz        `json:"assigned_at"`
-	UpdatedAt  pgtype.Timestamptz        `json:"updated_at"`
+	OrgID      pgtype.UUID        `json:"org_id"`
+	CellID     string             `json:"cell_id"`
+	Role       OrgCellRole        `json:"role"`
+	State      OrgCellState       `json:"state"`
+	AssignedAt pgtype.Timestamptz `json:"assigned_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type OrgMember struct {
@@ -3319,13 +3506,14 @@ type Organization struct {
 }
 
 type Project struct {
-	ID        pgtype.UUID        `json:"id"`
-	OrgID     pgtype.UUID        `json:"org_id"`
-	Slug      string             `json:"slug"`
-	Name      string             `json:"name"`
-	IsDefault bool               `json:"is_default"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	ID              pgtype.UUID        `json:"id"`
+	OrgID           pgtype.UUID        `json:"org_id"`
+	DefaultRegionID string             `json:"default_region_id"`
+	Slug            string             `json:"slug"`
+	Name            string             `json:"name"`
+	IsDefault       bool               `json:"is_default"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PublicAccessToken struct {
@@ -3362,10 +3550,24 @@ type PublicAccessTokenScope struct {
 	CreatedAt           pgtype.Timestamptz         `json:"created_at"`
 }
 
+type Region struct {
+	ID             string             `json:"id"`
+	Provider       string             `json:"provider"`
+	ProviderRegion string             `json:"provider_region"`
+	DisplayName    string             `json:"display_name"`
+	State          RegionState        `json:"state"`
+	Visibility     RegionVisibility   `json:"visibility"`
+	Location       string             `json:"location"`
+	StaticIps      []string           `json:"static_ips"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Run struct {
 	ID                        pgtype.UUID            `json:"id"`
 	OrgID                     pgtype.UUID            `json:"org_id"`
 	CellID                    string                 `json:"cell_id"`
+	RouteGeneration           int64                  `json:"route_generation"`
 	ProjectID                 pgtype.UUID            `json:"project_id"`
 	EnvironmentID             pgtype.UUID            `json:"environment_id"`
 	DeploymentID              pgtype.UUID            `json:"deployment_id"`
@@ -3434,6 +3636,8 @@ type RunLease struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	CellID                     string             `json:"cell_id"`
+	RouteGeneration            int64              `json:"route_generation"`
+	QueueClass                 string             `json:"queue_class"`
 	RunID                      pgtype.UUID        `json:"run_id"`
 	AttemptID                  pgtype.UUID        `json:"attempt_id"`
 	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
@@ -3553,6 +3757,8 @@ type RunQueueItem struct {
 	RunID                      pgtype.UUID        `json:"run_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	CellID                     string             `json:"cell_id"`
+	RouteGeneration            int64              `json:"route_generation"`
+	QueueClass                 string             `json:"queue_class"`
 	Status                     RunQueueStatus     `json:"status"`
 	Priority                   int32              `json:"priority"`
 	QueueName                  string             `json:"queue_name"`
@@ -3726,6 +3932,7 @@ type RuntimeCheckpointRestore struct {
 	ID                  pgtype.UUID                    `json:"id"`
 	OrgID               pgtype.UUID                    `json:"org_id"`
 	CellID              string                         `json:"cell_id"`
+	RouteGeneration     int64                          `json:"route_generation"`
 	ProjectID           pgtype.UUID                    `json:"project_id"`
 	EnvironmentID       pgtype.UUID                    `json:"environment_id"`
 	RunID               pgtype.UUID                    `json:"run_id"`
@@ -3747,6 +3954,7 @@ type RuntimeInstance struct {
 	ID                         pgtype.UUID          `json:"id"`
 	OrgID                      pgtype.UUID          `json:"org_id"`
 	CellID                     string               `json:"cell_id"`
+	RouteGeneration            int64                `json:"route_generation"`
 	ProjectID                  pgtype.UUID          `json:"project_id"`
 	EnvironmentID              pgtype.UUID          `json:"environment_id"`
 	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
@@ -3861,6 +4069,7 @@ type Session struct {
 	ID                  pgtype.UUID        `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
+	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	TaskID              string             `json:"task_id"`
@@ -3883,15 +4092,6 @@ type Session struct {
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
-type SessionActivity struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-	Activity      string      `json:"activity"`
-	CanClose      bool        `json:"can_close"`
 }
 
 type SessionRun struct {
@@ -4017,7 +4217,6 @@ type Task struct {
 type TaskSchedule struct {
 	ID           pgtype.UUID        `json:"id"`
 	OrgID        pgtype.UUID        `json:"org_id"`
-	CellID       string             `json:"cell_id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
 	ScheduleType TaskScheduleType   `json:"schedule_type"`
 	TaskID       string             `json:"task_id"`
@@ -4026,7 +4225,7 @@ type TaskSchedule struct {
 	ExternalID   pgtype.Text        `json:"external_id"`
 	Cron         string             `json:"cron"`
 	Timezone     string             `json:"timezone"`
-	Active       bool               `json:"active"`
+	Enabled      bool               `json:"enabled"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
@@ -4035,12 +4234,11 @@ type TaskScheduleInstance struct {
 	ID                  pgtype.UUID        `json:"id"`
 	ScheduleID          pgtype.UUID        `json:"schedule_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
-	CellID              string             `json:"cell_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	TaskID              string             `json:"task_id"`
 	RunOptions          []byte             `json:"run_options"`
-	Active              bool               `json:"active"`
+	Enabled             bool               `json:"enabled"`
 	Generation          int64              `json:"generation"`
 	NextFireAt          pgtype.Timestamptz `json:"next_fire_at"`
 	LastFireAt          pgtype.Timestamptz `json:"last_fire_at"`
@@ -4208,6 +4406,7 @@ type WorkerCommand struct {
 	ID                  int64              `json:"id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
+	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	RunID               pgtype.UUID        `json:"run_id"`
@@ -4233,13 +4432,15 @@ type WorkerCommand struct {
 
 type WorkerGroup struct {
 	ID           pgtype.UUID        `json:"id"`
-	OrgID        pgtype.UUID        `json:"org_id"`
+	OwnerOrgID   pgtype.UUID        `json:"owner_org_id"`
 	CellID       string             `json:"cell_id"`
 	Name         string             `json:"name"`
 	Description  string             `json:"description"`
 	Provider     string             `json:"provider"`
+	State        WorkerGroupState   `json:"state"`
 	TrustTier    WorkerTrustTier    `json:"trust_tier"`
 	ClaimVersion int64              `json:"claim_version"`
+	CreatedBy    pgtype.UUID        `json:"created_by"`
 	DeletedAt    pgtype.Timestamptz `json:"deleted_at"`
 	CreatedAt    pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
@@ -4296,6 +4497,7 @@ type Workspace struct {
 	ID                          pgtype.UUID               `json:"id"`
 	OrgID                       pgtype.UUID               `json:"org_id"`
 	CellID                      string                    `json:"cell_id"`
+	RouteGeneration             int64                     `json:"route_generation"`
 	ProjectID                   pgtype.UUID               `json:"project_id"`
 	EnvironmentID               pgtype.UUID               `json:"environment_id"`
 	DeploymentSandboxID         pgtype.UUID               `json:"deployment_sandbox_id"`
@@ -4422,6 +4624,7 @@ type WorkspaceMount struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`

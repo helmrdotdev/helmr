@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -14,6 +15,7 @@ import (
 )
 
 type Instance struct {
+	CellID     string
 	InstanceID pgtype.UUID
 	Generation int64
 	Active     bool
@@ -22,6 +24,7 @@ type Instance struct {
 }
 
 type AdvanceInstance struct {
+	CellID           string
 	InstanceID       pgtype.UUID
 	Generation       int64
 	CurrentFireAt    pgtype.Timestamptz
@@ -30,6 +33,7 @@ type AdvanceInstance struct {
 }
 
 type EngineConfig struct {
+	CellID          string
 	RepairLimit     int32
 	RepairLookahead time.Duration
 	MaxAttempts     int32
@@ -49,6 +53,7 @@ type Engine struct {
 	maxAttempts int32
 	jitter      time.Duration
 	now         func() time.Time
+	cellID      string
 }
 
 func NewEngine(log *slog.Logger, database dbConn, index Index, runner RunCreator, cfg EngineConfig) (*Engine, error) {
@@ -78,6 +83,10 @@ func NewEngine(log *slog.Logger, database dbConn, index Index, runner RunCreator
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
+	cellID := strings.TrimSpace(cfg.CellID)
+	if cellID == "" {
+		return nil, errors.New("schedule engine cell id is required")
+	}
 	engine := &Engine{
 		log:         log,
 		lock:        cfg.ReconcileLock,
@@ -88,6 +97,7 @@ func NewEngine(log *slog.Logger, database dbConn, index Index, runner RunCreator
 		maxAttempts: maxAttempts,
 		jitter:      jitter,
 		now:         now,
+		cellID:      cellID,
 	}
 	if database != nil {
 		engine.db = db.New(database)
@@ -99,6 +109,13 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	if !instance.Active || !instance.NextFireAt.Valid {
 		return nil
 	}
+	cellID := strings.TrimSpace(instance.CellID)
+	if cellID == "" {
+		return errors.New("schedule cell id is required")
+	}
+	if cellID != e.cellID {
+		return fmt.Errorf("schedule instance cell %q is not served by engine cell %q", cellID, e.cellID)
+	}
 	instanceID, err := pgvalue.UUIDValue(instance.InstanceID)
 	if err != nil {
 		return fmt.Errorf("schedule instance id is invalid: %v", err)
@@ -109,6 +126,7 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 		return err
 	}
 	return e.index.Enqueue(ctx, IndexEntry{
+		CellID:      cellID,
 		InstanceID:  instanceID,
 		Generation:  instance.Generation,
 		ScheduledAt: nextFireAt,
@@ -116,12 +134,19 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	})
 }
 
-func (e *Engine) DeleteInstance(ctx context.Context, instanceID pgtype.UUID) error {
+func (e *Engine) DeleteInstance(ctx context.Context, cellID string, instanceID pgtype.UUID) error {
+	cellID = strings.TrimSpace(cellID)
+	if cellID == "" {
+		return errors.New("schedule cell id is required")
+	}
+	if cellID != e.cellID {
+		return fmt.Errorf("schedule instance cell %q is not served by engine cell %q", cellID, e.cellID)
+	}
 	value, err := pgvalue.UUIDValue(instanceID)
 	if err != nil {
 		return fmt.Errorf("schedule instance id is invalid: %v", err)
 	}
-	return e.index.Delete(ctx, value)
+	return e.index.Delete(ctx, cellID, value)
 }
 
 func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
@@ -131,13 +156,25 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 	if e.runner == nil {
 		return errors.New("schedule run creator is required")
 	}
+	readiness, err := e.db.GetControlCellReadiness(ctx, e.cellID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return e.index.Nack(ctx, lease, e.now().Add(DefaultRepairEvery))
+	}
+	if err != nil {
+		return err
+	}
+	if !readiness.Routable {
+		return e.index.Nack(ctx, lease, e.now().Add(DefaultRepairEvery))
+	}
 	candidate, err := e.db.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
+		CellID:      e.cellID,
 		InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
 		Generation:  lease.Entry.Generation,
 		ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		retryAfter, retryErr := e.db.GetScheduleRetryAfter(ctx, db.GetScheduleRetryAfterParams{
+			CellID:      e.cellID,
 			InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
 			Generation:  lease.Entry.Generation,
 			ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
@@ -171,6 +208,7 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 		return errors.New("created schedule run has no id")
 	}
 	advanced, err := e.Advance(ctx, AdvanceInstance{
+		CellID:           candidate.CellID,
 		InstanceID:       candidate.InstanceID,
 		Generation:       candidate.Generation,
 		CurrentFireAt:    candidate.NextFireAt,
@@ -193,6 +231,7 @@ func (e *Engine) Advance(ctx context.Context, instance AdvanceInstance) (Instanc
 		NextFireAt:       instance.NextFireAt,
 		LastFireAt:       instance.CurrentFireAt,
 		LastTriggerRunID: instance.LastTriggerRunID,
+		CellID:           e.cellID,
 		InstanceID:       instance.InstanceID,
 		Generation:       instance.Generation,
 	})
@@ -200,6 +239,7 @@ func (e *Engine) Advance(ctx context.Context, instance AdvanceInstance) (Instanc
 		return Instance{}, err
 	}
 	return Instance{
+		CellID:     e.cellID,
 		InstanceID: advanced.InstanceID,
 		Generation: advanced.Generation,
 		Active:     true,
@@ -238,6 +278,7 @@ func (e *Engine) Repair(ctx context.Context) error {
 	var afterInstanceID pgtype.UUID
 	for {
 		rows, err := store.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
+			CellID:           e.cellID,
 			AvailableBefore:  availableBefore,
 			AfterAvailableAt: afterAvailableAt,
 			AfterInstanceID:  afterInstanceID,
@@ -248,6 +289,7 @@ func (e *Engine) Repair(ctx context.Context) error {
 		}
 		for _, row := range rows {
 			if err := e.RegisterNext(ctx, Instance{
+				CellID:     row.CellID,
 				InstanceID: row.InstanceID,
 				Generation: row.Generation,
 				Active:     true,
@@ -274,6 +316,7 @@ func (e *Engine) markTriggerFailed(ctx context.Context, lease IndexLease, row db
 		ErrorKind:    triggerErrorKind(cause),
 		ErrorMessage: cause.Error(),
 		RetryAfter:   pgvalue.TimestamptzUTCZeroInvalid(retryAt),
+		CellID:       e.cellID,
 		InstanceID:   row.InstanceID,
 		Generation:   row.Generation,
 		ScheduledAt:  row.NextFireAt,
@@ -295,6 +338,7 @@ func (e *Engine) deferTrigger(ctx context.Context, lease IndexLease, row db.GetS
 	retryAt := e.now().Add(RetryDelay(row.TriggerAttemptCount + indexAttempt))
 	affected, err := e.db.DeferScheduleInstanceTrigger(ctx, db.DeferScheduleInstanceTriggerParams{
 		RetryAfter:  pgvalue.TimestamptzUTCZeroInvalid(retryAt),
+		CellID:      e.cellID,
 		InstanceID:  row.InstanceID,
 		Generation:  row.Generation,
 		ScheduledAt: row.NextFireAt,
@@ -312,6 +356,7 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 	next, err := e.nextFireAt(row.Cron, row.Timezone, row.NextFireAt, e.now())
 	if err != nil {
 		affected, stopErr := e.db.StopScheduleInstanceTrigger(ctx, db.StopScheduleInstanceTriggerParams{
+			CellID:      e.cellID,
 			InstanceID:  row.InstanceID,
 			Generation:  row.Generation,
 			ScheduledAt: row.NextFireAt,
@@ -329,6 +374,7 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 	}
 	skipped, err := e.db.SkipScheduleInstanceTrigger(ctx, db.SkipScheduleInstanceTriggerParams{
 		NextFireAt: pgvalue.TimestamptzUTCZeroInvalid(next),
+		CellID:     e.cellID,
 		InstanceID: row.InstanceID,
 		Generation: row.Generation,
 		LastFireAt: row.NextFireAt,
@@ -343,6 +389,7 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 		return err
 	}
 	return e.RegisterNext(ctx, Instance{
+		CellID:     e.cellID,
 		InstanceID: skipped.InstanceID,
 		Generation: skipped.Generation,
 		Active:     true,

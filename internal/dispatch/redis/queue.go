@@ -24,6 +24,8 @@ const (
 	defaultScanLimit           = 128
 )
 
+var errMalformedMessageID = errors.New("message id is malformed")
+
 type Queue struct {
 	client        redis.Cmdable
 	prefix        string
@@ -105,7 +107,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if err != nil {
 		return dispatch.EnqueueResult{}, err
 	}
-	keys := q.keys(message.OrgID, message.ProjectID, message.EnvironmentID, message.QueueName)
+	keys := q.keys(message.OrgID, message.CellID, message.ProjectID, message.EnvironmentID, message.QueueClass, message.QueueName)
 	score := readyScore(message.Priority, message.QueueTimestamp)
 	concurrencyActiveKey := q.queueConcurrencyActiveKey(message)
 	resources := message.Requirements.Resources
@@ -163,11 +165,17 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if strings.TrimSpace(request.OrgID) == "" {
 		return nil, errors.New("org id is required")
 	}
+	if strings.TrimSpace(request.CellID) == "" {
+		return nil, errors.New("cell id is required")
+	}
 	if strings.TrimSpace(request.ProjectID) == "" {
 		return nil, errors.New("project id is required")
 	}
 	if strings.TrimSpace(request.EnvironmentID) == "" {
 		return nil, errors.New("environment id is required")
+	}
+	if strings.TrimSpace(request.QueueClass) == "" {
+		return nil, errors.New("queue class is required")
 	}
 	if strings.TrimSpace(request.WorkerInstanceID) == "" {
 		return nil, errors.New("worker instance id is required")
@@ -182,7 +190,7 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if maxMessages <= 0 {
 		maxMessages = defaultMaxMessages
 	}
-	keys := q.keys(request.OrgID, request.ProjectID, request.EnvironmentID, request.QueueName)
+	keys := q.keys(request.OrgID, request.CellID, request.ProjectID, request.EnvironmentID, request.QueueClass, request.QueueName)
 	labels, err := jsonMap(request.Labels)
 	if err != nil {
 		return nil, err
@@ -278,6 +286,9 @@ func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool,
 	}
 	ready, err := q.readyKeyFromMessageID(messageID)
 	if err != nil {
+		if errors.Is(err, errMalformedMessageID) {
+			return false, nil
+		}
 		return false, err
 	}
 	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID, q.now().UTC().UnixMilli(), q.generationTTL.Milliseconds(), ready).Int()
@@ -366,12 +377,15 @@ type queueKeys struct {
 	active   string
 }
 
-func (q *Queue) keys(orgID string, projectID string, environmentID string, queueName string) queueKeys {
+func (q *Queue) keys(orgID string, cellID string, projectID string, environmentID string, queueClass string, queueName string) queueKeys {
 	orgScope := "org:" + sanitizeKeyPart(orgID)
 	envScope := orgScope +
+		":cell:" + sanitizeKeyPart(cellID) +
 		":project:" + sanitizeKeyPart(projectID) +
 		":env:" + sanitizeKeyPart(environmentID)
-	scope := envScope + ":queue:" + sanitizeKeyPart(queueName)
+	scope := envScope +
+		":class:" + sanitizeKeyPart(queueClass) +
+		":queue:" + sanitizeKeyPart(queueName)
 	base := q.prefix + ":" + scope
 	return queueKeys{
 		scope:    scope,
@@ -390,8 +404,10 @@ func (q *Queue) queueConcurrencyActiveKey(message dispatch.Message) string {
 		scope = message.QueueName
 	}
 	key := "org:" + sanitizeKeyPart(message.OrgID) +
+		":cell:" + sanitizeKeyPart(message.CellID) +
 		":project:" + sanitizeKeyPart(message.ProjectID) +
 		":env:" + sanitizeKeyPart(message.EnvironmentID) +
+		":class:" + sanitizeKeyPart(message.QueueClass) +
 		":queue_concurrency:" + sanitizeKeyPart(scope)
 	if strings.TrimSpace(message.ConcurrencyKey) != "" {
 		key += ":ck:" + sanitizeKeyPart(message.ConcurrencyKey)
@@ -402,9 +418,13 @@ func (q *Queue) queueConcurrencyActiveKey(message dispatch.Message) string {
 func (q *Queue) readyKeyFromMessageID(messageID string) (string, error) {
 	splitAt := strings.LastIndex(messageID, ":run:")
 	if splitAt <= 0 {
-		return "", errors.New("message id is malformed")
+		return "", errMalformedMessageID
 	}
-	return q.prefix + ":" + messageID[:splitAt] + ":ready", nil
+	scope := messageID[:splitAt]
+	if !strings.Contains(scope, ":cell:") || !strings.Contains(scope, ":class:") {
+		return "", errMalformedMessageID
+	}
+	return q.prefix + ":" + scope + ":ready", nil
 }
 
 func sanitizeKeyPart(value string) string {

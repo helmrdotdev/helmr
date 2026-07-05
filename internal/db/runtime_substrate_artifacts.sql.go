@@ -19,23 +19,45 @@ SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runti
   FROM runtime_substrate_artifacts
   JOIN artifacts
     ON artifacts.org_id = runtime_substrate_artifacts.org_id
+   AND artifacts.cell_id = runtime_substrate_artifacts.cell_id
    AND artifacts.project_id = runtime_substrate_artifacts.project_id
    AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
    AND artifacts.id = runtime_substrate_artifacts.artifact_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
+   AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
+   AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
+   AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
+   AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
+  JOIN environment_cells
+    ON environment_cells.org_id = runtime_substrate_artifacts.org_id
+   AND environment_cells.project_id = runtime_substrate_artifacts.project_id
+   AND environment_cells.environment_id = runtime_substrate_artifacts.environment_id
+   AND environment_cells.cell_id = runtime_substrate_artifacts.cell_id
+   AND environment_cells.route_generation = deployment_sandboxes.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.region_id = environment_cells.region_id
+            AND cells.state = 'active'
  WHERE runtime_substrate_artifacts.org_id = $1
-   AND runtime_substrate_artifacts.project_id = $2
-   AND runtime_substrate_artifacts.environment_id = $3
-   AND runtime_substrate_artifacts.deployment_sandbox_id = $4
-   AND runtime_substrate_artifacts.substrate_digest = $5
-   AND runtime_substrate_artifacts.substrate_format = $6
-   AND runtime_substrate_artifacts.builder_abi = $7
-   AND runtime_substrate_artifacts.layout_abi = $8
+   AND runtime_substrate_artifacts.cell_id = $2
+   AND runtime_substrate_artifacts.project_id = $3
+   AND runtime_substrate_artifacts.environment_id = $4
+   AND runtime_substrate_artifacts.deployment_sandbox_id = $5
+   AND runtime_substrate_artifacts.substrate_digest = $6
+   AND runtime_substrate_artifacts.substrate_format = $7
+   AND runtime_substrate_artifacts.builder_abi = $8
+   AND runtime_substrate_artifacts.layout_abi = $9
    AND runtime_substrate_artifacts.retired_at IS NULL
  LIMIT 1
 `
 
 type GetRuntimeSubstrateArtifactForSandboxParams struct {
 	OrgID               pgtype.UUID `json:"org_id"`
+	CellID              string      `json:"cell_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -72,6 +94,7 @@ type GetRuntimeSubstrateArtifactForSandboxRow struct {
 func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg GetRuntimeSubstrateArtifactForSandboxParams) (GetRuntimeSubstrateArtifactForSandboxRow, error) {
 	row := q.db.QueryRow(ctx, getRuntimeSubstrateArtifactForSandbox,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -141,7 +164,7 @@ INSERT INTO runtime_substrate_artifacts (
     $14,
     now()
 )
-ON CONFLICT (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
+ON CONFLICT (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
 DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),

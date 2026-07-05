@@ -81,6 +81,85 @@ func TestCreateRuntimeInstanceForDeploymentSandboxRejectsWhenWorkerCapacityIsRes
 	}
 }
 
+func TestCreateExpiredRuntimeStopCommandsCarriesRuntimeRouteGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
+
+	ensureCellRoute(t, ctx, pool, ids, dbtest.DefaultCellID, 2)
+	if _, err := pool.Exec(ctx, `
+		UPDATE deployments
+		   SET route_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE deployment_sandboxes
+		   SET route_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.deploymentSandboxID); err != nil {
+		t.Fatal(err)
+	}
+
+	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeABI:          "test",
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeKeyHash:      "runtime-key-hash-route-generation",
+		RuntimeKey:          []byte(`{"test":"expired-runtime-route-generation"}`),
+		InstanceToken:       "runtime-instance-token-route-generation",
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(-time.Minute)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	commands, err := queries.CreateExpiredRuntimeStopCommands(ctx, db.CreateExpiredRuntimeStopCommandsParams{
+		CellID:        dbtest.DefaultCellID,
+		ExpiredBefore: pgvalue.Timestamptz(time.Now()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commands) != 1 || commands[0].RuntimeInstanceID != instance.ID {
+		t.Fatalf("expired runtime stop commands = %+v, want one for runtime %s", commands, pgvalue.UUIDString(instance.ID))
+	}
+	if commands[0].RouteGeneration != 2 {
+		t.Fatalf("stop command route_generation = %d, want 2", commands[0].RouteGeneration)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE environment_cells
+		   SET route_state = 'disabled'
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND region_id = $4
+		   AND route_generation = 1
+	`, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := queries.ClaimWorkerCommands(ctx, db.ClaimWorkerCommandsParams{
+		CellID:        dbtest.DefaultCellID,
+		RowLimit:      10,
+		LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].ID != commands[0].ID || claimed[0].RouteGeneration != 2 {
+		t.Fatalf("claimed stop commands = %+v, want command %d on route generation 2", claimed, commands[0].ID)
+	}
+}
+
 func TestMarkRuntimeInstanceClosedAcceptsLostRuntimeInstance(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -139,6 +218,96 @@ func TestMarkRuntimeInstanceClosedAcceptsLostRuntimeInstance(t *testing.T) {
 	}
 }
 
+func TestRuntimeInstanceWorkerMutationsContinueOnDrainingRoute(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE worker_instances
+		   SET total_milli_cpu = 2000,
+		       available_milli_cpu = 2000,
+		       total_memory_mib = 2048,
+		       available_memory_mib = 2048,
+		       total_disk_mib = 2048,
+		       available_disk_mib = 2048,
+		       total_execution_slots = 2,
+		       available_execution_slots = 2
+		 WHERE id = $1
+	`, workerID); err != nil {
+		t.Fatal(err)
+	}
+
+	instanceToken := "draining-runtime-instance-token"
+	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeABI:          "test",
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeKeyHash:      "runtime-key-hash",
+		RuntimeKey:          []byte(`{"test":"draining-route-runtime"}`),
+		InstanceToken:       instanceToken,
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	failedToken := "failed-draining-runtime-instance-token"
+	failedInstance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeABI:          "test",
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeKeyHash:      "runtime-key-hash",
+		RuntimeKey:          []byte(`{"test":"failed-draining-route-runtime"}`),
+		InstanceToken:       failedToken,
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+
+	if _, err := queries.RenewRuntimeInstance(ctx, db.RenewRuntimeInstanceParams{
+		ID:               instance.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		InstanceToken:    instanceToken,
+		ExpiresAt:        pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	}); err != nil {
+		t.Fatalf("RenewRuntimeInstance on draining route: %v", err)
+	}
+	if _, err := queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
+		ID:                         instance.ID,
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		InstanceToken:              instanceToken,
+		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		RuntimeSubstrateArtifactID: pgtype.UUID{},
+	}); err != nil {
+		t.Fatalf("MarkRuntimeInstanceReady on draining route: %v", err)
+	}
+	if _, err := queries.MarkRuntimeInstanceClosed(ctx, db.MarkRuntimeInstanceClosedParams{
+		ID:               instance.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		InstanceToken:    instanceToken,
+	}); err != nil {
+		t.Fatalf("MarkRuntimeInstanceClosed on draining route: %v", err)
+	}
+	if _, err := queries.MarkRuntimeInstanceFailed(ctx, db.MarkRuntimeInstanceFailedParams{
+		ID:               failedInstance.ID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		InstanceToken:    failedToken,
+		Error:            []byte(`{"message":"test failure"}`),
+	}); err != nil {
+		t.Fatalf("MarkRuntimeInstanceFailed on draining route: %v", err)
+	}
+}
+
 func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -175,6 +344,7 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -192,6 +362,7 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "unused-cold-runtime-token",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -318,6 +489,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -351,6 +523,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "must-not-create-cold-runtime",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -365,6 +538,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		RuntimeID:                   runtimeReleaseID,
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	if err != nil {
@@ -376,6 +550,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherRequestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(otherWorkspaceID),
@@ -473,6 +648,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -488,6 +664,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		RuntimeID:                   runtimeReleaseID,
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -509,6 +686,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "cold-runtime-after-expired-adoption",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -560,6 +738,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -575,6 +754,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		RuntimeID:                   runtimeReleaseID,
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -605,6 +785,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "must-not-create-cold-runtime-after-ready-adoption-expiry",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		CellID:                      dbtest.DefaultCellID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -638,6 +819,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -679,6 +861,56 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	}
 }
 
+func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDrainingRoute(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	mountTokenHash := "draining-workspace-mount-channel-token-hash"
+	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Request:       []byte(`{"test":"prepared-source-draining"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_mounts
+		   SET guestd_channel_token_hash = $1,
+		       guestd_channel_token_expires_at = now() + interval '1 hour'
+		 WHERE org_id = $2
+		   AND id = $3
+	`, mountTokenHash, ids.orgID, pgvalue.MustUUIDValue(requestedMount.ID)); err != nil {
+		t.Fatal(err)
+	}
+	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+
+	instance, err := queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
+		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkerInstanceID:       pgvalue.UUID(workerID),
+		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeKeyHash:         "runtime-key-hash",
+		RuntimeKey:             []byte(`{"test":"workspace-mount-source-draining"}`),
+		NetworkPolicy:          []byte(`{}`),
+		InstanceToken:          "prepared-runtime-instance-draining-token",
+		ExpiresAt:              pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		WorkspaceMountID:       requestedMount.ID,
+		GuestdChannelTokenHash: mountTokenHash,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instance.CellID != dbtest.DefaultCellID {
+		t.Fatalf("instance cell = %q, want %q", instance.CellID, dbtest.DefaultCellID)
+	}
+}
+
 func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -688,6 +920,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -830,27 +1063,29 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		Digest:        digest,
-		SizeBytes:     10,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.tar",
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		CellID:          dbtest.DefaultCellID,
+		RouteGeneration: 1,
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		Digest:          digest,
+		SizeBytes:       10,
+		MediaType:       "application/vnd.helmr.runtime-substrate.v0.tar",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	second, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		Digest:        digest,
-		SizeBytes:     10,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.tar",
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		CellID:          dbtest.DefaultCellID,
+		RouteGeneration: 1,
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		Digest:          digest,
+		SizeBytes:       10,
+		MediaType:       "application/vnd.helmr.runtime-substrate.v0.tar",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -976,6 +1211,95 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 	}
 }
 
+func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentCell(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
+	instanceToken := "runtime-instance-token"
+	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeABI:          "test",
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeKeyHash:      "runtime-key-hash",
+		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
+		InstanceToken:       instanceToken,
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherCellID, otherRouteGeneration, otherSandboxID := seedRuntimeSubstrateSourceInOtherCell(t, ctx, pool, ids, "runtime-substrate-wrong-cell")
+	digest := testDigest("runtime-substrate-wrong-cell")
+	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
+		OrgID:     pgvalue.UUID(ids.orgID),
+		CellID:    otherCellID,
+		Digest:    digest,
+		SizeBytes: 1024,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		CellID:          otherCellID,
+		RouteGeneration: otherRouteGeneration,
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		Digest:          digest,
+		SizeBytes:       1024,
+		MediaType:       "application/vnd.helmr.runtime-substrate.v0.ext4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    otherCellID,
+		ProjectID:                 pgvalue.UUID(ids.projectID),
+		EnvironmentID:             pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID:       pgvalue.UUID(otherSandboxID),
+		ArtifactID:                artifact.ID,
+		SubstrateDigest:           "sha256:wrong-cell-runtime-substrate",
+		SubstrateFormat:           "ext4",
+		BuilderAbi:                "builder-v0",
+		LayoutAbi:                 "layout-v0",
+		SubstrateSizeBytes:        1024,
+		Source:                    []byte(`{"test":"wrong-cell"}`),
+		CreatedByWorkerInstanceID: pgtype.UUID{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
+		ID:                         instance.ID,
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		InstanceToken:              instanceToken,
+		RuntimeSubstrateArtifactID: substrate.ID,
+		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("MarkRuntimeInstanceReady wrong-cell substrate error = %v, want pgx.ErrNoRows", err)
+	}
+	_, err = queries.RenewRuntimeInstance(ctx, db.RenewRuntimeInstanceParams{
+		ID:                         instance.ID,
+		WorkerInstanceID:           pgvalue.UUID(workerID),
+		InstanceToken:              instanceToken,
+		RuntimeSubstrateArtifactID: substrate.ID,
+		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("RenewRuntimeInstance wrong-cell substrate error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
 func TestGetDeploymentSandboxForWorkerGroupScopesByDeploymentWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -1011,13 +1335,110 @@ func TestGetDeploymentSandboxForWorkerGroupScopesByDeploymentWorkerGroup(t *test
 	}
 }
 
+func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongCellScope(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-cell-mismatch")
+	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
+		ProjectID:                 pgvalue.UUID(ids.projectID),
+		EnvironmentID:             pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
+		ArtifactID:                artifact.ID,
+		SubstrateDigest:           "sha256:runtime-substrate-cell-mismatch",
+		SubstrateFormat:           "ext4",
+		BuilderAbi:                "builder/v1",
+		LayoutAbi:                 "layout/v1",
+		SubstrateSizeBytes:        1024,
+		Source:                    []byte(`{"test":"cell-mismatch"}`),
+		CreatedByWorkerInstanceID: pgtype.UUID{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
+		ProjectID:           pgvalue.UUID(ids.projectID),
+		EnvironmentID:       pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		SubstrateDigest:     substrate.SubstrateDigest,
+		SubstrateFormat:     substrate.SubstrateFormat,
+		BuilderAbi:          substrate.BuilderAbi,
+		LayoutAbi:           substrate.LayoutAbi,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID + "-other",
+		ProjectID:           pgvalue.UUID(ids.projectID),
+		EnvironmentID:       pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		SubstrateDigest:     substrate.SubstrateDigest,
+		SubstrateFormat:     substrate.SubstrateFormat,
+		BuilderAbi:          substrate.BuilderAbi,
+		LayoutAbi:           substrate.LayoutAbi,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("wrong cell lookup error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
+func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledSourceRoute(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-stale-route")
+	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     pgvalue.UUID(ids.orgID),
+		CellID:                    dbtest.DefaultCellID,
+		ProjectID:                 pgvalue.UUID(ids.projectID),
+		EnvironmentID:             pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
+		ArtifactID:                artifact.ID,
+		SubstrateDigest:           "sha256:runtime-substrate-stale-route",
+		SubstrateFormat:           "ext4",
+		BuilderAbi:                "builder/v1",
+		LayoutAbi:                 "layout/v1",
+		SubstrateSizeBytes:        1024,
+		Source:                    []byte(`{"test":"stale-route"}`),
+		CreatedByWorkerInstanceID: pgtype.UUID{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+
+	_, err = queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+		OrgID:               pgvalue.UUID(ids.orgID),
+		CellID:              dbtest.DefaultCellID,
+		ProjectID:           pgvalue.UUID(ids.projectID),
+		EnvironmentID:       pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		SubstrateDigest:     substrate.SubstrateDigest,
+		SubstrateFormat:     substrate.SubstrateFormat,
+		BuilderAbi:          substrate.BuilderAbi,
+		LayoutAbi:           substrate.LayoutAbi,
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("disabled route lookup error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
 func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (uuid.UUID, string) {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
 	runtimeReleaseID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1068,14 +1489,15 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 		t.Fatal(err)
 	}
 	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		Digest:        digest,
-		SizeBytes:     1024,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.ext4",
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		CellID:          dbtest.DefaultCellID,
+		RouteGeneration: 1,
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		Digest:          digest,
+		SizeBytes:       1024,
+		MediaType:       "application/vnd.helmr.runtime-substrate.v0.ext4",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1161,6 +1583,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -1245,6 +1668,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
 		CellID:              target.CellID,
+		RouteGeneration:     target.RouteGeneration,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    target.WorkerInstanceID,
@@ -1270,6 +1694,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	exactCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
 		CellID:              target.CellID,
+		RouteGeneration:     target.RouteGeneration,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		WorkerInstanceID:    target.WorkerInstanceID,

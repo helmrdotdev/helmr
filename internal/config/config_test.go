@@ -11,6 +11,8 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", " managed-cloud ")
 	t.Setenv("HELMR_CELL_ID", " us-east-1-cell-2 ")
+	t.Setenv("HELMR_REGION_ID", " us-east-1 ")
+	t.Setenv("HELMR_DEFAULT_REGION_ID", " us-east-1 ")
 	t.Setenv("HELMR_REDIS_URL", "\nredis://redis.example.test:6379/0 ")
 	t.Setenv("HELMR_CLICKHOUSE_URL", " https://clickhouse.example.test ")
 	t.Setenv("HELMR_CLICKHOUSE_USER", " telemetry ")
@@ -35,12 +37,13 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.CellID != "us-east-1-cell-2" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.CellID != "us-east-1-cell-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerBootstrapToken != "worker-bootstrap-token" || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
 
 func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -58,12 +61,13 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	if cfg.DeploymentMode != DeploymentModeSelfHosted {
 		t.Fatalf("deployment mode = %q", cfg.DeploymentMode)
 	}
-	if cfg.CellID != DefaultCellID {
-		t.Fatalf("cell id = %q", cfg.CellID)
+	if cfg.CellID != "us-east-1-cell-1" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" {
+		t.Fatalf("cell config = %+v", cfg)
 	}
 }
 
 func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -83,6 +87,7 @@ func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
 }
 
 func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", "unknown")
@@ -104,6 +109,7 @@ func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 }
 
 func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -123,6 +129,7 @@ func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
 }
 
 func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -142,6 +149,7 @@ func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
 }
 
 func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -168,6 +176,7 @@ func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 }
 
 func TestLoadControlDefaultsPublicURL(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -200,6 +209,7 @@ func TestLoadControlRejectsInvalidMagicLinkDebugURLs(t *testing.T) {
 }
 
 func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
@@ -227,6 +237,7 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 }
 
 func TestLoadControlReadsResendConfig(t *testing.T) {
+	setControlCellEnv(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
 	t.Setenv("HELMR_DEPLOYMENT_MODE", "managed-cloud")
@@ -249,6 +260,13 @@ func TestLoadControlReadsResendConfig(t *testing.T) {
 	}
 }
 
+func setControlCellEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("HELMR_CELL_ID", "us-east-1-cell-1")
+	t.Setenv("HELMR_REGION_ID", "us-east-1")
+	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
+}
+
 func TestLoadDatabaseOnlyRequiresDatabaseURL(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", "\npostgres://example ")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")
@@ -269,7 +287,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", " bootstrap-token ")
 	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH", " /run/helmr/bootstrap-token ")
 	t.Setenv("HELMR_WORKER_RESOURCE_ID", " worker-instance-1 ")
-	t.Setenv("HELMR_WORKER_REGION", " us-east-1 ")
+	t.Setenv("HELMR_WORKER_PROVIDER_REGION", " us-east-1 ")
 	t.Setenv("HELMR_WORKER_LABELS", "pool=standard,dedicated_key=tenant-a")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= ")
 	t.Setenv("HELMR_WORKER_WORK_DIR", " /var/lib/helmr ")
@@ -328,7 +346,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerBootstrapToken != "bootstrap-token" || cfg.WorkerBootstrapTokenPath != "/run/helmr/bootstrap-token" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.WorkerRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
+	if cfg.WorkerProviderRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.CheckpointKey == "" {
@@ -339,6 +357,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 func TestLoadWorkerAllowsEmptyNetworkBlockedCIDRs(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "checkpoint-key")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -382,6 +401,7 @@ func TestLoadWorkerControlReadsOnlyControlAuth(t *testing.T) {
 func TestLoadWorkerDoesNotReadGenericBuildKitHost(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -448,6 +468,7 @@ func TestLoadWorkerRejectsHealthAttemptLongerThanHealthTimeout(t *testing.T) {
 func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) {
 	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_WORKER_PROVIDER_REGION", "us-east-1")
 	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
 	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
@@ -459,6 +480,22 @@ func TestLoadWorkerClampsDefaultHealthAttemptToShortHealthTimeout(t *testing.T) 
 	}
 	if cfg.VMHealthAttemptTimeout != time.Second {
 		t.Fatalf("VMHealthAttemptTimeout = %s, want 1s", cfg.VMHealthAttemptTimeout)
+	}
+}
+
+func TestLoadWorkerRequiresProviderRegion(t *testing.T) {
+	t.Setenv("HELMR_CONTROL_URL", "https://api.example.test")
+	t.Setenv("HELMR_CAS_URI", "s3://helmr-cas")
+	t.Setenv("HELMR_CHECKPOINT_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_UID", "1001")
+	t.Setenv("HELMR_WORKER_FIRECRACKER_JAILER_GID", "1002")
+
+	_, err := LoadWorker()
+	if err == nil {
+		t.Fatal("expected provider region error")
+	}
+	if got, want := err.Error(), "HELMR_WORKER_PROVIDER_REGION"; !strings.HasPrefix(got, want) {
+		t.Fatalf("error = %q", got)
 	}
 }
 

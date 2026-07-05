@@ -22,6 +22,7 @@ WITH bootstrap_token AS (
                         AND worker_groups.cell_id = worker_bootstrap_tokens.cell_id
      WHERE worker_bootstrap_tokens.token_hash = sqlc.arg(bootstrap_token_hash)
        AND worker_bootstrap_tokens.cell_id = sqlc.arg(cell_id)
+       AND worker_groups.state = 'active'
        AND worker_bootstrap_tokens.revoked_at IS NULL
        AND (worker_bootstrap_tokens.expires_at IS NULL OR worker_bootstrap_tokens.expires_at > now())
      FOR UPDATE
@@ -107,12 +108,25 @@ SELECT sqlc.arg(credential_id),
 RETURNING id, cell_id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, claim_version, created_at;
 
 -- name: AuthenticateWorkerInstanceCredential :one
+WITH credential AS (
+    SELECT worker_instance_credentials.id
+      FROM worker_instance_credentials
+      JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
+      JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+                        AND worker_groups.cell_id = worker_instances.cell_id
+     WHERE worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND worker_instance_credentials.secret_hash = sqlc.arg(secret_hash)
+       AND worker_instance_credentials.cell_id = sqlc.arg(cell_id)
+       AND worker_instance_credentials.cell_id = worker_instances.cell_id
+       AND worker_instance_credentials.claim_version = worker_instances.claim_version
+       AND worker_instance_credentials.claim_version = worker_groups.claim_version
+       AND worker_groups.state = 'active'
+       AND worker_instance_credentials.revoked_at IS NULL
+)
 UPDATE worker_instance_credentials
    SET last_used_at = now()
-WHERE worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_instance_credentials.secret_hash = sqlc.arg(secret_hash)
-   AND worker_instance_credentials.cell_id = sqlc.arg(cell_id)
-   AND worker_instance_credentials.revoked_at IS NULL
+  FROM credential
+ WHERE worker_instance_credentials.id = credential.id
 RETURNING worker_instance_credentials.id,
           worker_instance_credentials.cell_id,
           worker_instance_credentials.worker_instance_id,
@@ -127,9 +141,13 @@ SELECT worker_instance_credentials.id,
        worker_instances.resource_id
   FROM worker_instance_credentials
   JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
+  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
+                    AND worker_groups.cell_id = worker_instances.cell_id
 WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
    AND worker_instance_credentials.cell_id = sqlc.arg(cell_id)
    AND worker_instance_credentials.cell_id = worker_instances.cell_id
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
+   AND worker_instance_credentials.claim_version = worker_groups.claim_version
+   AND worker_groups.state = 'active'
    AND worker_instance_credentials.revoked_at IS NULL;

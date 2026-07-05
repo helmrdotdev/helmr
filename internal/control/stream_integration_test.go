@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	cellpkg "github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -421,6 +422,7 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
+		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -465,6 +467,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
+		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -505,6 +508,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -527,6 +531,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
+		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -605,6 +610,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -642,6 +648,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
+		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -693,6 +700,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
+		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -792,6 +800,7 @@ func (w *cursorInitAppendWakeups) latestSessionInputStreamWakeupID(ctx context.C
 	if _, err := w.queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(w.ids.orgID),
+		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(w.ids.projectID),
 		EnvironmentID:          pgvalue.UUID(w.ids.environmentID),
 		StreamID:               streamID,
@@ -933,6 +942,24 @@ func newControlIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := cellpkg.Bootstrap(ctx, db.New(pool), cellpkg.BootstrapConfig{
+		RegionID:          dbtest.DefaultRegionID,
+		DefaultRegionID:   dbtest.DefaultRegionID,
+		Provider:          dbtest.DefaultProvider,
+		ProviderRegion:    dbtest.DefaultProviderRegion,
+		RegionDisplayName: dbtest.DefaultRegionDisplay,
+		CellID:            dbtest.DefaultCellID,
+		EnvironmentClass:  dbtest.DefaultEnvironmentClass,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cellpkg.ReportHealth(ctx, db.New(pool), cellpkg.HealthConfig{
+		CellID:             dbtest.DefaultCellID,
+		Component:          cellpkg.ComponentDispatcher,
+		RequiredComponents: cellpkg.RoutingRequiredComponents(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return pool
 }
 
@@ -948,9 +975,12 @@ func controlTestDatabaseDSN(t *testing.T, dsn string, database string) string {
 
 func newControlIntegrationServer(pool *pgxpool.Pool) *Server {
 	return &Server{
-		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:  db.New(pool),
-		tx:  pool,
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:              db.New(pool),
+		tx:              pool,
+		cellID:          dbtest.DefaultCellID,
+		regionID:        dbtest.DefaultRegionID,
+		defaultRegionID: dbtest.DefaultRegionID,
 	}
 }
 
@@ -978,10 +1008,28 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default', 'default')`, ids.orgID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, org_id, slug, name) VALUES ($1, $2, 'proj', 'Project')`, ids.projectID, ids.orgID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, $3, 'proj', 'Project')`, ids.projectID, ids.orgID, dbtest.DefaultRegionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO environments (id, org_id, project_id, slug, name, color_hex) VALUES ($1, $2, $3, 'env', 'Env', '#3366ff')`, ids.environmentID, ids.orgID, ids.projectID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex) VALUES ($1, $2, $3, $4, 'env', 'Env', '#3366ff')`, ids.environmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	if _, err := queries.EnsureOrgCell(ctx, db.EnsureOrgCellParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		CellID: dbtest.DefaultCellID,
+		Role:   db.OrgCellRoleHome,
+		State:  db.OrgCellStateActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cellpkg.EnsureEnvironmentRoute(ctx, queries, cellpkg.EnsureEnvironmentRouteParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		RegionID:      dbtest.DefaultRegionID,
+		LocalCellID:   dbtest.DefaultCellID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO worker_groups (id, cell_id, name) VALUES ($1, $2, 'test')`, ids.workerGroupID, dbtest.DefaultCellID); err != nil {

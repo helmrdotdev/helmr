@@ -318,12 +318,14 @@ func TestCreateScheduleRunRejectsStaleTriggerIdempotencyHit(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := &Server{
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:          store,
-		cas:         &fakeCAS{},
-		secrets:     fakeSecrets{},
-		runEnqueuer: runEnqueuer,
-		eventStream: newTestEventStream(t),
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:              store,
+		cas:             &fakeCAS{},
+		secrets:         fakeSecrets{},
+		runEnqueuer:     runEnqueuer,
+		eventStream:     newTestEventStream(t),
+		cellID:          "us-east-1-cell-1",
+		defaultRegionID: "us-east-1",
 	}
 	row := db.GetScheduleTriggerCandidateRow{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
@@ -356,10 +358,12 @@ func TestCreateScheduleRunDefersSessionStartCoordinationFailures(t *testing.T) {
 	store := &fakeStore{}
 	runEnqueuer := &fakeRunEnqueuer{}
 	server := &Server{
-		log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:          store,
-		secrets:     fakeSecrets{},
-		runEnqueuer: runEnqueuer,
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:              store,
+		secrets:         fakeSecrets{},
+		runEnqueuer:     runEnqueuer,
+		cellID:          "us-east-1-cell-1",
+		defaultRegionID: "us-east-1",
 	}
 	row := db.GetScheduleTriggerCandidateRow{
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
@@ -631,6 +635,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
+			CellID:              "us-east-1-cell-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -649,6 +654,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 		run: db.Run{
 			ID:               runID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
+			CellID:           "us-east-1-cell-1",
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),

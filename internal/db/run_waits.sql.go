@@ -631,14 +631,20 @@ UPDATE run_waits
        resolved_at = COALESCE(run_waits.resolved_at, now()),
        updated_at = now()
  WHERE org_id = $1
+   AND cell_id = $2
    AND state IN ('live_waiting', 'checkpointed_waiting')
    AND timeout_at IS NOT NULL
    AND timeout_at <= now()
 RETURNING id, org_id, cell_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
 `
 
-func (q *Queries) ExpireDueRunWaits(ctx context.Context, orgID pgtype.UUID) ([]RunWait, error) {
-	rows, err := q.db.Query(ctx, expireDueRunWaits, orgID)
+type ExpireDueRunWaitsParams struct {
+	OrgID  pgtype.UUID `json:"org_id"`
+	CellID string      `json:"cell_id"`
+}
+
+func (q *Queries) ExpireDueRunWaits(ctx context.Context, arg ExpireDueRunWaitsParams) ([]RunWait, error) {
+	rows, err := q.db.Query(ctx, expireDueRunWaits, arg.OrgID, arg.CellID)
 	if err != nil {
 		return nil, err
 	}
@@ -736,6 +742,7 @@ WITH stale_waits AS MATERIALIZED (
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE run_waits.org_id = $1
+       AND run_waits.cell_id = $2
        AND (
            (run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired') AND runs.status = 'waiting')
            OR (run_waits.state = 'resuming' AND runs.status = 'queued')
@@ -749,7 +756,7 @@ WITH stale_waits AS MATERIALIZED (
            OR runtime_checkpoints.expires_at <= now()
        )
      ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
-     LIMIT $2
+     LIMIT $3
      FOR UPDATE OF run_waits, runs, sessions
 ),
 failed_waits AS (
@@ -933,6 +940,7 @@ SELECT failed_waits.id, failed_waits.org_id, failed_waits.cell_id, failed_waits.
 
 type FailStaleResolvedRunWaitsParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
+	CellID     string      `json:"cell_id"`
 	LimitCount int32       `json:"limit_count"`
 }
 
@@ -969,7 +977,7 @@ type FailStaleResolvedRunWaitsRow struct {
 }
 
 func (q *Queries) FailStaleResolvedRunWaits(ctx context.Context, arg FailStaleResolvedRunWaitsParams) ([]FailStaleResolvedRunWaitsRow, error) {
-	rows, err := q.db.Query(ctx, failStaleResolvedRunWaits, arg.OrgID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, failStaleResolvedRunWaits, arg.OrgID, arg.CellID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}
@@ -1020,7 +1028,7 @@ func (q *Queries) FailStaleResolvedRunWaits(ctx context.Context, arg FailStaleRe
 
 const getRunWait = `-- name: GetRunWait :one
 SELECT id, org_id, cell_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
-  FROM run_waits
+     FROM run_waits
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
@@ -1130,6 +1138,7 @@ func (q *Queries) GetRunWaitByRun(ctx context.Context, arg GetRunWaitByRunParams
 const getWorkerRunWaitScope = `-- name: GetWorkerRunWaitScope :one
 SELECT runs.org_id,
        runs.cell_id,
+       run_leases.route_generation,
        runs.project_id,
        runs.environment_id,
        runs.deployment_id,
@@ -1148,15 +1157,31 @@ SELECT runs.org_id,
        worker_instances.cni_profile AS worker_cni_profile
   FROM runs
   JOIN run_leases ON run_leases.org_id = runs.org_id
+                 AND run_leases.cell_id = runs.cell_id
                  AND run_leases.run_id = runs.id
                  AND run_leases.id = runs.current_run_lease_id
+  JOIN environment_cells
+    ON environment_cells.org_id = runs.org_id
+   AND environment_cells.project_id = runs.project_id
+   AND environment_cells.environment_id = runs.environment_id
+   AND environment_cells.cell_id = runs.cell_id
+   AND environment_cells.route_generation = run_leases.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.state IN ('active', 'draining')
   JOIN worker_instances ON worker_instances.id = run_leases.worker_instance_id
                        AND worker_instances.worker_group_id = run_leases.worker_group_id
+                       AND worker_instances.cell_id = runs.cell_id
   JOIN workspaces ON workspaces.org_id = runs.org_id
+                 AND workspaces.cell_id = runs.cell_id
                  AND workspaces.project_id = runs.project_id
                  AND workspaces.environment_id = runs.environment_id
                  AND workspaces.id = runs.workspace_id
   JOIN workspace_leases ON workspace_leases.org_id = runs.org_id
+                       AND workspace_leases.cell_id = runs.cell_id
                        AND workspace_leases.project_id = runs.project_id
                        AND workspace_leases.environment_id = runs.environment_id
                        AND workspace_leases.workspace_id = runs.workspace_id
@@ -1166,13 +1191,15 @@ SELECT runs.org_id,
                        AND workspace_leases.released_at IS NULL
                        AND workspace_leases.expires_at > now()
   JOIN workspace_mounts ON workspace_mounts.org_id = workspace_leases.org_id
-                                 AND workspace_mounts.project_id = workspace_leases.project_id
-                                 AND workspace_mounts.environment_id = workspace_leases.environment_id
-                                 AND workspace_mounts.workspace_id = workspace_leases.workspace_id
-                                 AND workspace_mounts.id = workspace_leases.workspace_mount_id
+                       AND workspace_mounts.cell_id = workspace_leases.cell_id
+                       AND workspace_mounts.project_id = workspace_leases.project_id
+                       AND workspace_mounts.environment_id = workspace_leases.environment_id
+                       AND workspace_mounts.workspace_id = workspace_leases.workspace_id
+                       AND workspace_mounts.id = workspace_leases.workspace_mount_id
  WHERE runs.org_id = $1
    AND runs.id = $2
    AND runs.current_run_lease_id = $3
+   AND runs.cell_id = worker_instances.cell_id
    AND runs.status = 'running'
    AND run_leases.worker_instance_id = $4
    AND run_leases.status IN ('leased', 'running')
@@ -1189,6 +1216,7 @@ type GetWorkerRunWaitScopeParams struct {
 type GetWorkerRunWaitScopeRow struct {
 	OrgID                     pgtype.UUID `json:"org_id"`
 	CellID                    string      `json:"cell_id"`
+	RouteGeneration           int64       `json:"route_generation"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentID              pgtype.UUID `json:"deployment_id"`
@@ -1218,6 +1246,7 @@ func (q *Queries) GetWorkerRunWaitScope(ctx context.Context, arg GetWorkerRunWai
 	err := row.Scan(
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
@@ -1498,6 +1527,7 @@ WITH eligible_waits AS (
                      AND workspaces.id = runs.workspace_id
                      AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
      WHERE run_waits.org_id = $1
+       AND run_waits.cell_id = $2
        AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
@@ -1505,7 +1535,7 @@ WITH eligible_waits AS (
        AND runtime_checkpoints.state = 'ready'
        AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
      ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
-     LIMIT $2
+     LIMIT $3
      FOR UPDATE OF run_waits, runs
 ),
 updated_waits AS (
@@ -1579,6 +1609,7 @@ SELECT updated_waits.id, updated_waits.org_id, updated_waits.cell_id, updated_wa
 
 type RequeueResolvedRunWaitsParams struct {
 	OrgID      pgtype.UUID `json:"org_id"`
+	CellID     string      `json:"cell_id"`
 	LimitCount int32       `json:"limit_count"`
 }
 
@@ -1617,7 +1648,7 @@ type RequeueResolvedRunWaitsRow struct {
 }
 
 func (q *Queries) RequeueResolvedRunWaits(ctx context.Context, arg RequeueResolvedRunWaitsParams) ([]RequeueResolvedRunWaitsRow, error) {
-	rows, err := q.db.Query(ctx, requeueResolvedRunWaits, arg.OrgID, arg.LimitCount)
+	rows, err := q.db.Query(ctx, requeueResolvedRunWaits, arg.OrgID, arg.CellID, arg.LimitCount)
 	if err != nil {
 		return nil, err
 	}

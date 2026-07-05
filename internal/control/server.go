@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	cellpkg "github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
@@ -41,18 +42,18 @@ const (
 )
 
 type SecretManager interface {
-	Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error)
-	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
-	CheckNames(ctx context.Context, orgID uuid.UUID, names []string) error
-	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
-	ResolveNames(ctx context.Context, orgID uuid.UUID, names []string) (api.ResolvedSecrets, error)
-	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
+	PutScoped(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
+	CheckScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
+	ResolveScopedNames(ctx context.Context, cellID string, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
 	cellID                string
+	regionID              string
+	defaultRegionID       string
+	readinessComponent    string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
@@ -108,7 +109,7 @@ type PreparedRuntimeSupplyReconciler interface {
 
 type ScheduleRegistrar interface {
 	RegisterNext(context.Context, schedule.Instance) error
-	DeleteInstance(context.Context, pgtype.UUID) error
+	DeleteInstance(context.Context, string, pgtype.UUID) error
 }
 
 type TxBeginner interface {
@@ -121,9 +122,12 @@ type dbTXBeginner interface {
 }
 
 type ServerConfig struct {
-	Log            *slog.Logger
-	DeploymentMode string
-	CellID         string
+	Log                *slog.Logger
+	DeploymentMode     string
+	CellID             string
+	RegionID           string
+	DefaultRegionID    string
+	ReadinessComponent string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -181,16 +185,31 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cellID == "" {
 		return nil, errors.New("control cell id is required")
 	}
+	regionID := strings.TrimSpace(cfg.RegionID)
+	if regionID == "" {
+		return nil, errors.New("control region id is required")
+	}
+	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
+	if defaultRegionID == "" {
+		return nil, errors.New("control default region id is required")
+	}
+	readinessComponent := strings.TrimSpace(cfg.ReadinessComponent)
+	if readinessComponent == "" {
+		readinessComponent = cellpkg.ComponentControl
+	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
-		telemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(cfg.DB), nil)
+		return nil, errors.New("control telemetry reader is required")
 	}
 	if cfg.EventStream != nil {
 		if cfg.EventStream.cellID == "" {
-			cfg.EventStream.cellID = cellID
+			return nil, errors.New("event stream cell id is required")
+		}
+		if cfg.EventStream.cellID != cellID {
+			return nil, errors.New("event stream cell id must match control cell id")
 		}
 		if cfg.EventStream.telemetryReader == nil {
-			cfg.EventStream.telemetryReader = telemetryReader
+			return nil, errors.New("event stream telemetry reader is required")
 		}
 	}
 	mailer := cfg.Mailer
@@ -209,6 +228,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		log:                   log,
 		deploymentMode:        deploymentMode,
 		cellID:                cellID,
+		regionID:              regionID,
+		defaultRegionID:       defaultRegionID,
+		readinessComponent:    readinessComponent,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,
@@ -655,6 +677,18 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	}
 	if version < int(currentVersion) {
 		s.writeReadinessUnavailable(w, fmt.Errorf("database schema version is %d, required %d", version, currentVersion))
+		return
+	}
+	readiness, err := db.New(s.readinessDB).GetCellComponentReadiness(ctx, db.GetCellComponentReadinessParams{
+		CellID:    s.cellID,
+		Component: s.readinessComponent,
+	})
+	if err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf("control cell readiness is not available: %w", err))
+		return
+	}
+	if !readiness.Ready {
+		s.writeReadinessUnavailable(w, errors.New("control component is not ready"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

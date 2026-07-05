@@ -12,9 +12,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -60,18 +62,36 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO projects (id, org_id, slug, name) VALUES ($1, $2, $3, 'Project')
-	`, ids.projectID, ids.orgID, projectSlug); err != nil {
+		INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, $3, $4, 'Project')
+	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $2, $3, $4, 'Env', '#3366ff')
-	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug); err != nil {
+		INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex)
+		VALUES ($1, $2, $3, $4, $5, 'Env', '#3366ff')
+	`, ids.environmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, environmentSlug); err != nil {
+		t.Fatal(err)
+	}
+	queries := db.New(pool)
+	if _, err := queries.EnsureOrgCell(ctx, db.EnsureOrgCellParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		CellID: dbtest.DefaultCellID,
+		Role:   db.OrgCellRoleHome,
+		State:  db.OrgCellStateActive,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		RegionID:      dbtest.DefaultRegionID,
+		LocalCellID:   dbtest.DefaultCellID,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	imageArtifactID, imageDigest := seedSandboxImageArtifact(t, ctx, pool, ids)
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -218,7 +238,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	workspaceMountID := uuid.Must(uuid.NewV7())
 	runtimeInstanceID := uuid.Must(uuid.NewV7())
 	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE cell_id = $1 AND name = 'default'`, dbtest.DefaultCellID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -404,6 +424,71 @@ func requestWorkspaceMountForTest(ctx context.Context, queries *db.Queries, arg 
 	return queries.EnsureWorkspaceMountRequested(ctx, arg)
 }
 
+func seedRuntimeSubstrateSourceInOtherCell(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, label string) (cellID string, routeGeneration int64, deploymentSandboxID uuid.UUID) {
+	t.Helper()
+	cellID = routeEnvironmentToOtherCell(t, ctx, pool, ids)
+	if err := pool.QueryRow(ctx, `
+		SELECT route_generation
+		  FROM environment_cells
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND cell_id = $4
+		   AND route_state = 'active'
+	`, ids.orgID, ids.projectID, ids.environmentID, cellID).Scan(&routeGeneration); err != nil {
+		t.Fatal(err)
+	}
+	workerGroupID := uuid.Must(uuid.NewV7())
+	deploymentID := uuid.Must(uuid.NewV7())
+	deploymentSandboxID = uuid.Must(uuid.NewV7())
+	taskBundleArtifactID := uuid.Must(uuid.NewV7())
+	imageArtifactID := uuid.Must(uuid.NewV7())
+	taskBundleDigest := testDigest(label + "-task-bundle")
+	imageDigest := testDigest(label + "-sandbox-image")
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_groups (id, cell_id, name)
+		VALUES ($1, $2, $3)
+	`, workerGroupID, cellID, "runtime-substrate-"+shortUUID(deploymentSandboxID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, $3, 1, 'application/json'),
+		       ($1, $2, $4, 6, $5)
+	`, ids.orgID, cellID, taskBundleDigest, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifacts (id, org_id, cell_id, route_generation, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'task_bundle', 1, 'application/json'),
+		       ($8, $2, $3, $4, $5, $6, $9, 'sandbox_image', 6, $10)
+	`, taskBundleArtifactID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, taskBundleDigest, imageArtifactID, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployments (
+			id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
+			version, content_hash, deployment_source_artifact_id, status
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'deployed')
+	`, deploymentID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, workerGroupID, "wrong-cell-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployment_sandboxes (
+			id, org_id, cell_id, route_generation, project_id, environment_id, deployment_id, sandbox_id,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
+			disk_floor_mib, contract_version, fingerprint
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, 'wrong-cell', $8, 'oci-tar', 'sha256:rootfs', $9, 'oci-tar', '/workspace',
+			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, $10)
+	`, deploymentSandboxID, ids.orgID, cellID, routeGeneration, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, imageDigest, "wrong-cell-"+shortUUID(deploymentSandboxID)); err != nil {
+		t.Fatal(err)
+	}
+	return cellID, routeGeneration, deploymentSandboxID
+}
+
 func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
 	t.Helper()
 	artifactID := uuid.Must(uuid.NewV7())
@@ -484,6 +569,24 @@ func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
+	if err := cell.Bootstrap(ctx, db.New(pool), cell.BootstrapConfig{
+		RegionID:          dbtest.DefaultRegionID,
+		DefaultRegionID:   dbtest.DefaultRegionID,
+		Provider:          dbtest.DefaultProvider,
+		ProviderRegion:    dbtest.DefaultProviderRegion,
+		RegionDisplayName: dbtest.DefaultRegionDisplay,
+		CellID:            dbtest.DefaultCellID,
+		EnvironmentClass:  dbtest.DefaultEnvironmentClass,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := cell.ReportHealth(ctx, db.New(pool), cell.HealthConfig{
+		CellID:             dbtest.DefaultCellID,
+		Component:          cell.ComponentDispatcher,
+		RequiredComponents: cell.RoutingRequiredComponents(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	return pool
 }
 
@@ -511,4 +614,27 @@ func canonicalFingerprint(t *testing.T, data []byte) string {
 	}
 	sum := sha256.Sum256(canonical)
 	return hex.EncodeToString(sum[:])
+}
+
+func markEnvironmentRouteDrainingWithStaleHealth(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		UPDATE environment_cells
+		   SET route_state = 'draining'
+		 WHERE org_id = $1
+		   AND project_id = $2
+		   AND environment_id = $3
+		   AND cell_id = $4
+		   AND route_state = 'active'
+	`, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultCellID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE cell_health
+		   SET state = 'unavailable',
+		       routing_fresh_until = now() - interval '1 second'
+		 WHERE cell_id = $1
+	`, dbtest.DefaultCellID); err != nil {
+		t.Fatal(err)
+	}
 }

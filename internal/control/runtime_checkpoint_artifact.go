@@ -133,6 +133,7 @@ func createRuntimeCheckpointArtifact(ctx context.Context, store db.Querier, work
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     scope.OrgID,
 		CellID:                    scope.CellID,
+		RouteGeneration:           scope.RouteGeneration,
 		ProjectID:                 scope.ProjectID,
 		EnvironmentID:             scope.EnvironmentID,
 		Digest:                    artifact.Digest,

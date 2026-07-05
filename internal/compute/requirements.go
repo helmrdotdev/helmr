@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 type Placement struct {
@@ -110,6 +111,9 @@ func (r RunRuntimeRequirements) Validate() error {
 	}
 	if err := r.Network.Validate(); err != nil {
 		problems = append(problems, err)
+	}
+	if strings.TrimSpace(r.Placement.Region) != "" {
+		problems = append(problems, errors.New("placement region is not supported; use the environment region route"))
 	}
 	return errors.Join(problems...)
 }

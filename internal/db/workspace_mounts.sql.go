@@ -16,6 +16,7 @@ WITH worker_scope AS MATERIALIZED (
     SELECT worker_instances.id, worker_instances.org_id, worker_instances.cell_id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.status, worker_instances.claim_version, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
       FROM worker_instances
      WHERE worker_instances.id = $2
+       AND worker_instances.cell_id = $3
        AND worker_instances.status = 'active'
      FOR UPDATE OF worker_instances
 ),
@@ -51,6 +52,7 @@ candidate AS (
     SELECT workspace_mounts.id,
            workspace_mounts.org_id,
            workspace_mounts.cell_id,
+           workspace_mounts.route_generation,
            workspace_mounts.project_id,
            workspace_mounts.environment_id,
            workspace_mounts.workspace_id,
@@ -76,29 +78,47 @@ candidate AS (
 	      FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
+       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
+       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
       JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
+                       AND worker_scope.cell_id = workspace_mounts.cell_id
+      JOIN environment_cells
+        ON environment_cells.org_id = workspace_mounts.org_id
+	       AND environment_cells.project_id = workspace_mounts.project_id
+	       AND environment_cells.environment_id = workspace_mounts.environment_id
+	       AND environment_cells.cell_id = workspace_mounts.cell_id
+	       AND environment_cells.route_generation = workspace_mounts.route_generation
+	       AND environment_cells.route_state IN ('active', 'draining')
+	      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+	                    AND org_cells.cell_id = environment_cells.cell_id
+	                    AND org_cells.state = 'active'
+	      JOIN cells ON cells.id = environment_cells.cell_id
+	                AND cells.state = 'active'
 	      JOIN artifacts AS image_artifact
-	        ON image_artifact.org_id = workspace_mounts.org_id
-	       AND image_artifact.project_id = workspace_mounts.project_id
-	       AND image_artifact.environment_id = workspace_mounts.environment_id
-	       AND image_artifact.id = workspace_mounts.image_artifact_id
-	       AND image_artifact.kind = 'sandbox_image'
-	       AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
+        ON image_artifact.org_id = workspace_mounts.org_id
+       AND image_artifact.cell_id = workspace_mounts.cell_id
+       AND image_artifact.project_id = workspace_mounts.project_id
+       AND image_artifact.environment_id = workspace_mounts.environment_id
+       AND image_artifact.id = workspace_mounts.image_artifact_id
+       AND image_artifact.kind = 'sandbox_image'
+       AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
 	      CROSS JOIN active_run_usage
 	      CROSS JOIN active_runtime_instance_usage
 	      LEFT JOIN LATERAL (
-          SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
+          SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.route_generation, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
             FROM runtime_instances
            WHERE runtime_instances.worker_instance_id = worker_scope.id
+             AND runtime_instances.cell_id = workspace_mounts.cell_id
+             AND runtime_instances.route_generation = workspace_mounts.route_generation
              AND runtime_instances.state = 'ready'
              AND (
                  runtime_instances.expires_at IS NULL
@@ -131,9 +151,12 @@ candidate AS (
             FROM runtime_instances
             JOIN worker_instances AS preparing_worker
               ON preparing_worker.id = runtime_instances.worker_instance_id
+             AND preparing_worker.cell_id = workspace_mounts.cell_id
              AND preparing_worker.status = 'active'
              AND preparing_worker.worker_group_id = worker_scope.worker_group_id
            WHERE runtime_instances.state = 'preparing'
+             AND runtime_instances.cell_id = workspace_mounts.cell_id
+             AND runtime_instances.route_generation = workspace_mounts.route_generation
              AND runtime_instances.workspace_mount_id IS NULL
              AND (
                  runtime_instances.expires_at IS NULL
@@ -167,10 +190,10 @@ candidate AS (
               AND workspace_leases.state IN ('active', 'releasing')
               AND workspace_leases.expires_at > now()
        )
-       AND workspace_mounts.rootfs_digest = $3
-       AND workspace_mounts.runtime_abi = $4
-       AND workspace_mounts.guestd_abi = $5
-       AND workspace_mounts.adapter_abi = $6
+       AND workspace_mounts.rootfs_digest = $4
+       AND workspace_mounts.runtime_abi = $5
+       AND workspace_mounts.guestd_abi = $6
+       AND workspace_mounts.adapter_abi = $7
        AND (
            ready_runtime_instance.id IS NOT NULL
            OR (
@@ -224,7 +247,7 @@ cold_runtime_key AS MATERIALIZED (
                'workspace_mount_path', candidate.workspace_mount_path,
                'sandbox_artifact_digest', candidate.image_artifact_digest,
                'sandbox_artifact_format', candidate.image_artifact_format,
-               'network', COALESCE($7::jsonb, '{}'::jsonb)
+               'network', COALESCE($8::jsonb, '{}'::jsonb)
            ) AS value
       FROM candidate
      WHERE candidate.runtime_instance_id IS NULL
@@ -234,6 +257,7 @@ cold_runtime_instance AS (
         id,
         org_id,
         cell_id,
+        route_generation,
         project_id,
         environment_id,
         worker_instance_id,
@@ -265,9 +289,10 @@ cold_runtime_instance AS (
         last_heartbeat_at,
         bound_at
     )
-    SELECT $8,
+    SELECT $9,
            candidate.org_id,
            candidate.cell_id,
+           candidate.route_generation,
            candidate.project_id,
            candidate.environment_id,
            $2,
@@ -286,7 +311,7 @@ cold_runtime_instance AS (
            candidate.runtime_abi,
            candidate.guestd_abi,
            candidate.adapter_abi,
-           COALESCE($7::jsonb, '{}'::jsonb),
+           COALESCE($8::jsonb, '{}'::jsonb),
            candidate.sandbox_floor_cpu_millis,
            candidate.sandbox_floor_memory_mib,
            candidate.sandbox_floor_disk_mib,
@@ -295,7 +320,7 @@ cold_runtime_instance AS (
            candidate.workspace_id,
            candidate.base_version_id,
            'binding',
-           $9,
+           $10,
            now(),
            now()
       FROM candidate, cold_runtime_key
@@ -318,17 +343,17 @@ runtime_instance_capacity AS (
 claimed AS (
     UPDATE workspace_mounts
        SET runtime_instance_id = runtime_instance_capacity.id,
-           guestd_channel_token_hash = $10,
-           guestd_channel_token_expires_at = $11,
+           guestd_channel_token_hash = $11,
+           guestd_channel_token_expires_at = $12,
            last_heartbeat_at = now(),
            updated_at = now()
       FROM candidate
       JOIN runtime_instance_capacity ON true
      WHERE workspace_mounts.org_id = candidate.org_id
        AND workspace_mounts.id = candidate.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT claimed.id, claimed.org_id, claimed.cell_id, claimed.project_id, claimed.environment_id, claimed.workspace_id, claimed.deployment_sandbox_id, claimed.sandbox_fingerprint, claimed.base_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.priority, claimed.guestd_channel_token_hash, claimed.guestd_channel_token_expires_at, claimed.state, claimed.request, claimed.lease_generation, claimed.dirty_generation, claimed.fencing_generation, claimed.network_namespace, claimed.port_namespace, claimed.image_artifact_id, claimed.image_artifact_format, claimed.rootfs_digest, claimed.image_digest, claimed.image_format, claimed.workspace_artifact_id, claimed.workspace_artifact_encoding, claimed.workspace_artifact_entry_count, claimed.workspace_artifact_digest, claimed.workspace_artifact_size_bytes, claimed.workspace_artifact_media_type, claimed.workspace_mount_path, claimed.runtime_abi, claimed.guestd_abi, claimed.adapter_abi, claimed.last_heartbeat_at, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.error, claimed.created_at, claimed.updated_at,
+SELECT claimed.id, claimed.org_id, claimed.cell_id, claimed.route_generation, claimed.project_id, claimed.environment_id, claimed.workspace_id, claimed.deployment_sandbox_id, claimed.sandbox_fingerprint, claimed.base_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.priority, claimed.guestd_channel_token_hash, claimed.guestd_channel_token_expires_at, claimed.state, claimed.request, claimed.lease_generation, claimed.dirty_generation, claimed.fencing_generation, claimed.network_namespace, claimed.port_namespace, claimed.image_artifact_id, claimed.image_artifact_format, claimed.rootfs_digest, claimed.image_digest, claimed.image_format, claimed.workspace_artifact_id, claimed.workspace_artifact_encoding, claimed.workspace_artifact_entry_count, claimed.workspace_artifact_digest, claimed.workspace_artifact_size_bytes, claimed.workspace_artifact_media_type, claimed.workspace_mount_path, claimed.runtime_abi, claimed.guestd_abi, claimed.adapter_abi, claimed.last_heartbeat_at, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.error, claimed.created_at, claimed.updated_at,
        image_artifact.digest AS image_artifact_digest,
        image_artifact.size_bytes AS image_artifact_size_bytes,
        image_artifact.media_type AS image_artifact_media_type,
@@ -353,6 +378,7 @@ SELECT claimed.id, claimed.org_id, claimed.cell_id, claimed.project_id, claimed.
 type ClaimWorkspaceMountParams struct {
 	RuntimeID                   string             `json:"runtime_id"`
 	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
+	CellID                      string             `json:"cell_id"`
 	RootfsDigest                string             `json:"rootfs_digest"`
 	RuntimeABI                  string             `json:"runtime_abi"`
 	GuestdAbi                   string             `json:"guestd_abi"`
@@ -368,6 +394,7 @@ type ClaimWorkspaceMountRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -427,6 +454,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 	row := q.db.QueryRow(ctx, claimWorkspaceMount,
 		arg.RuntimeID,
 		arg.WorkerInstanceID,
+		arg.CellID,
 		arg.RootfsDigest,
 		arg.RuntimeABI,
 		arg.GuestdAbi,
@@ -442,6 +470,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -533,7 +562,7 @@ worker_scope AS MATERIALIZED (
      WHERE worker_instances.id = $1
 ),
 active_mounts AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at,
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at,
            runtime_instances.worker_instance_id AS mounted_worker_instance_id,
            runtime_instances.runtime_release_id AS mounted_runtime_id
       FROM run_scope
@@ -548,7 +577,7 @@ active_mounts AS MATERIALIZED (
      WHERE workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
 ),
 resident_mount AS MATERIALIZED (
-    SELECT active_mounts.id, active_mounts.org_id, active_mounts.cell_id, active_mounts.project_id, active_mounts.environment_id, active_mounts.workspace_id, active_mounts.deployment_sandbox_id, active_mounts.sandbox_fingerprint, active_mounts.base_version_id, active_mounts.runtime_instance_id, active_mounts.claim_attempt, active_mounts.priority, active_mounts.guestd_channel_token_hash, active_mounts.guestd_channel_token_expires_at, active_mounts.state, active_mounts.request, active_mounts.lease_generation, active_mounts.dirty_generation, active_mounts.fencing_generation, active_mounts.network_namespace, active_mounts.port_namespace, active_mounts.image_artifact_id, active_mounts.image_artifact_format, active_mounts.rootfs_digest, active_mounts.image_digest, active_mounts.image_format, active_mounts.workspace_artifact_id, active_mounts.workspace_artifact_encoding, active_mounts.workspace_artifact_entry_count, active_mounts.workspace_artifact_digest, active_mounts.workspace_artifact_size_bytes, active_mounts.workspace_artifact_media_type, active_mounts.workspace_mount_path, active_mounts.runtime_abi, active_mounts.guestd_abi, active_mounts.adapter_abi, active_mounts.last_heartbeat_at, active_mounts.requested_at, active_mounts.mounted_at, active_mounts.unmounted_at, active_mounts.stopped_at, active_mounts.lost_at, active_mounts.failed_at, active_mounts.error, active_mounts.created_at, active_mounts.updated_at, active_mounts.mounted_worker_instance_id, active_mounts.mounted_runtime_id
+    SELECT active_mounts.id, active_mounts.org_id, active_mounts.cell_id, active_mounts.route_generation, active_mounts.project_id, active_mounts.environment_id, active_mounts.workspace_id, active_mounts.deployment_sandbox_id, active_mounts.sandbox_fingerprint, active_mounts.base_version_id, active_mounts.runtime_instance_id, active_mounts.claim_attempt, active_mounts.priority, active_mounts.guestd_channel_token_hash, active_mounts.guestd_channel_token_expires_at, active_mounts.state, active_mounts.request, active_mounts.lease_generation, active_mounts.dirty_generation, active_mounts.fencing_generation, active_mounts.network_namespace, active_mounts.port_namespace, active_mounts.image_artifact_id, active_mounts.image_artifact_format, active_mounts.rootfs_digest, active_mounts.image_digest, active_mounts.image_format, active_mounts.workspace_artifact_id, active_mounts.workspace_artifact_encoding, active_mounts.workspace_artifact_entry_count, active_mounts.workspace_artifact_digest, active_mounts.workspace_artifact_size_bytes, active_mounts.workspace_artifact_media_type, active_mounts.workspace_mount_path, active_mounts.runtime_abi, active_mounts.guestd_abi, active_mounts.adapter_abi, active_mounts.last_heartbeat_at, active_mounts.requested_at, active_mounts.mounted_at, active_mounts.unmounted_at, active_mounts.stopped_at, active_mounts.lost_at, active_mounts.failed_at, active_mounts.error, active_mounts.created_at, active_mounts.updated_at, active_mounts.mounted_worker_instance_id, active_mounts.mounted_runtime_id
       FROM active_mounts
      ORDER BY CASE active_mounts.state
                   WHEN 'mounted' THEN 0
@@ -701,22 +730,24 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 
 const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
-       AND workspaces.project_id = $2
-       AND workspaces.environment_id = $3
-       AND workspaces.id = $4
+       AND workspaces.cell_id = $2
+       AND workspaces.project_id = $3
+       AND workspaces.environment_id = $4
+       AND workspaces.id = $5
        AND workspaces.state = 'active'
        AND workspaces.archived_at IS NULL
        AND workspaces.deleted_at IS NULL
      FOR UPDATE
 ),
 existing_active_non_runnable AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM locked_workspace
       JOIN workspace_mounts
         ON workspace_mounts.org_id = locked_workspace.org_id
+       AND workspace_mounts.cell_id = locked_workspace.cell_id
        AND workspace_mounts.project_id = locked_workspace.project_id
        AND workspace_mounts.environment_id = locked_workspace.environment_id
        AND workspace_mounts.workspace_id = locked_workspace.id
@@ -727,6 +758,7 @@ inserted AS (
         id,
         org_id,
         cell_id,
+        route_generation,
         project_id,
         environment_id,
         workspace_id,
@@ -752,9 +784,10 @@ inserted AS (
         state,
         request
     )
-    SELECT $5,
+    SELECT $6,
            workspaces.org_id,
            workspaces.cell_id,
+           workspaces.route_generation,
            workspaces.project_id,
            workspaces.environment_id,
            workspaces.id,
@@ -776,17 +809,19 @@ inserted AS (
            deployment_sandboxes.runtime_abi,
            deployment_sandboxes.guestd_abi,
            deployment_sandboxes.adapter_abi,
-           $6,
+           $7,
            'mounting',
-           coalesce($7::jsonb, '{}'::jsonb)
+           coalesce($8::jsonb, '{}'::jsonb)
       FROM locked_workspace AS workspaces
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspaces.org_id
+       AND deployment_sandboxes.cell_id = workspaces.cell_id
        AND deployment_sandboxes.project_id = workspaces.project_id
        AND deployment_sandboxes.environment_id = workspaces.environment_id
        AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
+       AND image_artifact.cell_id = deployment_sandboxes.cell_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -794,6 +829,7 @@ inserted AS (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN workspace_versions AS current_workspace_version
         ON current_workspace_version.org_id = workspaces.org_id
+       AND current_workspace_version.cell_id = workspaces.cell_id
        AND current_workspace_version.project_id = workspaces.project_id
        AND current_workspace_version.environment_id = workspaces.environment_id
        AND current_workspace_version.workspace_id = workspaces.id
@@ -801,6 +837,7 @@ inserted AS (
        AND current_workspace_version.state = 'ready'
       JOIN artifacts AS workspace_artifact
         ON workspace_artifact.org_id = current_workspace_version.org_id
+       AND workspace_artifact.cell_id = current_workspace_version.cell_id
        AND workspace_artifact.project_id = current_workspace_version.project_id
        AND workspace_artifact.environment_id = current_workspace_version.environment_id
        AND workspace_artifact.id = current_workspace_version.artifact_id
@@ -814,7 +851,8 @@ inserted AS (
                       ELSE workspace_mounts.updated_at
                   END
     WHERE workspace_mounts.state IN ('mounting', 'mounted')
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at,
+      AND workspace_mounts.cell_id = excluded.cell_id
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at,
               (workspace_mounts.xmax = 0)::boolean AS inserted,
               CASE
                   WHEN workspace_mounts.xmax = 0 THEN 'created'
@@ -833,13 +871,14 @@ reactivated_inserted_workspace AS (
        AND workspaces.desired_state <> 'active'
     RETURNING workspaces.id
 )
-SELECT inserted.id, inserted.org_id, inserted.cell_id, inserted.project_id, inserted.environment_id, inserted.workspace_id, inserted.deployment_sandbox_id, inserted.sandbox_fingerprint, inserted.base_version_id, inserted.runtime_instance_id, inserted.claim_attempt, inserted.priority, inserted.guestd_channel_token_hash, inserted.guestd_channel_token_expires_at, inserted.state, inserted.request, inserted.lease_generation, inserted.dirty_generation, inserted.fencing_generation, inserted.network_namespace, inserted.port_namespace, inserted.image_artifact_id, inserted.image_artifact_format, inserted.rootfs_digest, inserted.image_digest, inserted.image_format, inserted.workspace_artifact_id, inserted.workspace_artifact_encoding, inserted.workspace_artifact_entry_count, inserted.workspace_artifact_digest, inserted.workspace_artifact_size_bytes, inserted.workspace_artifact_media_type, inserted.workspace_mount_path, inserted.runtime_abi, inserted.guestd_abi, inserted.adapter_abi, inserted.last_heartbeat_at, inserted.requested_at, inserted.mounted_at, inserted.unmounted_at, inserted.stopped_at, inserted.lost_at, inserted.failed_at, inserted.error, inserted.created_at, inserted.updated_at, inserted.inserted, inserted.decision
+SELECT inserted.id, inserted.org_id, inserted.cell_id, inserted.route_generation, inserted.project_id, inserted.environment_id, inserted.workspace_id, inserted.deployment_sandbox_id, inserted.sandbox_fingerprint, inserted.base_version_id, inserted.runtime_instance_id, inserted.claim_attempt, inserted.priority, inserted.guestd_channel_token_hash, inserted.guestd_channel_token_expires_at, inserted.state, inserted.request, inserted.lease_generation, inserted.dirty_generation, inserted.fencing_generation, inserted.network_namespace, inserted.port_namespace, inserted.image_artifact_id, inserted.image_artifact_format, inserted.rootfs_digest, inserted.image_digest, inserted.image_format, inserted.workspace_artifact_id, inserted.workspace_artifact_encoding, inserted.workspace_artifact_entry_count, inserted.workspace_artifact_digest, inserted.workspace_artifact_size_bytes, inserted.workspace_artifact_media_type, inserted.workspace_mount_path, inserted.runtime_abi, inserted.guestd_abi, inserted.adapter_abi, inserted.last_heartbeat_at, inserted.requested_at, inserted.mounted_at, inserted.unmounted_at, inserted.stopped_at, inserted.lost_at, inserted.failed_at, inserted.error, inserted.created_at, inserted.updated_at, inserted.inserted, inserted.decision
   FROM inserted
  LIMIT 1
 `
 
 type EnsureWorkspaceMountRequestedParams struct {
 	OrgID           pgtype.UUID `json:"org_id"`
+	CellID          string      `json:"cell_id"`
 	ProjectID       pgtype.UUID `json:"project_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	WorkspaceID     pgtype.UUID `json:"workspace_id"`
@@ -852,6 +891,7 @@ type EnsureWorkspaceMountRequestedRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -902,6 +942,7 @@ type EnsureWorkspaceMountRequestedRow struct {
 func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureWorkspaceMountRequestedParams) (EnsureWorkspaceMountRequestedRow, error) {
 	row := q.db.QueryRow(ctx, ensureWorkspaceMountRequested,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -914,6 +955,7 @@ func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureW
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -965,7 +1007,7 @@ func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureW
 
 const failWorkspaceMount = `-- name: FailWorkspaceMount :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
       JOIN workspaces
         ON workspaces.org_id = workspace_mounts.org_id
@@ -974,9 +1016,24 @@ WITH target AS MATERIALIZED (
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.cell_id = workspace_mounts.cell_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = $1
        AND runtime_instances.instance_token = $2
+      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
+                           AND worker_instances.cell_id = runtime_instances.cell_id
+      JOIN environment_cells
+       ON environment_cells.org_id = workspace_mounts.org_id
+       AND environment_cells.project_id = workspace_mounts.project_id
+       AND environment_cells.environment_id = workspace_mounts.environment_id
+       AND environment_cells.cell_id = workspace_mounts.cell_id
+       AND environment_cells.route_generation = workspace_mounts.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
@@ -991,7 +1048,7 @@ failed AS (
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
        AND workspace_mounts.id = target.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 failed_runtime_instances AS (
     UPDATE runtime_instances
@@ -1129,7 +1186,7 @@ stream_wakeups AS (
       FROM lost_ptys
     RETURNING id
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
  FROM failed
  WHERE (SELECT count(*) FROM stream_wakeups)
      + (SELECT count(*) FROM failed_runtime_instances)
@@ -1151,6 +1208,7 @@ type FailWorkspaceMountRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -1209,6 +1267,7 @@ func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMount
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1262,20 +1321,37 @@ SELECT workspace_mounts.id,
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
+   AND runtime_instances.cell_id = workspace_mounts.cell_id
    AND runtime_instances.adopting_workspace_mount_id = workspace_mounts.id
    AND runtime_instances.worker_instance_id = $1
+   AND runtime_instances.cell_id = $2
    AND runtime_instances.state = 'preparing'
    AND (
        runtime_instances.expires_at IS NULL
        OR runtime_instances.expires_at > now()
    )
+  JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
+                       AND worker_instances.cell_id = runtime_instances.cell_id
+                       AND worker_instances.status = 'active'
+  JOIN environment_cells
+    ON environment_cells.org_id = workspace_mounts.org_id
+   AND environment_cells.project_id = workspace_mounts.project_id
+   AND environment_cells.environment_id = workspace_mounts.environment_id
+   AND environment_cells.cell_id = workspace_mounts.cell_id
+   AND environment_cells.route_generation = workspace_mounts.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.state = 'active'
  WHERE workspace_mounts.state = 'mounting'
    AND workspace_mounts.runtime_instance_id IS NULL
-   AND workspace_mounts.rootfs_digest = $2
-   AND workspace_mounts.runtime_abi = $3
-   AND workspace_mounts.guestd_abi = $4
-   AND workspace_mounts.adapter_abi = $5
-   AND runtime_instances.runtime_release_id = $6
+   AND workspace_mounts.rootfs_digest = $3
+   AND workspace_mounts.runtime_abi = $4
+   AND workspace_mounts.guestd_abi = $5
+   AND workspace_mounts.adapter_abi = $6
+   AND runtime_instances.runtime_release_id = $7
  ORDER BY workspace_mounts.priority DESC,
           workspace_mounts.created_at ASC,
           workspace_mounts.id ASC
@@ -1284,6 +1360,7 @@ SELECT workspace_mounts.id,
 
 type GetAwaitingPreparedRuntimeMountForWorkerParams struct {
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	CellID           string      `json:"cell_id"`
 	RootfsDigest     string      `json:"rootfs_digest"`
 	RuntimeABI       string      `json:"runtime_abi"`
 	GuestdAbi        string      `json:"guestd_abi"`
@@ -1299,6 +1376,7 @@ type GetAwaitingPreparedRuntimeMountForWorkerRow struct {
 func (q *Queries) GetAwaitingPreparedRuntimeMountForWorker(ctx context.Context, arg GetAwaitingPreparedRuntimeMountForWorkerParams) (GetAwaitingPreparedRuntimeMountForWorkerRow, error) {
 	row := q.db.QueryRow(ctx, getAwaitingPreparedRuntimeMountForWorker,
 		arg.WorkerInstanceID,
+		arg.CellID,
 		arg.RootfsDigest,
 		arg.RuntimeABI,
 		arg.GuestdAbi,
@@ -1311,7 +1389,7 @@ func (q *Queries) GetAwaitingPreparedRuntimeMountForWorker(ctx context.Context, 
 }
 
 const getWorkspaceMount = `-- name: GetWorkspaceMount :one
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM workspace_mounts
  WHERE org_id = $1
    AND project_id = $2
@@ -1341,6 +1419,7 @@ func (q *Queries) GetWorkspaceMount(ctx context.Context, arg GetWorkspaceMountPa
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1389,12 +1468,25 @@ func (q *Queries) GetWorkspaceMount(ctx context.Context, arg GetWorkspaceMountPa
 }
 
 const getWorkspaceMountForWorkerPrimitiveScope = `-- name: GetWorkspaceMountForWorkerPrimitiveScope :one
-SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
    AND runtime_instances.cell_id = workspace_mounts.cell_id
+   AND runtime_instances.route_generation = workspace_mounts.route_generation
    AND runtime_instances.id = workspace_mounts.runtime_instance_id
+  JOIN environment_cells
+    ON environment_cells.org_id = workspace_mounts.org_id
+   AND environment_cells.project_id = workspace_mounts.project_id
+   AND environment_cells.environment_id = workspace_mounts.environment_id
+   AND environment_cells.cell_id = workspace_mounts.cell_id
+   AND environment_cells.route_generation = workspace_mounts.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.state = 'active'
  WHERE workspace_mounts.org_id = $1
    AND workspace_mounts.cell_id = $2
    AND workspace_mounts.project_id = $3
@@ -1440,6 +1532,7 @@ func (q *Queries) GetWorkspaceMountForWorkerPrimitiveScope(ctx context.Context, 
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1507,27 +1600,32 @@ SELECT workspaces.id AS workspace_id,
   FROM workspaces
   JOIN deployment_sandboxes
     ON deployment_sandboxes.org_id = workspaces.org_id
+   AND deployment_sandboxes.cell_id = workspaces.cell_id
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   LEFT JOIN artifacts AS image_artifact
     ON image_artifact.org_id = deployment_sandboxes.org_id
+   AND image_artifact.cell_id = deployment_sandboxes.cell_id
    AND image_artifact.project_id = deployment_sandboxes.project_id
    AND image_artifact.environment_id = deployment_sandboxes.environment_id
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
   LEFT JOIN workspace_versions AS current_workspace_version
     ON current_workspace_version.org_id = workspaces.org_id
+   AND current_workspace_version.cell_id = workspaces.cell_id
    AND current_workspace_version.project_id = workspaces.project_id
    AND current_workspace_version.environment_id = workspaces.environment_id
    AND current_workspace_version.workspace_id = workspaces.id
    AND current_workspace_version.id = workspaces.current_version_id
   LEFT JOIN artifacts AS workspace_artifact
     ON workspace_artifact.org_id = current_workspace_version.org_id
+   AND workspace_artifact.cell_id = current_workspace_version.cell_id
    AND workspace_artifact.project_id = current_workspace_version.project_id
    AND workspace_artifact.environment_id = current_workspace_version.environment_id
    AND workspace_artifact.id = current_workspace_version.artifact_id
   LEFT JOIN workspace_mounts AS active_mount
     ON active_mount.org_id = workspaces.org_id
+   AND active_mount.cell_id = workspaces.cell_id
    AND active_mount.project_id = workspaces.project_id
    AND active_mount.environment_id = workspaces.environment_id
    AND active_mount.workspace_id = workspaces.id
@@ -1598,7 +1696,7 @@ func (q *Queries) GetWorkspaceMountPrerequisites(ctx context.Context, arg GetWor
 
 const markStaleWorkspaceMountsLost = `-- name: MarkStaleWorkspaceMountsLost :many
 WITH target AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
      WHERE workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        AND workspace_mounts.last_heartbeat_at < $1
@@ -1620,7 +1718,7 @@ lost AS (
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
        AND workspace_mounts.id = target.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 lost_runtime_instances AS (
     UPDATE runtime_instances
@@ -1757,7 +1855,7 @@ stream_wakeups AS (
       FROM lost_ptys
     RETURNING id
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM lost
  WHERE (SELECT count(*) FROM stream_wakeups)
      + (SELECT count(*) FROM lost_runtime_instances)
@@ -1771,6 +1869,7 @@ type MarkStaleWorkspaceMountsLostRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -1829,6 +1928,7 @@ func (q *Queries) MarkStaleWorkspaceMountsLost(ctx context.Context, staleBefore 
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -1885,8 +1985,21 @@ func (q *Queries) MarkStaleWorkspaceMountsLost(ctx context.Context, staleBefore 
 
 const markWorkspaceMountMounted = `-- name: MarkWorkspaceMountMounted :one
 WITH authenticated_runtime_instance AS MATERIALIZED (
-    SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
+    SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.route_generation, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
       FROM runtime_instances
+      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
+                           AND worker_instances.cell_id = runtime_instances.cell_id
+      JOIN environment_cells ON environment_cells.org_id = runtime_instances.org_id
+                            AND environment_cells.project_id = runtime_instances.project_id
+                            AND environment_cells.environment_id = runtime_instances.environment_id
+                            AND environment_cells.cell_id = runtime_instances.cell_id
+                            AND environment_cells.route_generation = runtime_instances.route_generation
+                            AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE runtime_instances.org_id = $1
        AND runtime_instances.worker_instance_id = $2
        AND runtime_instances.instance_token = $3
@@ -1905,10 +2018,11 @@ updated_mount AS (
            updated_at = now()
       FROM authenticated_runtime_instance
      WHERE workspace_mounts.org_id = authenticated_runtime_instance.org_id
+       AND workspace_mounts.cell_id = authenticated_runtime_instance.cell_id
        AND workspace_mounts.id = $5
        AND workspace_mounts.runtime_instance_id = authenticated_runtime_instance.id
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 updated_runtime_instance AS (
     UPDATE runtime_instances
@@ -1931,7 +2045,7 @@ updated_runtime_instance AS (
        AND runtime_instances.id = updated_mount.runtime_instance_id
     RETURNING runtime_instances.id
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM updated_mount
  WHERE EXISTS (SELECT 1 FROM updated_runtime_instance)
 `
@@ -1948,6 +2062,7 @@ type MarkWorkspaceMountMountedRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -2006,6 +2121,7 @@ func (q *Queries) MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspa
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -2055,7 +2171,7 @@ func (q *Queries) MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspa
 
 const promoteWorkspaceMountStopCapture = `-- name: PromoteWorkspaceMountStopCapture :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
       JOIN workspaces
         ON workspaces.org_id = workspace_mounts.org_id
@@ -2064,9 +2180,24 @@ WITH target AS MATERIALIZED (
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.cell_id = workspace_mounts.cell_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = $1
        AND runtime_instances.instance_token = $2
+      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
+                           AND worker_instances.cell_id = runtime_instances.cell_id
+      JOIN environment_cells
+       ON environment_cells.org_id = workspace_mounts.org_id
+       AND environment_cells.project_id = workspace_mounts.project_id
+       AND environment_cells.environment_id = workspace_mounts.environment_id
+       AND environment_cells.cell_id = workspace_mounts.cell_id
+       AND environment_cells.route_generation = workspace_mounts.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
        AND workspace_mounts.workspace_id = $5
@@ -2078,6 +2209,11 @@ WITH target AS MATERIALIZED (
 verified_artifact AS (
     SELECT artifacts.id
       FROM artifacts
+      JOIN target
+        ON target.org_id = artifacts.org_id
+       AND target.cell_id = artifacts.cell_id
+       AND target.project_id = artifacts.project_id
+       AND target.environment_id = artifacts.environment_id
       JOIN cas_objects
         ON cas_objects.org_id = artifacts.org_id
        AND cas_objects.cell_id = artifacts.cell_id
@@ -2295,9 +2431,9 @@ released_mounts AS (
      WHERE workspace_mounts.org_id = expired_runtime_instances.org_id
        AND workspace_mounts.id = expired_runtime_instances.workspace_mount_id
        AND workspace_mounts.state = 'mounting'
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM released_mounts
 `
 
@@ -2305,6 +2441,7 @@ type ReleaseExpiredPreparedRuntimeReservationsRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -2363,6 +2500,7 @@ func (q *Queries) ReleaseExpiredPreparedRuntimeReservations(ctx context.Context,
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -2422,11 +2560,26 @@ WITH renewed_runtime_instance AS (
     UPDATE runtime_instances
        SET last_heartbeat_at = now(),
            updated_at = now()
+      FROM worker_instances
+      JOIN environment_cells ON true
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE runtime_instances.org_id = $1
        AND runtime_instances.worker_instance_id = $2
+       AND worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.cell_id = runtime_instances.cell_id
+       AND environment_cells.org_id = runtime_instances.org_id
+       AND environment_cells.project_id = runtime_instances.project_id
+       AND environment_cells.environment_id = runtime_instances.environment_id
+       AND environment_cells.cell_id = runtime_instances.cell_id
+       AND environment_cells.route_generation = runtime_instances.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
        AND runtime_instances.instance_token = $3
        AND runtime_instances.state IN ('binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.route_generation, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
 ),
 renewed_mount AS (
     UPDATE workspace_mounts
@@ -2435,12 +2588,13 @@ renewed_mount AS (
            updated_at = now()
       FROM renewed_runtime_instance
      WHERE workspace_mounts.org_id = renewed_runtime_instance.org_id
+       AND workspace_mounts.cell_id = renewed_runtime_instance.cell_id
        AND workspace_mounts.id = $5
        AND workspace_mounts.runtime_instance_id = renewed_runtime_instance.id
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM renewed_mount
 `
 
@@ -2456,6 +2610,7 @@ type RenewWorkspaceMountRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -2514,6 +2669,7 @@ func (q *Queries) RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMou
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -2569,10 +2725,11 @@ WITH worker_scope AS MATERIALIZED (
        AND worker_instances.status = 'active'
 ),
 victim AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.cell_id = workspace_mounts.cell_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = $1
        AND runtime_instances.workspace_mount_id = workspace_mounts.id
@@ -2583,6 +2740,19 @@ victim AS MATERIALIZED (
        AND workspaces.environment_id = workspace_mounts.environment_id
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN worker_scope ON true
+      JOIN environment_cells
+       ON environment_cells.org_id = workspace_mounts.org_id
+       AND environment_cells.project_id = workspace_mounts.project_id
+       AND environment_cells.environment_id = workspace_mounts.environment_id
+       AND environment_cells.cell_id = workspace_mounts.cell_id
+       AND environment_cells.cell_id = worker_scope.cell_id
+       AND environment_cells.route_generation = workspace_mounts.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE workspace_mounts.state = 'mounted'
        AND workspace_mounts.dirty_generation = 0
        AND workspaces.state = 'active'
@@ -2652,7 +2822,7 @@ stopping AS (
       FROM victim
      WHERE workspace_mounts.org_id = victim.org_id
        AND workspace_mounts.id = victim.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 stopping_runtime_instances AS (
     UPDATE runtime_instances
@@ -2678,7 +2848,7 @@ updated_workspaces AS (
        AND workspaces.id = stopping.workspace_id
     RETURNING workspaces.id
 )
-SELECT stopping.id, stopping.org_id, stopping.cell_id, stopping.project_id, stopping.environment_id, stopping.workspace_id, stopping.deployment_sandbox_id, stopping.sandbox_fingerprint, stopping.base_version_id, stopping.runtime_instance_id, stopping.claim_attempt, stopping.priority, stopping.guestd_channel_token_hash, stopping.guestd_channel_token_expires_at, stopping.state, stopping.request, stopping.lease_generation, stopping.dirty_generation, stopping.fencing_generation, stopping.network_namespace, stopping.port_namespace, stopping.image_artifact_id, stopping.image_artifact_format, stopping.rootfs_digest, stopping.image_digest, stopping.image_format, stopping.workspace_artifact_id, stopping.workspace_artifact_encoding, stopping.workspace_artifact_entry_count, stopping.workspace_artifact_digest, stopping.workspace_artifact_size_bytes, stopping.workspace_artifact_media_type, stopping.workspace_mount_path, stopping.runtime_abi, stopping.guestd_abi, stopping.adapter_abi, stopping.last_heartbeat_at, stopping.requested_at, stopping.mounted_at, stopping.unmounted_at, stopping.stopped_at, stopping.lost_at, stopping.failed_at, stopping.error, stopping.created_at, stopping.updated_at
+SELECT stopping.id, stopping.org_id, stopping.cell_id, stopping.route_generation, stopping.project_id, stopping.environment_id, stopping.workspace_id, stopping.deployment_sandbox_id, stopping.sandbox_fingerprint, stopping.base_version_id, stopping.runtime_instance_id, stopping.claim_attempt, stopping.priority, stopping.guestd_channel_token_hash, stopping.guestd_channel_token_expires_at, stopping.state, stopping.request, stopping.lease_generation, stopping.dirty_generation, stopping.fencing_generation, stopping.network_namespace, stopping.port_namespace, stopping.image_artifact_id, stopping.image_artifact_format, stopping.rootfs_digest, stopping.image_digest, stopping.image_format, stopping.workspace_artifact_id, stopping.workspace_artifact_encoding, stopping.workspace_artifact_entry_count, stopping.workspace_artifact_digest, stopping.workspace_artifact_size_bytes, stopping.workspace_artifact_media_type, stopping.workspace_mount_path, stopping.runtime_abi, stopping.guestd_abi, stopping.adapter_abi, stopping.last_heartbeat_at, stopping.requested_at, stopping.mounted_at, stopping.unmounted_at, stopping.stopped_at, stopping.lost_at, stopping.failed_at, stopping.error, stopping.created_at, stopping.updated_at
   FROM stopping
  WHERE (SELECT count(*) FROM stopping_runtime_instances)
      + (SELECT count(*) FROM updated_workspaces) >= 0
@@ -2693,6 +2863,7 @@ type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -2751,6 +2922,7 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 			&i.ID,
 			&i.OrgID,
 			&i.CellID,
+			&i.RouteGeneration,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -2807,22 +2979,24 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 
 const requestWorkspaceMountStop = `-- name: RequestWorkspaceMountStop :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.org_id, workspaces.cell_id, workspaces.route_generation, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
-       AND workspaces.project_id = $2
-       AND workspaces.environment_id = $3
-       AND workspaces.id = $4
+       AND workspaces.cell_id = $2
+       AND workspaces.project_id = $3
+       AND workspaces.environment_id = $4
+       AND workspaces.id = $5
        AND workspaces.state = 'active'
        AND workspaces.archived_at IS NULL
        AND workspaces.deleted_at IS NULL
      FOR UPDATE
 ),
 target AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM locked_workspace
       JOIN workspace_mounts
         ON workspace_mounts.org_id = locked_workspace.org_id
+       AND workspace_mounts.cell_id = locked_workspace.cell_id
        AND workspace_mounts.project_id = locked_workspace.project_id
        AND workspace_mounts.environment_id = locked_workspace.environment_id
        AND workspace_mounts.workspace_id = locked_workspace.id
@@ -2839,9 +3013,10 @@ requested_without_runtime AS (
            updated_at = now()
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
+       AND workspace_mounts.cell_id = target.cell_id
        AND workspace_mounts.id = target.id
        AND target.runtime_instance_id IS NULL
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 requested_live_stop AS (
     UPDATE workspace_mounts
@@ -2849,9 +3024,10 @@ requested_live_stop AS (
            updated_at = now()
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
+       AND workspace_mounts.cell_id = target.cell_id
        AND workspace_mounts.id = target.id
        AND target.runtime_instance_id IS NOT NULL
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 released_prepared_runtime_reservation AS (
     UPDATE runtime_instances
@@ -2860,6 +3036,7 @@ released_prepared_runtime_reservation AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE runtime_instances.org_id = requested_without_runtime.org_id
+       AND runtime_instances.cell_id = requested_without_runtime.cell_id
        AND runtime_instances.adopting_workspace_mount_id = requested_without_runtime.id
        AND runtime_instances.state IN ('preparing', 'ready')
     RETURNING runtime_instances.id
@@ -2870,6 +3047,7 @@ updated_workspace AS (
            updated_at = now()
       FROM locked_workspace
      WHERE workspaces.org_id = locked_workspace.org_id
+       AND workspaces.cell_id = locked_workspace.cell_id
        AND workspaces.project_id = locked_workspace.project_id
        AND workspaces.environment_id = locked_workspace.environment_id
        AND workspaces.id = locked_workspace.id
@@ -2883,6 +3061,7 @@ cancelled_requested_operations AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_operations.org_id = requested_without_runtime.org_id
+       AND workspace_operations.cell_id = requested_without_runtime.cell_id
        AND workspace_operations.workspace_mount_id = requested_without_runtime.id
        AND workspace_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_operations.id
@@ -2895,6 +3074,7 @@ terminated_requested_execs AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_execs.org_id = requested_without_runtime.org_id
+       AND workspace_execs.cell_id = requested_without_runtime.cell_id
        AND workspace_execs.project_id = requested_without_runtime.project_id
        AND workspace_execs.environment_id = requested_without_runtime.environment_id
        AND workspace_execs.workspace_id = requested_without_runtime.workspace_id
@@ -2912,6 +3092,7 @@ closed_requested_ptys AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_pty_sessions.org_id = requested_without_runtime.org_id
+       AND workspace_pty_sessions.cell_id = requested_without_runtime.cell_id
        AND workspace_pty_sessions.project_id = requested_without_runtime.project_id
        AND workspace_pty_sessions.environment_id = requested_without_runtime.environment_id
        AND workspace_pty_sessions.workspace_id = requested_without_runtime.workspace_id
@@ -2927,6 +3108,7 @@ closed_requested_ports AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_ports.org_id = requested_without_runtime.org_id
+       AND workspace_ports.cell_id = requested_without_runtime.cell_id
        AND workspace_ports.project_id = requested_without_runtime.project_id
        AND workspace_ports.environment_id = requested_without_runtime.environment_id
        AND workspace_ports.workspace_id = requested_without_runtime.workspace_id
@@ -2941,6 +3123,7 @@ released_requested_leases AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_leases.org_id = requested_without_runtime.org_id
+       AND workspace_leases.cell_id = requested_without_runtime.cell_id
        AND workspace_leases.project_id = requested_without_runtime.project_id
        AND workspace_leases.environment_id = requested_without_runtime.environment_id
        AND workspace_leases.workspace_id = requested_without_runtime.workspace_id
@@ -2981,16 +3164,17 @@ requested_cleanup_counts AS (
          + (SELECT count(*) FROM released_requested_leases)
          + (SELECT count(*) FROM requested_stream_wakeups) AS count
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM requested_without_runtime
  WHERE (SELECT count FROM requested_cleanup_counts) >= 0
 UNION ALL
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM requested_live_stop
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at FROM requested_live_stop
 LIMIT 1
 `
 
 type RequestWorkspaceMountStopParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
+	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
@@ -3000,6 +3184,7 @@ type RequestWorkspaceMountStopRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -3048,6 +3233,7 @@ type RequestWorkspaceMountStopRow struct {
 func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error) {
 	row := q.db.QueryRow(ctx, requestWorkspaceMountStop,
 		arg.OrgID,
+		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -3057,6 +3243,7 @@ func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWork
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -3109,6 +3296,7 @@ WITH worker_scope AS MATERIALIZED (
     SELECT worker_instances.id, worker_instances.org_id, worker_instances.cell_id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.status, worker_instances.claim_version, worker_instances.region, worker_instances.total_milli_cpu, worker_instances.total_memory_mib, worker_instances.total_disk_mib, worker_instances.total_execution_slots, worker_instances.available_milli_cpu, worker_instances.available_memory_mib, worker_instances.available_disk_mib, worker_instances.available_execution_slots, worker_instances.labels, worker_instances.heartbeat, worker_instances.runtime_id, worker_instances.runtime_arch, worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest, worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_version, worker_instances.protocol_version, worker_instances.first_seen_at, worker_instances.last_seen_at, worker_instances.drained_at
       FROM worker_instances
      WHERE worker_instances.id = $1
+       AND worker_instances.cell_id = $2
        AND worker_instances.status = 'active'
      FOR UPDATE OF worker_instances
 ),
@@ -3119,27 +3307,32 @@ candidate AS (
       FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
+       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
+       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
       JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
+       AND image_artifact.cell_id = workspace_mounts.cell_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN LATERAL (
-          SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
+          SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.cell_id, runtime_instances.route_generation, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
             FROM runtime_instances
            WHERE runtime_instances.worker_instance_id = worker_scope.id
+             AND runtime_instances.cell_id = workspace_mounts.cell_id
+             AND runtime_instances.route_generation = workspace_mounts.route_generation
              AND runtime_instances.state = 'preparing'
              AND runtime_instances.workspace_mount_id IS NULL
              AND runtime_instances.adopting_workspace_mount_id IS NULL
@@ -3147,7 +3340,7 @@ candidate AS (
                  runtime_instances.expires_at IS NULL
                  OR runtime_instances.expires_at > now()
              )
-             AND runtime_instances.runtime_release_id = $2
+             AND runtime_instances.runtime_release_id = $3
              AND runtime_instances.deployment_sandbox_id = workspace_mounts.deployment_sandbox_id
              AND runtime_instances.sandbox_fingerprint = workspace_mounts.sandbox_fingerprint
              AND runtime_instances.rootfs_digest = workspace_mounts.rootfs_digest
@@ -3164,12 +3357,25 @@ candidate AS (
            LIMIT 1
            FOR UPDATE SKIP LOCKED
       ) preparing_runtime_instance ON true
+      JOIN environment_cells
+        ON environment_cells.org_id = workspace_mounts.org_id
+       AND environment_cells.project_id = workspace_mounts.project_id
+       AND environment_cells.environment_id = workspace_mounts.environment_id
+       AND environment_cells.cell_id = workspace_mounts.cell_id
+       AND environment_cells.cell_id = worker_scope.cell_id
+       AND environment_cells.route_generation = workspace_mounts.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE workspace_mounts.state = 'mounting'
        AND workspace_mounts.runtime_instance_id IS NULL
-       AND workspace_mounts.rootfs_digest = $3
-       AND workspace_mounts.runtime_abi = $4
-       AND workspace_mounts.guestd_abi = $5
-       AND workspace_mounts.adapter_abi = $6
+       AND workspace_mounts.rootfs_digest = $4
+       AND workspace_mounts.runtime_abi = $5
+       AND workspace_mounts.guestd_abi = $6
+       AND workspace_mounts.adapter_abi = $7
      ORDER BY workspace_mounts.priority DESC,
               workspace_mounts.created_at ASC,
               workspace_mounts.id ASC
@@ -3179,7 +3385,7 @@ candidate AS (
 reserved_runtime_instance AS (
     UPDATE runtime_instances
        SET adopting_workspace_mount_id = candidate.id,
-           adoption_expires_at = $7,
+           adoption_expires_at = $8,
            updated_at = now()
       FROM candidate
      WHERE runtime_instances.id = candidate.preparing_runtime_instance_id
@@ -3195,9 +3401,9 @@ reserved_mount AS (
      WHERE workspace_mounts.org_id = candidate.org_id
        AND workspace_mounts.id = candidate.id
        AND EXISTS (SELECT 1 FROM reserved_runtime_instance)
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT reserved_mount.id, reserved_mount.org_id, reserved_mount.cell_id, reserved_mount.project_id, reserved_mount.environment_id, reserved_mount.workspace_id, reserved_mount.deployment_sandbox_id, reserved_mount.sandbox_fingerprint, reserved_mount.base_version_id, reserved_mount.runtime_instance_id, reserved_mount.claim_attempt, reserved_mount.priority, reserved_mount.guestd_channel_token_hash, reserved_mount.guestd_channel_token_expires_at, reserved_mount.state, reserved_mount.request, reserved_mount.lease_generation, reserved_mount.dirty_generation, reserved_mount.fencing_generation, reserved_mount.network_namespace, reserved_mount.port_namespace, reserved_mount.image_artifact_id, reserved_mount.image_artifact_format, reserved_mount.rootfs_digest, reserved_mount.image_digest, reserved_mount.image_format, reserved_mount.workspace_artifact_id, reserved_mount.workspace_artifact_encoding, reserved_mount.workspace_artifact_entry_count, reserved_mount.workspace_artifact_digest, reserved_mount.workspace_artifact_size_bytes, reserved_mount.workspace_artifact_media_type, reserved_mount.workspace_mount_path, reserved_mount.runtime_abi, reserved_mount.guestd_abi, reserved_mount.adapter_abi, reserved_mount.last_heartbeat_at, reserved_mount.requested_at, reserved_mount.mounted_at, reserved_mount.unmounted_at, reserved_mount.stopped_at, reserved_mount.lost_at, reserved_mount.failed_at, reserved_mount.error, reserved_mount.created_at, reserved_mount.updated_at,
+SELECT reserved_mount.id, reserved_mount.org_id, reserved_mount.cell_id, reserved_mount.route_generation, reserved_mount.project_id, reserved_mount.environment_id, reserved_mount.workspace_id, reserved_mount.deployment_sandbox_id, reserved_mount.sandbox_fingerprint, reserved_mount.base_version_id, reserved_mount.runtime_instance_id, reserved_mount.claim_attempt, reserved_mount.priority, reserved_mount.guestd_channel_token_hash, reserved_mount.guestd_channel_token_expires_at, reserved_mount.state, reserved_mount.request, reserved_mount.lease_generation, reserved_mount.dirty_generation, reserved_mount.fencing_generation, reserved_mount.network_namespace, reserved_mount.port_namespace, reserved_mount.image_artifact_id, reserved_mount.image_artifact_format, reserved_mount.rootfs_digest, reserved_mount.image_digest, reserved_mount.image_format, reserved_mount.workspace_artifact_id, reserved_mount.workspace_artifact_encoding, reserved_mount.workspace_artifact_entry_count, reserved_mount.workspace_artifact_digest, reserved_mount.workspace_artifact_size_bytes, reserved_mount.workspace_artifact_media_type, reserved_mount.workspace_mount_path, reserved_mount.runtime_abi, reserved_mount.guestd_abi, reserved_mount.adapter_abi, reserved_mount.last_heartbeat_at, reserved_mount.requested_at, reserved_mount.mounted_at, reserved_mount.unmounted_at, reserved_mount.stopped_at, reserved_mount.lost_at, reserved_mount.failed_at, reserved_mount.error, reserved_mount.created_at, reserved_mount.updated_at,
        candidate.preparing_runtime_instance_id
   FROM reserved_mount
   JOIN candidate ON candidate.org_id = reserved_mount.org_id
@@ -3206,6 +3412,7 @@ SELECT reserved_mount.id, reserved_mount.org_id, reserved_mount.cell_id, reserve
 
 type ReserveWorkspaceMountPreparingRuntimeParams struct {
 	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
+	CellID                      string             `json:"cell_id"`
 	RuntimeID                   string             `json:"runtime_id"`
 	RootfsDigest                string             `json:"rootfs_digest"`
 	RuntimeABI                  string             `json:"runtime_abi"`
@@ -3218,6 +3425,7 @@ type ReserveWorkspaceMountPreparingRuntimeRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -3267,6 +3475,7 @@ type ReserveWorkspaceMountPreparingRuntimeRow struct {
 func (q *Queries) ReserveWorkspaceMountPreparingRuntime(ctx context.Context, arg ReserveWorkspaceMountPreparingRuntimeParams) (ReserveWorkspaceMountPreparingRuntimeRow, error) {
 	row := q.db.QueryRow(ctx, reserveWorkspaceMountPreparingRuntime,
 		arg.WorkerInstanceID,
+		arg.CellID,
 		arg.RuntimeID,
 		arg.RootfsDigest,
 		arg.RuntimeABI,
@@ -3279,6 +3488,7 @@ func (q *Queries) ReserveWorkspaceMountPreparingRuntime(ctx context.Context, arg
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -3329,10 +3539,11 @@ func (q *Queries) ReserveWorkspaceMountPreparingRuntime(ctx context.Context, arg
 
 const stopWorkspaceMount = `-- name: StopWorkspaceMount :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.cell_id = workspace_mounts.cell_id
        AND runtime_instances.worker_instance_id = $1
        AND runtime_instances.instance_token = $2
        AND (
@@ -3348,6 +3559,20 @@ WITH target AS MATERIALIZED (
                 AND runtime_instances.state IN ('closed', 'lost', 'failed')
             )
        )
+      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
+                           AND worker_instances.cell_id = runtime_instances.cell_id
+      JOIN environment_cells
+       ON environment_cells.org_id = workspace_mounts.org_id
+       AND environment_cells.project_id = workspace_mounts.project_id
+       AND environment_cells.environment_id = workspace_mounts.environment_id
+       AND environment_cells.cell_id = workspace_mounts.cell_id
+       AND environment_cells.route_generation = workspace_mounts.route_generation
+       AND environment_cells.route_state IN ('active', 'draining')
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
 ),
@@ -3362,10 +3587,10 @@ stopped AS (
      WHERE workspace_mounts.org_id = target.org_id
        AND workspace_mounts.id = target.id
        AND target.state IN ('mounting', 'mounted', 'unmounting')
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.cell_id, workspace_mounts.route_generation, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 replayed AS (
-    SELECT target.id, target.org_id, target.cell_id, target.project_id, target.environment_id, target.workspace_id, target.deployment_sandbox_id, target.sandbox_fingerprint, target.base_version_id, target.runtime_instance_id, target.claim_attempt, target.priority, target.guestd_channel_token_hash, target.guestd_channel_token_expires_at, target.state, target.request, target.lease_generation, target.dirty_generation, target.fencing_generation, target.network_namespace, target.port_namespace, target.image_artifact_id, target.image_artifact_format, target.rootfs_digest, target.image_digest, target.image_format, target.workspace_artifact_id, target.workspace_artifact_encoding, target.workspace_artifact_entry_count, target.workspace_artifact_digest, target.workspace_artifact_size_bytes, target.workspace_artifact_media_type, target.workspace_mount_path, target.runtime_abi, target.guestd_abi, target.adapter_abi, target.last_heartbeat_at, target.requested_at, target.mounted_at, target.unmounted_at, target.stopped_at, target.lost_at, target.failed_at, target.error, target.created_at, target.updated_at
+    SELECT target.id, target.org_id, target.cell_id, target.route_generation, target.project_id, target.environment_id, target.workspace_id, target.deployment_sandbox_id, target.sandbox_fingerprint, target.base_version_id, target.runtime_instance_id, target.claim_attempt, target.priority, target.guestd_channel_token_hash, target.guestd_channel_token_expires_at, target.state, target.request, target.lease_generation, target.dirty_generation, target.fencing_generation, target.network_namespace, target.port_namespace, target.image_artifact_id, target.image_artifact_format, target.rootfs_digest, target.image_digest, target.image_format, target.workspace_artifact_id, target.workspace_artifact_encoding, target.workspace_artifact_entry_count, target.workspace_artifact_digest, target.workspace_artifact_size_bytes, target.workspace_artifact_media_type, target.workspace_mount_path, target.runtime_abi, target.guestd_abi, target.adapter_abi, target.last_heartbeat_at, target.requested_at, target.mounted_at, target.unmounted_at, target.stopped_at, target.lost_at, target.failed_at, target.error, target.created_at, target.updated_at
       FROM target
      WHERE target.state = 'unmounted'
 ),
@@ -3499,7 +3724,7 @@ stream_wakeups AS (
       FROM closed_ptys
     RETURNING id
 )
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM stopped
  WHERE (SELECT count(*) FROM stream_wakeups)
      + (SELECT count(*) FROM closed_runtime_instances)
@@ -3508,7 +3733,7 @@ SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment
      + (SELECT count(*) FROM released_leases)
      + (SELECT count(*) FROM updated_workspace) >= 0
 UNION ALL
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
+SELECT id, org_id, cell_id, route_generation, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM replayed
  WHERE NOT EXISTS (SELECT 1 FROM stopped)
 `
@@ -3524,6 +3749,7 @@ type StopWorkspaceMountRow struct {
 	ID                          pgtype.UUID         `json:"id"`
 	OrgID                       pgtype.UUID         `json:"org_id"`
 	CellID                      string              `json:"cell_id"`
+	RouteGeneration             int64               `json:"route_generation"`
 	ProjectID                   pgtype.UUID         `json:"project_id"`
 	EnvironmentID               pgtype.UUID         `json:"environment_id"`
 	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
@@ -3581,6 +3807,7 @@ func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMount
 		&i.ID,
 		&i.OrgID,
 		&i.CellID,
+		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,

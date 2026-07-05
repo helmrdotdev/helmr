@@ -32,7 +32,7 @@ INSERT INTO runtime_substrate_artifacts (
     sqlc.narg(created_by_worker_instance_id),
     now()
 )
-ON CONFLICT (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
+ON CONFLICT (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
 DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),
@@ -47,10 +47,31 @@ SELECT runtime_substrate_artifacts.*,
   FROM runtime_substrate_artifacts
   JOIN artifacts
     ON artifacts.org_id = runtime_substrate_artifacts.org_id
+   AND artifacts.cell_id = runtime_substrate_artifacts.cell_id
    AND artifacts.project_id = runtime_substrate_artifacts.project_id
    AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
    AND artifacts.id = runtime_substrate_artifacts.artifact_id
+  JOIN deployment_sandboxes
+    ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
+   AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
+   AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
+   AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
+   AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
+  JOIN environment_cells
+    ON environment_cells.org_id = runtime_substrate_artifacts.org_id
+   AND environment_cells.project_id = runtime_substrate_artifacts.project_id
+   AND environment_cells.environment_id = runtime_substrate_artifacts.environment_id
+   AND environment_cells.cell_id = runtime_substrate_artifacts.cell_id
+   AND environment_cells.route_generation = deployment_sandboxes.route_generation
+   AND environment_cells.route_state IN ('active', 'draining')
+  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                AND org_cells.cell_id = environment_cells.cell_id
+                AND org_cells.state = 'active'
+  JOIN cells ON cells.id = environment_cells.cell_id
+            AND cells.region_id = environment_cells.region_id
+            AND cells.state = 'active'
  WHERE runtime_substrate_artifacts.org_id = sqlc.arg(org_id)
+   AND runtime_substrate_artifacts.cell_id = sqlc.arg(cell_id)
    AND runtime_substrate_artifacts.project_id = sqlc.arg(project_id)
    AND runtime_substrate_artifacts.environment_id = sqlc.arg(environment_id)
    AND runtime_substrate_artifacts.deployment_sandbox_id = sqlc.arg(deployment_sandbox_id)

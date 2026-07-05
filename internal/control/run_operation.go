@@ -70,6 +70,10 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.CellID, summary.RouteGeneration); err != nil {
+		writeError(w, err)
+		return
+	}
 	requestBody, err := json.Marshal(request)
 	if err != nil {
 		writeError(w, errors.New("encode cancel request"))
@@ -98,6 +102,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
 		OrgID:       pgvalue.UUID(actor.OrgID),
+		CellID:      summary.CellID,
 		RunID:       pgvalue.UUID(runID),
 		Reason:      request.Reason,
 		Force:       request.Force,

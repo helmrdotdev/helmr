@@ -9,13 +9,15 @@ import (
 
 type DequeueRequest struct {
 	OrgID            string
+	CellID           string
 	ProjectID        string
 	EnvironmentID    string
+	QueueClass       string
 	WorkerInstanceID string
 	QueueName        string
+	Region           string
 	Available        compute.ResourceVector
 	Runtime          compute.RuntimeSelector
-	Region           string
 	Labels           map[string]string
 	MaxMessages      int
 	Wait             time.Duration

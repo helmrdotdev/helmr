@@ -44,13 +44,60 @@ variable "deployment_mode" {
 }
 
 variable "cell_id" {
-  description = "Managed-cloud cell ID for this control-plane stack."
+  description = "Opaque cell ID for this control-plane stack."
   type        = string
-  default     = "us-east-1-cell-1"
 
   validation {
     condition     = trimspace(var.cell_id) != ""
     error_message = "cell_id must be non-empty."
+  }
+}
+
+variable "region_id" {
+  description = "Helmr region primitive for this control-plane stack. Defaults to the AWS provider region."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.region_id == null || trimspace(var.region_id) != ""
+    error_message = "region_id must be null or non-empty."
+  }
+}
+
+variable "default_region_id" {
+  description = "Default execution region for newly created projects and environments. Defaults to region_id."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.default_region_id == null || trimspace(var.default_region_id) != ""
+    error_message = "default_region_id must be null or non-empty."
+  }
+}
+
+variable "region_display_name" {
+  description = "Display name stored for the Helmr region. Defaults to region_id."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.region_display_name == null || trimspace(var.region_display_name) != ""
+    error_message = "region_display_name must be null or non-empty."
+  }
+}
+
+variable "cell_environment_class" {
+  description = "Environment class stored for the bootstrapped cell. Defaults to deployment_mode."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.cell_environment_class == null || trimspace(var.cell_environment_class) != ""
+    error_message = "cell_environment_class must be null or non-empty."
   }
 }
 

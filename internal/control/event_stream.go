@@ -61,7 +61,7 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, c
 	}
 	reader := cfg.TelemetryReader
 	if reader == nil {
-		reader = telemetry.NewCompositeReader(telemetry.NewHotReader(queries), nil)
+		return nil, errors.New("event stream telemetry reader is required")
 	}
 	return &EventStream{log: log, db: queries, redis: redis, cellID: cfg.CellID, telemetryReader: reader}, nil
 }

@@ -122,7 +122,7 @@ func TestGetRunLogsRejectsWrongCell(t *testing.T) {
 
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusForbidden {
+	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	if store.runLogSnapshot.RunID.Valid {
@@ -253,7 +253,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient}
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, cellID: dbtest.DefaultCellID, telemetryReader: fakeTelemetryReader{store: store}}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
 	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
 	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))

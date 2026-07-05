@@ -32,14 +32,14 @@ func TestRequeueResolvedRunWaitsEnsuresWorkspaceMount(t *testing.T) {
 		}},
 		workspaceMountID: pgvalue.UUID(workspaceMountID),
 	}
-	rows, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), nil)
+	rows, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), "cell-test", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 1 {
 		t.Fatalf("rows = %d, want 1", len(rows))
 	}
-	if store.requeueParams.OrgID != pgvalue.UUID(orgID) || store.requeueParams.LimitCount != runWaitRequeueLimit {
+	if store.requeueParams.OrgID != pgvalue.UUID(orgID) || store.requeueParams.CellID != "cell-test" || store.requeueParams.LimitCount != runWaitRequeueLimit {
 		t.Fatalf("requeue params = %+v", store.requeueParams)
 	}
 	if store.ensureParams.WorkspaceID != pgvalue.UUID(workspaceID) {
@@ -74,7 +74,7 @@ func TestRequeueResolvedRunWaitsReturnsEnsureFailure(t *testing.T) {
 		ensureErr: errors.New("mount prerequisites missing"),
 	}
 
-	_, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), nil)
+	_, err := requeueResolvedRunWaitsWithStore(context.Background(), store, pgvalue.UUID(orgID), "cell-test", nil)
 	if err == nil || !errors.Is(err, store.ensureErr) {
 		t.Fatalf("err = %v, want ensure error", err)
 	}

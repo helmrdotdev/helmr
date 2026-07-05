@@ -3,6 +3,7 @@ package dispatch
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,10 +26,13 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:        orgID.String(),
-				RunID:        runID.String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:           orgID.String(),
+				CellID:          "us-east-1-cell-1",
+				RouteGeneration: 1,
+				QueueClass:      "default",
+				RunID:           runID.String(),
+				QueueName:       "queue-a",
+				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -57,6 +61,8 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	}
 	result, err := claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -86,10 +92,13 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:        orgID.String(),
-				RunID:        runID.String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:           orgID.String(),
+				CellID:          "us-east-1-cell-1",
+				RouteGeneration: 1,
+				QueueClass:      "default",
+				RunID:           runID.String(),
+				QueueName:       "queue-a",
+				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -104,6 +113,8 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -127,10 +138,13 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:        orgID.String(),
-				RunID:        runID.String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:           orgID.String(),
+				CellID:          "us-east-1-cell-1",
+				RouteGeneration: 1,
+				QueueClass:      "default",
+				RunID:           runID.String(),
+				QueueName:       "queue-a",
+				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -146,6 +160,8 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -169,10 +185,13 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:        orgID.String(),
-				RunID:        runID.String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:           orgID.String(),
+				CellID:          "us-east-1-cell-1",
+				RouteGeneration: 1,
+				QueueClass:      "default",
+				RunID:           runID.String(),
+				QueueName:       "queue-a",
+				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -187,6 +206,8 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -247,10 +268,13 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:        orgID.String(),
-			RunID:        runID.String(),
-			QueueName:    "queue-a",
-			Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:           orgID.String(),
+			CellID:          "us-east-1-cell-1",
+			RouteGeneration: 1,
+			QueueClass:      "default",
+			RunID:           runID.String(),
+			QueueName:       "queue-a",
+			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -265,6 +289,8 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -290,6 +316,151 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	}
 }
 
+func TestClaimDoesNotAckWhenDeadLetterFails(t *testing.T) {
+	ctx := context.Background()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	lease := Lease{
+		ID:        "lease-1",
+		MessageID: "message-dead",
+		Message: Message{
+			OrgID:           orgID.String(),
+			CellID:          "us-east-1-cell-1",
+			RouteGeneration: 1,
+			QueueClass:      "default",
+			RunID:           runID.String(),
+			QueueName:       "queue-a",
+			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+		},
+		WorkerInstanceID: hostID.String(),
+		AttemptNumber:    3,
+		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
+	}
+	queue := &fakeClaimerQueue{leases: []Lease{lease}}
+	deadErr := errors.New("route authority denied")
+	store := &fakeClaimerStore{attemptsExhausted: true, deadErr: deadErr}
+	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
+		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
+		WorkerInstanceID: hostID.String(),
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
+		MaxMessages:      1,
+	}})
+	if !errors.Is(err, deadErr) {
+		t.Fatalf("claim error = %v, want dead-letter error", err)
+	}
+	if len(queue.acked) != 0 {
+		t.Fatalf("acked leases = %+v", queue.acked)
+	}
+	if len(queue.requeued) != 0 {
+		t.Fatalf("requeued leases = %+v", queue.requeued)
+	}
+}
+
+func TestClaimDrainsNonMatchingDeadLetterLease(t *testing.T) {
+	ctx := context.Background()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	lease := Lease{
+		ID:        "lease-1",
+		MessageID: "message-dead",
+		Message: Message{
+			OrgID:           orgID.String(),
+			CellID:          "us-east-1-cell-1",
+			RouteGeneration: 1,
+			QueueClass:      "default",
+			RunID:           runID.String(),
+			QueueName:       "queue-a",
+			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+		},
+		WorkerInstanceID: hostID.String(),
+		AttemptNumber:    3,
+		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
+	}
+	queue := &fakeClaimerQueue{leases: []Lease{lease}}
+	store := &fakeClaimerStore{attemptsExhausted: true, deadErr: pgx.ErrNoRows}
+	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
+		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
+		WorkerInstanceID: hostID.String(),
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
+		MaxMessages:      1,
+	}})
+	if !errors.Is(err, ErrNoClaim) {
+		t.Fatalf("claim error = %v, want ErrNoClaim", err)
+	}
+	if len(queue.acked) != 0 {
+		t.Fatalf("acked leases = %+v", queue.acked)
+	}
+	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
+		t.Fatalf("requeued leases = %+v", queue.requeued)
+	}
+}
+
+func TestClaimDrainsInvalidDeadLetterLeaseWithoutAck(t *testing.T) {
+	ctx := context.Background()
+	orgID := uuid.Must(uuid.NewV7())
+	runID := uuid.Must(uuid.NewV7())
+	hostID := uuid.Must(uuid.NewV7())
+	lease := Lease{
+		ID:        "lease-1",
+		MessageID: "message-dead",
+		Message: Message{
+			OrgID:        orgID.String(),
+			RunID:        runID.String(),
+			QueueName:    "queue-a",
+			Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+		},
+		WorkerInstanceID: hostID.String(),
+		AttemptNumber:    3,
+		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
+	}
+	queue := &fakeClaimerQueue{leases: []Lease{lease}}
+	store := &fakeClaimerStore{attemptsExhausted: true}
+	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
+		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
+		WorkerInstanceID: hostID.String(),
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
+		MaxMessages:      1,
+	}})
+	if !errors.Is(err, ErrNoClaim) {
+		t.Fatalf("claim error = %v, want ErrNoClaim", err)
+	}
+	if store.deadLettered.DispatchMessageID.Valid {
+		t.Fatalf("dead letter params = %+v", store.deadLettered)
+	}
+	if len(queue.acked) != 0 {
+		t.Fatalf("acked leases = %+v", queue.acked)
+	}
+	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
+		t.Fatalf("requeued leases = %+v", queue.requeued)
+	}
+}
+
 func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	ctx := context.Background()
 	orgID := uuid.Must(uuid.NewV7())
@@ -301,10 +472,13 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:        orgID.String(),
-				RunID:        runID.String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:           orgID.String(),
+				CellID:          "us-east-1-cell-1",
+				RouteGeneration: 1,
+				QueueClass:      "default",
+				RunID:           runID.String(),
+				QueueName:       "queue-a",
+				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    DefaultMaxDispatchAttempts + 10,
@@ -333,6 +507,8 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 
 	result, err := claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
+		CellID:           "us-east-1-cell-1",
+		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
 		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
@@ -413,6 +589,14 @@ func (f *fakeClaimerQueue) Enqueue(context.Context, Message) (EnqueueResult, err
 func (f *fakeClaimerQueue) Dequeue(context.Context, DequeueRequest) ([]Lease, error) {
 	if f.err != nil {
 		return nil, f.err
+	}
+	for i := range f.leases {
+		if strings.TrimSpace(f.leases[i].Message.CellID) == "" {
+			f.leases[i].Message.CellID = "cell-1"
+		}
+		if f.leases[i].Message.RouteGeneration == 0 {
+			f.leases[i].Message.RouteGeneration = 1
+		}
 	}
 	return f.leases, nil
 }
