@@ -279,7 +279,7 @@ func TestCurrentDeploymentForRouteRequiresActiveRouteGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deployment.ID != pgvalue.UUID(secondDeploymentID) || deployment.CellID != secondCellID || deployment.RouteGeneration != 2 {
+	if deployment.ID != pgvalue.UUID(secondDeploymentID) || deployment.BuildCellID != secondCellID || deployment.BuildRouteGeneration != 2 {
 		t.Fatalf("deployment = %+v, want second-cell route generation 2", deployment)
 	}
 }
@@ -293,7 +293,7 @@ func TestPromoteDeploymentCarriesDeploymentRouteGeneration(t *testing.T) {
 	ensureCellRoute(t, ctx, pool, ids, dbtest.DefaultCellID, 2)
 	if _, err := pool.Exec(ctx, `
 		UPDATE deployments
-		   SET route_generation = 2
+		   SET build_route_generation = 2
 		 WHERE org_id = $1
 		   AND id = $2
 	`, ids.orgID, ids.deploymentID); err != nil {
@@ -306,6 +306,7 @@ func TestPromoteDeploymentCarriesDeploymentRouteGeneration(t *testing.T) {
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		DeploymentID:        pgvalue.UUID(ids.deploymentID),
+		RouteGeneration:     2,
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PromotedByPrincipal: "test",
 		Reason:              "route-generation-test",
@@ -313,8 +314,8 @@ func TestPromoteDeploymentCarriesDeploymentRouteGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if promotion.RouteGeneration != 2 {
-		t.Fatalf("promotion route_generation = %d, want 2", promotion.RouteGeneration)
+	if promotion.PromotionRouteGeneration != 2 {
+		t.Fatalf("promotion_route_generation = %d, want 2", promotion.PromotionRouteGeneration)
 	}
 }
 
@@ -338,8 +339,8 @@ func TestReusableDeploymentBuildKeyIsRouteGenerationScoped(t *testing.T) {
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PublicID:                   testDeploymentPublicID(t),
 		OrgID:                      pgvalue.UUID(ids.orgID),
-		CellID:                     dbtest.DefaultCellID,
-		RouteGeneration:            1,
+		BuildCellID:                dbtest.DefaultCellID,
+		BuildRouteGeneration:       1,
 		ProjectID:                  pgvalue.UUID(ids.projectID),
 		EnvironmentID:              pgvalue.UUID(ids.environmentID),
 		Version:                    "queued.1",
@@ -360,8 +361,8 @@ func TestReusableDeploymentBuildKeyIsRouteGenerationScoped(t *testing.T) {
 		ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		PublicID:                   testDeploymentPublicID(t),
 		OrgID:                      pgvalue.UUID(ids.orgID),
-		CellID:                     dbtest.DefaultCellID,
-		RouteGeneration:            2,
+		BuildCellID:                dbtest.DefaultCellID,
+		BuildRouteGeneration:       2,
 		ProjectID:                  pgvalue.UUID(ids.projectID),
 		EnvironmentID:              pgvalue.UUID(ids.environmentID),
 		Version:                    "queued.2",
@@ -481,7 +482,7 @@ func seedDeploymentInCell(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, public_id, org_id, cell_id, route_generation, project_id, environment_id, worker_group_id,
+			id, public_id, org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id,
 			version, content_hash, deployment_source_artifact_id, status
 		)
 		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, 'v2', $8, $9, 'deployed')

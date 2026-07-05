@@ -1700,7 +1700,6 @@ leaseable_workspace AS (
            AND artifacts.id = runtime_substrate_artifacts.artifact_id
           JOIN deployment_sandboxes
             ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-           AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
            AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
            AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
            AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
@@ -1731,7 +1730,6 @@ leaseable_workspace AS (
            AND artifacts.id = runtime_substrate_artifacts.artifact_id
           JOIN deployment_sandboxes
             ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-           AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
            AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
            AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
            AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id

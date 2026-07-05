@@ -324,9 +324,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if s.secrets == nil {
 			return sessionStartResult{}, errors.New("secret store is not configured")
 		}
-		if deploymentTask.CellID != routeCellID {
-			return sessionStartResult{}, unavailable(errors.New("execution source row cell does not match environment route"))
-		}
 		projectUUID, err := pgvalue.UUIDValue(projectID)
 		if err != nil {
 			return sessionStartResult{}, fmt.Errorf("project id is invalid: %v", err)
@@ -459,11 +456,11 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if startClaim.resolved && !resolvedClaimIsStale {
 			return errSessionStartPending
 		}
-		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, routeGeneration, deploymentTask, requestedWorkspaceID)
+		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, routeCellID, routeGeneration, deploymentTask, requestedWorkspaceID)
 		if err != nil {
 			return err
 		}
-		if deploymentTask.CellID != routeCellID || workspace.CellID != routeCellID || workspace.RouteGeneration != routeGeneration {
+		if workspace.CellID != routeCellID || workspace.RouteGeneration != routeGeneration {
 			return unavailable(errors.New("execution source row cell does not match environment route"))
 		}
 		var sessionPublicID string
@@ -728,9 +725,9 @@ func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(parsed), nil
 }
 
-func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, routeGeneration int64, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
+func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, routeCellID string, routeGeneration int64, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
 	if !requestedWorkspaceID.Valid {
-		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, task.CellID, routeGeneration, projectID, environmentID)
+		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, routeCellID, routeGeneration, projectID, environmentID)
 		if err != nil {
 			return db.Workspace{}, err
 		}
@@ -743,7 +740,7 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:                  workspacePublicID,
 				OrgID:                     pgvalue.UUID(orgID),
-				CellID:                    task.CellID,
+				CellID:                    routeCellID,
 				RouteGeneration:           routeGeneration,
 				ProjectID:                 projectID,
 				EnvironmentID:             environmentID,

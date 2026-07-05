@@ -360,9 +360,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 				return getWorkspaceErr
 			}
 		}
-		if deploymentSandbox.CellID != placement.CellID {
-			return unavailable(errors.New("workspace sandbox cell does not match environment route"))
-		}
 		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, placement.CellID, placement.RouteGeneration, projectID, environmentID)
 		if err != nil {
 			return err

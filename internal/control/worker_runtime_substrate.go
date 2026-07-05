@@ -84,7 +84,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			OrgID:     sandbox.OrgID,
-			CellID:    sandbox.CellID,
+			CellID:    worker.CellID,
 			Digest:    strings.TrimSpace(request.Artifact.Digest),
 			SizeBytes: request.Artifact.SizeBytes,
 			MediaType: strings.TrimSpace(request.Artifact.MediaType),
@@ -94,8 +94,8 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		artifact, err := work.q.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     sandbox.OrgID,
-			CellID:                    sandbox.CellID,
-			RouteGeneration:           sandbox.RouteGeneration,
+			CellID:                    worker.CellID,
+			RouteGeneration:           sandbox.BuildRouteGeneration,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			Digest:                    strings.TrimSpace(request.Artifact.Digest),
@@ -109,7 +109,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		row, err = work.q.UpsertRuntimeSubstrateArtifact(r.Context(), db.UpsertRuntimeSubstrateArtifactParams{
 			ID:                        runtimeSubstrateArtifactID,
 			OrgID:                     sandbox.OrgID,
-			CellID:                    sandbox.CellID,
+			CellID:                    worker.CellID,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			DeploymentSandboxID:       sandbox.ID,

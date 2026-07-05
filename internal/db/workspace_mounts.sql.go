@@ -78,17 +78,17 @@ candidate AS (
 	      FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
-       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
+       AND deployments.build_cell_id = workspace_mounts.cell_id
+       AND deployments.build_route_generation = workspace_mounts.route_generation
       JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
                        AND worker_scope.cell_id = workspace_mounts.cell_id
       JOIN environment_cells
@@ -815,13 +815,12 @@ inserted AS (
       FROM locked_workspace AS workspaces
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspaces.org_id
-       AND deployment_sandboxes.cell_id = workspaces.cell_id
        AND deployment_sandboxes.project_id = workspaces.project_id
        AND deployment_sandboxes.environment_id = workspaces.environment_id
        AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployment_sandboxes.cell_id
+       AND image_artifact.cell_id = workspaces.cell_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -1584,13 +1583,12 @@ SELECT workspaces.id AS workspace_id,
   FROM workspaces
   JOIN deployment_sandboxes
     ON deployment_sandboxes.org_id = workspaces.org_id
-   AND deployment_sandboxes.cell_id = workspaces.cell_id
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   LEFT JOIN artifacts AS image_artifact
     ON image_artifact.org_id = deployment_sandboxes.org_id
-   AND image_artifact.cell_id = deployment_sandboxes.cell_id
+   AND image_artifact.cell_id = workspaces.cell_id
    AND image_artifact.project_id = deployment_sandboxes.project_id
    AND image_artifact.environment_id = deployment_sandboxes.environment_id
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -3254,17 +3252,17 @@ candidate AS (
       FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
-       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
+       AND deployments.build_cell_id = workspace_mounts.cell_id
+       AND deployments.build_route_generation = workspace_mounts.route_generation
       JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id

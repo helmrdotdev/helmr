@@ -20,8 +20,8 @@ WITH created_workspace AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            deployment_sandboxes.org_id,
-           deployment_sandboxes.cell_id,
-           deployments.route_generation,
+           sqlc.arg(cell_id),
+           sqlc.arg(route_generation),
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
@@ -35,18 +35,18 @@ WITH created_workspace AS (
       FROM deployment_sandboxes
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.route_generation = sqlc.arg(route_generation)
+       AND deployments.build_cell_id = sqlc.arg(cell_id)
+       AND deployments.build_route_generation = sqlc.arg(route_generation)
        AND deployments.status = 'deployed'
       JOIN environment_cells
         ON environment_cells.org_id = deployment_sandboxes.org_id
        AND environment_cells.project_id = deployment_sandboxes.project_id
        AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployment_sandboxes.cell_id
-       AND environment_cells.route_generation = deployments.route_generation
+       AND environment_cells.cell_id = sqlc.arg(cell_id)
+       AND environment_cells.route_generation = sqlc.arg(route_generation)
        AND environment_cells.route_state = 'active'
       JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                     AND org_cells.cell_id = environment_cells.cell_id
@@ -58,8 +58,6 @@ WITH created_workspace AS (
                       AND cell_health.state IN ('healthy', 'degraded')
                       AND cell_health.routing_fresh_until > now()
      WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
-       AND deployment_sandboxes.cell_id = sqlc.arg(cell_id)
-       AND deployments.route_generation = sqlc.arg(route_generation)
        AND deployment_sandboxes.project_id = sqlc.arg(project_id)
        AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
        AND deployment_sandboxes.id = sqlc.arg(deployment_sandbox_id)
@@ -118,17 +116,17 @@ SELECT deployment_sandboxes.*
   FROM deployment_sandboxes
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
-   AND deployments.cell_id = deployment_sandboxes.cell_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.route_generation = sqlc.arg(route_generation)
+   AND deployments.build_cell_id = sqlc.arg(cell_id)
+   AND deployments.build_route_generation = sqlc.arg(route_generation)
   JOIN environment_cells
     ON environment_cells.org_id = deployment_sandboxes.org_id
    AND environment_cells.project_id = deployment_sandboxes.project_id
    AND environment_cells.environment_id = deployment_sandboxes.environment_id
-   AND environment_cells.cell_id = deployment_sandboxes.cell_id
-   AND environment_cells.route_generation = deployments.route_generation
+   AND environment_cells.cell_id = sqlc.arg(cell_id)
+   AND environment_cells.route_generation = sqlc.arg(route_generation)
    AND environment_cells.route_state = 'active'
   JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                 AND org_cells.cell_id = environment_cells.cell_id
@@ -144,7 +142,6 @@ SELECT deployment_sandboxes.*
    AND environments.project_id = deployment_sandboxes.project_id
    AND environments.id = deployment_sandboxes.environment_id
  WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
-   AND deployment_sandboxes.cell_id = sqlc.arg(cell_id)
    AND deployment_sandboxes.project_id = sqlc.arg(project_id)
    AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
    AND deployment_sandboxes.sandbox_id = sqlc.arg(sandbox_id)

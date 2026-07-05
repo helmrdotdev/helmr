@@ -77,7 +77,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
-	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID, deployment.CellID, deployment.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID, deployment.BuildCellID, deployment.BuildRouteGeneration); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -87,7 +87,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:       actor.OrgID,
-		CellID:      deployment.CellID,
+		CellID:      deployment.BuildCellID,
 		SubjectType: string(db.EventSubjectTypeDeployment),
 		SubjectID:   pgvalue.MustUUIDValue(deployment.ID),
 		AfterSeq:    cursor,

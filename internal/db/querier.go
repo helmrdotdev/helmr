@@ -186,7 +186,7 @@ type Querier interface {
 	GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error)
 	GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymentQueueConfigParams) (GetDeploymentQueueConfigRow, error)
 	GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) (DeploymentSandbox, error)
-	GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg GetDeploymentSandboxForWorkerGroupParams) (DeploymentSandbox, error)
+	GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg GetDeploymentSandboxForWorkerGroupParams) (GetDeploymentSandboxForWorkerGroupRow, error)
 	GetDeploymentStreamByName(ctx context.Context, arg GetDeploymentStreamByNameParams) (DeploymentStream, error)
 	GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskParams) (GetDeploymentTaskRow, error)
 	GetDeviceCodeByUserCodeHash(ctx context.Context, userCodeHash []byte) (DeviceCode, error)

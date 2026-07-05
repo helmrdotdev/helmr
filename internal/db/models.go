@@ -3023,8 +3023,8 @@ type Deployment struct {
 	ID                           pgtype.UUID        `json:"id"`
 	PublicID                     string             `json:"public_id"`
 	OrgID                        pgtype.UUID        `json:"org_id"`
-	CellID                       string             `json:"cell_id"`
-	RouteGeneration              int64              `json:"route_generation"`
+	BuildCellID                  string             `json:"build_cell_id"`
+	BuildRouteGeneration         int64              `json:"build_route_generation"`
 	ProjectID                    pgtype.UUID        `json:"project_id"`
 	EnvironmentID                pgtype.UUID        `json:"environment_id"`
 	WorkerGroupID                pgtype.UUID        `json:"worker_group_id"`
@@ -3053,23 +3053,22 @@ type Deployment struct {
 }
 
 type DeploymentPromotion struct {
-	ID                   pgtype.UUID        `json:"id"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	CellID               string             `json:"cell_id"`
-	RouteGeneration      int64              `json:"route_generation"`
-	ProjectID            pgtype.UUID        `json:"project_id"`
-	EnvironmentID        pgtype.UUID        `json:"environment_id"`
-	DeploymentID         pgtype.UUID        `json:"deployment_id"`
-	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
-	PromotedByPrincipal  string             `json:"promoted_by_principal"`
-	Reason               string             `json:"reason"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	OrgID                    pgtype.UUID        `json:"org_id"`
+	PromotionCellID          string             `json:"promotion_cell_id"`
+	PromotionRouteGeneration int64              `json:"promotion_route_generation"`
+	ProjectID                pgtype.UUID        `json:"project_id"`
+	EnvironmentID            pgtype.UUID        `json:"environment_id"`
+	DeploymentID             pgtype.UUID        `json:"deployment_id"`
+	PreviousDeploymentID     pgtype.UUID        `json:"previous_deployment_id"`
+	PromotedByPrincipal      string             `json:"promoted_by_principal"`
+	Reason                   string             `json:"reason"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentQueue struct {
 	ID               pgtype.UUID        `json:"id"`
 	OrgID            pgtype.UUID        `json:"org_id"`
-	CellID           string             `json:"cell_id"`
 	ProjectID        pgtype.UUID        `json:"project_id"`
 	EnvironmentID    pgtype.UUID        `json:"environment_id"`
 	DeploymentID     pgtype.UUID        `json:"deployment_id"`
@@ -3082,13 +3081,12 @@ type DeploymentSandbox struct {
 	ID                  pgtype.UUID        `json:"id"`
 	PublicID            string             `json:"public_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
-	CellID              string             `json:"cell_id"`
-	RouteGeneration     int64              `json:"route_generation"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	DeploymentID        pgtype.UUID        `json:"deployment_id"`
 	SandboxID           string             `json:"sandbox_id"`
 	ImageArtifactID     pgtype.UUID        `json:"image_artifact_id"`
+	ImageArtifactCellID string             `json:"image_artifact_cell_id"`
 	ImageArtifactFormat string             `json:"image_artifact_format"`
 	RootfsDigest        string             `json:"rootfs_digest"`
 	ImageDigest         string             `json:"image_digest"`
@@ -3128,7 +3126,6 @@ type DeploymentTask struct {
 	ID                      pgtype.UUID        `json:"id"`
 	PublicID                string             `json:"public_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
-	CellID                  string             `json:"cell_id"`
 	ProjectID               pgtype.UUID        `json:"project_id"`
 	EnvironmentID           pgtype.UUID        `json:"environment_id"`
 	DeploymentID            pgtype.UUID        `json:"deployment_id"`
@@ -3138,6 +3135,7 @@ type DeploymentTask struct {
 	ExportName              string             `json:"export_name"`
 	HandlerEntrypoint       string             `json:"handler_entrypoint"`
 	BundleArtifactID        pgtype.UUID        `json:"bundle_artifact_id"`
+	BundleArtifactCellID    string             `json:"bundle_artifact_cell_id"`
 	BundleFormatVersion     int32              `json:"bundle_format_version"`
 	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
@@ -3158,7 +3156,6 @@ type DeploymentTask struct {
 
 type DeploymentVersionCounter struct {
 	OrgID         pgtype.UUID        `json:"org_id"`
-	CellID        string             `json:"cell_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Prefix        string             `json:"prefix"`

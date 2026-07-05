@@ -944,8 +944,8 @@ CREATE TABLE deployments (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^dep_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
+    build_cell_id TEXT NOT NULL,
+    build_route_generation BIGINT NOT NULL DEFAULT 1 CHECK (build_route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_group_id UUID NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
@@ -972,24 +972,22 @@ CREATE TABLE deployments (
     deployed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
-    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, build_cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, version),
-    UNIQUE (org_id, cell_id, project_id, environment_id, version),
     FOREIGN KEY (org_id, project_id)
         REFERENCES projects(org_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_source_artifact_id)
+    FOREIGN KEY (org_id, build_cell_id, project_id, environment_id, deployment_source_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, build_manifest_artifact_id)
+    FOREIGN KEY (org_id, build_cell_id, project_id, environment_id, build_manifest_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_manifest_artifact_id)
+    FOREIGN KEY (org_id, build_cell_id, project_id, environment_id, deployment_manifest_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (build_worker_instance_id, worker_group_id)
@@ -1002,7 +1000,6 @@ ALTER TABLE environments
 
 CREATE TABLE deployment_version_counters (
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     prefix TEXT NOT NULL CHECK (btrim(prefix) <> ''),
@@ -1018,8 +1015,8 @@ CREATE TABLE deployment_version_counters (
 CREATE TABLE deployment_promotions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
+    promotion_cell_id TEXT NOT NULL,
+    promotion_route_generation BIGINT NOT NULL CHECK (promotion_route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1030,11 +1027,11 @@ CREATE TABLE deployment_promotions (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, previous_deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, previous_deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (previous_deployment_id)
 );
 
@@ -1067,13 +1064,12 @@ CREATE TABLE deployment_sandboxes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^sbx_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    route_generation BIGINT NOT NULL DEFAULT 1 CHECK (route_generation > 0),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
     sandbox_id TEXT NOT NULL CHECK (btrim(sandbox_id) <> ''),
     image_artifact_id UUID NOT NULL,
+    image_artifact_cell_id TEXT NOT NULL,
     image_artifact_format TEXT NOT NULL CHECK (btrim(image_artifact_format) <> ''),
     rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
     image_digest TEXT NOT NULL CHECK (btrim(image_digest) <> ''),
@@ -1093,18 +1089,17 @@ CREATE TABLE deployment_sandboxes (
     fingerprint TEXT NOT NULL CHECK (btrim(fingerprint) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, image_artifact_cell_id, project_id, environment_id, id),
+    UNIQUE (org_id, project_id, environment_id, deployment_id, id),
     UNIQUE (org_id, deployment_id, sandbox_id),
-    UNIQUE (org_id, cell_id, deployment_id, sandbox_id),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, image_artifact_cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, build_cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id)
+    FOREIGN KEY (org_id, image_artifact_cell_id, project_id, environment_id, image_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id, image_digest)
+    FOREIGN KEY (org_id, image_artifact_cell_id, project_id, environment_id, image_artifact_id, image_digest)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT
 );
@@ -1112,7 +1107,6 @@ CREATE TABLE deployment_sandboxes (
 CREATE TABLE deployment_queues (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1121,9 +1115,8 @@ CREATE TABLE deployment_queues (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_id, name),
-    UNIQUE (org_id, cell_id, project_id, environment_id, deployment_id, name),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -1155,7 +1148,7 @@ CREATE TABLE runtime_substrate_artifacts (
     UNIQUE (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi),
     UNIQUE (org_id, cell_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi),
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+        REFERENCES deployment_sandboxes(org_id, image_artifact_cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
@@ -1170,7 +1163,6 @@ CREATE TABLE deployment_tasks (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^dtask_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1180,6 +1172,7 @@ CREATE TABLE deployment_tasks (
     export_name TEXT NOT NULL DEFAULT '',
     handler_entrypoint TEXT NOT NULL DEFAULT '',
     bundle_artifact_id UUID NOT NULL,
+    bundle_artifact_cell_id TEXT NOT NULL,
     bundle_format_version INTEGER NOT NULL DEFAULT 2 CHECK (bundle_format_version > 0),
     requested_milli_cpu BIGINT NOT NULL DEFAULT 2000 CHECK (requested_milli_cpu > 0),
     requested_memory_mib BIGINT NOT NULL DEFAULT 2048 CHECK (requested_memory_mib > 0),
@@ -1197,26 +1190,22 @@ CREATE TABLE deployment_tasks (
     retry_policy JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, cell_id, id),
     UNIQUE (org_id, deployment_id, id),
-    UNIQUE (org_id, cell_id, deployment_id, id),
     UNIQUE (org_id, deployment_id, id, task_id),
-    UNIQUE (org_id, cell_id, deployment_id, id, task_id),
     UNIQUE (org_id, deployment_id, task_id),
-    UNIQUE (org_id, cell_id, deployment_id, task_id),
     FOREIGN KEY (org_id, project_id, environment_id, task_id)
         REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, bundle_artifact_cell_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, build_cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, deployment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id, queue_name)
-        REFERENCES deployment_queues(org_id, cell_id, project_id, environment_id, deployment_id, name)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, queue_name)
+        REFERENCES deployment_queues(org_id, project_id, environment_id, deployment_id, name)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, bundle_artifact_id)
+    FOREIGN KEY (org_id, bundle_artifact_cell_id, project_id, environment_id, bundle_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED
 );
@@ -1319,8 +1308,8 @@ CREATE TABLE workspaces (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1360,11 +1349,11 @@ CREATE TABLE sessions (
     FOREIGN KEY (org_id, project_id, environment_id, task_id)
         REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, initial_deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, initial_deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, active_deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, active_deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
@@ -1434,11 +1423,11 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, deployment_id, deployment_task_id, task_id)
-        REFERENCES deployment_tasks(org_id, cell_id, deployment_id, id, task_id)
+    FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
+        REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
@@ -1517,8 +1506,8 @@ CREATE TABLE session_runs (
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, previous_run_id)
         REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
@@ -1609,8 +1598,8 @@ CREATE TABLE workspace_mounts (
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, image_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
@@ -2084,10 +2073,12 @@ CREATE TABLE deployment_streams (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, cell_id, id),
+    UNIQUE (org_id, project_id, environment_id, id, name, direction),
+    UNIQUE (org_id, deployment_id, name, direction),
     UNIQUE (org_id, cell_id, project_id, environment_id, id, name, direction),
     UNIQUE (org_id, cell_id, deployment_id, name, direction),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -2115,8 +2106,8 @@ CREATE TABLE streams (
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, session_id)
         REFERENCES sessions(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_stream_id, name, direction)
-        REFERENCES deployment_streams(org_id, cell_id, project_id, environment_id, id, name, direction)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_stream_id, name, direction)
+        REFERENCES deployment_streams(org_id, project_id, environment_id, id, name, direction)
         ON DELETE CASCADE
 );
 
@@ -2456,8 +2447,8 @@ CREATE TABLE event_hot_payloads (
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
+        REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
         REFERENCES run_attempts(org_id, cell_id, run_id, id)
@@ -3154,8 +3145,8 @@ CREATE TABLE worker_commands (
     FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
         REFERENCES run_leases(org_id, cell_id, run_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -3267,8 +3258,8 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, deployment_sandbox_id)
-        REFERENCES deployment_sandboxes(org_id, cell_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_sandbox_id)
+        REFERENCES deployment_sandboxes(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, sandbox_image_artifact_id)
         REFERENCES artifacts(org_id, cell_id, project_id, environment_id, id)
@@ -3445,7 +3436,7 @@ CREATE INDEX deployment_promotions_deployment_idx
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
-    ON deployments(org_id, cell_id, route_generation, project_id, environment_id, worker_group_id, content_hash)
+    ON deployments(org_id, build_cell_id, build_route_generation, project_id, environment_id, worker_group_id, content_hash)
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_worker_group_status_idx
     ON deployments(worker_group_id, status, created_at)

@@ -236,33 +236,33 @@ WITH created_workspace AS (
     SELECT $1,
            $2,
            deployment_sandboxes.org_id,
-           deployment_sandboxes.cell_id,
-           deployments.route_generation,
+           $3,
+           $4,
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
            deployment_sandboxes.id,
            deployment_sandboxes.sandbox_id,
            deployment_sandboxes.fingerprint,
-           $3,
-           coalesce($4::text, ''),
-           coalesce($5::jsonb, '{}'::jsonb),
-           coalesce($6::text[], '{}'::text[]),
-           coalesce($7::jsonb, '{}'::jsonb)
+           $5,
+           coalesce($6::text, ''),
+           coalesce($7::jsonb, '{}'::jsonb),
+           coalesce($8::text[], '{}'::text[]),
+           coalesce($9::jsonb, '{}'::jsonb)
       FROM deployment_sandboxes
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.route_generation = $8
+       AND deployments.build_cell_id = $3
+       AND deployments.build_route_generation = $4
        AND deployments.status = 'deployed'
       JOIN environment_cells
         ON environment_cells.org_id = deployment_sandboxes.org_id
        AND environment_cells.project_id = deployment_sandboxes.project_id
        AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployment_sandboxes.cell_id
-       AND environment_cells.route_generation = deployments.route_generation
+       AND environment_cells.cell_id = $3
+       AND environment_cells.route_generation = $4
        AND environment_cells.route_state = 'active'
       JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                     AND org_cells.cell_id = environment_cells.cell_id
@@ -273,9 +273,7 @@ WITH created_workspace AS (
       JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
                       AND cell_health.state IN ('healthy', 'degraded')
                       AND cell_health.routing_fresh_until > now()
-     WHERE deployment_sandboxes.org_id = $9
-       AND deployment_sandboxes.cell_id = $10
-       AND deployments.route_generation = $8
+     WHERE deployment_sandboxes.org_id = $10
        AND deployment_sandboxes.project_id = $11
        AND deployment_sandboxes.environment_id = $12
        AND deployment_sandboxes.id = $13
@@ -301,7 +299,7 @@ created_version AS (
         promoted_at,
         created_by_subject_type
     )
-    SELECT $3,
+    SELECT $5,
            $14,
            created_workspace.org_id,
            created_workspace.cell_id,
@@ -333,14 +331,14 @@ SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_
 type CreateWorkspaceFromSandboxParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	PublicID                  string      `json:"public_id"`
+	CellID                    string      `json:"cell_id"`
+	RouteGeneration           int64       `json:"route_generation"`
 	InitialVersionID          pgtype.UUID `json:"initial_version_id"`
 	ExternalID                string      `json:"external_id"`
 	Metadata                  []byte      `json:"metadata"`
 	Tags                      []string    `json:"tags"`
 	RetentionPolicy           []byte      `json:"retention_policy"`
-	RouteGeneration           int64       `json:"route_generation"`
 	OrgID                     pgtype.UUID `json:"org_id"`
-	CellID                    string      `json:"cell_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
@@ -387,14 +385,14 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 	row := q.db.QueryRow(ctx, createWorkspaceFromSandbox,
 		arg.ID,
 		arg.PublicID,
+		arg.CellID,
+		arg.RouteGeneration,
 		arg.InitialVersionID,
 		arg.ExternalID,
 		arg.Metadata,
 		arg.Tags,
 		arg.RetentionPolicy,
-		arg.RouteGeneration,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -915,21 +913,21 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 }
 
 const resolveDeploymentSandboxForWorkspaceCreate = `-- name: ResolveDeploymentSandboxForWorkspaceCreate :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.cell_id, deployment_sandboxes.route_generation, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_cell_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
-   AND deployments.cell_id = deployment_sandboxes.cell_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.route_generation = $1
+   AND deployments.build_cell_id = $1
+   AND deployments.build_route_generation = $2
   JOIN environment_cells
     ON environment_cells.org_id = deployment_sandboxes.org_id
    AND environment_cells.project_id = deployment_sandboxes.project_id
    AND environment_cells.environment_id = deployment_sandboxes.environment_id
-   AND environment_cells.cell_id = deployment_sandboxes.cell_id
-   AND environment_cells.route_generation = deployments.route_generation
+   AND environment_cells.cell_id = $1
+   AND environment_cells.route_generation = $2
    AND environment_cells.route_state = 'active'
   JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                 AND org_cells.cell_id = environment_cells.cell_id
@@ -944,8 +942,7 @@ SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandb
     ON environments.org_id = deployment_sandboxes.org_id
    AND environments.project_id = deployment_sandboxes.project_id
    AND environments.id = deployment_sandboxes.environment_id
- WHERE deployment_sandboxes.org_id = $2
-   AND deployment_sandboxes.cell_id = $3
+ WHERE deployment_sandboxes.org_id = $3
    AND deployment_sandboxes.project_id = $4
    AND deployment_sandboxes.environment_id = $5
    AND deployment_sandboxes.sandbox_id = $6
@@ -959,9 +956,9 @@ SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandb
 `
 
 type ResolveDeploymentSandboxForWorkspaceCreateParams struct {
+	CellID          string      `json:"cell_id"`
 	RouteGeneration int64       `json:"route_generation"`
 	OrgID           pgtype.UUID `json:"org_id"`
-	CellID          string      `json:"cell_id"`
 	ProjectID       pgtype.UUID `json:"project_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	SandboxID       string      `json:"sandbox_id"`
@@ -970,9 +967,9 @@ type ResolveDeploymentSandboxForWorkspaceCreateParams struct {
 
 func (q *Queries) ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context, arg ResolveDeploymentSandboxForWorkspaceCreateParams) (DeploymentSandbox, error) {
 	row := q.db.QueryRow(ctx, resolveDeploymentSandboxForWorkspaceCreate,
+		arg.CellID,
 		arg.RouteGeneration,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SandboxID,
@@ -983,13 +980,12 @@ func (q *Queries) ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.CellID,
-		&i.RouteGeneration,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
+		&i.ImageArtifactCellID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,

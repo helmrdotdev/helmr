@@ -1293,12 +1293,16 @@ inserted_requirements AS (
            deployments.worker_group_id
       FROM target_run
       JOIN deployment_tasks ON deployment_tasks.org_id = target_run.org_id
-                           AND deployment_tasks.cell_id = target_run.cell_id
+                           AND deployment_tasks.project_id = target_run.project_id
+                           AND deployment_tasks.environment_id = target_run.environment_id
                            AND deployment_tasks.deployment_id = target_run.deployment_id
                            AND deployment_tasks.id = target_run.deployment_task_id
       JOIN deployments ON deployments.org_id = target_run.org_id
-                      AND deployments.cell_id = target_run.cell_id
+                      AND deployments.project_id = target_run.project_id
+                      AND deployments.environment_id = target_run.environment_id
                       AND deployments.id = target_run.deployment_id
+                      AND deployments.build_cell_id = target_run.cell_id
+                      AND deployments.build_route_generation = target_run.route_generation
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING

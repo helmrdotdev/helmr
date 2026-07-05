@@ -102,7 +102,7 @@ ON CONFLICT (id) DO UPDATE
        media_type = EXCLUDED.media_type;
 
 INSERT INTO deployments (
-    id, public_id, org_id, cell_id, project_id, environment_id, worker_group_id, version, content_hash,
+    id, public_id, org_id, build_cell_id, project_id, environment_id, worker_group_id, version, content_hash,
     deployment_source_artifact_id, deployment_manifest_artifact_id, status, built_at, deployed_at
 )
 SELECT '00000000-0000-0000-0000-000000000601',
@@ -123,7 +123,7 @@ SELECT '00000000-0000-0000-0000-000000000601',
  WHERE worker_groups.name = 'default'
    AND worker_groups.cell_id = current_setting('helmr.seed_cell_id')
 ON CONFLICT (id) DO UPDATE
-   SET cell_id = EXCLUDED.cell_id,
+   SET build_cell_id = EXCLUDED.build_cell_id,
        version = EXCLUDED.version,
        content_hash = EXCLUDED.content_hash,
        status = EXCLUDED.status,
@@ -137,8 +137,8 @@ UPDATE environments
  WHERE id = '00000000-0000-0000-0000-000000000401';
 
 INSERT INTO deployment_sandboxes (
-    id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id,
-    image_artifact_id, image_artifact_format, rootfs_digest, image_digest,
+    id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
+    image_artifact_id, image_artifact_cell_id, image_artifact_format, rootfs_digest, image_digest,
     image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi,
     filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint
 )
@@ -146,12 +146,12 @@ VALUES (
     '00000000-0000-0000-0000-000000000701',
     'sbx_aaaaaaaaaaaaaaaaaaaaaaaaaa',
     '00000000-0000-0000-0000-000000000201',
-    current_setting('helmr.seed_cell_id'),
     '00000000-0000-0000-0000-000000000301',
     '00000000-0000-0000-0000-000000000401',
     '00000000-0000-0000-0000-000000000601',
     'node-22',
     '00000000-0000-0000-0000-000000000504',
+    current_setting('helmr.seed_cell_id'),
     'rootfs-tar',
     'sha256:dev-sandbox-rootfs',
     'sha256:dev-sandbox-rootfs',
@@ -168,9 +168,9 @@ VALUES (
     'sha256:dev-sandbox-contract'
 )
 ON CONFLICT (id) DO UPDATE
-   SET cell_id = EXCLUDED.cell_id,
-       sandbox_id = EXCLUDED.sandbox_id,
+   SET sandbox_id = EXCLUDED.sandbox_id,
        image_artifact_id = EXCLUDED.image_artifact_id,
+       image_artifact_cell_id = EXCLUDED.image_artifact_cell_id,
        rootfs_digest = EXCLUDED.rootfs_digest,
        image_digest = EXCLUDED.image_digest,
        workspace_mount_path = EXCLUDED.workspace_mount_path,
@@ -187,26 +187,26 @@ ON CONFLICT (org_id, project_id, environment_id, task_id) DO UPDATE
        archived_at = NULL,
        updated_at = now();
 
-INSERT INTO deployment_queues (id, org_id, cell_id, project_id, environment_id, deployment_id, name)
+INSERT INTO deployment_queues (id, org_id, project_id, environment_id, deployment_id, name)
 VALUES
-    ('00000000-0000-0000-0000-000000000810', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', 'default')
+    ('00000000-0000-0000-0000-000000000810', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', 'default')
 ON CONFLICT (org_id, project_id, environment_id, deployment_id, name) DO NOTHING;
 
 INSERT INTO deployment_tasks (
-    id, public_id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id,
-    file_path, export_name, handler_entrypoint, bundle_artifact_id, queue_name, max_active_duration_ms
+    id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id,
+    file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_cell_id, queue_name, max_active_duration_ms
 )
 VALUES
-    ('00000000-0000-0000-0000-000000000811', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'code-review', 'tasks/code-review.ts', 'default', 'tasks/code-review.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 1800000),
-    ('00000000-0000-0000-0000-000000000812', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'approval-message', 'tasks/approval-message.ts', 'default', 'tasks/approval-message.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 900000),
-    ('00000000-0000-0000-0000-000000000813', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'failure-boundary', 'tasks/failure-boundary.ts', 'default', 'tasks/failure-boundary.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 600000),
-    ('00000000-0000-0000-0000-000000000814', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_cell_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'release-summary', 'tasks/release-summary.ts', 'default', 'tasks/release-summary.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 1200000)
+    ('00000000-0000-0000-0000-000000000811', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'code-review', 'tasks/code-review.ts', 'default', 'tasks/code-review.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_cell_id'), 'default', 1800000),
+    ('00000000-0000-0000-0000-000000000812', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'approval-message', 'tasks/approval-message.ts', 'default', 'tasks/approval-message.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_cell_id'), 'default', 900000),
+    ('00000000-0000-0000-0000-000000000813', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'failure-boundary', 'tasks/failure-boundary.ts', 'default', 'tasks/failure-boundary.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_cell_id'), 'default', 600000),
+    ('00000000-0000-0000-0000-000000000814', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'release-summary', 'tasks/release-summary.ts', 'default', 'tasks/release-summary.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_cell_id'), 'default', 1200000)
 ON CONFLICT (id) DO UPDATE
-   SET cell_id = EXCLUDED.cell_id,
-       task_id = EXCLUDED.task_id,
+   SET task_id = EXCLUDED.task_id,
        file_path = EXCLUDED.file_path,
        export_name = EXCLUDED.export_name,
        handler_entrypoint = EXCLUDED.handler_entrypoint,
+       bundle_artifact_cell_id = EXCLUDED.bundle_artifact_cell_id,
        queue_name = EXCLUDED.queue_name,
        max_active_duration_ms = EXCLUDED.max_active_duration_ms;
 

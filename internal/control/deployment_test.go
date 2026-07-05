@@ -587,7 +587,8 @@ func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:                     dbtest.DefaultCellID,
+			BuildCellID:                dbtest.DefaultCellID,
+			BuildRouteGeneration:       1,
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              environmentID,
 			Version:                    "20260101.2",
@@ -699,7 +700,6 @@ func (f *fakeStore) GetCurrentDeploymentTask(_ context.Context, arg db.GetCurren
 	return db.GetCurrentDeploymentTaskRow{
 		ID:                                testDeploymentTaskID(),
 		OrgID:                             arg.OrgID,
-		CellID:                            firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
 		ProjectID:                         arg.ProjectID,
 		EnvironmentID:                     arg.EnvironmentID,
 		DeploymentID:                      testDeploymentID(),
@@ -742,8 +742,8 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		return db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      arg.OrgID,
-			CellID:                     firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
-			RouteGeneration:            1,
+			BuildCellID:                firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
+			BuildRouteGeneration:       1,
 			ProjectID:                  arg.ProjectID,
 			EnvironmentID:              arg.EnvironmentID,
 			Version:                    "20260101.1",
@@ -763,8 +763,8 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 	return db.Deployment{
 		ID:                           f.deployment.ID,
 		OrgID:                        f.deployment.OrgID,
-		CellID:                       firstNonEmptyString(f.deployment.CellID, f.environmentRouteCellID, "us-east-1-cell-1"),
-		RouteGeneration:              firstNonZeroInt64(f.deployment.RouteGeneration, 1),
+		BuildCellID:                  firstNonEmptyString(f.deployment.BuildCellID, f.environmentRouteCellID, "us-east-1-cell-1"),
+		BuildRouteGeneration:         firstNonZeroInt64(f.deployment.BuildRouteGeneration, 1),
 		ProjectID:                    f.deployment.ProjectID,
 		EnvironmentID:                f.deployment.EnvironmentID,
 		DeploymentSourceArtifactID:   f.deployment.DeploymentSourceArtifactID,
@@ -789,7 +789,7 @@ func (f *fakeStore) GetCurrentDeploymentForRoute(ctx context.Context, arg db.Get
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	if deployment.CellID != arg.CellID || deployment.RouteGeneration != arg.RouteGeneration {
+	if deployment.BuildCellID != arg.CellID || deployment.BuildRouteGeneration != arg.RouteGeneration {
 		return db.Deployment{}, pgx.ErrNoRows
 	}
 	return deployment, nil
@@ -912,15 +912,19 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if !f.deployment.WorkerGroupID.Valid {
 			f.deployment.WorkerGroupID = arg.WorkerGroupID
 		}
-		if f.deployment.CellID == "" {
-			f.deployment.CellID = arg.CellID
+		if f.deployment.BuildCellID == "" {
+			f.deployment.BuildCellID = arg.BuildCellID
+		}
+		if f.deployment.BuildRouteGeneration == 0 {
+			f.deployment.BuildRouteGeneration = arg.BuildRouteGeneration
 		}
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
-		CellID:                     arg.CellID,
+		BuildCellID:                arg.BuildCellID,
+		BuildRouteGeneration:       arg.BuildRouteGeneration,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		Version:                    arg.Version,
@@ -1094,11 +1098,11 @@ func (f *fakeStore) GetDeploymentByVersion(_ context.Context, arg db.GetDeployme
 
 func (f *fakeStore) GetDeploymentForOrg(_ context.Context, arg db.GetDeploymentForOrgParams) (db.Deployment, error) {
 	if f.deployment.ID == arg.ID && f.deployment.OrgID == arg.OrgID {
-		if f.deployment.CellID == "" {
-			f.deployment.CellID = firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1")
+		if f.deployment.BuildCellID == "" {
+			f.deployment.BuildCellID = firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1")
 		}
-		if f.deployment.RouteGeneration == 0 {
-			f.deployment.RouteGeneration = 1
+		if f.deployment.BuildRouteGeneration == 0 {
+			f.deployment.BuildRouteGeneration = 1
 		}
 		return f.deployment, nil
 	}
@@ -1119,7 +1123,6 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 		return db.GetDeploymentTaskRow{
 			ID:                                testDeploymentTaskID(),
 			OrgID:                             arg.OrgID,
-			CellID:                            arg.CellID,
 			ProjectID:                         arg.ProjectID,
 			EnvironmentID:                     arg.EnvironmentID,
 			DeploymentID:                      arg.DeploymentID,
@@ -1154,7 +1157,6 @@ func (f *fakeStore) GetDeploymentTask(_ context.Context, arg db.GetDeploymentTas
 			return db.GetDeploymentTaskRow{
 				ID:                                task.ID,
 				OrgID:                             task.OrgID,
-				CellID:                            firstNonEmptyString(task.CellID, arg.CellID),
 				ProjectID:                         task.ProjectID,
 				EnvironmentID:                     task.EnvironmentID,
 				DeploymentID:                      task.DeploymentID,

@@ -219,10 +219,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return errors.New("get deployment build lease")
 		}
-		if buildDeployment.CellID != worker.CellID {
+		if buildDeployment.BuildCellID != worker.CellID {
 			return forbidden(errors.New("deployment build lease belongs to another cell"))
 		}
-		cellID := buildDeployment.CellID
+		cellID := buildDeployment.BuildCellID
 		workerState, err := work.q.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
 			ID:     buildWorkerInstanceID,
 			CellID: cellID,
@@ -246,11 +246,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				return failBuild("record deployment build artifact: " + err.Error())
 			}
 		}
-		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.RouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
+		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.BuildRouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record build manifest artifact: " + err.Error())
 		}
-		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.RouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
+		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.BuildRouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record deployment manifest artifact: " + err.Error())
 		}
@@ -261,7 +261,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if _, err := work.q.CreateDeploymentQueue(r.Context(), db.CreateDeploymentQueueParams{
 				ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:            orgID,
-				CellID:           cellID,
 				ProjectID:        projectID,
 				EnvironmentID:    environmentID,
 				DeploymentID:     deploymentID,
@@ -273,7 +272,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		deploymentSandboxIDs := map[string]pgtype.UUID{}
 		for _, task := range request.Result.Tasks {
-			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.RouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
+			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.BuildRouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
 			if err != nil {
 				return failBuild("record task bundle artifact: " + err.Error())
 			}
@@ -292,7 +291,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			sandboxID := strings.TrimSpace(task.SandboxID)
 			deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
 			if !ok {
-				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.RouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
+				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, cellID, buildDeployment.BuildRouteGeneration, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
 				if err != nil {
 					return failBuild("record deployment sandbox image artifact: " + err.Error())
 				}
@@ -323,13 +322,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 						ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 						PublicID:            sandboxPublicID,
 						OrgID:               orgID,
-						CellID:              cellID,
-						RouteGeneration:     buildDeployment.RouteGeneration,
 						ProjectID:           projectID,
 						EnvironmentID:       environmentID,
 						DeploymentID:        deploymentID,
 						SandboxID:           sandboxID,
 						ImageArtifactID:     imageArtifact.ID,
+						ImageArtifactCellID: cellID,
 						ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
 						RootfsDigest:        workerState.RootfsDigest,
 						ImageDigest:         imageArtifact.Digest,
@@ -373,7 +371,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 					ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 					PublicID:              deploymentTaskPublicID,
 					OrgID:                 orgID,
-					CellID:                cellID,
 					ProjectID:             projectID,
 					EnvironmentID:         environmentID,
 					DeploymentID:          deploymentID,
@@ -384,6 +381,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 					ExportName:            strings.TrimSpace(task.ExportName),
 					HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
 					BundleArtifactID:      bundleArtifact.ID,
+					BundleArtifactCellID:  cellID,
 					BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
 					RequestedMilliCpu:     task.RequestedMilliCPU,
 					RequestedMemoryMib:    task.RequestedMemoryMiB,

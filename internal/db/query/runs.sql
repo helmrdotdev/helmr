@@ -81,18 +81,18 @@ created AS (
               FROM deployment_tasks
               JOIN deployments
                 ON deployments.org_id = deployment_tasks.org_id
-               AND deployments.cell_id = deployment_tasks.cell_id
                AND deployments.project_id = deployment_tasks.project_id
                AND deployments.environment_id = deployment_tasks.environment_id
                AND deployments.id = deployment_tasks.deployment_id
-               AND deployments.route_generation = sqlc.arg(route_generation)
+               AND deployments.build_cell_id = sqlc.arg(cell_id)
+               AND deployments.build_route_generation = sqlc.arg(route_generation)
                AND deployments.status = 'deployed'
               JOIN environment_cells
                 ON environment_cells.org_id = deployment_tasks.org_id
                AND environment_cells.project_id = deployment_tasks.project_id
                AND environment_cells.environment_id = deployment_tasks.environment_id
-               AND environment_cells.cell_id = deployment_tasks.cell_id
-               AND environment_cells.route_generation = deployments.route_generation
+               AND environment_cells.cell_id = deployments.build_cell_id
+               AND environment_cells.route_generation = deployments.build_route_generation
                AND (
                    environment_cells.route_state = 'active'
                    OR (
@@ -116,7 +116,6 @@ created AS (
                               AND cell_health.state IN ('healthy', 'degraded')
                               AND cell_health.routing_fresh_until > now()
              WHERE deployment_tasks.org_id = sqlc.arg(org_id)
-               AND deployment_tasks.cell_id = sqlc.arg(cell_id)
                AND deployment_tasks.project_id = sqlc.arg(project_id)
                AND deployment_tasks.environment_id = sqlc.arg(environment_id)
                AND deployment_tasks.deployment_id = sqlc.arg(deployment_id)

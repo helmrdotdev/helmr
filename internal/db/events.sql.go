@@ -15,7 +15,7 @@ const appendDeploymentEvent = `-- name: AppendDeploymentEvent :one
 WITH target_deployment AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.cell_id,
+           deployments.build_cell_id AS cell_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments

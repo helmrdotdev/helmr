@@ -9,7 +9,6 @@ WITH source_mount AS MATERIALIZED (
       FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
-       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
@@ -162,6 +161,8 @@ WITH worker_scope AS MATERIALIZED (
 source_sandbox AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
+           environment_cells.cell_id,
+           environment_cells.route_generation,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes,
@@ -172,7 +173,6 @@ source_sandbox AS MATERIALIZED (
       FROM deployment_sandboxes
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
@@ -183,7 +183,7 @@ source_sandbox AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployment_sandboxes.cell_id
+       AND image_artifact.cell_id = deployments.build_cell_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -192,13 +192,13 @@ source_sandbox AS MATERIALIZED (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN worker_scope
         ON worker_scope.worker_group_id = deployments.worker_group_id
-       AND worker_scope.cell_id = deployment_sandboxes.cell_id
+       AND worker_scope.cell_id = deployments.build_cell_id
       JOIN environment_cells
         ON environment_cells.org_id = deployment_sandboxes.org_id
        AND environment_cells.project_id = deployment_sandboxes.project_id
        AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployment_sandboxes.cell_id
-       AND environment_cells.route_generation = deployment_sandboxes.route_generation
+       AND environment_cells.cell_id = deployments.build_cell_id
+       AND environment_cells.route_generation = deployments.build_route_generation
        AND environment_cells.route_state = 'active'
       JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                     AND org_cells.cell_id = environment_cells.cell_id
@@ -367,7 +367,6 @@ UPDATE runtime_instances
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
              JOIN deployment_sandboxes
                ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
               AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
               AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
               AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
@@ -425,7 +424,6 @@ UPDATE runtime_instances
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
              JOIN deployment_sandboxes
                ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.cell_id = runtime_substrate_artifacts.cell_id
               AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
               AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
               AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
@@ -688,6 +686,8 @@ RETURNING *;
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
+           environment_cells.cell_id,
+           environment_cells.route_generation,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes,
@@ -708,7 +708,7 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployment_sandboxes.cell_id
+       AND image_artifact.cell_id = deployments.build_cell_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -719,8 +719,8 @@ WITH current_sandboxes AS MATERIALIZED (
         ON environment_cells.org_id = deployment_sandboxes.org_id
        AND environment_cells.project_id = deployment_sandboxes.project_id
        AND environment_cells.environment_id = deployment_sandboxes.environment_id
-       AND environment_cells.cell_id = deployment_sandboxes.cell_id
-       AND environment_cells.route_generation = deployment_sandboxes.route_generation
+       AND environment_cells.cell_id = deployments.build_cell_id
+       AND environment_cells.route_generation = deployments.build_route_generation
        AND environment_cells.route_state = 'active'
       JOIN org_cells ON org_cells.org_id = environment_cells.org_id
                     AND org_cells.cell_id = environment_cells.cell_id
@@ -996,6 +996,8 @@ SELECT org_id,
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
            deployments.worker_group_id,
+           environment_cells.cell_id,
+           environment_cells.route_generation,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
            image_artifact.size_bytes AS image_artifact_size_bytes
@@ -1010,31 +1012,31 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.project_id = deployment_sandboxes.project_id
        AND environments.id = deployment_sandboxes.environment_id
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
-	      JOIN artifacts AS image_artifact
-	        ON image_artifact.org_id = deployment_sandboxes.org_id
-	       AND image_artifact.cell_id = deployment_sandboxes.cell_id
-	       AND image_artifact.project_id = deployment_sandboxes.project_id
-	       AND image_artifact.environment_id = deployment_sandboxes.environment_id
-	       AND image_artifact.id = deployment_sandboxes.image_artifact_id
-	       AND image_artifact.digest = deployment_sandboxes.image_digest
-	       AND image_artifact.kind = 'sandbox_image'
-	       AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-	      JOIN environment_cells
-	        ON environment_cells.org_id = deployment_sandboxes.org_id
-	       AND environment_cells.project_id = deployment_sandboxes.project_id
-	       AND environment_cells.environment_id = deployment_sandboxes.environment_id
-	       AND environment_cells.cell_id = deployment_sandboxes.cell_id
-	       AND environment_cells.route_generation = deployment_sandboxes.route_generation
-	       AND environment_cells.route_state = 'active'
-	      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-	                    AND org_cells.cell_id = environment_cells.cell_id
-	                    AND org_cells.state = 'active'
-	      JOIN cells ON cells.id = environment_cells.cell_id
-	                AND cells.state = 'active'
-	      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
-	                      AND cell_health.state IN ('healthy', 'degraded')
-	                      AND cell_health.routing_fresh_until > now()
-	),
+      JOIN artifacts AS image_artifact
+        ON image_artifact.org_id = deployment_sandboxes.org_id
+       AND image_artifact.cell_id = deployments.build_cell_id
+       AND image_artifact.project_id = deployment_sandboxes.project_id
+       AND image_artifact.environment_id = deployment_sandboxes.environment_id
+       AND image_artifact.id = deployment_sandboxes.image_artifact_id
+       AND image_artifact.digest = deployment_sandboxes.image_digest
+       AND image_artifact.kind = 'sandbox_image'
+       AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
+      JOIN environment_cells
+        ON environment_cells.org_id = deployment_sandboxes.org_id
+       AND environment_cells.project_id = deployment_sandboxes.project_id
+       AND environment_cells.environment_id = deployment_sandboxes.environment_id
+       AND environment_cells.cell_id = deployments.build_cell_id
+       AND environment_cells.route_generation = deployments.build_route_generation
+       AND environment_cells.route_state = 'active'
+      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
+                    AND org_cells.cell_id = environment_cells.cell_id
+                    AND org_cells.state = 'active'
+      JOIN cells ON cells.id = environment_cells.cell_id
+                AND cells.state = 'active'
+      JOIN cell_health ON cell_health.cell_id = environment_cells.cell_id
+                      AND cell_health.state IN ('healthy', 'degraded')
+                      AND cell_health.routing_fresh_until > now()
+),
 worker_sandbox_scope AS MATERIALIZED (
     SELECT worker_instances.id AS worker_instance_id,
            worker_instances.runtime_id AS runtime_release_id,

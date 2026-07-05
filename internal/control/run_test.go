@@ -1670,7 +1670,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		deploymentTaskRow: db.GetDeploymentTaskRow{
 			ID:                  testDeploymentTaskID(),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			DeploymentID:        testDeploymentID(),
@@ -3166,7 +3165,6 @@ func (f *fakeStore) ResolveDeploymentSandboxForWorkspaceCreate(_ context.Context
 	return db.DeploymentSandbox{
 		ID:            testDeploymentSandboxID(),
 		OrgID:         arg.OrgID,
-		CellID:        firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		DeploymentID:  testDeploymentID(),

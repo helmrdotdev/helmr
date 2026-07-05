@@ -147,7 +147,6 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, cellID string,
 	if deploymentID.Valid {
 		deployment, err := s.db.GetDeployment(ctx, db.GetDeploymentParams{
 			OrgID:         pgvalue.UUID(orgID),
-			CellID:        cellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			ID:            deploymentID,
@@ -166,7 +165,6 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, cellID string,
 	if selection.version != "" {
 		deployment, err := s.db.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
 			OrgID:         pgvalue.UUID(orgID),
-			CellID:        cellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			Version:       selection.version,
@@ -192,7 +190,7 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, cellID string,
 	if err != nil {
 		return db.GetDeploymentTaskRow{}, err
 	}
-	return s.deploymentTask(ctx, deployment.CellID, deployment.RouteGeneration, orgID, projectID, environmentID, deployment.ID, taskID)
+	return s.deploymentTask(ctx, cellID, routeGeneration, orgID, projectID, environmentID, deployment.ID, taskID)
 }
 
 func (s *Server) deploymentTask(ctx context.Context, cellID string, routeGeneration int64, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
@@ -607,7 +605,6 @@ func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, 
 	}
 	queueConfig, err := s.db.GetDeploymentQueueConfig(ctx, db.GetDeploymentQueueConfigParams{
 		OrgID:         pgvalue.UUID(orgID),
-		CellID:        task.CellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		DeploymentID:  task.DeploymentID,
