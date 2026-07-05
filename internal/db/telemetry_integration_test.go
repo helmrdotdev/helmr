@@ -12,11 +12,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const testCellID = "us-east-1-cell-1"
 
-func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
+func TestAppendRunLogChunkIdempotentUsageLedgerAndByteContinuity(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -114,7 +115,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	var usageBytes int64
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*), COALESCE(SUM(quantity), 0)
-		  FROM usage_facts
+		  FROM usage_ledger_entries
 		 WHERE org_id = $1
 		   AND run_id = $2
 		   AND meter = 'log_bytes'
@@ -122,7 +123,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if usageCount != 3 || usageBytes != int64(len("alphabetagamma")) {
-		t.Fatalf("usage facts count=%d bytes=%d", usageCount, usageBytes)
+		t.Fatalf("usage ledger entries count=%d bytes=%d", usageCount, usageBytes)
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -254,6 +255,83 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 }
 
+func TestUsageLedgerEntriesSurviveRunDeletion(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+
+	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		Kind:             "run.log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+		OrgID:            pgvalue.UUID(ids.orgID),
+		CellID:           testCellID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("billable"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	var usageCount int64
+	var usageBytes int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(SUM(quantity), 0)
+		  FROM usage_ledger_entries
+		 WHERE org_id = $1
+		   AND run_id = $2
+		   AND meter = 'log_bytes'
+	`, ids.orgID, ids.runID).Scan(&usageCount, &usageBytes); err != nil {
+		t.Fatal(err)
+	}
+	if usageCount != 1 || usageBytes != int64(len("billable")) {
+		t.Fatalf("usage ledger entries after run deletion count=%d bytes=%d", usageCount, usageBytes)
+	}
+}
+
+func TestUsageLedgerEntryIdempotencyRejectsDuplicateScope(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	sourceID := uuid.Must(uuid.NewV7())
+
+	insert := `
+		INSERT INTO usage_ledger_entries (
+			org_id,
+			project_id,
+			environment_id,
+			source_type,
+			source_id,
+			run_id,
+			meter,
+			quantity,
+			unit,
+			idempotency_key
+		)
+		VALUES ($1, $2, $3, 'run_log', $4, $5, 'log_bytes', 7, 'bytes', 'duplicate-key')
+	`
+	if _, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("duplicate usage ledger entry error = %v, want unique_violation", err)
+	}
+}
+
 func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -296,7 +374,7 @@ func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
 			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND run_id = $2),
 			(SELECT count(*) FROM event_hot_payloads WHERE org_id = $1 AND run_id = $2),
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND source_id = $2),
-			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND run_id = $2)
+			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $2)
 	`, ids.orgID, ids.runID).Scan(&chunkCount, &eventCount, &outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}
@@ -391,7 +469,7 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND stream_name = '__run__'),
 			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND cell_id = $2 AND run_id = $3),
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND cell_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
-			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND meter = 'log_bytes')
+			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
 	`, ids.orgID, testCellID, ids.runID).Scan(&headSeq, &chunkCount, &outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}

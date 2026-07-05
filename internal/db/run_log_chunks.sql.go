@@ -270,19 +270,16 @@ run_log_telemetry_outbox AS (
     RETURNING id
 ),
 usage_event AS (
-    INSERT INTO usage_facts (org_id, cell_id, project_id, environment_id, source_kind, source_id, run_id, attempt_id, run_lease_id, trace_id, span_id, snapshot_version, meter, quantity, unit, details, idempotency_key)
+    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, details, idempotency_key)
     SELECT current_run_lease.org_id,
-           current_run_lease.cell_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
            'run_log',
            selected_chunk.run_lease_id,
            selected_chunk.run_id,
-           current_run_lease.attempt_id,
-           selected_chunk.run_lease_id,
+           current_run_lease.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
-           current_run_lease.state_version,
            'log_bytes',
            selected_chunk.size_bytes,
            'bytes',

@@ -84,8 +84,7 @@ CREATE TYPE artifact_grant_event_kind AS ENUM (
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
-    'terminal_output',
-    'usage_fact'
+    'terminal_output'
 );
 
 CREATE TYPE telemetry_outbox_state AS ENUM (
@@ -2900,59 +2899,41 @@ ALTER TABLE run_leases
     REFERENCES runtime_checkpoints(org_id, cell_id, run_id, id)
     ON DELETE SET NULL (restore_runtime_checkpoint_id);
 
-CREATE TABLE usage_facts (
+CREATE TABLE usage_ledger_entries (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    source_kind TEXT NOT NULL,
+    source_type TEXT NOT NULL,
     source_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    attempt_id UUID,
-    run_lease_id UUID,
-    worker_group_id UUID,
-    runtime_checkpoint_id UUID,
-    trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
+    attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
+    trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
-    snapshot_version BIGINT NOT NULL CHECK (snapshot_version > 0),
     meter TEXT NOT NULL CHECK (btrim(meter) <> ''),
     quantity NUMERIC NOT NULL CHECK (quantity >= 0),
     unit TEXT NOT NULL CHECK (btrim(unit) <> ''),
     measured_to TIMESTAMPTZ,
-    measured_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     details JSONB NOT NULL DEFAULT '{}'::jsonb,
-    idempotency_key TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_id, id),
-    UNIQUE (org_id, run_id, id),
-    UNIQUE (org_id, cell_id, run_id, id),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, cell_id, run_id, id)
-        ON DELETE SET NULL (attempt_id),
-    FOREIGN KEY (org_id, cell_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, cell_id, run_id, id)
-        ON DELETE SET NULL (run_lease_id),
-    FOREIGN KEY (org_id, cell_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, cell_id, run_id, id)
-        ON DELETE SET NULL (runtime_checkpoint_id),
-    FOREIGN KEY (org_id, cell_id, run_id, snapshot_version)
-        REFERENCES run_snapshots(org_id, cell_id, run_id, version)
-        ON DELETE RESTRICT
-        DEFERRABLE INITIALLY DEFERRED
+    PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX usage_facts_idempotency_idx
-    ON usage_facts (org_id, cell_id, source_kind, source_id, meter, idempotency_key);
+CREATE UNIQUE INDEX usage_ledger_entries_idempotency_idx
+    ON usage_ledger_entries (org_id, source_type, source_id, meter, idempotency_key);
 
-CREATE INDEX usage_facts_scope_created_idx
-    ON usage_facts (org_id, project_id, environment_id, created_at DESC);
+CREATE INDEX usage_ledger_entries_scope_created_idx
+    ON usage_ledger_entries (org_id, project_id, environment_id, created_at DESC);
 
-CREATE INDEX usage_facts_trace_idx
-    ON usage_facts (trace_id, created_at);
+CREATE INDEX usage_ledger_entries_trace_idx
+    ON usage_ledger_entries (trace_id, created_at)
+    WHERE trace_id IS NOT NULL;
+
+CREATE INDEX usage_ledger_entries_run_meter_idx
+    ON usage_ledger_entries (org_id, run_id, meter)
+    INCLUDE (quantity);
 
 CREATE TABLE run_waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

@@ -746,30 +746,27 @@ active_time_delta AS (
            GREATEST(
                updated_runs.active_elapsed_ms
                - COALESCE((
-                   SELECT SUM(usage_facts.quantity)::bigint
-                     FROM usage_facts
-                    WHERE usage_facts.org_id = $1
-                      AND usage_facts.run_id = updated_runs.run_id
-                      AND usage_facts.meter = 'active_time'
+                   SELECT SUM(usage_ledger_entries.quantity)::bigint
+                     FROM usage_ledger_entries
+                    WHERE usage_ledger_entries.org_id = $1
+                      AND usage_ledger_entries.run_id = updated_runs.run_id
+                      AND usage_ledger_entries.meter = 'active_time'
                ), 0),
                0
            )::bigint AS quantity
       FROM updated_runs
 ),
 active_time_usage_event AS (
-    INSERT INTO usage_facts (org_id, cell_id, project_id, environment_id, source_kind, source_id, run_id, attempt_id, run_lease_id, trace_id, span_id, snapshot_version, meter, quantity, unit, measured_to, details, idempotency_key)
+    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT $1,
-           updated_runs.cell_id,
            updated_runs.project_id,
            updated_runs.environment_id,
            'run_lease',
            updated_runs.run_lease_id,
            updated_runs.run_id,
-           updated_runs.previous_attempt_id,
-           updated_runs.run_lease_id,
+           updated_runs.previous_attempt_number,
            run_leases.trace_id,
            run_leases.span_id,
-           CASE WHEN retry_plan.run_id IS NOT NULL THEN updated_runs.state_version - 1 ELSE updated_runs.state_version END,
            'active_time',
            active_time_delta.quantity,
            'ms',
@@ -2995,11 +2992,11 @@ active_time_delta AS (
     SELECT GREATEST(
                released_run_lease.active_duration_ms
                - COALESCE((
-                   SELECT SUM(usage_facts.quantity)::bigint
-                     FROM usage_facts
-                    WHERE usage_facts.org_id = released.org_id
-                      AND usage_facts.run_id = released.id
-                      AND usage_facts.meter = 'active_time'
+                   SELECT SUM(usage_ledger_entries.quantity)::bigint
+                     FROM usage_ledger_entries
+                    WHERE usage_ledger_entries.org_id = released.org_id
+                      AND usage_ledger_entries.run_id = released.id
+                      AND usage_ledger_entries.meter = 'active_time'
                ), 0),
                0
            )::bigint AS quantity
@@ -3007,19 +3004,16 @@ active_time_delta AS (
       JOIN released_run_lease ON true
 ),
 active_time_usage_event AS (
-    INSERT INTO usage_facts (org_id, cell_id, project_id, environment_id, source_kind, source_id, run_id, attempt_id, run_lease_id, trace_id, span_id, snapshot_version, meter, quantity, unit, measured_to, details, idempotency_key)
+    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT released.org_id,
-           released.cell_id,
            released.project_id,
            released.environment_id,
            'run_lease',
            released_run_lease.id,
            released.id,
-           released_run_lease.attempt_id,
-           released_run_lease.id,
+           released_attempt.attempt_number,
            released_run_lease.trace_id,
            released_run_lease.span_id,
-           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 1 ELSE released.state_version END,
            'active_time',
            active_time_delta.quantity,
            'ms',
@@ -3028,6 +3022,7 @@ active_time_usage_event AS (
            'active_time:' || released_run_lease.id::text || ':final'
       FROM released
       JOIN released_run_lease ON true
+      JOIN released_attempt ON true
       JOIN active_time_delta ON true
       LEFT JOIN retry_plan ON true
      WHERE active_time_delta.quantity > 0
@@ -3035,19 +3030,16 @@ active_time_usage_event AS (
     RETURNING id
 ),
 output_usage_event AS (
-    INSERT INTO usage_facts (org_id, cell_id, project_id, environment_id, source_kind, source_id, run_id, attempt_id, run_lease_id, trace_id, span_id, snapshot_version, meter, quantity, unit, measured_to, details, idempotency_key)
+    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT released.org_id,
-           released.cell_id,
            released.project_id,
            released.environment_id,
            'run_lease',
            released_run_lease.id,
            released.id,
-           released_run_lease.attempt_id,
-           released_run_lease.id,
+           released_attempt.attempt_number,
            released_run_lease.trace_id,
            released_run_lease.span_id,
-           CASE WHEN retry_plan.run_id IS NOT NULL THEN released.state_version - 1 ELSE released.state_version END,
            'output_bytes',
            octet_length(effective_release.output::text)::bigint,
            'bytes',
@@ -3056,6 +3048,7 @@ output_usage_event AS (
            'output:' || released_run_lease.id::text || ':final'
       FROM released
       JOIN released_run_lease ON true
+      JOIN released_attempt ON true
       JOIN effective_release ON true
       LEFT JOIN retry_plan ON true
      WHERE effective_release.output IS NOT NULL
