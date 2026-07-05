@@ -188,7 +188,7 @@ func TestIssueAPIKeySupportsTasksDeploy(t *testing.T) {
 func TestIssueAPIKeySupportsWorkspaceScopes(t *testing.T) {
 	store := &apiKeyStore{role: db.OrgMemberRoleOwner}
 	server := testAPIKeyServer(store)
-	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"workspace","expires_in_days":30,"permissions":[{"scopes":["workspace-lifecycle:manage","workspace-files:read","workspace-files:write","workspace-versions:read","workspace-versions:capture","workspace-versions:restore","workspace-versions:diff","workspace-exec:create","workspace-exec:read","workspace-exec:manage","workspace-pty:create","workspace-pty:read","workspace-pty:manage","workspace-ports:expose","workspace-ports:read","workspace-ports:close"]}]}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/projects/"+testProjectIDString()+"/environments/"+testEnvironmentIDString()+"/api-keys", strings.NewReader(`{"name":"workspace","expires_in_days":30,"permissions":[{"scopes":["workspace-lifecycle:manage","workspace-files:read","workspace-files:write","workspace-versions:read","workspace-versions:capture","workspace-versions:restore","workspace-versions:diff","workspace-exec:create","workspace-exec:read","workspace-exec:manage","workspace-pty:create","workspace-pty:read","workspace-pty:manage"]}]}`))
 	addSessionCookie(req)
 	rec := httptest.NewRecorder()
 
@@ -215,9 +215,6 @@ func TestIssueAPIKeySupportsWorkspaceScopes(t *testing.T) {
 		api.APIKeyScopeWorkspacePtyCreate,
 		api.APIKeyScopeWorkspacePtyRead,
 		api.APIKeyScopeWorkspacePtyManage,
-		api.APIKeyScopeWorkspacePortsExpose,
-		api.APIKeyScopeWorkspacePortsRead,
-		api.APIKeyScopeWorkspacePortsClose,
 	}
 	if len(issued.Permissions) != 1 || !slices.Equal(issued.Permissions[0].Scopes, wantScopes) {
 		t.Fatalf("permissions = %+v, want %+v", issued.Permissions, wantScopes)
@@ -236,9 +233,6 @@ func TestIssueAPIKeySupportsWorkspaceScopes(t *testing.T) {
 		string(auth.PermissionPtyCreate),
 		string(auth.PermissionPtyRead),
 		string(auth.PermissionPtyManage),
-		string(auth.PermissionPortsExpose),
-		string(auth.PermissionPortsRead),
-		string(auth.PermissionPortsClose),
 	}
 	gotPermissions := make([]string, 0, len(store.grants))
 	for _, grant := range store.grants {

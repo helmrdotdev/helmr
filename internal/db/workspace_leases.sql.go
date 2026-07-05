@@ -54,7 +54,7 @@ SELECT $1,
    AND workspace_mounts.workspace_id = $9
    AND workspace_mounts.id = $10
    AND workspace_mounts.state = 'mounted'
-RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceInstanceLeaseParams struct {
@@ -97,7 +97,6 @@ func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg Acquire
 		&i.OwnerRunID,
 		&i.OwnerExecID,
 		&i.OwnerPtySessionID,
-		&i.OwnerPortID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -165,7 +164,7 @@ SELECT $1,
    AND workspaces.project_id = fenced_mount.project_id
    AND workspaces.environment_id = fenced_mount.environment_id
    AND workspaces.id = fenced_mount.workspace_id
-RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceWriteLeaseParams struct {
@@ -210,7 +209,6 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 		&i.OwnerRunID,
 		&i.OwnerExecID,
 		&i.OwnerPtySessionID,
-		&i.OwnerPortID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -228,7 +226,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 }
 
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
-SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+SELECT id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
   FROM workspace_leases
  WHERE org_id = $1
    AND project_id = $2
@@ -267,7 +265,6 @@ func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeasePa
 		&i.OwnerRunID,
 		&i.OwnerExecID,
 		&i.OwnerPtySessionID,
-		&i.OwnerPortID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -440,7 +437,7 @@ func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWork
 
 const promoteWorkspaceCapture = `-- name: PromoteWorkspaceCapture :one
 WITH active_writer AS (
-    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.cell_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.owner_port_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
+    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.cell_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
       FROM workspace_leases
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.id = $2
@@ -648,7 +645,7 @@ UPDATE workspace_leases
    AND id = $2
    AND fencing_token = $3
    AND state = 'active'
-RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type ReleaseWorkspaceLeaseParams struct {
@@ -673,7 +670,6 @@ func (q *Queries) ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspac
 		&i.OwnerRunID,
 		&i.OwnerExecID,
 		&i.OwnerPtySessionID,
-		&i.OwnerPortID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,

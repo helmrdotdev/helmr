@@ -8,7 +8,6 @@
     "workspace:pty": "bun run src/workspace/pty.ts",
     "workspace:stop": "bun run src/workspace/stop.ts",
     "workspace:files": "bun run src/workspace/files.ts",
-    "workspace:ports": "bun run src/workspace/ports.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   }
 }

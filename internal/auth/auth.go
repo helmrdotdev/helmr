@@ -213,12 +213,6 @@ func normalizeAPIKeyGrantPermission(permission string) []Permission {
 		return []Permission{PermissionPtyRead}
 	case string(PermissionPtyManage):
 		return []Permission{PermissionPtyManage}
-	case string(PermissionPortsExpose):
-		return []Permission{PermissionPortsExpose}
-	case string(PermissionPortsRead):
-		return []Permission{PermissionPortsRead}
-	case string(PermissionPortsClose):
-		return []Permission{PermissionPortsClose}
 	case string(PermissionSecretsWrite):
 		return []Permission{PermissionSecretsWrite}
 	case string(PermissionTasksDeploy):

@@ -36,9 +36,6 @@ const (
 	PermissionPtyCreate                Permission = "workspace.pty.create"
 	PermissionPtyRead                  Permission = "workspace.pty.read"
 	PermissionPtyManage                Permission = "workspace.pty.manage"
-	PermissionPortsExpose              Permission = "workspace.ports.expose"
-	PermissionPortsRead                Permission = "workspace.ports.read"
-	PermissionPortsClose               Permission = "workspace.ports.close"
 	PermissionSecretsWrite             Permission = "secrets.write"
 	PermissionTasksDeploy              Permission = "tasks.deploy"
 )
@@ -96,9 +93,6 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionPtyCreate,
 			PermissionPtyRead,
 			PermissionPtyManage,
-			PermissionPortsExpose,
-			PermissionPortsRead,
-			PermissionPortsClose,
 			PermissionTasksDeploy:
 			return true
 		default:
@@ -112,8 +106,7 @@ func RoleAllows(role Role, permission Permission) bool {
 			PermissionFilesRead,
 			PermissionVersionsRead,
 			PermissionExecRead,
-			PermissionPtyRead,
-			PermissionPortsRead:
+			PermissionPtyRead:
 			return true
 		default:
 			return false

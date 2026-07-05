@@ -1199,22 +1199,6 @@ closed_requested_ptys AS (
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING workspace_pty_sessions.*
 ),
-closed_requested_ports AS (
-    UPDATE workspace_ports
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           closed_at = coalesce(workspace_ports.closed_at, now()),
-           updated_at = now()
-      FROM requested_without_runtime
-     WHERE workspace_ports.org_id = requested_without_runtime.org_id
-       AND workspace_ports.cell_id = requested_without_runtime.cell_id
-       AND workspace_ports.project_id = requested_without_runtime.project_id
-       AND workspace_ports.environment_id = requested_without_runtime.environment_id
-       AND workspace_ports.workspace_id = requested_without_runtime.workspace_id
-       AND workspace_ports.workspace_mount_id = requested_without_runtime.id
-       AND workspace_ports.state IN ('exposing', 'open', 'closing')
-    RETURNING workspace_ports.id
-),
 released_requested_leases AS (
     UPDATE workspace_leases
        SET state = 'released',
@@ -1259,7 +1243,6 @@ requested_stream_wakeups AS (
 requested_cleanup_counts AS (
     SELECT (SELECT count(*) FROM released_prepared_runtime_reservation)
          + (SELECT count(*) FROM cancelled_requested_operations)
-         + (SELECT count(*) FROM closed_requested_ports)
          + (SELECT count(*) FROM released_requested_leases)
          + (SELECT count(*) FROM requested_stream_wakeups) AS count
 )
@@ -1503,21 +1486,6 @@ closed_ptys AS (
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING workspace_pty_sessions.*
 ),
-closed_ports AS (
-    UPDATE workspace_ports
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           closed_at = coalesce(workspace_ports.closed_at, now()),
-           updated_at = now()
-      FROM stopped
-     WHERE workspace_ports.org_id = stopped.org_id
-       AND workspace_ports.project_id = stopped.project_id
-       AND workspace_ports.environment_id = stopped.environment_id
-       AND workspace_ports.workspace_id = stopped.workspace_id
-       AND workspace_ports.workspace_mount_id = stopped.id
-       AND workspace_ports.state IN ('exposing', 'open', 'closing')
-    RETURNING workspace_ports.id
-),
 released_leases AS (
     UPDATE workspace_leases
        SET state = 'released',
@@ -1594,7 +1562,6 @@ SELECT *
  WHERE (SELECT count(*) FROM stream_wakeups)
      + (SELECT count(*) FROM closed_runtime_instances)
      + (SELECT count(*) FROM cancelled_operations)
-     + (SELECT count(*) FROM closed_ports)
      + (SELECT count(*) FROM released_leases)
      + (SELECT count(*) FROM updated_workspace) >= 0
 UNION ALL
@@ -1682,16 +1649,6 @@ victim AS MATERIALIZED (
               AND workspace_pty_sessions.workspace_id = workspace_mounts.workspace_id
               AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
               AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_ports
-            WHERE workspace_ports.org_id = workspace_mounts.org_id
-              AND workspace_ports.project_id = workspace_mounts.project_id
-              AND workspace_ports.environment_id = workspace_mounts.environment_id
-              AND workspace_ports.workspace_id = workspace_mounts.workspace_id
-              AND workspace_ports.workspace_mount_id = workspace_mounts.id
-              AND workspace_ports.state IN ('exposing', 'open', 'closing')
        )
      ORDER BY workspaces.last_activity_at ASC,
               runtime_instances.waiting_at ASC NULLS LAST,
@@ -1864,21 +1821,6 @@ lost_ptys AS (
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING workspace_pty_sessions.*
 ),
-closed_ports AS (
-    UPDATE workspace_ports
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_mount_failed'),
-           closed_at = coalesce(workspace_ports.closed_at, now()),
-           updated_at = now()
-      FROM failed
-     WHERE workspace_ports.org_id = failed.org_id
-       AND workspace_ports.project_id = failed.project_id
-       AND workspace_ports.environment_id = failed.environment_id
-       AND workspace_ports.workspace_id = failed.workspace_id
-       AND workspace_ports.workspace_mount_id = failed.id
-       AND workspace_ports.state IN ('exposing', 'open', 'closing')
-    RETURNING workspace_ports.id
-),
 released_leases AS (
     UPDATE workspace_leases
        SET state = 'released',
@@ -1925,7 +1867,6 @@ SELECT *
      + (SELECT count(*) FROM failed_runtime_instances)
      + (SELECT count(*) FROM updated_workspace)
      + (SELECT count(*) FROM lost_operations)
-     + (SELECT count(*) FROM closed_ports)
      + (SELECT count(*) FROM released_leases) >= 0;
 
 -- name: MarkStaleWorkspaceMountsLost :many
@@ -2034,21 +1975,6 @@ lost_ptys AS (
        AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
     RETURNING workspace_pty_sessions.*
 ),
-closed_ports AS (
-    UPDATE workspace_ports
-       SET state = 'closed',
-           error = jsonb_build_object('code', 'workspace_mount_lost'),
-           closed_at = coalesce(workspace_ports.closed_at, now()),
-           updated_at = now()
-      FROM lost
-     WHERE workspace_ports.org_id = lost.org_id
-       AND workspace_ports.project_id = lost.project_id
-       AND workspace_ports.environment_id = lost.environment_id
-       AND workspace_ports.workspace_id = lost.workspace_id
-       AND workspace_ports.workspace_mount_id = lost.id
-       AND workspace_ports.state IN ('exposing', 'open', 'closing')
-    RETURNING workspace_ports.id
-),
 released_leases AS (
     UPDATE workspace_leases
        SET state = 'released',
@@ -2095,5 +2021,4 @@ SELECT *
      + (SELECT count(*) FROM lost_runtime_instances)
      + (SELECT count(*) FROM lost_operations)
      + (SELECT count(*) FROM updated_lost_dirty_workspaces)
-     + (SELECT count(*) FROM closed_ports)
      + (SELECT count(*) FROM released_leases) >= 0;

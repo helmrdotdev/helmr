@@ -2868,16 +2868,6 @@ waiting_runtime_instance AS (
               AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
               AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
        )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_ports
-            WHERE workspace_ports.org_id = workspace_mounts.org_id
-              AND workspace_ports.project_id = workspace_mounts.project_id
-              AND workspace_ports.environment_id = workspace_mounts.environment_id
-              AND workspace_ports.workspace_id = workspace_mounts.workspace_id
-              AND workspace_ports.workspace_mount_id = workspace_mounts.id
-              AND workspace_ports.state IN ('exposing', 'open', 'closing')
-       )
     RETURNING runtime_instances.id
 ),
 released_run_lease AS (

@@ -70,9 +70,6 @@ const (
 	APIKeyScopeWorkspacePtyCreate       APIKeyScope = "workspace-pty:create"
 	APIKeyScopeWorkspacePtyRead         APIKeyScope = "workspace-pty:read"
 	APIKeyScopeWorkspacePtyManage       APIKeyScope = "workspace-pty:manage"
-	APIKeyScopeWorkspacePortsExpose     APIKeyScope = "workspace-ports:expose"
-	APIKeyScopeWorkspacePortsRead       APIKeyScope = "workspace-ports:read"
-	APIKeyScopeWorkspacePortsClose      APIKeyScope = "workspace-ports:close"
 	APIKeyScopeSecretsWrite             APIKeyScope = "secrets:write"
 	APIKeyScopeTasksDeploy              APIKeyScope = "tasks:deploy"
 )

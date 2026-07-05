@@ -26,9 +26,6 @@ export type ApiKeyScope =
   | "workspace-pty:create"
   | "workspace-pty:read"
   | "workspace-pty:manage"
-  | "workspace-ports:expose"
-  | "workspace-ports:read"
-  | "workspace-ports:close"
   | "secrets:write"
   | "tasks:deploy";
 

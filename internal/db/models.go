@@ -836,51 +836,6 @@ func (ns NullRegionVisibility) Value() (driver.Value, error) {
 	return string(ns.RegionVisibility), nil
 }
 
-type RetentionClass string
-
-const (
-	RetentionClassHot      RetentionClass = "hot"
-	RetentionClassStandard RetentionClass = "standard"
-	RetentionClassAudit    RetentionClass = "audit"
-	RetentionClassBilling  RetentionClass = "billing"
-	RetentionClassArchive  RetentionClass = "archive"
-)
-
-func (e *RetentionClass) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RetentionClass(s)
-	case string:
-		*e = RetentionClass(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RetentionClass: %T", src)
-	}
-	return nil
-}
-
-type NullRetentionClass struct {
-	RetentionClass RetentionClass `json:"retention_class"`
-	Valid          bool           `json:"valid"` // Valid is true if RetentionClass is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRetentionClass) Scan(value interface{}) error {
-	if value == nil {
-		ns.RetentionClass, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RetentionClass.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRetentionClass) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RetentionClass), nil
-}
-
 type RunAttemptStatus string
 
 const (
@@ -1870,7 +1825,6 @@ type TelemetryStreamKind string
 const (
 	TelemetryStreamKindRunLog         TelemetryStreamKind = "run_log"
 	TelemetryStreamKindEvent          TelemetryStreamKind = "event"
-	TelemetryStreamKindTraceSpan      TelemetryStreamKind = "trace_span"
 	TelemetryStreamKindTerminalOutput TelemetryStreamKind = "terminal_output"
 	TelemetryStreamKindUsageFact      TelemetryStreamKind = "usage_fact"
 )
@@ -2617,136 +2571,6 @@ func (ns NullWorkspaceOperationState) Value() (driver.Value, error) {
 	return string(ns.WorkspaceOperationState), nil
 }
 
-type WorkspacePortAuthMode string
-
-const (
-	WorkspacePortAuthModePrivate     WorkspacePortAuthMode = "private"
-	WorkspacePortAuthModePublicToken WorkspacePortAuthMode = "public_token"
-)
-
-func (e *WorkspacePortAuthMode) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspacePortAuthMode(s)
-	case string:
-		*e = WorkspacePortAuthMode(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspacePortAuthMode: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspacePortAuthMode struct {
-	WorkspacePortAuthMode WorkspacePortAuthMode `json:"workspace_port_auth_mode"`
-	Valid                 bool                  `json:"valid"` // Valid is true if WorkspacePortAuthMode is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspacePortAuthMode) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspacePortAuthMode, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspacePortAuthMode.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspacePortAuthMode) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspacePortAuthMode), nil
-}
-
-type WorkspacePortProtocol string
-
-const (
-	WorkspacePortProtocolHttp WorkspacePortProtocol = "http"
-	WorkspacePortProtocolTcp  WorkspacePortProtocol = "tcp"
-)
-
-func (e *WorkspacePortProtocol) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspacePortProtocol(s)
-	case string:
-		*e = WorkspacePortProtocol(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspacePortProtocol: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspacePortProtocol struct {
-	WorkspacePortProtocol WorkspacePortProtocol `json:"workspace_port_protocol"`
-	Valid                 bool                  `json:"valid"` // Valid is true if WorkspacePortProtocol is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspacePortProtocol) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspacePortProtocol, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspacePortProtocol.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspacePortProtocol) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspacePortProtocol), nil
-}
-
-type WorkspacePortState string
-
-const (
-	WorkspacePortStateExposing WorkspacePortState = "exposing"
-	WorkspacePortStateOpen     WorkspacePortState = "open"
-	WorkspacePortStateClosing  WorkspacePortState = "closing"
-	WorkspacePortStateClosed   WorkspacePortState = "closed"
-	WorkspacePortStateExpired  WorkspacePortState = "expired"
-	WorkspacePortStateFailed   WorkspacePortState = "failed"
-)
-
-func (e *WorkspacePortState) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspacePortState(s)
-	case string:
-		*e = WorkspacePortState(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspacePortState: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspacePortState struct {
-	WorkspacePortState WorkspacePortState `json:"workspace_port_state"`
-	Valid              bool               `json:"valid"` // Valid is true if WorkspacePortState is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspacePortState) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspacePortState, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspacePortState.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspacePortState) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspacePortState), nil
-}
-
 type WorkspacePtyState string
 
 const (
@@ -3421,21 +3245,6 @@ type EventHotPayload struct {
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
-type EventSpillObject struct {
-	ID          pgtype.UUID        `json:"id"`
-	OrgID       pgtype.UUID        `json:"org_id"`
-	CellID      string             `json:"cell_id"`
-	SubjectKind EventSubjectType   `json:"subject_kind"`
-	SubjectID   pgtype.UUID        `json:"subject_id"`
-	SeqStart    int64              `json:"seq_start"`
-	SeqEnd      int64              `json:"seq_end"`
-	CasDigest   pgtype.Text        `json:"cas_digest"`
-	ObjectKey   pgtype.Text        `json:"object_key"`
-	SizeBytes   int64              `json:"size_bytes"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
 type EventWatermark struct {
 	OrgID               pgtype.UUID        `json:"org_id"`
 	CellID              string             `json:"cell_id"`
@@ -3690,21 +3499,6 @@ type RunLogHotChunk struct {
 	SizeBytes     int64              `json:"size_bytes"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-type RunLogSpillObject struct {
-	ID         pgtype.UUID        `json:"id"`
-	OrgID      pgtype.UUID        `json:"org_id"`
-	CellID     string             `json:"cell_id"`
-	RunID      pgtype.UUID        `json:"run_id"`
-	StreamName string             `json:"stream_name"`
-	SeqStart   int64              `json:"seq_start"`
-	SeqEnd     int64              `json:"seq_end"`
-	CasDigest  pgtype.Text        `json:"cas_digest"`
-	ObjectKey  pgtype.Text        `json:"object_key"`
-	SizeBytes  int64              `json:"size_bytes"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
 type RunLogWatermark struct {
@@ -4605,7 +4399,6 @@ type WorkspaceLease struct {
 	OwnerRunID                pgtype.UUID         `json:"owner_run_id"`
 	OwnerExecID               pgtype.UUID         `json:"owner_exec_id"`
 	OwnerPtySessionID         pgtype.UUID         `json:"owner_pty_session_id"`
-	OwnerPortID               pgtype.UUID         `json:"owner_port_id"`
 	BaseVersionID             pgtype.UUID         `json:"base_version_id"`
 	AcquiredVersionID         pgtype.UUID         `json:"acquired_version_id"`
 	AcquiredFencingGeneration int64               `json:"acquired_fencing_generation"`
@@ -4718,32 +4511,6 @@ type WorkspaceOperationIdempotency struct {
 	ExpiresAt            pgtype.Timestamptz                `json:"expires_at"`
 	CreatedAt            pgtype.Timestamptz                `json:"created_at"`
 	LastUsedAt           pgtype.Timestamptz                `json:"last_used_at"`
-}
-
-type WorkspacePort struct {
-	ID                   pgtype.UUID           `json:"id"`
-	OrgID                pgtype.UUID           `json:"org_id"`
-	CellID               string                `json:"cell_id"`
-	ProjectID            pgtype.UUID           `json:"project_id"`
-	EnvironmentID        pgtype.UUID           `json:"environment_id"`
-	WorkspaceID          pgtype.UUID           `json:"workspace_id"`
-	WorkspaceMountID     pgtype.UUID           `json:"workspace_mount_id"`
-	OwnerRunID           pgtype.UUID           `json:"owner_run_id"`
-	OwnerExecID          pgtype.UUID           `json:"owner_exec_id"`
-	OwnerPtySessionID    pgtype.UUID           `json:"owner_pty_session_id"`
-	Port                 int32                 `json:"port"`
-	Protocol             WorkspacePortProtocol `json:"protocol"`
-	State                WorkspacePortState    `json:"state"`
-	AuthMode             WorkspacePortAuthMode `json:"auth_mode"`
-	Url                  string                `json:"url"`
-	ExpiresAt            pgtype.Timestamptz    `json:"expires_at"`
-	CreatedBySubjectType string                `json:"created_by_subject_type"`
-	CreatedBySubjectID   string                `json:"created_by_subject_id"`
-	CreatedAt            pgtype.Timestamptz    `json:"created_at"`
-	OpenedAt             pgtype.Timestamptz    `json:"opened_at"`
-	ClosedAt             pgtype.Timestamptz    `json:"closed_at"`
-	UpdatedAt            pgtype.Timestamptz    `json:"updated_at"`
-	Error                []byte                `json:"error"`
 }
 
 type WorkspacePtySession struct {

@@ -1766,7 +1766,7 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 		writeError(w, forbidden(errPermissionRequired))
 		return db.Session{}, false
 	}
-	if err := s.requireRoutableRecordCell(r.Context(), s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID); err != nil {
+	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
 		writeError(w, err)
 		return db.Session{}, false
 	}

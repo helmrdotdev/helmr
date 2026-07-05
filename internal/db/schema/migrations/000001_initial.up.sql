@@ -84,7 +84,6 @@ CREATE TYPE artifact_grant_event_kind AS ENUM (
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
-    'trace_span',
     'terminal_output',
     'usage_fact'
 );
@@ -101,14 +100,6 @@ CREATE TYPE telemetry_replay_error_state AS ENUM (
     'retryable',
     'dead_lettered',
     'resolved'
-);
-
-CREATE TYPE retention_class AS ENUM (
-    'hot',
-    'standard',
-    'audit',
-    'billing',
-    'archive'
 );
 
 CREATE TABLE regions (
@@ -938,25 +929,6 @@ CREATE TYPE workspace_pty_stream AS ENUM (
     'output'
 );
 
-CREATE TYPE workspace_port_protocol AS ENUM (
-    'http',
-    'tcp'
-);
-
-CREATE TYPE workspace_port_state AS ENUM (
-    'exposing',
-    'open',
-    'closing',
-    'closed',
-    'expired',
-    'failed'
-);
-
-CREATE TYPE workspace_port_auth_mode AS ENUM (
-    'private',
-    'public_token'
-);
-
 CREATE TYPE deployment_status AS ENUM (
     'queued',
     'building',
@@ -1669,7 +1641,6 @@ CREATE TABLE workspace_leases (
     owner_run_id UUID,
     owner_exec_id UUID,
     owner_pty_session_id UUID,
-    owner_port_id UUID,
     base_version_id UUID,
     acquired_version_id UUID,
     acquired_fencing_generation BIGINT NOT NULL CHECK (acquired_fencing_generation > 0),
@@ -1688,7 +1659,7 @@ CREATE TABLE workspace_leases (
     UNIQUE (org_id, cell_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
     UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
-    CHECK (num_nonnulls(owner_run_id, owner_exec_id, owner_pty_session_id, owner_port_id) = 1),
+    CHECK (num_nonnulls(owner_run_id, owner_exec_id, owner_pty_session_id) = 1),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
@@ -1805,54 +1776,6 @@ CREATE TABLE workspace_pty_sessions (
         ON DELETE SET NULL (write_lease_id)
 );
 
-CREATE TABLE workspace_ports (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    workspace_id UUID NOT NULL,
-    workspace_mount_id UUID NOT NULL,
-    owner_run_id UUID,
-    owner_exec_id UUID,
-    owner_pty_session_id UUID,
-    port INTEGER NOT NULL CHECK (port > 0 AND port <= 65535),
-    protocol workspace_port_protocol NOT NULL DEFAULT 'http',
-    state workspace_port_state NOT NULL DEFAULT 'exposing',
-    auth_mode workspace_port_auth_mode NOT NULL DEFAULT 'private',
-    url TEXT NOT NULL DEFAULT '',
-    expires_at TIMESTAMPTZ,
-    created_by_subject_type TEXT NOT NULL DEFAULT '',
-    created_by_subject_id TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    opened_at TIMESTAMPTZ,
-    closed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    error JSONB NOT NULL DEFAULT '{}'::jsonb,
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, cell_id, id),
-    UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, id),
-    UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    UNIQUE (org_id, cell_id, project_id, environment_id, workspace_id, id),
-    CHECK (num_nonnulls(owner_run_id, owner_exec_id, owner_pty_session_id) = 1),
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, cell_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, cell_id, project_id, environment_id, workspace_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, owner_run_id)
-        REFERENCES runs(org_id, cell_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_exec_id)
-        REFERENCES workspace_execs(org_id, cell_id, project_id, environment_id, workspace_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_pty_session_id)
-        REFERENCES workspace_pty_sessions(org_id, cell_id, project_id, environment_id, workspace_id, id)
-        ON DELETE CASCADE
-);
-
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_exec_id_fkey
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_exec_id)
@@ -1863,12 +1786,6 @@ ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_pty_session_id_fkey
     FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_pty_session_id)
     REFERENCES workspace_pty_sessions(org_id, cell_id, project_id, environment_id, workspace_id, id)
-    ON DELETE CASCADE;
-
-ALTER TABLE workspace_leases
-    ADD CONSTRAINT workspace_leases_owner_port_id_fkey
-    FOREIGN KEY (org_id, cell_id, project_id, environment_id, workspace_id, owner_port_id)
-    REFERENCES workspace_ports(org_id, cell_id, project_id, environment_id, workspace_id, id)
     ON DELETE CASCADE;
 
 CREATE TABLE workspace_versions (
@@ -2548,21 +2465,6 @@ CREATE TABLE event_cursors (
     PRIMARY KEY (org_id, cell_id, subject_kind, subject_id)
 );
 
-CREATE TABLE event_spill_objects (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    subject_kind event_subject_type NOT NULL,
-    subject_id UUID NOT NULL,
-    seq_start BIGINT NOT NULL CHECK (seq_start > 0),
-    seq_end BIGINT NOT NULL CHECK (seq_end >= seq_start),
-    cas_digest TEXT,
-    object_key TEXT,
-    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE event_watermarks (
     org_id UUID NOT NULL,
     cell_id TEXT NOT NULL,
@@ -2707,21 +2609,6 @@ CREATE TABLE run_log_cursors (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, cell_id, run_id, stream_name, seq),
     UNIQUE (org_id, cell_id, run_id, stream_name, idempotency_key)
-);
-
-CREATE TABLE run_log_spill_objects (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    cell_id TEXT NOT NULL,
-    run_id UUID NOT NULL,
-    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
-    seq_start BIGINT NOT NULL CHECK (seq_start > 0),
-    seq_end BIGINT NOT NULL CHECK (seq_end >= seq_start),
-    cas_digest TEXT,
-    object_key TEXT,
-    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE run_log_watermarks (
@@ -3679,8 +3566,6 @@ ALTER TABLE workspace_pty_stream_chunk_receipts
         stream WITH =,
         int8range(offset_start, offset_end, '[)') WITH &&
     );
-CREATE UNIQUE INDEX workspace_ports_active_idx ON workspace_ports(workspace_mount_id, port, protocol)
-    WHERE state IN ('exposing', 'open');
 CREATE UNIQUE INDEX workspace_operation_idempotencies_workspace_idx
     ON workspace_operation_idempotencies(org_id, project_id, environment_id, operation_kind, workspace_id, idempotency_key)
     WHERE workspace_id IS NOT NULL;
