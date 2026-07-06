@@ -173,6 +173,41 @@ stale_resume AS MATERIALIZED (
        AND target.acknowledged_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM eligible_resume)
 ),
+active_checkpoint AS MATERIALIZED (
+    SELECT target.id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
+      FROM target
+      JOIN run_waits
+        ON run_waits.org_id = target.org_id
+       AND run_waits.worker_group_id = target.worker_group_id
+       AND run_waits.run_id = target.run_id
+       AND run_waits.id = target.run_wait_id
+       AND run_waits.owner_run_lease_id = target.run_lease_id
+       AND run_waits.owner_worker_instance_id = target.worker_instance_id
+       AND run_waits.owner_runtime_instance_id = target.runtime_instance_id
+       AND run_waits.owner_runtime_epoch = target.runtime_epoch
+       AND run_waits.owner_run_state_version = target.run_state_version
+       AND run_waits.state IN ('hot_waiting', 'checkpointing')
+      JOIN runtime_instances
+        ON runtime_instances.org_id = target.org_id
+       AND runtime_instances.worker_group_id = target.worker_group_id
+       AND runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.worker_instance_id = target.worker_instance_id
+       AND runtime_instances.runtime_epoch = target.runtime_epoch
+       AND runtime_instances.owner_run_id = target.run_id
+       AND runtime_instances.owner_run_lease_id = target.run_lease_id
+       AND runtime_instances.owner_run_wait_id = target.run_wait_id
+       AND runtime_instances.owner_run_state_version = target.run_state_version
+       AND runtime_instances.state IN ('waiting_hot', 'checkpointing')
+     WHERE target.kind = 'runtime_checkpoint_wait'
+       AND target.acknowledged_at IS NULL
+),
+stale_checkpoint AS MATERIALIZED (
+    SELECT target.id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.run_id, target.run_wait_id, target.run_lease_id, target.worker_instance_id, target.deployment_sandbox_id, target.runtime_instance_id, target.runtime_epoch, target.run_state_version, target.kind, target.payload, target.delivered_at, target.accepted_at, target.completed_at, target.acknowledged_at, target.delivery_attempts, target.delivery_locked_until, target.last_delivery_error, target.created_at, target.updated_at
+      FROM target
+     WHERE target.kind = 'runtime_checkpoint_wait'
+       AND target.acknowledged_at IS NULL
+       AND NOT EXISTS (SELECT 1 FROM active_checkpoint)
+),
 acknowledged AS (
     UPDATE worker_commands
        SET accepted_at = COALESCE(worker_commands.accepted_at, now()),
@@ -184,12 +219,13 @@ acknowledged AS (
      WHERE worker_commands.id = target.id
        AND target.acknowledged_at IS NULL
        AND (
-           target.kind <> 'runtime_resume_wait'
+           target.kind NOT IN ('runtime_resume_wait', 'runtime_checkpoint_wait')
            OR (
                EXISTS (SELECT 1 FROM resumed_live_wait)
                AND EXISTS (SELECT 1 FROM resumed_runtime_instance)
            )
            OR EXISTS (SELECT 1 FROM stale_resume)
+           OR EXISTS (SELECT 1 FROM stale_checkpoint)
        )
     RETURNING worker_commands.id, worker_commands.org_id, worker_commands.worker_group_id, worker_commands.project_id, worker_commands.environment_id, worker_commands.run_id, worker_commands.run_wait_id, worker_commands.run_lease_id, worker_commands.worker_instance_id, worker_commands.deployment_sandbox_id, worker_commands.runtime_instance_id, worker_commands.runtime_epoch, worker_commands.run_state_version, worker_commands.kind, worker_commands.payload, worker_commands.delivered_at, worker_commands.accepted_at, worker_commands.completed_at, worker_commands.acknowledged_at, worker_commands.delivery_attempts, worker_commands.delivery_locked_until, worker_commands.last_delivery_error, worker_commands.created_at, worker_commands.updated_at
 )
@@ -281,6 +317,27 @@ UPDATE worker_commands
    AND worker_commands.run_wait_id = $6
    AND worker_commands.run_lease_id = $7
    AND worker_commands.kind = $8::worker_command_kind
+   AND (
+       worker_commands.acknowledged_at IS NOT NULL
+       OR worker_commands.kind <> 'runtime_checkpoint_wait'
+       OR EXISTS (
+           SELECT 1
+             FROM runtime_checkpoints
+            WHERE runtime_checkpoints.org_id = worker_commands.org_id
+              AND runtime_checkpoints.worker_group_id = worker_commands.worker_group_id
+              AND runtime_checkpoints.project_id = worker_commands.project_id
+              AND runtime_checkpoints.environment_id = worker_commands.environment_id
+              AND runtime_checkpoints.run_id = worker_commands.run_id
+              AND runtime_checkpoints.id = $9
+              AND runtime_checkpoints.owner_run_wait_id = worker_commands.run_wait_id
+              AND runtime_checkpoints.owner_run_lease_id = worker_commands.run_lease_id
+              AND runtime_checkpoints.owner_worker_instance_id = worker_commands.worker_instance_id
+              AND runtime_checkpoints.owner_runtime_instance_id = worker_commands.runtime_instance_id
+              AND runtime_checkpoints.owner_runtime_epoch = worker_commands.runtime_epoch
+              AND runtime_checkpoints.created_at >= worker_commands.accepted_at
+              AND runtime_checkpoints.state IN ('ready', 'invalid')
+       )
+   )
    AND EXISTS (
        SELECT 1
          FROM worker_instances
@@ -295,14 +352,15 @@ RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, run_w
 `
 
 type AcknowledgeWorkerCommandForRunWaitParams struct {
-	WorkerInstanceID pgtype.UUID       `json:"worker_instance_id"`
-	ID               int64             `json:"id"`
-	OrgID            pgtype.UUID       `json:"org_id"`
-	WorkerGroupID    string            `json:"worker_group_id"`
-	RunID            pgtype.UUID       `json:"run_id"`
-	RunWaitID        pgtype.UUID       `json:"run_wait_id"`
-	RunLeaseID       pgtype.UUID       `json:"run_lease_id"`
-	Kind             WorkerCommandKind `json:"kind"`
+	WorkerInstanceID    pgtype.UUID       `json:"worker_instance_id"`
+	ID                  int64             `json:"id"`
+	OrgID               pgtype.UUID       `json:"org_id"`
+	WorkerGroupID       string            `json:"worker_group_id"`
+	RunID               pgtype.UUID       `json:"run_id"`
+	RunWaitID           pgtype.UUID       `json:"run_wait_id"`
+	RunLeaseID          pgtype.UUID       `json:"run_lease_id"`
+	Kind                WorkerCommandKind `json:"kind"`
+	RuntimeCheckpointID pgtype.UUID       `json:"runtime_checkpoint_id"`
 }
 
 func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg AcknowledgeWorkerCommandForRunWaitParams) (WorkerCommand, error) {
@@ -315,6 +373,7 @@ func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg Ac
 		arg.RunWaitID,
 		arg.RunLeaseID,
 		arg.Kind,
+		arg.RuntimeCheckpointID,
 	)
 	var i WorkerCommand
 	err := row.Scan(
