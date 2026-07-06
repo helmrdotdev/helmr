@@ -12,8 +12,7 @@ import (
 type runSummary struct {
 	ID                   pgtype.UUID
 	OrgID                pgtype.UUID
-	CellID               string
-	RouteGeneration      int64
+	WorkerGroupID        string
 	ProjectID            pgtype.UUID
 	EnvironmentID        pgtype.UUID
 	DeploymentID         pgtype.UUID
@@ -41,8 +40,7 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
-		CellID:               run.CellID,
-		RouteGeneration:      run.RouteGeneration,
+		WorkerGroupID:        run.WorkerGroupID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -67,12 +65,11 @@ func createScopedRunSummary(run db.CreateScopedRunRow) runSummary {
 	}
 }
 
-func getRunSummary(run db.GetRunSummaryRow) runSummary {
+func getRunSummary(run db.Run) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
-		CellID:               run.CellID,
-		RouteGeneration:      run.RouteGeneration,
+		WorkerGroupID:        run.WorkerGroupID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -97,12 +94,11 @@ func getRunSummary(run db.GetRunSummaryRow) runSummary {
 	}
 }
 
-func listScopedRunSummary(run db.ListScopedRunSummariesRow) runSummary {
+func listScopedRunSummary(run db.Run) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
-		CellID:               run.CellID,
-		RouteGeneration:      run.RouteGeneration,
+		WorkerGroupID:        run.WorkerGroupID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,
@@ -131,8 +127,7 @@ func cancelRunSummary(run db.CancelRunRow) runSummary {
 	return runSummary{
 		ID:                   run.ID,
 		OrgID:                run.OrgID,
-		CellID:               run.CellID,
-		RouteGeneration:      run.RouteGeneration,
+		WorkerGroupID:        run.WorkerGroupID,
 		ProjectID:            run.ProjectID,
 		EnvironmentID:        run.EnvironmentID,
 		DeploymentID:         run.DeploymentID,

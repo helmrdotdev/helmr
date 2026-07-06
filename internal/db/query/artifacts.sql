@@ -2,8 +2,6 @@
 INSERT INTO artifacts (
     id,
     org_id,
-    cell_id,
-    route_generation,
     project_id,
     environment_id,
     digest,
@@ -14,8 +12,6 @@ INSERT INTO artifacts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
-    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(digest),
@@ -30,8 +26,6 @@ RETURNING *;
 INSERT INTO artifacts (
     id,
     org_id,
-    cell_id,
-    route_generation,
     project_id,
     environment_id,
     digest,
@@ -42,8 +36,6 @@ INSERT INTO artifacts (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
-    sqlc.arg(route_generation),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(digest),
@@ -52,7 +44,7 @@ INSERT INTO artifacts (
     sqlc.arg(media_type),
     sqlc.narg(created_by_worker_instance_id)
 )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, digest, kind)
+ON CONFLICT (org_id, project_id, environment_id, digest, kind)
 WHERE kind = 'runtime_substrate'
 DO UPDATE
    SET created_by_worker_instance_id = COALESCE(artifacts.created_by_worker_instance_id, excluded.created_by_worker_instance_id)

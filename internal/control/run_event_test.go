@@ -161,7 +161,7 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	}
 	assertJSONBytes(t, payload, `{"bytes":12,"observed_seq":7,"run_id":"run-1","stream":"stdout"}`)
 
-	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7()), WorkerGroupID: pgvalue.MustUUIDValue(testWorkerGroupID()), ResourceID: "worker-resource"}, api.WorkerCapabilities{
+	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7()), WorkerGroupID: "us-east-1-worker-group-1", ResourceID: "worker-resource"}, api.WorkerCapabilities{
 		ProtocolVersion: api.CurrentWorkerProtocolVersion,
 		RuntimeID:       "sha256:runtime",
 		RuntimeArch:     "arm64",
@@ -262,7 +262,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	streamKey := eventStreamKey(dbtest.DefaultOrgID, "us-east-1-cell-1", db.EventSubjectTypeRun, runID)
+	streamKey := eventStreamKey(dbtest.DefaultOrgID, "us-east-1-worker-group-1", db.EventSubjectTypeRun, runID)
 	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",
@@ -331,13 +331,13 @@ func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEvent
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
-	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.CellID != dbtest.DefaultCellID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
 	event := db.EventHotPayload{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
-		CellID:         arg.CellID,
+		WorkerGroupID:  arg.WorkerGroupID,
 		RunID:          arg.RunID,
 		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},

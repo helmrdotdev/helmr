@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -70,7 +71,7 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.CellID, summary.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, summary.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -101,12 +102,12 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
-		OrgID:       pgvalue.UUID(actor.OrgID),
-		CellID:      summary.CellID,
-		RunID:       pgvalue.UUID(runID),
-		Reason:      request.Reason,
-		Force:       request.Force,
-		OperationID: operation.ID,
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		WorkerGroupID: summary.WorkerGroupID,
+		RunID:         pgvalue.UUID(runID),
+		Reason:        request.Reason,
+		Force:         request.Force,
+		OperationID:   operation.ID,
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -167,20 +168,24 @@ func createRunOperationWithStore(ctx context.Context, store db.Querier, actor au
 	if actor.Kind == auth.ActorKindAPIKey {
 		apiKeyID = pgvalue.UUID(actor.APIKeyID)
 	}
-	return store.CreateRunOperation(ctx, db.CreateRunOperationParams{
-		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:          run.OrgID,
-		CellID:         run.CellID,
-		ProjectID:      run.ProjectID,
-		EnvironmentID:  run.EnvironmentID,
-		RunID:          run.ID,
-		Kind:           kind,
-		ActorKind:      string(actor.Kind),
-		ActorID:        actorID,
-		ApiKeyID:       apiKeyID,
-		Reason:         reason,
-		Request:        requestBody,
-		IdempotencyKey: idempotencyKey,
+	var publicID string
+	return createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.RunOperation, value: &publicID}}, func() (db.RunOperation, error) {
+		return store.CreateRunOperation(ctx, db.CreateRunOperationParams{
+			ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:       publicID,
+			OrgID:          run.OrgID,
+			WorkerGroupID:  run.WorkerGroupID,
+			ProjectID:      run.ProjectID,
+			EnvironmentID:  run.EnvironmentID,
+			RunID:          run.ID,
+			Kind:           kind,
+			ActorKind:      string(actor.Kind),
+			ActorID:        actorID,
+			ApiKeyID:       apiKeyID,
+			Reason:         reason,
+			Request:        requestBody,
+			IdempotencyKey: idempotencyKey,
+		})
 	})
 }
 

@@ -111,7 +111,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, placement.CellID, placement.RouteGeneration, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(r.Context(), store, placement.WorkerGroupID, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		return createErr
 	})
 	if err != nil {
@@ -238,7 +238,6 @@ func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context,
 	if store, ok := s.db.(casObjectLookupStore); ok {
 		if _, err := store.GetCasObject(ctx, db.GetCasObjectParams{
 			OrgID:  pgvalue.UUID(orgID),
-			CellID: s.cellID,
 			Digest: digest,
 		}); err == nil {
 			return

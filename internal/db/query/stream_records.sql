@@ -2,7 +2,6 @@
 SELECT *
  FROM stream_records
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND stream_id = sqlc.arg(stream_id)
    AND idempotency_key = sqlc.arg(idempotency_key)
    AND sqlc.arg(idempotency_key)::text <> '';
@@ -11,7 +10,6 @@ SELECT *
 SELECT *
  FROM stream_records
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -21,7 +19,6 @@ WITH existing_record AS MATERIALIZED (
     SELECT stream_records.*
      FROM stream_records
      WHERE stream_records.org_id = sqlc.arg(org_id)
-       AND stream_records.cell_id = sqlc.arg(cell_id)
        AND stream_records.project_id = sqlc.arg(project_id)
        AND stream_records.environment_id = sqlc.arg(environment_id)
        AND stream_records.stream_id = sqlc.arg(stream_id)
@@ -33,7 +30,6 @@ locked_stream AS (
     SELECT streams.*
      FROM streams
      WHERE streams.org_id = sqlc.arg(org_id)
-       AND streams.cell_id = sqlc.arg(cell_id)
        AND streams.project_id = sqlc.arg(project_id)
        AND streams.environment_id = sqlc.arg(environment_id)
        AND streams.id = sqlc.arg(stream_id)
@@ -46,15 +42,15 @@ allocated_stream AS (
        SET next_sequence = streams.next_sequence + 1
       FROM locked_stream
      WHERE streams.org_id = locked_stream.org_id
-       AND streams.cell_id = locked_stream.cell_id
        AND streams.id = locked_stream.id
     RETURNING streams.*, streams.next_sequence - 1 AS allocated_sequence
 ),
 inserted_record AS (
     INSERT INTO stream_records (
         id,
+        public_id,
         org_id,
-        cell_id,
+        worker_group_id,
         project_id,
         environment_id,
         session_id,
@@ -71,8 +67,9 @@ inserted_record AS (
         public_access_token_id
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            allocated_stream.org_id,
-           allocated_stream.cell_id,
+           allocated_stream.worker_group_id,
            allocated_stream.project_id,
            allocated_stream.environment_id,
            allocated_stream.session_id,
@@ -108,10 +105,8 @@ SELECT selected_record.*,
 SELECT stream_records.*
   FROM stream_records
   JOIN streams ON streams.org_id = stream_records.org_id
-              AND streams.cell_id = stream_records.cell_id
               AND streams.id = stream_records.stream_id
  WHERE stream_records.org_id = sqlc.arg(org_id)
-   AND stream_records.cell_id = sqlc.arg(cell_id)
    AND stream_records.project_id = sqlc.arg(project_id)
    AND stream_records.environment_id = sqlc.arg(environment_id)
    AND stream_records.stream_id = sqlc.arg(stream_id)
@@ -128,7 +123,7 @@ SELECT stream_records.*
 WITH candidate_raw AS (
     SELECT stream_waits.id AS stream_wait_id,
            stream_waits.org_id,
-           stream_waits.cell_id,
+           stream_waits.worker_group_id,
            stream_waits.project_id,
            stream_waits.environment_id,
            stream_waits.run_wait_id,
@@ -139,13 +134,13 @@ WITH candidate_raw AS (
            next_record.data
       FROM stream_waits
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
-                    AND run_waits.cell_id = stream_waits.cell_id
+                    AND run_waits.worker_group_id = stream_waits.worker_group_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
           SELECT stream_records.*
            FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
-             AND stream_records.cell_id = stream_waits.cell_id
+             AND stream_records.worker_group_id = stream_waits.worker_group_id
              AND stream_records.stream_id = stream_waits.stream_id
              AND stream_records.sequence > stream_waits.after_sequence
              AND (
@@ -156,7 +151,7 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE stream_waits.org_id = sqlc.arg(org_id)
-       AND stream_waits.cell_id = sqlc.arg(cell_id)
+       AND stream_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND stream_waits.project_id = sqlc.arg(project_id)
        AND stream_waits.environment_id = sqlc.arg(environment_id)
        AND stream_waits.stream_id = sqlc.arg(stream_id)
@@ -172,12 +167,12 @@ matched_wait AS (
            cursor_advanced_at = now()
       FROM candidate_raw
      WHERE stream_waits.org_id = candidate_raw.org_id
-       AND stream_waits.cell_id = candidate_raw.cell_id
+       AND stream_waits.worker_group_id = candidate_raw.worker_group_id
        AND stream_waits.id = candidate_raw.stream_wait_id
        AND stream_waits.matched_record_id IS NULL
     RETURNING stream_waits.id,
               stream_waits.org_id,
-              stream_waits.cell_id,
+              stream_waits.worker_group_id,
               stream_waits.project_id,
               stream_waits.environment_id,
               stream_waits.run_wait_id,
@@ -197,14 +192,14 @@ resolved_wait AS (
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.cell_id = matched_wait.cell_id
+       AND run_waits.worker_group_id = matched_wait.worker_group_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.*
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
-       resolved_wait.cell_id,
+       resolved_wait.worker_group_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -214,14 +209,14 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
-                   AND matched_wait.cell_id = resolved_wait.cell_id
+                   AND matched_wait.worker_group_id = resolved_wait.worker_group_id
                    AND matched_wait.run_wait_id = resolved_wait.id;
 
 -- name: ResolveStreamWaitForRunWait :one
 WITH candidate_raw AS (
     SELECT stream_waits.id AS stream_wait_id,
            stream_waits.org_id,
-           stream_waits.cell_id,
+           stream_waits.worker_group_id,
            stream_waits.project_id,
            stream_waits.environment_id,
            stream_waits.run_wait_id,
@@ -231,13 +226,13 @@ WITH candidate_raw AS (
            next_record.data
       FROM stream_waits
       JOIN run_waits ON run_waits.org_id = stream_waits.org_id
-                    AND run_waits.cell_id = stream_waits.cell_id
+                    AND run_waits.worker_group_id = stream_waits.worker_group_id
                     AND run_waits.id = stream_waits.run_wait_id
       JOIN LATERAL (
           SELECT stream_records.*
            FROM stream_records
            WHERE stream_records.org_id = stream_waits.org_id
-             AND stream_records.cell_id = stream_waits.cell_id
+             AND stream_records.worker_group_id = stream_waits.worker_group_id
              AND stream_records.stream_id = stream_waits.stream_id
              AND stream_records.sequence > stream_waits.after_sequence
              AND (
@@ -248,7 +243,7 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE stream_waits.org_id = sqlc.arg(org_id)
-       AND stream_waits.cell_id = sqlc.arg(cell_id)
+       AND stream_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND stream_waits.project_id = sqlc.arg(project_id)
        AND stream_waits.environment_id = sqlc.arg(environment_id)
        AND stream_waits.run_wait_id = sqlc.arg(run_wait_id)
@@ -263,12 +258,12 @@ matched_wait AS (
            cursor_advanced_at = now()
       FROM candidate_raw
      WHERE stream_waits.org_id = candidate_raw.org_id
-       AND stream_waits.cell_id = candidate_raw.cell_id
+       AND stream_waits.worker_group_id = candidate_raw.worker_group_id
        AND stream_waits.id = candidate_raw.stream_wait_id
        AND stream_waits.matched_record_id IS NULL
     RETURNING stream_waits.id,
               stream_waits.org_id,
-              stream_waits.cell_id,
+              stream_waits.worker_group_id,
               stream_waits.project_id,
               stream_waits.environment_id,
               stream_waits.run_wait_id,
@@ -288,14 +283,14 @@ resolved_wait AS (
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.cell_id = matched_wait.cell_id
+       AND run_waits.worker_group_id = matched_wait.worker_group_id
        AND run_waits.id = matched_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.*
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
-       resolved_wait.cell_id,
+       resolved_wait.worker_group_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -305,5 +300,5 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
-                   AND matched_wait.cell_id = resolved_wait.cell_id
+                   AND matched_wait.worker_group_id = resolved_wait.worker_group_id
                    AND matched_wait.run_wait_id = resolved_wait.id;

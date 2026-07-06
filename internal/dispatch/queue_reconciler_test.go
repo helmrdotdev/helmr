@@ -29,7 +29,7 @@ func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 		},
 		errs: map[QueueScope]error{scopeB1: errors.New("redis unavailable")},
 	}
-	reconciler, err := NewQueueReconciler(store, enqueuer, WithQueueReconcileCellID("cell-1"), WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	reconciler, err := NewQueueReconciler(store, enqueuer, WithQueueReconcileWorkerGroupID("worker-group-1"), WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestQueueReconcilerReconcilesScopesRoundRobinByOrganization(t *testing.T) {
 	if !sameScopes(enqueuer.scopes, wantScopes) {
 		t.Fatalf("reconciled scopes = %+v, want %+v", enqueuer.scopes, wantScopes)
 	}
-	if len(store.args) != 1 || store.args[0].CellID != "cell-1" || store.args[0].RowLimit != DefaultQueueReconcileScopeLimit || enqueuer.limits[0] != DefaultQueueReconcileRunLimit {
+	if len(store.args) != 1 || store.args[0].WorkerGroupID != "worker-group-1" || store.args[0].RowLimit != DefaultQueueReconcileScopeLimit || enqueuer.limits[0] != DefaultQueueReconcileRunLimit {
 		t.Fatalf("store args = %+v limits = %+v", store.args, enqueuer.limits)
 	}
 }
@@ -56,7 +56,7 @@ func TestQueueReconcilerPaginatesScopes(t *testing.T) {
 	reconciler, err := NewQueueReconciler(
 		store,
 		enqueuer,
-		WithQueueReconcileCellID("cell-1"),
+		WithQueueReconcileWorkerGroupID("worker-group-1"),
 		WithQueueReconcileLimits(2, 10),
 		WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
 	)
@@ -84,18 +84,18 @@ func TestNewQueueReconcilerRejectsInvalidConfig(t *testing.T) {
 		t.Fatal("nil queue enqueuer error = nil")
 	}
 	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}); err == nil {
-		t.Fatal("missing cell id error = nil")
+		t.Fatal("missing worker group id error = nil")
 	}
-	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileCellID("cell-1"), WithQueueReconcileInterval(0)); err == nil {
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileWorkerGroupID("worker-group-1"), WithQueueReconcileInterval(0)); err == nil {
 		t.Fatal("invalid interval error = nil")
 	}
-	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileCellID("cell-1"), WithQueueReconcileLimits(0, 10)); err == nil {
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileWorkerGroupID("worker-group-1"), WithQueueReconcileLimits(0, 10)); err == nil {
 		t.Fatal("invalid scope limit error = nil")
 	}
-	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileCellID("cell-1"), WithQueueReconcileScopeSelector(nil)); err == nil {
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileWorkerGroupID("worker-group-1"), WithQueueReconcileScopeSelector(nil)); err == nil {
 		t.Fatal("nil selector error = nil")
 	}
-	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileCellID("cell-1"), WithQueueReconcileConsecutiveFailureLimit(0)); err == nil {
+	if _, err := NewQueueReconciler(&fakeQueueReconcilerStore{}, &fakeQueueEnqueuer{}, WithQueueReconcileWorkerGroupID("worker-group-1"), WithQueueReconcileConsecutiveFailureLimit(0)); err == nil {
 		t.Fatal("invalid failure limit error = nil")
 	}
 }
@@ -106,7 +106,7 @@ func TestQueueReconcilerRunReturnsAfterConsecutiveFailures(t *testing.T) {
 	reconciler, err := NewQueueReconciler(
 		store,
 		&fakeQueueEnqueuer{},
-		WithQueueReconcileCellID("cell-1"),
+		WithQueueReconcileWorkerGroupID("worker-group-1"),
 		WithQueueReconcileInterval(time.Millisecond),
 		WithQueueReconcileConsecutiveFailureLimit(2),
 		WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
@@ -132,7 +132,7 @@ func TestQueueReconcilerRunReturnsContextCancellation(t *testing.T) {
 	reconciler, err := NewQueueReconciler(
 		store,
 		&fakeQueueEnqueuer{},
-		WithQueueReconcileCellID("cell-1"),
+		WithQueueReconcileWorkerGroupID("worker-group-1"),
 		WithQueueReconcileInterval(time.Millisecond),
 		WithQueueReconcileConsecutiveFailureLimit(1),
 		WithQueueReconcileLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
@@ -193,7 +193,7 @@ func (f *fakeQueueReconcilerStore) ListQueuedRunCandidateScopes(ctx context.Cont
 	for index, scope := range scopes {
 		rows = append(rows, db.ListQueuedRunCandidateScopesRow{
 			OrgID:         scope.OrgID,
-			CellID:        scope.CellID,
+			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			QueueClass:    scope.QueueClass,
@@ -232,7 +232,7 @@ func sameScopes(a, b []QueueScope) bool {
 func testQueueScope(orgID pgtype.UUID, queueName string) QueueScope {
 	return QueueScope{
 		OrgID:         orgID,
-		CellID:        "us-east-1-cell-1",
+		WorkerGroupID: "us-east-1-worker-group-1",
 		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		QueueClass:    "default",

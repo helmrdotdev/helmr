@@ -21,6 +21,12 @@ SELECT *
   FROM regions
  WHERE id = sqlc.arg(id);
 
+-- name: GetRegionByProviderRegion :one
+SELECT *
+  FROM regions
+ WHERE provider = sqlc.arg(provider)
+   AND provider_region = sqlc.arg(provider_region);
+
 -- name: ListRegions :many
 SELECT *
   FROM regions

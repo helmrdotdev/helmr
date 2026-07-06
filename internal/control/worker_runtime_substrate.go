@@ -45,7 +45,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
 		ID:            deploymentSandboxID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerGroupID: worker.WorkerGroupID,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("deployment sandbox not found")))
 		return
@@ -74,7 +74,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		sandbox, err := work.q.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
 			ID:            deploymentSandboxID,
-			WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+			WorkerGroupID: worker.WorkerGroupID,
 		})
 		if isNoRows(err) {
 			return notFound(errors.New("deployment sandbox not found"))
@@ -84,7 +84,6 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			OrgID:     sandbox.OrgID,
-			CellID:    sandbox.CellID,
 			Digest:    strings.TrimSpace(request.Artifact.Digest),
 			SizeBytes: request.Artifact.SizeBytes,
 			MediaType: strings.TrimSpace(request.Artifact.MediaType),
@@ -94,8 +93,6 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		artifact, err := work.q.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     sandbox.OrgID,
-			CellID:                    sandbox.CellID,
-			RouteGeneration:           sandbox.RouteGeneration,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			Digest:                    strings.TrimSpace(request.Artifact.Digest),
@@ -109,7 +106,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		row, err = work.q.UpsertRuntimeSubstrateArtifact(r.Context(), db.UpsertRuntimeSubstrateArtifactParams{
 			ID:                        runtimeSubstrateArtifactID,
 			OrgID:                     sandbox.OrgID,
-			CellID:                    sandbox.CellID,
+			WorkerGroupID:             worker.WorkerGroupID,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			DeploymentSandboxID:       sandbox.ID,
@@ -155,7 +152,7 @@ func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *
 	worker := workerFromContext(r.Context())
 	sandbox, err := s.db.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
 		ID:            deploymentSandboxID,
-		WorkerGroupID: pgvalue.UUID(worker.WorkerGroupID),
+		WorkerGroupID: worker.WorkerGroupID,
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("deployment sandbox not found")))
@@ -168,7 +165,7 @@ func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *
 	}
 	row, err := s.db.GetRuntimeSubstrateArtifactForSandbox(r.Context(), db.GetRuntimeSubstrateArtifactForSandboxParams{
 		OrgID:               sandbox.OrgID,
-		CellID:              worker.CellID,
+		WorkerGroupID:       worker.WorkerGroupID,
 		ProjectID:           sandbox.ProjectID,
 		EnvironmentID:       sandbox.EnvironmentID,
 		DeploymentSandboxID: sandbox.ID,

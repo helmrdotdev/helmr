@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -21,7 +20,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(secretID),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "API_KEY",
@@ -34,11 +32,10 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	routeEnvironmentToOtherCell(t, ctx, pool, ids)
+	placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
 
 	record, err := queries.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Name:          "API_KEY",
@@ -51,7 +48,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 	}
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -64,28 +60,17 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 	}
 }
 
-func TestScopedSecretQueriesDoNotDuplicateWhenCellHasActiveAndDrainingRoutes(t *testing.T) {
+func TestScopedSecretQueriesDoNotDuplicateWhenWorkerGroupHasActiveAndDrainingRoutes(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 
-	routeEnvironmentToOtherCell(t, ctx, pool, ids)
-	if _, err := cell.EnsureEnvironmentRoute(ctx, queries, cell.EnsureEnvironmentRouteParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		RegionID:      dbtest.DefaultRegionID,
-		LocalCellID:   dbtest.DefaultCellID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-
+	placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
 	secretID := uuid.Must(uuid.NewV7())
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(secretID),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "DUPLICATE_GUARD",
@@ -100,7 +85,6 @@ func TestScopedSecretQueriesDoNotDuplicateWhenCellHasActiveAndDrainingRoutes(t *
 
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -113,7 +97,7 @@ func TestScopedSecretQueriesDoNotDuplicateWhenCellHasActiveAndDrainingRoutes(t *
 	}
 }
 
-func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
+func TestScopedSecretListAndDeleteContinueOnStaleWorkerGroupHealth(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -122,7 +106,6 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          dbtest.DefaultCellID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		Name:            "STALE_HEALTH",
@@ -135,17 +118,16 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE cell_health
-		   SET state = 'unavailable',
+		UPDATE worker_groups
+		   SET health_state = 'unavailable',
 		       routing_fresh_until = now() - interval '1 minute'
-		 WHERE cell_id = $1
-	`, dbtest.DefaultCellID); err != nil {
+		 WHERE id = $1
+	`, dbtest.DefaultWorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
 
 	rows, err := queries.ListScopedSecrets(ctx, db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		RowLimit:      100,
@@ -158,7 +140,6 @@ func TestScopedSecretListAndDeleteContinueOnStaleCellHealth(t *testing.T) {
 	}
 	if affected, err := queries.DeleteScopedSecret(ctx, db.DeleteScopedSecretParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Name:          "STALE_HEALTH",

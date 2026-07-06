@@ -32,7 +32,7 @@ type ExpirySweepOrgStore interface {
 	FailExpiredRunningRunLeases(ctx context.Context, arg db.FailExpiredRunningRunLeasesParams) error
 	ExpireQueuedRuns(ctx context.Context, arg db.ExpireQueuedRunsParams) error
 	ExpireDueSessions(ctx context.Context, arg db.ExpireDueSessionsParams) ([]db.Session, error)
-	ExpireDueTokens(ctx context.Context, arg db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error)
+	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
 	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
@@ -51,13 +51,13 @@ type ExpirySweepLockGuard interface {
 }
 
 type ExpirySweeper struct {
-	store        ExpirySweepStore
-	lock         ExpirySweepLock
-	cellID       string
-	every        time.Duration
-	orgLimit     int32
-	failureLimit int
-	log          *slog.Logger
+	store         ExpirySweepStore
+	lock          ExpirySweepLock
+	workerGroupID string
+	every         time.Duration
+	orgLimit      int32
+	failureLimit  int
+	log           *slog.Logger
 }
 
 type ExpirySweeperOption func(*ExpirySweeper)
@@ -86,9 +86,9 @@ func WithExpirySweepLogger(log *slog.Logger) ExpirySweeperOption {
 	}
 }
 
-func WithExpirySweepCellID(cellID string) ExpirySweeperOption {
+func WithExpirySweepWorkerGroupID(workerGroupID string) ExpirySweeperOption {
 	return func(sweeper *ExpirySweeper) {
-		sweeper.cellID = strings.TrimSpace(cellID)
+		sweeper.workerGroupID = strings.TrimSpace(workerGroupID)
 	}
 }
 
@@ -121,8 +121,8 @@ func NewExpirySweeper(store ExpirySweepStore, opts ...ExpirySweeperOption) (*Exp
 	if sweeper.failureLimit <= 0 {
 		return nil, errors.New("sweep consecutive failure limit must be positive")
 	}
-	if sweeper.cellID == "" {
-		return nil, errors.New("sweeper cell_id is required")
+	if sweeper.workerGroupID == "" {
+		return nil, errors.New("sweeper worker_group_id is required")
 	}
 	if sweeper.log == nil {
 		sweeper.log = slog.Default()
@@ -179,16 +179,16 @@ func (s *ExpirySweeper) sweep(ctx context.Context) error {
 			}
 		}()
 	}
-	return sweepOnce(ctx, store, s.cellID, s.orgLimit)
+	return sweepOnce(ctx, store, s.workerGroupID, s.orgLimit)
 }
 
-func sweepOnce(ctx context.Context, store ExpirySweepStore, cellID string, orgLimit int32) error {
+func sweepOnce(ctx context.Context, store ExpirySweepStore, workerGroupID string, orgLimit int32) error {
 	var problems []error
 	expiredBefore := pgvalue.Timestamptz(time.Now())
-	if _, err := store.CreateExpiredRuntimeStopCommands(ctx, db.CreateExpiredRuntimeStopCommandsParams{CellID: cellID, ExpiredBefore: expiredBefore}); err != nil {
+	if _, err := store.CreateExpiredRuntimeStopCommands(ctx, db.CreateExpiredRuntimeStopCommandsParams{WorkerGroupID: workerGroupID, ExpiredBefore: expiredBefore}); err != nil {
 		problems = append(problems, err)
 	}
-	if _, err := store.MarkExpiredRuntimeInstancesLost(ctx, db.MarkExpiredRuntimeInstancesLostParams{CellID: cellID, ExpiredBefore: expiredBefore}); err != nil {
+	if _, err := store.MarkExpiredRuntimeInstancesLost(ctx, db.MarkExpiredRuntimeInstancesLostParams{WorkerGroupID: workerGroupID, ExpiredBefore: expiredBefore}); err != nil {
 		problems = append(problems, err)
 	}
 	var afterID pgtype.UUID
@@ -201,7 +201,7 @@ func sweepOnce(ctx context.Context, store ExpirySweepStore, cellID string, orgLi
 			return err
 		}
 		for _, orgID := range orgIDs {
-			if err := SweepExpiredForOrg(ctx, store, cellID, orgID); err != nil {
+			if err := SweepExpiredForOrg(ctx, store, workerGroupID, orgID); err != nil {
 				problems = append(problems, err)
 			}
 		}
@@ -213,57 +213,57 @@ func sweepOnce(ctx context.Context, store ExpirySweepStore, cellID string, orgLi
 	return errors.Join(problems...)
 }
 
-func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, cellID string, orgID pgtype.UUID) error {
-	if err := store.RequeueExpiredLeasedRunLeases(ctx, db.RequeueExpiredLeasedRunLeasesParams{OrgID: orgID, CellID: cellID}); err != nil {
+func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, workerGroupID string, orgID pgtype.UUID) error {
+	if err := store.RequeueExpiredLeasedRunLeases(ctx, db.RequeueExpiredLeasedRunLeasesParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if err := store.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: orgID, CellID: cellID}); err != nil {
+	if err := store.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if err := store.ExpireQueuedRuns(ctx, db.ExpireQueuedRunsParams{OrgID: orgID, CellID: cellID}); err != nil {
+	if err := store.ExpireQueuedRuns(ctx, db.ExpireQueuedRunsParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: orgID, CellID: cellID}); err != nil {
+	if _, err := store.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueTokens(ctx, db.ExpireDueTokensParams{OrgID: orgID, CellID: cellID}); err != nil {
+	if _, err := store.ExpireDueTokens(ctx, orgID); err != nil {
 		return err
 	}
 	if _, err := store.ResolveDueTimerWaits(ctx, db.ResolveDueTimerWaitsParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: 1000,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueRunWaits(ctx, db.ExpireDueRunWaitsParams{OrgID: orgID, CellID: cellID}); err != nil {
+	if _, err := store.ExpireDueRunWaits(ctx, db.ExpireDueRunWaitsParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
 	if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: 1000,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: 1000,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: 1000,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}
 	if _, err := store.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: 1000,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}

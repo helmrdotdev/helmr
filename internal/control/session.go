@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/tracing"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -58,7 +59,7 @@ type sessionStartSource struct {
 	scheduleInstanceID    pgtype.UUID
 	scheduleGeneration    int64
 	scheduleOrgID         pgtype.UUID
-	scheduleCellID        string
+	scheduleWorkerGroupID string
 	scheduleProjectID     pgtype.UUID
 	scheduleEnvironmentID pgtype.UUID
 	scheduledAt           pgtype.Timestamptz
@@ -74,7 +75,7 @@ type sessionStartResult struct {
 type sessionStartIdempotencyBinding struct {
 	ID                 pgtype.UUID
 	OrgID              pgtype.UUID
-	CellID             string
+	WorkerGroupID      string
 	ProjectID          pgtype.UUID
 	EnvironmentID      pgtype.UUID
 	TaskID             string
@@ -240,8 +241,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	if idempotency.key.Valid {
 		idempotencyFingerprint = startFingerprint
 	}
-	var routeCellID string
-	var routeGeneration int64
+	var placementWorkerGroupID string
 	var attachedWorkspace db.GetWorkspaceSourceForSessionStartRow
 	if requestedWorkspaceID.Valid {
 		workspace, err := s.db.GetWorkspaceSourceForSessionStart(ctx, db.GetWorkspaceSourceForSessionStartParams{
@@ -256,22 +256,20 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return sessionStartResult{}, err
 		}
-		if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, projectID, environmentID, workspace.CellID, workspace.RouteGeneration); err != nil {
+		if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, workspace.WorkerGroupID); err != nil {
 			return sessionStartResult{}, err
 		}
-		routeCellID = workspace.CellID
-		routeGeneration = workspace.RouteGeneration
+		placementWorkerGroupID = workspace.WorkerGroupID
 		attachedWorkspace = workspace
 	} else {
 		placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, projectID, environmentID)
 		if err != nil {
 			return sessionStartResult{}, err
 		}
-		routeCellID = placement.CellID
-		routeGeneration = placement.RouteGeneration
+		placementWorkerGroupID = placement.WorkerGroupID
 	}
 	if idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
 			return sessionStartResult{}, err
 		} else if hit {
 			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -281,7 +279,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}
 	}
 	if externalID != "" && !idempotency.key.Valid {
-		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, routeCellID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
+		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
 			return existing, nil
 		} else if !isNoRows(err) {
 			return sessionStartResult{}, err
@@ -289,7 +287,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	task, err := s.db.GetTaskForStart(ctx, db.GetTaskForStartParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		CellID:        routeCellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		TaskID:        taskID,
@@ -305,9 +302,9 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	var deploymentTask db.GetDeploymentTaskRow
 	if requestedWorkspaceID.Valid {
-		deploymentTask, err = s.deploymentTask(ctx, routeCellID, routeGeneration, actor.OrgID, projectID, environmentID, attachedWorkspace.DeploymentID, taskID)
+		deploymentTask, err = s.deploymentTask(ctx, placementWorkerGroupID, actor.OrgID, projectID, environmentID, attachedWorkspace.DeploymentID, taskID)
 	} else {
-		deploymentTask, err = s.deploymentTaskForRunRequest(ctx, routeCellID, routeGeneration, actor.OrgID, projectID, environmentID, taskID, runDeploymentSelection{})
+		deploymentTask, err = s.deploymentTaskForRunRequest(ctx, placementWorkerGroupID, actor.OrgID, projectID, environmentID, taskID, runDeploymentSelection{})
 	}
 	if isNoRows(err) {
 		return sessionStartResult{}, errTaskNotDeployed
@@ -323,9 +320,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if s.secrets == nil {
 			return sessionStartResult{}, errors.New("secret store is not configured")
 		}
-		if deploymentTask.CellID != routeCellID {
-			return sessionStartResult{}, unavailable(errors.New("execution source row cell does not match environment route"))
-		}
 		projectUUID, err := pgvalue.UUIDValue(projectID)
 		if err != nil {
 			return sessionStartResult{}, fmt.Errorf("project id is invalid: %v", err)
@@ -334,7 +328,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return sessionStartResult{}, fmt.Errorf("environment id is invalid: %v", err)
 		}
-		if err := s.secrets.CheckScopedNames(ctx, routeCellID, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
+		if err := s.secrets.CheckScopedNames(ctx, actor.OrgID, projectUUID, environmentUUID, secretNames); err != nil {
 			return sessionStartResult{}, err
 		}
 	}
@@ -366,7 +360,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}()
 	resolvedClaimIsStale := false
 	if startClaim.resolved && idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, routeCellID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
+		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
 			return sessionStartResult{}, err
 		} else if hit {
 			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -402,9 +396,8 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	var result sessionStartResult
 	err = s.inTx(ctx, func(work *txWork) error {
 		if externalID != "" {
-			if existing, err := work.q.GetSessionByExternalIDInCell(ctx, db.GetSessionByExternalIDInCellParams{
+			if existing, err := work.q.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 				OrgID:         pgvalue.UUID(actor.OrgID),
-				CellID:        routeCellID,
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
 				ExternalID:    externalID,
@@ -422,7 +415,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 					existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
 						ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 						OrgID:              pgvalue.UUID(actor.OrgID),
-						CellID:             existing.CellID,
 						ProjectID:          projectID,
 						EnvironmentID:      environmentID,
 						TaskID:             taskID,
@@ -457,29 +449,28 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if startClaim.resolved && !resolvedClaimIsStale {
 			return errSessionStartPending
 		}
-		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, routeGeneration, deploymentTask, requestedWorkspaceID)
+		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, placementWorkerGroupID, deploymentTask, requestedWorkspaceID)
 		if err != nil {
 			return err
 		}
-		if deploymentTask.CellID != routeCellID || workspace.CellID != routeCellID || workspace.RouteGeneration != routeGeneration {
-			return unavailable(errors.New("execution source row cell does not match environment route"))
-		}
-		session, err := work.q.CreateSession(ctx, db.CreateSessionParams{
-			ID:                  pgvalue.UUID(sessionID),
-			OrgID:               pgvalue.UUID(actor.OrgID),
-			CellID:              routeCellID,
-			RouteGeneration:     routeGeneration,
-			ProjectID:           projectID,
-			EnvironmentID:       environmentID,
-			TaskID:              taskID,
-			InitialDeploymentID: deploymentTask.DeploymentID,
-			ActiveDeploymentID:  deploymentTask.DeploymentID,
-			WorkspaceID:         workspace.ID,
-			ExternalID:          externalID,
-			StartFingerprint:    startFingerprint.String,
-			Metadata:            metadata,
-			Tags:                tags,
-			ExpiresAt:           timePtrToTimestamptz(request.Options.ExpiresAt),
+		var sessionPublicID string
+		session, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Session, value: &sessionPublicID}}, func() (db.Session, error) {
+			return work.q.CreateSession(ctx, db.CreateSessionParams{
+				ID:                  pgvalue.UUID(sessionID),
+				PublicID:            sessionPublicID,
+				OrgID:               pgvalue.UUID(actor.OrgID),
+				ProjectID:           projectID,
+				EnvironmentID:       environmentID,
+				TaskID:              taskID,
+				InitialDeploymentID: deploymentTask.DeploymentID,
+				ActiveDeploymentID:  deploymentTask.DeploymentID,
+				WorkspaceID:         workspace.ID,
+				ExternalID:          externalID,
+				StartFingerprint:    startFingerprint.String,
+				Metadata:            metadata,
+				Tags:                tags,
+				ExpiresAt:           timePtrToTimestamptz(request.Options.ExpiresAt),
+			})
 		})
 		if err != nil {
 			if isUniqueViolation(err) && externalID != "" {
@@ -487,42 +478,44 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			}
 			return err
 		}
-		run, err := work.q.CreateScopedRun(ctx, db.CreateScopedRunParams{
-			ID:                    pgvalue.UUID(runID),
-			OrgID:                 pgvalue.UUID(actor.OrgID),
-			CellID:                routeCellID,
-			RouteGeneration:       routeGeneration,
-			ProjectID:             projectID,
-			EnvironmentID:         environmentID,
-			DeploymentID:          deploymentTask.DeploymentID,
-			DeploymentTaskID:      deploymentTask.ID,
-			WorkspaceID:           workspace.ID,
-			DeploymentVersion:     deploymentTask.DeploymentVersion,
-			ApiVersion:            versionMetadata.APIVersion,
-			SdkVersion:            firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
-			CliVersion:            firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
-			TaskID:                taskID,
-			SessionID:             session.ID,
-			Payload:               payload,
-			Metadata:              metadata,
-			Tags:                  tags,
-			LockedRetryPolicy:     lockedRetryPolicy,
-			QueueName:             scheduling.queueName,
-			QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
-			ConcurrencyKey:        scheduling.concurrencyKey,
-			Priority:              scheduling.priority,
-			QueueTimestamp:        scheduling.queueTimestamp,
-			Ttl:                   scheduling.ttl,
-			QueuedExpiresAt:       scheduling.queuedExpiresAt,
-			MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
-			TraceID:               pgtype.Text{String: traceID, Valid: true},
-			RootSpanID:            rootSpanID,
-			EventPayload:          createdPayload,
-			ScheduleID:            source.scheduleID,
-			ScheduleInstanceID:    source.scheduleInstanceID,
-			ScheduleGeneration:    pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
-			ScheduledAt:           source.scheduledAt,
-			AllowDrainingRoute:    requestedWorkspaceID.Valid,
+		var runPublicID string
+		run, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Run, value: &runPublicID}}, func() (db.CreateScopedRunRow, error) {
+			return work.q.CreateScopedRun(ctx, db.CreateScopedRunParams{
+				ID:                    pgvalue.UUID(runID),
+				PublicID:              runPublicID,
+				OrgID:                 pgvalue.UUID(actor.OrgID),
+				ProjectID:             projectID,
+				EnvironmentID:         environmentID,
+				DeploymentID:          deploymentTask.DeploymentID,
+				DeploymentTaskID:      deploymentTask.ID,
+				WorkspaceID:           workspace.ID,
+				DeploymentVersion:     deploymentTask.DeploymentVersion,
+				ApiVersion:            versionMetadata.APIVersion,
+				SdkVersion:            firstNonEmptyString(versionMetadata.SDKVersion, deploymentTask.SdkVersion),
+				CliVersion:            firstNonEmptyString(versionMetadata.CLIVersion, deploymentTask.CliVersion),
+				TaskID:                taskID,
+				SessionID:             session.ID,
+				Payload:               payload,
+				Metadata:              metadata,
+				Tags:                  tags,
+				LockedRetryPolicy:     lockedRetryPolicy,
+				QueueName:             scheduling.queueName,
+				QueueConcurrencyLimit: scheduling.queueConcurrencyLimit,
+				ConcurrencyKey:        scheduling.concurrencyKey,
+				Priority:              scheduling.priority,
+				QueueTimestamp:        scheduling.queueTimestamp,
+				Ttl:                   scheduling.ttl,
+				QueuedExpiresAt:       scheduling.queuedExpiresAt,
+				MaxActiveDurationMs:   int64(maxDurationSeconds) * 1000,
+				TraceID:               pgtype.Text{String: traceID, Valid: true},
+				RootSpanID:            rootSpanID,
+				EventPayload:          createdPayload,
+				ScheduleID:            source.scheduleID,
+				ScheduleInstanceID:    source.scheduleInstanceID,
+				ScheduleGeneration:    pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
+				ScheduledAt:           source.scheduledAt,
+				AllowDrainingRoute:    requestedWorkspaceID.Valid,
+			})
 		})
 		if err != nil {
 			if isNoRows(err) && source.scheduleInstanceID.Valid {
@@ -543,7 +536,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
-			CellID:          routeCellID,
 			ProjectID:       projectID,
 			EnvironmentID:   environmentID,
 			WorkspaceID:     workspace.ID,
@@ -564,23 +556,25 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}); err != nil {
 			return err
 		}
-		if _, err := work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			CellID:        session.CellID,
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			SessionID:     session.ID,
-			RunID:         run.ID,
-			DeploymentID:  deploymentTask.DeploymentID,
-			TurnIndex:     0,
-			Reason:        "initial",
+		var sessionRunPublicID string
+		if _, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.SessionRun, value: &sessionRunPublicID}}, func() (db.SessionRun, error) {
+			return work.q.CreateSessionRun(ctx, db.CreateSessionRunParams{
+				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:      sessionRunPublicID,
+				OrgID:         pgvalue.UUID(actor.OrgID),
+				ProjectID:     projectID,
+				EnvironmentID: environmentID,
+				SessionID:     session.ID,
+				RunID:         run.ID,
+				DeploymentID:  deploymentTask.DeploymentID,
+				TurnIndex:     0,
+				Reason:        "initial",
+			})
 		}); err != nil {
 			return err
 		}
 		session, err = work.q.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
 			OrgID:         pgvalue.UUID(actor.OrgID),
-			CellID:        session.CellID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			SessionID:     session.ID,
@@ -593,7 +587,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
 				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:              pgvalue.UUID(actor.OrgID),
-				CellID:             session.CellID,
 				ProjectID:          projectID,
 				EnvironmentID:      environmentID,
 				TaskID:             taskID,
@@ -628,7 +621,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		return result, nil
 	}
 	if errors.Is(err, errSessionStartExternalIDRace) {
-		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, routeCellID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
+		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
 		if err != nil {
 			return sessionStartResult{}, err
 		}
@@ -713,30 +706,37 @@ func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(parsed), nil
 }
 
-func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, routeGeneration int64, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
+func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, placementWorkerGroupID string, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
 	if !requestedWorkspaceID.Valid {
-		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, task.CellID, routeGeneration, projectID, environmentID)
+		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, projectID, environmentID)
 		if err != nil {
 			return db.Workspace{}, err
 		}
-		workspace, err := store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     pgvalue.UUID(orgID),
-			CellID:                    task.CellID,
-			RouteGeneration:           routeGeneration,
-			ProjectID:                 projectID,
-			EnvironmentID:             environmentID,
-			DeploymentSandboxID:       task.DeploymentSandboxID,
-			ExternalID:                "",
-			Metadata:                  []byte(`{}`),
-			Tags:                      []string{},
-			RetentionPolicy:           []byte(`{}`),
-			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			InitialArtifactID:         workspaceArtifact.ID,
-			InitialArtifactEncoding:   initialWorkspace.Encoding,
-			InitialArtifactEntryCount: int32(initialWorkspace.EntryCount),
-			InitialContentDigest:      workspaceArtifact.Digest,
-			InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		var workspacePublicID, initialVersionPublicID string
+		workspace, err := createWithPublicID(ctx, []publicIDSlot{
+			{prefix: publicid.Workspace, value: &workspacePublicID},
+			{prefix: publicid.WorkspaceVersion, value: &initialVersionPublicID},
+		}, func() (db.CreateWorkspaceFromSandboxRow, error) {
+			return store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:                  workspacePublicID,
+				WorkerGroupID:             placementWorkerGroupID,
+				OrgID:                     pgvalue.UUID(orgID),
+				ProjectID:                 projectID,
+				EnvironmentID:             environmentID,
+				DeploymentSandboxID:       task.DeploymentSandboxID,
+				ExternalID:                "",
+				Metadata:                  []byte(`{}`),
+				Tags:                      []string{},
+				RetentionPolicy:           []byte(`{}`),
+				InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				InitialVersionPublicID:    initialVersionPublicID,
+				InitialArtifactID:         workspaceArtifact.ID,
+				InitialArtifactEncoding:   initialWorkspace.Encoding,
+				InitialArtifactEntryCount: int32(initialWorkspace.EntryCount),
+				InitialContentDigest:      workspaceArtifact.Digest,
+				InitialSizeBytes:          workspaceArtifact.SizeBytes,
+			})
 		})
 		if isNoRows(err) {
 			return db.Workspace{}, errSandboxNotDeployed
@@ -753,7 +753,7 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 		WorkspaceID:   requestedWorkspaceID,
 	})
 	if isNoRows(err) {
-		return db.Workspace{}, unavailable(errors.New("record route generation is not available"))
+		return db.Workspace{}, unavailable(errors.New("record placement generation is not available"))
 	}
 	if err != nil {
 		return db.Workspace{}, err
@@ -786,8 +786,7 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 	return db.Workspace{
 		ID:                  workspace.ID,
 		OrgID:               workspace.OrgID,
-		CellID:              workspace.CellID,
-		RouteGeneration:     workspace.RouteGeneration,
+		WorkerGroupID:       workspace.WorkerGroupID,
 		ProjectID:           workspace.ProjectID,
 		EnvironmentID:       workspace.EnvironmentID,
 		DeploymentSandboxID: workspace.DeploymentSandboxID,
@@ -850,7 +849,6 @@ func (s *Server) createSessionStartIdempotency(ctx context.Context, store db.Que
 	}
 	if err := store.DeleteExpiredSessionStartIdempotency(ctx, db.DeleteExpiredSessionStartIdempotencyParams{
 		OrgID:          binding.OrgID,
-		CellID:         binding.CellID,
 		ProjectID:      binding.ProjectID,
 		EnvironmentID:  binding.EnvironmentID,
 		TaskID:         binding.TaskID,
@@ -869,7 +867,6 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 	created, err := store.CreateSessionStartIdempotency(ctx, db.CreateSessionStartIdempotencyParams{
 		ID:                 binding.ID,
 		OrgID:              binding.OrgID,
-		CellID:             binding.CellID,
 		ProjectID:          binding.ProjectID,
 		EnvironmentID:      binding.EnvironmentID,
 		TaskID:             binding.TaskID,
@@ -885,7 +882,7 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 	if !isNoRows(err) {
 		return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
 	}
-	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.CellID, binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
+	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
 		return db.SessionStartIdempotency{}, sessionStartResult{}, false, hitErr
 	} else if hit {
 		if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
@@ -894,7 +891,6 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 		return db.SessionStartIdempotency{
 			ID:                 binding.ID,
 			OrgID:              binding.OrgID,
-			CellID:             binding.CellID,
 			ProjectID:          binding.ProjectID,
 			EnvironmentID:      binding.EnvironmentID,
 			TaskID:             binding.TaskID,
@@ -908,10 +904,9 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 	return db.SessionStartIdempotency{}, sessionStartResult{}, false, nil
 }
 
-func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
-	existing, err := store.GetSessionByExternalIDInCell(ctx, db.GetSessionByExternalIDInCellParams{
+func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
+	existing, err := store.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 		OrgID:         pgvalue.UUID(orgID),
-		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ExternalID:    externalID,
@@ -932,7 +927,6 @@ func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier,
 		if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
 			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:              pgvalue.UUID(orgID),
-			CellID:             existing.CellID,
 			ProjectID:          projectID,
 			EnvironmentID:      environmentID,
 			TaskID:             taskID,
@@ -964,7 +958,6 @@ func (s *Server) ensureSessionStartSourceCurrent(ctx context.Context, source ses
 		ScheduledAt:   source.scheduledAt,
 		ScheduleID:    source.scheduleID,
 		OrgID:         source.scheduleOrgID,
-		CellID:        source.scheduleCellID,
 		ProjectID:     source.scheduleProjectID,
 		EnvironmentID: source.scheduleEnvironmentID,
 	})
@@ -1043,10 +1036,9 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
 }
 
-func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, cellID string, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
+func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
 	existing, err := s.db.GetSessionStartIdempotency(ctx, db.GetSessionStartIdempotencyParams{
 		OrgID:          pgvalue.UUID(orgID),
-		CellID:         cellID,
 		ProjectID:      projectID,
 		EnvironmentID:  environmentID,
 		TaskID:         taskID,
@@ -1405,7 +1397,6 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.db.PatchSession(r.Context(), db.PatchSessionParams{
 		OrgID:         session.OrgID,
-		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -1472,7 +1463,6 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	closed, err := s.db.CloseSession(r.Context(), db.CloseSessionParams{
 		OrgID:         session.OrgID,
-		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -1482,7 +1472,6 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 		if session.ExpiresAt.Valid && !session.ExpiresAt.Time.After(time.Now()) {
 			expired, expireErr := s.db.ExpireSessionIfDue(r.Context(), db.ExpireSessionIfDueParams{
 				OrgID:         session.OrgID,
-				CellID:        session.CellID,
 				ProjectID:     session.ProjectID,
 				EnvironmentID: session.EnvironmentID,
 				ID:            session.ID,
@@ -1596,7 +1585,6 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		locked, err := work.q.LockSession(r.Context(), db.LockSessionParams{
 			OrgID:         session.OrgID,
-			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -1621,7 +1609,6 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 		}
 		cancelled, err := work.q.CancelSession(r.Context(), db.CancelSessionParams{
 			OrgID:         locked.OrgID,
-			CellID:        locked.CellID,
 			ProjectID:     locked.ProjectID,
 			EnvironmentID: locked.EnvironmentID,
 			ID:            locked.ID,
@@ -1661,12 +1648,12 @@ func (s *Server) cancelSessionRun(ctx context.Context, store db.Querier, actor a
 		return err
 	}
 	_, err = store.CancelRun(ctx, db.CancelRunParams{
-		OrgID:       session.OrgID,
-		CellID:      run.CellID,
-		RunID:       session.CurrentRunID,
-		Reason:      reason,
-		Force:       false,
-		OperationID: operation.ID,
+		OrgID:         session.OrgID,
+		WorkerGroupID: run.WorkerGroupID,
+		RunID:         session.CurrentRunID,
+		Reason:        reason,
+		Force:         false,
+		OperationID:   operation.ID,
 	})
 	if isNoRows(err) {
 		_, _ = store.MarkRunOperationRejected(ctx, db.MarkRunOperationRejectedParams{
@@ -1766,7 +1753,7 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 		writeError(w, forbidden(errPermissionRequired))
 		return db.Session{}, false
 	}
-	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.CellID, session.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, session.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return db.Session{}, false
 	}
@@ -1788,25 +1775,6 @@ func loadSessionAddressInScope(ctx context.Context, store db.Querier, orgID uuid
 	}
 	return store.GetSession(ctx, db.GetSessionParams{
 		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(address.id),
-	})
-}
-
-func loadSessionAddressInScopeCell(ctx context.Context, store db.Querier, cellID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, address sessionAddress) (db.Session, error) {
-	if address.kind == sessionAddressExternalID {
-		return store.GetSessionByExternalIDInCell(ctx, db.GetSessionByExternalIDInCellParams{
-			OrgID:         pgvalue.UUID(orgID),
-			CellID:        cellID,
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ExternalID:    address.externalID,
-		})
-	}
-	return store.GetSessionInCell(ctx, db.GetSessionInCellParams{
-		OrgID:         pgvalue.UUID(orgID),
-		CellID:        cellID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ID:            pgvalue.UUID(address.id),

@@ -71,8 +71,7 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 		_, markErr := e.store.MarkRunQueueItemEnqueueError(ctx, db.MarkRunQueueItemEnqueueErrorParams{
 			OrgID:                      orgID,
 			RunID:                      runID,
-			CellID:                     row.CellID,
-			RouteGeneration:            row.RouteGeneration,
+			WorkerGroupID:              row.WorkerGroupID,
 			QueueClass:                 row.QueueClass,
 			LastError:                  truncateError(err, e.errorSize),
 			ExpectedDispatchGeneration: row.DispatchGeneration,
@@ -82,8 +81,7 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 	if _, err := e.store.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
-		CellID:                     row.CellID,
-		RouteGeneration:            row.RouteGeneration,
+		WorkerGroupID:              row.WorkerGroupID,
 		QueueClass:                 row.QueueClass,
 		DispatchMessageID:          pgtype.Text{String: result.MessageID, Valid: true},
 		ExpectedDispatchGeneration: row.DispatchGeneration,
@@ -106,7 +104,7 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	}
 	candidates, err := e.store.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
 		OrgID:         scope.OrgID,
-		CellID:        scope.CellID,
+		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		QueueClass:    scope.QueueClass,
@@ -173,8 +171,7 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 	return Message{
 		RunID:                 runID,
 		OrgID:                 orgID,
-		CellID:                row.CellID,
-		RouteGeneration:       row.RouteGeneration,
+		WorkerGroupID:         row.WorkerGroupID,
 		ProjectID:             projectID,
 		EnvironmentID:         environmentID,
 		QueueClass:            row.QueueClass,

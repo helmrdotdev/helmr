@@ -1,7 +1,7 @@
 CREATE DATABASE IF NOT EXISTS helmr_telemetry;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
-    cell_id String,
+    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -10,7 +10,6 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
     attempt_id Nullable(UUID),
     run_lease_id Nullable(UUID),
     attempt_number Int32,
-    worker_group_id Nullable(UUID),
     worker_instance_id Nullable(UUID),
     stream_name LowCardinality(String),
     seq UInt64,
@@ -25,11 +24,11 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), cell_id)
+PARTITION BY (toYYYYMM(observed_at), worker_group_id)
 ORDER BY (org_id, project_id, environment_id, run_id, stream_name, seq);
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
-    cell_id String,
+    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -58,11 +57,11 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), cell_id)
+PARTITION BY (toYYYYMM(observed_at), worker_group_id)
 ORDER BY (org_id, project_id, environment_id, subject_kind, subject_id, seq);
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
-    cell_id String,
+    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -81,5 +80,5 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), cell_id)
+PARTITION BY (toYYYYMM(observed_at), worker_group_id)
 ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start);

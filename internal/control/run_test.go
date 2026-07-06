@@ -47,8 +47,8 @@ func requireErrorCode(t *testing.T, body []byte, want string) {
 	}
 }
 
-func testWorkerGroupID() pgtype.UUID {
-	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000201"))
+func testWorkerGroupID() string {
+	return "us-east-1-worker-group-1"
 }
 
 func testProjectID() pgtype.UUID {
@@ -168,8 +168,7 @@ func fakeWorkspaceForSessionStart(workspaceID pgtype.UUID) db.GetWorkspaceForSes
 	return db.GetWorkspaceForSessionStartRow{
 		ID:                                workspaceID,
 		OrgID:                             pgvalue.UUID(dbtest.DefaultOrgID),
-		CellID:                            "us-east-1-cell-1",
-		RouteGeneration:                   1,
+		WorkerGroupID:                     dbtest.DefaultWorkerGroupID,
 		ProjectID:                         testProjectID(),
 		EnvironmentID:                     testEnvironmentID(),
 		DeploymentSandboxID:               testDeploymentSandboxID(),
@@ -561,11 +560,11 @@ func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
 	}
 }
 
-func TestGetWorkspaceRejectsStaleRouteGeneration(t *testing.T) {
+func TestGetWorkspaceRejectsUnavailableRecordPlacement(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
-		workspace:                        testWorkspaceRow(workspaceID),
-		recordRouteGenerationUnavailable: true,
+		workspace:                  testWorkspaceRow(workspaceID),
+		recordPlacementUnavailable: true,
 	}
 	server := newTestServer(testServerConfig{
 		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -584,7 +583,7 @@ func TestGetWorkspaceRejectsStaleRouteGeneration(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "record route generation is not available") {
+	if !strings.Contains(rec.Body.String(), "record placement is not available") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
@@ -620,8 +619,6 @@ func testWorkspaceRow(id uuid.UUID) db.Workspace {
 	return db.Workspace{
 		ID:                  pgvalue.UUID(id),
 		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-		CellID:              "us-east-1-cell-1",
-		RouteGeneration:     1,
 		ProjectID:           testProjectID(),
 		EnvironmentID:       testEnvironmentID(),
 		DeploymentSandboxID: testDeploymentSandboxID(),
@@ -976,13 +973,12 @@ func TestSessionStartAttachesCompatibleWorkspace(t *testing.T) {
 	}
 }
 
-func TestSessionStartAttachesWorkspaceOnDrainingSourceRoute(t *testing.T) {
+func TestSessionStartAttachesWorkspaceOnDrainingWorkerGroupPlacement(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	workspace := fakeWorkspaceForSessionStart(workspaceID)
-	workspace.RouteGeneration = 7
 	store := &fakeStore{
-		attachedWorkspace:      workspace,
-		environmentRouteCellID: "us-east-1-cell-2",
+		attachedWorkspace:                 workspace,
+		environmentPlacementWorkerGroupID: "us-east-1-worker-group-2",
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
@@ -1000,17 +996,17 @@ func TestSessionStartAttachesWorkspaceOnDrainingSourceRoute(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.getDeploymentTask.CellID != workspace.CellID || store.getDeploymentTask.RouteGeneration != workspace.RouteGeneration {
-		t.Fatalf("deployment task source route = %q/%d, want %q/%d", store.getDeploymentTask.CellID, store.getDeploymentTask.RouteGeneration, workspace.CellID, workspace.RouteGeneration)
+	if store.getDeploymentTask.WorkerGroupID != workspace.WorkerGroupID {
+		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, workspace.WorkerGroupID)
 	}
-	if store.createRun.CellID != workspace.CellID || store.createRun.RouteGeneration != workspace.RouteGeneration {
-		t.Fatalf("created run route = %q/%d, want %q/%d", store.createRun.CellID, store.createRun.RouteGeneration, workspace.CellID, workspace.RouteGeneration)
+	if store.run.WorkerGroupID != workspace.WorkerGroupID {
+		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, workspace.WorkerGroupID)
 	}
 	if !store.createRun.AllowDrainingRoute {
 		t.Fatalf("created run allow_draining_route = false, want true for explicit workspace attach")
 	}
-	if store.session.CellID != workspace.CellID || store.session.RouteGeneration != workspace.RouteGeneration {
-		t.Fatalf("created session route = %q/%d, want %q/%d", store.session.CellID, store.session.RouteGeneration, workspace.CellID, workspace.RouteGeneration)
+	if store.session.WorkerGroupID != workspace.WorkerGroupID {
+		t.Fatalf("created session worker_group_id = %q, want %q", store.session.WorkerGroupID, workspace.WorkerGroupID)
 	}
 }
 
@@ -1174,8 +1170,7 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
-			RouteGeneration:     1,
+			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1348,7 +1343,6 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1367,7 +1361,6 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 		run: db.Run{
 			ID:               runID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:           "us-east-1-cell-1",
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1458,7 +1451,7 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
 	previousRun := store.run
 	store.ensureWorkspaceMountErr = errors.New("transient mount failure")
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, cellID: "us-east-1-cell-1"}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -1490,7 +1483,7 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 
 func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusRunning)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, cellID: "us-east-1-cell-1"}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
 		t.Fatal(err)
@@ -1513,12 +1506,9 @@ func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	}
 }
 
-func TestContinuationRunRequestUsesSessionSourceRouteGeneration(t *testing.T) {
+func TestContinuationRunRequestUsesSessionWorkerGroup(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
-	store.session.RouteGeneration = 7
-	store.lockSession.RouteGeneration = 7
-	store.run.RouteGeneration = 7
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, cellID: "us-east-1-cell-1"}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
 	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
@@ -1527,21 +1517,21 @@ func TestContinuationRunRequestUsesSessionSourceRouteGeneration(t *testing.T) {
 	if !runID.Valid || store.sessionRunRequest.Status != "created" {
 		t.Fatalf("run=%s request status=%q", pgvalue.UUIDString(runID), store.sessionRunRequest.Status)
 	}
-	if store.getDeploymentTask.RouteGeneration != 7 {
-		t.Fatalf("deployment task route_generation = %d, want 7", store.getDeploymentTask.RouteGeneration)
+	if store.getDeploymentTask.WorkerGroupID != store.session.WorkerGroupID {
+		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, store.session.WorkerGroupID)
 	}
-	if store.createRun.RouteGeneration != 7 {
-		t.Fatalf("created run route_generation = %d, want 7", store.createRun.RouteGeneration)
+	if store.run.WorkerGroupID != store.session.WorkerGroupID {
+		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, store.session.WorkerGroupID)
 	}
 	if !store.createRun.AllowDrainingRoute {
-		t.Fatalf("created run allow_draining_route = false, want true for continuation source route")
+		t.Fatalf("created run allow_draining_route = false, want true for continuation worker group placement")
 	}
 }
 
-func TestContinuationRunRequestFailsWhenSessionSourceRouteUnavailable(t *testing.T) {
+func TestContinuationRunRequestFailsWhenSessionWorkerGroupPlacementUnavailable(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
 	store.environmentRouteUnavailable = true
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, cellID: "us-east-1-cell-1"}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
 	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
 	if err != nil {
@@ -1561,7 +1551,7 @@ func TestContinuationRunRequestClaimLostRollsBackContinuationCreation(t *testing
 	store.sessionRunRequest.ClaimOwner = "other-control"
 	previousSessionRunCount := len(store.sessionRuns)
 	previousCurrentRunID := store.session.CurrentRunID
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, cellID: "us-east-1-cell-1"}
+	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
 	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), request)
 
@@ -1604,7 +1594,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
+			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1622,8 +1612,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		run: db.Run{
 			ID:               previousRunID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:           "us-east-1-cell-1",
-			RouteGeneration:  1,
+			WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1638,7 +1627,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		streamRecord: db.StreamRecord{
 			ID:            recordID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:        "us-east-1-cell-1",
+			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -1653,7 +1642,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionRunRequest: db.SessionRunRequest{
 			ID:             requestID,
 			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:         "us-east-1-cell-1",
+			WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
 			SessionID:      sessionID,
@@ -1670,7 +1659,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		deploymentTaskRow: db.GetDeploymentTaskRow{
 			ID:                  testDeploymentTaskID(),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			DeploymentID:        testDeploymentID(),
@@ -1687,7 +1675,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionRuns: []db.SessionRun{{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:        "us-east-1-cell-1",
+			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -2743,7 +2731,7 @@ type fakeStore struct {
 	upsertWorkerBootstrapToken              db.UpsertWorkerBootstrapTokenParams
 	workerCredentialID                      pgtype.UUID
 	workerCredentialSecretHash              []byte
-	workerCredentialCellID                  string
+	workerCredentialWorkerGroupID           string
 	workerCredentialClaimVersion            int64
 	dequeueRequest                          dispatch.DequeueRequest
 	ackedLeases                             []dispatch.Lease
@@ -2792,10 +2780,10 @@ type fakeStore struct {
 	sessionRunRequest                       db.SessionRunRequest
 	lockSessionCalls                        int
 	deploymentTaskRow                       db.GetDeploymentTaskRow
-	environmentRouteCellID                  string
+	environmentPlacementWorkerGroupID       string
 	environmentRouteRegionID                string
 	environmentRouteUnavailable             bool
-	recordRouteGenerationUnavailable        bool
+	recordPlacementUnavailable              bool
 	scheduleTriggerNotCurrent               bool
 	closeSessionAttachesRun                 pgtype.UUID
 	closeSessionRetryRun                    db.Run
@@ -2811,58 +2799,36 @@ type fakeControlTransaction struct {
 }
 
 func fakeSessionRecord(session db.Session) db.Session {
-	if session.CellID == "" {
-		session.CellID = "us-east-1-cell-1"
-	}
-	if session.RouteGeneration == 0 {
-		session.RouteGeneration = 1
+	if session.WorkerGroupID == "" {
+		session.WorkerGroupID = "us-east-1-worker-group-1"
 	}
 	return session
 }
 
-func (f *fakeStore) GetRoutableEnvironmentCellRoute(_ context.Context, arg db.GetRoutableEnvironmentCellRouteParams) (db.GetRoutableEnvironmentCellRouteRow, error) {
+func (f *fakeStore) SelectProjectPlacementWorkerGroup(_ context.Context, arg db.SelectProjectPlacementWorkerGroupParams) (db.SelectProjectPlacementWorkerGroupRow, error) {
 	if f.environmentRouteUnavailable {
-		return db.GetRoutableEnvironmentCellRouteRow{}, pgx.ErrNoRows
+		return db.SelectProjectPlacementWorkerGroupRow{}, pgx.ErrNoRows
 	}
-	return db.GetRoutableEnvironmentCellRouteRow{
+	return db.SelectProjectPlacementWorkerGroupRow{
 		OrgID:             arg.OrgID,
 		ProjectID:         arg.ProjectID,
-		EnvironmentID:     arg.EnvironmentID,
 		RegionID:          firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		CellID:            firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
-		RouteGeneration:   1,
-		HealthState:       db.CellHealthStateHealthy,
+		WorkerGroupID:     firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
+		HealthState:       db.WorkerGroupHealthStateHealthy,
 		RoutingFreshUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}, nil
 }
 
-func (f *fakeStore) GetEnvironmentCellRouteForRecord(_ context.Context, arg db.GetEnvironmentCellRouteForRecordParams) (db.GetEnvironmentCellRouteForRecordRow, error) {
-	if f.environmentRouteUnavailable {
-		return db.GetEnvironmentCellRouteForRecordRow{}, pgx.ErrNoRows
+func (f *fakeStore) GetWorkerGroupPlacementForRecord(_ context.Context, workerGroupID string) (db.GetWorkerGroupPlacementForRecordRow, error) {
+	if f.environmentRouteUnavailable || f.recordPlacementUnavailable {
+		return db.GetWorkerGroupPlacementForRecordRow{}, pgx.ErrNoRows
 	}
-	return db.GetEnvironmentCellRouteForRecordRow{
-		OrgID:           arg.OrgID,
-		ProjectID:       arg.ProjectID,
-		EnvironmentID:   arg.EnvironmentID,
-		RegionID:        firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		CellID:          arg.CellID,
-		RouteState:      db.EnvironmentCellRouteStateActive,
-		RouteGeneration: 1,
-	}, nil
-}
-
-func (f *fakeStore) GetEnvironmentCellRouteForRecordGeneration(_ context.Context, arg db.GetEnvironmentCellRouteForRecordGenerationParams) (db.GetEnvironmentCellRouteForRecordGenerationRow, error) {
-	if f.environmentRouteUnavailable || f.recordRouteGenerationUnavailable {
-		return db.GetEnvironmentCellRouteForRecordGenerationRow{}, pgx.ErrNoRows
-	}
-	return db.GetEnvironmentCellRouteForRecordGenerationRow{
-		OrgID:           arg.OrgID,
-		ProjectID:       arg.ProjectID,
-		EnvironmentID:   arg.EnvironmentID,
-		RegionID:        firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		CellID:          arg.CellID,
-		RouteState:      db.EnvironmentCellRouteStateActive,
-		RouteGeneration: arg.RouteGeneration,
+	return db.GetWorkerGroupPlacementForRecordRow{
+		WorkerGroupID:     workerGroupID,
+		RegionID:          firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
+		State:             db.WorkerGroupStateActive,
+		HealthState:       db.WorkerGroupHealthStateHealthy,
+		RoutingFreshUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	}, nil
 }
 
@@ -2889,24 +2855,6 @@ func (f *fakeStore) BeginQuerier(context.Context) (db.Querier, controlTransactio
 		run:               f.run,
 		sessionRuns:       append([]db.SessionRun(nil), f.sessionRuns...),
 		sessionRunRequest: f.sessionRunRequest,
-	}, nil
-}
-
-func (f *fakeStore) GetActiveEnvironmentCellRoute(_ context.Context, arg db.GetActiveEnvironmentCellRouteParams) (db.EnvironmentCell, error) {
-	if f.environmentRouteUnavailable {
-		return db.EnvironmentCell{}, pgx.ErrNoRows
-	}
-	regionID := firstNonEmptyString(f.environmentRouteRegionID, "us-east-1")
-	return db.EnvironmentCell{
-		OrgID:           arg.OrgID,
-		ProjectID:       arg.ProjectID,
-		EnvironmentID:   arg.EnvironmentID,
-		RegionID:        regionID,
-		CellID:          firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
-		RouteState:      db.EnvironmentCellRouteStateActive,
-		RouteGeneration: 1,
-		AssignedAt:      testTime(),
-		UpdatedAt:       testTime(),
 	}, nil
 }
 
@@ -2938,11 +2886,11 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	if status == "" {
 		status = db.RunStatusQueued
 	}
+	workerGroupID := firstNonEmptyString(f.session.WorkerGroupID, f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, "us-east-1-worker-group-1")
 	f.run = db.Run{
 		ID:                    arg.ID,
 		OrgID:                 arg.OrgID,
-		CellID:                arg.CellID,
-		RouteGeneration:       arg.RouteGeneration,
+		WorkerGroupID:         workerGroupID,
 		ProjectID:             arg.ProjectID,
 		EnvironmentID:         arg.EnvironmentID,
 		DeploymentID:          arg.DeploymentID,
@@ -2987,7 +2935,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	return db.CreateScopedRunRow{
 		ID:                f.run.ID,
 		OrgID:             f.run.OrgID,
-		CellID:            f.run.CellID,
+		WorkerGroupID:     f.run.WorkerGroupID,
 		ProjectID:         f.run.ProjectID,
 		EnvironmentID:     f.run.EnvironmentID,
 		DeploymentID:      f.run.DeploymentID,
@@ -3013,11 +2961,10 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 
 func (f *fakeStore) GetTaskForStart(_ context.Context, arg db.GetTaskForStartParams) (db.Task, error) {
 	for _, task := range f.deploymentTasks {
-		if task.OrgID == arg.OrgID && firstNonEmptyString(task.CellID, f.environmentRouteCellID, "us-east-1-cell-1") == arg.CellID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.TaskID == arg.TaskID {
+		if task.OrgID == arg.OrgID && task.ProjectID == arg.ProjectID && task.EnvironmentID == arg.EnvironmentID && task.TaskID == arg.TaskID {
 			return db.Task{
 				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:         arg.OrgID,
-				CellID:        arg.CellID,
 				ProjectID:     arg.ProjectID,
 				EnvironmentID: arg.EnvironmentID,
 				TaskID:        arg.TaskID,
@@ -3031,7 +2978,6 @@ func (f *fakeStore) GetTaskForStart(_ context.Context, arg db.GetTaskForStartPar
 		task := db.Task{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         arg.OrgID,
-			CellID:        arg.CellID,
 			ProjectID:     arg.ProjectID,
 			EnvironmentID: arg.EnvironmentID,
 			TaskID:        arg.TaskID,
@@ -3055,8 +3001,7 @@ func (f *fakeStore) CreateSession(_ context.Context, arg db.CreateSessionParams)
 	f.session = db.Session{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		CellID:              arg.CellID,
-		RouteGeneration:     arg.RouteGeneration,
+		WorkerGroupID:       firstNonEmptyString(f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, dbtest.DefaultWorkerGroupID),
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		TaskID:              arg.TaskID,
@@ -3083,8 +3028,7 @@ func (f *fakeStore) CreateWorkspace(_ context.Context, arg db.CreateWorkspacePar
 	f.workspace = db.Workspace{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		CellID:              arg.CellID,
-		RouteGeneration:     1,
+		WorkerGroupID:       arg.WorkerGroupID,
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		DeploymentSandboxID: arg.DeploymentSandboxID,
@@ -3110,8 +3054,6 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 	f.workspace = db.Workspace{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		CellID:              arg.CellID,
-		RouteGeneration:     arg.RouteGeneration,
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		DeploymentSandboxID: arg.DeploymentSandboxID,
@@ -3132,8 +3074,7 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 	return db.CreateWorkspaceFromSandboxRow{
 		ID:                   f.workspace.ID,
 		OrgID:                f.workspace.OrgID,
-		CellID:               f.workspace.CellID,
-		RouteGeneration:      f.workspace.RouteGeneration,
+		WorkerGroupID:        f.workspace.WorkerGroupID,
 		ProjectID:            f.workspace.ProjectID,
 		EnvironmentID:        f.workspace.EnvironmentID,
 		DeploymentSandboxID:  f.workspace.DeploymentSandboxID,
@@ -3168,7 +3109,6 @@ func (f *fakeStore) ResolveDeploymentSandboxForWorkspaceCreate(_ context.Context
 	return db.DeploymentSandbox{
 		ID:            testDeploymentSandboxID(),
 		OrgID:         arg.OrgID,
-		CellID:        firstNonEmptyString(f.environmentRouteCellID, "us-east-1-cell-1"),
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		DeploymentID:  testDeploymentID(),
@@ -3185,11 +3125,8 @@ func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (
 		f.workspace.EnvironmentID == arg.EnvironmentID &&
 		f.workspace.ID == arg.ID {
 		workspace := f.workspace
-		if workspace.CellID == "" {
-			workspace.CellID = "us-east-1-cell-1"
-		}
-		if workspace.RouteGeneration == 0 {
-			workspace.RouteGeneration = 1
+		if workspace.WorkerGroupID == "" {
+			workspace.WorkerGroupID = "us-east-1-worker-group-1"
 		}
 		return workspace, nil
 	}
@@ -3362,8 +3299,7 @@ func (f *fakeStore) GetWorkspaceSourceForSessionStart(_ context.Context, arg db.
 		return db.GetWorkspaceSourceForSessionStartRow{
 			ID:                  f.attachedWorkspace.ID,
 			OrgID:               f.attachedWorkspace.OrgID,
-			CellID:              f.attachedWorkspace.CellID,
-			RouteGeneration:     f.attachedWorkspace.RouteGeneration,
+			WorkerGroupID:       f.attachedWorkspace.WorkerGroupID,
 			ProjectID:           f.attachedWorkspace.ProjectID,
 			EnvironmentID:       f.attachedWorkspace.EnvironmentID,
 			DeploymentSandboxID: f.attachedWorkspace.DeploymentSandboxID,
@@ -3419,7 +3355,6 @@ func (f *fakeStore) CreateSessionRun(_ context.Context, arg db.CreateSessionRunP
 	row := db.SessionRun{
 		ID:            arg.ID,
 		OrgID:         arg.OrgID,
-		CellID:        arg.CellID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		SessionID:     arg.SessionID,
@@ -3548,7 +3483,6 @@ func (f *fakeStore) MarkSessionRunRequestFailed(_ context.Context, arg db.MarkSe
 func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.CellID == arg.CellID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
 		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
 		f.startIdempotency.TaskID == arg.TaskID &&
@@ -3563,7 +3497,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 	f.startIdempotency = db.GetSessionStartIdempotencyRow{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
-		CellID:                     arg.CellID,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		TaskID:                     arg.TaskID,
@@ -3575,6 +3508,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		LastUsedAt:                 testTime(),
 		SessionID:                  f.session.ID,
 		SessionOrgID:               f.session.OrgID,
+		SessionWorkerGroupID:       f.session.WorkerGroupID,
 		SessionProjectID:           f.session.ProjectID,
 		SessionEnvironmentID:       f.session.EnvironmentID,
 		SessionTaskID:              f.session.TaskID,
@@ -3596,6 +3530,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		SessionUpdatedAt:           f.session.UpdatedAt,
 		RunID:                      f.run.ID,
 		RunOrgID:                   f.run.OrgID,
+		RunWorkerGroupID:           f.run.WorkerGroupID,
 		RunProjectID:               f.run.ProjectID,
 		RunEnvironmentID:           f.run.EnvironmentID,
 		RunDeploymentID:            f.run.DeploymentID,
@@ -3619,7 +3554,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 	return db.SessionStartIdempotency{
 		ID:                 arg.ID,
 		OrgID:              arg.OrgID,
-		CellID:             arg.CellID,
 		ProjectID:          arg.ProjectID,
 		EnvironmentID:      arg.EnvironmentID,
 		TaskID:             arg.TaskID,
@@ -3636,7 +3570,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 func (f *fakeStore) DeleteExpiredSessionStartIdempotency(_ context.Context, arg db.DeleteExpiredSessionStartIdempotencyParams) error {
 	if f.startIdempotency.ID.Valid &&
 		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.CellID == arg.CellID &&
 		f.startIdempotency.ProjectID == arg.ProjectID &&
 		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
 		f.startIdempotency.TaskID == arg.TaskID &&
@@ -3779,7 +3712,7 @@ func (f *fakeStore) GetSessionByExternalID(_ context.Context, arg db.GetSessionB
 	return db.Session{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) GetSessionByExternalIDInCell(_ context.Context, arg db.GetSessionByExternalIDInCellParams) (db.Session, error) {
+func (f *fakeStore) GetSessionByExternalIDInWorkerGroup(_ context.Context, arg db.GetSessionByExternalIDInWorkerGroupParams) (db.Session, error) {
 	if f.getSessionByExternalIDMisses > 0 {
 		f.getSessionByExternalIDMisses--
 		return db.Session{}, pgx.ErrNoRows
@@ -3787,7 +3720,6 @@ func (f *fakeStore) GetSessionByExternalIDInCell(_ context.Context, arg db.GetSe
 	session := fakeSessionRecord(f.session)
 	if session.ID.Valid &&
 		session.OrgID == arg.OrgID &&
-		session.CellID == arg.CellID &&
 		session.ProjectID == arg.ProjectID &&
 		session.EnvironmentID == arg.EnvironmentID &&
 		session.ExternalID == arg.ExternalID {

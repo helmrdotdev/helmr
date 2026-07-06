@@ -43,7 +43,7 @@ module "control" {
   private_subnet_ids                     = module.network.private_subnet_ids
   public_url                             = var.public_url
   deployment_mode                        = var.deployment_mode
-  cell_id                                = var.cell_id
+  worker_group_id                        = var.worker_group_id
   region_id                              = var.region_id
   default_region_id                      = var.default_region_id
   clickhouse_url                         = var.clickhouse_url

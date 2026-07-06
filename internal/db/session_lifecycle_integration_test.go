@@ -65,7 +65,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	expired, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
+	expired, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 	}
 
 	markCurrentRunTerminal(t, ctx, pool, ids)
-	expired, err = queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
+	expired, err = queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestExpireDueSessionsExpiresOnlyIdleSessions(t *testing.T) {
 		t.Fatalf("expired sessions = %+v", expired)
 	}
 
-	again, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), CellID: dbtest.DefaultCellID})
+	again, err := queries.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: pgvalue.UUID(ids.orgID), WorkerGroupID: dbtest.DefaultWorkerGroupID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,32 +114,32 @@ func seedPendingSessionRunRequest(t *testing.T, ctx context.Context, pool *pgxpo
 	streamRecordID := uuid.Must(uuid.NewV7())
 	requestID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployment_streams (id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction)
-		VALUES ($1, $2, $3, $4, $5, $6, 'user.input', 'input')
-	`, deploymentStreamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, 'user.input', 'input')
+	`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO streams (id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, 'user.input', 'input')
-	`, streamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID); err != nil {
+		INSERT INTO streams (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction)
+		VALUES ($1, $8, $2, $3, $4, $5, $6, $7, 'user.input', 'input')
+	`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, testStreamPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO stream_records (
-				id, org_id, cell_id, project_id, environment_id, session_id, stream_id, direction,
+				id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, stream_id, direction,
 				sequence, data, source_type, source_id, created_at
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, 'input', 1, '{"text":"continue"}', 'api_key', 'test', $8)
-		`, streamRecordID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, streamID, time.Now().UTC()); err != nil {
+			VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'input', 1, '{"text":"continue"}', 'api_key', 'test', $8)
+		`, streamRecordID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, streamID, time.Now().UTC(), testStreamRecordPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO session_run_requests (
-				id, org_id, cell_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status
+				id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'stream_record', 'accepted')
-		`, requestID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, streamRecordID, streamID); err != nil {
+		`, requestID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, streamRecordID, streamID); err != nil {
 		t.Fatal(err)
 	}
 }

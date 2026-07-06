@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -37,7 +38,6 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListSessionStreams(r.Context(), db.ListSessionStreamsParams{
 		OrgID:         session.OrgID,
-		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		SessionID:     session.ID,
@@ -67,15 +67,18 @@ func (s *Server) materializeSessionStreamCatalog(ctx context.Context, session db
 		return err
 	}
 	for _, deploymentStream := range deploymentStreams {
-		if _, err := s.db.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
-			ID:                 pgvalue.UUID(uuid.New()),
-			OrgID:              session.OrgID,
-			CellID:             session.CellID,
-			ProjectID:          session.ProjectID,
-			EnvironmentID:      session.EnvironmentID,
-			SessionID:          session.ID,
-			DeploymentStreamID: deploymentStream.ID,
-			Metadata:           []byte("{}"),
+		var publicID string
+		if _, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Stream, value: &publicID}}, func() (db.Stream, error) {
+			return s.db.EnsureSessionStream(ctx, db.EnsureSessionStreamParams{
+				ID:                 pgvalue.UUID(uuid.New()),
+				PublicID:           publicID,
+				OrgID:              session.OrgID,
+				ProjectID:          session.ProjectID,
+				EnvironmentID:      session.EnvironmentID,
+				SessionID:          session.ID,
+				DeploymentStreamID: deploymentStream.ID,
+				Metadata:           []byte("{}"),
+			})
 		}); err != nil {
 			return err
 		}

@@ -1,9 +1,9 @@
 import { useNavigate } from "@solidjs/router";
 import { createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createEffect, createMemo, createSignal, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, type JSX } from "solid-js";
 import { ApiError } from "../lib/api";
 import { getMe } from "../lib/auth";
-import { createProject, listProjects } from "../lib/projects";
+import { createProject, listProjects, listRegions } from "../lib/projects";
 import { rememberProjectScope } from "../lib/scope";
 import { AuthLoading, AuthScreen, AuthTitle } from "../ui/AuthScreen";
 import { ui } from "../ui/styles";
@@ -31,6 +31,7 @@ export function ProjectNew() {
   const [name, setName] = createSignal("");
   const [slug, setSlug] = createSignal("");
   const [slugTouched, setSlugTouched] = createSignal(false);
+  const [selectedRegionID, setSelectedRegionID] = createSignal("");
   const [submitting, setSubmitting] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const me = createQuery(() => ({
@@ -46,9 +47,23 @@ export function ProjectNew() {
     retry: false,
     staleTime: 30_000,
   }));
+  const regions = createQuery(() => ({
+    queryKey: ["regions"],
+    queryFn: listRegions,
+    enabled: !!me.data?.org_id,
+    retry: false,
+    staleTime: 60_000,
+  }));
+  const availableRegions = createMemo(() =>
+    (regions.data?.regions ?? []).filter((region) => region.state === "available"),
+  );
   const firstProject = createMemo(() =>
     !projects.isPending && !projects.isError && (projects.data?.projects.length ?? 0) === 0,
   );
+
+  createEffect(() => {
+    if (!selectedRegionID()) setSelectedRegionID(availableRegions()[0]?.id ?? "");
+  });
 
   createEffect(() => {
     if (me.data?.access_required) {
@@ -64,15 +79,20 @@ export function ProjectNew() {
     event.preventDefault();
     const nextName = name().trim();
     const nextSlug = slug().trim();
-    if (!nextName || !nextSlug) {
-      setError("Name and slug are required.");
+    const nextRegionID = selectedRegionID().trim();
+    if (!nextName || !nextSlug || !nextRegionID) {
+      setError("Name, slug, and region are required.");
       return;
     }
     setSubmitting(true);
     setError(null);
     try {
       const wasFirstProject = firstProject();
-      const project = await createProject({ name: nextName, slug: nextSlug });
+      const project = await createProject({
+        name: nextName,
+        slug: nextSlug,
+        default_region_id: nextRegionID,
+      });
       rememberProjectScope(project);
       await queryClient.invalidateQueries({ queryKey: ["projects"] });
       await queryClient.invalidateQueries({ queryKey: ["me"] });
@@ -116,11 +136,28 @@ export function ProjectNew() {
           spellcheck={false}
         />
       </label>
+      <label class={ui.field}>
+        <span>Region</span>
+        <select
+          class={ui.input}
+          value={selectedRegionID()}
+          onChange={(event) => setSelectedRegionID(event.currentTarget.value)}
+          disabled={regions.isPending || availableRegions().length === 0}
+        >
+          <For each={availableRegions()}>
+            {(region) => (
+              <option value={region.id}>
+                {region.display_name || region.id}
+              </option>
+            )}
+          </For>
+        </select>
+      </label>
       <Show when={error()}>
         <p class={ui.fieldError} role="alert">{error()}</p>
       </Show>
       <div class={firstProject() ? undefined : ui.actionRow}>
-        <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim()}>
+        <button class={ui.button} type="submit" disabled={submitting() || !name().trim() || !slug().trim() || !selectedRegionID().trim()}>
           {submitting() ? "Creating..." : "Create"}
         </button>
       </div>
@@ -128,7 +165,7 @@ export function ProjectNew() {
   );
 
   return (
-    <Show when={!me.isPending && !projects.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
+    <Show when={!me.isPending && !projects.isPending && !regions.isPending} fallback={<AuthLoading>Loading...</AuthLoading>}>
       <Show
         when={firstProject()}
         fallback={

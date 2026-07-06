@@ -26,7 +26,7 @@ func (s *Server) requeueResolvedRunWaits(ctx context.Context, orgID pgtype.UUID)
 	var rows []db.RequeueResolvedRunWaitsRow
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
-		rows, err = requeueResolvedRunWaitsWithStore(ctx, work.q, orgID, s.cellID, log)
+		rows, err = requeueResolvedRunWaitsWithStore(ctx, work.q, orgID, s.workerGroupID, log)
 		return err
 	})
 	if err != nil {
@@ -49,11 +49,11 @@ type runWaitResumeStore interface {
 	SetQueuedRunWorkspaceMount(context.Context, db.SetQueuedRunWorkspaceMountParams) error
 }
 
-func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeStore, orgID pgtype.UUID, cellID string, log *slog.Logger) ([]db.RequeueResolvedRunWaitsRow, error) {
+func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeStore, orgID pgtype.UUID, workerGroupID string, log *slog.Logger) ([]db.RequeueResolvedRunWaitsRow, error) {
 	rows, err := store.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
-		OrgID:      orgID,
-		CellID:     cellID,
-		LimitCount: runWaitRequeueLimit,
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		LimitCount:    runWaitRequeueLimit,
 	})
 	if err != nil {
 		return nil, err
@@ -70,7 +70,7 @@ func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeSt
 		mount, err := ensureWorkspaceMountForQueuedRun(ctx, store, queuedRunWorkspaceMountTarget{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         row.OrgID,
-			CellID:        row.CellID,
+			WorkerGroupID: row.WorkerGroupID,
 			ProjectID:     row.ProjectID,
 			EnvironmentID: row.EnvironmentID,
 			WorkspaceID:   row.WorkspaceID,

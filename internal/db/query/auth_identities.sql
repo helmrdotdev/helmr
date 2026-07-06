@@ -1,8 +1,9 @@
 -- name: UpsertAuthIdentity :one
 WITH upserted_user AS (
-    INSERT INTO users (id, display_name, profile_image_url, primary_email)
+    INSERT INTO users (id, public_id, display_name, profile_image_url, primary_email)
     SELECT
         sqlc.arg(user_id) AS id,
+        sqlc.arg(user_public_id) AS public_id,
         sqlc.arg(display_name) AS display_name,
         sqlc.narg(profile_image_url) AS profile_image_url,
         CASE WHEN sqlc.arg(email_verified)::bool THEN sqlc.arg(email) ELSE NULL END AS primary_email

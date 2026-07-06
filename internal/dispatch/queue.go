@@ -9,7 +9,7 @@ import (
 
 type DequeueRequest struct {
 	OrgID            string
-	CellID           string
+	WorkerGroupID    string
 	ProjectID        string
 	EnvironmentID    string
 	QueueClass       string

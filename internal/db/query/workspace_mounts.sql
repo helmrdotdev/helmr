@@ -1,9 +1,8 @@
 -- name: EnsureWorkspaceMountRequested :one
 WITH locked_workspace AS MATERIALIZED (
     SELECT workspaces.*
-      FROM workspaces
+     FROM workspaces
      WHERE workspaces.org_id = sqlc.arg(org_id)
-       AND workspaces.cell_id = sqlc.arg(cell_id)
        AND workspaces.project_id = sqlc.arg(project_id)
        AND workspaces.environment_id = sqlc.arg(environment_id)
        AND workspaces.id = sqlc.arg(workspace_id)
@@ -17,7 +16,7 @@ existing_active_non_runnable AS MATERIALIZED (
       FROM locked_workspace
       JOIN workspace_mounts
         ON workspace_mounts.org_id = locked_workspace.org_id
-       AND workspace_mounts.cell_id = locked_workspace.cell_id
+       AND workspace_mounts.worker_group_id = locked_workspace.worker_group_id
        AND workspace_mounts.project_id = locked_workspace.project_id
        AND workspace_mounts.environment_id = locked_workspace.environment_id
        AND workspace_mounts.workspace_id = locked_workspace.id
@@ -27,8 +26,7 @@ inserted AS (
     INSERT INTO workspace_mounts (
         id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -56,8 +54,7 @@ inserted AS (
     )
     SELECT sqlc.arg(id),
            workspaces.org_id,
-           workspaces.cell_id,
-           workspaces.route_generation,
+           workspaces.worker_group_id,
            workspaces.project_id,
            workspaces.environment_id,
            workspaces.id,
@@ -79,19 +76,17 @@ inserted AS (
            deployment_sandboxes.runtime_abi,
            deployment_sandboxes.guestd_abi,
            deployment_sandboxes.adapter_abi,
-           sqlc.arg(request_priority),
+           sqlc.arg(request_priority)::integer,
            'mounting',
            coalesce(sqlc.arg(request)::jsonb, '{}'::jsonb)
       FROM locked_workspace AS workspaces
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspaces.org_id
-       AND deployment_sandboxes.cell_id = workspaces.cell_id
        AND deployment_sandboxes.project_id = workspaces.project_id
        AND deployment_sandboxes.environment_id = workspaces.environment_id
        AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.cell_id = deployment_sandboxes.cell_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -99,7 +94,6 @@ inserted AS (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN workspace_versions AS current_workspace_version
         ON current_workspace_version.org_id = workspaces.org_id
-       AND current_workspace_version.cell_id = workspaces.cell_id
        AND current_workspace_version.project_id = workspaces.project_id
        AND current_workspace_version.environment_id = workspaces.environment_id
        AND current_workspace_version.workspace_id = workspaces.id
@@ -107,7 +101,6 @@ inserted AS (
        AND current_workspace_version.state = 'ready'
       JOIN artifacts AS workspace_artifact
         ON workspace_artifact.org_id = current_workspace_version.org_id
-       AND workspace_artifact.cell_id = current_workspace_version.cell_id
        AND workspace_artifact.project_id = current_workspace_version.project_id
        AND workspace_artifact.environment_id = current_workspace_version.environment_id
        AND workspace_artifact.id = current_workspace_version.artifact_id
@@ -121,7 +114,7 @@ inserted AS (
                       ELSE workspace_mounts.updated_at
                   END
     WHERE workspace_mounts.state IN ('mounting', 'mounted')
-      AND workspace_mounts.cell_id = excluded.cell_id
+      AND workspace_mounts.worker_group_id = excluded.worker_group_id
     RETURNING workspace_mounts.*,
               (workspace_mounts.xmax = 0)::boolean AS inserted,
               CASE
@@ -311,30 +304,19 @@ SELECT workspace_mounts.*
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
-   AND runtime_instances.cell_id = workspace_mounts.cell_id
-   AND runtime_instances.route_generation = workspace_mounts.route_generation
+   AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
    AND runtime_instances.id = workspace_mounts.runtime_instance_id
-  JOIN environment_cells
-    ON environment_cells.org_id = workspace_mounts.org_id
-   AND environment_cells.project_id = workspace_mounts.project_id
-   AND environment_cells.environment_id = workspace_mounts.environment_id
-   AND environment_cells.cell_id = workspace_mounts.cell_id
-   AND environment_cells.route_generation = workspace_mounts.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.state = 'active'
+  JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                    AND worker_groups.state IN ('active', 'draining')
  WHERE workspace_mounts.org_id = sqlc.arg(org_id)
-   AND workspace_mounts.cell_id = sqlc.arg(cell_id)
+   AND workspace_mounts.worker_group_id = sqlc.arg(worker_group_id)
    AND workspace_mounts.project_id = sqlc.arg(project_id)
    AND workspace_mounts.environment_id = sqlc.arg(environment_id)
    AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
    AND workspace_mounts.id = sqlc.arg(id)
    AND workspace_mounts.state IN ('mounted', 'unmounting')
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_instances.cell_id = sqlc.arg(cell_id)
+   AND runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
    AND runtime_instances.workspace_mount_id = workspace_mounts.id
    AND runtime_instances.state IN ('running', 'waiting_hot', 'checkpointing', 'stopping')
@@ -363,32 +345,28 @@ SELECT workspaces.id AS workspace_id,
   FROM workspaces
   JOIN deployment_sandboxes
     ON deployment_sandboxes.org_id = workspaces.org_id
-   AND deployment_sandboxes.cell_id = workspaces.cell_id
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   LEFT JOIN artifacts AS image_artifact
     ON image_artifact.org_id = deployment_sandboxes.org_id
-   AND image_artifact.cell_id = deployment_sandboxes.cell_id
    AND image_artifact.project_id = deployment_sandboxes.project_id
    AND image_artifact.environment_id = deployment_sandboxes.environment_id
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
   LEFT JOIN workspace_versions AS current_workspace_version
     ON current_workspace_version.org_id = workspaces.org_id
-   AND current_workspace_version.cell_id = workspaces.cell_id
    AND current_workspace_version.project_id = workspaces.project_id
    AND current_workspace_version.environment_id = workspaces.environment_id
    AND current_workspace_version.workspace_id = workspaces.id
    AND current_workspace_version.id = workspaces.current_version_id
   LEFT JOIN artifacts AS workspace_artifact
     ON workspace_artifact.org_id = current_workspace_version.org_id
-   AND workspace_artifact.cell_id = current_workspace_version.cell_id
    AND workspace_artifact.project_id = current_workspace_version.project_id
    AND workspace_artifact.environment_id = current_workspace_version.environment_id
    AND workspace_artifact.id = current_workspace_version.artifact_id
   LEFT JOIN workspace_mounts AS active_mount
     ON active_mount.org_id = workspaces.org_id
-   AND active_mount.cell_id = workspaces.cell_id
+   AND active_mount.worker_group_id = workspaces.worker_group_id
    AND active_mount.project_id = workspaces.project_id
    AND active_mount.environment_id = workspaces.environment_id
    AND active_mount.workspace_id = workspaces.id
@@ -406,7 +384,7 @@ WITH worker_scope AS MATERIALIZED (
     SELECT worker_instances.*
       FROM worker_instances
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.cell_id = sqlc.arg(cell_id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.status = 'active'
      FOR UPDATE OF worker_instances
 ),
@@ -441,8 +419,7 @@ active_runtime_instance_usage AS MATERIALIZED (
 candidate AS (
     SELECT workspace_mounts.id,
            workspace_mounts.org_id,
-           workspace_mounts.cell_id,
-           workspace_mounts.route_generation,
+           workspace_mounts.worker_group_id,
            workspace_mounts.project_id,
            workspace_mounts.environment_id,
            workspace_mounts.workspace_id,
@@ -468,34 +445,20 @@ candidate AS (
 	      FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
-       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
-                       AND worker_scope.cell_id = workspace_mounts.cell_id
-      JOIN environment_cells
-        ON environment_cells.org_id = workspace_mounts.org_id
-	       AND environment_cells.project_id = workspace_mounts.project_id
-	       AND environment_cells.environment_id = workspace_mounts.environment_id
-	       AND environment_cells.cell_id = workspace_mounts.cell_id
-	       AND environment_cells.route_generation = workspace_mounts.route_generation
-	       AND environment_cells.route_state IN ('active', 'draining')
-	      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-	                    AND org_cells.cell_id = environment_cells.cell_id
-	                    AND org_cells.state = 'active'
-	      JOIN cells ON cells.id = environment_cells.cell_id
-	                AND cells.state = 'active'
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state = 'active'
 	      JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.cell_id = workspace_mounts.cell_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -507,8 +470,7 @@ candidate AS (
           SELECT runtime_instances.*
             FROM runtime_instances
            WHERE runtime_instances.worker_instance_id = worker_scope.id
-             AND runtime_instances.cell_id = workspace_mounts.cell_id
-             AND runtime_instances.route_generation = workspace_mounts.route_generation
+             AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
              AND runtime_instances.state = 'ready'
              AND (
                  runtime_instances.expires_at IS NULL
@@ -541,12 +503,11 @@ candidate AS (
             FROM runtime_instances
             JOIN worker_instances AS preparing_worker
               ON preparing_worker.id = runtime_instances.worker_instance_id
-             AND preparing_worker.cell_id = workspace_mounts.cell_id
+             AND preparing_worker.worker_group_id = workspace_mounts.worker_group_id
              AND preparing_worker.status = 'active'
              AND preparing_worker.worker_group_id = worker_scope.worker_group_id
            WHERE runtime_instances.state = 'preparing'
-             AND runtime_instances.cell_id = workspace_mounts.cell_id
-             AND runtime_instances.route_generation = workspace_mounts.route_generation
+             AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
              AND runtime_instances.workspace_mount_id IS NULL
              AND (
                  runtime_instances.expires_at IS NULL
@@ -646,8 +607,7 @@ cold_runtime_instance AS (
     INSERT INTO runtime_instances (
         id,
         org_id,
-        cell_id,
-        route_generation,
+        worker_group_id,
         project_id,
         environment_id,
         worker_instance_id,
@@ -681,8 +641,7 @@ cold_runtime_instance AS (
     )
     SELECT sqlc.arg(runtime_instance_id),
            candidate.org_id,
-           candidate.cell_id,
-           candidate.route_generation,
+           candidate.worker_group_id,
            candidate.project_id,
            candidate.environment_id,
            sqlc.arg(worker_instance_id),
@@ -770,7 +729,7 @@ WITH worker_scope AS MATERIALIZED (
     SELECT worker_instances.*
       FROM worker_instances
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-       AND worker_instances.cell_id = sqlc.arg(cell_id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.status = 'active'
      FOR UPDATE OF worker_instances
 ),
@@ -781,21 +740,18 @@ candidate AS (
       FROM workspace_mounts
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspace_mounts.org_id
-       AND deployment_sandboxes.cell_id = workspace_mounts.cell_id
        AND deployment_sandboxes.project_id = workspace_mounts.project_id
        AND deployment_sandboxes.environment_id = workspace_mounts.environment_id
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
        AND deployment_sandboxes.fingerprint = workspace_mounts.sandbox_fingerprint
       JOIN deployments
         ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.cell_id = deployment_sandboxes.cell_id
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.cell_id = workspace_mounts.cell_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -805,8 +761,7 @@ candidate AS (
           SELECT runtime_instances.*
             FROM runtime_instances
            WHERE runtime_instances.worker_instance_id = worker_scope.id
-             AND runtime_instances.cell_id = workspace_mounts.cell_id
-             AND runtime_instances.route_generation = workspace_mounts.route_generation
+             AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
              AND runtime_instances.state = 'preparing'
              AND runtime_instances.workspace_mount_id IS NULL
              AND runtime_instances.adopting_workspace_mount_id IS NULL
@@ -831,19 +786,9 @@ candidate AS (
            LIMIT 1
            FOR UPDATE SKIP LOCKED
       ) preparing_runtime_instance ON true
-      JOIN environment_cells
-        ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.cell_id = worker_scope.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.id = worker_scope.worker_group_id
+                        AND worker_groups.state = 'active'
      WHERE workspace_mounts.state = 'mounting'
        AND workspace_mounts.runtime_instance_id IS NULL
        AND workspace_mounts.rootfs_digest = sqlc.arg(rootfs_digest)
@@ -889,30 +834,20 @@ SELECT workspace_mounts.id,
   FROM workspace_mounts
   JOIN runtime_instances
     ON runtime_instances.org_id = workspace_mounts.org_id
-   AND runtime_instances.cell_id = workspace_mounts.cell_id
+   AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
    AND runtime_instances.adopting_workspace_mount_id = workspace_mounts.id
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND runtime_instances.cell_id = sqlc.arg(cell_id)
+   AND runtime_instances.worker_group_id = sqlc.arg(worker_group_id)
    AND runtime_instances.state = 'preparing'
    AND (
        runtime_instances.expires_at IS NULL
        OR runtime_instances.expires_at > now()
    )
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                       AND worker_instances.cell_id = runtime_instances.cell_id
+                       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
                        AND worker_instances.status = 'active'
-  JOIN environment_cells
-    ON environment_cells.org_id = workspace_mounts.org_id
-   AND environment_cells.project_id = workspace_mounts.project_id
-   AND environment_cells.environment_id = workspace_mounts.environment_id
-   AND environment_cells.cell_id = workspace_mounts.cell_id
-   AND environment_cells.route_generation = workspace_mounts.route_generation
-   AND environment_cells.route_state IN ('active', 'draining')
-  JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                AND org_cells.cell_id = environment_cells.cell_id
-                AND org_cells.state = 'active'
-  JOIN cells ON cells.id = environment_cells.cell_id
-            AND cells.state = 'active'
+  JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                    AND worker_groups.state = 'active'
  WHERE workspace_mounts.state = 'mounting'
    AND workspace_mounts.runtime_instance_id IS NULL
    AND workspace_mounts.rootfs_digest = sqlc.arg(rootfs_digest)
@@ -974,22 +909,12 @@ WITH renewed_runtime_instance AS (
        SET last_heartbeat_at = now(),
            updated_at = now()
       FROM worker_instances
-      JOIN environment_cells ON true
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+      JOIN worker_groups ON worker_groups.id = runtime_instances.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE runtime_instances.org_id = sqlc.arg(org_id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND worker_instances.id = runtime_instances.worker_instance_id
-       AND worker_instances.cell_id = runtime_instances.cell_id
-       AND environment_cells.org_id = runtime_instances.org_id
-       AND environment_cells.project_id = runtime_instances.project_id
-       AND environment_cells.environment_id = runtime_instances.environment_id
-       AND environment_cells.cell_id = runtime_instances.cell_id
-       AND environment_cells.route_generation = runtime_instances.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
+       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
        AND runtime_instances.state IN ('binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
     RETURNING runtime_instances.*
@@ -1001,7 +926,7 @@ renewed_mount AS (
            updated_at = now()
       FROM renewed_runtime_instance
      WHERE workspace_mounts.org_id = renewed_runtime_instance.org_id
-       AND workspace_mounts.cell_id = renewed_runtime_instance.cell_id
+       AND workspace_mounts.worker_group_id = renewed_runtime_instance.worker_group_id
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.runtime_instance_id = renewed_runtime_instance.id
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
@@ -1015,18 +940,9 @@ WITH authenticated_runtime_instance AS MATERIALIZED (
     SELECT runtime_instances.*
       FROM runtime_instances
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells ON environment_cells.org_id = runtime_instances.org_id
-                            AND environment_cells.project_id = runtime_instances.project_id
-                            AND environment_cells.environment_id = runtime_instances.environment_id
-                            AND environment_cells.cell_id = runtime_instances.cell_id
-                            AND environment_cells.route_generation = runtime_instances.route_generation
-                            AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN worker_groups ON worker_groups.id = runtime_instances.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE runtime_instances.org_id = sqlc.arg(org_id)
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
@@ -1045,7 +961,7 @@ updated_mount AS (
            updated_at = now()
       FROM authenticated_runtime_instance
      WHERE workspace_mounts.org_id = authenticated_runtime_instance.org_id
-       AND workspace_mounts.cell_id = authenticated_runtime_instance.cell_id
+       AND workspace_mounts.worker_group_id = authenticated_runtime_instance.worker_group_id
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.runtime_instance_id = authenticated_runtime_instance.id
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
@@ -1081,7 +997,6 @@ WITH locked_workspace AS MATERIALIZED (
     SELECT workspaces.*
       FROM workspaces
      WHERE workspaces.org_id = sqlc.arg(org_id)
-       AND workspaces.cell_id = sqlc.arg(cell_id)
        AND workspaces.project_id = sqlc.arg(project_id)
        AND workspaces.environment_id = sqlc.arg(environment_id)
        AND workspaces.id = sqlc.arg(workspace_id)
@@ -1095,10 +1010,11 @@ target AS MATERIALIZED (
       FROM locked_workspace
       JOIN workspace_mounts
         ON workspace_mounts.org_id = locked_workspace.org_id
-       AND workspace_mounts.cell_id = locked_workspace.cell_id
        AND workspace_mounts.project_id = locked_workspace.project_id
        AND workspace_mounts.environment_id = locked_workspace.environment_id
        AND workspace_mounts.workspace_id = locked_workspace.id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
      ORDER BY workspace_mounts.created_at DESC
      LIMIT 1
@@ -1112,7 +1028,7 @@ requested_without_runtime AS (
            updated_at = now()
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
-       AND workspace_mounts.cell_id = target.cell_id
+       AND workspace_mounts.worker_group_id = target.worker_group_id
        AND workspace_mounts.id = target.id
        AND target.runtime_instance_id IS NULL
     RETURNING workspace_mounts.*
@@ -1123,7 +1039,7 @@ requested_live_stop AS (
            updated_at = now()
       FROM target
      WHERE workspace_mounts.org_id = target.org_id
-       AND workspace_mounts.cell_id = target.cell_id
+       AND workspace_mounts.worker_group_id = target.worker_group_id
        AND workspace_mounts.id = target.id
        AND target.runtime_instance_id IS NOT NULL
     RETURNING workspace_mounts.*
@@ -1135,7 +1051,7 @@ released_prepared_runtime_reservation AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE runtime_instances.org_id = requested_without_runtime.org_id
-       AND runtime_instances.cell_id = requested_without_runtime.cell_id
+       AND runtime_instances.worker_group_id = requested_without_runtime.worker_group_id
        AND runtime_instances.adopting_workspace_mount_id = requested_without_runtime.id
        AND runtime_instances.state IN ('preparing', 'ready')
     RETURNING runtime_instances.id
@@ -1146,7 +1062,6 @@ updated_workspace AS (
            updated_at = now()
       FROM locked_workspace
      WHERE workspaces.org_id = locked_workspace.org_id
-       AND workspaces.cell_id = locked_workspace.cell_id
        AND workspaces.project_id = locked_workspace.project_id
        AND workspaces.environment_id = locked_workspace.environment_id
        AND workspaces.id = locked_workspace.id
@@ -1160,7 +1075,7 @@ cancelled_requested_operations AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_operations.org_id = requested_without_runtime.org_id
-       AND workspace_operations.cell_id = requested_without_runtime.cell_id
+       AND workspace_operations.worker_group_id = requested_without_runtime.worker_group_id
        AND workspace_operations.workspace_mount_id = requested_without_runtime.id
        AND workspace_operations.state IN ('queued', 'claimed', 'running')
     RETURNING workspace_operations.id
@@ -1173,7 +1088,7 @@ terminated_requested_execs AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_execs.org_id = requested_without_runtime.org_id
-       AND workspace_execs.cell_id = requested_without_runtime.cell_id
+       AND workspace_execs.worker_group_id = requested_without_runtime.worker_group_id
        AND workspace_execs.project_id = requested_without_runtime.project_id
        AND workspace_execs.environment_id = requested_without_runtime.environment_id
        AND workspace_execs.workspace_id = requested_without_runtime.workspace_id
@@ -1191,7 +1106,7 @@ closed_requested_ptys AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_pty_sessions.org_id = requested_without_runtime.org_id
-       AND workspace_pty_sessions.cell_id = requested_without_runtime.cell_id
+       AND workspace_pty_sessions.worker_group_id = requested_without_runtime.worker_group_id
        AND workspace_pty_sessions.project_id = requested_without_runtime.project_id
        AND workspace_pty_sessions.environment_id = requested_without_runtime.environment_id
        AND workspace_pty_sessions.workspace_id = requested_without_runtime.workspace_id
@@ -1206,7 +1121,7 @@ released_requested_leases AS (
            updated_at = now()
       FROM requested_without_runtime
      WHERE workspace_leases.org_id = requested_without_runtime.org_id
-       AND workspace_leases.cell_id = requested_without_runtime.cell_id
+       AND workspace_leases.worker_group_id = requested_without_runtime.worker_group_id
        AND workspace_leases.project_id = requested_without_runtime.project_id
        AND workspace_leases.environment_id = requested_without_runtime.environment_id
        AND workspace_leases.workspace_id = requested_without_runtime.workspace_id
@@ -1264,24 +1179,14 @@ WITH target AS MATERIALIZED (
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.cell_id = workspace_mounts.cell_id
+       AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells
-       ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.workspace_id = sqlc.arg(workspace_id)
@@ -1295,12 +1200,10 @@ verified_artifact AS (
       FROM artifacts
       JOIN target
         ON target.org_id = artifacts.org_id
-       AND target.cell_id = artifacts.cell_id
        AND target.project_id = artifacts.project_id
        AND target.environment_id = artifacts.environment_id
       JOIN cas_objects
         ON cas_objects.org_id = artifacts.org_id
-       AND cas_objects.cell_id = artifacts.cell_id
        AND cas_objects.digest = artifacts.digest
      WHERE artifacts.org_id = sqlc.arg(org_id)
        AND artifacts.project_id = sqlc.arg(project_id)
@@ -1317,8 +1220,8 @@ verified_artifact AS (
 created_version AS (
     INSERT INTO workspace_versions (
         id,
+        public_id,
         org_id,
-        cell_id,
         project_id,
         environment_id,
         workspace_id,
@@ -1336,8 +1239,8 @@ created_version AS (
         created_by_subject_type
     )
     SELECT sqlc.arg(version_id),
+           sqlc.arg(version_public_id)::text,
            target.org_id,
-           target.cell_id,
            target.project_id,
            target.environment_id,
            target.workspace_id,
@@ -1391,7 +1294,7 @@ WITH target AS MATERIALIZED (
       FROM workspace_mounts
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.cell_id = workspace_mounts.cell_id
+       AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
        AND (
@@ -1408,19 +1311,9 @@ WITH target AS MATERIALIZED (
             )
        )
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells
-       ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
 ),
@@ -1581,7 +1474,7 @@ victim AS MATERIALIZED (
       FROM workspace_mounts
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.cell_id = workspace_mounts.cell_id
+       AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.workspace_mount_id = workspace_mounts.id
@@ -1592,19 +1485,9 @@ victim AS MATERIALIZED (
        AND workspaces.environment_id = workspace_mounts.environment_id
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN worker_scope ON true
-      JOIN environment_cells
-       ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.cell_id = worker_scope.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.id = worker_scope.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.state = 'mounted'
        AND workspace_mounts.dirty_generation = 0
        AND workspaces.state = 'active'
@@ -1706,24 +1589,14 @@ WITH target AS MATERIALIZED (
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.cell_id = workspace_mounts.cell_id
+       AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
        AND runtime_instances.id = workspace_mounts.runtime_instance_id
        AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-                           AND worker_instances.cell_id = runtime_instances.cell_id
-      JOIN environment_cells
-       ON environment_cells.org_id = workspace_mounts.org_id
-       AND environment_cells.project_id = workspace_mounts.project_id
-       AND environment_cells.environment_id = workspace_mounts.environment_id
-       AND environment_cells.cell_id = workspace_mounts.cell_id
-       AND environment_cells.route_generation = workspace_mounts.route_generation
-       AND environment_cells.route_state IN ('active', 'draining')
-      JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                    AND org_cells.cell_id = environment_cells.cell_id
-                    AND org_cells.state = 'active'
-      JOIN cells ON cells.id = environment_cells.cell_id
-                AND cells.state = 'active'
+                           AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.id = sqlc.arg(id)
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')

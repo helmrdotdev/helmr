@@ -10,7 +10,6 @@ import (
 	"sync"
 	"syscall"
 
-	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
@@ -20,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -81,7 +81,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-		CellID:          cfg.CellID,
+		WorkerGroupID:   cfg.WorkerGroupID,
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
@@ -109,7 +109,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	sweeper, err := dispatch.NewExpirySweeper(
 		queries,
-		dispatch.WithExpirySweepCellID(cfg.CellID),
+		dispatch.WithExpirySweepWorkerGroupID(cfg.WorkerGroupID),
 		dispatch.WithExpirySweepLogger(log),
 		dispatch.WithExpirySweepLock(sweeperLock),
 	)
@@ -123,7 +123,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	queueReconciler, err := dispatch.NewQueueReconciler(
 		queries,
 		enqueuer,
-		dispatch.WithQueueReconcileCellID(cfg.CellID),
+		dispatch.WithQueueReconcileWorkerGroupID(cfg.WorkerGroupID),
 		dispatch.WithQueueReconcileLogger(log),
 		dispatch.WithQueueReconcileLock(queueReconcileLock),
 	)
@@ -159,7 +159,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		scheduleIndex,
 		scheduleRunCreator,
 		schedule.EngineConfig{
-			CellID:          cfg.CellID,
+			WorkerGroupID:   cfg.WorkerGroupID,
 			RepairLimit:     int32(cfg.ScheduleRepairLimit),
 			RepairLookahead: cfg.ScheduleRepairLookahead,
 			MaxAttempts:     int32(cfg.ScheduleMaxAttempts),
@@ -189,15 +189,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 	wg.Add(6)
 	go func() {
 		defer wg.Done()
-		errc <- cell.RunHealthReporter(runCtx, queries, cell.HealthReporterConfig{
-			CellID:             cfg.CellID,
-			Component:          cell.ComponentDispatcher,
-			RequiredComponents: cell.RoutingRequiredComponents(),
-			Probe: func(ctx context.Context) (db.CellHealthState, []byte, error) {
+		errc <- workergroup.RunHealthReporter(runCtx, queries, workergroup.HealthReporterConfig{
+			WorkerGroupID:      cfg.WorkerGroupID,
+			Component:          workergroup.ComponentDispatcher,
+			RequiredComponents: workergroup.RoutingRequiredComponents(),
+			Probe: func(ctx context.Context) (db.WorkerGroupHealthState, []byte, error) {
 				if err := redisClient.Ping(ctx).Err(); err != nil {
-					return db.CellHealthStateUnavailable, nil, fmt.Errorf("ping redis: %w", err)
+					return db.WorkerGroupHealthStateUnavailable, nil, fmt.Errorf("ping redis: %w", err)
 				}
-				return db.CellHealthStateHealthy, []byte(`{"redis":"ok"}`), nil
+				return db.WorkerGroupHealthStateHealthy, []byte(`{"redis":"ok"}`), nil
 			},
 			Log: log,
 		})

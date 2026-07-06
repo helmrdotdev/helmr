@@ -27,30 +27,13 @@ func (q *Queries) CountSecretsByKeyID(ctx context.Context, keyID string) (int64,
 const deleteScopedSecret = `-- name: DeleteScopedSecret :execrows
 DELETE FROM secrets
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
-   AND secrets.project_id = $3
-   AND secrets.environment_id = $4
-   AND secrets.name = $5
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+   AND secrets.project_id = $2
+   AND secrets.environment_id = $3
+   AND secrets.name = $4
 `
 
 type DeleteScopedSecretParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	Name          string      `json:"name"`
@@ -59,7 +42,6 @@ type DeleteScopedSecretParams struct {
 func (q *Queries) DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecretParams) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteScopedSecret,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Name,
@@ -71,33 +53,16 @@ func (q *Queries) DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecret
 }
 
 const getScopedSecretByName = `-- name: GetScopedSecretByName :one
-SELECT secrets.id, secrets.org_id, secrets.cell_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
+SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
   FROM secrets
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
-   AND secrets.project_id = $3
-   AND secrets.environment_id = $4
-   AND secrets.name = $5
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+   AND secrets.project_id = $2
+   AND secrets.environment_id = $3
+   AND secrets.name = $4
 `
 
 type GetScopedSecretByNameParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	Name          string      `json:"name"`
@@ -106,7 +71,6 @@ type GetScopedSecretByNameParams struct {
 func (q *Queries) GetScopedSecretByName(ctx context.Context, arg GetScopedSecretByNameParams) (Secret, error) {
 	row := q.db.QueryRow(ctx, getScopedSecretByName,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Name,
@@ -115,7 +79,6 @@ func (q *Queries) GetScopedSecretByName(ctx context.Context, arg GetScopedSecret
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
@@ -134,30 +97,13 @@ const getScopedSecretMetadataByName = `-- name: GetScopedSecretMetadataByName :o
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
   FROM secrets
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
-   AND secrets.project_id = $3
-   AND secrets.environment_id = $4
-   AND secrets.name = $5
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+   AND secrets.project_id = $2
+   AND secrets.environment_id = $3
+   AND secrets.name = $4
 `
 
 type GetScopedSecretMetadataByNameParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	Name          string      `json:"name"`
@@ -176,7 +122,6 @@ type GetScopedSecretMetadataByNameRow struct {
 func (q *Queries) GetScopedSecretMetadataByName(ctx context.Context, arg GetScopedSecretMetadataByNameParams) (GetScopedSecretMetadataByNameRow, error) {
 	row := q.db.QueryRow(ctx, getScopedSecretMetadataByName,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Name,
@@ -204,45 +149,27 @@ WITH default_scope AS (
                        AND environments.is_default
      WHERE projects.org_id = $1
        AND projects.is_default
-       AND EXISTS (
-           SELECT 1
-             FROM environment_cells
-             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                           AND org_cells.cell_id = environment_cells.cell_id
-                           AND org_cells.state = 'active'
-             JOIN cells ON cells.id = environment_cells.cell_id
-                       AND cells.region_id = environment_cells.region_id
-                       AND cells.state IN ('active', 'draining')
-            WHERE environment_cells.org_id = projects.org_id
-              AND environment_cells.project_id = projects.id
-              AND environment_cells.environment_id = environments.id
-              AND environment_cells.cell_id = $2
-              AND environment_cells.route_state IN ('active', 'draining')
-       )
      LIMIT 1
 )
-SELECT secrets.id, secrets.org_id, secrets.cell_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
+SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
   FROM secrets
  JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
-   AND secrets.name = $3
+   AND secrets.name = $2
 `
 
 type GetSecretByNameParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	CellID string      `json:"cell_id"`
-	Name   string      `json:"name"`
+	OrgID pgtype.UUID `json:"org_id"`
+	Name  string      `json:"name"`
 }
 
 func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, getSecretByName, arg.OrgID, arg.CellID, arg.Name)
+	row := q.db.QueryRow(ctx, getSecretByName, arg.OrgID, arg.Name)
 	var i Secret
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
@@ -261,31 +188,14 @@ const listScopedSecrets = `-- name: ListScopedSecrets :many
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
   FROM secrets
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
-   AND secrets.project_id = $3
-   AND secrets.environment_id = $4
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
+   AND secrets.project_id = $2
+   AND secrets.environment_id = $3
  ORDER BY name ASC
- LIMIT $5
+ LIMIT $4
 `
 
 type ListScopedSecretsParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	CellID        string      `json:"cell_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	RowLimit      int32       `json:"row_limit"`
@@ -304,7 +214,6 @@ type ListScopedSecretsRow struct {
 func (q *Queries) ListScopedSecrets(ctx context.Context, arg ListScopedSecretsParams) ([]ListScopedSecretsRow, error) {
 	rows, err := q.db.Query(ctx, listScopedSecrets,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RowLimit,
@@ -377,21 +286,6 @@ WITH default_scope AS (
                        AND environments.is_default
      WHERE projects.org_id = $1
        AND projects.is_default
-       AND EXISTS (
-           SELECT 1
-             FROM environment_cells
-             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                           AND org_cells.cell_id = environment_cells.cell_id
-                           AND org_cells.state = 'active'
-             JOIN cells ON cells.id = environment_cells.cell_id
-                       AND cells.region_id = environment_cells.region_id
-                       AND cells.state IN ('active', 'draining')
-            WHERE environment_cells.org_id = projects.org_id
-              AND environment_cells.project_id = projects.id
-              AND environment_cells.environment_id = environments.id
-              AND environment_cells.cell_id = $2
-              AND environment_cells.route_state IN ('active', 'draining')
-       )
      LIMIT 1
 )
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
@@ -399,14 +293,12 @@ SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, s
  JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = $1
-   AND secrets.cell_id = $2
  ORDER BY name ASC
- LIMIT $3
+ LIMIT $2
 `
 
 type ListSecretsParams struct {
 	OrgID    pgtype.UUID `json:"org_id"`
-	CellID   string      `json:"cell_id"`
 	RowLimit int32       `json:"row_limit"`
 }
 
@@ -421,7 +313,7 @@ type ListSecretsRow struct {
 }
 
 func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error) {
-	rows, err := q.db.Query(ctx, listSecrets, arg.OrgID, arg.CellID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listSecrets, arg.OrgID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -449,7 +341,7 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 }
 
 const listSecretsByKeyIDForRotation = `-- name: ListSecretsByKeyIDForRotation :many
-SELECT id, org_id, cell_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+SELECT id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
   FROM secrets
  WHERE key_id = $1
  ORDER BY updated_at ASC, id ASC
@@ -473,7 +365,6 @@ func (q *Queries) ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSec
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.CellID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.Name,
@@ -538,7 +429,6 @@ const upsertScopedSecret = `-- name: UpsertScopedSecret :one
 INSERT INTO secrets (
     id,
     org_id,
-    cell_id,
     project_id,
     environment_id,
     name,
@@ -556,37 +446,20 @@ SELECT
     $6,
     $7,
     $8,
-    $9,
-    $10
- WHERE EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = $2
-          AND environment_cells.project_id = $4
-          AND environment_cells.environment_id = $5
-          AND environment_cells.cell_id = $3
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, name) DO UPDATE
+    $9
+ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET version = EXCLUDED.version,
        key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
        ciphertext = EXCLUDED.ciphertext,
        updated_at = now()
- WHERE secrets.version = $11
-RETURNING id, org_id, cell_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+ WHERE secrets.version = $10
+RETURNING id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
 `
 
 type UpsertScopedSecretParams struct {
 	ID              pgtype.UUID `json:"id"`
 	OrgID           pgtype.UUID `json:"org_id"`
-	CellID          string      `json:"cell_id"`
 	ProjectID       pgtype.UUID `json:"project_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	Name            string      `json:"name"`
@@ -601,7 +474,6 @@ func (q *Queries) UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecret
 	row := q.db.QueryRow(ctx, upsertScopedSecret,
 		arg.ID,
 		arg.OrgID,
-		arg.CellID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.Name,
@@ -615,7 +487,6 @@ func (q *Queries) UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecret
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.CellID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,

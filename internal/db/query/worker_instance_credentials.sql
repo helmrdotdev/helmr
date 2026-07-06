@@ -1,8 +1,7 @@
 -- name: UpsertWorkerBootstrapToken :one
-INSERT INTO worker_bootstrap_tokens (id, cell_id, token_hash, worker_group_id)
+INSERT INTO worker_bootstrap_tokens (id, token_hash, worker_group_id)
 VALUES (
     sqlc.arg(id),
-    sqlc.arg(cell_id),
     sqlc.arg(token_hash)::bytea,
     sqlc.arg(worker_group_id)
 )
@@ -14,14 +13,12 @@ RETURNING *;
 WITH bootstrap_token AS (
     SELECT worker_bootstrap_tokens.id,
            worker_bootstrap_tokens.org_id,
-           worker_bootstrap_tokens.cell_id,
            worker_bootstrap_tokens.worker_group_id,
            worker_groups.claim_version
      FROM worker_bootstrap_tokens
       JOIN worker_groups ON worker_groups.id = worker_bootstrap_tokens.worker_group_id
-                        AND worker_groups.cell_id = worker_bootstrap_tokens.cell_id
      WHERE worker_bootstrap_tokens.token_hash = sqlc.arg(bootstrap_token_hash)
-       AND worker_bootstrap_tokens.cell_id = sqlc.arg(cell_id)
+       AND worker_bootstrap_tokens.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_groups.state = 'active'
        AND worker_bootstrap_tokens.revoked_at IS NULL
        AND (worker_bootstrap_tokens.expires_at IS NULL OR worker_bootstrap_tokens.expires_at > now())
@@ -31,7 +28,6 @@ reserved_worker_instance AS (
     INSERT INTO worker_instances (
         id,
         org_id,
-        cell_id,
         worker_group_id,
         resource_id,
         status,
@@ -50,7 +46,6 @@ reserved_worker_instance AS (
     )
     SELECT sqlc.arg(worker_instance_id),
            bootstrap_token.org_id,
-           bootstrap_token.cell_id,
            bootstrap_token.worker_group_id,
            sqlc.arg(resource_id),
            'offline',
@@ -69,9 +64,9 @@ reserved_worker_instance AS (
       FROM bootstrap_token
     ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET resource_id = EXCLUDED.resource_id,
-           cell_id = EXCLUDED.cell_id,
+           worker_group_id = EXCLUDED.worker_group_id,
            claim_version = EXCLUDED.claim_version
-    RETURNING id AS worker_instance_id, org_id, cell_id, worker_group_id, claim_version
+    RETURNING id AS worker_instance_id, org_id, worker_group_id, claim_version
 ),
 revoked_existing_credentials AS (
     UPDATE worker_instance_credentials
@@ -89,14 +84,14 @@ bootstrap_token_update AS (
        SET last_used_at = now(),
            last_used_by_worker_instance_id = (SELECT worker_instance_id FROM reserved_worker_instance)
      WHERE worker_bootstrap_tokens.token_hash = sqlc.arg(bootstrap_token_hash)
-       AND worker_bootstrap_tokens.cell_id = sqlc.arg(cell_id)
+       AND worker_bootstrap_tokens.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_bootstrap_tokens.revoked_at IS NULL
      RETURNING 1
 )
-INSERT INTO worker_instance_credentials (id, org_id, cell_id, worker_instance_id, key_prefix, claim_version, secret_hash)
+INSERT INTO worker_instance_credentials (id, org_id, worker_group_id, worker_instance_id, key_prefix, claim_version, secret_hash)
 SELECT sqlc.arg(credential_id),
        reserved_worker_instance.org_id,
-       reserved_worker_instance.cell_id,
+       reserved_worker_instance.worker_group_id,
        reserved_worker_instance.worker_instance_id,
        sqlc.arg(key_prefix),
        reserved_worker_instance.claim_version,
@@ -105,7 +100,7 @@ SELECT sqlc.arg(credential_id),
  CROSS JOIN reserved_worker_instance
  CROSS JOIN bootstrap_token_update
  CROSS JOIN credential_rotation
-RETURNING id, cell_id, worker_instance_id, (SELECT worker_group_id FROM reserved_worker_instance) AS worker_group_id, key_prefix, claim_version, created_at;
+RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, created_at;
 
 -- name: AuthenticateWorkerInstanceCredential :one
 WITH credential AS (
@@ -113,11 +108,10 @@ WITH credential AS (
       FROM worker_instance_credentials
       JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-                        AND worker_groups.cell_id = worker_instances.cell_id
      WHERE worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
        AND worker_instance_credentials.secret_hash = sqlc.arg(secret_hash)
-       AND worker_instance_credentials.cell_id = sqlc.arg(cell_id)
-       AND worker_instance_credentials.cell_id = worker_instances.cell_id
+       AND worker_instance_credentials.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instance_credentials.worker_group_id = worker_instances.worker_group_id
        AND worker_instance_credentials.claim_version = worker_instances.claim_version
        AND worker_instance_credentials.claim_version = worker_groups.claim_version
        AND worker_groups.state = 'active'
@@ -128,25 +122,23 @@ UPDATE worker_instance_credentials
   FROM credential
  WHERE worker_instance_credentials.id = credential.id
 RETURNING worker_instance_credentials.id,
-          worker_instance_credentials.cell_id,
+          worker_instance_credentials.worker_group_id,
           worker_instance_credentials.worker_instance_id,
           worker_instance_credentials.claim_version;
 
 -- name: AuthorizeWorkerInstanceCredential :one
 SELECT worker_instance_credentials.id,
-       worker_instance_credentials.cell_id,
+       worker_instance_credentials.worker_group_id,
        worker_instance_credentials.worker_instance_id,
        worker_instance_credentials.claim_version,
-       worker_instances.worker_group_id,
        worker_instances.resource_id
   FROM worker_instance_credentials
   JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
   JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-                    AND worker_groups.cell_id = worker_instances.cell_id
 WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
    AND worker_instance_credentials.worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_instance_credentials.cell_id = sqlc.arg(cell_id)
-   AND worker_instance_credentials.cell_id = worker_instances.cell_id
+   AND worker_instance_credentials.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_credentials.worker_group_id = worker_instances.worker_group_id
    AND worker_instance_credentials.claim_version = worker_instances.claim_version
    AND worker_instance_credentials.claim_version = worker_groups.claim_version
    AND worker_groups.state = 'active'

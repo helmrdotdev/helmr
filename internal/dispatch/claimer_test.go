@@ -26,13 +26,12 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:           orgID.String(),
-				CellID:          "us-east-1-cell-1",
-				RouteGeneration: 1,
-				QueueClass:      "default",
-				RunID:           runID.String(),
-				QueueName:       "queue-a",
-				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:         orgID.String(),
+				WorkerGroupID: "us-east-1-worker-group-1",
+				QueueClass:    "default",
+				RunID:         runID.String(),
+				QueueName:     "queue-a",
+				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -61,7 +60,7 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	}
 	result, err := claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -92,13 +91,12 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:           orgID.String(),
-				CellID:          "us-east-1-cell-1",
-				RouteGeneration: 1,
-				QueueClass:      "default",
-				RunID:           runID.String(),
-				QueueName:       "queue-a",
-				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:         orgID.String(),
+				WorkerGroupID: "us-east-1-worker-group-1",
+				QueueClass:    "default",
+				RunID:         runID.String(),
+				QueueName:     "queue-a",
+				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -113,7 +111,7 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -138,13 +136,12 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:           orgID.String(),
-				CellID:          "us-east-1-cell-1",
-				RouteGeneration: 1,
-				QueueClass:      "default",
-				RunID:           runID.String(),
-				QueueName:       "queue-a",
-				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:         orgID.String(),
+				WorkerGroupID: "us-east-1-worker-group-1",
+				QueueClass:    "default",
+				RunID:         runID.String(),
+				QueueName:     "queue-a",
+				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -160,7 +157,7 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -185,13 +182,12 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:           orgID.String(),
-				CellID:          "us-east-1-cell-1",
-				RouteGeneration: 1,
-				QueueClass:      "default",
-				RunID:           runID.String(),
-				QueueName:       "queue-a",
-				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:         orgID.String(),
+				WorkerGroupID: "us-east-1-worker-group-1",
+				QueueClass:    "default",
+				RunID:         runID.String(),
+				QueueName:     "queue-a",
+				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -206,7 +202,7 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -268,13 +264,12 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:           orgID.String(),
-			CellID:          "us-east-1-cell-1",
-			RouteGeneration: 1,
-			QueueClass:      "default",
-			RunID:           runID.String(),
-			QueueName:       "queue-a",
-			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:         orgID.String(),
+			WorkerGroupID: "us-east-1-worker-group-1",
+			QueueClass:    "default",
+			RunID:         runID.String(),
+			QueueName:     "queue-a",
+			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -289,7 +284,7 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -325,13 +320,12 @@ func TestClaimDoesNotAckWhenDeadLetterFails(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:           orgID.String(),
-			CellID:          "us-east-1-cell-1",
-			RouteGeneration: 1,
-			QueueClass:      "default",
-			RunID:           runID.String(),
-			QueueName:       "queue-a",
-			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:         orgID.String(),
+			WorkerGroupID: "us-east-1-worker-group-1",
+			QueueClass:    "default",
+			RunID:         runID.String(),
+			QueueName:     "queue-a",
+			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -347,7 +341,7 @@ func TestClaimDoesNotAckWhenDeadLetterFails(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -374,13 +368,12 @@ func TestClaimDrainsNonMatchingDeadLetterLease(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:           orgID.String(),
-			CellID:          "us-east-1-cell-1",
-			RouteGeneration: 1,
-			QueueClass:      "default",
-			RunID:           runID.String(),
-			QueueName:       "queue-a",
-			Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:         orgID.String(),
+			WorkerGroupID: "us-east-1-worker-group-1",
+			QueueClass:    "default",
+			RunID:         runID.String(),
+			QueueName:     "queue-a",
+			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -395,7 +388,7 @@ func TestClaimDrainsNonMatchingDeadLetterLease(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -440,7 +433,7 @@ func TestClaimDrainsInvalidDeadLetterLeaseWithoutAck(t *testing.T) {
 
 	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -472,13 +465,12 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:           orgID.String(),
-				CellID:          "us-east-1-cell-1",
-				RouteGeneration: 1,
-				QueueClass:      "default",
-				RunID:           runID.String(),
-				QueueName:       "queue-a",
-				Requirements:    compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:         orgID.String(),
+				WorkerGroupID: "us-east-1-worker-group-1",
+				QueueClass:    "default",
+				RunID:         runID.String(),
+				QueueName:     "queue-a",
+				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    DefaultMaxDispatchAttempts + 10,
@@ -507,7 +499,7 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 
 	result, err := claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
 		OrgID:            orgID.String(),
-		CellID:           "us-east-1-cell-1",
+		WorkerGroupID:    "us-east-1-worker-group-1",
 		QueueClass:       "default",
 		WorkerInstanceID: hostID.String(),
 		QueueName:        "queue-a",
@@ -591,11 +583,8 @@ func (f *fakeClaimerQueue) Dequeue(context.Context, DequeueRequest) ([]Lease, er
 		return nil, f.err
 	}
 	for i := range f.leases {
-		if strings.TrimSpace(f.leases[i].Message.CellID) == "" {
-			f.leases[i].Message.CellID = "cell-1"
-		}
-		if f.leases[i].Message.RouteGeneration == 0 {
-			f.leases[i].Message.RouteGeneration = 1
+		if strings.TrimSpace(f.leases[i].Message.WorkerGroupID) == "" {
+			f.leases[i].Message.WorkerGroupID = "worker-group-1"
 		}
 	}
 	return f.leases, nil

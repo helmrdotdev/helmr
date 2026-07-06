@@ -12,11 +12,12 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
-const testCellID = "us-east-1-cell-1"
+const testWorkerGroupID = "us-east-1-worker-group-1"
 
-func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
+func TestAppendRunLogChunkIdempotentUsageLedgerAndByteContinuity(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -27,7 +28,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -42,7 +43,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -60,7 +61,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stderr"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -78,7 +79,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -114,7 +115,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	var usageBytes int64
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*), COALESCE(SUM(quantity), 0)
-		  FROM usage_facts
+		  FROM usage_ledger_entries
 		 WHERE org_id = $1
 		   AND run_id = $2
 		   AND meter = 'log_bytes'
@@ -122,7 +123,7 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if usageCount != 3 || usageBytes != int64(len("alphabetagamma")) {
-		t.Fatalf("usage facts count=%d bytes=%d", usageCount, usageBytes)
+		t.Fatalf("usage ledger entries count=%d bytes=%d", usageCount, usageBytes)
 	}
 
 	if _, err := pool.Exec(ctx, `
@@ -136,18 +137,18 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.UpsertRunLogWatermark(ctx, db.UpsertRunLogWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		RunID:        pgvalue.UUID(ids.runID),
-		StreamName:   string(db.RunLogStreamStdout),
-		WatermarkSeq: third.Seq,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		StreamName:    string(db.RunLogStreamStdout),
+		WatermarkSeq:  third.Seq,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	watermark, err := queries.GetRunLogWatermark(ctx, db.GetRunLogWatermarkParams{
-		OrgID:  pgvalue.UUID(ids.orgID),
-		CellID: testCellID,
-		RunID:  pgvalue.UUID(ids.runID),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -171,19 +172,19 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 
 	if _, err := queries.UpsertRunLogWatermark(ctx, db.UpsertRunLogWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		RunID:        pgvalue.UUID(ids.runID),
-		StreamName:   string(db.RunLogStreamStdout),
-		WatermarkSeq: first.Seq,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		StreamName:    string(db.RunLogStreamStdout),
+		WatermarkSeq:  first.Seq,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	prunedLogs, err := queries.PruneRunLogChunksPastWatermark(ctx, db.PruneRunLogChunksPastWatermarkParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     testCellID,
-		RunID:      pgvalue.UUID(ids.runID),
-		PruneGrace: pgvalue.Interval(0),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		PruneGrace:    pgvalue.Interval(0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -206,20 +207,20 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 
 	if _, err := queries.UpsertEventWatermark(ctx, db.UpsertEventWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		SubjectType:  db.EventSubjectTypeRun,
-		SubjectID:    pgvalue.UUID(ids.runID),
-		WatermarkSeq: first.Seq,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		SubjectType:   db.EventSubjectTypeRun,
+		SubjectID:     pgvalue.UUID(ids.runID),
+		WatermarkSeq:  first.Seq,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	prunedEvents, err := queries.PruneEventsPastWatermark(ctx, db.PruneEventsPastWatermarkParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      testCellID,
-		SubjectType: db.EventSubjectTypeRun,
-		SubjectID:   pgvalue.UUID(ids.runID),
-		PruneGrace:  pgvalue.Interval(0),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		SubjectType:   db.EventSubjectTypeRun,
+		SubjectID:     pgvalue.UUID(ids.runID),
+		PruneGrace:    pgvalue.Interval(0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -240,11 +241,11 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 		t.Fatal(err)
 	}
 	prunedEvents, err = queries.PruneEventsPastWatermark(ctx, db.PruneEventsPastWatermarkParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      testCellID,
-		SubjectType: db.EventSubjectTypeRun,
-		SubjectID:   pgvalue.UUID(ids.runID),
-		PruneGrace:  pgvalue.Interval(0),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		SubjectType:   db.EventSubjectTypeRun,
+		SubjectID:     pgvalue.UUID(ids.runID),
+		PruneGrace:    pgvalue.Interval(0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -254,40 +255,117 @@ func TestAppendRunLogChunkIdempotentUsageFactsAndByteContinuity(t *testing.T) {
 	}
 }
 
-func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
+func TestUsageLedgerEntriesSurviveRunDeletion(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
-	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
 
-	_, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+	if _, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
 		Stream:           db.RunLogStreamStdout,
 		ObservedSeq:      1,
-		Content:          []byte("wrong-cell"),
+		Content:          []byte("billable"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		DELETE FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	var usageCount int64
+	var usageBytes int64
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*), COALESCE(SUM(quantity), 0)
+		  FROM usage_ledger_entries
+		 WHERE org_id = $1
+		   AND run_id = $2
+		   AND meter = 'log_bytes'
+	`, ids.orgID, ids.runID).Scan(&usageCount, &usageBytes); err != nil {
+		t.Fatal(err)
+	}
+	if usageCount != 1 || usageBytes != int64(len("billable")) {
+		t.Fatalf("usage ledger entries after run deletion count=%d bytes=%d", usageCount, usageBytes)
+	}
+}
+
+func TestUsageLedgerEntryIdempotencyRejectsDuplicateScope(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	sourceID := uuid.Must(uuid.NewV7())
+
+	insert := `
+		INSERT INTO usage_ledger_entries (
+			org_id,
+			project_id,
+			environment_id,
+			source_type,
+			source_id,
+			run_id,
+			meter,
+			quantity,
+			unit,
+			idempotency_key
+		)
+		VALUES ($1, $2, $3, 'run_log', $4, $5, 'log_bytes', 7, 'bytes', 'duplicate-key')
+	`
+	if _, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("duplicate usage ledger entry error = %v, want unique_violation", err)
+	}
+}
+
+func TestWorkerTelemetryAppendRejectsDisabledWorkerGroup(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
+
+	_, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		Kind:             "run.log",
+		Payload:          []byte(`{"stream":"stdout"}`),
+		OrgID:            pgvalue.UUID(ids.orgID),
+		WorkerGroupID:    testWorkerGroupID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		Stream:           db.RunLogStreamStdout,
+		ObservedSeq:      1,
+		Content:          []byte("wrong-worker-group"),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("AppendRunLogChunk disabled route error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("AppendRunLogChunk disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 	_, err = queries.AppendRunEventForExecution(ctx, db.AppendRunEventForExecutionParams{
 		Kind:             "run.event",
 		Payload:          []byte(`{"ok":true}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("AppendRunEventForExecution route mismatch error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("AppendRunEventForExecution disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 
 	var chunkCount, eventCount, outboxCount, usageCount int64
@@ -296,26 +374,26 @@ func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
 			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND run_id = $2),
 			(SELECT count(*) FROM event_hot_payloads WHERE org_id = $1 AND run_id = $2),
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND source_id = $2),
-			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND run_id = $2)
+			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $2)
 	`, ids.orgID, ids.runID).Scan(&chunkCount, &eventCount, &outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}
 	if chunkCount != 0 || eventCount != 0 || outboxCount != 0 || usageCount != 0 {
-		t.Fatalf("wrong-cell append mutated chunks=%d events=%d outbox=%d usage=%d", chunkCount, eventCount, outboxCount, usageCount)
+		t.Fatalf("wrong-worker-group append mutated chunks=%d events=%d outbox=%d usage=%d", chunkCount, eventCount, outboxCount, usageCount)
 	}
 }
 
-func TestWorkerTelemetryAppendAllowsStaleCellHealthForInFlightLease(t *testing.T) {
+func TestWorkerTelemetryAppendAllowsStaleWorkerGroupHealthForInFlightLease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
-		UPDATE cell_health
+		UPDATE worker_groups
 		   SET routing_fresh_until = now() - interval '1 minute'
-		 WHERE cell_id = $1
-	`, testCellID); err != nil {
+		 WHERE id = $1
+	`, testWorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,7 +401,7 @@ func TestWorkerTelemetryAppendAllowsStaleCellHealthForInFlightLease(t *testing.T
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -357,7 +435,7 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 				Kind:             "run.log",
 				Payload:          []byte(`{"stream":"stdout"}`),
 				OrgID:            pgvalue.UUID(ids.orgID),
-				CellID:           testCellID,
+				WorkerGroupID:    testWorkerGroupID,
 				RunID:            pgvalue.UUID(ids.runID),
 				RunLeaseID:       pgvalue.UUID(runLeaseID),
 				WorkerInstanceID: pgvalue.UUID(workerID),
@@ -388,11 +466,11 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 	var headSeq, chunkCount, outboxCount, usageCount int64
 	if err := pool.QueryRow(ctx, `
 		SELECT
-			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND stream_name = '__run__'),
-			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND cell_id = $2 AND run_id = $3),
-			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND cell_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
-			(SELECT count(*) FROM usage_facts WHERE org_id = $1 AND cell_id = $2 AND run_id = $3 AND meter = 'log_bytes')
-	`, ids.orgID, testCellID, ids.runID).Scan(&headSeq, &chunkCount, &outboxCount, &usageCount); err != nil {
+			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND run_id = $3 AND stream_name = '__run__'),
+			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND worker_group_id = $2 AND run_id = $3),
+			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND worker_group_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
+			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
+	`, ids.orgID, testWorkerGroupID, ids.runID).Scan(&headSeq, &chunkCount, &outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}
 	if headSeq != 1 || chunkCount != 1 || outboxCount != 1 || usageCount != 1 {
@@ -409,16 +487,16 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	execID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_execs (
-			id, org_id, cell_id, project_id, environment_id, workspace_id,
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id,
 			command, state, detached, created_by_subject_type, created_by_subject_id
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, '["true"]'::jsonb, 'running', true, 'test', 'test')
-	`, execID, ids.orgID, testCellID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
+	`, execID, ids.orgID, testWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -432,7 +510,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	if _, err := queries.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -455,7 +533,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	execFrontier, err := queries.GetTerminalOutputIngestFrontier(ctx, db.GetTerminalOutputIngestFrontierParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		SourceKind:       "workspace_exec",
 		SourceID:         pgvalue.UUID(execID),
 		StreamName:       "stdout",
@@ -483,9 +561,9 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 		SELECT count(*)
 		  FROM workspace_exec_stream_chunks
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND exec_id = $3
-	`, ids.orgID, testCellID, execID).Scan(&execHotRows); err != nil {
+	`, ids.orgID, testWorkerGroupID, execID).Scan(&execHotRows); err != nil {
 		t.Fatal(err)
 	}
 	if execHotRows != 2 {
@@ -493,7 +571,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	if _, err := queries.UpsertTerminalOutputWatermark(ctx, db.UpsertTerminalOutputWatermarkParams{
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          testCellID,
+		WorkerGroupID:   testWorkerGroupID,
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
 		ResourceKind:    "workspace_exec",
 		ResourceID:      pgvalue.UUID(execID),
@@ -503,11 +581,11 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	prunedExec, err := queries.PruneWorkspaceExecStreamChunksPastWatermark(ctx, db.PruneWorkspaceExecStreamChunksPastWatermarkParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      testCellID,
-		WorkspaceID: pgvalue.UUID(ids.workspaceID),
-		ExecID:      pgvalue.UUID(execID),
-		PruneGrace:  pgvalue.Interval(0),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ExecID:        pgvalue.UUID(execID),
+		PruneGrace:    pgvalue.Interval(0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -517,7 +595,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	remainingExec, err := queries.ListWorkspaceExecStreamChunksAfterWatermark(ctx, db.ListWorkspaceExecStreamChunksAfterWatermarkParams{
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          testCellID,
+		WorkerGroupID:   testWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -537,16 +615,16 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	ptyID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO workspace_pty_sessions (
-				id, org_id, cell_id, project_id, environment_id, workspace_id,
+				id, org_id, worker_group_id, project_id, environment_id, workspace_id,
 				cols, rows, state, created_by_subject_type, created_by_subject_id
 			)
 			VALUES ($1, $2, $3, $4, $5, $6, 80, 24, 'open', 'test', 'test')
-	`, ptyID, ids.orgID, testCellID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
+	`, ptyID, ids.orgID, testWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := queries.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -560,7 +638,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	if _, err := queries.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -583,7 +661,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	ptyFrontier, err := queries.GetTerminalOutputIngestFrontier(ctx, db.GetTerminalOutputIngestFrontierParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		SourceKind:       "workspace_pty",
 		SourceID:         pgvalue.UUID(ptyID),
 		StreamName:       "output",
@@ -611,9 +689,9 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 		SELECT count(*)
 		  FROM workspace_pty_stream_chunks
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND pty_session_id = $3
-	`, ids.orgID, testCellID, ptyID).Scan(&ptyHotRows); err != nil {
+	`, ids.orgID, testWorkerGroupID, ptyID).Scan(&ptyHotRows); err != nil {
 		t.Fatal(err)
 	}
 	if ptyHotRows != 2 {
@@ -621,7 +699,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	if _, err := queries.UpsertTerminalOutputWatermark(ctx, db.UpsertTerminalOutputWatermarkParams{
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          testCellID,
+		WorkerGroupID:   testWorkerGroupID,
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
 		ResourceKind:    "workspace_pty",
 		ResourceID:      pgvalue.UUID(ptyID),
@@ -631,11 +709,11 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	prunedPty, err := queries.PruneWorkspacePtyStreamChunksPastWatermark(ctx, db.PruneWorkspacePtyStreamChunksPastWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		WorkspaceID:  pgvalue.UUID(ids.workspaceID),
-		PtySessionID: pgvalue.UUID(ptyID),
-		PruneGrace:   pgvalue.Interval(0),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		PtySessionID:  pgvalue.UUID(ptyID),
+		PruneGrace:    pgvalue.Interval(0),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -645,7 +723,7 @@ func TestTerminalOutputHotBuffersPruneOnlyPastWatermark(t *testing.T) {
 	}
 	remainingPty, err := queries.ListWorkspacePtyStreamChunksAfterWatermark(ctx, db.ListWorkspacePtyStreamChunksAfterWatermarkParams{
 		OrgID:           pgvalue.UUID(ids.orgID),
-		CellID:          testCellID,
+		WorkerGroupID:   testWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -674,18 +752,18 @@ func TestDeadLetteredTelemetryDoesNotFreezeFrontiers(t *testing.T) {
 	terminalID := uuid.Must(uuid.NewV7())
 
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key, state, written_at)
+		INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key, state, written_at)
 		VALUES
 			($1, $2, 'run_log', 'run', $3, 'stdout', 1, 'run-log:dead', 'dead_lettered', NULL),
 			($1, $2, 'run_log', 'run', $3, 'stderr', 2, 'run-log:written', 'written', now()),
 			($1, $2, 'event', 'run', $4, '', 1, 'event:dead', 'dead_lettered', NULL),
 			($1, $2, 'terminal_output', 'workspace_exec', $5, 'stdout', 0, 'terminal:dead', 'dead_lettered', NULL)
-	`, ids.orgID, testCellID, runID, eventSubjectID, terminalID); err != nil {
+	`, ids.orgID, testWorkerGroupID, runID, eventSubjectID, terminalID); err != nil {
 		t.Fatal(err)
 	}
 	runFrontier, err := queries.GetRunLogIngestFrontier(ctx, db.GetRunLogIngestFrontierParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		RunID:         pgvalue.UUID(runID),
 		MaxWrittenSeq: 2,
 	})
@@ -696,19 +774,19 @@ func TestDeadLetteredTelemetryDoesNotFreezeFrontiers(t *testing.T) {
 		t.Fatalf("run log frontier = %d, want 2", runFrontier)
 	}
 	if _, err := queries.UpsertEventWatermark(ctx, db.UpsertEventWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		SubjectType:  db.EventSubjectTypeRun,
-		SubjectID:    pgvalue.UUID(eventSubjectID),
-		WatermarkSeq: 7,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		SubjectType:   db.EventSubjectTypeRun,
+		SubjectID:     pgvalue.UUID(eventSubjectID),
+		WatermarkSeq:  7,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	eventWatermark, err := queries.GetEventWatermark(ctx, db.GetEventWatermarkParams{
-		OrgID:       pgvalue.UUID(ids.orgID),
-		CellID:      testCellID,
-		SubjectType: string(db.EventSubjectTypeRun),
-		SubjectID:   pgvalue.UUID(eventSubjectID),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		SubjectType:   string(db.EventSubjectTypeRun),
+		SubjectID:     pgvalue.UUID(eventSubjectID),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -718,7 +796,7 @@ func TestDeadLetteredTelemetryDoesNotFreezeFrontiers(t *testing.T) {
 	}
 	terminalFrontier, err := queries.GetTerminalOutputIngestFrontier(ctx, db.GetTerminalOutputIngestFrontierParams{
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		SourceKind:       "workspace_exec",
 		SourceID:         pgvalue.UUID(terminalID),
 		StreamName:       "stdout",
@@ -742,12 +820,12 @@ func TestOrphanedTelemetryOutboxDeadLettersAndPrunes(t *testing.T) {
 	eventSubjectID := uuid.Must(uuid.NewV7())
 	terminalID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO telemetry_outbox (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+		INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
 		VALUES
 			($1, $2, 'run_log', 'run', $3, 'stdout', 1, 'run-log:orphan'),
 			($1, $2, 'event', 'run', $4, '', 1, 'event:orphan'),
 			($1, $2, 'terminal_output', 'workspace_exec', $5, 'stdout', 0, 'terminal:orphan')
-	`, ids.orgID, testCellID, runID, eventSubjectID, terminalID); err != nil {
+	`, ids.orgID, testWorkerGroupID, runID, eventSubjectID, terminalID); err != nil {
 		t.Fatal(err)
 	}
 
@@ -763,9 +841,9 @@ func TestOrphanedTelemetryOutboxDeadLettersAndPrunes(t *testing.T) {
 		SELECT count(*)
 		  FROM telemetry_outbox
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND state = 'dead_lettered'
-	`, ids.orgID, testCellID).Scan(&deadLetteredCount); err != nil {
+	`, ids.orgID, testWorkerGroupID).Scan(&deadLetteredCount); err != nil {
 		t.Fatal(err)
 	}
 	if deadLetteredCount != 3 {
@@ -773,7 +851,7 @@ func TestOrphanedTelemetryOutboxDeadLettersAndPrunes(t *testing.T) {
 	}
 	runFrontier, err := queries.GetRunLogIngestFrontier(ctx, db.GetRunLogIngestFrontierParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        testCellID,
+		WorkerGroupID: testWorkerGroupID,
 		RunID:         pgvalue.UUID(runID),
 		MaxWrittenSeq: 4,
 	})
@@ -788,9 +866,9 @@ func TestOrphanedTelemetryOutboxDeadLettersAndPrunes(t *testing.T) {
 		UPDATE telemetry_outbox
 		   SET updated_at = now() - interval '2 days'
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND state = 'dead_lettered'
-	`, ids.orgID, testCellID); err != nil {
+	`, ids.orgID, testWorkerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	pruned, err := queries.PruneTelemetryOutboxWritten(ctx, pgvalue.Interval(24*time.Hour))
@@ -839,11 +917,11 @@ func TestDeadLetteredUnpublishedEventDoesNotBlockLaterPublish(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		DELETE FROM event_hot_payloads
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND subject_type = 'run'
 		   AND subject_id = $3
 		   AND seq = $4
-	`, ids.orgID, testCellID, ids.runID, first.Seq); err != nil {
+	`, ids.orgID, testWorkerGroupID, ids.runID, first.Seq); err != nil {
 		t.Fatal(err)
 	}
 
@@ -870,7 +948,7 @@ func TestRunLogPruneRequiresGracePastWatermark(t *testing.T) {
 		Kind:             "run.log",
 		Payload:          []byte(`{"stream":"stdout"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
-		CellID:           testCellID,
+		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
@@ -892,19 +970,19 @@ func TestRunLogPruneRequiresGracePastWatermark(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.UpsertRunLogWatermark(ctx, db.UpsertRunLogWatermarkParams{
-		OrgID:        pgvalue.UUID(ids.orgID),
-		CellID:       testCellID,
-		RunID:        pgvalue.UUID(ids.runID),
-		StreamName:   "__run__",
-		WatermarkSeq: chunk.Seq,
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		StreamName:    "__run__",
+		WatermarkSeq:  chunk.Seq,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	pruned, err := queries.PruneRunLogChunksPastWatermark(ctx, db.PruneRunLogChunksPastWatermarkParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     testCellID,
-		RunID:      pgvalue.UUID(ids.runID),
-		PruneGrace: pgvalue.Interval(time.Hour),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		PruneGrace:    pgvalue.Interval(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -916,17 +994,17 @@ func TestRunLogPruneRequiresGracePastWatermark(t *testing.T) {
 		UPDATE run_log_hot_chunks
 		   SET created_at = now() - interval '2 hours'
 		 WHERE org_id = $1
-		   AND cell_id = $2
+		   AND worker_group_id = $2
 		   AND run_id = $3
 		   AND seq = $4
-	`, ids.orgID, testCellID, ids.runID, chunk.Seq); err != nil {
+	`, ids.orgID, testWorkerGroupID, ids.runID, chunk.Seq); err != nil {
 		t.Fatal(err)
 	}
 	pruned, err = queries.PruneRunLogChunksPastWatermark(ctx, db.PruneRunLogChunksPastWatermarkParams{
-		OrgID:      pgvalue.UUID(ids.orgID),
-		CellID:     testCellID,
-		RunID:      pgvalue.UUID(ids.runID),
-		PruneGrace: pgvalue.Interval(time.Hour),
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: testWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		PruneGrace:    pgvalue.Interval(time.Hour),
 	})
 	if err != nil {
 		t.Fatal(err)

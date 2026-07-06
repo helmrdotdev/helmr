@@ -135,13 +135,14 @@ func TestCreateGetAndListRun(t *testing.T) {
 	}
 }
 
-func TestGetRunRejectsWrongCellRoute(t *testing.T) {
+func TestGetRunRejectsWrongWorkerGroupRoute(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
+		recordPlacementUnavailable: true,
 		run: db.Run{
 			ID:               pgvalue.UUID(runID),
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:           "us-east-1-cell-2",
+			WorkerGroupID:    "us-east-1-worker-group-2",
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -346,22 +347,21 @@ func fakeRunSessionID(run db.Run) pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000601"))
 }
 
-func fakeRunCellID(run db.Run) string {
-	if run.CellID != "" {
-		return run.CellID
+func fakeRunWorkerGroupID(run db.Run) string {
+	if run.WorkerGroupID != "" {
+		return run.WorkerGroupID
 	}
-	return dbtest.DefaultCellID
+	return dbtest.DefaultWorkerGroupID
 }
 
-func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams) (db.GetRunSummaryRow, error) {
+func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams) (db.Run, error) {
 	if f.run.ID != arg.ID {
-		return db.GetRunSummaryRow{}, pgx.ErrNoRows
+		return db.Run{}, pgx.ErrNoRows
 	}
-	return db.GetRunSummaryRow{
+	return db.Run{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		CellID:           fakeRunCellID(f.run),
-		RouteGeneration:  1,
+		WorkerGroupID:    fakeRunWorkerGroupID(f.run),
 		ProjectID:        fakeRunProjectID(f.run),
 		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
@@ -376,7 +376,7 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 	}, nil
 }
 
-func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedRunSummariesParams) ([]db.ListScopedRunSummariesRow, error) {
+func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedRunSummariesParams) ([]db.Run, error) {
 	f.listScopedRuns = arg
 	f.listRuns = fakeListRunsParams{
 		StatusFilter: arg.StatusFilter,
@@ -385,11 +385,10 @@ func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedR
 	if !f.run.ID.Valid || f.run.ProjectID != arg.ProjectID || f.run.EnvironmentID != arg.EnvironmentID {
 		return nil, nil
 	}
-	return []db.ListScopedRunSummariesRow{{
+	return []db.Run{{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		CellID:           fakeRunCellID(f.run),
-		RouteGeneration:  1,
+		WorkerGroupID:    fakeRunWorkerGroupID(f.run),
 		ProjectID:        f.run.ProjectID,
 		EnvironmentID:    f.run.EnvironmentID,
 		DeploymentID:     fakeRunDeploymentID(f.run),

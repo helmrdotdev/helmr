@@ -15,13 +15,13 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const expirySweeperTestCellID = "cell-1"
+const expirySweeperTestWorkerGroupID = "worker-group-1"
 
 func TestSweepOnce(t *testing.T) {
 	orgA := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperStore{orgIDs: []pgtype.UUID{orgA, orgB}}
-	if err := sweepOnce(context.Background(), store, expirySweeperTestCellID, DefaultExpirySweepOrgLimit); err != nil {
+	if err := sweepOnce(context.Background(), store, expirySweeperTestWorkerGroupID, DefaultExpirySweepOrgLimit); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.calls; got != "stop-runtime-instances,lose-expired-runtime-instances,requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,publish-hot-resumes,publish-hot-checkpoints,fail-stale-waits,requeue-waits,requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,publish-hot-resumes,publish-hot-checkpoints,fail-stale-waits,requeue-waits" {
@@ -33,10 +33,10 @@ func TestSweepOnce(t *testing.T) {
 	if store.sweptOrgIDs[2] != orgA || store.sweptOrgIDs[13] != orgB {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
-	if len(store.createExpiredRuntimeStopParams) != 1 || store.createExpiredRuntimeStopParams[0].CellID != expirySweeperTestCellID {
+	if len(store.createExpiredRuntimeStopParams) != 1 || store.createExpiredRuntimeStopParams[0].WorkerGroupID != expirySweeperTestWorkerGroupID {
 		t.Fatalf("runtime stop params = %+v", store.createExpiredRuntimeStopParams)
 	}
-	if len(store.markExpiredRuntimeLostParams) != 1 || store.markExpiredRuntimeLostParams[0].CellID != expirySweeperTestCellID {
+	if len(store.markExpiredRuntimeLostParams) != 1 || store.markExpiredRuntimeLostParams[0].WorkerGroupID != expirySweeperTestWorkerGroupID {
 		t.Fatalf("runtime lost params = %+v", store.markExpiredRuntimeLostParams)
 	}
 }
@@ -46,7 +46,7 @@ func TestSweepOnceStopsAfterRequeueError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
 		orgIDs:              []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))},
 	}
-	if err := sweepOnce(context.Background(), store, expirySweeperTestCellID, DefaultExpirySweepOrgLimit); err == nil {
+	if err := sweepOnce(context.Background(), store, expirySweeperTestWorkerGroupID, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "stop-runtime-instances,lose-expired-runtime-instances,requeue" {
@@ -61,7 +61,7 @@ func TestSweepOnceContinuesAfterOrgError(t *testing.T) {
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErrs: map[pgtype.UUID]error{orgA: errors.New("requeue failed")}},
 		orgIDs:              []pgtype.UUID{orgA, orgB},
 	}
-	if err := sweepOnce(context.Background(), store, expirySweeperTestCellID, DefaultExpirySweepOrgLimit); err == nil {
+	if err := sweepOnce(context.Background(), store, expirySweeperTestWorkerGroupID, DefaultExpirySweepOrgLimit); err == nil {
 		t.Fatal("expected error")
 	}
 	if got := store.calls; got != "stop-runtime-instances,lose-expired-runtime-instances,requeue,requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,publish-hot-resumes,publish-hot-checkpoints,fail-stale-waits,requeue-waits" {
@@ -77,7 +77,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 	orgB := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	orgC := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperStore{pages: [][]pgtype.UUID{{orgA, orgB}, {orgC}}}
-	sweeper, err := NewExpirySweeper(store, WithExpirySweepCellID(expirySweeperTestCellID), WithExpirySweepOrgLimit(2))
+	sweeper, err := NewExpirySweeper(store, WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID), WithExpirySweepOrgLimit(2))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestSweeperPaginatesOrganizations(t *testing.T) {
 func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeSweeperOrgStore{}
-	if err := SweepExpiredForOrg(context.Background(), store, expirySweeperTestCellID, orgID); err != nil {
+	if err := SweepExpiredForOrg(context.Background(), store, expirySweeperTestWorkerGroupID, orgID); err != nil {
 		t.Fatal(err)
 	}
 	if got := store.calls; got != "requeue,fail,expire-runs,expire-sessions,expire-tokens,resolve-timers,expire-waits,publish-hot-resumes,publish-hot-checkpoints,fail-stale-waits,requeue-waits" {
@@ -104,7 +104,7 @@ func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	if len(store.sweptOrgIDs) != 11 || store.sweptOrgIDs[0] != orgID {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
-	if len(store.expireDueTokensParams) != 1 || store.expireDueTokensParams[0].CellID != expirySweeperTestCellID {
+	if len(store.expireDueTokensParams) != 1 || store.expireDueTokensParams[0] != orgID {
 		t.Fatalf("expire token params = %+v", store.expireDueTokensParams)
 	}
 }
@@ -123,9 +123,9 @@ func TestNewExpirySweeperValidatesInput(t *testing.T) {
 		t.Fatal("expected invalid failure limit error")
 	}
 	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepInterval(time.Second)); err == nil {
-		t.Fatal("expected missing cell_id error")
+		t.Fatal("expected missing worker_group_id error")
 	}
-	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepCellID(expirySweeperTestCellID), WithExpirySweepInterval(time.Second)); err != nil {
+	if _, err := NewExpirySweeper(&fakeSweeperStore{}, WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID), WithExpirySweepInterval(time.Second)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -135,7 +135,7 @@ func TestSweeperRunReturnsAfterConsecutiveFailures(t *testing.T) {
 	store := &fakeSweeperStore{listErr: listErr}
 	sweeper, err := NewExpirySweeper(
 		store,
-		WithExpirySweepCellID(expirySweeperTestCellID),
+		WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID),
 		WithExpirySweepInterval(time.Millisecond),
 		WithExpirySweepConsecutiveFailureLimit(2),
 		WithExpirySweepLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
@@ -160,7 +160,7 @@ func TestSweeperRunReturnsContextCancellation(t *testing.T) {
 	store := &fakeSweeperStore{blockUntilCancel: true, entered: entered}
 	sweeper, err := NewExpirySweeper(
 		store,
-		WithExpirySweepCellID(expirySweeperTestCellID),
+		WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID),
 		WithExpirySweepInterval(time.Millisecond),
 		WithExpirySweepConsecutiveFailureLimit(1),
 		WithExpirySweepLogger(slog.New(slog.NewTextHandler(io.Discard, nil))),
@@ -188,7 +188,7 @@ func TestSweeperRunReturnsContextCancellation(t *testing.T) {
 
 func TestSweeperSkipsWhenLockIsHeld(t *testing.T) {
 	store := &fakeSweeperStore{}
-	sweeper, err := NewExpirySweeper(store, WithExpirySweepCellID(expirySweeperTestCellID), WithExpirySweepLock(&fakeSweepLock{}))
+	sweeper, err := NewExpirySweeper(store, WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID), WithExpirySweepLock(&fakeSweepLock{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestSweeperSkipsWhenLockIsHeld(t *testing.T) {
 
 func TestSweeperUnlocksAfterSweep(t *testing.T) {
 	lock := &fakeSweepLock{locked: true}
-	sweeper, err := NewExpirySweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))}}, WithExpirySweepCellID(expirySweeperTestCellID), WithExpirySweepLock(lock))
+	sweeper, err := NewExpirySweeper(&fakeSweeperStore{orgIDs: []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))}}, WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID), WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,7 +219,7 @@ func TestSweeperUnlocksAfterSweepError(t *testing.T) {
 	sweeper, err := NewExpirySweeper(&fakeSweeperStore{
 		fakeSweeperOrgStore: fakeSweeperOrgStore{requeueErr: errors.New("requeue failed")},
 		orgIDs:              []pgtype.UUID{pgvalue.UUID(uuid.Must(uuid.NewV7()))},
-	}, WithExpirySweepCellID(expirySweeperTestCellID), WithExpirySweepLock(lock))
+	}, WithExpirySweepWorkerGroupID(expirySweeperTestWorkerGroupID), WithExpirySweepLock(lock))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,7 +274,7 @@ type fakeSweeperOrgStore struct {
 	timerErr                       error
 	waitErr                        error
 	requeueErrs                    map[pgtype.UUID]error
-	expireDueTokensParams          []db.ExpireDueTokensParams
+	expireDueTokensParams          []pgtype.UUID
 	createExpiredRuntimeStopParams []db.CreateExpiredRuntimeStopCommandsParams
 	markExpiredRuntimeLostParams   []db.MarkExpiredRuntimeInstancesLostParams
 	requeueResolvedRunWaitsParams  db.RequeueResolvedRunWaitsParams
@@ -283,8 +283,8 @@ type fakeSweeperOrgStore struct {
 func (f *fakeSweeperOrgStore) RequeueExpiredLeasedRunLeases(_ context.Context, arg db.RequeueExpiredLeasedRunLeasesParams) error {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "requeue")
-	if arg.CellID != expirySweeperTestCellID {
-		return fmt.Errorf("requeue cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return fmt.Errorf("requeue worker_group_id = %q", arg.WorkerGroupID)
 	}
 	if err := f.requeueErrs[arg.OrgID]; err != nil {
 		return err
@@ -295,8 +295,8 @@ func (f *fakeSweeperOrgStore) RequeueExpiredLeasedRunLeases(_ context.Context, a
 func (f *fakeSweeperOrgStore) FailExpiredRunningRunLeases(_ context.Context, arg db.FailExpiredRunningRunLeasesParams) error {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "fail")
-	if arg.CellID != expirySweeperTestCellID {
-		return fmt.Errorf("fail cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return fmt.Errorf("fail worker_group_id = %q", arg.WorkerGroupID)
 	}
 	return f.failErr
 }
@@ -304,8 +304,8 @@ func (f *fakeSweeperOrgStore) FailExpiredRunningRunLeases(_ context.Context, arg
 func (f *fakeSweeperOrgStore) ExpireQueuedRuns(_ context.Context, arg db.ExpireQueuedRunsParams) error {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "expire-runs")
-	if arg.CellID != expirySweeperTestCellID {
-		return fmt.Errorf("expire-runs cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return fmt.Errorf("expire-runs worker_group_id = %q", arg.WorkerGroupID)
 	}
 	return nil
 }
@@ -313,22 +313,22 @@ func (f *fakeSweeperOrgStore) ExpireQueuedRuns(_ context.Context, arg db.ExpireQ
 func (f *fakeSweeperOrgStore) ExpireDueSessions(_ context.Context, arg db.ExpireDueSessionsParams) ([]db.Session, error) {
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "expire-sessions")
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("expire-sessions cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("expire-sessions worker_group_id = %q", arg.WorkerGroupID)
 	}
 	return nil, nil
 }
 
-func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, arg db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error) {
-	f.expireDueTokensParams = append(f.expireDueTokensParams, arg)
-	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
+func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
+	f.expireDueTokensParams = append(f.expireDueTokensParams, orgID)
+	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "expire-tokens")
 	return nil, f.tokenErr
 }
 
 func (f *fakeSweeperOrgStore) ResolveDueTimerWaits(_ context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("resolve-timers cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("resolve-timers worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "resolve-timers")
@@ -336,8 +336,8 @@ func (f *fakeSweeperOrgStore) ResolveDueTimerWaits(_ context.Context, arg db.Res
 }
 
 func (f *fakeSweeperOrgStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(_ context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("publish-hot-resumes cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("publish-hot-resumes worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "publish-hot-resumes")
@@ -345,8 +345,8 @@ func (f *fakeSweeperOrgStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(
 }
 
 func (f *fakeSweeperOrgStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(_ context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("publish-hot-checkpoints cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("publish-hot-checkpoints worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "publish-hot-checkpoints")
@@ -354,8 +354,8 @@ func (f *fakeSweeperOrgStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(_
 }
 
 func (f *fakeSweeperOrgStore) ExpireDueRunWaits(_ context.Context, arg db.ExpireDueRunWaitsParams) ([]db.RunWait, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("expire-waits cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("expire-waits worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "expire-waits")
@@ -377,8 +377,8 @@ func (f *fakeSweeperOrgStore) MarkExpiredRuntimeInstancesLost(_ context.Context,
 }
 
 func (f *fakeSweeperOrgStore) FailStaleResolvedRunWaits(_ context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("fail-stale-waits cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("fail-stale-waits worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "fail-stale-waits")
@@ -386,8 +386,8 @@ func (f *fakeSweeperOrgStore) FailStaleResolvedRunWaits(_ context.Context, arg d
 }
 
 func (f *fakeSweeperOrgStore) RequeueResolvedRunWaits(_ context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error) {
-	if arg.CellID != expirySweeperTestCellID {
-		return nil, fmt.Errorf("requeue-waits cell_id = %q", arg.CellID)
+	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
+		return nil, fmt.Errorf("requeue-waits worker_group_id = %q", arg.WorkerGroupID)
 	}
 	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
 	f.calls = appendCall(f.calls, "requeue-waits")

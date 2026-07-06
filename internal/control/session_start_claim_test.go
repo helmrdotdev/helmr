@@ -21,7 +21,7 @@ func newTestEventStream(t *testing.T) *EventStream {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	return &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient, cellID: dbtest.DefaultCellID, telemetryReader: fakeTelemetryReader{store: &fakeStore{}}}
+	return &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: &fakeStore{}}}
 }
 
 func TestSessionStartClaimUsesOwnerTokenForRelease(t *testing.T) {

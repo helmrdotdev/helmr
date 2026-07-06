@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -212,7 +213,6 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		capture := request.WorkspaceCapture
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			OrgID:     scope.OrgID,
-			CellID:    scope.CellID,
 			Digest:    strings.TrimSpace(capture.Digest),
 			SizeBytes: capture.SizeBytes,
 			MediaType: strings.TrimSpace(capture.MediaType),
@@ -222,8 +222,6 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     scope.OrgID,
-			CellID:                    scope.CellID,
-			RouteGeneration:           scope.RouteGeneration,
 			ProjectID:                 scope.ProjectID,
 			EnvironmentID:             scope.EnvironmentID,
 			Digest:                    strings.TrimSpace(capture.Digest),
@@ -235,19 +233,23 @@ func (s *Server) workerCaptureRunWaitWorkspace(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return errors.New("record run wait workspace capture artifact")
 		}
-		version, err := work.q.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
-			OrgID:              scope.OrgID,
-			WriteLeaseID:       scope.WorkspaceLeaseID,
-			FencingToken:       scope.WorkspaceFencingToken,
-			DirtyGeneration:    scope.DirtyGeneration,
-			ArtifactID:         artifact.ID,
-			SizeBytes:          capture.SizeBytes,
-			ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
-			ContentDigest:      strings.TrimSpace(capture.Digest),
-			VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Kind:               db.WorkspaceVersionKindSystem,
-			ArtifactEntryCount: capture.EntryCount,
-			Message:            "system capture before parked wait",
+		var versionPublicID string
+		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceCaptureRow, error) {
+			return work.q.PromoteWorkspaceCapture(r.Context(), db.PromoteWorkspaceCaptureParams{
+				OrgID:              scope.OrgID,
+				WriteLeaseID:       scope.WorkspaceLeaseID,
+				FencingToken:       scope.WorkspaceFencingToken,
+				DirtyGeneration:    scope.DirtyGeneration,
+				ArtifactID:         artifact.ID,
+				SizeBytes:          capture.SizeBytes,
+				ArtifactEncoding:   strings.TrimSpace(capture.Encoding),
+				ContentDigest:      strings.TrimSpace(capture.Digest),
+				VersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				VersionPublicID:    versionPublicID,
+				Kind:               db.WorkspaceVersionKindSystem,
+				ArtifactEntryCount: capture.EntryCount,
+				Message:            "system capture before parked wait",
+			})
 		})
 		if isNoRows(err) {
 			return conflict(codedError{code: "workspace_capture_rejected", message: "workspace capture is stale"})
@@ -487,7 +489,7 @@ func acknowledgeCheckpointWorkerCommand(ctx context.Context, store db.Querier, s
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		ID:               commandID,
 		OrgID:            scope.OrgID,
-		CellID:           scope.CellID,
+		WorkerGroupID:    scope.WorkerGroupID,
 		RunID:            pgvalue.UUID(runID),
 		RunWaitID:        pgvalue.UUID(runWaitID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),

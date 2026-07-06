@@ -107,7 +107,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if err != nil {
 		return dispatch.EnqueueResult{}, err
 	}
-	keys := q.keys(message.OrgID, message.CellID, message.ProjectID, message.EnvironmentID, message.QueueClass, message.QueueName)
+	keys := q.keys(message.OrgID, message.WorkerGroupID, message.ProjectID, message.EnvironmentID, message.QueueClass, message.QueueName)
 	score := readyScore(message.Priority, message.QueueTimestamp)
 	concurrencyActiveKey := q.queueConcurrencyActiveKey(message)
 	resources := message.Requirements.Resources
@@ -165,8 +165,8 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if strings.TrimSpace(request.OrgID) == "" {
 		return nil, errors.New("org id is required")
 	}
-	if strings.TrimSpace(request.CellID) == "" {
-		return nil, errors.New("cell id is required")
+	if strings.TrimSpace(request.WorkerGroupID) == "" {
+		return nil, errors.New("worker group id is required")
 	}
 	if strings.TrimSpace(request.ProjectID) == "" {
 		return nil, errors.New("project id is required")
@@ -190,7 +190,7 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	if maxMessages <= 0 {
 		maxMessages = defaultMaxMessages
 	}
-	keys := q.keys(request.OrgID, request.CellID, request.ProjectID, request.EnvironmentID, request.QueueClass, request.QueueName)
+	keys := q.keys(request.OrgID, request.WorkerGroupID, request.ProjectID, request.EnvironmentID, request.QueueClass, request.QueueName)
 	labels, err := jsonMap(request.Labels)
 	if err != nil {
 		return nil, err
@@ -377,10 +377,10 @@ type queueKeys struct {
 	active   string
 }
 
-func (q *Queue) keys(orgID string, cellID string, projectID string, environmentID string, queueClass string, queueName string) queueKeys {
+func (q *Queue) keys(orgID string, workerGroupID string, projectID string, environmentID string, queueClass string, queueName string) queueKeys {
 	orgScope := "org:" + sanitizeKeyPart(orgID)
 	envScope := orgScope +
-		":cell:" + sanitizeKeyPart(cellID) +
+		":worker_group:" + sanitizeKeyPart(workerGroupID) +
 		":project:" + sanitizeKeyPart(projectID) +
 		":env:" + sanitizeKeyPart(environmentID)
 	scope := envScope +
@@ -404,7 +404,7 @@ func (q *Queue) queueConcurrencyActiveKey(message dispatch.Message) string {
 		scope = message.QueueName
 	}
 	key := "org:" + sanitizeKeyPart(message.OrgID) +
-		":cell:" + sanitizeKeyPart(message.CellID) +
+		":worker_group:" + sanitizeKeyPart(message.WorkerGroupID) +
 		":project:" + sanitizeKeyPart(message.ProjectID) +
 		":env:" + sanitizeKeyPart(message.EnvironmentID) +
 		":class:" + sanitizeKeyPart(message.QueueClass) +
@@ -421,7 +421,7 @@ func (q *Queue) readyKeyFromMessageID(messageID string) (string, error) {
 		return "", errMalformedMessageID
 	}
 	scope := messageID[:splitAt]
-	if !strings.Contains(scope, ":cell:") || !strings.Contains(scope, ":class:") {
+	if !strings.Contains(scope, ":worker_group:") || !strings.Contains(scope, ":class:") {
 		return "", errMalformedMessageID
 	}
 	return q.prefix + ":" + scope + ":ready", nil

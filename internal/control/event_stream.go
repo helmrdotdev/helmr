@@ -33,12 +33,12 @@ type EventStream struct {
 	log             *slog.Logger
 	db              db.Querier
 	redis           redis.Cmdable
-	cellID          string
+	workerGroupID   string
 	telemetryReader telemetry.Reader
 }
 
 type EventStreamConfig struct {
-	CellID          string
+	WorkerGroupID   string
 	TelemetryReader telemetry.Reader
 }
 
@@ -56,14 +56,14 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, c
 	if len(configs) > 0 {
 		cfg = configs[0]
 	}
-	if strings.TrimSpace(cfg.CellID) == "" {
-		return nil, errors.New("event stream cell id is required")
+	if strings.TrimSpace(cfg.WorkerGroupID) == "" {
+		return nil, errors.New("event stream worker group id is required")
 	}
 	reader := cfg.TelemetryReader
 	if reader == nil {
 		return nil, errors.New("event stream telemetry reader is required")
 	}
-	return &EventStream{log: log, db: queries, redis: redis, cellID: cfg.CellID, telemetryReader: reader}, nil
+	return &EventStream{log: log, db: queries, redis: redis, workerGroupID: cfg.WorkerGroupID, telemetryReader: reader}, nil
 }
 
 func (s *EventStream) RunPublisher(ctx context.Context) error {
@@ -174,7 +174,7 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 }
 
 func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
-	streamKey := eventStreamKey(orgID, s.cellID, subjectType, subjectID)
+	streamKey := eventStreamKey(orgID, s.workerGroupID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -230,12 +230,12 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 
 func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
-		OrgID:       orgID,
-		CellID:      s.cellID,
-		SubjectType: string(subjectType),
-		SubjectID:   subjectID,
-		AfterSeq:    cursor,
-		Limit:       runEventsPageSize,
+		OrgID:         orgID,
+		WorkerGroupID: s.workerGroupID,
+		SubjectType:   string(subjectType),
+		SubjectID:     subjectID,
+		AfterSeq:      cursor,
+		Limit:         runEventsPageSize,
 	})
 	if err != nil {
 		return cursor, false, fmt.Errorf("list durable subject events: %w", err)
@@ -253,8 +253,8 @@ func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.U
 	return cursor, len(page.Events) == int(runEventsPageSize), nil
 }
 
-func eventStreamKey(orgID uuid.UUID, cellID string, subjectType db.EventSubjectType, subjectID uuid.UUID) string {
-	return "helmr:events:" + orgID.String() + ":" + cellID + ":" + string(subjectType) + ":" + subjectID.String()
+func eventStreamKey(orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID) string {
+	return "helmr:events:" + orgID.String() + ":" + workerGroupID + ":" + string(subjectType) + ":" + subjectID.String()
 }
 
 func redisEventID(seq int64) string {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 )
 
@@ -15,8 +14,8 @@ var (
 	errTelemetryUnavailable   = codedError{code: "telemetry_unavailable", message: "telemetry historical store is unavailable"}
 )
 
-func (s *Server) rejectRunFromWrongCell(ctx context.Context, w http.ResponseWriter, actor auth.Actor, summary runSummary) bool {
-	if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.CellID, summary.RouteGeneration); err != nil {
+func (s *Server) rejectRunFromWrongWorkerGroup(ctx context.Context, w http.ResponseWriter, summary runSummary) bool {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, summary.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return true
 	}

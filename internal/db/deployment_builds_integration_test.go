@@ -15,22 +15,18 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongCellDeployment(t *testing.T) {
+func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongWorkerGroupDeployment(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	otherCellID := routeEnvironmentToOtherCell(t, ctx, pool, ids)
+	otherWorkerGroupID := placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
 	workerID := uuid.Must(uuid.NewV7())
 	workerResourceID := "worker-" + shortUUID(workerID)
 	runtimeID := "runtime-" + shortUUID(workerID)
 	otherDeploymentID := uuid.Must(uuid.NewV7())
 	otherArtifactID := uuid.Must(uuid.NewV7())
-	otherDigest := testDigest("wrong-cell-deployment-source")
-	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
-		t.Fatal(err)
-	}
+	otherDigest := testDigest("wrong-worker-group-deployment-source")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
@@ -42,42 +38,41 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongCellDeployment(t *testing.T
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, worker_group_id, resource_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6,
+		VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json')
-	`, ids.orgID, otherCellID, otherDigest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json')
+	`, ids.orgID, otherDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json')
-	`, otherArtifactID, ids.orgID, otherCellID, ids.projectID, ids.environmentID, otherDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, otherArtifactID, ids.orgID, ids.projectID, ids.environmentID, otherDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, build_worker_group_id, project_id, environment_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'wrong-cell-build', $7, $8, 'queued')
-	`, otherDeploymentID, ids.orgID, otherCellID, ids.projectID, ids.environmentID, workerGroupID, otherDigest, otherArtifactID); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'wrong-worker-group-build', $6, $7, 'queued')
+	`, otherDeploymentID, ids.orgID, otherWorkerGroupID, ids.projectID, ids.environmentID, otherDigest, otherArtifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
-		CellID:                dbtest.DefaultCellID,
-		WorkerGroupID:         pgvalue.UUID(workerGroupID),
-		BuildLeaseID:          pgtype.Text{String: "wrong-cell-build-lease", Valid: true},
+		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
+		BuildLeaseID:          pgtype.Text{String: "wrong-worker-group-build-lease", Valid: true},
 		BuildWorkerInstanceID: pgvalue.UUID(workerID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
@@ -95,26 +90,22 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongCellDeployment(t *testing.T
 		t.Fatal(err)
 	}
 	if status != db.DeploymentStatusQueued || leaseID.Valid {
-		t.Fatalf("wrong-cell deployment mutated: status=%s lease=%q", status, leaseID.String)
+		t.Fatalf("wrong-worker-group deployment mutated: status=%s lease=%q", status, leaseID.String)
 	}
 }
 
-func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T) {
+func TestLeaseQueuedDeploymentBuildRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	disableDefaultEnvironmentRoute(t, ctx, pool, ids)
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 	workerID := uuid.Must(uuid.NewV7())
 	workerResourceID := "worker-" + shortUUID(workerID)
 	runtimeID := "runtime-" + shortUUID(workerID)
 	deploymentID := uuid.Must(uuid.NewV7())
 	artifactID := uuid.Must(uuid.NewV7())
-	digest := testDigest("stale-route-deployment-source")
-	var workerGroupID uuid.UUID
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE name = 'default'`).Scan(&workerGroupID); err != nil {
-		t.Fatal(err)
-	}
+	digest := testDigest("disabled-worker-group-deployment-source")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
@@ -126,42 +117,41 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, cell_id, resource_id, worker_group_id, status, protocol_version,
+			id, org_id, worker_group_id, resource_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6,
+		VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultCellID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json')
-	`, ids.orgID, dbtest.DefaultCellID, digest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json')
+	`, ids.orgID, digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json')
-	`, artifactID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, digest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, org_id, cell_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, build_worker_group_id, project_id, environment_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, 'stale-route-build', $7, $8, 'queued')
-	`, deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, workerGroupID, digest, artifactID); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'disabled-worker-group-build', $6, $7, 'queued')
+	`, deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
-		CellID:                dbtest.DefaultCellID,
-		WorkerGroupID:         pgvalue.UUID(workerGroupID),
-		BuildLeaseID:          pgtype.Text{String: "disabled-route-build-lease", Valid: true},
+		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
+		BuildLeaseID:          pgtype.Text{String: "disabled-worker-group-build-lease", Valid: true},
 		BuildWorkerInstanceID: pgvalue.UUID(workerID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
@@ -179,6 +169,6 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 		t.Fatal(err)
 	}
 	if status != db.DeploymentStatusQueued || leaseID.Valid {
-		t.Fatalf("disabled-route deployment mutated: status=%s lease=%q", status, leaseID.String)
+		t.Fatalf("disabled worker group deployment mutated: status=%s lease=%q", status, leaseID.String)
 	}
 }

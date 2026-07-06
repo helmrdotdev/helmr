@@ -21,54 +21,54 @@ func NewHotReader(queries db.Querier) *HotReader {
 
 func (r *HotReader) EventWatermark(ctx context.Context, q EventQuery) (int64, error) {
 	return r.db.GetEventWatermark(ctx, db.GetEventWatermarkParams{
-		OrgID:       pgvalue.UUID(q.OrgID),
-		CellID:      q.CellID,
-		SubjectType: q.SubjectType,
-		SubjectID:   pgvalue.UUID(q.SubjectID),
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		SubjectType:   q.SubjectType,
+		SubjectID:     pgvalue.UUID(q.SubjectID),
 	})
 }
 
 func (r *HotReader) RunLogWatermark(ctx context.Context, q RunLogChunkQuery) (int64, error) {
 	return r.db.GetRunLogWatermark(ctx, db.GetRunLogWatermarkParams{
-		OrgID:  pgvalue.UUID(q.OrgID),
-		CellID: q.CellID,
-		RunID:  pgvalue.UUID(q.RunID),
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		RunID:         pgvalue.UUID(q.RunID),
 	})
 }
 
 func (r *HotReader) TerminalOutputWatermark(ctx context.Context, q TerminalOutputQuery) (int64, error) {
 	return r.db.GetTerminalOutputWatermark(ctx, db.GetTerminalOutputWatermarkParams{
-		OrgID:        pgvalue.UUID(q.OrgID),
-		CellID:       q.CellID,
-		WorkspaceID:  pgvalue.UUID(q.WorkspaceID),
-		ResourceKind: q.ResourceKind,
-		ResourceID:   pgvalue.UUID(q.ResourceID),
-		StreamName:   q.StreamName,
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		WorkspaceID:   pgvalue.UUID(q.WorkspaceID),
+		ResourceKind:  q.ResourceKind,
+		ResourceID:    pgvalue.UUID(q.ResourceID),
+		StreamName:    q.StreamName,
 	})
 }
 
 func (r *HotReader) DeadLetteredTelemetrySeqs(ctx context.Context, q DeadLetteredTelemetryQuery) ([]int64, error) {
 	return r.db.ListDeadLetteredTelemetrySeqs(ctx, db.ListDeadLetteredTelemetrySeqsParams{
-		OrgID:        pgvalue.UUID(q.OrgID),
-		CellID:       q.CellID,
-		StreamKind:   db.TelemetryStreamKind(q.StreamKind),
-		SourceKind:   q.SourceKind,
-		SourceID:     pgvalue.UUID(q.SourceID),
-		StreamName:   "",
-		AfterSeq:     q.AfterSeq,
-		WatermarkSeq: q.Watermark,
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		StreamKind:    db.TelemetryStreamKind(q.StreamKind),
+		SourceKind:    q.SourceKind,
+		SourceID:      pgvalue.UUID(q.SourceID),
+		StreamName:    "",
+		AfterSeq:      q.AfterSeq,
+		WatermarkSeq:  q.Watermark,
 	})
 }
 
 func (r *HotReader) ListEventsAboveWatermark(ctx context.Context, q EventQuery, watermark int64) ([]api.RunEvent, int64, error) {
 	rows, err := r.db.ListSubjectEventsAfterWatermark(ctx, db.ListSubjectEventsAfterWatermarkParams{
-		OrgID:        pgvalue.UUID(q.OrgID),
-		CellID:       q.CellID,
-		SubjectType:  db.EventSubjectType(q.SubjectType),
-		SubjectID:    pgvalue.UUID(q.SubjectID),
-		WatermarkSeq: watermark,
-		Seq:          q.AfterSeq,
-		RowLimit:     q.Limit,
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		SubjectType:   db.EventSubjectType(q.SubjectType),
+		SubjectID:     pgvalue.UUID(q.SubjectID),
+		WatermarkSeq:  watermark,
+		Seq:           q.AfterSeq,
+		RowLimit:      q.Limit,
 	})
 	if err != nil {
 		return nil, q.AfterSeq, err
@@ -84,12 +84,12 @@ func (r *HotReader) ListEventsAboveWatermark(ctx context.Context, q EventQuery, 
 
 func (r *HotReader) ListRunLogChunksAboveWatermark(ctx context.Context, q RunLogChunkQuery, watermark int64) ([]api.RunLogChunk, int64, error) {
 	rows, err := r.db.ListRunLogChunksAfterWatermark(ctx, db.ListRunLogChunksAfterWatermarkParams{
-		OrgID:        pgvalue.UUID(q.OrgID),
-		CellID:       q.CellID,
-		RunID:        pgvalue.UUID(q.RunID),
-		WatermarkSeq: watermark,
-		Seq:          q.AfterSeq,
-		RowLimit:     q.Limit,
+		OrgID:         pgvalue.UUID(q.OrgID),
+		WorkerGroupID: q.WorkerGroupID,
+		RunID:         pgvalue.UUID(q.RunID),
+		WatermarkSeq:  watermark,
+		Seq:           q.AfterSeq,
+		RowLimit:      q.Limit,
 	})
 	if err != nil {
 		return nil, q.AfterSeq, err
@@ -110,7 +110,7 @@ func (r *HotReader) ListTerminalOutputAboveWatermark(ctx context.Context, q Term
 	case "workspace_exec":
 		rows, err := r.db.ListWorkspaceExecStreamChunksAfterWatermark(ctx, db.ListWorkspaceExecStreamChunksAfterWatermarkParams{
 			OrgID:           pgvalue.UUID(q.OrgID),
-			CellID:          q.CellID,
+			WorkerGroupID:   q.WorkerGroupID,
 			ProjectID:       pgvalue.UUID(q.ProjectID),
 			EnvironmentID:   pgvalue.UUID(q.EnvironmentID),
 			WorkspaceID:     pgvalue.UUID(q.WorkspaceID),
@@ -131,7 +131,7 @@ func (r *HotReader) ListTerminalOutputAboveWatermark(ctx context.Context, q Term
 	case "workspace_pty":
 		rows, err := r.db.ListWorkspacePtyStreamChunksAfterWatermark(ctx, db.ListWorkspacePtyStreamChunksAfterWatermarkParams{
 			OrgID:           pgvalue.UUID(q.OrgID),
-			CellID:          q.CellID,
+			WorkerGroupID:   q.WorkerGroupID,
 			ProjectID:       pgvalue.UUID(q.ProjectID),
 			EnvironmentID:   pgvalue.UUID(q.EnvironmentID),
 			WorkspaceID:     pgvalue.UUID(q.WorkspaceID),

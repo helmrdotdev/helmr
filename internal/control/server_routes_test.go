@@ -98,6 +98,7 @@ GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspace
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/output
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions
 GET /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions/{versionID}
+GET /api/regions
 GET /api/runs
 GET /api/runs/counts
 GET /api/runs/{id}

@@ -16,7 +16,7 @@ func TestNewScheduleRunCreatorWiresSessionStartCoordination(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	eventStream := &EventStream{log: slog.Default(), redis: redisClient, cellID: "us-east-1-cell-1"}
+	eventStream := &EventStream{log: slog.Default(), redis: redisClient, workerGroupID: "us-east-1-worker-group-1"}
 	server, err := NewScheduleRunCreator(slog.Default(), fakeScheduleRunCreatorDB{}, nil, nil, eventStream)
 	if err != nil {
 		t.Fatal(err)

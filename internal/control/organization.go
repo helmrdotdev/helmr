@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -50,25 +51,20 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 				return conflict(errors.New("organization already exists"))
 			}
 		}
-		var err error
-		org, err = work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
-			ID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			Name: name,
-			Slug: slug,
+		var publicID string
+		org, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Organization, value: &publicID}}, func() (db.Organization, error) {
+			return work.q.CreateOrganization(r.Context(), db.CreateOrganizationParams{
+				ID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID: publicID,
+				Name:     name,
+				Slug:     slug,
+			})
 		})
 		if err != nil {
 			if isUniqueViolation(err) {
 				return badRequest(errors.New("organization slug is already in use"))
 			}
 			return errors.New("create organization")
-		}
-		if _, err := work.q.EnsureOrgCell(r.Context(), db.EnsureOrgCellParams{
-			OrgID:  org.ID,
-			CellID: s.cellID,
-			Role:   db.OrgCellRoleHome,
-			State:  db.OrgCellStateActive,
-		}); err != nil {
-			return errors.New("create organization cell")
 		}
 		if _, err := work.q.EnsureOrgMember(r.Context(), db.EnsureOrgMemberParams{
 			OrgID:       org.ID,
@@ -87,6 +83,32 @@ func (s *Server) createOrganization(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, organizationResponse(org))
 }
 
+func (s *Server) listRegions(w http.ResponseWriter, r *http.Request) {
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("region storage is not configured")))
+		return
+	}
+	regions, err := s.db.ListRegions(r.Context())
+	if err != nil {
+		writeError(w, errors.New("list regions"))
+		return
+	}
+	response := api.ListRegionsResponse{Regions: make([]api.RegionSummary, 0, len(regions))}
+	for _, region := range regions {
+		response.Regions = append(response.Regions, api.RegionSummary{
+			ID:             region.ID,
+			Provider:       region.Provider,
+			ProviderRegion: region.ProviderRegion,
+			DisplayName:    region.DisplayName,
+			State:          string(region.State),
+			Visibility:     string(region.Visibility),
+			Location:       region.Location,
+			StaticIPs:      region.StaticIps,
+		})
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
 func (s *Server) initialSetupTokenMatches(token string) bool {
 	expected := strings.TrimSpace(s.setupToken)
 	provided := strings.TrimSpace(token)
@@ -99,7 +121,7 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 }
 
 type workerBootstrapTokenStore interface {
-	EnsureDefaultWorkerGroup(context.Context, string) (db.WorkerGroup, error)
+	EnsureDefaultWorkerGroup(context.Context, db.EnsureDefaultWorkerGroupParams) (db.WorkerGroup, error)
 	UpsertWorkerBootstrapToken(context.Context, db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error)
 }
 
@@ -111,13 +133,15 @@ func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerB
 	if err != nil {
 		return err
 	}
-	workerGroup, err := queries.EnsureDefaultWorkerGroup(ctx, s.cellID)
+	workerGroup, err := queries.EnsureDefaultWorkerGroup(ctx, db.EnsureDefaultWorkerGroupParams{
+		ID:       s.workerGroupID,
+		RegionID: s.defaultRegionID,
+	})
 	if err != nil {
 		return fmt.Errorf("get default worker group: %w", err)
 	}
 	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		CellID:        s.cellID,
 		TokenHash:     tokenHash,
 		WorkerGroupID: workerGroup.ID,
 	})

@@ -13,6 +13,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -55,8 +56,8 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), db.GetWorkerInstanceQueueCapacityParams{
-		ID:     pgvalue.UUID(worker.WorkerInstanceID),
-		CellID: worker.CellID,
+		ID:            pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: worker.WorkerGroupID,
 	})
 	if isNoRows(err) {
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
@@ -113,7 +114,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        runtimeInstanceToken,
 		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-		CellID:                      worker.CellID,
+		WorkerGroupID:               worker.WorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(workspaceMountReservationDuration), Valid: true},
 		GuestdChannelTokenHash:      guestdChannelTokenHash(guestdChannelToken),
 		RuntimeID:                   capabilities.RuntimeID,
@@ -125,7 +126,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:                   currentGuestdABI,
 			AdapterAbi:                  currentAdapterABI,
 			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-			CellID:                      worker.CellID,
+			WorkerGroupID:               worker.WorkerGroupID,
 			RuntimeID:                   capabilities.RuntimeID,
 			GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(preparedRuntimeReservationDuration), Valid: true},
 		})
@@ -154,7 +155,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			GuestdAbi:        currentGuestdABI,
 			AdapterAbi:       currentAdapterABI,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			CellID:           worker.CellID,
+			WorkerGroupID:    worker.WorkerGroupID,
 			RuntimeID:        capabilities.RuntimeID,
 		})
 		if awaitingErr == nil {
@@ -287,9 +288,9 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 	}
 	var response api.WorkerWorkspaceMountCaptureResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		scope, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
+		_, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
 			OrgID:                params.OrgID,
-			CellID:               params.CellID,
+			WorkerGroupID:        params.WorkerGroupID,
 			ProjectID:            pgvalue.UUID(projectID),
 			EnvironmentID:        pgvalue.UUID(environmentID),
 			WorkspaceID:          pgvalue.UUID(workspaceID),
@@ -305,7 +306,6 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
 			OrgID:     params.OrgID,
-			CellID:    params.CellID,
 			Digest:    digest,
 			SizeBytes: request.ArtifactSizeBytes,
 			MediaType: strings.TrimSpace(request.ArtifactMediaType),
@@ -315,8 +315,6 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     params.OrgID,
-			CellID:                    params.CellID,
-			RouteGeneration:           scope.RouteGeneration,
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			Digest:                    digest,
@@ -328,21 +326,25 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		if err != nil {
 			return errors.New("record workspace capture artifact")
 		}
-		version, err := work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
-			OrgID:                params.OrgID,
-			ID:                   params.ID,
-			WorkspaceID:          pgvalue.UUID(workspaceID),
-			WorkerInstanceID:     params.WorkerInstanceID,
-			RuntimeInstanceToken: params.RuntimeInstanceToken,
-			ProjectID:            pgvalue.UUID(projectID),
-			EnvironmentID:        pgvalue.UUID(environmentID),
-			ArtifactID:           artifact.ID,
-			SizeBytes:            request.ArtifactSizeBytes,
-			ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
-			ContentDigest:        digest,
-			VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			ArtifactEntryCount:   request.ArtifactEntryCount,
-			Message:              "system capture before workspace stop",
+		var versionPublicID string
+		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceMountStopCaptureRow, error) {
+			return work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
+				OrgID:                params.OrgID,
+				ID:                   params.ID,
+				WorkspaceID:          pgvalue.UUID(workspaceID),
+				WorkerInstanceID:     params.WorkerInstanceID,
+				RuntimeInstanceToken: params.RuntimeInstanceToken,
+				ProjectID:            pgvalue.UUID(projectID),
+				EnvironmentID:        pgvalue.UUID(environmentID),
+				ArtifactID:           artifact.ID,
+				SizeBytes:            request.ArtifactSizeBytes,
+				ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
+				ContentDigest:        digest,
+				VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				VersionPublicID:      versionPublicID,
+				ArtifactEntryCount:   request.ArtifactEntryCount,
+				Message:              "system capture before workspace stop",
+			})
 		})
 		if isNoRows(err) {
 			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})

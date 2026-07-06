@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -118,18 +119,22 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 	waitPolicy := selectWorkerRunWaitPolicy(request)
 	var response api.WorkerCreateRunWaitResponse
 	err := s.inTx(ctx, func(work *txWork) error {
-		createdRunWait, err := work.q.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
-			ID:               pgvalue.UUID(runWaitID),
-			OrgID:            scope.OrgID,
-			ProjectID:        scope.ProjectID,
-			EnvironmentID:    scope.EnvironmentID,
-			RunID:            scope.RunID,
-			RunLeaseID:       scope.CurrentRunLeaseID,
-			WorkerInstanceID: scope.WorkerInstanceID,
-			Kind:             db.RunWaitKind(request.Kind),
-			CorrelationID:    strings.TrimSpace(request.CorrelationID),
-			TimeoutAt:        timeoutAt,
-			CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
+		var publicID string
+		createdRunWait, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Wait, value: &publicID}}, func() (db.CreateHotRunWaitRow, error) {
+			return work.q.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+				ID:               pgvalue.UUID(runWaitID),
+				PublicID:         publicID,
+				OrgID:            scope.OrgID,
+				ProjectID:        scope.ProjectID,
+				EnvironmentID:    scope.EnvironmentID,
+				RunID:            scope.RunID,
+				RunLeaseID:       scope.CurrentRunLeaseID,
+				WorkerInstanceID: scope.WorkerInstanceID,
+				Kind:             db.RunWaitKind(request.Kind),
+				CorrelationID:    strings.TrimSpace(request.CorrelationID),
+				TimeoutAt:        timeoutAt,
+				CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
+			})
 		})
 		if err != nil {
 			return err
@@ -344,7 +349,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 		}
 		_, err = store.ResolveStreamWaitForRunWait(ctx, db.ResolveStreamWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
-			CellID:        scope.CellID,
+			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     streamWait.RunWaitID,
@@ -356,7 +361,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 	case db.RunWaitKindToken:
 		tokenWait, err := store.GetTokenWaitForRunWait(ctx, db.GetTokenWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
-			CellID:        scope.CellID,
+			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     wait.ID,
@@ -367,7 +372,7 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 		if err != nil {
 			return err
 		}
-		_, err = store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, CellID: scope.CellID, ID: tokenWait.ID})
+		_, err = store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, WorkerGroupID: scope.WorkerGroupID, ID: tokenWait.ID})
 		if isNoRows(err) {
 			return nil
 		}

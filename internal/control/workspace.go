@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -196,7 +197,6 @@ func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.db.PatchWorkspace(r.Context(), db.PatchWorkspaceParams{
 		OrgID:         current.OrgID,
-		CellID:        current.CellID,
 		ProjectID:     current.ProjectID,
 		EnvironmentID: current.EnvironmentID,
 		ID:            current.ID,
@@ -217,7 +217,6 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.db.ArchiveWorkspace(r.Context(), db.ArchiveWorkspaceParams{
 		OrgID:         current.OrgID,
-		CellID:        current.CellID,
 		ProjectID:     current.ProjectID,
 		EnvironmentID: current.EnvironmentID,
 		ID:            current.ID,
@@ -288,7 +287,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			if err != nil {
 				return db.Workspace{}, false, err
 			}
-			if err := s.requireRoutableRecordCellGeneration(ctx, s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID, row.RouteGeneration); err != nil {
+			if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, row.WorkerGroupID); err != nil {
 				return db.Workspace{}, false, err
 			}
 			return row, true, nil
@@ -302,13 +301,12 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		return db.Workspace{}, false, err
 	}
 	deploymentSandbox, err := s.db.ResolveDeploymentSandboxForWorkspaceCreate(ctx, db.ResolveDeploymentSandboxForWorkspaceCreateParams{
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		CellID:          placement.CellID,
-		RouteGeneration: placement.RouteGeneration,
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		SandboxID:       sandboxID,
-		DeploymentID:    deploymentID,
+		OrgID:         pgvalue.UUID(actor.OrgID),
+		WorkerGroupID: placement.WorkerGroupID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		SandboxID:     sandboxID,
+		DeploymentID:  deploymentID,
 	})
 	if err != nil {
 		if isNoRows(err) {
@@ -359,31 +357,35 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 				return getWorkspaceErr
 			}
 		}
-		if deploymentSandbox.CellID != placement.CellID {
-			return unavailable(errors.New("workspace sandbox cell does not match environment route"))
-		}
-		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, placement.CellID, placement.RouteGeneration, projectID, environmentID)
+		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)
 		if err != nil {
 			return err
 		}
-		created, err := workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     pgvalue.UUID(actor.OrgID),
-			CellID:                    placement.CellID,
-			RouteGeneration:           placement.RouteGeneration,
-			ProjectID:                 projectID,
-			EnvironmentID:             environmentID,
-			DeploymentSandboxID:       deploymentSandbox.ID,
-			ExternalID:                strings.TrimSpace(request.ExternalID),
-			Metadata:                  metadata,
-			Tags:                      tags,
-			RetentionPolicy:           []byte(`{}`),
-			InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			InitialArtifactID:         workspaceArtifact.ID,
-			InitialArtifactEncoding:   emptyArtifact.Encoding,
-			InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
-			InitialContentDigest:      workspaceArtifact.Digest,
-			InitialSizeBytes:          workspaceArtifact.SizeBytes,
+		var workspacePublicID, initialVersionPublicID string
+		created, err := createWithPublicID(ctx, []publicIDSlot{
+			{prefix: publicid.Workspace, value: &workspacePublicID},
+			{prefix: publicid.WorkspaceVersion, value: &initialVersionPublicID},
+		}, func() (db.CreateWorkspaceFromSandboxRow, error) {
+			return workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
+				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:                  workspacePublicID,
+				OrgID:                     pgvalue.UUID(actor.OrgID),
+				WorkerGroupID:             placement.WorkerGroupID,
+				ProjectID:                 projectID,
+				EnvironmentID:             environmentID,
+				DeploymentSandboxID:       deploymentSandbox.ID,
+				ExternalID:                strings.TrimSpace(request.ExternalID),
+				Metadata:                  metadata,
+				Tags:                      tags,
+				RetentionPolicy:           []byte(`{}`),
+				InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				InitialVersionPublicID:    initialVersionPublicID,
+				InitialArtifactID:         workspaceArtifact.ID,
+				InitialArtifactEncoding:   emptyArtifact.Encoding,
+				InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
+				InitialContentDigest:      workspaceArtifact.Digest,
+				InitialSizeBytes:          workspaceArtifact.SizeBytes,
+			})
 		})
 		if err != nil {
 			return err
@@ -417,7 +419,7 @@ func workspaceFromCreateWorkspaceFromSandbox(row db.CreateWorkspaceFromSandboxRo
 	return db.Workspace(row)
 }
 
-func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, cellID string, routeGeneration int64, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {
+func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {
 	if s.cas == nil {
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, errors.New("workspace artifact CAS is not configured")
 	}
@@ -443,7 +445,6 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(orgID),
-		CellID:    cellID,
 		Digest:    object.Digest,
 		SizeBytes: object.SizeBytes,
 		MediaType: object.MediaType,
@@ -451,16 +452,14 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, err
 	}
 	workspaceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(orgID),
-		CellID:          cellID,
-		RouteGeneration: routeGeneration,
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		Digest:          object.Digest,
-		Kind:            db.ArtifactKindWorkspaceVersion,
-		SizeBytes:       object.SizeBytes,
-		MediaType:       object.MediaType,
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         pgvalue.UUID(orgID),
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		Digest:        object.Digest,
+		Kind:          db.ArtifactKindWorkspaceVersion,
+		SizeBytes:     object.SizeBytes,
+		MediaType:     object.MediaType,
 	})
 	if err != nil {
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, err
@@ -499,7 +498,7 @@ func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request,
 		writeError(w, errors.New("load workspace"))
 		return db.Workspace{}, false
 	}
-	if err := s.requireRoutableRecordCellGeneration(r.Context(), s.db, actor.OrgID, row.ProjectID, row.EnvironmentID, row.CellID, row.RouteGeneration); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, row.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return db.Workspace{}, false
 	}

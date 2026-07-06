@@ -22,7 +22,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 
 	t.Setenv("HELMR_DATABASE_URL", databaseURL)
-	t.Setenv("HELMR_CELL_ID", "us-east-1-cell-1")
+	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")

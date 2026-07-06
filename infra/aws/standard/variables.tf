@@ -56,13 +56,13 @@ variable "deployment_mode" {
   default     = "self-hosted"
 }
 
-variable "cell_id" {
-  description = "Opaque cell ID for this stack."
+variable "worker_group_id" {
+  description = "Worker group ID bootstrapped by this stack."
   type        = string
 
   validation {
-    condition     = trimspace(var.cell_id) != ""
-    error_message = "cell_id must be non-empty."
+    condition     = trimspace(var.worker_group_id) != ""
+    error_message = "worker_group_id must be non-empty."
   }
 }
 

@@ -15,6 +15,7 @@ export type Project = {
   id: string;
   slug: string;
   name: string;
+  default_region_id: string;
   is_default: boolean;
   created_at: string;
   updated_at: string;
@@ -25,7 +26,28 @@ export type ListProjectsResponse = {
   projects: Project[];
 };
 
+export type Region = {
+  id: string;
+  provider: string;
+  provider_region: string;
+  display_name: string;
+  state: string;
+  visibility: string;
+  location?: string;
+  static_ips?: string[];
+};
+
+export type ListRegionsResponse = {
+  regions: Region[];
+};
+
 export type CreateProjectInput = {
+  slug: string;
+  name: string;
+  default_region_id: string;
+};
+
+export type UpdateProjectInput = {
   slug: string;
   name: string;
 };
@@ -40,11 +62,15 @@ export async function listProjects(): Promise<ListProjectsResponse> {
   return request<ListProjectsResponse>("/api/projects");
 }
 
+export async function listRegions(): Promise<ListRegionsResponse> {
+  return request<ListRegionsResponse>("/api/regions");
+}
+
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   return postJson<CreateProjectInput, Project>("/api/projects", input);
 }
 
-export async function updateProject(projectID: string, input: CreateProjectInput): Promise<Project> {
+export async function updateProject(projectID: string, input: UpdateProjectInput): Promise<Project> {
   return request<Project>(
     `/api/projects/${encodeURIComponent(projectID)}`,
     { method: "PATCH", body: JSON.stringify(input) },

@@ -17,7 +17,6 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/config"
@@ -30,6 +29,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -78,20 +78,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	queries := db.New(pool)
-	bootstrapCfg, err := config.LoadCellBootstrap()
+	bootstrapCfg, err := config.LoadWorkerGroupBootstrap()
 	if err != nil {
-		return fmt.Errorf("load cell bootstrap config: %w", err)
+		return fmt.Errorf("load worker group bootstrap config: %w", err)
 	}
-	if err := cell.Bootstrap(ctx, queries, cell.BootstrapConfig{
+	if err := workergroup.Bootstrap(ctx, queries, workergroup.BootstrapConfig{
 		RegionID:          bootstrapCfg.RegionID,
 		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
 		Provider:          bootstrapCfg.Provider,
 		ProviderRegion:    bootstrapCfg.ProviderRegion,
 		RegionDisplayName: bootstrapCfg.RegionDisplayName,
-		CellID:            bootstrapCfg.CellID,
-		EnvironmentClass:  bootstrapCfg.EnvironmentClass,
+		WorkerGroupID:     bootstrapCfg.WorkerGroupID,
 	}); err != nil {
-		return fmt.Errorf("bootstrap cell: %w", err)
+		return fmt.Errorf("bootstrap worker group: %w", err)
 	}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
@@ -144,7 +143,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	mailer := configuredEmailSender(log, cfg)
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-		CellID:          cfg.CellID,
+		WorkerGroupID:   cfg.WorkerGroupID,
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
@@ -154,7 +153,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure workspace stream notifier: %w", err)
 	}
-	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.CellID)
+	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.WorkerGroupID)
 	if err != nil {
 		return fmt.Errorf("configure worker command stream: %w", err)
 	}
@@ -177,13 +176,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 	}()
 	go func() {
-		if err := cell.RunHealthReporter(backgroundCtx, queries, cell.HealthReporterConfig{
-			CellID:             cfg.CellID,
-			Component:          cell.ComponentControl,
-			RequiredComponents: cell.RoutingRequiredComponents(),
+		if err := workergroup.RunHealthReporter(backgroundCtx, queries, workergroup.HealthReporterConfig{
+			WorkerGroupID:      cfg.WorkerGroupID,
+			Component:          workergroup.ComponentControl,
+			RequiredComponents: workergroup.RoutingRequiredComponents(),
 			Log:                log,
 		}); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("cell health reporter stopped", "error", err)
+			log.Error("worker group health reporter stopped", "error", err)
 			cancelServer()
 		}
 	}()
@@ -200,8 +199,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
 	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
-		CellID: cfg.CellID,
-		Jitter: cfg.ScheduleJitter,
+		WorkerGroupID: cfg.WorkerGroupID,
+		Jitter:        cfg.ScheduleJitter,
 	})
 	if err != nil {
 		return fmt.Errorf("configure schedule engine: %w", err)
@@ -217,7 +216,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	handler, err := control.NewServer(control.ServerConfig{
 		Log:                   log,
 		DeploymentMode:        cfg.DeploymentMode,
-		CellID:                cfg.CellID,
+		WorkerGroupID:         cfg.WorkerGroupID,
 		RegionID:              cfg.RegionID,
 		DefaultRegionID:       cfg.DefaultRegionID,
 		DB:                    queries,
@@ -305,9 +304,9 @@ func runMigrate(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load clickhouse config: %w", err)
 	}
-	bootstrapCfg, err := config.LoadCellBootstrap()
+	bootstrapCfg, err := config.LoadWorkerGroupBootstrap()
 	if err != nil {
-		return fmt.Errorf("load cell bootstrap config: %w", err)
+		return fmt.Errorf("load worker group bootstrap config: %w", err)
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -328,22 +327,21 @@ func runMigrate(log *slog.Logger, args []string) error {
 	defer pool.Close()
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("begin cell bootstrap: %w", err)
+		return fmt.Errorf("begin worker group bootstrap: %w", err)
 	}
 	defer tx.Rollback(ctx)
-	if err := cell.Bootstrap(ctx, db.New(tx), cell.BootstrapConfig{
+	if err := workergroup.Bootstrap(ctx, db.New(tx), workergroup.BootstrapConfig{
 		RegionID:          bootstrapCfg.RegionID,
 		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
 		Provider:          bootstrapCfg.Provider,
 		ProviderRegion:    bootstrapCfg.ProviderRegion,
 		RegionDisplayName: bootstrapCfg.RegionDisplayName,
-		CellID:            bootstrapCfg.CellID,
-		EnvironmentClass:  bootstrapCfg.EnvironmentClass,
+		WorkerGroupID:     bootstrapCfg.WorkerGroupID,
 	}); err != nil {
-		return fmt.Errorf("bootstrap cell: %w", err)
+		return fmt.Errorf("bootstrap worker group: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit cell bootstrap: %w", err)
+		return fmt.Errorf("commit worker group bootstrap: %w", err)
 	}
 	log.Info("database migrations are up to date")
 	return nil

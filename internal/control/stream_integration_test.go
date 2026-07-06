@@ -17,11 +17,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
-	cellpkg "github.com/helmrdotdev/helmr/internal/cell"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
+	workergrouppkg "github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,11 +34,20 @@ type streamTokenRouteFixture struct {
 	environmentID    uuid.UUID
 	deploymentID     uuid.UUID
 	deploymentTaskID uuid.UUID
-	workerGroupID    uuid.UUID
+	workerGroupID    string
 	workspaceID      uuid.UUID
 	sessionID        uuid.UUID
 	inputStreamID    uuid.UUID
 	outputStreamID   uuid.UUID
+}
+
+func streamTestPublicID(t *testing.T, prefix publicid.Prefix) string {
+	t.Helper()
+	id, err := newPublicID(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
 }
 
 func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
@@ -394,9 +404,9 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 	}
 
 	expiredToken, err := queries.CreateToken(ctx, db.CreateTokenParams{
+		PublicID:                 streamTestPublicID(t, publicid.Token),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		CellID:                   dbtest.DefaultCellID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(-time.Minute)),
@@ -420,9 +430,9 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	queries := db.New(pool)
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -465,9 +475,9 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
 	recordID := uuid.Must(uuid.NewV7())
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -483,7 +493,6 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		CellID:         dbtest.DefaultCellID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -508,7 +517,6 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -529,9 +537,9 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
 	recordID := uuid.Must(uuid.NewV7())
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -547,7 +555,6 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		CellID:         dbtest.DefaultCellID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -560,18 +567,18 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	continuationRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'queued', 'queued', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'queued', 'queued', '{}', 'default', 300000,
 			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
-	`, continuationRunID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID); err != nil {
+	`, continuationRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO session_runs (id, org_id, cell_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'input')
-	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.sessionID, continuationRunID, ids.deploymentID, leaseIDs.runID); err != nil {
+		INSERT INTO session_runs (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason)
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'input')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.sessionID, continuationRunID, ids.deploymentID, leaseIDs.runID, streamTestPublicID(t, publicid.SessionRun)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -610,7 +617,6 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -646,9 +652,9 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
 	recordID := uuid.Must(uuid.NewV7())
 	if _, err := queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -664,7 +670,6 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		CellID:         dbtest.DefaultCellID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -700,7 +705,6 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -798,9 +802,9 @@ type cursorInitAppendWakeups struct {
 func (w *cursorInitAppendWakeups) latestSessionInputStreamWakeupID(ctx context.Context, orgID pgtype.UUID, streamID pgtype.UUID) (string, error) {
 	w.t.Helper()
 	if _, err := w.queries.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+		PublicID:               streamTestPublicID(w.t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(w.ids.orgID),
-		CellID:                 dbtest.DefaultCellID,
 		ProjectID:              pgvalue.UUID(w.ids.projectID),
 		EnvironmentID:          pgvalue.UUID(w.ids.environmentID),
 		StreamID:               streamID,
@@ -865,9 +869,9 @@ func createPublicStreamScope(t *testing.T, ctx context.Context, queries *db.Quer
 		t.Fatal(err)
 	}
 	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
+		PublicID:      streamTestPublicID(t, publicid.PublicAccessToken),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		CellID:        dbtest.DefaultCellID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TokenHash:     hash,
@@ -881,7 +885,6 @@ func createPublicStreamScope(t *testing.T, ctx context.Context, queries *db.Quer
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		CellID:              dbtest.DefaultCellID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -942,21 +945,20 @@ func newControlIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := cellpkg.Bootstrap(ctx, db.New(pool), cellpkg.BootstrapConfig{
+	if err := workergrouppkg.Bootstrap(ctx, db.New(pool), workergrouppkg.BootstrapConfig{
 		RegionID:          dbtest.DefaultRegionID,
 		DefaultRegionID:   dbtest.DefaultRegionID,
 		Provider:          dbtest.DefaultProvider,
 		ProviderRegion:    dbtest.DefaultProviderRegion,
 		RegionDisplayName: dbtest.DefaultRegionDisplay,
-		CellID:            dbtest.DefaultCellID,
-		EnvironmentClass:  dbtest.DefaultEnvironmentClass,
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := cellpkg.ReportHealth(ctx, db.New(pool), cellpkg.HealthConfig{
-		CellID:             dbtest.DefaultCellID,
-		Component:          cellpkg.ComponentDispatcher,
-		RequiredComponents: cellpkg.RoutingRequiredComponents(),
+	if err := workergrouppkg.ReportHealth(ctx, db.New(pool), workergrouppkg.HealthConfig{
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		Component:          workergrouppkg.ComponentDispatcher,
+		RequiredComponents: workergrouppkg.RoutingRequiredComponents(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -978,7 +980,7 @@ func newControlIntegrationServer(pool *pgxpool.Pool) *Server {
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		db:              db.New(pool),
 		tx:              pool,
-		cellID:          dbtest.DefaultCellID,
+		workerGroupID:   dbtest.DefaultWorkerGroupID,
 		regionID:        dbtest.DefaultRegionID,
 		defaultRegionID: dbtest.DefaultRegionID,
 	}
@@ -992,7 +994,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 		environmentID:    testEnvironmentIDStringUUID(),
 		deploymentID:     uuid.Must(uuid.NewV7()),
 		deploymentTaskID: uuid.Must(uuid.NewV7()),
-		workerGroupID:    uuid.Must(uuid.NewV7()),
+		workerGroupID:    dbtest.DefaultWorkerGroupID,
 		workspaceID:      uuid.Must(uuid.NewV7()),
 		sessionID:        uuid.Must(uuid.NewV7()),
 		inputStreamID:    uuid.Must(uuid.NewV7()),
@@ -1005,64 +1007,43 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	digest := "sha256:" + strings.Repeat("1", 64)
 	rootfsDigest := "sha256:" + strings.Repeat("2", 64)
 
-	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, name, slug) VALUES ($1, 'Default', 'default')`, ids.orgID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations (id, public_id, name, slug) VALUES ($1, $2, 'Default', 'default')`, ids.orgID, streamTestPublicID(t, publicid.Organization)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, org_id, default_region_id, slug, name) VALUES ($1, $2, $3, 'proj', 'Project')`, ids.projectID, ids.orgID, dbtest.DefaultRegionID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name) VALUES ($1, $4, $2, $3, 'proj', 'Project')`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, streamTestPublicID(t, publicid.Project)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO environments (id, org_id, project_id, default_region_id, slug, name, color_hex) VALUES ($1, $2, $3, $4, 'env', 'Env', '#3366ff')`, ids.environmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex) VALUES ($1, $4, $2, $3, 'env', 'Env', '#3366ff')`, ids.environmentID, ids.orgID, ids.projectID, streamTestPublicID(t, publicid.Environment)); err != nil {
 		t.Fatal(err)
 	}
-	queries := db.New(pool)
-	if _, err := queries.EnsureOrgCell(ctx, db.EnsureOrgCellParams{
-		OrgID:  pgvalue.UUID(ids.orgID),
-		CellID: dbtest.DefaultCellID,
-		Role:   db.OrgCellRoleHome,
-		State:  db.OrgCellStateActive,
-	}); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, 'application/octet-stream'), ($1, $3, 1, 'application/octet-stream')`, ids.orgID, digest, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cellpkg.EnsureEnvironmentRoute(ctx, queries, cellpkg.EnsureEnvironmentRouteParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		RegionID:      dbtest.DefaultRegionID,
-		LocalCellID:   dbtest.DefaultCellID,
-	}); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/octet-stream')`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO worker_groups (id, cell_id, name) VALUES ($1, $2, 'test')`, ids.workerGroupID, dbtest.DefaultCellID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO cas_objects (org_id, cell_id, digest, size_bytes, media_type) VALUES ($1, $2, $3, 1, 'application/octet-stream'), ($1, $2, $4, 1, 'application/octet-stream')`, ids.orgID, dbtest.DefaultCellID, digest, rootfsDigest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/octet-stream')`, artifactID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, digest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, cell_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id) VALUES ($5, $1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, org_id, cell_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.workerGroupID, digest, artifactID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', $7, $7, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, rootfsDigest, streamTestPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, cell_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, $5, 'default')`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_tasks (id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, queue_name, max_active_duration_ms) VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 'default', 300000)`, ids.deploymentTaskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, sandboxID, taskID, artifactID, streamTestPublicID(t, publicid.DeploymentTask)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO tasks (org_id, cell_id, project_id, environment_id, task_id) VALUES ($1, $2, $3, $4, $5)`, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, taskID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sandboxID, streamTestPublicID(t, publicid.Workspace)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, org_id, cell_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $2, $3, $4, $5, $6, 'default', $7, 'oci-tar', $8, $8, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, rootfsDigest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_tasks (id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, queue_name, max_active_duration_ms) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'default', 300000)`, ids.deploymentTaskID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, sandboxID, taskID, artifactID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, org_id, cell_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sandboxID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, org_id, cell_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $8, 'slack:T123:C456')`, ids.sessionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $7, $8, 'slack:T123:C456')`, ids.sessionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID, streamTestPublicID(t, publicid.Session)); err != nil {
 		t.Fatal(err)
 	}
 	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
@@ -1087,54 +1068,53 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, cell_id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
-			worker_group_id, protocol_version,
-			total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
+			id, org_id, worker_group_id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
+			protocol_version, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
 			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, 1000, 1024, 4096, $5, $6, 1, 1000, 1024, 4096, 1,
-			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultCellID, "worker-"+workerID.String()[:8], ids.workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+		VALUES ($1, $2, $3, $4, 1000, 1024, 4096, $5, 1, 1000, 1024, 4096, 1,
+			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, org_id, cell_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'running', 'executing', '{}', 'default', 300000,
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'running', 'executing', '{}', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
-	`, runID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID); err != nil {
+	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_runtime_requirements (
-			run_id, org_id, cell_id, worker_group_id, requested_milli_cpu, requested_memory_mib,
+			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib,
 			requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch,
 			runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, 1000, 1024, 4096, 1, $5, 'arm64', 'test',
+		VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test',
 			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, runID, ids.orgID, dbtest.DefaultCellID, ids.workerGroupID, runtimeID); err != nil {
+	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, cell_id, run_id, attempt_number, status)
+		INSERT INTO run_attempts (id, org_id, worker_group_id, run_id, attempt_number, status)
 		VALUES ($1, $2, $3, $4, 1, 'running')
-	`, attemptID, ids.orgID, dbtest.DefaultCellID, runID); err != nil {
+	`, attemptID, ids.orgID, dbtest.DefaultWorkerGroupID, runID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_leases (
-			id, org_id, cell_id, run_id, attempt_id, worker_instance_id, worker_group_id, dispatch_message_id,
+			id, org_id, worker_group_id, run_id, attempt_id, worker_instance_id, dispatch_message_id,
 			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
 			span_id, parent_span_id, traceparent
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'running', now() + interval '1 hour', $10,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, 'running', now() + interval '1 hour', $9,
 			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
 			'00-11111111111111111111111111111111-3333333333333333-01')
-	`, runLeaseID, ids.orgID, dbtest.DefaultCellID, runID, attemptID, workerID, ids.workerGroupID, dispatchMessageID, dispatchLeaseID, runtimeID); err != nil {
+	`, runLeaseID, ids.orgID, dbtest.DefaultWorkerGroupID, runID, attemptID, workerID, dispatchMessageID, dispatchLeaseID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1158,17 +1138,16 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_queue_items (
-			run_id, org_id, cell_id, status, queue_name, dispatch_message_id,
+			run_id, org_id, worker_group_id, status, queue_name, dispatch_message_id,
 			reserved_by_worker_instance_id, reservation_expires_at
 		)
 		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
-	`, runID, ids.orgID, dbtest.DefaultCellID, dispatchMessageID, workerID); err != nil {
+	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	return workerActor{
 			WorkerInstanceID: workerID,
-			WorkerGroupID:    ids.workerGroupID,
-			CellID:           dbtest.DefaultCellID,
+			WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 			ResourceID:       "worker-" + workerID.String()[:8],
 		}, workerRunLeaseIDs{
 			orgID:           ids.orgID,
@@ -1184,10 +1163,10 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, streamID uuid.UUID, name string, direction string) {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')`, deploymentStreamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, org_id, cell_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, streamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name, streamTestPublicID(t, publicid.Stream)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1211,20 +1190,20 @@ func seedControlStreamSession(t *testing.T, ctx context.Context, pool *pgxpool.P
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO sessions (
-			id, org_id, cell_id, project_id, environment_id, task_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, task_id,
 			initial_deployment_id, active_deployment_id, workspace_id, external_id
 		)
-		VALUES ($1, $2, $3, $4, $5, 'approval-task', $6, $6, $7, $8)
-	`, sessionID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, externalID); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'approval-task', $6, $6, $7, $8)
+	`, sessionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, externalID, streamTestPublicID(t, publicid.Session)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO streams (
-			id, org_id, cell_id, project_id, environment_id, session_id,
+			id, public_id, org_id, worker_group_id, project_id, environment_id, session_id,
 			deployment_stream_id, name, direction, schema_fingerprint
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, streamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, streamName, direction, "schema-"+streamName); err != nil {
+		VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+	`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, streamName, direction, "schema-"+streamName, streamTestPublicID(t, publicid.Stream)); err != nil {
 		t.Fatal(err)
 	}
 	return sessionID, streamID
@@ -1233,7 +1212,7 @@ func seedControlStreamSession(t *testing.T, ctx context.Context, pool *pgxpool.P
 func seedControlDeploymentStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, name string, direction string, schemaFingerprint string, schemaJSON string) uuid.UUID {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, cell_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, deploymentStreamID, ids.orgID, dbtest.DefaultCellID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentStreamID

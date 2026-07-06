@@ -1,4 +1,4 @@
-package cell
+package workergroup
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const defaultRoutingFreshness = 120 * time.Second
@@ -16,35 +16,29 @@ const defaultRoutingFreshness = 120 * time.Second
 type BootstrapStore interface {
 	EnsureRegion(context.Context, db.EnsureRegionParams) (db.Region, error)
 	GetRegion(context.Context, string) (db.Region, error)
-	EnsureCell(context.Context, db.EnsureCellParams) (db.Cell, error)
-	GetCell(context.Context, string) (db.Cell, error)
-	RefreshCellHealthFromComponents(context.Context, db.RefreshCellHealthFromComponentsParams) (db.CellHealth, error)
-	EnsureDefaultWorkerGroup(context.Context, string) (db.WorkerGroup, error)
+	EnsureDefaultWorkerGroup(context.Context, db.EnsureDefaultWorkerGroupParams) (db.WorkerGroup, error)
+	ReportWorkerGroupHealth(context.Context, db.ReportWorkerGroupHealthParams) (db.WorkerGroup, error)
 }
 
 type BootstrapConfig struct {
-	RegionID           string
-	DefaultRegionID    string
-	Provider           string
-	ProviderRegion     string
-	RegionDisplayName  string
-	CellID             string
-	EnvironmentClass   string
-	RequiredComponents []string
+	RegionID          string
+	DefaultRegionID   string
+	Provider          string
+	ProviderRegion    string
+	RegionDisplayName string
+	WorkerGroupID     string
 }
 
 func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) error {
 	if store == nil {
-		return errors.New("cell bootstrap store is required")
+		return errors.New("worker group bootstrap store is required")
 	}
 	regionID := strings.TrimSpace(cfg.RegionID)
 	provider := strings.TrimSpace(cfg.Provider)
 	providerRegion := strings.TrimSpace(cfg.ProviderRegion)
 	displayName := strings.TrimSpace(cfg.RegionDisplayName)
-	cellID := strings.TrimSpace(cfg.CellID)
-	environmentClass := strings.TrimSpace(cfg.EnvironmentClass)
+	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
 	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
-	requiredComponents := normalizeRequiredComponents(cfg.RequiredComponents)
 	if regionID == "" {
 		return errors.New("region id is required")
 	}
@@ -60,14 +54,8 @@ func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) e
 	if displayName == "" {
 		displayName = regionID
 	}
-	if cellID == "" {
-		return errors.New("cell id is required")
-	}
-	if environmentClass == "" {
-		return errors.New("cell environment class is required")
-	}
-	if len(requiredComponents) == 0 {
-		requiredComponents = RoutingRequiredComponents()
+	if workerGroupID == "" {
+		return errors.New("worker group id is required")
 	}
 	region, err := store.EnsureRegion(ctx, db.EnsureRegionParams{
 		ID:             regionID,
@@ -94,28 +82,19 @@ func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) e
 			return fmt.Errorf("default region %q is not available", defaultRegionID)
 		}
 	}
-	if _, err := store.EnsureCell(ctx, db.EnsureCellParams{
-		ID:               cellID,
-		RegionID:         regionID,
-		EnvironmentClass: environmentClass,
-		State:            db.CellStateActive,
+	if _, err := store.EnsureDefaultWorkerGroup(ctx, db.EnsureDefaultWorkerGroupParams{
+		ID:       workerGroupID,
+		RegionID: regionID,
 	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			existing, getErr := store.GetCell(ctx, cellID)
-			if getErr == nil && existing.RegionID != regionID {
-				return fmt.Errorf("cell %q is already bound to region %q, not %q", cellID, existing.RegionID, regionID)
-			}
-		}
-		return fmt.Errorf("ensure cell: %w", err)
-	}
-	if _, err := store.RefreshCellHealthFromComponents(ctx, db.RefreshCellHealthFromComponentsParams{
-		CellID:             cellID,
-		RequiredComponents: requiredComponents,
-	}); err != nil {
-		return fmt.Errorf("ensure cell health: %w", err)
-	}
-	if _, err := store.EnsureDefaultWorkerGroup(ctx, cellID); err != nil {
 		return fmt.Errorf("ensure default worker group: %w", err)
+	}
+	if _, err := store.ReportWorkerGroupHealth(ctx, db.ReportWorkerGroupHealthParams{
+		HealthState:   db.WorkerGroupHealthStateHealthy,
+		FreshFor:      pgtype.Interval{Microseconds: defaultRoutingFreshness.Microseconds(), Valid: true},
+		HealthDetails: []byte(`{}`),
+		WorkerGroupID: workerGroupID,
+	}); err != nil {
+		return fmt.Errorf("ensure worker group health: %w", err)
 	}
 	return nil
 }

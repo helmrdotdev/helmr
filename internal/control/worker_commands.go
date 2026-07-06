@@ -30,10 +30,10 @@ const (
 )
 
 type WorkerCommandStream struct {
-	log    *slog.Logger
-	db     db.Querier
-	redis  redis.Cmdable
-	cellID string
+	log           *slog.Logger
+	db            db.Querier
+	redis         redis.Cmdable
+	workerGroupID string
 }
 
 type workerCommand struct {
@@ -53,20 +53,20 @@ type workerCommand struct {
 	Payload             json.RawMessage `json:"payload"`
 }
 
-func NewWorkerCommandStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, cellID string) (*WorkerCommandStream, error) {
+func NewWorkerCommandStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, workerGroupID string) (*WorkerCommandStream, error) {
 	if queries == nil {
 		return nil, errors.New("worker command stream database is required")
 	}
 	if redis == nil {
 		return nil, errors.New("worker command stream redis client is required")
 	}
-	if strings.TrimSpace(cellID) == "" {
-		return nil, errors.New("worker command stream cell id is required")
+	if strings.TrimSpace(workerGroupID) == "" {
+		return nil, errors.New("worker command stream worker group id is required")
 	}
 	if log == nil {
 		log = slog.Default()
 	}
-	return &WorkerCommandStream{log: log, db: queries, redis: redis, cellID: cellID}, nil
+	return &WorkerCommandStream{log: log, db: queries, redis: redis, workerGroupID: workerGroupID}, nil
 }
 
 func (s *WorkerCommandStream) LatestID(ctx context.Context, workerInstanceID pgtype.UUID) (string, error) {
@@ -114,7 +114,7 @@ func (s *WorkerCommandStream) RunPublisher(ctx context.Context) error {
 			return err
 		}
 		claimed, err := s.db.ClaimWorkerCommands(ctx, db.ClaimWorkerCommandsParams{
-			CellID:        s.cellID,
+			WorkerGroupID: s.workerGroupID,
 			RowLimit:      workerCommandBatchSize,
 			LeaseDuration: pgvalue.Interval(workerCommandLeaseDuration),
 		})
@@ -240,7 +240,7 @@ func (s *Server) workerReadCommands(w http.ResponseWriter, r *http.Request) {
 		}
 		rows, err := s.db.ListWorkerCommandsAfter(r.Context(), db.ListWorkerCommandsAfterParams{
 			WorkerInstanceID: workerInstanceID,
-			CellID:           worker.CellID,
+			WorkerGroupID:    worker.WorkerGroupID,
 			AfterID:          afterID,
 			LimitCount:       workerCommandReplayLimit,
 		})
@@ -294,7 +294,7 @@ func (s *Server) workerAcknowledgeCommand(w http.ResponseWriter, r *http.Request
 	worker := workerFromContext(r.Context())
 	row, err := s.db.AcknowledgeWorkerCommand(r.Context(), db.AcknowledgeWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		ID:               request.ID,
 	})
 	if isNoRows(err) {
@@ -324,7 +324,7 @@ func (s *Server) workerAcceptCommand(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
 	row, err := s.db.AcceptWorkerCommand(r.Context(), db.AcceptWorkerCommandParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		ID:               request.ID,
 	})
 	if isNoRows(err) {

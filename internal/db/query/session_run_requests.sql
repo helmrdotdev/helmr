@@ -2,25 +2,45 @@
 INSERT INTO session_run_requests (
     id,
     org_id,
-    cell_id,
+    worker_group_id,
     project_id,
     environment_id,
     session_id,
     stream_record_id,
     stream_id,
     cause_kind
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(org_id),
-    sqlc.arg(cell_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
-    sqlc.arg(session_id),
-    sqlc.arg(stream_record_id),
-    sqlc.arg(stream_id),
-    'stream_record'
 )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, stream_record_id)
+SELECT
+    sqlc.arg(id),
+    stream_records.org_id,
+    stream_records.worker_group_id,
+    stream_records.project_id,
+    stream_records.environment_id,
+    stream_records.session_id,
+    stream_records.id,
+    stream_records.stream_id,
+    'stream_record'
+  FROM stream_records
+  JOIN streams
+    ON streams.org_id = stream_records.org_id
+   AND streams.project_id = stream_records.project_id
+   AND streams.environment_id = stream_records.environment_id
+   AND streams.id = stream_records.stream_id
+   AND streams.worker_group_id = stream_records.worker_group_id
+   AND streams.session_id = stream_records.session_id
+  JOIN sessions
+    ON sessions.org_id = stream_records.org_id
+   AND sessions.project_id = stream_records.project_id
+   AND sessions.environment_id = stream_records.environment_id
+   AND sessions.id = stream_records.session_id
+   AND sessions.worker_group_id = stream_records.worker_group_id
+ WHERE stream_records.org_id = sqlc.arg(org_id)
+   AND stream_records.project_id = sqlc.arg(project_id)
+   AND stream_records.environment_id = sqlc.arg(environment_id)
+   AND stream_records.session_id = sqlc.arg(session_id)
+   AND stream_records.stream_id = sqlc.arg(stream_id)
+   AND stream_records.id = sqlc.arg(stream_record_id)
+ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_run_requests.updated_at
 RETURNING *;
 
@@ -28,7 +48,6 @@ RETURNING *;
 SELECT *
  FROM session_run_requests
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -38,7 +57,7 @@ WITH eligible AS (
     SELECT id
      FROM session_run_requests
      WHERE status IN ('accepted', 'claimed')
-       AND cell_id = sqlc.arg(cell_id)
+       AND worker_group_id = sqlc.arg(worker_group_id)
        AND (
            status = 'accepted'
            OR claim_expires_at IS NULL
@@ -74,7 +93,7 @@ UPDATE session_run_requests
        updated_at = now()
  FROM eligible
  WHERE session_run_requests.id = eligible.id
-   AND session_run_requests.cell_id = sqlc.arg(cell_id)
+   AND session_run_requests.worker_group_id = sqlc.arg(worker_group_id)
 RETURNING session_run_requests.*;
 
 -- name: ReleaseSessionRunRequestForRetry :one
@@ -88,7 +107,7 @@ UPDATE session_run_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND cell_id = sqlc.arg(cell_id)
+	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -107,7 +126,7 @@ UPDATE session_run_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND cell_id = sqlc.arg(cell_id)
+	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -125,7 +144,7 @@ UPDATE session_run_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND cell_id = sqlc.arg(cell_id)
+	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -138,7 +157,7 @@ WITH target AS MATERIALIZED (
     SELECT *
      FROM session_run_requests
      WHERE session_run_requests.org_id = sqlc.arg(org_id)
-       AND session_run_requests.cell_id = sqlc.arg(cell_id)
+       AND session_run_requests.worker_group_id = sqlc.arg(worker_group_id)
        AND session_run_requests.project_id = sqlc.arg(project_id)
        AND session_run_requests.environment_id = sqlc.arg(environment_id)
        AND session_run_requests.stream_record_id = sqlc.arg(stream_record_id)
@@ -172,7 +191,7 @@ cancelled_runs AS (
      WHERE target.status = 'created'
        AND target.run_id IS NOT NULL
        AND runs.org_id = target.org_id
-       AND runs.cell_id = target.cell_id
+       AND runs.worker_group_id = target.worker_group_id
        AND runs.project_id = target.project_id
        AND runs.environment_id = target.environment_id
        AND runs.id = target.run_id
@@ -190,7 +209,7 @@ cancelled_attempts AS (
            updated_at = now()
       FROM cancelled_runs
      WHERE run_attempts.org_id = cancelled_runs.org_id
-       AND run_attempts.cell_id = cancelled_runs.cell_id
+       AND run_attempts.worker_group_id = cancelled_runs.worker_group_id
        AND run_attempts.run_id = cancelled_runs.id
        AND run_attempts.id = cancelled_runs.current_attempt_id
     RETURNING run_attempts.id
@@ -204,7 +223,7 @@ cancelled_queue AS (
            finished_at = now()
       FROM cancelled_runs
      WHERE run_queue_items.org_id = cancelled_runs.org_id
-       AND run_queue_items.cell_id = cancelled_runs.cell_id
+       AND run_queue_items.worker_group_id = cancelled_runs.worker_group_id
        AND run_queue_items.run_id = cancelled_runs.id
        AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
        AND cancelled_runs.execution_status <> 'pending_cancel'
@@ -215,7 +234,7 @@ ended_session_runs AS (
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs
      WHERE session_runs.org_id = cancelled_runs.org_id
-       AND session_runs.cell_id = cancelled_runs.cell_id
+       AND session_runs.worker_group_id = cancelled_runs.worker_group_id
        AND session_runs.project_id = cancelled_runs.project_id
        AND session_runs.environment_id = cancelled_runs.environment_id
        AND session_runs.session_id = cancelled_runs.session_id
@@ -229,7 +248,7 @@ restored_session_current AS (
            updated_at = now()
       FROM target
      WHERE sessions.org_id = target.org_id
-       AND sessions.cell_id = target.cell_id
+       AND sessions.worker_group_id = target.worker_group_id
        AND sessions.project_id = target.project_id
        AND sessions.environment_id = target.environment_id
        AND sessions.id = target.session_id
@@ -247,7 +266,7 @@ UPDATE session_run_requests
        updated_at = now()
   FROM target
  WHERE session_run_requests.org_id = target.org_id
-   AND session_run_requests.cell_id = target.cell_id
+   AND session_run_requests.worker_group_id = target.worker_group_id
    AND session_run_requests.project_id = target.project_id
    AND session_run_requests.environment_id = target.environment_id
    AND session_run_requests.id = target.id
@@ -263,7 +282,7 @@ UPDATE session_run_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND cell_id = sqlc.arg(cell_id)
+	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)

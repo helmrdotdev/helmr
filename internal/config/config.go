@@ -28,7 +28,7 @@ const (
 type Control struct {
 	Addr                    string
 	DeploymentMode          string
-	CellID                  string
+	WorkerGroupID           string
 	RegionID                string
 	DefaultRegionID         string
 	DatabaseURL             string
@@ -61,7 +61,7 @@ type Control struct {
 type Dispatcher struct {
 	DatabaseURL                string
 	RedisURL                   string
-	CellID                     string
+	WorkerGroupID              string
 	ClickHouseURL              string
 	ClickHouseUser             string
 	ClickHousePassword         string
@@ -97,14 +97,13 @@ type ClickHouse struct {
 	Password string
 }
 
-type CellBootstrap struct {
+type WorkerGroupBootstrap struct {
 	RegionID          string
 	DefaultRegionID   string
 	Provider          string
 	ProviderRegion    string
 	RegionDisplayName string
-	CellID            string
-	EnvironmentClass  string
+	WorkerGroupID     string
 }
 
 type Worker struct {
@@ -182,17 +181,16 @@ func LoadClickHouse() (ClickHouse, error) {
 	return cfg, nil
 }
 
-func LoadCellBootstrap() (CellBootstrap, error) {
+func LoadWorkerGroupBootstrap() (WorkerGroupBootstrap, error) {
 	regionID := envString("HELMR_REGION_ID")
 	defaultRegionID := envString("HELMR_DEFAULT_REGION_ID")
-	cfg := CellBootstrap{
+	cfg := WorkerGroupBootstrap{
 		RegionID:          regionID,
 		DefaultRegionID:   defaultRegionID,
 		Provider:          envString("HELMR_PROVIDER"),
 		ProviderRegion:    envString("HELMR_PROVIDER_REGION"),
 		RegionDisplayName: envString("HELMR_REGION_DISPLAY_NAME"),
-		CellID:            envString("HELMR_CELL_ID"),
-		EnvironmentClass:  envString("HELMR_CELL_ENVIRONMENT_CLASS"),
+		WorkerGroupID:     envString("HELMR_WORKER_GROUP_ID"),
 	}
 	if cfg.RegionID == "" {
 		return cfg, errors.New("HELMR_REGION_ID is required")
@@ -209,11 +207,8 @@ func LoadCellBootstrap() (CellBootstrap, error) {
 	if cfg.RegionDisplayName == "" {
 		cfg.RegionDisplayName = cfg.RegionID
 	}
-	if cfg.CellID == "" {
-		return cfg, errors.New("HELMR_CELL_ID is required")
-	}
-	if cfg.EnvironmentClass == "" {
-		return cfg, errors.New("HELMR_CELL_ENVIRONMENT_CLASS is required")
+	if cfg.WorkerGroupID == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	return cfg, nil
 }

@@ -27,7 +27,7 @@ SELECT updated.id AS outbox_id,
        events.*
   FROM updated
   JOIN event_hot_payloads AS events ON events.org_id = updated.org_id
-                                   AND events.cell_id = updated.cell_id
+                                   AND events.worker_group_id = updated.worker_group_id
                                    AND events.subject_type = updated.source_kind::event_subject_type
                                    AND events.subject_id = updated.source_id
                                    AND events.seq = updated.seq
@@ -60,7 +60,7 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        runs.project_id,
        runs.environment_id,
        chunks.run_id,
@@ -75,7 +75,7 @@ SELECT updated.id AS outbox_id,
        chunks.created_at
   FROM updated
   JOIN run_log_hot_chunks AS chunks ON chunks.org_id = updated.org_id
-                                   AND chunks.cell_id = updated.cell_id
+                                   AND chunks.worker_group_id = updated.worker_group_id
                                    AND chunks.run_id = updated.source_id
                                    AND chunks.stream::text = updated.stream_name
                                    AND chunks.seq = updated.seq
@@ -99,7 +99,7 @@ WITH claimed AS (
              SELECT 1
                FROM workspace_exec_stream_chunks AS chunks
               WHERE chunks.org_id = telemetry_outbox.org_id
-                AND chunks.cell_id = telemetry_outbox.cell_id
+                AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                 AND chunks.exec_id = telemetry_outbox.source_id
                 AND chunks.stream::text = telemetry_outbox.stream_name
                 AND chunks.offset_start = telemetry_outbox.seq
@@ -123,7 +123,7 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        chunks.project_id,
        chunks.environment_id,
        chunks.workspace_id,
@@ -136,7 +136,7 @@ SELECT updated.id AS outbox_id,
        chunks.observed_at
   FROM updated
   JOIN workspace_exec_stream_chunks AS chunks ON chunks.org_id = updated.org_id
-                                             AND chunks.cell_id = updated.cell_id
+                                             AND chunks.worker_group_id = updated.worker_group_id
                                              AND chunks.exec_id = updated.source_id
                                              AND chunks.stream::text = updated.stream_name
                                              AND chunks.offset_start = updated.seq
@@ -155,7 +155,7 @@ WITH claimed AS (
              SELECT 1
                FROM workspace_pty_stream_chunks AS chunks
               WHERE chunks.org_id = telemetry_outbox.org_id
-                AND chunks.cell_id = telemetry_outbox.cell_id
+                AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                 AND chunks.pty_session_id = telemetry_outbox.source_id
                 AND chunks.stream::text = telemetry_outbox.stream_name
                 AND chunks.offset_start = telemetry_outbox.seq
@@ -179,7 +179,7 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
        chunks.org_id,
-       chunks.cell_id,
+       chunks.worker_group_id,
        chunks.project_id,
        chunks.environment_id,
        chunks.workspace_id,
@@ -192,7 +192,7 @@ SELECT updated.id AS outbox_id,
        chunks.observed_at
   FROM updated
   JOIN workspace_pty_stream_chunks AS chunks ON chunks.org_id = updated.org_id
-                                            AND chunks.cell_id = updated.cell_id
+                                            AND chunks.worker_group_id = updated.worker_group_id
                                             AND chunks.pty_session_id = updated.source_id
                                             AND chunks.stream::text = updated.stream_name
                                             AND chunks.offset_start = updated.seq
@@ -212,7 +212,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM event_hot_payloads AS events
                      WHERE events.org_id = telemetry_outbox.org_id
-                       AND events.cell_id = telemetry_outbox.cell_id
+                       AND events.worker_group_id = telemetry_outbox.worker_group_id
                        AND events.subject_type = telemetry_outbox.source_kind::event_subject_type
                        AND events.subject_id = telemetry_outbox.source_id
                        AND events.seq = telemetry_outbox.seq
@@ -224,7 +224,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM run_log_hot_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.run_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.seq = telemetry_outbox.seq
@@ -237,7 +237,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM workspace_exec_stream_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.exec_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.offset_start = telemetry_outbox.seq
@@ -250,7 +250,7 @@ WITH candidates AS (
                     SELECT 1
                       FROM workspace_pty_stream_chunks AS chunks
                      WHERE chunks.org_id = telemetry_outbox.org_id
-                       AND chunks.cell_id = telemetry_outbox.cell_id
+                       AND chunks.worker_group_id = telemetry_outbox.worker_group_id
                        AND chunks.pty_session_id = telemetry_outbox.source_id
                        AND chunks.stream::text = telemetry_outbox.stream_name
                        AND chunks.offset_start = telemetry_outbox.seq
@@ -273,9 +273,9 @@ dead_lettered AS (
     RETURNING telemetry_outbox.*
 ),
 replay_errors AS (
-    INSERT INTO telemetry_replay_errors (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
+    INSERT INTO telemetry_replay_errors (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
     SELECT org_id,
-           cell_id,
+           worker_group_id,
            stream_kind,
            source_kind,
            source_id,
@@ -332,9 +332,9 @@ WITH dead_lettered AS (
        AND telemetry_outbox.written_at IS NULL
     RETURNING *
 )
-INSERT INTO telemetry_replay_errors (org_id, cell_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
+INSERT INTO telemetry_replay_errors (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
 SELECT org_id,
-       cell_id,
+       worker_group_id,
        stream_kind,
        source_kind,
        source_id,
@@ -350,7 +350,7 @@ SELECT org_id,
 SELECT telemetry_outbox.seq
   FROM telemetry_outbox
  WHERE telemetry_outbox.org_id = sqlc.arg(org_id)
-   AND telemetry_outbox.cell_id = sqlc.arg(cell_id)
+   AND telemetry_outbox.worker_group_id = sqlc.arg(worker_group_id)
    AND telemetry_outbox.stream_kind = sqlc.arg(stream_kind)::telemetry_stream_kind
    AND telemetry_outbox.source_kind = sqlc.arg(source_kind)
    AND telemetry_outbox.source_id = sqlc.arg(source_id)
@@ -365,7 +365,7 @@ UNION
 SELECT telemetry_replay_errors.seq
   FROM telemetry_replay_errors
  WHERE telemetry_replay_errors.org_id = sqlc.arg(org_id)
-   AND telemetry_replay_errors.cell_id = sqlc.arg(cell_id)
+   AND telemetry_replay_errors.worker_group_id = sqlc.arg(worker_group_id)
    AND telemetry_replay_errors.stream_kind = sqlc.arg(stream_kind)::telemetry_stream_kind
    AND telemetry_replay_errors.source_kind = sqlc.arg(source_kind)
    AND telemetry_replay_errors.source_id = sqlc.arg(source_id)
@@ -384,7 +384,7 @@ SELECT COALESCE(
         SELECT MIN(seq) - 1
                  FROM telemetry_outbox
                 WHERE org_id = sqlc.arg(org_id)
-                  AND cell_id = sqlc.arg(cell_id)
+                  AND worker_group_id = sqlc.arg(worker_group_id)
                   AND stream_kind = sqlc.arg(stream_kind)::telemetry_stream_kind
                   AND source_kind = sqlc.arg(source_kind)
                   AND source_id = sqlc.arg(source_id)
@@ -401,7 +401,7 @@ SELECT COALESCE(
         SELECT MIN(seq) - 1
           FROM telemetry_outbox
          WHERE org_id = sqlc.arg(org_id)
-           AND cell_id = sqlc.arg(cell_id)
+           AND worker_group_id = sqlc.arg(worker_group_id)
            AND stream_kind = 'run_log'
            AND source_kind = 'run'
            AND source_id = sqlc.arg(run_id)
@@ -417,7 +417,7 @@ SELECT COALESCE(
         SELECT MIN(seq)
           FROM telemetry_outbox
          WHERE org_id = sqlc.arg(org_id)
-           AND cell_id = sqlc.arg(cell_id)
+           AND worker_group_id = sqlc.arg(worker_group_id)
            AND stream_kind = 'terminal_output'
            AND source_kind = sqlc.arg(source_kind)
            AND source_id = sqlc.arg(source_id)

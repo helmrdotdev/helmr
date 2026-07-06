@@ -1,9 +1,8 @@
 -- name: CreateToken :one
 WITH existing_token AS MATERIALIZED (
     SELECT tokens.*
-      FROM tokens
+     FROM tokens
      WHERE tokens.org_id = sqlc.arg(org_id)
-       AND tokens.cell_id = sqlc.arg(cell_id)
        AND tokens.project_id = sqlc.arg(project_id)
        AND tokens.environment_id = sqlc.arg(environment_id)
        AND tokens.idempotency_key = sqlc.arg(idempotency_key)
@@ -13,8 +12,8 @@ WITH existing_token AS MATERIALIZED (
 inserted_token AS (
     INSERT INTO tokens (
         id,
+        public_id,
         org_id,
-        cell_id,
         project_id,
         environment_id,
         timeout_at,
@@ -28,8 +27,8 @@ inserted_token AS (
         tags
     )
     SELECT sqlc.arg(id),
+           sqlc.arg(public_id),
            sqlc.arg(org_id),
-           sqlc.arg(cell_id),
            sqlc.arg(project_id),
            sqlc.arg(environment_id),
            sqlc.arg(timeout_at),
@@ -62,7 +61,6 @@ SELECT selected_token.*,
 SELECT *
  FROM tokens
  WHERE org_id = sqlc.arg(org_id)
-   AND cell_id = sqlc.arg(cell_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -77,15 +75,13 @@ WITH cursor_token AS (
     SELECT created_at, id
      FROM tokens
      WHERE org_id = sqlc.arg(org_id)
-       AND cell_id = sqlc.arg(cell_id)
        AND project_id = sqlc.arg(project_id)
        AND environment_id = sqlc.arg(environment_id)
        AND id = sqlc.narg(after_id)::uuid
 )
 SELECT *
-  FROM tokens
+ FROM tokens
  WHERE tokens.org_id = sqlc.arg(org_id)
-   AND tokens.cell_id = sqlc.arg(cell_id)
    AND tokens.project_id = sqlc.arg(project_id)
    AND tokens.environment_id = sqlc.arg(environment_id)
    AND (
@@ -111,9 +107,8 @@ SELECT *
 -- name: CompleteToken :one
 WITH target AS (
     SELECT tokens.*
-      FROM tokens
+     FROM tokens
      WHERE tokens.org_id = sqlc.arg(org_id)
-       AND tokens.cell_id = sqlc.arg(cell_id)
        AND tokens.project_id = sqlc.arg(project_id)
        AND tokens.environment_id = sqlc.arg(environment_id)
        AND tokens.id = sqlc.arg(id)
@@ -128,9 +123,8 @@ completed AS (
            completion_fingerprint = COALESCE(sqlc.arg(completion_fingerprint)::text, ''),
            completed_at = now(),
            updated_at = now()
-      FROM target
+     FROM target
      WHERE tokens.org_id = target.org_id
-       AND tokens.cell_id = target.cell_id
        AND tokens.id = target.id
        AND target.state = 'pending'
        AND target.timeout_at > now()
@@ -151,13 +145,12 @@ matched_token_wait AS (
        SET matched_completion_at = COALESCE(selected_token.completed_at, now())
       FROM selected_token
      WHERE token_waits.org_id = selected_token.org_id
-       AND token_waits.cell_id = selected_token.cell_id
        AND token_waits.project_id = selected_token.project_id
        AND token_waits.environment_id = selected_token.environment_id
        AND token_waits.token_id = selected_token.id
        AND token_waits.matched_completion_at IS NULL
        AND selected_token.state = 'completed'
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
 ),
 resolved_wait AS (
     UPDATE run_waits
@@ -170,7 +163,7 @@ resolved_wait AS (
            updated_at = now()
      FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.cell_id = matched_token_wait.cell_id
+       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -195,7 +188,6 @@ WITH cancelled AS (
            cancelled_at = now(),
            updated_at = now()
      WHERE tokens.org_id = sqlc.arg(org_id)
-       AND tokens.cell_id = sqlc.arg(cell_id)
        AND tokens.project_id = sqlc.arg(project_id)
        AND tokens.environment_id = sqlc.arg(environment_id)
        AND tokens.id = sqlc.arg(id)
@@ -208,12 +200,11 @@ matched_token_wait AS (
        SET matched_completion_at = now()
      FROM cancelled
      WHERE token_waits.org_id = cancelled.org_id
-       AND token_waits.cell_id = cancelled.cell_id
        AND token_waits.project_id = cancelled.project_id
        AND token_waits.environment_id = cancelled.environment_id
        AND token_waits.token_id = cancelled.id
        AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
 ),
 resolved_cancelled_wait AS (
     UPDATE run_waits
@@ -226,7 +217,7 @@ resolved_cancelled_wait AS (
            updated_at = now()
      FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.cell_id = matched_token_wait.cell_id
+       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
@@ -241,7 +232,6 @@ WITH expired AS (
            expired_at = now(),
            updated_at = now()
      WHERE tokens.org_id = sqlc.arg(org_id)
-       AND tokens.cell_id = sqlc.arg(cell_id)
        AND tokens.state = 'pending'
        AND tokens.timeout_at <= now()
     RETURNING tokens.*
@@ -251,12 +241,11 @@ matched_token_wait AS (
        SET matched_completion_at = now()
       FROM expired
      WHERE token_waits.org_id = expired.org_id
-       AND token_waits.cell_id = expired.cell_id
        AND token_waits.project_id = expired.project_id
        AND token_waits.environment_id = expired.environment_id
        AND token_waits.token_id = expired.id
        AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.cell_id
+    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
 ),
 expired_wait AS (
     UPDATE run_waits
@@ -265,7 +254,7 @@ expired_wait AS (
            updated_at = now()
       FROM matched_token_wait
      WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.cell_id = matched_token_wait.cell_id
+       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
        AND run_waits.id = matched_token_wait.run_wait_id
        AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id

@@ -17,7 +17,7 @@ SELECT COALESCE(
         SELECT MIN(telemetry_outbox.seq) - 1
           FROM telemetry_outbox
          WHERE telemetry_outbox.org_id = $1
-           AND telemetry_outbox.cell_id = $2
+           AND telemetry_outbox.worker_group_id = $2
            AND telemetry_outbox.stream_kind = 'event'
            AND telemetry_outbox.source_kind = $3
            AND telemetry_outbox.source_id = $4
@@ -28,7 +28,7 @@ SELECT COALESCE(
         SELECT watermark_seq
           FROM event_watermarks
          WHERE org_id = $1
-           AND cell_id = $2
+           AND worker_group_id = $2
            AND subject_kind = $3::event_subject_type
            AND subject_id = $4
     ),
@@ -37,16 +37,16 @@ SELECT COALESCE(
 `
 
 type GetEventWatermarkParams struct {
-	OrgID       pgtype.UUID `json:"org_id"`
-	CellID      string      `json:"cell_id"`
-	SubjectType string      `json:"subject_type"`
-	SubjectID   pgtype.UUID `json:"subject_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	SubjectType   string      `json:"subject_type"`
+	SubjectID     pgtype.UUID `json:"subject_id"`
 }
 
 func (q *Queries) GetEventWatermark(ctx context.Context, arg GetEventWatermarkParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getEventWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.SubjectType,
 		arg.SubjectID,
 	)
@@ -61,7 +61,7 @@ SELECT COALESCE(
         SELECT MIN(telemetry_outbox.seq) - 1
           FROM telemetry_outbox
          WHERE telemetry_outbox.org_id = $1
-           AND telemetry_outbox.cell_id = $2
+           AND telemetry_outbox.worker_group_id = $2
            AND telemetry_outbox.stream_kind = 'run_log'
            AND telemetry_outbox.source_kind = 'run'
            AND telemetry_outbox.source_id = $3
@@ -72,7 +72,7 @@ SELECT COALESCE(
         SELECT MIN(watermark_seq)
           FROM run_log_watermarks
          WHERE org_id = $1
-           AND cell_id = $2
+           AND worker_group_id = $2
            AND run_id = $3
     ),
     0
@@ -80,13 +80,13 @@ SELECT COALESCE(
 `
 
 type GetRunLogWatermarkParams struct {
-	OrgID  pgtype.UUID `json:"org_id"`
-	CellID string      `json:"cell_id"`
-	RunID  pgtype.UUID `json:"run_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	RunID         pgtype.UUID `json:"run_id"`
 }
 
 func (q *Queries) GetRunLogWatermark(ctx context.Context, arg GetRunLogWatermarkParams) (int64, error) {
-	row := q.db.QueryRow(ctx, getRunLogWatermark, arg.OrgID, arg.CellID, arg.RunID)
+	row := q.db.QueryRow(ctx, getRunLogWatermark, arg.OrgID, arg.WorkerGroupID, arg.RunID)
 	var watermark_seq int64
 	err := row.Scan(&watermark_seq)
 	return watermark_seq, err
@@ -98,7 +98,7 @@ SELECT COALESCE(
         SELECT MIN(telemetry_outbox.seq)
           FROM telemetry_outbox
          WHERE telemetry_outbox.org_id = $1
-           AND telemetry_outbox.cell_id = $2
+           AND telemetry_outbox.worker_group_id = $2
            AND telemetry_outbox.stream_kind = 'terminal_output'
            AND telemetry_outbox.source_kind = $3
            AND telemetry_outbox.source_id = $4
@@ -110,7 +110,7 @@ SELECT COALESCE(
         SELECT watermark_offset
           FROM terminal_output_watermarks
          WHERE org_id = $1
-           AND cell_id = $2
+           AND worker_group_id = $2
            AND workspace_id = $6
            AND resource_kind = $3
            AND resource_id = $4
@@ -121,18 +121,18 @@ SELECT COALESCE(
 `
 
 type GetTerminalOutputWatermarkParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	CellID       string      `json:"cell_id"`
-	ResourceKind string      `json:"resource_kind"`
-	ResourceID   pgtype.UUID `json:"resource_id"`
-	StreamName   string      `json:"stream_name"`
-	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	ResourceKind  string      `json:"resource_kind"`
+	ResourceID    pgtype.UUID `json:"resource_id"`
+	StreamName    string      `json:"stream_name"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 }
 
 func (q *Queries) GetTerminalOutputWatermark(ctx context.Context, arg GetTerminalOutputWatermarkParams) (int64, error) {
 	row := q.db.QueryRow(ctx, getTerminalOutputWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ResourceKind,
 		arg.ResourceID,
 		arg.StreamName,
@@ -144,10 +144,10 @@ func (q *Queries) GetTerminalOutputWatermark(ctx context.Context, arg GetTermina
 }
 
 const listRunLogChunksAfterWatermark = `-- name: ListRunLogChunksAfterWatermark :many
-SELECT chunks.org_id, chunks.cell_id, chunks.run_id, chunks.run_lease_id, chunks.attempt_number, chunks.stream, chunks.seq, chunks.observed_seq, chunks.content, chunks.size_bytes, chunks.expires_at, chunks.created_at
+SELECT chunks.org_id, chunks.worker_group_id, chunks.run_id, chunks.run_lease_id, chunks.attempt_number, chunks.stream, chunks.seq, chunks.observed_seq, chunks.content, chunks.size_bytes, chunks.expires_at, chunks.created_at
   FROM run_log_hot_chunks AS chunks
  WHERE chunks.org_id = $1
-   AND chunks.cell_id = $2
+   AND chunks.worker_group_id = $2
    AND chunks.run_id = $3
    AND chunks.seq > GREATEST($4::bigint, $5::bigint)
  ORDER BY chunks.seq
@@ -155,18 +155,18 @@ SELECT chunks.org_id, chunks.cell_id, chunks.run_id, chunks.run_lease_id, chunks
 `
 
 type ListRunLogChunksAfterWatermarkParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	CellID       string      `json:"cell_id"`
-	RunID        pgtype.UUID `json:"run_id"`
-	WatermarkSeq int64       `json:"watermark_seq"`
-	Seq          int64       `json:"seq"`
-	RowLimit     int32       `json:"row_limit"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WatermarkSeq  int64       `json:"watermark_seq"`
+	Seq           int64       `json:"seq"`
+	RowLimit      int32       `json:"row_limit"`
 }
 
 func (q *Queries) ListRunLogChunksAfterWatermark(ctx context.Context, arg ListRunLogChunksAfterWatermarkParams) ([]RunLogHotChunk, error) {
 	rows, err := q.db.Query(ctx, listRunLogChunksAfterWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.RunID,
 		arg.WatermarkSeq,
 		arg.Seq,
@@ -181,7 +181,7 @@ func (q *Queries) ListRunLogChunksAfterWatermark(ctx context.Context, arg ListRu
 		var i RunLogHotChunk
 		if err := rows.Scan(
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.RunID,
 			&i.RunLeaseID,
 			&i.AttemptNumber,
@@ -204,10 +204,10 @@ func (q *Queries) ListRunLogChunksAfterWatermark(ctx context.Context, arg ListRu
 }
 
 const listSubjectEventsAfterWatermark = `-- name: ListSubjectEventsAfterWatermark :many
-SELECT events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.cell_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
+SELECT events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
   FROM event_hot_payloads AS events
  WHERE events.org_id = $1
-   AND events.cell_id = $2
+   AND events.worker_group_id = $2
    AND events.subject_type = $3::event_subject_type
    AND events.subject_id = $4
    AND events.seq > GREATEST($5::bigint, $6::bigint)
@@ -216,19 +216,19 @@ SELECT events.id, events.subject_type, events.subject_id, events.seq, events.org
 `
 
 type ListSubjectEventsAfterWatermarkParams struct {
-	OrgID        pgtype.UUID      `json:"org_id"`
-	CellID       string           `json:"cell_id"`
-	SubjectType  EventSubjectType `json:"subject_type"`
-	SubjectID    pgtype.UUID      `json:"subject_id"`
-	WatermarkSeq int64            `json:"watermark_seq"`
-	Seq          int64            `json:"seq"`
-	RowLimit     int32            `json:"row_limit"`
+	OrgID         pgtype.UUID      `json:"org_id"`
+	WorkerGroupID string           `json:"worker_group_id"`
+	SubjectType   EventSubjectType `json:"subject_type"`
+	SubjectID     pgtype.UUID      `json:"subject_id"`
+	WatermarkSeq  int64            `json:"watermark_seq"`
+	Seq           int64            `json:"seq"`
+	RowLimit      int32            `json:"row_limit"`
 }
 
 func (q *Queries) ListSubjectEventsAfterWatermark(ctx context.Context, arg ListSubjectEventsAfterWatermarkParams) ([]EventHotPayload, error) {
 	rows, err := q.db.Query(ctx, listSubjectEventsAfterWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.SubjectType,
 		arg.SubjectID,
 		arg.WatermarkSeq,
@@ -248,7 +248,7 @@ func (q *Queries) ListSubjectEventsAfterWatermark(ctx context.Context, arg ListS
 			&i.SubjectID,
 			&i.Seq,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
@@ -283,10 +283,10 @@ func (q *Queries) ListSubjectEventsAfterWatermark(ctx context.Context, arg ListS
 }
 
 const listWorkspaceExecStreamChunksAfterWatermark = `-- name: ListWorkspaceExecStreamChunksAfterWatermark :many
-SELECT chunks.id, chunks.org_id, chunks.cell_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.exec_id, chunks.stream, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
+SELECT chunks.id, chunks.org_id, chunks.worker_group_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.exec_id, chunks.stream, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
   FROM workspace_exec_stream_chunks AS chunks
  WHERE chunks.org_id = $1
-   AND chunks.cell_id = $2
+   AND chunks.worker_group_id = $2
    AND chunks.project_id = $3
    AND chunks.environment_id = $4
    AND chunks.workspace_id = $5
@@ -299,7 +299,7 @@ SELECT chunks.id, chunks.org_id, chunks.cell_id, chunks.project_id, chunks.envir
 
 type ListWorkspaceExecStreamChunksAfterWatermarkParams struct {
 	OrgID           pgtype.UUID         `json:"org_id"`
-	CellID          string              `json:"cell_id"`
+	WorkerGroupID   string              `json:"worker_group_id"`
 	ProjectID       pgtype.UUID         `json:"project_id"`
 	EnvironmentID   pgtype.UUID         `json:"environment_id"`
 	WorkspaceID     pgtype.UUID         `json:"workspace_id"`
@@ -313,7 +313,7 @@ type ListWorkspaceExecStreamChunksAfterWatermarkParams struct {
 func (q *Queries) ListWorkspaceExecStreamChunksAfterWatermark(ctx context.Context, arg ListWorkspaceExecStreamChunksAfterWatermarkParams) ([]WorkspaceExecStreamChunk, error) {
 	rows, err := q.db.Query(ctx, listWorkspaceExecStreamChunksAfterWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -333,7 +333,7 @@ func (q *Queries) ListWorkspaceExecStreamChunksAfterWatermark(ctx context.Contex
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -357,10 +357,10 @@ func (q *Queries) ListWorkspaceExecStreamChunksAfterWatermark(ctx context.Contex
 }
 
 const listWorkspacePtyStreamChunksAfterWatermark = `-- name: ListWorkspacePtyStreamChunksAfterWatermark :many
-SELECT chunks.id, chunks.org_id, chunks.cell_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.pty_session_id, chunks.stream, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
+SELECT chunks.id, chunks.org_id, chunks.worker_group_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.pty_session_id, chunks.stream, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
   FROM workspace_pty_stream_chunks AS chunks
  WHERE chunks.org_id = $1
-   AND chunks.cell_id = $2
+   AND chunks.worker_group_id = $2
    AND chunks.project_id = $3
    AND chunks.environment_id = $4
    AND chunks.workspace_id = $5
@@ -373,7 +373,7 @@ SELECT chunks.id, chunks.org_id, chunks.cell_id, chunks.project_id, chunks.envir
 
 type ListWorkspacePtyStreamChunksAfterWatermarkParams struct {
 	OrgID           pgtype.UUID        `json:"org_id"`
-	CellID          string             `json:"cell_id"`
+	WorkerGroupID   string             `json:"worker_group_id"`
 	ProjectID       pgtype.UUID        `json:"project_id"`
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
@@ -387,7 +387,7 @@ type ListWorkspacePtyStreamChunksAfterWatermarkParams struct {
 func (q *Queries) ListWorkspacePtyStreamChunksAfterWatermark(ctx context.Context, arg ListWorkspacePtyStreamChunksAfterWatermarkParams) ([]WorkspacePtyStreamChunk, error) {
 	rows, err := q.db.Query(ctx, listWorkspacePtyStreamChunksAfterWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -407,7 +407,7 @@ func (q *Queries) ListWorkspacePtyStreamChunksAfterWatermark(ctx context.Context
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.CellID,
+			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -434,11 +434,11 @@ const pruneEventsPastWatermark = `-- name: PruneEventsPastWatermark :many
 DELETE FROM event_hot_payloads
 USING event_watermarks
 WHERE event_hot_payloads.org_id = $1
-  AND event_hot_payloads.cell_id = $2
+  AND event_hot_payloads.worker_group_id = $2
   AND event_hot_payloads.subject_type = $3::event_subject_type
   AND event_hot_payloads.subject_id = $4
   AND event_watermarks.org_id = event_hot_payloads.org_id
-  AND event_watermarks.cell_id = event_hot_payloads.cell_id
+  AND event_watermarks.worker_group_id = event_hot_payloads.worker_group_id
   AND event_watermarks.subject_kind = event_hot_payloads.subject_type
   AND event_watermarks.subject_id = event_hot_payloads.subject_id
   AND event_hot_payloads.seq <= event_watermarks.watermark_seq
@@ -448,7 +448,7 @@ WHERE event_hot_payloads.org_id = $1
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.org_id = event_hot_payloads.org_id
-       AND telemetry_outbox.cell_id = event_hot_payloads.cell_id
+       AND telemetry_outbox.worker_group_id = event_hot_payloads.worker_group_id
        AND telemetry_outbox.source_kind = event_hot_payloads.subject_type::text
        AND telemetry_outbox.source_id = event_hot_payloads.subject_id
        AND telemetry_outbox.seq = event_hot_payloads.seq
@@ -459,17 +459,17 @@ RETURNING event_hot_payloads.seq
 `
 
 type PruneEventsPastWatermarkParams struct {
-	OrgID       pgtype.UUID      `json:"org_id"`
-	CellID      string           `json:"cell_id"`
-	SubjectType EventSubjectType `json:"subject_type"`
-	SubjectID   pgtype.UUID      `json:"subject_id"`
-	PruneGrace  pgtype.Interval  `json:"prune_grace"`
+	OrgID         pgtype.UUID      `json:"org_id"`
+	WorkerGroupID string           `json:"worker_group_id"`
+	SubjectType   EventSubjectType `json:"subject_type"`
+	SubjectID     pgtype.UUID      `json:"subject_id"`
+	PruneGrace    pgtype.Interval  `json:"prune_grace"`
 }
 
 func (q *Queries) PruneEventsPastWatermark(ctx context.Context, arg PruneEventsPastWatermarkParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, pruneEventsPastWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.SubjectType,
 		arg.SubjectID,
 		arg.PruneGrace,
@@ -499,7 +499,7 @@ WITH watermark AS (
             SELECT MIN(telemetry_outbox.seq) - 1
               FROM telemetry_outbox
              WHERE telemetry_outbox.org_id = $1
-               AND telemetry_outbox.cell_id = $2
+               AND telemetry_outbox.worker_group_id = $2
                AND telemetry_outbox.stream_kind = 'run_log'
                AND telemetry_outbox.source_kind = 'run'
                AND telemetry_outbox.source_id = $3
@@ -510,7 +510,7 @@ WITH watermark AS (
             SELECT MIN(watermark_seq)
               FROM run_log_watermarks
              WHERE org_id = $1
-               AND cell_id = $2
+               AND worker_group_id = $2
                AND run_id = $3
         ),
         0
@@ -519,7 +519,7 @@ WITH watermark AS (
 DELETE FROM run_log_hot_chunks
 USING watermark
 WHERE run_log_hot_chunks.org_id = $1
-  AND run_log_hot_chunks.cell_id = $2
+  AND run_log_hot_chunks.worker_group_id = $2
   AND run_log_hot_chunks.run_id = $3
   AND run_log_hot_chunks.seq <= watermark.seq
   AND run_log_hot_chunks.created_at < now() - $4::interval
@@ -527,16 +527,16 @@ RETURNING run_log_hot_chunks.seq
 `
 
 type PruneRunLogChunksPastWatermarkParams struct {
-	OrgID      pgtype.UUID     `json:"org_id"`
-	CellID     string          `json:"cell_id"`
-	RunID      pgtype.UUID     `json:"run_id"`
-	PruneGrace pgtype.Interval `json:"prune_grace"`
+	OrgID         pgtype.UUID     `json:"org_id"`
+	WorkerGroupID string          `json:"worker_group_id"`
+	RunID         pgtype.UUID     `json:"run_id"`
+	PruneGrace    pgtype.Interval `json:"prune_grace"`
 }
 
 func (q *Queries) PruneRunLogChunksPastWatermark(ctx context.Context, arg PruneRunLogChunksPastWatermarkParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, pruneRunLogChunksPastWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.RunID,
 		arg.PruneGrace,
 	)
@@ -562,11 +562,11 @@ const pruneWorkspaceExecStreamChunksPastWatermark = `-- name: PruneWorkspaceExec
 DELETE FROM workspace_exec_stream_chunks
 USING terminal_output_watermarks
 WHERE workspace_exec_stream_chunks.org_id = $1
-  AND workspace_exec_stream_chunks.cell_id = $2
+  AND workspace_exec_stream_chunks.worker_group_id = $2
   AND workspace_exec_stream_chunks.workspace_id = $3
   AND workspace_exec_stream_chunks.exec_id = $4
   AND terminal_output_watermarks.org_id = workspace_exec_stream_chunks.org_id
-  AND terminal_output_watermarks.cell_id = workspace_exec_stream_chunks.cell_id
+  AND terminal_output_watermarks.worker_group_id = workspace_exec_stream_chunks.worker_group_id
   AND terminal_output_watermarks.workspace_id = workspace_exec_stream_chunks.workspace_id
   AND terminal_output_watermarks.resource_kind = 'workspace_exec'
   AND terminal_output_watermarks.resource_id = workspace_exec_stream_chunks.exec_id
@@ -577,7 +577,7 @@ WHERE workspace_exec_stream_chunks.org_id = $1
         SELECT 1
           FROM telemetry_outbox
          WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
-           AND telemetry_outbox.cell_id = workspace_exec_stream_chunks.cell_id
+           AND telemetry_outbox.worker_group_id = workspace_exec_stream_chunks.worker_group_id
            AND telemetry_outbox.stream_kind = 'terminal_output'
            AND telemetry_outbox.source_kind = 'workspace_exec'
            AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
@@ -590,17 +590,17 @@ RETURNING workspace_exec_stream_chunks.offset_end
 `
 
 type PruneWorkspaceExecStreamChunksPastWatermarkParams struct {
-	OrgID       pgtype.UUID     `json:"org_id"`
-	CellID      string          `json:"cell_id"`
-	WorkspaceID pgtype.UUID     `json:"workspace_id"`
-	ExecID      pgtype.UUID     `json:"exec_id"`
-	PruneGrace  pgtype.Interval `json:"prune_grace"`
+	OrgID         pgtype.UUID     `json:"org_id"`
+	WorkerGroupID string          `json:"worker_group_id"`
+	WorkspaceID   pgtype.UUID     `json:"workspace_id"`
+	ExecID        pgtype.UUID     `json:"exec_id"`
+	PruneGrace    pgtype.Interval `json:"prune_grace"`
 }
 
 func (q *Queries) PruneWorkspaceExecStreamChunksPastWatermark(ctx context.Context, arg PruneWorkspaceExecStreamChunksPastWatermarkParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, pruneWorkspaceExecStreamChunksPastWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.WorkspaceID,
 		arg.ExecID,
 		arg.PruneGrace,
@@ -627,11 +627,11 @@ const pruneWorkspacePtyStreamChunksPastWatermark = `-- name: PruneWorkspacePtySt
 DELETE FROM workspace_pty_stream_chunks
 USING terminal_output_watermarks
 WHERE workspace_pty_stream_chunks.org_id = $1
-  AND workspace_pty_stream_chunks.cell_id = $2
+  AND workspace_pty_stream_chunks.worker_group_id = $2
   AND workspace_pty_stream_chunks.workspace_id = $3
   AND workspace_pty_stream_chunks.pty_session_id = $4
   AND terminal_output_watermarks.org_id = workspace_pty_stream_chunks.org_id
-  AND terminal_output_watermarks.cell_id = workspace_pty_stream_chunks.cell_id
+  AND terminal_output_watermarks.worker_group_id = workspace_pty_stream_chunks.worker_group_id
   AND terminal_output_watermarks.workspace_id = workspace_pty_stream_chunks.workspace_id
   AND terminal_output_watermarks.resource_kind = 'workspace_pty'
   AND terminal_output_watermarks.resource_id = workspace_pty_stream_chunks.pty_session_id
@@ -642,7 +642,7 @@ WHERE workspace_pty_stream_chunks.org_id = $1
         SELECT 1
           FROM telemetry_outbox
          WHERE telemetry_outbox.org_id = workspace_pty_stream_chunks.org_id
-           AND telemetry_outbox.cell_id = workspace_pty_stream_chunks.cell_id
+           AND telemetry_outbox.worker_group_id = workspace_pty_stream_chunks.worker_group_id
            AND telemetry_outbox.stream_kind = 'terminal_output'
            AND telemetry_outbox.source_kind = 'workspace_pty'
            AND telemetry_outbox.source_id = workspace_pty_stream_chunks.pty_session_id
@@ -655,17 +655,17 @@ RETURNING workspace_pty_stream_chunks.offset_end
 `
 
 type PruneWorkspacePtyStreamChunksPastWatermarkParams struct {
-	OrgID        pgtype.UUID     `json:"org_id"`
-	CellID       string          `json:"cell_id"`
-	WorkspaceID  pgtype.UUID     `json:"workspace_id"`
-	PtySessionID pgtype.UUID     `json:"pty_session_id"`
-	PruneGrace   pgtype.Interval `json:"prune_grace"`
+	OrgID         pgtype.UUID     `json:"org_id"`
+	WorkerGroupID string          `json:"worker_group_id"`
+	WorkspaceID   pgtype.UUID     `json:"workspace_id"`
+	PtySessionID  pgtype.UUID     `json:"pty_session_id"`
+	PruneGrace    pgtype.Interval `json:"prune_grace"`
 }
 
 func (q *Queries) PruneWorkspacePtyStreamChunksPastWatermark(ctx context.Context, arg PruneWorkspacePtyStreamChunksPastWatermarkParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, pruneWorkspacePtyStreamChunksPastWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.WorkspaceID,
 		arg.PtySessionID,
 		arg.PruneGrace,
@@ -689,30 +689,30 @@ func (q *Queries) PruneWorkspacePtyStreamChunksPastWatermark(ctx context.Context
 }
 
 const upsertEventWatermark = `-- name: UpsertEventWatermark :one
-INSERT INTO event_watermarks (org_id, cell_id, subject_kind, subject_id, watermark_seq, watermark_observed_at)
+INSERT INTO event_watermarks (org_id, worker_group_id, subject_kind, subject_id, watermark_seq, watermark_observed_at)
 VALUES ($1, $2, $3::event_subject_type, $4, $5, now())
-ON CONFLICT (org_id, cell_id, subject_kind, subject_id)
+ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
 DO UPDATE SET watermark_seq = GREATEST(event_watermarks.watermark_seq, EXCLUDED.watermark_seq),
               watermark_observed_at = CASE
                 WHEN EXCLUDED.watermark_seq >= event_watermarks.watermark_seq THEN EXCLUDED.watermark_observed_at
                 ELSE event_watermarks.watermark_observed_at
               END,
               updated_at = now()
-RETURNING org_id, cell_id, subject_kind, subject_id, watermark_seq, watermark_observed_at, updated_at
+RETURNING org_id, worker_group_id, subject_kind, subject_id, watermark_seq, watermark_observed_at, updated_at
 `
 
 type UpsertEventWatermarkParams struct {
-	OrgID        pgtype.UUID      `json:"org_id"`
-	CellID       string           `json:"cell_id"`
-	SubjectType  EventSubjectType `json:"subject_type"`
-	SubjectID    pgtype.UUID      `json:"subject_id"`
-	WatermarkSeq int64            `json:"watermark_seq"`
+	OrgID         pgtype.UUID      `json:"org_id"`
+	WorkerGroupID string           `json:"worker_group_id"`
+	SubjectType   EventSubjectType `json:"subject_type"`
+	SubjectID     pgtype.UUID      `json:"subject_id"`
+	WatermarkSeq  int64            `json:"watermark_seq"`
 }
 
 func (q *Queries) UpsertEventWatermark(ctx context.Context, arg UpsertEventWatermarkParams) (EventWatermark, error) {
 	row := q.db.QueryRow(ctx, upsertEventWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.SubjectType,
 		arg.SubjectID,
 		arg.WatermarkSeq,
@@ -720,7 +720,7 @@ func (q *Queries) UpsertEventWatermark(ctx context.Context, arg UpsertEventWater
 	var i EventWatermark
 	err := row.Scan(
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.SubjectKind,
 		&i.SubjectID,
 		&i.WatermarkSeq,
@@ -731,30 +731,30 @@ func (q *Queries) UpsertEventWatermark(ctx context.Context, arg UpsertEventWater
 }
 
 const upsertRunLogWatermark = `-- name: UpsertRunLogWatermark :one
-INSERT INTO run_log_watermarks (org_id, cell_id, run_id, stream_name, watermark_seq, watermark_observed_at)
+INSERT INTO run_log_watermarks (org_id, worker_group_id, run_id, stream_name, watermark_seq, watermark_observed_at)
 VALUES ($1, $2, $3, $4, $5, now())
-ON CONFLICT (org_id, cell_id, run_id, stream_name)
+ON CONFLICT (org_id, worker_group_id, run_id, stream_name)
 DO UPDATE SET watermark_seq = GREATEST(run_log_watermarks.watermark_seq, EXCLUDED.watermark_seq),
               watermark_observed_at = CASE
                 WHEN EXCLUDED.watermark_seq >= run_log_watermarks.watermark_seq THEN EXCLUDED.watermark_observed_at
                 ELSE run_log_watermarks.watermark_observed_at
               END,
               updated_at = now()
-RETURNING org_id, cell_id, run_id, stream_name, watermark_seq, watermark_observed_at, updated_at
+RETURNING org_id, worker_group_id, run_id, stream_name, watermark_seq, watermark_observed_at, updated_at
 `
 
 type UpsertRunLogWatermarkParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	CellID       string      `json:"cell_id"`
-	RunID        pgtype.UUID `json:"run_id"`
-	StreamName   string      `json:"stream_name"`
-	WatermarkSeq int64       `json:"watermark_seq"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	StreamName    string      `json:"stream_name"`
+	WatermarkSeq  int64       `json:"watermark_seq"`
 }
 
 func (q *Queries) UpsertRunLogWatermark(ctx context.Context, arg UpsertRunLogWatermarkParams) (RunLogWatermark, error) {
 	row := q.db.QueryRow(ctx, upsertRunLogWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.RunID,
 		arg.StreamName,
 		arg.WatermarkSeq,
@@ -762,7 +762,7 @@ func (q *Queries) UpsertRunLogWatermark(ctx context.Context, arg UpsertRunLogWat
 	var i RunLogWatermark
 	err := row.Scan(
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.RunID,
 		&i.StreamName,
 		&i.WatermarkSeq,
@@ -773,21 +773,21 @@ func (q *Queries) UpsertRunLogWatermark(ctx context.Context, arg UpsertRunLogWat
 }
 
 const upsertTerminalOutputWatermark = `-- name: UpsertTerminalOutputWatermark :one
-INSERT INTO terminal_output_watermarks (org_id, cell_id, workspace_id, resource_kind, resource_id, stream_name, watermark_offset, watermark_observed_at)
+INSERT INTO terminal_output_watermarks (org_id, worker_group_id, workspace_id, resource_kind, resource_id, stream_name, watermark_offset, watermark_observed_at)
 VALUES ($1, $2, $3, $4, $5, $6, $7, now())
-ON CONFLICT (org_id, cell_id, workspace_id, resource_kind, resource_id, stream_name)
+ON CONFLICT (org_id, worker_group_id, workspace_id, resource_kind, resource_id, stream_name)
 DO UPDATE SET watermark_offset = GREATEST(terminal_output_watermarks.watermark_offset, EXCLUDED.watermark_offset),
               watermark_observed_at = CASE
                 WHEN EXCLUDED.watermark_offset >= terminal_output_watermarks.watermark_offset THEN EXCLUDED.watermark_observed_at
                 ELSE terminal_output_watermarks.watermark_observed_at
               END,
               updated_at = now()
-RETURNING org_id, cell_id, workspace_id, resource_kind, resource_id, stream_name, watermark_offset, watermark_observed_at, updated_at
+RETURNING org_id, worker_group_id, workspace_id, resource_kind, resource_id, stream_name, watermark_offset, watermark_observed_at, updated_at
 `
 
 type UpsertTerminalOutputWatermarkParams struct {
 	OrgID           pgtype.UUID `json:"org_id"`
-	CellID          string      `json:"cell_id"`
+	WorkerGroupID   string      `json:"worker_group_id"`
 	WorkspaceID     pgtype.UUID `json:"workspace_id"`
 	ResourceKind    string      `json:"resource_kind"`
 	ResourceID      pgtype.UUID `json:"resource_id"`
@@ -798,7 +798,7 @@ type UpsertTerminalOutputWatermarkParams struct {
 func (q *Queries) UpsertTerminalOutputWatermark(ctx context.Context, arg UpsertTerminalOutputWatermarkParams) (TerminalOutputWatermark, error) {
 	row := q.db.QueryRow(ctx, upsertTerminalOutputWatermark,
 		arg.OrgID,
-		arg.CellID,
+		arg.WorkerGroupID,
 		arg.WorkspaceID,
 		arg.ResourceKind,
 		arg.ResourceID,
@@ -808,7 +808,7 @@ func (q *Queries) UpsertTerminalOutputWatermark(ctx context.Context, arg UpsertT
 	var i TerminalOutputWatermark
 	err := row.Scan(
 		&i.OrgID,
-		&i.CellID,
+		&i.WorkerGroupID,
 		&i.WorkspaceID,
 		&i.ResourceKind,
 		&i.ResourceID,

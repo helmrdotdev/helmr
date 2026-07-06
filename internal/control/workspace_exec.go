@@ -350,7 +350,6 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
-			CellID:          ws.CellID,
 			ProjectID:       ws.ProjectID,
 			EnvironmentID:   ws.EnvironmentID,
 			WorkspaceID:     ws.ID,
@@ -477,7 +476,7 @@ func (s *Server) appendWorkspaceExecStreamChunk(ctx context.Context, exec db.Wor
 		}
 		chunk, err = work.q.InsertWorkspaceExecStreamChunk(ctx, db.InsertWorkspaceExecStreamChunkParams{
 			OrgID:         exec.OrgID,
-			CellID:        exec.CellID,
+			WorkerGroupID: exec.WorkerGroupID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,

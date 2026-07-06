@@ -54,7 +54,7 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	_, err = s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		CellID:           worker.CellID,
+		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

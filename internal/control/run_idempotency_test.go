@@ -324,7 +324,7 @@ func TestCreateScheduleRunRejectsStaleTriggerIdempotencyHit(t *testing.T) {
 		secrets:         fakeSecrets{},
 		runEnqueuer:     runEnqueuer,
 		eventStream:     newTestEventStream(t),
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 	}
 	row := db.GetScheduleTriggerCandidateRow{
@@ -362,7 +362,7 @@ func TestCreateScheduleRunDefersSessionStartCoordinationFailures(t *testing.T) {
 		db:              store,
 		secrets:         fakeSecrets{},
 		runEnqueuer:     runEnqueuer,
-		cellID:          "us-east-1-cell-1",
+		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 	}
 	row := db.GetScheduleTriggerCandidateRow{
@@ -635,7 +635,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:              "us-east-1-cell-1",
+			WorkerGroupID:       "us-east-1-worker-group-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -654,7 +654,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 		run: db.Run{
 			ID:               runID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			CellID:           "us-east-1-cell-1",
+			WorkerGroupID:    "us-east-1-worker-group-1",
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),

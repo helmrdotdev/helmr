@@ -48,14 +48,14 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 	}
 	reader := NewHistoricalReader(client)
 	rows, last, err := reader.ListTerminalOutput(context.Background(), TerminalOutputQuery{
-		OrgID:        uuid.Must(uuid.NewV7()),
-		CellID:       "us-east-1-cell-1",
-		WorkspaceID:  uuid.Must(uuid.NewV7()),
-		ResourceKind: "workspace_pty",
-		ResourceID:   resourceID,
-		StreamName:   "output",
-		AfterOffset:  5,
-		Limit:        25,
+		OrgID:         uuid.Must(uuid.NewV7()),
+		WorkerGroupID: "us-east-1-worker-group-1",
+		WorkspaceID:   uuid.Must(uuid.NewV7()),
+		ResourceKind:  "workspace_pty",
+		ResourceID:    resourceID,
+		StreamName:    "output",
+		AfterOffset:   5,
+		Limit:         25,
 	}, 10)
 	if err != nil {
 		t.Fatal(err)

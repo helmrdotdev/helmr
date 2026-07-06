@@ -90,6 +90,36 @@ func (q *Queries) GetRegion(ctx context.Context, id string) (Region, error) {
 	return i, err
 }
 
+const getRegionByProviderRegion = `-- name: GetRegionByProviderRegion :one
+SELECT id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
+  FROM regions
+ WHERE provider = $1
+   AND provider_region = $2
+`
+
+type GetRegionByProviderRegionParams struct {
+	Provider       string `json:"provider"`
+	ProviderRegion string `json:"provider_region"`
+}
+
+func (q *Queries) GetRegionByProviderRegion(ctx context.Context, arg GetRegionByProviderRegionParams) (Region, error) {
+	row := q.db.QueryRow(ctx, getRegionByProviderRegion, arg.Provider, arg.ProviderRegion)
+	var i Region
+	err := row.Scan(
+		&i.ID,
+		&i.Provider,
+		&i.ProviderRegion,
+		&i.DisplayName,
+		&i.State,
+		&i.Visibility,
+		&i.Location,
+		&i.StaticIps,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const listRegions = `-- name: ListRegions :many
 SELECT id, provider, provider_region, display_name, state, visibility, location, static_ips, created_at, updated_at
   FROM regions

@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -49,7 +50,6 @@ func (s *Server) readOutputStreamRecord(ctx context.Context, store db.Querier, s
 	}
 	records, err := store.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
-		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,
@@ -131,7 +131,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		locked, err := store.LockSession(ctx, db.LockSessionParams{
 			OrgID:         session.OrgID,
-			CellID:        session.CellID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -171,22 +170,25 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if sourceID == "" {
 		sourceID = string(sourceType)
 	}
-	row, err := store.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
-		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:                  session.OrgID,
-		CellID:                 session.CellID,
-		ProjectID:              session.ProjectID,
-		EnvironmentID:          session.EnvironmentID,
-		StreamID:               stream.ID,
-		Direction:              direction,
-		Data:                   data,
-		CorrelationID:          correlationID,
-		ContentType:            contentType,
-		IdempotencyKey:         idempotencyKey,
-		IdempotencyFingerprint: fingerprint,
-		SourceType:             sourceType,
-		SourceID:               sourceID,
-		PublicAccessTokenID:    publicAccessTokenID,
+	var publicID string
+	row, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.StreamRecord, value: &publicID}}, func() (db.AppendStreamRecordRow, error) {
+		return store.AppendStreamRecord(ctx, db.AppendStreamRecordParams{
+			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:               publicID,
+			OrgID:                  session.OrgID,
+			ProjectID:              session.ProjectID,
+			EnvironmentID:          session.EnvironmentID,
+			StreamID:               stream.ID,
+			Direction:              direction,
+			Data:                   data,
+			CorrelationID:          correlationID,
+			ContentType:            contentType,
+			IdempotencyKey:         idempotencyKey,
+			IdempotencyFingerprint: fingerprint,
+			SourceType:             sourceType,
+			SourceID:               sourceID,
+			PublicAccessTokenID:    publicAccessTokenID,
+		})
 	})
 	if isNoRows(err) {
 		return appendedStreamRecord{}, errStreamDirectionMismatch
@@ -201,7 +203,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		resolved, err := store.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 			OrgID:         session.OrgID,
-			CellID:        session.CellID,
+			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			StreamID:      stream.ID,
@@ -212,9 +214,9 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 		appended.resolvedWaitCount = len(resolved)
 		if appended.resolvedWaitCount > 0 {
 			if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
-				OrgID:      session.OrgID,
-				CellID:     session.CellID,
-				LimitCount: int32(appended.resolvedWaitCount),
+				OrgID:         session.OrgID,
+				WorkerGroupID: session.WorkerGroupID,
+				LimitCount:    int32(appended.resolvedWaitCount),
 			}); err != nil {
 				return appendedStreamRecord{}, err
 			}
@@ -223,7 +225,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:          session.OrgID,
-				CellID:         session.CellID,
 				ProjectID:      session.ProjectID,
 				EnvironmentID:  session.EnvironmentID,
 				SessionID:      session.ID,
@@ -257,7 +258,6 @@ func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request
 	}
 	records, err := s.db.ListStreamRecords(r.Context(), db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
-		CellID:        session.CellID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,

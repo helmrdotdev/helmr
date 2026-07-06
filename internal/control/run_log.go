@@ -56,7 +56,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongCell(r.Context(), w, actor, summary) {
+	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, summary) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
@@ -69,11 +69,11 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logs, err := s.telemetryReader.GetRunLogSnapshot(r.Context(), telemetry.RunLogSnapshotQuery{
-		StdoutLimit: maxRunLogSnapshotBytes,
-		StderrLimit: maxRunLogSnapshotBytes,
-		OrgID:       actor.OrgID,
-		CellID:      s.cellID,
-		RunID:       runID,
+		StdoutLimit:   maxRunLogSnapshotBytes,
+		StderrLimit:   maxRunLogSnapshotBytes,
+		OrgID:         actor.OrgID,
+		WorkerGroupID: s.workerGroupID,
+		RunID:         runID,
 	})
 	if err != nil {
 		s.log.Error("get run logs failed", "run_id", runID.String(), "error", err)
@@ -145,11 +145,11 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 
 func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, runID uuid.UUID, cursor int64) (int64, int, error) {
 	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
-		OrgID:    orgID,
-		CellID:   s.cellID,
-		RunID:    runID,
-		AfterSeq: cursor,
-		Limit:    runLogStreamBatchSize,
+		OrgID:         orgID,
+		WorkerGroupID: s.workerGroupID,
+		RunID:         runID,
+		AfterSeq:      cursor,
+		Limit:         runLogStreamBatchSize,
 	})
 	if err != nil {
 		return cursor, 0, err

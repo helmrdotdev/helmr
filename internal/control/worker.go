@@ -58,7 +58,7 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	credential, err := s.db.CreateWorkerInstanceCredentialFromBootstrap(r.Context(), db.CreateWorkerInstanceCredentialFromBootstrapParams{
 		BootstrapTokenHash: registrationHash,
-		CellID:             s.cellID,
+		WorkerGroupID:      s.workerGroupID,
 		CredentialID:       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:   pgvalue.UUID(workerInstanceID),
 		ResourceID:         resourceID,
@@ -76,7 +76,7 @@ func (s *Server) workerRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusCreated, api.WorkerRegisterResponse{
 		WorkerInstanceID:     pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
-		WorkerGroupID:        pgvalue.MustUUIDValue(credential.WorkerGroupID).String(),
+		WorkerGroupID:        credential.WorkerGroupID,
 		WorkerInstanceSecret: generated.Raw,
 	})
 }
@@ -109,7 +109,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	credential, err := s.db.AuthenticateWorkerInstanceCredential(r.Context(), db.AuthenticateWorkerInstanceCredentialParams{
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		SecretHash:       secretHash,
-		CellID:           s.cellID,
+		WorkerGroupID:    s.workerGroupID,
 	})
 	if isNoRows(err) {
 		writeError(w, unauthorized(errors.New("worker authentication is required")))
@@ -130,7 +130,7 @@ func (s *Server) workerAuthToken(w http.ResponseWriter, r *http.Request) {
 	signed, err := auth.IssueWorkerToken(s.workerTokenSecret, auth.WorkerClaims{
 		WorkerInstanceID: pgvalue.MustUUIDValue(credential.WorkerInstanceID).String(),
 		CredentialID:     credentialID.String(),
-		CellID:           credential.CellID,
+		WorkerGroupID:    credential.WorkerGroupID,
 		ClaimVersion:     credential.ClaimVersion,
 		IssuedAt:         now,
 		ExpiresAt:        expiresAt,
@@ -175,9 +175,9 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
-		ID:     pgvalue.UUID(worker.WorkerInstanceID),
-		CellID: worker.CellID,
-		Status: db.WorkerInstanceStatusActive,
+		ID:            pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: worker.WorkerGroupID,
+		Status:        db.WorkerInstanceStatusActive,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -196,9 +196,9 @@ func (s *Server) workerDrain(w http.ResponseWriter, r *http.Request) {
 	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.SetWorkerInstanceStatus(r.Context(), db.SetWorkerInstanceStatusParams{
-		ID:     pgvalue.UUID(worker.WorkerInstanceID),
-		CellID: worker.CellID,
-		Status: db.WorkerInstanceStatusDraining,
+		ID:            pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: worker.WorkerGroupID,
+		Status:        db.WorkerInstanceStatusDraining,
 	}); isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
 		return
@@ -220,8 +220,8 @@ func (s *Server) workerStatus(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worker workerActor) {
 	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
-		ID:     pgvalue.UUID(worker.WorkerInstanceID),
-		CellID: worker.CellID,
+		ID:            pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerGroupID: worker.WorkerGroupID,
 	})
 	if isNoRows(err) {
 		writeError(w, notFound(errors.New("worker is not registered")))
@@ -234,7 +234,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 	}
 	writeJSON(w, http.StatusOK, api.WorkerStatusResponse{
 		WorkerInstanceID: pgvalue.MustUUIDValue(state.ID).String(),
-		WorkerGroupID:    pgvalue.MustUUIDValue(state.WorkerGroupID).String(),
+		WorkerGroupID:    state.WorkerGroupID,
 		Status:           api.WorkerStatus(state.Status),
 		ActiveExecutions: state.ActiveExecutions,
 	})
@@ -242,7 +242,7 @@ func (s *Server) writeWorkerStatus(w http.ResponseWriter, r *http.Request, worke
 
 func (s *Server) recordWorkerInstanceHeartbeat(ctx context.Context, worker workerActor, capabilities api.WorkerCapabilities) error {
 	if _, err := s.db.UpsertWorkerInstanceHeartbeat(ctx, workerInstanceHeartbeatParams(worker, capabilities)); isNoRows(err) {
-		return forbidden(errors.New("worker instance heartbeat conflicts with this cell or runtime"))
+		return forbidden(errors.New("worker instance heartbeat conflicts with this worker group or runtime"))
 	} else if err != nil {
 		return errors.New("record worker heartbeat")
 	}
@@ -268,8 +268,7 @@ func workerInstanceHeartbeatParams(worker workerActor, capabilities api.WorkerCa
 	labels, _ := json.Marshal(capabilities.Labels)
 	return db.UpsertWorkerInstanceHeartbeatParams{
 		ID:                      pgvalue.UUID(worker.WorkerInstanceID),
-		CellID:                  worker.CellID,
-		WorkerGroupID:           pgvalue.UUID(worker.WorkerGroupID),
+		WorkerGroupID:           worker.WorkerGroupID,
 		ResourceID:              worker.ResourceID,
 		Region:                  capabilities.Region,
 		TotalMilliCpu:           resources.MilliCPU,

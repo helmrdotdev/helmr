@@ -151,46 +151,31 @@ func (row fakeReadinessRow) Scan(dest ...any) error {
 	if row.err != nil {
 		return row.err
 	}
-	if len(dest) == 8 {
-		if cellID, ok := dest[0].(*string); ok {
-			*cellID = "us-east-1-cell-1"
+	if len(dest) == 5 {
+		if workerGroupID, ok := dest[0].(*string); ok {
+			*workerGroupID = "us-east-1-worker-group-1"
 		} else {
-			return errors.New("cell id destination is not *string")
+			return errors.New("worker group id destination is not *string")
 		}
-		if cellState, ok := dest[1].(*db.CellState); ok {
-			*cellState = db.CellStateActive
+		if state, ok := dest[1].(*db.WorkerGroupState); ok {
+			*state = db.WorkerGroupStateActive
 		} else {
-			return errors.New("cell state destination is not *db.CellState")
+			return errors.New("worker group state destination is not *db.WorkerGroupState")
 		}
-		if component, ok := dest[2].(*string); ok {
-			*component = "control"
+		if healthState, ok := dest[2].(*db.WorkerGroupHealthState); ok {
+			*healthState = db.WorkerGroupHealthStateHealthy
 		} else {
-			return errors.New("component destination is not *string")
+			return errors.New("health state destination is not *db.WorkerGroupHealthState")
 		}
-		if healthState, ok := dest[3].(*db.CellHealthState); ok {
-			*healthState = db.CellHealthStateHealthy
-		} else {
-			return errors.New("health state destination is not *db.CellHealthState")
-		}
-		if checkedAt, ok := dest[4].(*pgtype.Timestamptz); ok {
-			*checkedAt = pgtype.Timestamptz{Valid: true}
-		} else {
-			return errors.New("checked at destination is not *pgtype.Timestamptz")
-		}
-		if freshUntil, ok := dest[5].(*pgtype.Timestamptz); ok {
+		if freshUntil, ok := dest[3].(*pgtype.Timestamptz); ok {
 			*freshUntil = pgtype.Timestamptz{Valid: true}
 		} else {
 			return errors.New("fresh until destination is not *pgtype.Timestamptz")
 		}
-		if details, ok := dest[6].(*[]byte); ok {
-			*details = []byte(`{}`)
+		if ready, ok := dest[4].(*pgtype.Bool); ok {
+			*ready = pgtype.Bool{Bool: row.ready, Valid: true}
 		} else {
-			return errors.New("details destination is not *[]byte")
-		}
-		if ready, ok := dest[7].(*bool); ok {
-			*ready = row.ready
-		} else {
-			return errors.New("ready destination is not *bool")
+			return errors.New("ready destination is not *pgtype.Bool")
 		}
 		return nil
 	}

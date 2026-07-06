@@ -122,7 +122,6 @@ func (s *Server) createRuntimeCheckpointArtifacts(ctx context.Context, store db.
 func createRuntimeCheckpointArtifact(ctx context.Context, store db.Querier, workerInstanceID pgtype.UUID, scope db.GetWorkerRunWaitScopeRow, artifact api.WorkerCheckpointArtifact, kind db.ArtifactKind) (db.Artifact, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     scope.OrgID,
-		CellID:    scope.CellID,
 		Digest:    artifact.Digest,
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
@@ -132,8 +131,6 @@ func createRuntimeCheckpointArtifact(ctx context.Context, store db.Querier, work
 	return store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     scope.OrgID,
-		CellID:                    scope.CellID,
-		RouteGeneration:           scope.RouteGeneration,
 		ProjectID:                 scope.ProjectID,
 		EnvironmentID:             scope.EnvironmentID,
 		Digest:                    artifact.Digest,

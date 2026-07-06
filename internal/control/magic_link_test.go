@@ -545,9 +545,9 @@ func (tx *magicLinkFinishTx) QueryRow(_ context.Context, sql string, args ...any
 	case strings.Contains(sql, "WITH upserted_user") && strings.Contains(sql, "INSERT INTO auth_identities"):
 		return scanRow{values: []any{
 			pgvalue.UUID(parent.userID),
-			args[1].(string),
-			args[2].(pgtype.Text),
+			args[2].(string),
 			args[3].(pgtype.Text),
+			args[4].(pgtype.Text),
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},
 			pgtype.Timestamptz{},

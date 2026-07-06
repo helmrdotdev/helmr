@@ -2,7 +2,6 @@
 INSERT INTO secrets (
     id,
     org_id,
-    cell_id,
     project_id,
     environment_id,
     name,
@@ -14,7 +13,6 @@ INSERT INTO secrets (
 SELECT
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(cell_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(name),
@@ -22,22 +20,7 @@ SELECT
     sqlc.arg(key_id),
     sqlc.arg(nonce),
     sqlc.arg(ciphertext)
- WHERE EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = sqlc.arg(org_id)
-          AND environment_cells.project_id = sqlc.arg(project_id)
-          AND environment_cells.environment_id = sqlc.arg(environment_id)
-          AND environment_cells.cell_id = sqlc.arg(cell_id)
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
-ON CONFLICT (org_id, cell_id, project_id, environment_id, name) DO UPDATE
+ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
    SET version = EXCLUDED.version,
        key_id = EXCLUDED.key_id,
        nonce = EXCLUDED.nonce,
@@ -56,21 +39,6 @@ WITH default_scope AS (
                        AND environments.is_default
      WHERE projects.org_id = sqlc.arg(org_id)
        AND projects.is_default
-       AND EXISTS (
-           SELECT 1
-             FROM environment_cells
-             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                           AND org_cells.cell_id = environment_cells.cell_id
-                           AND org_cells.state = 'active'
-             JOIN cells ON cells.id = environment_cells.cell_id
-                       AND cells.region_id = environment_cells.region_id
-                       AND cells.state IN ('active', 'draining')
-            WHERE environment_cells.org_id = projects.org_id
-              AND environment_cells.project_id = projects.id
-              AND environment_cells.environment_id = environments.id
-              AND environment_cells.cell_id = sqlc.arg(cell_id)
-              AND environment_cells.route_state IN ('active', 'draining')
-       )
      LIMIT 1
 )
 SELECT secrets.*
@@ -78,56 +46,23 @@ SELECT secrets.*
  JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
    AND secrets.name = sqlc.arg(name);
 
 -- name: GetScopedSecretByName :one
 SELECT secrets.*
   FROM secrets
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
    AND secrets.project_id = sqlc.arg(project_id)
    AND secrets.environment_id = sqlc.arg(environment_id)
-   AND secrets.name = sqlc.arg(name)
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   );
+   AND secrets.name = sqlc.arg(name);
 
 -- name: GetScopedSecretMetadataByName :one
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
   FROM secrets
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
    AND secrets.project_id = sqlc.arg(project_id)
    AND secrets.environment_id = sqlc.arg(environment_id)
-   AND secrets.name = sqlc.arg(name)
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   );
+   AND secrets.name = sqlc.arg(name);
 
 -- name: ListSecrets :many
 WITH default_scope AS (
@@ -139,21 +74,6 @@ WITH default_scope AS (
                        AND environments.is_default
      WHERE projects.org_id = sqlc.arg(org_id)
        AND projects.is_default
-       AND EXISTS (
-           SELECT 1
-             FROM environment_cells
-             JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                           AND org_cells.cell_id = environment_cells.cell_id
-                           AND org_cells.state = 'active'
-             JOIN cells ON cells.id = environment_cells.cell_id
-                       AND cells.region_id = environment_cells.region_id
-                       AND cells.state IN ('active', 'draining')
-            WHERE environment_cells.org_id = projects.org_id
-              AND environment_cells.project_id = projects.id
-              AND environment_cells.environment_id = environments.id
-              AND environment_cells.cell_id = sqlc.arg(cell_id)
-              AND environment_cells.route_state IN ('active', 'draining')
-       )
      LIMIT 1
 )
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
@@ -161,7 +81,6 @@ SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, s
  JOIN default_scope ON default_scope.project_id = secrets.project_id
                     AND default_scope.environment_id = secrets.environment_id
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
  ORDER BY name ASC
  LIMIT sqlc.arg(row_limit);
 
@@ -169,49 +88,17 @@ SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, s
 SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
   FROM secrets
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
    AND secrets.project_id = sqlc.arg(project_id)
    AND secrets.environment_id = sqlc.arg(environment_id)
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   )
  ORDER BY name ASC
  LIMIT sqlc.arg(row_limit);
 
 -- name: DeleteScopedSecret :execrows
 DELETE FROM secrets
  WHERE secrets.org_id = sqlc.arg(org_id)
-   AND secrets.cell_id = sqlc.arg(cell_id)
    AND secrets.project_id = sqlc.arg(project_id)
    AND secrets.environment_id = sqlc.arg(environment_id)
-   AND secrets.name = sqlc.arg(name)
-   AND EXISTS (
-       SELECT 1
-         FROM environment_cells
-         JOIN org_cells ON org_cells.org_id = environment_cells.org_id
-                       AND org_cells.cell_id = environment_cells.cell_id
-                       AND org_cells.state = 'active'
-         JOIN cells ON cells.id = environment_cells.cell_id
-                   AND cells.region_id = environment_cells.region_id
-                   AND cells.state IN ('active', 'draining')
-        WHERE environment_cells.org_id = secrets.org_id
-          AND environment_cells.project_id = secrets.project_id
-          AND environment_cells.environment_id = secrets.environment_id
-          AND environment_cells.cell_id = secrets.cell_id
-          AND environment_cells.route_state IN ('active', 'draining')
-   );
+   AND secrets.name = sqlc.arg(name);
 
 -- name: ListSecretKeyUsage :many
 SELECT key_id, count(*)::bigint AS secret_count

@@ -47,7 +47,7 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	session := db.Session{
 		ID:            scope.SessionID,
 		OrgID:         scope.OrgID,
-		CellID:        scope.CellID,
+		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 	}
@@ -87,7 +87,7 @@ func (s *Server) workerInputStreamWaitTarget(ctx context.Context, store db.Queri
 	stream, err := s.ensureSessionStream(ctx, store, db.Session{
 		ID:                 scope.SessionID,
 		OrgID:              scope.OrgID,
-		CellID:             scope.CellID,
+		WorkerGroupID:      scope.WorkerGroupID,
 		ProjectID:          scope.ProjectID,
 		EnvironmentID:      scope.EnvironmentID,
 		ActiveDeploymentID: scope.DeploymentID,
