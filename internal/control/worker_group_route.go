@@ -13,12 +13,9 @@ type workerGroupPlacementResolver interface {
 	GetWorkerGroupPlacementForRecord(context.Context, string) (db.GetWorkerGroupPlacementForRecordRow, error)
 }
 
-func (s *Server) requireEnvironmentPlacementWorkerGroup(ctx context.Context, store environmentPlacementStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (string, error) {
-	placement, err := s.resolveEnvironmentPlacement(ctx, store, orgID, projectID, environmentID)
-	if err != nil {
-		return "", err
-	}
-	return placement.WorkerGroupID, nil
+func (s *Server) requireEnvironmentPlacementWorkerGroup(ctx context.Context, store environmentPlacementStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) error {
+	_, err := s.resolveEnvironmentPlacement(ctx, store, orgID, projectID, environmentID)
+	return err
 }
 
 func (s *Server) requireRoutableRecordWorkerGroup(ctx context.Context, store workerGroupPlacementResolver, recordWorkerGroupID string) error {

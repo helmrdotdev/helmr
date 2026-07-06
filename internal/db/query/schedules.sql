@@ -830,16 +830,6 @@ SELECT EXISTS (
     SELECT 1
       FROM task_schedule_instances
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-      JOIN environments ON environments.org_id = task_schedule_instances.org_id
-                       AND environments.project_id = task_schedule_instances.project_id
-                       AND environments.id = task_schedule_instances.environment_id
-      JOIN projects ON projects.org_id = task_schedule_instances.org_id
-                   AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                      AND worker_groups.health_state IN ('healthy', 'degraded')
-                      AND worker_groups.routing_fresh_until > now()
      WHERE task_schedule_instances.id = sqlc.arg(instance_id)
        AND task_schedule_instances.generation = sqlc.arg(generation)
        AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
@@ -847,6 +837,8 @@ SELECT EXISTS (
        AND task_schedule_instances.org_id = sqlc.arg(org_id)
        AND task_schedule_instances.project_id = sqlc.arg(project_id)
        AND task_schedule_instances.environment_id = sqlc.arg(environment_id)
+       AND task_schedules.org_id = task_schedule_instances.org_id
+       AND task_schedules.project_id = task_schedule_instances.project_id
        AND task_schedule_instances.enabled
        AND (
            task_schedule_instances.retry_after IS NULL

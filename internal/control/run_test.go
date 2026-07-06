@@ -168,7 +168,7 @@ func fakeWorkspaceForSessionStart(workspaceID pgtype.UUID) db.GetWorkspaceForSes
 	return db.GetWorkspaceForSessionStartRow{
 		ID:                                workspaceID,
 		OrgID:                             pgvalue.UUID(dbtest.DefaultOrgID),
-		WorkerGroupID:                     "us-east-1-worker-group-1",
+		WorkerGroupID:                     dbtest.DefaultWorkerGroupID,
 		ProjectID:                         testProjectID(),
 		EnvironmentID:                     testEnvironmentID(),
 		DeploymentSandboxID:               testDeploymentSandboxID(),
@@ -619,7 +619,6 @@ func testWorkspaceRow(id uuid.UUID) db.Workspace {
 	return db.Workspace{
 		ID:                  pgvalue.UUID(id),
 		OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-		WorkerGroupID:       "us-east-1-worker-group-1",
 		ProjectID:           testProjectID(),
 		EnvironmentID:       testEnvironmentID(),
 		DeploymentSandboxID: testDeploymentSandboxID(),
@@ -1000,8 +999,8 @@ func TestSessionStartAttachesWorkspaceOnDrainingWorkerGroupPlacement(t *testing.
 	if store.getDeploymentTask.WorkerGroupID != workspace.WorkerGroupID {
 		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, workspace.WorkerGroupID)
 	}
-	if store.createRun.WorkerGroupID != workspace.WorkerGroupID {
-		t.Fatalf("created run worker_group_id = %q, want %q", store.createRun.WorkerGroupID, workspace.WorkerGroupID)
+	if store.run.WorkerGroupID != workspace.WorkerGroupID {
+		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, workspace.WorkerGroupID)
 	}
 	if !store.createRun.AllowDrainingRoute {
 		t.Fatalf("created run allow_draining_route = false, want true for explicit workspace attach")
@@ -1171,7 +1170,7 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:       "us-east-1-worker-group-1",
+			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1344,7 +1343,6 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 		session: db.Session{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:       "us-east-1-worker-group-1",
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1363,7 +1361,6 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 		run: db.Run{
 			ID:               runID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:    "us-east-1-worker-group-1",
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1523,8 +1520,8 @@ func TestContinuationRunRequestUsesSessionWorkerGroup(t *testing.T) {
 	if store.getDeploymentTask.WorkerGroupID != store.session.WorkerGroupID {
 		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, store.session.WorkerGroupID)
 	}
-	if store.createRun.WorkerGroupID != store.session.WorkerGroupID {
-		t.Fatalf("created run worker_group_id = %q, want %q", store.createRun.WorkerGroupID, store.session.WorkerGroupID)
+	if store.run.WorkerGroupID != store.session.WorkerGroupID {
+		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, store.session.WorkerGroupID)
 	}
 	if !store.createRun.AllowDrainingRoute {
 		t.Fatalf("created run allow_draining_route = false, want true for continuation worker group placement")
@@ -1597,7 +1594,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:       "us-east-1-worker-group-1",
+			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1615,7 +1612,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		run: db.Run{
 			ID:               previousRunID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:    "us-east-1-worker-group-1",
+			WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1630,7 +1627,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		streamRecord: db.StreamRecord{
 			ID:            recordID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: "us-east-1-worker-group-1",
+			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -1645,7 +1642,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionRunRequest: db.SessionRunRequest{
 			ID:             requestID,
 			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:  "us-east-1-worker-group-1",
+			WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
 			SessionID:      sessionID,
@@ -1678,7 +1675,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionRuns: []db.SessionRun{{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: "us-east-1-worker-group-1",
+			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -2889,10 +2886,11 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	if status == "" {
 		status = db.RunStatusQueued
 	}
+	workerGroupID := firstNonEmptyString(f.session.WorkerGroupID, f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, "us-east-1-worker-group-1")
 	f.run = db.Run{
 		ID:                    arg.ID,
 		OrgID:                 arg.OrgID,
-		WorkerGroupID:         arg.WorkerGroupID,
+		WorkerGroupID:         workerGroupID,
 		ProjectID:             arg.ProjectID,
 		EnvironmentID:         arg.EnvironmentID,
 		DeploymentID:          arg.DeploymentID,
@@ -3003,7 +3001,7 @@ func (f *fakeStore) CreateSession(_ context.Context, arg db.CreateSessionParams)
 	f.session = db.Session{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		WorkerGroupID:       arg.WorkerGroupID,
+		WorkerGroupID:       firstNonEmptyString(f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, dbtest.DefaultWorkerGroupID),
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		TaskID:              arg.TaskID,
@@ -3056,7 +3054,6 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 	f.workspace = db.Workspace{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		WorkerGroupID:       arg.WorkerGroupID,
 		ProjectID:           arg.ProjectID,
 		EnvironmentID:       arg.EnvironmentID,
 		DeploymentSandboxID: arg.DeploymentSandboxID,
@@ -3358,7 +3355,6 @@ func (f *fakeStore) CreateSessionRun(_ context.Context, arg db.CreateSessionRunP
 	row := db.SessionRun{
 		ID:            arg.ID,
 		OrgID:         arg.OrgID,
-		WorkerGroupID: arg.WorkerGroupID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		SessionID:     arg.SessionID,
@@ -3724,7 +3720,6 @@ func (f *fakeStore) GetSessionByExternalIDInWorkerGroup(_ context.Context, arg d
 	session := fakeSessionRecord(f.session)
 	if session.ID.Valid &&
 		session.OrgID == arg.OrgID &&
-		session.WorkerGroupID == arg.WorkerGroupID &&
 		session.ProjectID == arg.ProjectID &&
 		session.EnvironmentID == arg.EnvironmentID &&
 		session.ExternalID == arg.ExternalID {

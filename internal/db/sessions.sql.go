@@ -14,12 +14,11 @@ import (
 const cancelSession = `-- name: CancelSession :one
 WITH target_session AS (
     SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
-      FROM sessions
+     FROM sessions
      WHERE sessions.org_id = $1
-       AND sessions.worker_group_id = $2
-       AND sessions.project_id = $3
-       AND sessions.environment_id = $4
-       AND sessions.id = $5
+       AND sessions.project_id = $2
+       AND sessions.environment_id = $3
+       AND sessions.id = $4
      FOR UPDATE
 ),
 cancelled_session AS (
@@ -30,11 +29,11 @@ cancelled_session AS (
                'ok', false,
                'error', jsonb_build_object(
                    'name', 'TaskCancelled',
-                   'message', $6::text,
+                   'message', $5::text,
                    'details', jsonb_build_object('origin', 'api')
                )
            ),
-           terminal_reason = jsonb_build_object('reason', $6::text, 'origin', 'api'),
+           terminal_reason = jsonb_build_object('reason', $5::text, 'origin', 'api'),
            updated_at = now()
       FROM target_session
      WHERE sessions.org_id = target_session.org_id
@@ -46,11 +45,10 @@ cancelled_session AS (
 ended_session_run AS (
     UPDATE session_runs
        SET ended_at = now()
-      FROM target_session
-      JOIN cancelled_session ON true
+     FROM target_session
+     JOIN cancelled_session ON true
      WHERE target_session.current_run_id IS NOT NULL
        AND session_runs.org_id = target_session.org_id
-       AND session_runs.worker_group_id = target_session.worker_group_id
        AND session_runs.project_id = target_session.project_id
        AND session_runs.environment_id = target_session.environment_id
        AND session_runs.session_id = target_session.id
@@ -60,13 +58,11 @@ ended_session_run AS (
 SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
   FROM sessions
   JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
-                        AND cancelled_session.worker_group_id = sessions.worker_group_id
                         AND cancelled_session.id = sessions.id
 `
 
 type CancelSessionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -76,7 +72,6 @@ type CancelSessionParams struct {
 func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, cancelSession,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -122,10 +117,9 @@ UPDATE sessions
        terminal_reason = jsonb_build_object('reason', $1::text, 'origin', 'api'),
        updated_at = now()
  WHERE sessions.org_id = $2
-   AND sessions.worker_group_id = $3
-   AND sessions.project_id = $4
-   AND sessions.environment_id = $5
-   AND sessions.id = $6
+   AND sessions.project_id = $3
+   AND sessions.environment_id = $4
+   AND sessions.id = $5
    AND sessions.status = 'open'
    AND (sessions.expires_at IS NULL OR sessions.expires_at > now())
    AND NOT EXISTS (
@@ -152,7 +146,6 @@ RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, ta
 type CloseSessionParams struct {
 	Reason        string      `json:"reason"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -162,7 +155,6 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (Ses
 	row := q.db.QueryRow(ctx, closeSession,
 		arg.Reason,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -216,61 +208,67 @@ INSERT INTO sessions (
     metadata,
     tags,
     expires_at
-) VALUES (
+)
+SELECT
     $1,
     $2,
+    workspaces.org_id,
+    workspaces.worker_group_id,
+    workspaces.project_id,
+    workspaces.environment_id,
     $3,
     $4,
     $5,
+    workspaces.id,
     $6,
     $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    coalesce($13::jsonb, '{}'::jsonb),
-    coalesce($14::text[], '{}'::text[]),
-    $15
-)
+    coalesce($8::jsonb, '{}'::jsonb),
+    coalesce($9::text[], '{}'::text[]),
+    $10
+  FROM workspaces
+ WHERE workspaces.org_id = $11
+   AND workspaces.project_id = $12
+   AND workspaces.environment_id = $13
+   AND workspaces.id = $14
+   AND workspaces.state = 'active'
+   AND workspaces.archived_at IS NULL
+   AND workspaces.deleted_at IS NULL
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CreateSessionParams struct {
 	ID                  pgtype.UUID        `json:"id"`
 	PublicID            string             `json:"public_id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	TaskID              string             `json:"task_id"`
 	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
 	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
 	ExternalID          string             `json:"external_id"`
 	StartFingerprint    string             `json:"start_fingerprint"`
 	Metadata            []byte             `json:"metadata"`
 	Tags                []string           `json:"tags"`
 	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, createSession,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.TaskID,
 		arg.InitialDeploymentID,
 		arg.ActiveDeploymentID,
-		arg.WorkspaceID,
 		arg.ExternalID,
 		arg.StartFingerprint,
 		arg.Metadata,
 		arg.Tags,
 		arg.ExpiresAt,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
 	)
 	var i Session
 	err := row.Scan(
@@ -318,52 +316,61 @@ INSERT INTO session_runs (
     previous_run_id,
     turn_index,
     reason
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12
 )
+SELECT $1,
+       $2,
+       sessions.org_id,
+       sessions.worker_group_id,
+       sessions.project_id,
+       sessions.environment_id,
+       sessions.id,
+       runs.id,
+       $3,
+       $4,
+       $5,
+       $6
+  FROM sessions
+  JOIN runs
+    ON runs.org_id = sessions.org_id
+   AND runs.worker_group_id = sessions.worker_group_id
+   AND runs.project_id = sessions.project_id
+   AND runs.environment_id = sessions.environment_id
+   AND runs.session_id = sessions.id
+   AND runs.id = $7
+ WHERE sessions.org_id = $8
+   AND sessions.project_id = $9
+   AND sessions.environment_id = $10
+   AND sessions.id = $11
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
 `
 
 type CreateSessionRunParams struct {
 	ID            pgtype.UUID `json:"id"`
 	PublicID      string      `json:"public_id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
-	RunID         pgtype.UUID `json:"run_id"`
 	DeploymentID  pgtype.UUID `json:"deployment_id"`
 	PreviousRunID pgtype.UUID `json:"previous_run_id"`
 	TurnIndex     int32       `json:"turn_index"`
 	Reason        string      `json:"reason"`
+	RunID         pgtype.UUID `json:"run_id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SessionID     pgtype.UUID `json:"session_id"`
 }
 
 func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunParams) (SessionRun, error) {
 	row := q.db.QueryRow(ctx, createSessionRun,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.SessionID,
-		arg.RunID,
 		arg.DeploymentID,
 		arg.PreviousRunID,
 		arg.TurnIndex,
 		arg.Reason,
+		arg.RunID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
 	)
 	var i SessionRun
 	err := row.Scan(
@@ -700,10 +707,9 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = $1
-   AND sessions.worker_group_id = $2
-   AND sessions.project_id = $3
-   AND sessions.environment_id = $4
-   AND sessions.id = $5
+   AND sessions.project_id = $2
+   AND sessions.environment_id = $3
+   AND sessions.id = $4
    AND sessions.status = 'open'
    AND sessions.expires_at IS NOT NULL
    AND sessions.expires_at <= now()
@@ -730,7 +736,6 @@ RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, ta
 
 type ExpireSessionIfDueParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -739,7 +744,6 @@ type ExpireSessionIfDueParams struct {
 func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDueParams) (Session, error) {
 	row := q.db.QueryRow(ctx, expireSessionIfDue,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -980,16 +984,14 @@ const getSessionByExternalIDInWorkerGroup = `-- name: GetSessionByExternalIDInWo
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND external_id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND external_id = $4
    AND external_id <> ''
 `
 
 type GetSessionByExternalIDInWorkerGroupParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ExternalID    string      `json:"external_id"`
@@ -998,7 +1000,6 @@ type GetSessionByExternalIDInWorkerGroupParams struct {
 func (q *Queries) GetSessionByExternalIDInWorkerGroup(ctx context.Context, arg GetSessionByExternalIDInWorkerGroupParams) (Session, error) {
 	row := q.db.QueryRow(ctx, getSessionByExternalIDInWorkerGroup,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ExternalID,
@@ -1143,16 +1144,14 @@ const getSessionRunByRunID = `-- name: GetSessionRunByRunID :one
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason, created_at, ended_at
   FROM session_runs
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND session_id = $5
-   AND run_id = $6
+   AND project_id = $2
+   AND environment_id = $3
+   AND session_id = $4
+   AND run_id = $5
 `
 
 type GetSessionRunByRunIDParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -1162,7 +1161,6 @@ type GetSessionRunByRunIDParams struct {
 func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error) {
 	row := q.db.QueryRow(ctx, getSessionRunByRunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -1463,28 +1461,8 @@ SELECT workspaces.id,
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-  JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-    ON project_worker_group_placement.org_id = workspaces.org_id
-   AND project_worker_group_placement.project_id = workspaces.project_id
-   AND project_worker_group_placement.environment_id = workspaces.environment_id
-   AND project_worker_group_placement.worker_group_id = workspaces.worker_group_id
-   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-            AND worker_groups.region_id = project_worker_group_placement.region_id
-            AND worker_groups.state IN ('active', 'draining')
+  JOIN worker_groups ON worker_groups.id = workspaces.worker_group_id
+                    AND worker_groups.state IN ('active', 'draining')
  WHERE workspaces.org_id = $1
    AND workspaces.project_id = $2
    AND workspaces.environment_id = $3
@@ -1686,31 +1664,6 @@ SELECT sessions.id,
  WHERE sessions.org_id = $2
    AND sessions.project_id = $3
    AND sessions.environment_id = $4
-   AND EXISTS (
-       SELECT 1
-         FROM (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.region_id = project_worker_group_placement.region_id
-                   AND worker_groups.state IN ('active', 'draining')
-        WHERE project_worker_group_placement.org_id = sessions.org_id
-          AND project_worker_group_placement.project_id = sessions.project_id
-          AND project_worker_group_placement.environment_id = sessions.environment_id
-          AND project_worker_group_placement.worker_group_id = sessions.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-   )
 `
 
 type ListSessionActivitiesParams struct {
@@ -1850,31 +1803,6 @@ SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_i
  WHERE sessions.org_id = $1
    AND sessions.project_id = $2
    AND sessions.environment_id = $3
-   AND EXISTS (
-       SELECT 1
-         FROM (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.region_id = project_worker_group_placement.region_id
-                   AND worker_groups.state IN ('active', 'draining')
-        WHERE project_worker_group_placement.org_id = sessions.org_id
-          AND project_worker_group_placement.project_id = sessions.project_id
-          AND project_worker_group_placement.environment_id = sessions.environment_id
-          AND project_worker_group_placement.worker_group_id = sessions.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-   )
    AND (
        $4::text = ''
        OR sessions.status::text = $4::text
@@ -1960,16 +1888,14 @@ const lockSession = `-- name: LockSession :one
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
  FOR UPDATE
 `
 
 type LockSessionParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -1978,7 +1904,6 @@ type LockSessionParams struct {
 func (q *Queries) LockSession(ctx context.Context, arg LockSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, lockSession,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -2025,10 +1950,9 @@ UPDATE sessions
        END,
        updated_at = now()
  WHERE sessions.org_id = $4
-   AND sessions.worker_group_id = $5
-   AND sessions.project_id = $6
-   AND sessions.environment_id = $7
-   AND sessions.id = $8
+   AND sessions.project_id = $5
+   AND sessions.environment_id = $6
+   AND sessions.id = $7
    AND sessions.status = 'open'
    AND (
        $3::timestamptz IS NULL
@@ -2046,7 +1970,6 @@ type PatchSessionParams struct {
 	Tags          []string           `json:"tags"`
 	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	ID            pgtype.UUID        `json:"id"`
@@ -2058,7 +1981,6 @@ func (q *Queries) PatchSession(ctx context.Context, arg PatchSessionParams) (Ses
 		arg.Tags,
 		arg.ExpiresAt,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -2101,10 +2023,9 @@ UPDATE sessions
        current_run_version = current_run_version + 1,
        updated_at = now()
 WHERE sessions.org_id = $2
-   AND sessions.worker_group_id = $3
-   AND sessions.project_id = $4
-   AND sessions.environment_id = $5
-   AND sessions.id = $6
+   AND sessions.project_id = $3
+   AND sessions.environment_id = $4
+   AND sessions.id = $5
    AND sessions.status = 'open'
    AND (
        current_run_id IS NULL
@@ -2124,7 +2045,6 @@ RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, ta
 type SetSessionCurrentRunParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -2134,7 +2054,6 @@ func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurren
 	row := q.db.QueryRow(ctx, setSessionCurrentRun,
 		arg.RunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,

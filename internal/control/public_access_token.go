@@ -351,7 +351,6 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         publicToken.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     publicToken.ProjectID,
 		EnvironmentID: publicToken.EnvironmentID,
 		SessionID:     session.ID,

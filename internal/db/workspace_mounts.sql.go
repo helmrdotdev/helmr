@@ -87,27 +87,8 @@ candidate AS (
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
       JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-        ON project_worker_group_placement.org_id = workspace_mounts.org_id
-	       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-	       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-	       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-	       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-	      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-	                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state = 'active'
 	      JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
        AND image_artifact.project_id = workspace_mounts.project_id
@@ -729,12 +710,11 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
 WITH locked_workspace AS MATERIALIZED (
     SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
-      FROM workspaces
+     FROM workspaces
      WHERE workspaces.org_id = $1
-       AND workspaces.worker_group_id = $2
-       AND workspaces.project_id = $3
-       AND workspaces.environment_id = $4
-       AND workspaces.id = $5
+       AND workspaces.project_id = $2
+       AND workspaces.environment_id = $3
+       AND workspaces.id = $4
        AND workspaces.state = 'active'
        AND workspaces.archived_at IS NULL
        AND workspaces.deleted_at IS NULL
@@ -781,7 +761,7 @@ inserted AS (
         state,
         request
     )
-    SELECT $6,
+    SELECT $5,
            workspaces.org_id,
            workspaces.worker_group_id,
            workspaces.project_id,
@@ -805,9 +785,9 @@ inserted AS (
            deployment_sandboxes.runtime_abi,
            deployment_sandboxes.guestd_abi,
            deployment_sandboxes.adapter_abi,
-           $7::integer,
+           $6::integer,
            'mounting',
-           coalesce($8::jsonb, '{}'::jsonb)
+           coalesce($7::jsonb, '{}'::jsonb)
       FROM locked_workspace AS workspaces
       JOIN deployment_sandboxes
         ON deployment_sandboxes.org_id = workspaces.org_id
@@ -870,7 +850,6 @@ SELECT inserted.id, inserted.org_id, inserted.worker_group_id, inserted.project_
 
 type EnsureWorkspaceMountRequestedParams struct {
 	OrgID           pgtype.UUID `json:"org_id"`
-	WorkerGroupID   string      `json:"worker_group_id"`
 	ProjectID       pgtype.UUID `json:"project_id"`
 	EnvironmentID   pgtype.UUID `json:"environment_id"`
 	WorkspaceID     pgtype.UUID `json:"workspace_id"`
@@ -933,7 +912,6 @@ type EnsureWorkspaceMountRequestedRow struct {
 func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureWorkspaceMountRequestedParams) (EnsureWorkspaceMountRequestedRow, error) {
 	row := q.db.QueryRow(ctx, ensureWorkspaceMountRequested,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -1012,27 +990,8 @@ WITH target AS MATERIALIZED (
        AND runtime_instances.instance_token = $2
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                            AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-       ON project_worker_group_placement.org_id = workspace_mounts.org_id
-       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
        AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
@@ -1314,27 +1273,8 @@ SELECT workspace_mounts.id,
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
                        AND worker_instances.status = 'active'
-  JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-    ON project_worker_group_placement.org_id = workspace_mounts.org_id
-   AND project_worker_group_placement.project_id = workspace_mounts.project_id
-   AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-   AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-            AND worker_groups.state = 'active'
+  JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                    AND worker_groups.state = 'active'
  WHERE workspace_mounts.state = 'mounting'
    AND workspace_mounts.runtime_instance_id IS NULL
    AND workspace_mounts.rootfs_digest = $3
@@ -1463,27 +1403,8 @@ SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_gro
     ON runtime_instances.org_id = workspace_mounts.org_id
    AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
    AND runtime_instances.id = workspace_mounts.runtime_instance_id
-  JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-    ON project_worker_group_placement.org_id = workspace_mounts.org_id
-   AND project_worker_group_placement.project_id = workspace_mounts.project_id
-   AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-   AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-            AND worker_groups.state = 'active'
+  JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                    AND worker_groups.state IN ('active', 'draining')
  WHERE workspace_mounts.org_id = $1
    AND workspace_mounts.worker_group_id = $2
    AND workspace_mounts.project_id = $3
@@ -1963,26 +1884,8 @@ WITH authenticated_runtime_instance AS MATERIALIZED (
       FROM runtime_instances
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                            AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement ON project_worker_group_placement.org_id = runtime_instances.org_id
-                            AND project_worker_group_placement.project_id = runtime_instances.project_id
-                            AND project_worker_group_placement.environment_id = runtime_instances.environment_id
-                            AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
-                            AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = runtime_instances.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE runtime_instances.org_id = $1
        AND runtime_instances.worker_instance_id = $2
        AND runtime_instances.instance_token = $3
@@ -2167,27 +2070,8 @@ WITH target AS MATERIALIZED (
        AND runtime_instances.instance_token = $2
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                            AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-       ON project_worker_group_placement.org_id = workspace_mounts.org_id
-       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
        AND workspace_mounts.workspace_id = $5
@@ -2549,31 +2433,12 @@ WITH renewed_runtime_instance AS (
        SET last_heartbeat_at = now(),
            updated_at = now()
       FROM worker_instances
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement ON true
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = runtime_instances.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE runtime_instances.org_id = $1
        AND runtime_instances.worker_instance_id = $2
        AND worker_instances.id = runtime_instances.worker_instance_id
        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-       AND project_worker_group_placement.org_id = runtime_instances.org_id
-       AND project_worker_group_placement.project_id = runtime_instances.project_id
-       AND project_worker_group_placement.environment_id = runtime_instances.environment_id
-       AND project_worker_group_placement.worker_group_id = runtime_instances.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
        AND runtime_instances.instance_token = $3
        AND runtime_instances.state IN ('binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
     RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
@@ -2735,28 +2600,9 @@ victim AS MATERIALIZED (
        AND workspaces.environment_id = workspace_mounts.environment_id
        AND workspaces.id = workspace_mounts.workspace_id
       JOIN worker_scope ON true
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-       ON project_worker_group_placement.org_id = workspace_mounts.org_id
-       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-       AND project_worker_group_placement.worker_group_id = worker_scope.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.id = worker_scope.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.state = 'mounted'
        AND workspace_mounts.dirty_generation = 0
        AND workspaces.state = 'active'
@@ -2974,10 +2820,9 @@ WITH locked_workspace AS MATERIALIZED (
     SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
-       AND workspaces.worker_group_id = $2
-       AND workspaces.project_id = $3
-       AND workspaces.environment_id = $4
-       AND workspaces.id = $5
+       AND workspaces.project_id = $2
+       AND workspaces.environment_id = $3
+       AND workspaces.id = $4
        AND workspaces.state = 'active'
        AND workspaces.archived_at IS NULL
        AND workspaces.deleted_at IS NULL
@@ -2988,10 +2833,11 @@ target AS MATERIALIZED (
       FROM locked_workspace
       JOIN workspace_mounts
         ON workspace_mounts.org_id = locked_workspace.org_id
-       AND workspace_mounts.worker_group_id = locked_workspace.worker_group_id
        AND workspace_mounts.project_id = locked_workspace.project_id
        AND workspace_mounts.environment_id = locked_workspace.environment_id
        AND workspace_mounts.workspace_id = locked_workspace.id
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
      ORDER BY workspace_mounts.created_at DESC
      LIMIT 1
@@ -3039,7 +2885,6 @@ updated_workspace AS (
            updated_at = now()
       FROM locked_workspace
      WHERE workspaces.org_id = locked_workspace.org_id
-       AND workspaces.worker_group_id = locked_workspace.worker_group_id
        AND workspaces.project_id = locked_workspace.project_id
        AND workspaces.environment_id = locked_workspace.environment_id
        AND workspaces.id = locked_workspace.id
@@ -3149,7 +2994,6 @@ LIMIT 1
 
 type RequestWorkspaceMountStopParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
@@ -3207,7 +3051,6 @@ type RequestWorkspaceMountStopRow struct {
 func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error) {
 	row := q.db.QueryRow(ctx, requestWorkspaceMountStop,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -3326,28 +3169,9 @@ candidate AS (
            LIMIT 1
            FOR UPDATE SKIP LOCKED
       ) preparing_runtime_instance ON true
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-        ON project_worker_group_placement.org_id = workspace_mounts.org_id
-       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-       AND project_worker_group_placement.worker_group_id = worker_scope.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.id = worker_scope.worker_group_id
+                        AND worker_groups.state = 'active'
      WHERE workspace_mounts.state = 'mounting'
        AND workspace_mounts.runtime_instance_id IS NULL
        AND workspace_mounts.rootfs_digest = $4
@@ -3537,27 +3361,8 @@ WITH target AS MATERIALIZED (
        )
       JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                            AND worker_instances.worker_group_id = runtime_instances.worker_group_id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-       ON project_worker_group_placement.org_id = workspace_mounts.org_id
-       AND project_worker_group_placement.project_id = workspace_mounts.project_id
-       AND project_worker_group_placement.environment_id = workspace_mounts.environment_id
-       AND project_worker_group_placement.worker_group_id = workspace_mounts.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state = 'active'
+      JOIN worker_groups ON worker_groups.id = workspace_mounts.worker_group_id
+                        AND worker_groups.state IN ('active', 'draining')
      WHERE workspace_mounts.org_id = $3
        AND workspace_mounts.id = $4
 ),

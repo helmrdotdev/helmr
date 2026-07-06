@@ -127,7 +127,6 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}
 	if _, err := queries.CancelSession(ctx, db.CancelSessionParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            pgvalue.UUID(sessionID),

@@ -76,11 +76,6 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	placementWorkerGroupID, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	if err := s.markStaleWorkspaceMountsLost(r.Context()); err != nil {
 		s.log.Error("mark stale workspace mounts lost failed", "workspace_id", workspaceID.String(), "error", err)
 		writeError(w, errors.New("reap stale workspace mounts"))
@@ -89,7 +84,6 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	row, err := s.db.EnsureWorkspaceMountRequested(r.Context(), db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(actor.OrgID),
-		WorkerGroupID:   placementWorkerGroupID,
 		ProjectID:       projectID,
 		EnvironmentID:   environmentID,
 		WorkspaceID:     pgvalue.UUID(workspaceID),

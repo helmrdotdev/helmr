@@ -2,7 +2,6 @@
 SELECT *
  FROM stream_records
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND stream_id = sqlc.arg(stream_id)
    AND idempotency_key = sqlc.arg(idempotency_key)
    AND sqlc.arg(idempotency_key)::text <> '';
@@ -11,7 +10,6 @@ SELECT *
 SELECT *
  FROM stream_records
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -21,7 +19,6 @@ WITH existing_record AS MATERIALIZED (
     SELECT stream_records.*
      FROM stream_records
      WHERE stream_records.org_id = sqlc.arg(org_id)
-       AND stream_records.worker_group_id = sqlc.arg(worker_group_id)
        AND stream_records.project_id = sqlc.arg(project_id)
        AND stream_records.environment_id = sqlc.arg(environment_id)
        AND stream_records.stream_id = sqlc.arg(stream_id)
@@ -33,7 +30,6 @@ locked_stream AS (
     SELECT streams.*
      FROM streams
      WHERE streams.org_id = sqlc.arg(org_id)
-       AND streams.worker_group_id = sqlc.arg(worker_group_id)
        AND streams.project_id = sqlc.arg(project_id)
        AND streams.environment_id = sqlc.arg(environment_id)
        AND streams.id = sqlc.arg(stream_id)
@@ -46,7 +42,6 @@ allocated_stream AS (
        SET next_sequence = streams.next_sequence + 1
       FROM locked_stream
      WHERE streams.org_id = locked_stream.org_id
-       AND streams.worker_group_id = locked_stream.worker_group_id
        AND streams.id = locked_stream.id
     RETURNING streams.*, streams.next_sequence - 1 AS allocated_sequence
 ),
@@ -110,10 +105,8 @@ SELECT selected_record.*,
 SELECT stream_records.*
   FROM stream_records
   JOIN streams ON streams.org_id = stream_records.org_id
-              AND streams.worker_group_id = stream_records.worker_group_id
               AND streams.id = stream_records.stream_id
  WHERE stream_records.org_id = sqlc.arg(org_id)
-   AND stream_records.worker_group_id = sqlc.arg(worker_group_id)
    AND stream_records.project_id = sqlc.arg(project_id)
    AND stream_records.environment_id = sqlc.arg(environment_id)
    AND stream_records.stream_id = sqlc.arg(stream_id)

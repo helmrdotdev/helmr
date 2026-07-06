@@ -1474,23 +1474,15 @@ SELECT EXISTS (
     SELECT 1
       FROM task_schedule_instances
       JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-      JOIN environments ON environments.org_id = task_schedule_instances.org_id
-                       AND environments.project_id = task_schedule_instances.project_id
-                       AND environments.id = task_schedule_instances.environment_id
-      JOIN projects ON projects.org_id = task_schedule_instances.org_id
-                   AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = $1
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                      AND worker_groups.health_state IN ('healthy', 'degraded')
-                      AND worker_groups.routing_fresh_until > now()
-     WHERE task_schedule_instances.id = $2
-       AND task_schedule_instances.generation = $3
-       AND task_schedule_instances.next_fire_at = $4
-       AND task_schedule_instances.schedule_id = $5
-       AND task_schedule_instances.org_id = $6
-       AND task_schedule_instances.project_id = $7
-       AND task_schedule_instances.environment_id = $8
+     WHERE task_schedule_instances.id = $1
+       AND task_schedule_instances.generation = $2
+       AND task_schedule_instances.next_fire_at = $3
+       AND task_schedule_instances.schedule_id = $4
+       AND task_schedule_instances.org_id = $5
+       AND task_schedule_instances.project_id = $6
+       AND task_schedule_instances.environment_id = $7
+       AND task_schedules.org_id = task_schedule_instances.org_id
+       AND task_schedules.project_id = task_schedule_instances.project_id
        AND task_schedule_instances.enabled
        AND (
            task_schedule_instances.retry_after IS NULL
@@ -1501,7 +1493,6 @@ SELECT EXISTS (
 `
 
 type ScheduleInstanceTriggerIsCurrentParams struct {
-	WorkerGroupID string             `json:"worker_group_id"`
 	InstanceID    pgtype.UUID        `json:"instance_id"`
 	Generation    int64              `json:"generation"`
 	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
@@ -1513,7 +1504,6 @@ type ScheduleInstanceTriggerIsCurrentParams struct {
 
 func (q *Queries) ScheduleInstanceTriggerIsCurrent(ctx context.Context, arg ScheduleInstanceTriggerIsCurrentParams) (bool, error) {
 	row := q.db.QueryRow(ctx, scheduleInstanceTriggerIsCurrent,
-		arg.WorkerGroupID,
 		arg.InstanceID,
 		arg.Generation,
 		arg.ScheduledAt,

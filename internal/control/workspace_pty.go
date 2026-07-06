@@ -345,7 +345,6 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
-			WorkerGroupID:   ws.WorkerGroupID,
 			ProjectID:       ws.ProjectID,
 			EnvironmentID:   ws.EnvironmentID,
 			WorkspaceID:     ws.ID,

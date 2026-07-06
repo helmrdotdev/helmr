@@ -38,7 +38,6 @@ func (s *Server) listSessionStreams(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.db.ListSessionStreams(r.Context(), db.ListSessionStreamsParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		SessionID:     session.ID,
@@ -74,7 +73,6 @@ func (s *Server) materializeSessionStreamCatalog(ctx context.Context, session db
 				ID:                 pgvalue.UUID(uuid.New()),
 				PublicID:           publicID,
 				OrgID:              session.OrgID,
-				WorkerGroupID:      session.WorkerGroupID,
 				ProjectID:          session.ProjectID,
 				EnvironmentID:      session.EnvironmentID,
 				SessionID:          session.ID,

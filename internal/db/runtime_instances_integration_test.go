@@ -319,7 +319,6 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -464,7 +463,6 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -482,6 +480,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "must-not-create-cross-worker-cold-runtime",
 		WorkerInstanceID:            pgvalue.UUID(otherWorkerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "other-worker-workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -512,8 +511,8 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		GuestdAbi:                   "guestd-test",
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
-		RuntimeID:                   runtimeReleaseID,
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		RuntimeID:                   runtimeReleaseID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	if err != nil {
@@ -525,7 +524,6 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherRequestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(otherWorkspaceID),
@@ -546,6 +544,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "must-not-create-cold-runtime-after-reserve",
 		WorkerInstanceID:            pgvalue.UUID(otherWorkerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "reserved-other-worker-workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -562,6 +561,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "must-not-create-cold-runtime-for-second-workspace",
 		WorkerInstanceID:            pgvalue.UUID(otherWorkerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "second-workspace-workspace-mount-channel-token-hash",
 		RuntimeID:                   runtimeReleaseID,
@@ -623,7 +623,6 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -638,8 +637,8 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		GuestdAbi:                   "guestd-test",
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
-		RuntimeID:                   runtimeReleaseID,
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		RuntimeID:                   runtimeReleaseID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -713,7 +712,6 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -728,8 +726,8 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		GuestdAbi:                   "guestd-test",
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
-		RuntimeID:                   runtimeReleaseID,
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		RuntimeID:                   runtimeReleaseID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -794,7 +792,6 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -845,7 +842,6 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDraining
 	mountTokenHash := "draining-workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -886,6 +882,78 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDraining
 	}
 }
 
+func TestPreparedRuntimeMountAdoptionRejectsDrainingWorkerGroup(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
+	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeABI:          "test",
+		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeKeyHash:      "runtime-key-hash",
+		RuntimeKey:          []byte(`{"test":"draining-prepared-adoption"}`),
+		InstanceToken:       "draining-prepared-runtime-token",
+		ExpiresAt:           pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Request:       []byte(`{"test":"draining-prepared-adoption"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
+
+	_, err = queries.ReserveWorkspaceMountPreparingRuntime(ctx, db.ReserveWorkspaceMountPreparingRuntimeParams{
+		RootfsDigest:                "sha256:rootfs",
+		RuntimeABI:                  "test",
+		GuestdAbi:                   "guestd-test",
+		AdapterAbi:                  "adapter-test",
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		RuntimeID:                   runtimeReleaseID,
+		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("reserve preparing runtime on draining worker group err = %v, want pgx.ErrNoRows", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runtime_instances
+		   SET adopting_workspace_mount_id = $1,
+		       adoption_expires_at = now() + interval '1 hour',
+		       updated_at = now()
+		 WHERE org_id = $2
+		   AND id = $3
+	`, pgvalue.MustUUIDValue(requestedMount.ID), ids.orgID, pgvalue.MustUUIDValue(instance.ID)); err != nil {
+		t.Fatal(err)
+	}
+	_, err = queries.GetAwaitingPreparedRuntimeMountForWorker(ctx, db.GetAwaitingPreparedRuntimeMountForWorkerParams{
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
+		RuntimeID:        runtimeReleaseID,
+		RootfsDigest:     "sha256:rootfs",
+		RuntimeABI:       "test",
+		GuestdAbi:        "guestd-test",
+		AdapterAbi:       "adapter-test",
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("get awaiting prepared runtime mount on draining worker group err = %v, want pgx.ErrNoRows", err)
+	}
+}
+
 func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -895,7 +963,6 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
@@ -1274,15 +1341,15 @@ func TestGetDeploymentSandboxForWorkerGroupRejectsDisabledWorkerGroup(t *testing
 	queries := db.New(pool)
 
 	if _, err := queries.GetDeploymentSandboxForWorkerGroup(ctx, db.GetDeploymentSandboxForWorkerGroupParams{
-		ID:            pgvalue.UUID(ids.deploymentSandboxID),
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		ID:            pgvalue.UUID(ids.deploymentSandboxID),
 	}); err != nil {
 		t.Fatal(err)
 	}
 	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 	if _, err := queries.GetDeploymentSandboxForWorkerGroup(ctx, db.GetDeploymentSandboxForWorkerGroupParams{
-		ID:            pgvalue.UUID(ids.deploymentSandboxID),
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		ID:            pgvalue.UUID(ids.deploymentSandboxID),
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("disabled worker group lookup error = %v, want pgx.ErrNoRows", err)
 	}
@@ -1533,7 +1600,6 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if _, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),

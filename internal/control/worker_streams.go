@@ -210,7 +210,6 @@ func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, sess
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		SessionID:     session.ID,
@@ -245,7 +244,6 @@ func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, sess
 			Metadata:           []byte("{}"),
 			DeploymentStreamID: deploymentStream.ID,
 			OrgID:              session.OrgID,
-			WorkerGroupID:      session.WorkerGroupID,
 			ProjectID:          session.ProjectID,
 			EnvironmentID:      session.EnvironmentID,
 			SessionID:          session.ID,
@@ -256,7 +254,6 @@ func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, sess
 func (s *Server) readInputStreamRecord(ctx context.Context, store db.Querier, session db.Session, stream db.Stream, afterSequence int64, correlationID string) (db.StreamRecord, bool, error) {
 	records, err := store.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,

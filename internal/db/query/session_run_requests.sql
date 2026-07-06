@@ -9,18 +9,38 @@ INSERT INTO session_run_requests (
     stream_record_id,
     stream_id,
     cause_kind
-) VALUES (
-    sqlc.arg(id),
-    sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
-    sqlc.arg(project_id),
-    sqlc.arg(environment_id),
-    sqlc.arg(session_id),
-    sqlc.arg(stream_record_id),
-    sqlc.arg(stream_id),
-    'stream_record'
 )
-ON CONFLICT (org_id, worker_group_id, project_id, environment_id, stream_record_id)
+SELECT
+    sqlc.arg(id),
+    stream_records.org_id,
+    stream_records.worker_group_id,
+    stream_records.project_id,
+    stream_records.environment_id,
+    stream_records.session_id,
+    stream_records.id,
+    stream_records.stream_id,
+    'stream_record'
+  FROM stream_records
+  JOIN streams
+    ON streams.org_id = stream_records.org_id
+   AND streams.project_id = stream_records.project_id
+   AND streams.environment_id = stream_records.environment_id
+   AND streams.id = stream_records.stream_id
+   AND streams.worker_group_id = stream_records.worker_group_id
+   AND streams.session_id = stream_records.session_id
+  JOIN sessions
+    ON sessions.org_id = stream_records.org_id
+   AND sessions.project_id = stream_records.project_id
+   AND sessions.environment_id = stream_records.environment_id
+   AND sessions.id = stream_records.session_id
+   AND sessions.worker_group_id = stream_records.worker_group_id
+ WHERE stream_records.org_id = sqlc.arg(org_id)
+   AND stream_records.project_id = sqlc.arg(project_id)
+   AND stream_records.environment_id = sqlc.arg(environment_id)
+   AND stream_records.session_id = sqlc.arg(session_id)
+   AND stream_records.stream_id = sqlc.arg(stream_id)
+   AND stream_records.id = sqlc.arg(stream_record_id)
+ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_run_requests.updated_at
 RETURNING *;
 
@@ -28,7 +48,6 @@ RETURNING *;
 SELECT *
  FROM session_run_requests
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);

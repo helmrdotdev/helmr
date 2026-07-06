@@ -128,18 +128,38 @@ INSERT INTO session_run_requests (
     stream_record_id,
     stream_id,
     cause_kind
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    'stream_record'
 )
-ON CONFLICT (org_id, worker_group_id, project_id, environment_id, stream_record_id)
+SELECT
+    $1,
+    stream_records.org_id,
+    stream_records.worker_group_id,
+    stream_records.project_id,
+    stream_records.environment_id,
+    stream_records.session_id,
+    stream_records.id,
+    stream_records.stream_id,
+    'stream_record'
+  FROM stream_records
+  JOIN streams
+    ON streams.org_id = stream_records.org_id
+   AND streams.project_id = stream_records.project_id
+   AND streams.environment_id = stream_records.environment_id
+   AND streams.id = stream_records.stream_id
+   AND streams.worker_group_id = stream_records.worker_group_id
+   AND streams.session_id = stream_records.session_id
+  JOIN sessions
+    ON sessions.org_id = stream_records.org_id
+   AND sessions.project_id = stream_records.project_id
+   AND sessions.environment_id = stream_records.environment_id
+   AND sessions.id = stream_records.session_id
+   AND sessions.worker_group_id = stream_records.worker_group_id
+ WHERE stream_records.org_id = $2
+   AND stream_records.project_id = $3
+   AND stream_records.environment_id = $4
+   AND stream_records.session_id = $5
+   AND stream_records.stream_id = $6
+   AND stream_records.id = $7
+ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_run_requests.updated_at
 RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
 `
@@ -147,24 +167,22 @@ RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, s
 type EnsureSessionRunRequestForStreamRecordParams struct {
 	ID             pgtype.UUID `json:"id"`
 	OrgID          pgtype.UUID `json:"org_id"`
-	WorkerGroupID  string      `json:"worker_group_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	SessionID      pgtype.UUID `json:"session_id"`
-	StreamRecordID pgtype.UUID `json:"stream_record_id"`
 	StreamID       pgtype.UUID `json:"stream_id"`
+	StreamRecordID pgtype.UUID `json:"stream_record_id"`
 }
 
 func (q *Queries) EnsureSessionRunRequestForStreamRecord(ctx context.Context, arg EnsureSessionRunRequestForStreamRecordParams) (SessionRunRequest, error) {
 	row := q.db.QueryRow(ctx, ensureSessionRunRequestForStreamRecord,
 		arg.ID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
-		arg.StreamRecordID,
 		arg.StreamID,
+		arg.StreamRecordID,
 	)
 	var i SessionRunRequest
 	err := row.Scan(
@@ -196,15 +214,13 @@ const getSessionRunRequest = `-- name: GetSessionRunRequest :one
 SELECT id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status, attempts, next_attempt_at, last_error, claimed_at, claim_expires_at, claim_owner, run_id, error_message, created_at, updated_at
  FROM session_run_requests
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
 `
 
 type GetSessionRunRequestParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -213,7 +229,6 @@ type GetSessionRunRequestParams struct {
 func (q *Queries) GetSessionRunRequest(ctx context.Context, arg GetSessionRunRequestParams) (SessionRunRequest, error) {
 	row := q.db.QueryRow(ctx, getSessionRunRequest,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,

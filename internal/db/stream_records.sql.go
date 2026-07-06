@@ -16,23 +16,21 @@ WITH existing_record AS MATERIALIZED (
     SELECT stream_records.id, stream_records.public_id, stream_records.org_id, stream_records.worker_group_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
      FROM stream_records
      WHERE stream_records.org_id = $2
-       AND stream_records.worker_group_id = $3
-       AND stream_records.project_id = $4
-       AND stream_records.environment_id = $5
-       AND stream_records.stream_id = $6
-       AND stream_records.idempotency_key = $7
-       AND $7::text <> ''
+       AND stream_records.project_id = $3
+       AND stream_records.environment_id = $4
+       AND stream_records.stream_id = $5
+       AND stream_records.idempotency_key = $6
+       AND $6::text <> ''
      FOR UPDATE
 ),
 locked_stream AS (
     SELECT streams.id, streams.public_id, streams.org_id, streams.worker_group_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at
      FROM streams
      WHERE streams.org_id = $2
-       AND streams.worker_group_id = $3
-       AND streams.project_id = $4
-       AND streams.environment_id = $5
-       AND streams.id = $6
-       AND streams.direction = $8::stream_direction
+       AND streams.project_id = $3
+       AND streams.environment_id = $4
+       AND streams.id = $5
+       AND streams.direction = $7::stream_direction
        AND NOT EXISTS (SELECT 1 FROM existing_record)
      FOR UPDATE
 ),
@@ -41,7 +39,6 @@ allocated_stream AS (
        SET next_sequence = streams.next_sequence + 1
       FROM locked_stream
      WHERE streams.org_id = locked_stream.org_id
-       AND streams.worker_group_id = locked_stream.worker_group_id
        AND streams.id = locked_stream.id
     RETURNING streams.id, streams.public_id, streams.org_id, streams.worker_group_id, streams.project_id, streams.environment_id, streams.session_id, streams.deployment_stream_id, streams.name, streams.direction, streams.schema_fingerprint, streams.metadata, streams.next_sequence, streams.created_at, streams.next_sequence - 1 AS allocated_sequence
 ),
@@ -66,8 +63,8 @@ inserted_record AS (
         source_id,
         public_access_token_id
     )
-    SELECT $9,
-           $10,
+    SELECT $8,
+           $9,
            allocated_stream.org_id,
            allocated_stream.worker_group_id,
            allocated_stream.project_id,
@@ -76,14 +73,14 @@ inserted_record AS (
            allocated_stream.id,
            allocated_stream.direction,
            allocated_stream.allocated_sequence,
-           COALESCE($11::jsonb, 'null'::jsonb),
-           COALESCE($12::text, ''),
-           COALESCE(NULLIF($13::text, ''), 'application/json'),
-           COALESCE($7::text, ''),
+           COALESCE($10::jsonb, 'null'::jsonb),
+           COALESCE($11::text, ''),
+           COALESCE(NULLIF($12::text, ''), 'application/json'),
+           COALESCE($6::text, ''),
            COALESCE($1::text, ''),
-           $14::stream_record_source_type,
-           COALESCE($15::text, ''),
-           $16::uuid
+           $13::stream_record_source_type,
+           COALESCE($14::text, ''),
+           $15::uuid
       FROM allocated_stream
     RETURNING stream_records.id, stream_records.public_id, stream_records.org_id, stream_records.worker_group_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
 ),
@@ -105,7 +102,6 @@ SELECT selected_record.id, selected_record.public_id, selected_record.org_id, se
 type AppendStreamRecordParams struct {
 	IdempotencyFingerprint string                 `json:"idempotency_fingerprint"`
 	OrgID                  pgtype.UUID            `json:"org_id"`
-	WorkerGroupID          string                 `json:"worker_group_id"`
 	ProjectID              pgtype.UUID            `json:"project_id"`
 	EnvironmentID          pgtype.UUID            `json:"environment_id"`
 	StreamID               pgtype.UUID            `json:"stream_id"`
@@ -149,7 +145,6 @@ func (q *Queries) AppendStreamRecord(ctx context.Context, arg AppendStreamRecord
 	row := q.db.QueryRow(ctx, appendStreamRecord,
 		arg.IdempotencyFingerprint,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamID,
@@ -195,15 +190,13 @@ const getStreamRecord = `-- name: GetStreamRecord :one
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
  FROM stream_records
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
 `
 
 type GetStreamRecordParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -212,7 +205,6 @@ type GetStreamRecordParams struct {
 func (q *Queries) GetStreamRecord(ctx context.Context, arg GetStreamRecordParams) (StreamRecord, error) {
 	row := q.db.QueryRow(ctx, getStreamRecord,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -246,26 +238,19 @@ const getStreamRecordByIdempotencyKey = `-- name: GetStreamRecordByIdempotencyKe
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, stream_id, direction, sequence, data, correlation_id, content_type, idempotency_key, idempotency_fingerprint, source_type, source_id, public_access_token_id, created_at
  FROM stream_records
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND stream_id = $3
-   AND idempotency_key = $4
-   AND $4::text <> ''
+   AND stream_id = $2
+   AND idempotency_key = $3
+   AND $3::text <> ''
 `
 
 type GetStreamRecordByIdempotencyKeyParams struct {
 	OrgID          pgtype.UUID `json:"org_id"`
-	WorkerGroupID  string      `json:"worker_group_id"`
 	StreamID       pgtype.UUID `json:"stream_id"`
 	IdempotencyKey string      `json:"idempotency_key"`
 }
 
 func (q *Queries) GetStreamRecordByIdempotencyKey(ctx context.Context, arg GetStreamRecordByIdempotencyKeyParams) (StreamRecord, error) {
-	row := q.db.QueryRow(ctx, getStreamRecordByIdempotencyKey,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.StreamID,
-		arg.IdempotencyKey,
-	)
+	row := q.db.QueryRow(ctx, getStreamRecordByIdempotencyKey, arg.OrgID, arg.StreamID, arg.IdempotencyKey)
 	var i StreamRecord
 	err := row.Scan(
 		&i.ID,
@@ -295,26 +280,23 @@ const listStreamRecords = `-- name: ListStreamRecords :many
 SELECT stream_records.id, stream_records.public_id, stream_records.org_id, stream_records.worker_group_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
   FROM stream_records
   JOIN streams ON streams.org_id = stream_records.org_id
-              AND streams.worker_group_id = stream_records.worker_group_id
               AND streams.id = stream_records.stream_id
  WHERE stream_records.org_id = $1
-   AND stream_records.worker_group_id = $2
-   AND stream_records.project_id = $3
-   AND stream_records.environment_id = $4
-   AND stream_records.stream_id = $5
-   AND streams.direction = $6::stream_direction
-   AND stream_records.sequence > $7::bigint
+   AND stream_records.project_id = $2
+   AND stream_records.environment_id = $3
+   AND stream_records.stream_id = $4
+   AND streams.direction = $5::stream_direction
+   AND stream_records.sequence > $6::bigint
    AND (
-       COALESCE($8::text, '') = ''
-       OR stream_records.correlation_id = COALESCE($8::text, '')
+       COALESCE($7::text, '') = ''
+       OR stream_records.correlation_id = COALESCE($7::text, '')
    )
  ORDER BY stream_records.sequence ASC, stream_records.id ASC
- LIMIT $9
+ LIMIT $8
 `
 
 type ListStreamRecordsParams struct {
 	OrgID         pgtype.UUID     `json:"org_id"`
-	WorkerGroupID string          `json:"worker_group_id"`
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
 	StreamID      pgtype.UUID     `json:"stream_id"`
@@ -327,7 +309,6 @@ type ListStreamRecordsParams struct {
 func (q *Queries) ListStreamRecords(ctx context.Context, arg ListStreamRecordsParams) ([]StreamRecord, error) {
 	rows, err := q.db.Query(ctx, listStreamRecords,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamID,

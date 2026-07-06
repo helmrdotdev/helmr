@@ -18,16 +18,14 @@ UPDATE workspaces
        archived_at = coalesce(workspaces.archived_at, now()),
        updated_at = now()
  WHERE workspaces.org_id = $1
-   AND workspaces.worker_group_id = $2
-   AND workspaces.project_id = $3
-   AND workspaces.environment_id = $4
-   AND workspaces.id = $5
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.id = $4
    AND workspaces.deleted_at IS NULL
    AND NOT EXISTS (
        SELECT 1
          FROM workspace_mounts
         WHERE workspace_mounts.org_id = workspaces.org_id
-          AND workspace_mounts.worker_group_id = workspaces.worker_group_id
           AND workspace_mounts.project_id = workspaces.project_id
           AND workspace_mounts.environment_id = workspaces.environment_id
           AND workspace_mounts.workspace_id = workspaces.id
@@ -38,7 +36,6 @@ RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, de
 
 type ArchiveWorkspaceParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -47,7 +44,6 @@ type ArchiveWorkspaceParams struct {
 func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspaceParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, archiveWorkspace,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -250,30 +246,15 @@ WITH created_workspace AS (
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
        AND deployments.status = 'deployed'
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_project.default_region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON placement_worker_group.region_id = placement_project.default_region_id
-) AS project_worker_group_placement
-        ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
-       AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
-       AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = $3
-       AND project_worker_group_placement.worker_group_state = 'active'
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.region_id = project_worker_group_placement.region_id
-                AND worker_groups.state = 'active'
-                AND worker_groups.health_state IN ('healthy', 'degraded')
-                AND worker_groups.routing_fresh_until > now()
+      JOIN projects
+        ON projects.org_id = deployment_sandboxes.org_id
+       AND projects.id = deployment_sandboxes.project_id
+      JOIN worker_groups
+        ON worker_groups.id = $3
+       AND worker_groups.region_id = projects.default_region_id
+       AND worker_groups.state = 'active'
+       AND worker_groups.health_state IN ('healthy', 'degraded')
+       AND worker_groups.routing_fresh_until > now()
      WHERE deployment_sandboxes.org_id = $9
        AND deployment_sandboxes.project_id = $10
        AND deployment_sandboxes.environment_id = $11
@@ -743,31 +724,6 @@ SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker
 WHERE workspaces.org_id = $1
    AND workspaces.project_id = $2
    AND workspaces.environment_id = $3
-   AND EXISTS (
-       SELECT 1
-         FROM (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.region_id = project_worker_group_placement.region_id
-                   AND worker_groups.state IN ('active', 'draining')
-        WHERE project_worker_group_placement.org_id = workspaces.org_id
-          AND project_worker_group_placement.project_id = workspaces.project_id
-          AND project_worker_group_placement.environment_id = workspaces.environment_id
-          AND project_worker_group_placement.worker_group_id = workspaces.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-   )
    AND workspaces.deleted_at IS NULL
    AND ($4::workspace_state IS NULL OR workspaces.state = $4::workspace_state)
    AND ($5::text IS NULL OR workspaces.external_id = $5::text)
@@ -848,10 +804,9 @@ UPDATE workspaces
        tags = coalesce($2::text[], workspaces.tags),
        updated_at = now()
  WHERE workspaces.org_id = $3
-   AND workspaces.worker_group_id = $4
-   AND workspaces.project_id = $5
-   AND workspaces.environment_id = $6
-   AND workspaces.id = $7
+   AND workspaces.project_id = $4
+   AND workspaces.environment_id = $5
+   AND workspaces.id = $6
    AND workspaces.deleted_at IS NULL
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, current_version_required_state, state, desired_state, dirty_state, last_workspace_mount_id, metadata, tags, retention_policy, auto_stop_at, auto_archive_at, auto_delete_at, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
@@ -860,7 +815,6 @@ type PatchWorkspaceParams struct {
 	Metadata      []byte      `json:"metadata"`
 	Tags          []string    `json:"tags"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -871,7 +825,6 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 		arg.Metadata,
 		arg.Tags,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -998,10 +951,9 @@ UPDATE workspaces
    SET desired_state = 'stopped',
        updated_at = now()
  WHERE workspaces.org_id = $1
-   AND workspaces.worker_group_id = $2
-   AND workspaces.project_id = $3
-   AND workspaces.environment_id = $4
-   AND workspaces.id = $5
+   AND workspaces.project_id = $2
+   AND workspaces.environment_id = $3
+   AND workspaces.id = $4
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
@@ -1010,7 +962,6 @@ RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, de
 
 type SetWorkspaceDesiredStoppedParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -1019,7 +970,6 @@ type SetWorkspaceDesiredStoppedParams struct {
 func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspaceDesiredStoppedParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, setWorkspaceDesiredStopped,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,

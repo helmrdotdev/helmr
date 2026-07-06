@@ -3133,7 +3133,6 @@ type RunLease struct {
 type RunLogCursor struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
-	WorkerGroupID  string             `json:"worker_group_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
 	AttemptID      pgtype.UUID        `json:"attempt_id"`
 	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`

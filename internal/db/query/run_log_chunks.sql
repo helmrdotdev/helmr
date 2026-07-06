@@ -38,31 +38,27 @@ current_run_lease AS (
        AND run_leases.lease_expires_at > now()
 ),
 inserted_run_log_cursor AS (
-    INSERT INTO run_log_cursors (org_id, worker_group_id, run_id, stream_name, seq, cursor, idempotency_key)
+    INSERT INTO run_log_cursors (org_id, run_id, stream_name, seq, cursor, idempotency_key)
     SELECT current_run_lease.org_id,
-           current_run_lease.worker_group_id,
            current_run_lease.id,
            '__run__',
            1,
            'rlc1.' || current_run_lease.org_id::text || '.' || current_run_lease.id::text || '.__run__.1',
            '__head__'
       FROM current_run_lease
-    ON CONFLICT (org_id, worker_group_id, run_id, stream_name, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, run_id, stream_name, idempotency_key) DO NOTHING
     RETURNING run_log_cursors.org_id,
-              run_log_cursors.worker_group_id,
               run_log_cursors.run_id,
               run_log_cursors.seq,
               true AS inserted
 ),
 existing_run_log_cursor AS (
     SELECT run_log_cursors.org_id,
-           run_log_cursors.worker_group_id,
            run_log_cursors.run_id,
            run_log_cursors.seq,
            false AS inserted
       FROM run_log_cursors
       JOIN current_run_lease ON current_run_lease.org_id = run_log_cursors.org_id
-                            AND current_run_lease.worker_group_id = run_log_cursors.worker_group_id
                             AND current_run_lease.id = run_log_cursors.run_id
      WHERE run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
@@ -75,9 +71,8 @@ locked_run_log_cursor AS (
     SELECT * FROM existing_run_log_cursor
 ),
 selected_cursor AS (
-    INSERT INTO run_log_cursors (org_id, worker_group_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
+    INSERT INTO run_log_cursors (org_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
     SELECT locked_run_log_cursor.org_id,
-           locked_run_log_cursor.worker_group_id,
            locked_run_log_cursor.run_id,
            current_run_lease.attempt_id,
            current_run_lease.run_lease_id,
@@ -87,12 +82,10 @@ selected_cursor AS (
            'log:' || current_run_lease.run_lease_id::text || ':' || (sqlc.arg(stream)::run_log_stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text
       FROM locked_run_log_cursor
       JOIN current_run_lease ON current_run_lease.org_id = locked_run_log_cursor.org_id
-                            AND current_run_lease.worker_group_id = locked_run_log_cursor.worker_group_id
                             AND current_run_lease.id = locked_run_log_cursor.run_id
-    ON CONFLICT (org_id, worker_group_id, run_id, stream_name, idempotency_key)
+    ON CONFLICT (org_id, run_id, stream_name, idempotency_key)
     DO UPDATE SET observed_at = run_log_cursors.observed_at
     RETURNING run_log_cursors.org_id,
-              run_log_cursors.worker_group_id,
               run_log_cursors.run_id,
               run_log_cursors.stream_name,
               run_log_cursors.seq
@@ -104,10 +97,8 @@ advanced_run_log_cursor AS (
            observed_at = now()
       FROM selected_cursor
       JOIN locked_run_log_cursor ON locked_run_log_cursor.org_id = selected_cursor.org_id
-                                AND locked_run_log_cursor.worker_group_id = selected_cursor.worker_group_id
                                 AND locked_run_log_cursor.run_id = selected_cursor.run_id
      WHERE run_log_cursors.org_id = selected_cursor.org_id
-       AND run_log_cursors.worker_group_id = selected_cursor.worker_group_id
        AND run_log_cursors.run_id = selected_cursor.run_id
        AND run_log_cursors.stream_name = '__run__'
        AND run_log_cursors.idempotency_key = '__head__'
@@ -130,7 +121,6 @@ selected_chunk AS (
            now()
       FROM current_run_lease
       JOIN selected_cursor ON selected_cursor.org_id = current_run_lease.org_id
-                          AND selected_cursor.worker_group_id = current_run_lease.worker_group_id
                           AND selected_cursor.run_id = current_run_lease.id
     ON CONFLICT (org_id, run_id, run_lease_id, stream, observed_seq)
     DO UPDATE SET size_bytes = run_log_hot_chunks.size_bytes

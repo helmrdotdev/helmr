@@ -23,7 +23,6 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	first, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -40,7 +39,6 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	raised, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -57,7 +55,6 @@ func TestEnsureWorkspaceMountRequestedBumpsExistingPriority(t *testing.T) {
 	lowered, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -106,7 +103,6 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 	requested, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           pgvalue.UUID(ids.orgID),
-		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
 		ProjectID:       pgvalue.UUID(ids.projectID),
 		EnvironmentID:   pgvalue.UUID(ids.environmentID),
 		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
@@ -127,6 +123,7 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 
 	claimed, err := queries.ClaimWorkspaceMount(ctx, db.ClaimWorkspaceMountParams{
 		WorkerInstanceID:            pgvalue.UUID(workerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		RuntimeID:                   runtimeID,
 		RootfsDigest:                "sha256:rootfs",
 		RuntimeABI:                  "test",
@@ -135,7 +132,6 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 		NetworkPolicy:               []byte(`{"internet":true}`),
 		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RuntimeInstanceToken:        "cold-runtime-instance-token",
-		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenHash:      "guestd-token-hash",
 		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})
@@ -162,6 +158,77 @@ func TestClaimWorkspaceMountAllowsColdClaimWithoutReadyRuntime(t *testing.T) {
 	}
 	if runtimeState != db.RuntimeInstanceStateBinding {
 		t.Fatalf("cold runtime state = %s, want binding", runtimeState)
+	}
+}
+
+func TestClaimWorkspaceMountRejectsDrainingWorkerGroup(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, _, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_mounts
+		   SET state = 'unmounted',
+		       unmounted_at = now(),
+		       updated_at = now()
+		 WHERE org_id = $1
+		   AND workspace_id = $2
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runtime_instances
+		   SET state = 'closed',
+		       closed_at = now(),
+		       updated_at = now()
+		 WHERE org_id = $1
+		   AND workspace_mount_id IN (
+		       SELECT id
+		         FROM workspace_mounts
+		        WHERE org_id = $1
+		          AND workspace_id = $2
+		   )
+	`, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
+		RequestPriority: 1,
+		Request:         []byte(`{"source":"draining-claim-test"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeID string
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_id
+		  FROM worker_instances
+		 WHERE id = $1
+	`, workerID).Scan(&runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
+
+	_, err := queries.ClaimWorkspaceMount(ctx, db.ClaimWorkspaceMountParams{
+		WorkerInstanceID:            pgvalue.UUID(workerID),
+		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
+		RuntimeID:                   runtimeID,
+		RootfsDigest:                "sha256:rootfs",
+		RuntimeABI:                  "test",
+		GuestdAbi:                   "guestd-test",
+		AdapterAbi:                  "adapter-test",
+		NetworkPolicy:               []byte(`{"internet":true}`),
+		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RuntimeInstanceToken:        "draining-cold-runtime-instance-token",
+		GuestdChannelTokenHash:      "draining-guestd-token-hash",
+		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("claim on draining worker group err = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -221,6 +288,57 @@ func TestStopWorkspaceMountReplaysAfterSuccessfulStop(t *testing.T) {
 	}
 	if runtimeState != db.RuntimeInstanceStateClosed {
 		t.Fatalf("runtime state = %s, want closed", runtimeState)
+	}
+}
+
+func TestRequestWorkspaceMountStopUsesMountPlacementSnapshot(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, _, _ = seedRunningSessionLease(t, ctx, pool, ids)
+	alternateWorkerGroupID := "alternate-stop-route"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_groups (id, region_id, name, description)
+		VALUES ($1, $2, 'alternate-stop-route', 'alternate route for stop test')
+	`, alternateWorkerGroupID, dbtest.DefaultRegionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspaces
+		   SET worker_group_id = $1
+		 WHERE org_id = $2
+		   AND id = $3
+	`, alternateWorkerGroupID, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+
+	stopped, err := queries.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.WorkerGroupID != dbtest.DefaultWorkerGroupID {
+		t.Fatalf("stopped mount worker group = %q, want persisted mount worker group %q", stopped.WorkerGroupID, dbtest.DefaultWorkerGroupID)
+	}
+	if stopped.State != db.WorkspaceMountStateUnmounting {
+		t.Fatalf("stopped mount state = %s, want unmounting", stopped.State)
+	}
+	var desiredState db.WorkspaceDesiredState
+	if err := pool.QueryRow(ctx, `
+		SELECT desired_state
+		  FROM workspaces
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.workspaceID).Scan(&desiredState); err != nil {
+		t.Fatal(err)
+	}
+	if desiredState != db.WorkspaceDesiredStateStopped {
+		t.Fatalf("workspace desired_state = %s, want stopped", desiredState)
 	}
 }
 

@@ -110,7 +110,6 @@ func (w sessionRunRequestWorkflow) reconcileClaimed(ctx context.Context, request
 	err := inTxWith(ctx, w.db, w.tx, func(work *txWork) error {
 		record, err := work.q.GetStreamRecord(ctx, db.GetStreamRecordParams{
 			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.StreamRecordID,
@@ -198,7 +197,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	locked, err := store.LockSession(ctx, db.LockSessionParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -261,7 +259,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	previousSessionRun, err := store.GetSessionRunByRunID(ctx, db.GetSessionRunByRunIDParams{
 		OrgID:         locked.OrgID,
-		WorkerGroupID: locked.WorkerGroupID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		SessionID:     locked.ID,
@@ -355,7 +352,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 			ID:                    runID,
 			PublicID:              runPublicID,
 			OrgID:                 locked.OrgID,
-			WorkerGroupID:         locked.WorkerGroupID,
 			ProjectID:             locked.ProjectID,
 			EnvironmentID:         locked.EnvironmentID,
 			DeploymentID:          deploymentTask.DeploymentID,
@@ -398,7 +394,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:           locked.OrgID,
-		WorkerGroupID:   locked.WorkerGroupID,
 		ProjectID:       locked.ProjectID,
 		EnvironmentID:   locked.EnvironmentID,
 		WorkspaceID:     locked.WorkspaceID,
@@ -425,7 +420,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:      sessionRunPublicID,
 			OrgID:         locked.OrgID,
-			WorkerGroupID: locked.WorkerGroupID,
 			ProjectID:     locked.ProjectID,
 			EnvironmentID: locked.EnvironmentID,
 			SessionID:     locked.ID,
@@ -440,7 +434,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	if _, err := store.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
 		OrgID:         locked.OrgID,
-		WorkerGroupID: locked.WorkerGroupID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		SessionID:     locked.ID,
@@ -469,7 +462,6 @@ func (w sessionRunRequestWorkflow) consumeByActiveRun(ctx context.Context, sessi
 	return inTxWith(ctx, w.db, w.tx, func(work *txWork) error {
 		if _, err := work.q.LockSession(ctx, db.LockSessionParams{
 			OrgID:         session.OrgID,
-			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,

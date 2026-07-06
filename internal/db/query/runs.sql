@@ -2,6 +2,35 @@
 WITH attempt_seed AS (
     SELECT uuidv7() AS id
 ),
+run_scope AS MATERIALIZED (
+    SELECT sessions.org_id,
+           sessions.worker_group_id,
+           sessions.project_id,
+           sessions.environment_id,
+           sessions.id AS session_id,
+           sessions.workspace_id
+      FROM sessions
+      JOIN workspaces
+        ON workspaces.org_id = sessions.org_id
+       AND workspaces.project_id = sessions.project_id
+       AND workspaces.environment_id = sessions.environment_id
+       AND workspaces.id = sessions.workspace_id
+       AND workspaces.worker_group_id = sessions.worker_group_id
+      JOIN worker_groups
+        ON worker_groups.id = sessions.worker_group_id
+       AND (
+           worker_groups.state = 'active'
+           OR (
+               sqlc.arg(allow_draining_route)::boolean
+               AND worker_groups.state = 'draining'
+           )
+       )
+     WHERE sessions.org_id = sqlc.arg(org_id)
+       AND sessions.project_id = sqlc.arg(project_id)
+       AND sessions.environment_id = sqlc.arg(environment_id)
+       AND sessions.id = sqlc.arg(session_id)
+       AND sessions.workspace_id = sqlc.arg(workspace_id)
+),
 created AS (
     INSERT INTO runs (
         id,
@@ -42,7 +71,7 @@ created AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            sqlc.arg(org_id),
-           sqlc.arg(worker_group_id),
+           run_scope.worker_group_id,
            sqlc.arg(project_id),
            sqlc.arg(environment_id),
            sqlc.arg(deployment_id),
@@ -73,7 +102,7 @@ created AS (
            sqlc.narg(schedule_id),
            sqlc.narg(schedule_instance_id),
            sqlc.narg(scheduled_at)
-      FROM attempt_seed
+      FROM attempt_seed, run_scope
      WHERE EXISTS (
             SELECT 1
               FROM deployment_tasks
@@ -83,21 +112,6 @@ created AS (
                AND deployments.environment_id = deployment_tasks.environment_id
                AND deployments.id = deployment_tasks.deployment_id
                AND deployments.status = 'deployed'
-              JOIN projects
-                ON projects.org_id = deployment_tasks.org_id
-               AND projects.id = deployment_tasks.project_id
-              JOIN worker_groups
-                ON worker_groups.id = sqlc.arg(worker_group_id)
-               AND worker_groups.region_id = projects.default_region_id
-               AND (
-                   worker_groups.state = 'active'
-                   OR (
-                       sqlc.arg(allow_draining_route)::boolean
-                       AND worker_groups.state = 'draining'
-                   )
-               )
-               AND worker_groups.health_state IN ('healthy', 'degraded')
-               AND worker_groups.routing_fresh_until > now()
              WHERE deployment_tasks.org_id = sqlc.arg(org_id)
                AND deployment_tasks.project_id = sqlc.arg(project_id)
                AND deployment_tasks.environment_id = sqlc.arg(environment_id)

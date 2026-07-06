@@ -433,7 +433,6 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -479,7 +478,6 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -495,7 +493,6 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -520,7 +517,6 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -544,7 +540,6 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -560,7 +555,6 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -623,7 +617,6 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -662,7 +655,6 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 		PublicID:               streamTestPublicID(t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(recordID),
 		OrgID:                  pgvalue.UUID(ids.orgID),
-		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(ids.projectID),
 		EnvironmentID:          pgvalue.UUID(ids.environmentID),
 		StreamID:               pgvalue.UUID(ids.inputStreamID),
@@ -678,7 +670,6 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
-		WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 		ProjectID:      pgvalue.UUID(ids.projectID),
 		EnvironmentID:  pgvalue.UUID(ids.environmentID),
 		SessionID:      pgvalue.UUID(ids.sessionID),
@@ -714,7 +705,6 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	}
 	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		ID:            request.ID,
@@ -815,7 +805,6 @@ func (w *cursorInitAppendWakeups) latestSessionInputStreamWakeupID(ctx context.C
 		PublicID:               streamTestPublicID(w.t, publicid.StreamRecord),
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                  pgvalue.UUID(w.ids.orgID),
-		WorkerGroupID:          dbtest.DefaultWorkerGroupID,
 		ProjectID:              pgvalue.UUID(w.ids.projectID),
 		EnvironmentID:          pgvalue.UUID(w.ids.environmentID),
 		StreamID:               streamID,

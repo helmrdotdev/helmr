@@ -466,7 +466,7 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 	var headSeq, chunkCount, outboxCount, usageCount int64
 	if err := pool.QueryRow(ctx, `
 		SELECT
-			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND worker_group_id = $2 AND run_id = $3 AND stream_name = '__run__'),
+			(SELECT seq FROM run_log_cursors WHERE org_id = $1 AND run_id = $3 AND stream_name = '__run__'),
 			(SELECT count(*) FROM run_log_hot_chunks WHERE org_id = $1 AND worker_group_id = $2 AND run_id = $3),
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND worker_group_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
 			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')

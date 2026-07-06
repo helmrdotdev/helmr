@@ -50,7 +50,6 @@ func (s *Server) readOutputStreamRecord(ctx context.Context, store db.Querier, s
 	}
 	records, err := store.ListStreamRecords(ctx, db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,
@@ -132,7 +131,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		locked, err := store.LockSession(ctx, db.LockSessionParams{
 			OrgID:         session.OrgID,
-			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -178,7 +176,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:               publicID,
 			OrgID:                  session.OrgID,
-			WorkerGroupID:          session.WorkerGroupID,
 			ProjectID:              session.ProjectID,
 			EnvironmentID:          session.EnvironmentID,
 			StreamID:               stream.ID,
@@ -228,7 +225,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:          session.OrgID,
-				WorkerGroupID:  session.WorkerGroupID,
 				ProjectID:      session.ProjectID,
 				EnvironmentID:  session.EnvironmentID,
 				SessionID:      session.ID,
@@ -262,7 +258,6 @@ func (s *Server) listSessionStreamRecords(w http.ResponseWriter, r *http.Request
 	}
 	records, err := s.db.ListStreamRecords(r.Context(), db.ListStreamRecordsParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		StreamID:      stream.ID,

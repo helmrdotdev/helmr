@@ -197,7 +197,6 @@ func (s *Server) patchWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.db.PatchWorkspace(r.Context(), db.PatchWorkspaceParams{
 		OrgID:         current.OrgID,
-		WorkerGroupID: current.WorkerGroupID,
 		ProjectID:     current.ProjectID,
 		EnvironmentID: current.EnvironmentID,
 		ID:            current.ID,
@@ -218,7 +217,6 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	row, err := s.db.ArchiveWorkspace(r.Context(), db.ArchiveWorkspaceParams{
 		OrgID:         current.OrgID,
-		WorkerGroupID: current.WorkerGroupID,
 		ProjectID:     current.ProjectID,
 		EnvironmentID: current.EnvironmentID,
 		ID:            current.ID,

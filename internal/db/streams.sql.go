@@ -45,11 +45,10 @@ SELECT $1,
    AND deployment_streams.environment_id = sessions.environment_id
    AND deployment_streams.id = $4
  WHERE sessions.org_id = $5
-   AND sessions.worker_group_id = $6
-   AND sessions.project_id = $7
-   AND sessions.environment_id = $8
-   AND sessions.id = $9
-ON CONFLICT (org_id, worker_group_id, session_id, name, direction)
+   AND sessions.project_id = $6
+   AND sessions.environment_id = $7
+   AND sessions.id = $8
+ON CONFLICT (org_id, session_id, name, direction)
 DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,
     schema_fingerprint = streams.schema_fingerprint,
@@ -63,7 +62,6 @@ type EnsureSessionStreamParams struct {
 	Metadata           []byte      `json:"metadata"`
 	DeploymentStreamID pgtype.UUID `json:"deployment_stream_id"`
 	OrgID              pgtype.UUID `json:"org_id"`
-	WorkerGroupID      string      `json:"worker_group_id"`
 	ProjectID          pgtype.UUID `json:"project_id"`
 	EnvironmentID      pgtype.UUID `json:"environment_id"`
 	SessionID          pgtype.UUID `json:"session_id"`
@@ -76,7 +74,6 @@ func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStre
 		arg.Metadata,
 		arg.DeploymentStreamID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -105,17 +102,15 @@ const getSessionStreamByName = `-- name: GetSessionStreamByName :one
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND session_id = $5
-   AND name = $6
-   AND direction = $7::stream_direction
+   AND project_id = $2
+   AND environment_id = $3
+   AND session_id = $4
+   AND name = $5
+   AND direction = $6::stream_direction
 `
 
 type GetSessionStreamByNameParams struct {
 	OrgID         pgtype.UUID     `json:"org_id"`
-	WorkerGroupID string          `json:"worker_group_id"`
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
 	SessionID     pgtype.UUID     `json:"session_id"`
@@ -126,7 +121,6 @@ type GetSessionStreamByNameParams struct {
 func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStreamByNameParams) (Stream, error) {
 	row := q.db.QueryRow(ctx, getSessionStreamByName,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,
@@ -157,15 +151,13 @@ const getStream = `-- name: GetStream :one
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND id = $4
 `
 
 type GetStreamParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -174,7 +166,6 @@ type GetStreamParams struct {
 func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, error) {
 	row := q.db.QueryRow(ctx, getStream,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -203,16 +194,14 @@ const listSessionStreams = `-- name: ListSessionStreams :many
 SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
  FROM streams
  WHERE org_id = $1
-   AND worker_group_id = $2
-   AND project_id = $3
-   AND environment_id = $4
-   AND session_id = $5
+   AND project_id = $2
+   AND environment_id = $3
+   AND session_id = $4
  ORDER BY name ASC, direction ASC
 `
 
 type ListSessionStreamsParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	SessionID     pgtype.UUID `json:"session_id"`
@@ -221,7 +210,6 @@ type ListSessionStreamsParams struct {
 func (q *Queries) ListSessionStreams(ctx context.Context, arg ListSessionStreamsParams) ([]Stream, error) {
 	rows, err := q.db.Query(ctx, listSessionStreams,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.SessionID,

@@ -542,6 +542,35 @@ const createScopedRun = `-- name: CreateScopedRun :one
 WITH attempt_seed AS (
     SELECT uuidv7() AS id
 ),
+run_scope AS MATERIALIZED (
+    SELECT sessions.org_id,
+           sessions.worker_group_id,
+           sessions.project_id,
+           sessions.environment_id,
+           sessions.id AS session_id,
+           sessions.workspace_id
+      FROM sessions
+      JOIN workspaces
+        ON workspaces.org_id = sessions.org_id
+       AND workspaces.project_id = sessions.project_id
+       AND workspaces.environment_id = sessions.environment_id
+       AND workspaces.id = sessions.workspace_id
+       AND workspaces.worker_group_id = sessions.worker_group_id
+      JOIN worker_groups
+        ON worker_groups.id = sessions.worker_group_id
+       AND (
+           worker_groups.state = 'active'
+           OR (
+               $1::boolean
+               AND worker_groups.state = 'draining'
+           )
+       )
+     WHERE sessions.org_id = $2
+       AND sessions.project_id = $3
+       AND sessions.environment_id = $4
+       AND sessions.id = $5
+       AND sessions.workspace_id = $6
+),
 created AS (
     INSERT INTO runs (
         id,
@@ -579,21 +608,21 @@ created AS (
         schedule_instance_id,
         scheduled_at
     )
-    SELECT $1,
+    SELECT $7,
+           $8,
            $2,
+           run_scope.worker_group_id,
            $3,
            $4,
-           $5,
-           $6,
-           $7,
-           $8,
            $9,
            $10,
+           $6,
            $11,
            $12,
            $13,
            $14,
            $15,
+           $5,
            $16,
            coalesce($17::jsonb, '{}'::jsonb),
            coalesce($18::text[], '{}'::text[]),
@@ -613,7 +642,7 @@ created AS (
            $30,
            $31,
            $32
-      FROM attempt_seed
+      FROM attempt_seed, run_scope
      WHERE EXISTS (
             SELECT 1
               FROM deployment_tasks
@@ -623,27 +652,12 @@ created AS (
                AND deployments.environment_id = deployment_tasks.environment_id
                AND deployments.id = deployment_tasks.deployment_id
                AND deployments.status = 'deployed'
-              JOIN projects
-                ON projects.org_id = deployment_tasks.org_id
-               AND projects.id = deployment_tasks.project_id
-              JOIN worker_groups
-                ON worker_groups.id = $4
-               AND worker_groups.region_id = projects.default_region_id
-               AND (
-                   worker_groups.state = 'active'
-                   OR (
-                       $33::boolean
-                       AND worker_groups.state = 'draining'
-                   )
-               )
-               AND worker_groups.health_state IN ('healthy', 'degraded')
-               AND worker_groups.routing_fresh_until > now()
-             WHERE deployment_tasks.org_id = $3
-               AND deployment_tasks.project_id = $5
-               AND deployment_tasks.environment_id = $6
-               AND deployment_tasks.deployment_id = $7
-               AND deployment_tasks.id = $8
-               AND deployment_tasks.task_id = $14
+             WHERE deployment_tasks.org_id = $2
+               AND deployment_tasks.project_id = $3
+               AND deployment_tasks.environment_id = $4
+               AND deployment_tasks.deployment_id = $9
+               AND deployment_tasks.id = $10
+               AND deployment_tasks.task_id = $15
         )
        AND (
             $31::uuid IS NULL
@@ -652,19 +666,19 @@ created AS (
               FROM task_schedule_instances
               JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
              WHERE task_schedule_instances.id = $31
-               AND task_schedule_instances.generation = $34
+               AND task_schedule_instances.generation = $33
                AND task_schedule_instances.next_fire_at = $32
                AND task_schedule_instances.schedule_id = $30
-               AND task_schedule_instances.org_id = $3
-               AND task_schedule_instances.project_id = $5
-               AND task_schedule_instances.environment_id = $6
+               AND task_schedule_instances.org_id = $2
+               AND task_schedule_instances.project_id = $3
+               AND task_schedule_instances.environment_id = $4
                AND task_schedule_instances.enabled
                AND (
                    task_schedule_instances.retry_after IS NULL
                    OR task_schedule_instances.retry_after <= now()
                )
-               AND task_schedules.org_id = $3
-               AND task_schedules.project_id = $5
+               AND task_schedules.org_id = $2
+               AND task_schedules.project_id = $3
                AND task_schedules.enabled
         )
 	       )
@@ -692,7 +706,7 @@ created_snapshot AS (
            created.current_attempt_id,
            NULL::uuid,
            'run.created',
-           $35
+           $34
       FROM created
       JOIN created_attempt ON created_attempt.run_id = created.id
     RETURNING run_snapshots.run_id
@@ -725,7 +739,7 @@ created_event AS (
            'control',
            'run.created',
            'run.created',
-           $35,
+           $34,
            'internal',
            created.state_version
       FROM created
@@ -753,21 +767,21 @@ SELECT created.id, created.public_id, created.org_id, created.worker_group_id, c
 `
 
 type CreateScopedRunParams struct {
-	ID                    pgtype.UUID        `json:"id"`
-	PublicID              string             `json:"public_id"`
+	AllowDrainingRoute    bool               `json:"allow_draining_route"`
 	OrgID                 pgtype.UUID        `json:"org_id"`
-	WorkerGroupID         string             `json:"worker_group_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	SessionID             pgtype.UUID        `json:"session_id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ID                    pgtype.UUID        `json:"id"`
+	PublicID              string             `json:"public_id"`
 	DeploymentID          pgtype.UUID        `json:"deployment_id"`
 	DeploymentTaskID      pgtype.UUID        `json:"deployment_task_id"`
-	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
 	DeploymentVersion     string             `json:"deployment_version"`
 	ApiVersion            string             `json:"api_version"`
 	SdkVersion            string             `json:"sdk_version"`
 	CliVersion            string             `json:"cli_version"`
 	TaskID                string             `json:"task_id"`
-	SessionID             pgtype.UUID        `json:"session_id"`
 	Payload               []byte             `json:"payload"`
 	Metadata              []byte             `json:"metadata"`
 	Tags                  []string           `json:"tags"`
@@ -785,7 +799,6 @@ type CreateScopedRunParams struct {
 	ScheduleID            pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID    pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
-	AllowDrainingRoute    bool               `json:"allow_draining_route"`
 	ScheduleGeneration    pgtype.Int8        `json:"schedule_generation"`
 	EventPayload          []byte             `json:"event_payload"`
 }
@@ -845,21 +858,21 @@ type CreateScopedRunRow struct {
 
 func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error) {
 	row := q.db.QueryRow(ctx, createScopedRun,
-		arg.ID,
-		arg.PublicID,
+		arg.AllowDrainingRoute,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.SessionID,
+		arg.WorkspaceID,
+		arg.ID,
+		arg.PublicID,
 		arg.DeploymentID,
 		arg.DeploymentTaskID,
-		arg.WorkspaceID,
 		arg.DeploymentVersion,
 		arg.ApiVersion,
 		arg.SdkVersion,
 		arg.CliVersion,
 		arg.TaskID,
-		arg.SessionID,
 		arg.Payload,
 		arg.Metadata,
 		arg.Tags,
@@ -877,7 +890,6 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		arg.ScheduleID,
 		arg.ScheduleInstanceID,
 		arg.ScheduledAt,
-		arg.AllowDrainingRoute,
 		arg.ScheduleGeneration,
 		arg.EventPayload,
 	)

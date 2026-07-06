@@ -279,7 +279,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}
 	}
 	if externalID != "" && !idempotency.key.Valid {
-		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, placementWorkerGroupID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
+		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
 			return existing, nil
 		} else if !isNoRows(err) {
 			return sessionStartResult{}, err
@@ -398,7 +398,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if externalID != "" {
 			if existing, err := work.q.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 				OrgID:         pgvalue.UUID(actor.OrgID),
-				WorkerGroupID: placementWorkerGroupID,
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
 				ExternalID:    externalID,
@@ -416,7 +415,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 					existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
 						ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 						OrgID:              pgvalue.UUID(actor.OrgID),
-						WorkerGroupID:      existing.WorkerGroupID,
 						ProjectID:          projectID,
 						EnvironmentID:      environmentID,
 						TaskID:             taskID,
@@ -455,16 +453,12 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return err
 		}
-		if workspace.WorkerGroupID != placementWorkerGroupID {
-			return unavailable(errors.New("execution source row worker group does not match environment placement"))
-		}
 		var sessionPublicID string
 		session, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Session, value: &sessionPublicID}}, func() (db.Session, error) {
 			return work.q.CreateSession(ctx, db.CreateSessionParams{
 				ID:                  pgvalue.UUID(sessionID),
 				PublicID:            sessionPublicID,
 				OrgID:               pgvalue.UUID(actor.OrgID),
-				WorkerGroupID:       placementWorkerGroupID,
 				ProjectID:           projectID,
 				EnvironmentID:       environmentID,
 				TaskID:              taskID,
@@ -490,7 +484,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				ID:                    pgvalue.UUID(runID),
 				PublicID:              runPublicID,
 				OrgID:                 pgvalue.UUID(actor.OrgID),
-				WorkerGroupID:         placementWorkerGroupID,
 				ProjectID:             projectID,
 				EnvironmentID:         environmentID,
 				DeploymentID:          deploymentTask.DeploymentID,
@@ -543,7 +536,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:           pgvalue.UUID(actor.OrgID),
-			WorkerGroupID:   placementWorkerGroupID,
 			ProjectID:       projectID,
 			EnvironmentID:   environmentID,
 			WorkspaceID:     workspace.ID,
@@ -570,7 +562,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:      sessionRunPublicID,
 				OrgID:         pgvalue.UUID(actor.OrgID),
-				WorkerGroupID: session.WorkerGroupID,
 				ProjectID:     projectID,
 				EnvironmentID: environmentID,
 				SessionID:     session.ID,
@@ -584,7 +575,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}
 		session, err = work.q.SetSessionCurrentRun(ctx, db.SetSessionCurrentRunParams{
 			OrgID:         pgvalue.UUID(actor.OrgID),
-			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
 			SessionID:     session.ID,
@@ -597,7 +587,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
 				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:              pgvalue.UUID(actor.OrgID),
-				WorkerGroupID:      session.WorkerGroupID,
 				ProjectID:          projectID,
 				EnvironmentID:      environmentID,
 				TaskID:             taskID,
@@ -632,7 +621,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		return result, nil
 	}
 	if errors.Is(err, errSessionStartExternalIDRace) {
-		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, placementWorkerGroupID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
+		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
 		if err != nil {
 			return sessionStartResult{}, err
 		}
@@ -731,8 +720,8 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 			return store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
 				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:                  workspacePublicID,
-				OrgID:                     pgvalue.UUID(orgID),
 				WorkerGroupID:             placementWorkerGroupID,
+				OrgID:                     pgvalue.UUID(orgID),
 				ProjectID:                 projectID,
 				EnvironmentID:             environmentID,
 				DeploymentSandboxID:       task.DeploymentSandboxID,
@@ -915,10 +904,9 @@ func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.
 	return db.SessionStartIdempotency{}, sessionStartResult{}, false, nil
 }
 
-func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, workerGroupID string, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
+func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
 	existing, err := store.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ExternalID:    externalID,
@@ -939,7 +927,6 @@ func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier,
 		if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
 			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:              pgvalue.UUID(orgID),
-			WorkerGroupID:      existing.WorkerGroupID,
 			ProjectID:          projectID,
 			EnvironmentID:      environmentID,
 			TaskID:             taskID,
@@ -966,7 +953,6 @@ func (s *Server) ensureSessionStartSourceCurrent(ctx context.Context, source ses
 		return nil
 	}
 	current, err := s.db.ScheduleInstanceTriggerIsCurrent(ctx, db.ScheduleInstanceTriggerIsCurrentParams{
-		WorkerGroupID: source.scheduleWorkerGroupID,
 		InstanceID:    source.scheduleInstanceID,
 		Generation:    source.scheduleGeneration,
 		ScheduledAt:   source.scheduledAt,
@@ -1079,7 +1065,6 @@ func sessionFromIdempotency(row db.GetSessionStartIdempotencyRow) db.Session {
 	return db.Session{
 		ID:                  row.SessionID,
 		OrgID:               row.SessionOrgID,
-		WorkerGroupID:       row.SessionWorkerGroupID,
 		ProjectID:           row.SessionProjectID,
 		EnvironmentID:       row.SessionEnvironmentID,
 		TaskID:              row.SessionTaskID,
@@ -1106,7 +1091,6 @@ func runSummaryFromIdempotency(row db.GetSessionStartIdempotencyRow) runSummary 
 	return runSummary{
 		ID:                   row.RunID,
 		OrgID:                row.RunOrgID,
-		WorkerGroupID:        row.RunWorkerGroupID,
 		ProjectID:            row.RunProjectID,
 		EnvironmentID:        row.RunEnvironmentID,
 		DeploymentID:         row.RunDeploymentID,
@@ -1413,7 +1397,6 @@ func (s *Server) patchSession(w http.ResponseWriter, r *http.Request) {
 	}
 	updated, err := s.db.PatchSession(r.Context(), db.PatchSessionParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -1480,7 +1463,6 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 	}
 	closed, err := s.db.CloseSession(r.Context(), db.CloseSessionParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		ID:            session.ID,
@@ -1490,7 +1472,6 @@ func (s *Server) closeSession(w http.ResponseWriter, r *http.Request) {
 		if session.ExpiresAt.Valid && !session.ExpiresAt.Time.After(time.Now()) {
 			expired, expireErr := s.db.ExpireSessionIfDue(r.Context(), db.ExpireSessionIfDueParams{
 				OrgID:         session.OrgID,
-				WorkerGroupID: session.WorkerGroupID,
 				ProjectID:     session.ProjectID,
 				EnvironmentID: session.EnvironmentID,
 				ID:            session.ID,
@@ -1604,7 +1585,6 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 	err := s.inTx(r.Context(), func(work *txWork) error {
 		locked, err := work.q.LockSession(r.Context(), db.LockSessionParams{
 			OrgID:         session.OrgID,
-			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			ID:            session.ID,
@@ -1629,7 +1609,6 @@ func (s *Server) cancelSession(w http.ResponseWriter, r *http.Request) {
 		}
 		cancelled, err := work.q.CancelSession(r.Context(), db.CancelSessionParams{
 			OrgID:         locked.OrgID,
-			WorkerGroupID: locked.WorkerGroupID,
 			ProjectID:     locked.ProjectID,
 			EnvironmentID: locked.EnvironmentID,
 			ID:            locked.ID,

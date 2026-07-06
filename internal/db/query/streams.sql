@@ -32,11 +32,10 @@ SELECT sqlc.arg(id),
    AND deployment_streams.environment_id = sessions.environment_id
    AND deployment_streams.id = sqlc.arg(deployment_stream_id)
  WHERE sessions.org_id = sqlc.arg(org_id)
-   AND sessions.worker_group_id = sqlc.arg(worker_group_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.id = sqlc.arg(session_id)
-ON CONFLICT (org_id, worker_group_id, session_id, name, direction)
+ON CONFLICT (org_id, session_id, name, direction)
 DO UPDATE SET
     deployment_stream_id = streams.deployment_stream_id,
     schema_fingerprint = streams.schema_fingerprint,
@@ -47,7 +46,6 @@ RETURNING *;
 SELECT *
  FROM streams
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND session_id = sqlc.arg(session_id)
@@ -58,7 +56,6 @@ SELECT *
 SELECT *
  FROM streams
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -67,7 +64,6 @@ SELECT *
 SELECT *
  FROM streams
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND session_id = sqlc.arg(session_id)

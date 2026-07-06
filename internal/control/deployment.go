@@ -187,7 +187,7 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
-	if _, err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID); err != nil {
+	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -530,7 +530,7 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentSta
 		if err != nil {
 			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
 		}
-		if _, placementErr := s.requireEnvironmentPlacementWorkerGroup(ctx, s.db, orgID, projectID, environmentID); placementErr != nil {
+		if placementErr := s.requireEnvironmentPlacementWorkerGroup(ctx, s.db, orgID, projectID, environmentID); placementErr != nil {
 			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, placementErr
 		}
 		deployment, err := deploymentByIDOrVersion(ctx, store, orgID, projectID, environmentID, deploymentRef)

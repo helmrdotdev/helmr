@@ -41,7 +41,6 @@ func ensureWorkspaceMountForQueuedRun(ctx context.Context, store interface {
 	return store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
 		ID:              target.ID,
 		OrgID:           target.OrgID,
-		WorkerGroupID:   target.WorkerGroupID,
 		ProjectID:       target.ProjectID,
 		EnvironmentID:   target.EnvironmentID,
 		WorkspaceID:     target.WorkspaceID,
@@ -79,7 +78,6 @@ func ensureQueuedRunWorkspaceMount(ctx context.Context, store queuedRunWorkspace
 	mount, err := ensureWorkspaceMountForQueuedRun(ctx, store, queuedRunWorkspaceMountTarget{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         run.OrgID,
-		WorkerGroupID: run.WorkerGroupID,
 		ProjectID:     run.ProjectID,
 		EnvironmentID: run.EnvironmentID,
 		WorkspaceID:   run.WorkspaceID,
