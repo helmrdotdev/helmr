@@ -3732,14 +3732,14 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
     }
   }
   if (message === "run_wait.created") {
-    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const waitId = stringValue(attributes?.["wait_id"])
     const kind = publicWaitKind(attributes?.["kind"])
-    if (runWaitId === undefined) return undefined
+    if (waitId === undefined) return undefined
     if (kind === undefined) return undefined
     return {
       type: `${kind}_wait`,
       run_id: runId,
-      wait_id: runWaitId,
+      wait_id: waitId,
       kind,
       params: attributes?.["params"] ?? {},
       metadata: objectRecord(attributes?.["metadata"]) ?? {},
@@ -3749,27 +3749,27 @@ function runEventRecordToRunEvent(event: unknown): RunEvent | undefined {
     }
   }
   if (message === "run_wait.completed") {
-    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const waitId = stringValue(attributes?.["wait_id"])
     const kind = publicWaitKind(attributes?.["kind"])
-    if (runWaitId === undefined) return undefined
+    if (waitId === undefined) return undefined
     if (kind === undefined) return undefined
     return {
       type: `${kind}_wait_completed`,
       run_id: runId,
-      wait_id: runWaitId,
+      wait_id: waitId,
       kind,
       payload: attributes?.["payload"],
       at,
     }
   }
   if (message === "run_wait.timed_out") {
-    const runWaitId = stringValue(attributes?.["run_wait_id"])
+    const waitId = stringValue(attributes?.["wait_id"])
     const kind = publicWaitKind(attributes?.["kind"])
-    if (runWaitId === undefined || kind === undefined) return undefined
+    if (waitId === undefined || kind === undefined) return undefined
     return {
       type: `${kind}_wait_timed_out`,
       run_id: runId,
-      wait_id: runWaitId,
+      wait_id: waitId,
       kind,
       at,
     }
