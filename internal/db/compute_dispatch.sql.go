@@ -1318,6 +1318,7 @@ SELECT runs.org_id,
    AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
  WHERE runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND runs.queue_timestamp <= now()
  ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
  LIMIT 1
 `
@@ -1371,6 +1372,7 @@ SELECT runs.org_id,
    AND worker_instances.status = 'active'
  WHERE runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND runs.queue_timestamp <= now()
    AND runs.latest_runtime_checkpoint_id IS NULL
    AND EXISTS (
        SELECT 1

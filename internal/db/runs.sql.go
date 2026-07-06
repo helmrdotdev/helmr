@@ -62,12 +62,27 @@ updated AS (
              WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.current_run_lease_id
              ELSE NULL
            END,
-	           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-	           dispatch_generation = CASE
-	             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.dispatch_generation
-	             ELSE runs.dispatch_generation + 1
-	           END,
-	           state_version = runs.state_version + 1,
+           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+           dispatch_generation = CASE
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.dispatch_generation
+             ELSE runs.dispatch_generation + 1
+           END,
+           state_version = runs.state_version + 1,
+           active_elapsed_ms = CASE
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.active_elapsed_ms
+             ELSE LEAST(
+               runs.active_elapsed_ms
+               + CASE
+                   WHEN runs.active_started_at IS NULL THEN 0
+                   ELSE GREATEST(floor(extract(epoch from (now() - runs.active_started_at)) * 1000)::bigint, 0)
+                 END,
+               runs.max_active_duration_ms
+             )
+           END,
+           active_started_at = CASE
+             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.active_started_at
+             ELSE NULL
+           END,
            finished_at = CASE
              WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.finished_at
              ELSE COALESCE(runs.finished_at, now())
@@ -125,29 +140,119 @@ terminal_sessions AS (
       FROM updated
      WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
 ),
-cancelled_session AS (
+cancelled_run_lease AS (
     UPDATE run_leases
        SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN 'cancelled'::run_lease_status ELSE run_leases.status END,
            released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN COALESCE(run_leases.released_at, now()) ELSE run_leases.released_at END,
-           renewed_at = now()
+           renewed_at = now(),
+           active_duration_ms = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN updated.active_elapsed_ms ELSE run_leases.active_duration_ms END
       FROM updated
      WHERE run_leases.org_id = updated.org_id
        AND run_leases.run_id = updated.id
        AND run_leases.id = updated.previous_run_lease_id
        AND run_leases.status IN ('leased', 'running')
-    RETURNING run_leases.id
+    RETURNING run_leases.id, run_leases.org_id, run_leases.queue_class, run_leases.run_id, run_leases.worker_instance_id, run_leases.worker_group_id, run_leases.project_id, run_leases.environment_id, run_leases.dispatch_message_id, run_leases.dispatch_generation, run_leases.dispatch_lease_id, run_leases.dispatch_attempt, run_leases.attempt_number, run_leases.queue_name, run_leases.concurrency_key, run_leases.status, run_leases.lease_expires_at, run_leases.runtime_id, run_leases.worker_protocol_version, run_leases.active_duration_ms, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.restore_runtime_checkpoint_id, run_leases.leased_at, run_leases.started_at, run_leases.renewed_at, run_leases.released_at, run_leases.lost_at
 ),
-	snapshot AS (
-	    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, operation_id, previous_version, transition, reason)
+released_workspace_leases AS (
+    UPDATE workspace_leases
+       SET state = 'released',
+           released_at = COALESCE(released_at, now()),
+           renewed_at = now(),
+           updated_at = now()
+      FROM updated
+     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
+       AND workspace_leases.org_id = updated.org_id
+       AND workspace_leases.owner_run_id = updated.id
+       AND workspace_leases.lease_kind = 'write'
+       AND workspace_leases.state = 'active'
+       AND workspace_leases.released_at IS NULL
+    RETURNING workspace_leases.id
+),
+invalidated_runtime_checkpoints AS (
+    UPDATE runtime_checkpoints
+       SET state = 'invalid',
+           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+           invalidated_at = now()
+      FROM updated
+     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
+       AND runtime_checkpoints.org_id = updated.org_id
+       AND runtime_checkpoints.run_id = updated.id
+       AND runtime_checkpoints.state = 'creating'
+    RETURNING runtime_checkpoints.id
+),
+failed_runtime_checkpoint_restores AS (
+    UPDATE runtime_checkpoint_restores
+       SET status = 'failed',
+           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           updated_at = now()
+      FROM updated
+      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
+                              AND cancelled_run_lease.run_id = updated.id
+                              AND cancelled_run_lease.id = updated.previous_run_lease_id
+     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
+       AND runtime_checkpoint_restores.org_id = updated.org_id
+       AND runtime_checkpoint_restores.run_id = updated.id
+       AND runtime_checkpoint_restores.run_lease_id = cancelled_run_lease.id
+       AND runtime_checkpoint_restores.runtime_checkpoint_id = cancelled_run_lease.restore_runtime_checkpoint_id
+       AND runtime_checkpoint_restores.status = 'restoring'
+    RETURNING runtime_checkpoint_restores.id
+),
+active_time_delta AS (
+    SELECT GREATEST(
+               cancelled_run_lease.active_duration_ms
+               - COALESCE((
+                   SELECT SUM(usage_ledger_entries.quantity)::bigint
+                     FROM usage_ledger_entries
+                    WHERE usage_ledger_entries.org_id = updated.org_id
+                      AND usage_ledger_entries.run_id = updated.id
+                      AND usage_ledger_entries.meter = 'active_time'
+               ), 0),
+               0
+           )::bigint AS quantity
+      FROM updated
+      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
+                              AND cancelled_run_lease.run_id = updated.id
+                              AND cancelled_run_lease.id = updated.previous_run_lease_id
+     WHERE updated.execution_status <> 'pending_cancel' OR $5::bool
+),
+active_time_usage_event AS (
+    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
+    SELECT updated.org_id,
+           updated.project_id,
+           updated.environment_id,
+           'run_lease',
+           cancelled_run_lease.id,
+           updated.id,
+           cancelled_run_lease.attempt_number,
+           cancelled_run_lease.trace_id,
+           cancelled_run_lease.span_id,
+           'active_time',
+           active_time_delta.quantity,
+           'ms',
+           now(),
+           jsonb_build_object('phase', 'cancelled', 'force', $5::bool),
+           'active_time:' || cancelled_run_lease.id::text || ':cancelled'
+      FROM updated
+      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
+                              AND cancelled_run_lease.run_id = updated.id
+                              AND cancelled_run_lease.id = updated.previous_run_lease_id
+      JOIN active_time_delta ON true
+     WHERE active_time_delta.quantity > 0
+    ON CONFLICT DO NOTHING
+    RETURNING id
+),
+snapshot AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, operation_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.worker_group_id,
            updated.id,
            updated.state_version,
            updated.status,
            updated.execution_status,
-	           updated.terminal_outcome,
-	           updated.current_attempt_number,
-	           updated.previous_run_lease_id,
+           updated.terminal_outcome,
+           updated.current_attempt_number,
+           updated.previous_run_lease_id,
            $3,
            updated.state_version - 1,
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
@@ -155,9 +260,9 @@ cancelled_session AS (
                'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
                'force', $5::bool
            )
-	      FROM updated
-	    RETURNING run_state_snapshots.run_id
-	),
+      FROM updated
+    RETURNING run_state_snapshots.run_id
+),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT updated.org_id, updated.worker_group_id, 'run', updated.id, 1
@@ -168,16 +273,16 @@ event_seq AS (
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
-	event AS (
-	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+event AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT updated.org_id,
            updated.worker_group_id,
            updated.project_id,
            updated.environment_id,
-	           updated.id,
-	           event_seq.seq,
-	           updated.previous_run_lease_id,
-	           updated.current_attempt_number,
+           updated.id,
+           event_seq.seq,
+           updated.previous_run_lease_id,
+           updated.current_attempt_number,
            updated.trace_id,
            updated.root_span_id,
            '00-' || updated.trace_id || '-' || updated.root_span_id || '-01',
@@ -192,8 +297,8 @@ event_seq AS (
            ),
            'internal',
            updated.state_version
-	      FROM updated
-	      JOIN event_seq ON event_seq.org_id = updated.org_id
+      FROM updated
+      JOIN event_seq ON event_seq.org_id = updated.org_id
                     AND event_seq.subject_kind = 'run'
                     AND event_seq.subject_id = updated.id
     RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
@@ -230,9 +335,14 @@ SELECT updated.id, updated.public_id, updated.org_id, updated.worker_group_id, u
   FROM updated
   JOIN operation_applied ON true
   JOIN telemetry_outbox ON true
-	 WHERE (SELECT count(*) FROM cancelled_run_waits) >= 0
-	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
-	   AND (SELECT count(*) FROM terminal_sessions) >= 0
+ WHERE (SELECT count(*) FROM cancelled_run_waits) >= 0
+   AND (SELECT count(*) FROM terminal_session_runs) >= 0
+   AND (SELECT count(*) FROM terminal_sessions) >= 0
+   AND (SELECT count(*) FROM cancelled_run_lease) >= 0
+   AND (SELECT count(*) FROM released_workspace_leases) >= 0
+   AND (SELECT count(*) FROM invalidated_runtime_checkpoints) >= 0
+   AND (SELECT count(*) FROM failed_runtime_checkpoint_restores) >= 0
+   AND (SELECT count(*) FROM active_time_usage_event) >= 0
 UNION ALL
 SELECT target.id, target.public_id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.workspace_id, target.workspace_mount_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.session_id, target.schedule_id, target.schedule_instance_id, target.scheduled_at, target.status, target.execution_status, target.terminal_outcome, target.payload, target.output, target.metadata, target.tags, target.locked_retry_policy, target.queue_class, target.queue_name, target.queue_concurrency_limit, target.concurrency_key, target.priority, target.queue_timestamp, target.ttl, target.queued_expires_at, target.dispatch_generation, target.dispatch_attempt_count, target.last_enqueue_error, target.last_enqueued_at, target.requested_milli_cpu, target.requested_memory_mib, target.requested_disk_mib, target.requested_execution_slots, target.runtime_id, target.runtime_arch, target.runtime_abi, target.kernel_digest, target.initramfs_digest, target.rootfs_digest, target.cni_profile, target.network_policy, target.placement, target.max_active_duration_ms, target.active_elapsed_ms, target.active_started_at, target.trace_id, target.root_span_id, target.state_version, target.current_attempt_number, target.current_run_lease_id, target.latest_runtime_checkpoint_id, target.exit_code, target.error_message, target.created_at, target.updated_at, target.started_at, target.finished_at, NULL::uuid AS previous_run_lease_id
   FROM target

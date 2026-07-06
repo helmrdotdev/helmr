@@ -107,6 +107,136 @@ func TestCancelRunLeavesExecutingSessionForRelease(t *testing.T) {
 	}
 }
 
+func TestForceCancelRunCleansRuntimeAuthority(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
+	checkpointed := createCheckpointedRunWait(t, ctx, queries, ids, runLeaseID, workerID)
+
+	if _, err := queries.ResolveRunWait(ctx, db.ResolveRunWaitParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		ID:     pgvalue.UUID(checkpointed.runWaitID),
+		Result: []byte(`{"timer":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeued) != 1 {
+		t.Fatalf("requeued waits = %d, want 1", len(requeued))
+	}
+	mount, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RequestPriority: requeued[0].Priority,
+		Request:         []byte(`{"reason":"force_cancel_cleanup_test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		WorkspaceID:      pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	dispatchGeneration := currentRunDispatchGeneration(t, ctx, pool, ids.orgID, ids.runID)
+	leased, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "force-cancel-restore", dispatchGeneration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leasedRunLeaseID := pgvalue.MustUUIDValue(leased.RunLeaseID)
+	if _, err := queries.StartRunLease(ctx, db.StartRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		RunLeaseID:        leased.RunLeaseID,
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		DispatchMessageID: leased.RunLeaseDispatchMessageID,
+		DispatchLeaseID:   leased.RunLeaseDispatchLeaseID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET active_started_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	operation := seedCancelOperation(t, ctx, queries, ids, "force cleanup")
+
+	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		RunID:         pgvalue.UUID(ids.runID),
+		Reason:        "force cleanup",
+		Force:         true,
+		OperationID:   operation.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var status db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var currentRunLeaseID uuid.NullUUID
+	var runLeaseStatus db.RunLeaseStatus
+	var activeWorkspaceLeases, releasedWorkspaceLeases, usageCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT runs.status,
+		       runs.execution_status,
+		       runs.current_run_lease_id,
+		       run_leases.status,
+		       (SELECT count(*)::int FROM workspace_leases WHERE org_id = runs.org_id AND owner_run_id = runs.id AND state = 'active'),
+		       (SELECT count(*)::int FROM workspace_leases WHERE org_id = runs.org_id AND owner_run_id = runs.id AND state = 'released'),
+		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		  FROM runs
+		  JOIN run_leases ON run_leases.org_id = runs.org_id
+		                 AND run_leases.run_id = runs.id
+		                 AND run_leases.id = $3
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+	`, ids.orgID, ids.runID, leasedRunLeaseID).Scan(
+		&status,
+		&executionStatus,
+		&currentRunLeaseID,
+		&runLeaseStatus,
+		&activeWorkspaceLeases,
+		&releasedWorkspaceLeases,
+		&usageCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusCancelled || executionStatus != db.RunExecutionStatusFinished || currentRunLeaseID.Valid {
+		t.Fatalf("run state = %s/%s currentLease=%v, want cancelled/finished/no current lease", status, executionStatus, currentRunLeaseID.Valid)
+	}
+	if runLeaseStatus != db.RunLeaseStatusCancelled {
+		t.Fatalf("run lease status = %s, want cancelled", runLeaseStatus)
+	}
+	if activeWorkspaceLeases != 0 || releasedWorkspaceLeases == 0 {
+		t.Fatalf("workspace leases active=%d released=%d, want none active and at least one released", activeWorkspaceLeases, releasedWorkspaceLeases)
+	}
+	if usageCount != 1 {
+		t.Fatalf("active_time usage count = %d, want 1", usageCount)
+	}
+	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusFailed)
+}
+
 func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)

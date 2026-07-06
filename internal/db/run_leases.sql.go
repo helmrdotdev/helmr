@@ -17,7 +17,7 @@ WITH abandoned AS (
        SET status = 'queued',
            execution_status = 'queued',
            current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
+           dispatch_generation = runs.dispatch_generation + 1,
            dispatch_attempt_count = dispatch_attempt_count + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = 'worker payload build abandoned',
@@ -190,15 +190,86 @@ WITH expired AS (
        AND run_leases.lease_expires_at <= now()
      FOR UPDATE OF runs, run_leases
 ),
+effective_expiry AS (
+    SELECT expired.id,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN 'cancelled'::run_status
+             ELSE 'failed'::run_status
+           END AS terminal_status,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN 'cancelled'::run_terminal_outcome
+             ELSE 'failed'::run_terminal_outcome
+           END AS terminal_outcome,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN COALESCE(expired.error_message, 'run cancelled')
+             ELSE 'worker lease expired while run was executing'
+           END AS error_message,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN 'run.cancelled'
+             ELSE 'run.failed'
+           END AS terminal_event_kind,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel'
+             THEN jsonb_build_object('reason', COALESCE(expired.error_message, 'run cancelled'), 'origin', 'lease_sweeper')
+             ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'detail', jsonb_build_object('message', 'worker lease expired while run was executing'))
+           END AS terminal_event_payload,
+           CASE
+             WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN '{}'::jsonb
+             ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'message', 'worker lease expired while run was executing')
+           END AS error_payload
+      FROM expired
+),
+retry_plan AS (
+    SELECT expired.id AS run_id,
+           expired.org_id,
+           expired.worker_group_id,
+           expired.project_id,
+           expired.environment_id,
+           expired.source_run_lease_id,
+           expired.source_attempt_number,
+           expired.source_attempt_number + 1 AS next_attempt_number,
+           'transient_error'::text AS reason,
+           delay.delay_ms,
+           now() + ((delay.delay_ms::text || ' milliseconds')::interval) AS retry_after
+      FROM expired
+      JOIN effective_expiry ON effective_expiry.id = expired.id
+      CROSS JOIN LATERAL (
+          SELECT COALESCE(NULLIF(expired.locked_retry_policy ->> 'maxAttempts', '')::int, 1) AS max_attempts,
+                 COALESCE(NULLIF(expired.locked_retry_policy #>> '{backoff,minMs}', '')::bigint, 1000) AS min_ms,
+                 COALESCE(NULLIF(expired.locked_retry_policy #>> '{backoff,maxMs}', '')::bigint, 30000) AS max_ms,
+                 COALESCE(NULLIF(expired.locked_retry_policy #>> '{backoff,factor}', '')::numeric, 2) AS factor,
+                 COALESCE(NULLIF(expired.locked_retry_policy #>> '{backoff,jitter}', ''), 'full') AS jitter
+      ) policy
+      CROSS JOIN LATERAL (
+          SELECT LEAST(
+                     GREATEST(policy.max_ms, 0),
+                     GREATEST(0, round(GREATEST(policy.min_ms, 0)::numeric * power(GREATEST(policy.factor, 0), expired.source_attempt_number - 1))::bigint)
+                 ) AS base_delay_ms
+      ) base_delay
+      CROSS JOIN LATERAL (
+          SELECT CASE
+                   WHEN policy.jitter = 'full' THEN floor(random() * GREATEST(base_delay.base_delay_ms, 1))::bigint
+                   ELSE base_delay.base_delay_ms
+                 END AS delay_ms
+      ) delay
+     WHERE effective_expiry.terminal_status = 'failed'
+       AND jsonb_typeof(expired.locked_retry_policy) = 'object'
+       AND COALESCE((expired.locked_retry_policy ->> 'enabled')::boolean, false)
+       AND expired.source_attempt_number < policy.max_attempts
+),
 failed_runs AS (
     UPDATE runs
-       SET status = CASE WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN 'cancelled'::run_status ELSE 'failed'::run_status END,
-           execution_status = 'finished',
-           terminal_outcome = CASE WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN 'cancelled'::run_terminal_outcome ELSE 'failed'::run_terminal_outcome END,
+       SET status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_status ELSE effective_expiry.terminal_status END,
+           execution_status = CASE WHEN retry_plan.run_id IS NOT NULL THEN 'queued'::run_execution_status ELSE 'finished'::run_execution_status END,
+           terminal_outcome = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_expiry.terminal_outcome END,
            current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
-           error_message = CASE WHEN expired.status = 'cancelled' AND expired.execution_status = 'pending_cancel' THEN COALESCE(runs.error_message, 'run cancelled') ELSE 'worker lease expired while run was executing' END,
-           state_version = state_version + 1,
+           current_attempt_number = COALESCE(retry_plan.next_attempt_number, runs.current_attempt_number),
+           queue_timestamp = COALESCE(retry_plan.retry_after, runs.queue_timestamp),
+           dispatch_generation = runs.dispatch_generation + 1,
+           last_enqueued_at = NULL,
+           last_enqueue_error = '',
+           error_message = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_expiry.error_message END,
+           state_version = runs.state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
            active_elapsed_ms = LEAST(
                runs.active_elapsed_ms
                + CASE
@@ -208,9 +279,11 @@ failed_runs AS (
                runs.max_active_duration_ms
            ),
            active_started_at = NULL,
-           finished_at = COALESCE(finished_at, now()),
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE COALESCE(runs.finished_at, now()) END,
            updated_at = now()
       FROM expired
+      JOIN effective_expiry ON effective_expiry.id = expired.id
+      LEFT JOIN retry_plan ON retry_plan.run_id = expired.id
      WHERE runs.org_id = expired.org_id
        AND runs.id = expired.id
     RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, expired.source_run_lease_id, expired.source_worker_instance_id, expired.source_attempt_number, expired.source_trace_id, expired.source_span_id, expired.source_parent_span_id, expired.source_traceparent, expired.source_restore_runtime_checkpoint_id
@@ -219,7 +292,9 @@ terminal_session_runs AS (
     UPDATE session_runs
        SET ended_at = now()
       FROM failed_runs
+      LEFT JOIN retry_plan ON retry_plan.run_id = failed_runs.id
      WHERE session_runs.org_id = failed_runs.org_id
+       AND retry_plan.run_id IS NULL
        AND session_runs.project_id = failed_runs.project_id
        AND session_runs.environment_id = failed_runs.environment_id
        AND session_runs.session_id = failed_runs.session_id
@@ -304,49 +379,75 @@ failed_snapshot AS (
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
-           failed_runs.state_version,
-           failed_runs.status,
-           failed_runs.execution_status,
-           failed_runs.terminal_outcome,
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN failed_runs.state_version - 1 ELSE failed_runs.state_version END,
+           effective_expiry.terminal_status,
+           'finished',
+           effective_expiry.terminal_outcome,
            failed_runs.source_attempt_number,
            failed_runs.source_run_lease_id,
            failed_runs.source_worker_instance_id,
            failed_runs.source_restore_runtime_checkpoint_id,
-           failed_runs.state_version - 1,
-           CASE WHEN failed_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
-           CASE
-             WHEN failed_runs.status = 'cancelled'
-             THEN jsonb_build_object('reason', COALESCE(failed_runs.error_message, 'run cancelled'), 'origin', 'lease_sweeper')
-             ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'detail', jsonb_build_object('message', 'worker lease expired while run was executing'))
-           END,
-           CASE
-             WHEN failed_runs.status = 'cancelled' THEN '{}'::jsonb
-             ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'message', 'worker lease expired while run was executing')
-           END
+           CASE WHEN retry_plan.run_id IS NOT NULL THEN failed_runs.state_version - 2 ELSE failed_runs.state_version - 1 END,
+           effective_expiry.terminal_event_kind,
+           effective_expiry.terminal_event_payload,
+           effective_expiry.error_payload
       FROM failed_runs
+      JOIN effective_expiry ON effective_expiry.id = failed_runs.id
+      LEFT JOIN retry_plan ON retry_plan.run_id = failed_runs.id
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+retry_snapshot AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, worker_instance_id, previous_version, transition, reason)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
-           'run',
            failed_runs.id,
-           1
+           failed_runs.state_version,
+           failed_runs.status,
+           failed_runs.execution_status,
+           failed_runs.current_attempt_number,
+           failed_runs.source_run_lease_id,
+           failed_runs.source_worker_instance_id,
+           failed_runs.state_version - 1,
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_number', retry_plan.source_attempt_number,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           )
       FROM failed_runs
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, worker_group_id, subject_kind, subject_id, seq
+      JOIN retry_plan ON retry_plan.run_id = failed_runs.id
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-failed_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT failed_runs.org_id,
+event_inputs(
+    event_ordinal,
+    org_id,
+    worker_group_id,
+    project_id,
+    environment_id,
+    run_id,
+    run_lease_id,
+    attempt_number,
+    trace_id,
+    span_id,
+    parent_span_id,
+    traceparent,
+    category,
+    severity,
+    source,
+    kind,
+    message,
+    payload,
+    redaction_class,
+    snapshot_version
+) AS (
+    SELECT 1 AS event_ordinal,
+           failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.project_id,
            failed_runs.environment_id,
-           failed_runs.id,
-           event_seq.seq,
+           failed_runs.id AS run_id,
            failed_runs.source_run_lease_id,
            failed_runs.source_attempt_number,
            failed_runs.source_trace_id,
@@ -354,23 +455,98 @@ failed_events AS (
            failed_runs.source_parent_span_id,
            failed_runs.source_traceparent,
            'lifecycle',
-           CASE WHEN failed_runs.status = 'cancelled' THEN 'warn' ELSE 'error' END,
+           CASE WHEN effective_expiry.terminal_status = 'cancelled' THEN 'warn' ELSE 'error' END,
            'lease_sweeper',
-           CASE WHEN failed_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
-           CASE WHEN failed_runs.status = 'cancelled' THEN 'run.cancelled' ELSE 'run.failed' END,
-           CASE
-             WHEN failed_runs.status = 'cancelled'
-             THEN jsonb_build_object('reason', COALESCE(failed_runs.error_message, 'run cancelled'), 'origin', 'lease_sweeper')
-             ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'detail', jsonb_build_object('message', 'worker lease expired while run was executing'))
-           END,
+           effective_expiry.terminal_event_kind,
+           effective_expiry.terminal_event_kind,
+           effective_expiry.terminal_event_payload,
            'internal',
            failed_snapshot.version
       FROM failed_runs
+      JOIN effective_expiry ON effective_expiry.id = failed_runs.id
       JOIN failed_snapshot ON failed_snapshot.run_id = failed_runs.id
-      JOIN event_seq ON event_seq.org_id = failed_runs.org_id
-                    AND event_seq.worker_group_id = failed_runs.worker_group_id
+    UNION ALL
+    SELECT 2 AS event_ordinal,
+           failed_runs.org_id,
+           failed_runs.worker_group_id,
+           failed_runs.project_id,
+           failed_runs.environment_id,
+           failed_runs.id AS run_id,
+           NULL::uuid,
+           failed_runs.current_attempt_number,
+           failed_runs.trace_id,
+           failed_runs.root_span_id,
+           NULL::text,
+           '00-' || failed_runs.trace_id || '-' || failed_runs.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'lease_sweeper',
+           'run.retry_scheduled',
+           'run.retry_scheduled',
+           jsonb_build_object(
+               'reason', retry_plan.reason,
+               'previous_attempt_number', retry_plan.source_attempt_number,
+               'next_attempt_number', retry_plan.next_attempt_number,
+               'retry_after', retry_plan.retry_after,
+               'delay_ms', retry_plan.delay_ms
+           ),
+           'internal',
+           retry_snapshot.version
+      FROM failed_runs
+      JOIN retry_plan ON retry_plan.run_id = failed_runs.id
+      JOIN retry_snapshot ON retry_snapshot.run_id = failed_runs.id
+),
+event_subject_counts AS (
+    SELECT event_inputs.org_id,
+           event_inputs.worker_group_id,
+           event_inputs.run_id,
+           count(*)::bigint AS event_count
+      FROM event_inputs
+     GROUP BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id
+),
+event_seq AS (
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT event_subject_counts.org_id,
+           event_subject_counts.worker_group_id,
+           'run',
+           event_subject_counts.run_id,
+           event_subject_counts.event_count
+      FROM event_subject_counts
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + EXCLUDED.seq,
+                  observed_at = now()
+    RETURNING org_id, worker_group_id, subject_kind, subject_id, seq
+),
+failed_events AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT event_inputs.org_id,
+           event_inputs.worker_group_id,
+           event_inputs.project_id,
+           event_inputs.environment_id,
+           event_inputs.run_id,
+           event_seq.seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           event_inputs.run_lease_id,
+           event_inputs.attempt_number,
+           event_inputs.trace_id,
+           event_inputs.span_id,
+           event_inputs.parent_span_id,
+           event_inputs.traceparent,
+           event_inputs.category,
+           event_inputs.severity,
+           event_inputs.source,
+           event_inputs.kind,
+           event_inputs.message,
+           event_inputs.payload,
+           event_inputs.redaction_class,
+           event_inputs.snapshot_version
+      FROM event_inputs
+      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
+                               AND event_subject_counts.worker_group_id = event_inputs.worker_group_id
+                               AND event_subject_counts.run_id = event_inputs.run_id
+      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
+                    AND event_seq.worker_group_id = event_inputs.worker_group_id
                     AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = failed_runs.id
+                    AND event_seq.subject_id = event_inputs.run_id
     RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 telemetry_outboxes AS (
@@ -431,6 +607,7 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
         (SELECT count(*) FROM failed_runtime_checkpoint_restores) AS failed_runtime_checkpoint_restores,
         (SELECT count(*) FROM failed_snapshot) AS failed_snapshots,
+        (SELECT count(*) FROM retry_snapshot) AS retry_snapshots,
         (SELECT count(*) FROM failed_events) AS failed_events,
         (SELECT count(*) FROM telemetry_outboxes) AS telemetry_outboxes,
         (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events
@@ -443,7 +620,7 @@ UPDATE run_leases
   FROM failed_runs
  WHERE run_leases.org_id = failed_runs.org_id
    AND run_leases.id = failed_runs.source_run_lease_id
-   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + failed_snapshots + failed_events + telemetry_outboxes + active_time_usage_events FROM cleanup) >= 0
+   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + failed_snapshots + retry_snapshots + failed_events + telemetry_outboxes + active_time_usage_events FROM cleanup) >= 0
 `
 
 type FailExpiredRunningRunLeasesParams struct {
@@ -718,6 +895,7 @@ candidate AS MATERIALIZED (
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
        AND runs.dispatch_generation = $4
+       AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND (
            runs.latest_runtime_checkpoint_id IS NULL
@@ -1851,28 +2029,30 @@ completed_runtime_checkpoint_restore AS (
            updated_at = now()
       FROM released
       JOIN released_run_lease ON true
+      JOIN effective_release ON effective_release.id = released.id
      WHERE runtime_checkpoint_restores.org_id = released.org_id
        AND runtime_checkpoint_restores.run_id = released.id
        AND runtime_checkpoint_restores.run_lease_id = released_run_lease.id
        AND runtime_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
        AND runtime_checkpoint_restores.status = 'restoring'
-       AND released.error_message IS NULL
+       AND effective_release.run_status = 'succeeded'
     RETURNING runtime_checkpoint_restores.id
 ),
 failed_runtime_checkpoint_restore AS (
     UPDATE runtime_checkpoint_restores
        SET status = 'failed',
-           error_message = released.error_message,
+           error_message = COALESCE(effective_release.error_message, effective_release.terminal_event_kind),
            finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
            updated_at = now()
       FROM released
       JOIN released_run_lease ON true
+      JOIN effective_release ON effective_release.id = released.id
      WHERE runtime_checkpoint_restores.org_id = released.org_id
        AND runtime_checkpoint_restores.run_id = released.id
        AND runtime_checkpoint_restores.run_lease_id = released_run_lease.id
        AND runtime_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
        AND runtime_checkpoint_restores.status = 'restoring'
-       AND released.error_message IS NOT NULL
+       AND effective_release.run_status <> 'succeeded'
     RETURNING runtime_checkpoint_restores.id
 ),
 active_time_delta AS (
@@ -2561,7 +2741,7 @@ updated_runs AS (
        SET status = 'queued',
            execution_status = 'queued',
            current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
+           dispatch_generation = runs.dispatch_generation + 1,
            dispatch_attempt_count = dispatch_attempt_count + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = 'worker lease expired before execution started',
