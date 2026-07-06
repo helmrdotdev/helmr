@@ -62,84 +62,6 @@ func TestQueueEnqueueDequeueAck(t *testing.T) {
 	}
 }
 
-func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	first, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exists, err := queue.ReadyMessageExists(ctx, first.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("first message exists = false")
-	}
-	mustDequeueOne(t, ctx, queue, "host-1")
-	exists, err = queue.ReadyMessageExists(ctx, first.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("leased message exists = false")
-	}
-	second, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	exists, err = queue.ReadyMessageExists(ctx, first.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if exists {
-		t.Fatal("stale message exists = true")
-	}
-	exists, err = queue.ReadyMessageExists(ctx, second.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("second message exists = false")
-	}
-}
-
-func TestQueueReadyMessageExistsInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	result, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	messageKey := queue.prefix + ":message:" + result.MessageID
-	if err := queue.client.HDel(ctx, messageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if exists {
-		t.Fatal("message without runtime metadata exists = true")
-	}
-	if count, err := queue.client.Exists(ctx, messageKey).Result(); err != nil {
-		t.Fatal(err)
-	} else if count != 0 {
-		t.Fatal("message without runtime metadata was not deleted")
-	}
-	keys := queue.keys("org-1", "worker-group-1", "project-1", "env-1", "default", "queue-a")
-	if score, err := queue.client.ZScore(ctx, keys.ready, result.MessageID).Result(); err == nil {
-		t.Fatalf("message without runtime metadata remained ready with score %f", score)
-	} else if !errors.Is(err, redis.Nil) {
-		t.Fatal(err)
-	}
-}
-
 func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
@@ -183,37 +105,63 @@ func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
 	}
 }
 
-func TestQueueReadyMessageExistsReclaimsExpiredActiveLease(t *testing.T) {
+func TestQueueMessageIDUsesRunIDAndDispatchGeneration(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
+	queue, cleanup := newTestQueue(t)
 	defer cleanup()
 
-	result, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	message.DispatchGeneration = 42
+	result, err := queue.Enqueue(ctx, message)
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	now = now.Add(2 * time.Second)
-	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("expired active message exists = false")
-	}
-	if got, err := queue.client.Exists(ctx, activeMessageKey(queue, lease.MessageID)).Result(); err != nil {
-		t.Fatal(err)
-	} else if got != 0 {
-		t.Fatalf("active message index exists after reclaim = %d, want 0", got)
-	}
-	released := mustDequeueOne(t, ctx, queue, "host-2")
-	if released.MessageID != result.MessageID || released.AttemptNumber != 2 {
-		t.Fatalf("released lease = %+v, want message %s attempt 2", released, result.MessageID)
+	if result.MessageID != "run-1:42" {
+		t.Fatalf("message id = %q, want run-1:42", result.MessageID)
 	}
 }
 
-func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
+func TestQueueEnqueueIsIdempotentForActiveMessage(t *testing.T) {
+	ctx := context.Background()
+	queue, cleanup := newTestQueue(t)
+	defer cleanup()
+
+	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	if _, err := queue.Enqueue(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	lease := mustDequeueOne(t, ctx, queue, "host-1")
+	if _, err := queue.Enqueue(ctx, message); err != nil {
+		t.Fatal(err)
+	}
+	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
+		OrgID:            "org-1",
+		WorkerGroupID:    "worker-group-1",
+		ProjectID:        "project-1",
+		EnvironmentID:    "env-1",
+		QueueClass:       "default",
+		WorkerInstanceID: "host-2",
+		QueueName:        "queue-a",
+		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
+		Runtime:          testRuntime(),
+		MaxMessages:      1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(leases) != 0 {
+		t.Fatalf("leases after duplicate enqueue of active message = %+v, want none", leases)
+	}
+	if err := queue.Nack(ctx, lease, dispatch.NackReasonRetry); err != nil {
+		t.Fatal(err)
+	}
+	released := mustDequeueOne(t, ctx, queue, "host-2")
+	if released.MessageID != lease.MessageID || released.AttemptNumber != 2 {
+		t.Fatalf("released lease = %+v, want message %s attempt 2", released, lease.MessageID)
+	}
+}
+
+func TestQueueDequeueHandlesQueueNamedRun(t *testing.T) {
 	ctx := context.Background()
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
@@ -223,13 +171,6 @@ func TestQueueReadyMessageExistsHandlesQueueNamedRun(t *testing.T) {
 	result, err := queue.Enqueue(ctx, message)
 	if err != nil {
 		t.Fatal(err)
-	}
-	exists, err := queue.ReadyMessageExists(ctx, result.MessageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists {
-		t.Fatal("message in queue named run exists = false")
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
 		OrgID:            "org-1",
@@ -763,7 +704,9 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
 
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
+	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
+	requeued.DispatchGeneration = 2
+	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
@@ -840,150 +783,6 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	}
 	if got := mustDequeueOne(t, ctx, queue, "host-1"); got.Message.RunID != "run-1" {
 		t.Fatalf("same-queue lease = %+v", got)
-	}
-}
-
-func TestQueueReenqueueIsLeaseFenced(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	if err := queue.Ack(ctx, oldLease); !errors.Is(err, dispatch.ErrLeaseConflict) {
-		t.Fatalf("stale ack error = %v, want lease conflict", err)
-	}
-	newLease := mustDequeueOne(t, ctx, queue, "host-1")
-	if newLease.ID == oldLease.ID || newLease.Message.RunID != "run-1" {
-		t.Fatalf("new lease = %+v, old = %+v", newLease, oldLease)
-	}
-}
-
-func TestQueueGenerationTTLIsRefreshedAndTerminallyCleaned(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithGenerationSafetyTTL(time.Hour))
-	defer cleanup()
-
-	result, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	generationKey := messageGenerationKey(t, ctx, queue, result.MessageID)
-	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
-		t.Fatalf("generation ttl after enqueue = %s, want refreshed safety ttl", ttl)
-	}
-	if err := queue.client.PExpire(ctx, generationKey, 5*time.Second).Err(); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
-		t.Fatalf("generation ttl after dequeue = %s, want refreshed safety ttl", ttl)
-	}
-	if err := queue.client.PExpire(ctx, generationKey, 5*time.Second).Err(); err != nil {
-		t.Fatal(err)
-	}
-	renewed, err := queue.Renew(ctx, lease, now.Add(10*time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ttl := generationTTL(t, ctx, queue, generationKey); ttl <= 30*time.Minute {
-		t.Fatalf("generation ttl after renew = %s, want refreshed safety ttl", ttl)
-	}
-	if got, err := queue.client.Get(ctx, activeMessageKey(queue, result.MessageID)).Result(); err != nil {
-		t.Fatal(err)
-	} else if got != renewed.ID {
-		t.Fatalf("active message index = %q, want %q", got, renewed.ID)
-	}
-	if err := queue.Ack(ctx, renewed); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := queue.client.Exists(ctx, generationKey, activeMessageKey(queue, result.MessageID)).Result(); err != nil {
-		t.Fatal(err)
-	} else if got != 0 {
-		t.Fatalf("terminal redis keys exist = %d, want 0", got)
-	}
-}
-
-func TestQueueReenqueuePreventsExpiredOldLeaseReclaim(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(2 * time.Second)
-	lease := mustDequeueOne(t, ctx, queue, "host-2")
-	if lease.ID == oldLease.ID || lease.AttemptNumber != 1 || lease.WorkerInstanceID != "host-2" {
-		t.Fatalf("new generation lease = %+v, old = %+v", lease, oldLease)
-	}
-}
-
-func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
-	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requeued.QueueName = "queue-b"
-	if _, err := queue.Enqueue(ctx, requeued); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Renew(ctx, oldLease, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseConflict) {
-		t.Fatalf("stale renew error = %v, want lease conflict", err)
-	}
-	now = now.Add(2 * time.Second)
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-2",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("stale queue leases = %+v", leases)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-2",
-		QueueName:        "queue-b",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].ID == oldLease.ID || leases[0].AttemptNumber != 1 {
-		t.Fatalf("new queue leases = %+v, old = %+v", leases, oldLease)
 	}
 }
 
@@ -1066,16 +865,17 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 		resources.DiskMiB = 1024
 	}
 	return dispatch.Message{
-		RunID:         runID,
-		OrgID:         "org-1",
-		WorkerGroupID: "worker-group-1",
-		ProjectID:     "project-1",
-		EnvironmentID: "env-1",
-		QueueClass:    "default",
-		QueueName:     "queue-a",
-		Requirements:  dispatchRequirements(resources),
-		Priority:      priority,
-		EnqueuedAt:    time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
+		RunID:              runID,
+		OrgID:              "org-1",
+		WorkerGroupID:      "worker-group-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		QueueClass:         "default",
+		QueueName:          "queue-a",
+		DispatchGeneration: 1,
+		Requirements:       dispatchRequirements(resources),
+		Priority:           priority,
+		EnqueuedAt:         time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
 	}
 }
 
@@ -1124,26 +924,4 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInsta
 		t.Fatalf("leases = %+v, want one", leases)
 	}
 	return leases[0]
-}
-
-func messageGenerationKey(t *testing.T, ctx context.Context, queue *Queue, messageID string) string {
-	t.Helper()
-	generationKey, err := queue.client.HGet(ctx, queue.prefix+":message:"+messageID, "run_generation_key").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return generationKey
-}
-
-func generationTTL(t *testing.T, ctx context.Context, queue *Queue, generationKey string) time.Duration {
-	t.Helper()
-	ttl, err := queue.client.PTTL(ctx, generationKey).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return ttl
-}
-
-func activeMessageKey(queue *Queue, messageID string) string {
-	return queue.prefix + ":message_active:" + messageID
 }

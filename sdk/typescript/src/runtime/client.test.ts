@@ -1940,7 +1940,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           at: "2026-04-28T00:00:00Z",
             attributes: {
               kind: "token",
-              run_wait_id: "token-1",
+              wait_id: "token-1",
               timeout: 30,
             params: { message: "Approve deploy?", timeout: 30 },
             metadata: { bridge: "slack" },
@@ -1955,7 +1955,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           at: "2026-04-28T00:00:01Z",
             attributes: {
               kind: "token",
-              run_wait_id: "token-2",
+              wait_id: "token-2",
               timeout: 60,
             params: { prompt: "What changed?", timeout: 60 },
           },
@@ -1968,7 +1968,7 @@ test("runs.events.list maps backend audit payload fields", async () => {
           at: "2026-04-28T00:00:02Z",
           attributes: {
             kind: "token",
-            run_wait_id: "token-2",
+            wait_id: "token-2",
             principal: "user",
             payload: { text: "Dependency update", attachments: [] },
           },
@@ -2383,7 +2383,7 @@ test("runs.events.subscribe handles CRLF SSE frames split across chunks", async 
       attributes: {
         run_id: "run-1",
         kind: "token",
-        run_wait_id: "token-1",
+        wait_id: "token-1",
         params: { subject: "deploy" },
     },
   }
@@ -2511,7 +2511,7 @@ test("runs.events.subscribe flushes the final SSE frame at EOF", async () => {
       attributes: {
         run_id: "run-1",
         kind: "token",
-        run_wait_id: "token-1",
+        wait_id: "token-1",
         params: { type: "note" },
     },
   }
@@ -2558,7 +2558,7 @@ test("runs.events.subscribe reconnects with the last event cursor and ends after
       attributes: {
         run_id: "run-1",
         kind: "token",
-        run_wait_id: "token-1",
+        wait_id: "token-1",
         params: {},
     },
   }

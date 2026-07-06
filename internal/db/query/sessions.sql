@@ -344,7 +344,7 @@ SELECT sessions.id,
          WHEN sessions.current_run_id IS NULL THEN 'idle'
          WHEN runs.id IS NULL THEN 'idle'
          WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
-         WHEN active_wait.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed') THEN 'waiting'
+         WHEN active_wait.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming') THEN 'waiting'
          WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
          WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
          ELSE 'running'
@@ -382,7 +382,7 @@ SELECT sessions.id,
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
-          AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming', 'resumed')
+          AND run_waits.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming')
         ORDER BY run_waits.created_at DESC, run_waits.id DESC
         LIMIT 1
  ) active_wait ON true
@@ -408,7 +408,7 @@ SELECT sessions.id,
          WHEN sessions.current_run_id IS NULL THEN 'idle'
          WHEN runs.id IS NULL THEN 'idle'
          WHEN runs.status IN ('succeeded', 'failed', 'cancelled', 'expired') THEN 'idle'
-         WHEN active_wait.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed') THEN 'waiting'
+         WHEN active_wait.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming') THEN 'waiting'
          WHEN runs.status = 'waiting' OR runs.execution_status = 'waiting' THEN 'waiting'
          WHEN runs.status = 'queued' OR runs.execution_status IN ('created', 'queued', 'leased') THEN 'queued'
          ELSE 'running'
@@ -449,7 +449,7 @@ SELECT sessions.id,
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
-          AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming', 'resumed')
+          AND run_waits.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming')
         ORDER BY run_waits.created_at DESC, run_waits.id DESC
         LIMIT 1
  ) active_wait ON true

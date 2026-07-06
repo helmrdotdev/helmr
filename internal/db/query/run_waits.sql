@@ -38,20 +38,49 @@ WITH scope AS MATERIALIZED (
      FOR UPDATE OF runtime_instances
 ),
 inserted_wait AS (
-    INSERT INTO run_waits (
+    INSERT INTO waits (
         id,
         public_id,
+        org_id,
+        project_id,
+        environment_id,
+        kind,
+        state,
+        correlation_key,
+        stream_id,
+        stream_sequence,
+        token_id,
+        completed_after,
+        expires_at
+    )
+    SELECT sqlc.arg(wait_id),
+           sqlc.arg(public_id),
+           scope.org_id,
+           scope.project_id,
+           scope.environment_id,
+           sqlc.arg(kind)::wait_kind,
+           'pending'::wait_state,
+           COALESCE(sqlc.arg(correlation_key)::text, ''),
+           sqlc.narg(stream_id)::uuid,
+           sqlc.narg(stream_sequence)::bigint,
+           sqlc.narg(token_id)::uuid,
+           sqlc.narg(completed_after)::timestamptz,
+           sqlc.narg(expires_at)::timestamptz
+      FROM scope
+    RETURNING *
+),
+inserted_run_wait AS (
+    INSERT INTO run_waits (
+        id,
         org_id,
         worker_group_id,
         project_id,
         environment_id,
         run_id,
-        kind,
-        correlation_id,
+        wait_id,
         state,
-        timeout_at,
         runtime_checkpoint_due_at,
-        live_wait_started_at,
+        hot_wait_started_at,
         owner_runtime_instance_id,
         owner_runtime_epoch,
         owner_run_id,
@@ -59,17 +88,14 @@ inserted_wait AS (
         owner_worker_instance_id,
         owner_run_state_version
     )
-    SELECT sqlc.arg(id),
-           sqlc.arg(public_id),
+    SELECT sqlc.arg(run_wait_id),
            scope.org_id,
            scope.worker_group_id,
            scope.project_id,
            scope.environment_id,
            scope.run_id,
-           sqlc.arg(kind)::run_wait_kind,
-           COALESCE(sqlc.arg(correlation_id)::text, ''),
-           'live_waiting'::run_wait_state,
-           sqlc.narg(timeout_at)::timestamptz,
+           inserted_wait.id,
+           'hot_waiting'::run_wait_state,
            CASE
              WHEN sqlc.arg(checkpoint_delay)::interval <= interval '0 seconds' THEN now()
              ELSE now() + sqlc.arg(checkpoint_delay)::interval
@@ -82,6 +108,7 @@ inserted_wait AS (
            scope.worker_instance_id,
            scope.state_version
       FROM scope
+      JOIN inserted_wait ON true
     RETURNING *
 ),
 waiting_runtime_instance AS (
@@ -93,14 +120,14 @@ waiting_runtime_instance AS (
            owner_run_state_version = inserted_wait.owner_run_state_version,
            waiting_at = now(),
            updated_at = now()
-      FROM scope, inserted_wait
+      FROM scope, inserted_run_wait AS inserted_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
        AND runtime_instances.state IN ('running', 'waiting_hot')
     RETURNING runtime_instances.id
 )
-SELECT inserted_wait.*
-  FROM inserted_wait
+SELECT inserted_run_wait.*
+  FROM inserted_run_wait
  WHERE EXISTS (SELECT 1 FROM waiting_runtime_instance);
 
 -- name: GetRunWait :one
@@ -120,7 +147,7 @@ SELECT *
 
 -- name: ListRunWaits :many
 WITH cursor_wait AS (
-    SELECT parked_at, id
+    SELECT created_at, id
       FROM run_waits
      WHERE org_id = sqlc.arg(org_id)
        AND run_id = sqlc.arg(run_id)
@@ -136,24 +163,48 @@ SELECT *
    )
    AND (
        sqlc.narg(after_id)::uuid IS NULL
-       OR (run_waits.parked_at, run_waits.id) > (SELECT cursor_wait.parked_at, cursor_wait.id FROM cursor_wait)
+       OR (run_waits.created_at, run_waits.id) > (SELECT cursor_wait.created_at, cursor_wait.id FROM cursor_wait)
    )
- ORDER BY run_waits.parked_at ASC, run_waits.id ASC
+ ORDER BY run_waits.created_at ASC, run_waits.id ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: ResolveRunWait :one
-UPDATE run_waits
-   SET state = CASE
-         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-         WHEN state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-         ELSE state
-       END,
-       resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND id = sqlc.arg(id)
-   AND state IN ('live_waiting', 'checkpointed_waiting')
-RETURNING *;
+WITH target AS MATERIALIZED (
+    SELECT run_waits.*
+      FROM run_waits
+      JOIN waits ON waits.org_id = run_waits.org_id
+                AND waits.id = run_waits.wait_id
+     WHERE run_waits.org_id = sqlc.arg(org_id)
+       AND run_waits.id = sqlc.arg(id)
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+       AND waits.state = 'pending'
+     FOR UPDATE OF run_waits, waits
+),
+completed_wait AS (
+    UPDATE waits
+       SET state = 'completed',
+           result = COALESCE(sqlc.narg(result)::jsonb, waits.result, 'null'::jsonb),
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
+      FROM target
+     WHERE waits.org_id = target.org_id
+       AND waits.id = target.wait_id
+    RETURNING waits.id
+),
+updated_run_wait AS (
+    UPDATE run_waits
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
+           updated_at = now()
+      FROM target
+      JOIN completed_wait ON completed_wait.id = target.wait_id
+     WHERE run_waits.org_id = target.org_id
+       AND run_waits.id = target.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.*
+)
+SELECT *
+  FROM updated_run_wait;
 
 -- name: ClaimRuntimeCheckpointWait :one
 WITH scope AS (
@@ -225,7 +276,7 @@ WITH scope AS (
        AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.owner_run_lease_id = sqlc.arg(run_lease_id)
        AND run_waits.owner_worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_waits.state IN ('live_waiting', 'checkpointing')
+       AND run_waits.state IN ('hot_waiting', 'checkpointing')
        AND runs.status = 'running'
        AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -295,7 +346,7 @@ claimed_checkpoint AS (
            '{}'::jsonb,
            scope.runtime_checkpoint_due_at + interval '5 minutes'
       FROM scope
-     WHERE scope.state = 'live_waiting'
+     WHERE scope.state = 'hot_waiting'
        AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
     ON CONFLICT (id) DO NOTHING
     RETURNING *
@@ -309,7 +360,7 @@ claimed_wait AS (
       FROM scope
      WHERE run_waits.org_id = scope.org_id
        AND run_waits.id = scope.id
-       AND scope.state = 'live_waiting'
+       AND scope.state = 'hot_waiting'
        AND EXISTS (SELECT 1 FROM claimed_checkpoint)
     RETURNING run_waits.*
 ),
@@ -441,8 +492,8 @@ updated_restore AS (
 ),
 updated_wait AS (
     UPDATE run_waits
-       SET resumed_at = COALESCE(run_waits.resumed_at, now()),
-           state = 'resumed',
+       SET released_at = COALESCE(run_waits.released_at, now()),
+           state = 'released',
            updated_at = now()
       FROM current_wait
       JOIN updated_restore ON true
@@ -456,7 +507,6 @@ SELECT updated_wait.*
 -- name: RequeueResolvedRunWaits :many
 WITH eligible_waits AS (
     SELECT run_waits.*,
-           runs.current_attempt_id,
            runs.queued_expires_at,
            runs.workspace_id,
            runs.priority
@@ -477,13 +527,13 @@ WITH eligible_waits AS (
                      AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
+       AND run_waits.state = 'resuming'
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
        AND runtime_checkpoints.state = 'ready'
        AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
-     ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
+     ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF run_waits, runs
 ),
@@ -495,15 +545,18 @@ updated_waits AS (
       FROM eligible_waits
      WHERE run_waits.org_id = eligible_waits.org_id
        AND run_waits.id = eligible_waits.id
-       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
+       AND run_waits.state = 'resuming'
     RETURNING run_waits.*
 ),
 updated_runs AS (
     UPDATE runs
-       SET status = 'queued',
-           execution_status = 'queued',
-           state_version = runs.state_version + 1,
-           updated_at = now()
+	       SET status = 'queued',
+	           execution_status = 'queued',
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           last_enqueue_error = '',
+	           last_enqueued_at = NULL,
+	           state_version = runs.state_version + 1,
+	           updated_at = now()
       FROM eligible_waits
       JOIN updated_waits ON updated_waits.org_id = eligible_waits.org_id
                         AND updated_waits.id = eligible_waits.id
@@ -511,49 +564,16 @@ updated_runs AS (
        AND runs.id = eligible_waits.run_id
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.current_attempt_id, runs.queued_expires_at
-),
-updated_attempts AS (
-    UPDATE run_attempts
-       SET status = 'queued',
-           updated_at = now()
-      FROM updated_runs
-     WHERE run_attempts.org_id = updated_runs.org_id
-       AND run_attempts.run_id = updated_runs.id
-       AND run_attempts.id = updated_runs.current_attempt_id
-       AND run_attempts.status = 'waiting'
-    RETURNING run_attempts.run_id
-),
-updated_queue AS (
-    UPDATE run_queue_items
-       SET status = 'queued',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           queued_expires_at = updated_runs.queued_expires_at,
-           dispatch_generation = run_queue_items.dispatch_generation + 1,
-           last_error = '',
-           enqueued_at = now(),
-           updated_at = now(),
-           finished_at = NULL
-      FROM updated_runs
-      JOIN eligible_waits ON eligible_waits.org_id = updated_runs.org_id
-                         AND eligible_waits.run_id = updated_runs.id
-    WHERE run_queue_items.org_id = updated_runs.org_id
-       AND run_queue_items.run_id = updated_runs.id
-       AND run_queue_items.status = 'parked'
-    RETURNING run_queue_items.run_id
-)
+	    RETURNING runs.id, runs.org_id, runs.queued_expires_at
+	)
 SELECT updated_waits.*,
        eligible_waits.workspace_id,
        eligible_waits.priority
   FROM updated_waits
-  JOIN eligible_waits ON eligible_waits.org_id = updated_waits.org_id
-                     AND eligible_waits.id = updated_waits.id
-  JOIN updated_runs ON updated_runs.org_id = updated_waits.org_id
-                   AND updated_runs.id = updated_waits.run_id
-  JOIN updated_attempts ON updated_attempts.run_id = updated_waits.run_id
-  JOIN updated_queue ON updated_queue.run_id = updated_waits.run_id;
+	  JOIN eligible_waits ON eligible_waits.org_id = updated_waits.org_id
+	                     AND eligible_waits.id = updated_waits.id
+	  JOIN updated_runs ON updated_runs.org_id = updated_waits.org_id
+	                   AND updated_runs.id = updated_waits.run_id;
 
 -- name: FailStaleResolvedRunWaits :many
 WITH stale_waits AS MATERIALIZED (
@@ -564,8 +584,7 @@ WITH stale_waits AS MATERIALIZED (
            run_waits.environment_id,
            run_waits.run_id,
            runs.session_id,
-           runs.current_attempt_id,
-           runs.current_attempt_number,
+	           runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
            runs.state_version + 1 AS next_state_version,
@@ -606,7 +625,7 @@ WITH stale_waits AS MATERIALIZED (
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND (
-           (run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired') AND runs.status = 'waiting')
+           (run_waits.state = 'resuming' AND runs.status = 'waiting')
            OR (run_waits.state = 'resuming' AND runs.status = 'queued')
        )
        AND run_waits.runtime_checkpoint_id IS NOT NULL
@@ -617,7 +636,7 @@ WITH stale_waits AS MATERIALIZED (
            workspaces.current_version_id IS DISTINCT FROM runtime_checkpoints.base_workspace_version_id
            OR runtime_checkpoints.expires_at <= now()
        )
-     ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
+     ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF run_waits, runs, sessions
 ),
@@ -636,8 +655,9 @@ failed_runs AS (
        SET status = 'failed',
            execution_status = 'finished',
            terminal_outcome = 'failed',
-           error_message = stale_waits.failure_message,
-           state_version = stale_waits.next_state_version,
+	           error_message = stale_waits.failure_message,
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           state_version = stale_waits.next_state_version,
            finished_at = now(),
            updated_at = now()
       FROM stale_waits
@@ -647,8 +667,8 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id,
-              runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
+	    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id,
+	              runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
               stale_waits.runtime_checkpoint_expires_at, stale_waits.failure_reason
@@ -682,32 +702,21 @@ failed_sessions AS (
     SELECT failed_runs.session_id AS id
       FROM failed_runs
 ),
-failed_attempts AS (
-    UPDATE run_attempts
-       SET status = 'failed',
-           error_message = failed_runs.error_message,
-           finished_at = now(),
-           updated_at = now()
-      FROM failed_runs
-     WHERE run_attempts.org_id = failed_runs.org_id
-       AND run_attempts.run_id = failed_runs.id
-       AND run_attempts.id = failed_runs.current_attempt_id
-    RETURNING run_attempts.id, run_attempts.run_id
-),
-completed_queue_entries AS (
-    UPDATE run_queue_items
-       SET status = 'completed',
-           dispatch_generation = dispatch_generation + 1,
-           updated_at = now(),
-           finished_at = now()
-     FROM failed_runs
-     WHERE run_queue_items.org_id = failed_runs.org_id
-       AND run_queue_items.run_id = failed_runs.id
-       AND run_queue_items.status IN ('parked', 'queued', 'published', 'reserved')
-    RETURNING run_queue_items.run_id
-),
 failed_snapshots AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+    INSERT INTO run_state_snapshots (
+        org_id,
+        worker_group_id,
+        run_id,
+        version,
+        status,
+        execution_status,
+        terminal_outcome,
+        attempt_number,
+        transition,
+        runtime_checkpoint_id,
+        reason,
+        error
+    )
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -715,20 +724,24 @@ failed_snapshots AS (
            'failed',
            'finished',
            'failed',
-           failed_runs.current_attempt_id,
+           failed_runs.current_attempt_number,
            'run.failed',
+           failed_runs.runtime_checkpoint_id,
            jsonb_build_object(
                'origin', 'runtime_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message,
-               'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
                'base_workspace_version_id', failed_runs.base_workspace_version_id,
                'current_workspace_version_id', failed_runs.current_version_id,
                'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
+           ),
+           jsonb_build_object(
+               'origin', 'runtime_resume_wait',
+               'reason', failed_runs.failure_reason,
+               'message', failed_runs.error_message
            )
       FROM failed_runs
-      JOIN failed_attempts ON failed_attempts.run_id = failed_runs.id
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 failed_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -740,16 +753,15 @@ failed_event_seq AS (
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
-failed_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	failed_events AS (
+	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.project_id,
            failed_runs.environment_id,
            failed_runs.id,
            failed_event_seq.seq,
-           failed_runs.current_attempt_id,
-           failed_runs.current_attempt_number,
+	           failed_runs.current_attempt_number,
            failed_runs.trace_id,
            failed_runs.root_span_id,
            '00-' || failed_runs.trace_id || '-' || failed_runs.root_span_id || '-01',
@@ -816,7 +828,7 @@ UPDATE run_waits
    AND run_waits.environment_id = sqlc.arg(environment_id)
    AND run_waits.id = sqlc.arg(id)
    AND run_waits.run_id = sqlc.arg(run_id)
-   AND run_waits.state IN ('live_waiting', 'checkpointing')
+   AND run_waits.state IN ('hot_waiting', 'checkpointing')
    AND run_waits.workspace_version_id IS NULL
    AND runs.org_id = run_waits.org_id
    AND runs.project_id = run_waits.project_id
@@ -845,19 +857,45 @@ UPDATE run_waits
 RETURNING *;
 
 -- name: ExpireDueRunWaits :many
-UPDATE run_waits
-   SET state = CASE
-         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-         ELSE 'expired'::run_wait_state
-       END,
-       resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND state IN ('live_waiting', 'checkpointed_waiting')
-   AND timeout_at IS NOT NULL
-   AND timeout_at <= now()
-RETURNING *;
+WITH candidate_waits AS MATERIALIZED (
+    SELECT waits.id,
+           waits.org_id
+      FROM waits
+      JOIN run_waits ON run_waits.org_id = waits.org_id
+                    AND run_waits.wait_id = waits.id
+     WHERE waits.org_id = sqlc.arg(org_id)
+       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
+       AND waits.state = 'pending'
+       AND waits.expires_at IS NOT NULL
+       AND waits.expires_at <= now()
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     FOR UPDATE OF waits, run_waits
+),
+expired_waits AS (
+    UPDATE waits
+       SET state = 'expired',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
+      FROM candidate_waits
+     WHERE waits.org_id = candidate_waits.org_id
+       AND waits.id = candidate_waits.id
+       AND waits.state = 'pending'
+    RETURNING waits.*
+),
+expired_run_waits AS (
+    UPDATE run_waits
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
+           updated_at = now()
+      FROM expired_waits
+     WHERE run_waits.org_id = expired_waits.org_id
+       AND run_waits.wait_id = expired_waits.id
+       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.*
+)
+SELECT *
+  FROM expired_run_waits;
 
 -- name: GetWorkerRunWaitScope :one
 SELECT runs.org_id,

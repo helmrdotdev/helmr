@@ -536,53 +536,6 @@ func (ns NullRegionVisibility) Value() (driver.Value, error) {
 	return string(ns.RegionVisibility), nil
 }
 
-type RunAttemptStatus string
-
-const (
-	RunAttemptStatusQueued    RunAttemptStatus = "queued"
-	RunAttemptStatusRunning   RunAttemptStatus = "running"
-	RunAttemptStatusWaiting   RunAttemptStatus = "waiting"
-	RunAttemptStatusSucceeded RunAttemptStatus = "succeeded"
-	RunAttemptStatusFailed    RunAttemptStatus = "failed"
-	RunAttemptStatusCancelled RunAttemptStatus = "cancelled"
-	RunAttemptStatusExpired   RunAttemptStatus = "expired"
-)
-
-func (e *RunAttemptStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunAttemptStatus(s)
-	case string:
-		*e = RunAttemptStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunAttemptStatus: %T", src)
-	}
-	return nil
-}
-
-type NullRunAttemptStatus struct {
-	RunAttemptStatus RunAttemptStatus `json:"run_attempt_status"`
-	Valid            bool             `json:"valid"` // Valid is true if RunAttemptStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunAttemptStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunAttemptStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunAttemptStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunAttemptStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunAttemptStatus), nil
-}
-
 type RunExecutionStatus string
 
 const (
@@ -802,96 +755,6 @@ func (ns NullRunOperationStatus) Value() (driver.Value, error) {
 	return string(ns.RunOperationStatus), nil
 }
 
-type RunQueueStatus string
-
-const (
-	RunQueueStatusQueued       RunQueueStatus = "queued"
-	RunQueueStatusPublished    RunQueueStatus = "published"
-	RunQueueStatusReserved     RunQueueStatus = "reserved"
-	RunQueueStatusParked       RunQueueStatus = "parked"
-	RunQueueStatusCompleted    RunQueueStatus = "completed"
-	RunQueueStatusCancelled    RunQueueStatus = "cancelled"
-	RunQueueStatusDeadLettered RunQueueStatus = "dead_lettered"
-)
-
-func (e *RunQueueStatus) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunQueueStatus(s)
-	case string:
-		*e = RunQueueStatus(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunQueueStatus: %T", src)
-	}
-	return nil
-}
-
-type NullRunQueueStatus struct {
-	RunQueueStatus RunQueueStatus `json:"run_queue_status"`
-	Valid          bool           `json:"valid"` // Valid is true if RunQueueStatus is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunQueueStatus) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunQueueStatus, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunQueueStatus.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunQueueStatus) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunQueueStatus), nil
-}
-
-type RunRetryDecisionKind string
-
-const (
-	RunRetryDecisionKindRetry     RunRetryDecisionKind = "retry"
-	RunRetryDecisionKindFailRun   RunRetryDecisionKind = "fail_run"
-	RunRetryDecisionKindCancelRun RunRetryDecisionKind = "cancel_run"
-)
-
-func (e *RunRetryDecisionKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunRetryDecisionKind(s)
-	case string:
-		*e = RunRetryDecisionKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunRetryDecisionKind: %T", src)
-	}
-	return nil
-}
-
-type NullRunRetryDecisionKind struct {
-	RunRetryDecisionKind RunRetryDecisionKind `json:"run_retry_decision_kind"`
-	Valid                bool                 `json:"valid"` // Valid is true if RunRetryDecisionKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunRetryDecisionKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunRetryDecisionKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunRetryDecisionKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunRetryDecisionKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunRetryDecisionKind), nil
-}
-
 type RunStatus string
 
 const (
@@ -984,62 +847,16 @@ func (ns NullRunTerminalOutcome) Value() (driver.Value, error) {
 	return string(ns.RunTerminalOutcome), nil
 }
 
-type RunWaitKind string
-
-const (
-	RunWaitKindStream RunWaitKind = "stream"
-	RunWaitKindToken  RunWaitKind = "token"
-	RunWaitKindTimer  RunWaitKind = "timer"
-)
-
-func (e *RunWaitKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunWaitKind(s)
-	case string:
-		*e = RunWaitKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunWaitKind: %T", src)
-	}
-	return nil
-}
-
-type NullRunWaitKind struct {
-	RunWaitKind RunWaitKind `json:"run_wait_kind"`
-	Valid       bool        `json:"valid"` // Valid is true if RunWaitKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunWaitKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunWaitKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunWaitKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunWaitKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunWaitKind), nil
-}
-
 type RunWaitState string
 
 const (
-	RunWaitStateLiveWaiting          RunWaitState = "live_waiting"
-	RunWaitStateCheckpointing        RunWaitState = "checkpointing"
-	RunWaitStateCheckpointedWaiting  RunWaitState = "checkpointed_waiting"
-	RunWaitStateResolvedLive         RunWaitState = "resolved_live"
-	RunWaitStateResolvedCheckpointed RunWaitState = "resolved_checkpointed"
-	RunWaitStateExpired              RunWaitState = "expired"
-	RunWaitStateResuming             RunWaitState = "resuming"
-	RunWaitStateResumed              RunWaitState = "resumed"
-	RunWaitStateCancelled            RunWaitState = "cancelled"
-	RunWaitStateFailed               RunWaitState = "failed"
+	RunWaitStateHotWaiting          RunWaitState = "hot_waiting"
+	RunWaitStateCheckpointing       RunWaitState = "checkpointing"
+	RunWaitStateCheckpointedWaiting RunWaitState = "checkpointed_waiting"
+	RunWaitStateResuming            RunWaitState = "resuming"
+	RunWaitStateReleased            RunWaitState = "released"
+	RunWaitStateCancelled           RunWaitState = "cancelled"
+	RunWaitStateFailed              RunWaitState = "failed"
 )
 
 func (e *RunWaitState) Scan(src interface{}) error {
@@ -1605,6 +1422,94 @@ func (ns NullTokenState) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.TokenState), nil
+}
+
+type WaitKind string
+
+const (
+	WaitKindStream WaitKind = "stream"
+	WaitKindToken  WaitKind = "token"
+	WaitKindTimer  WaitKind = "timer"
+)
+
+func (e *WaitKind) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WaitKind(s)
+	case string:
+		*e = WaitKind(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WaitKind: %T", src)
+	}
+	return nil
+}
+
+type NullWaitKind struct {
+	WaitKind WaitKind `json:"wait_kind"`
+	Valid    bool     `json:"valid"` // Valid is true if WaitKind is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWaitKind) Scan(value interface{}) error {
+	if value == nil {
+		ns.WaitKind, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WaitKind.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWaitKind) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WaitKind), nil
+}
+
+type WaitState string
+
+const (
+	WaitStatePending   WaitState = "pending"
+	WaitStateCompleted WaitState = "completed"
+	WaitStateFailed    WaitState = "failed"
+	WaitStateExpired   WaitState = "expired"
+	WaitStateCancelled WaitState = "cancelled"
+)
+
+func (e *WaitState) Scan(src interface{}) error {
+	switch s := src.(type) {
+	case []byte:
+		*e = WaitState(s)
+	case string:
+		*e = WaitState(s)
+	default:
+		return fmt.Errorf("unsupported scan type for WaitState: %T", src)
+	}
+	return nil
+}
+
+type NullWaitState struct {
+	WaitState WaitState `json:"wait_state"`
+	Valid     bool      `json:"valid"` // Valid is true if WaitState is not NULL
+}
+
+// Scan implements the Scanner interface.
+func (ns *NullWaitState) Scan(value interface{}) error {
+	if value == nil {
+		ns.WaitState, ns.Valid = "", false
+		return nil
+	}
+	ns.Valid = true
+	return ns.WaitState.Scan(value)
+}
+
+// Value implements the driver Valuer interface.
+func (ns NullWaitState) Value() (driver.Value, error) {
+	if !ns.Valid {
+		return nil, nil
+	}
+	return string(ns.WaitState), nil
 }
 
 type WorkerCommandKind string
@@ -2893,7 +2798,6 @@ type EventHotPayload struct {
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	RunID           pgtype.UUID        `json:"run_id"`
 	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	AttemptID       pgtype.UUID        `json:"attempt_id"`
 	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
 	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
 	TraceID         pgtype.Text        `json:"trace_id"`
@@ -3061,6 +2965,7 @@ type Run struct {
 	Metadata                  []byte                 `json:"metadata"`
 	Tags                      []string               `json:"tags"`
 	LockedRetryPolicy         []byte                 `json:"locked_retry_policy"`
+	QueueClass                string                 `json:"queue_class"`
 	QueueName                 string                 `json:"queue_name"`
 	QueueConcurrencyLimit     pgtype.Int4            `json:"queue_concurrency_limit"`
 	ConcurrencyKey            pgtype.Text            `json:"concurrency_key"`
@@ -3068,14 +2973,30 @@ type Run struct {
 	QueueTimestamp            pgtype.Timestamptz     `json:"queue_timestamp"`
 	Ttl                       string                 `json:"ttl"`
 	QueuedExpiresAt           pgtype.Timestamptz     `json:"queued_expires_at"`
+	DispatchGeneration        int64                  `json:"dispatch_generation"`
+	DispatchAttemptCount      int32                  `json:"dispatch_attempt_count"`
+	LastEnqueueError          string                 `json:"last_enqueue_error"`
+	LastEnqueuedAt            pgtype.Timestamptz     `json:"last_enqueued_at"`
+	RequestedMilliCpu         int64                  `json:"requested_milli_cpu"`
+	RequestedMemoryMib        int64                  `json:"requested_memory_mib"`
+	RequestedDiskMib          int64                  `json:"requested_disk_mib"`
+	RequestedExecutionSlots   int32                  `json:"requested_execution_slots"`
+	RuntimeID                 string                 `json:"runtime_id"`
+	RuntimeArch               string                 `json:"runtime_arch"`
+	RuntimeABI                string                 `json:"runtime_abi"`
+	KernelDigest              string                 `json:"kernel_digest"`
+	InitramfsDigest           string                 `json:"initramfs_digest"`
+	RootfsDigest              string                 `json:"rootfs_digest"`
+	CniProfile                string                 `json:"cni_profile"`
+	NetworkPolicy             []byte                 `json:"network_policy"`
+	Placement                 []byte                 `json:"placement"`
 	MaxActiveDurationMs       int64                  `json:"max_active_duration_ms"`
 	ActiveElapsedMs           int64                  `json:"active_elapsed_ms"`
 	ActiveStartedAt           pgtype.Timestamptz     `json:"active_started_at"`
 	TraceID                   pgtype.Text            `json:"trace_id"`
 	RootSpanID                string                 `json:"root_span_id"`
 	StateVersion              int64                  `json:"state_version"`
-	CurrentAttemptID          pgtype.UUID            `json:"current_attempt_id"`
-	CurrentAttemptNumber      pgtype.Int4            `json:"current_attempt_number"`
+	CurrentAttemptNumber      int32                  `json:"current_attempt_number"`
 	CurrentRunLeaseID         pgtype.UUID            `json:"current_run_lease_id"`
 	LatestRuntimeCheckpointID pgtype.UUID            `json:"latest_runtime_checkpoint_id"`
 	ExitCode                  pgtype.Int4            `json:"exit_code"`
@@ -3086,33 +3007,22 @@ type Run struct {
 	FinishedAt                pgtype.Timestamptz     `json:"finished_at"`
 }
 
-type RunAttempt struct {
-	ID                pgtype.UUID        `json:"id"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	WorkerGroupID     string             `json:"worker_group_id"`
-	RunID             pgtype.UUID        `json:"run_id"`
-	AttemptNumber     int32              `json:"attempt_number"`
-	Status            RunAttemptStatus   `json:"status"`
-	PreviousAttemptID pgtype.UUID        `json:"previous_attempt_id"`
-	Output            []byte             `json:"output"`
-	ErrorMessage      pgtype.Text        `json:"error_message"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
-	StartedAt         pgtype.Timestamptz `json:"started_at"`
-	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
-}
-
 type RunLease struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	QueueClass                 string             `json:"queue_class"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	AttemptID                  pgtype.UUID        `json:"attempt_id"`
 	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	DispatchMessageID          string             `json:"dispatch_message_id"`
+	DispatchGeneration         int64              `json:"dispatch_generation"`
 	DispatchLeaseID            string             `json:"dispatch_lease_id"`
 	DispatchAttempt            int32              `json:"dispatch_attempt"`
+	AttemptNumber              int32              `json:"attempt_number"`
+	QueueName                  string             `json:"queue_name"`
+	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
 	Status                     RunLeaseStatus     `json:"status"`
 	LeaseExpiresAt             pgtype.Timestamptz `json:"lease_expires_at"`
 	RuntimeID                  string             `json:"runtime_id"`
@@ -3134,7 +3044,6 @@ type RunLogCursor struct {
 	ID             pgtype.UUID        `json:"id"`
 	OrgID          pgtype.UUID        `json:"org_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
-	AttemptID      pgtype.UUID        `json:"attempt_id"`
 	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
 	StreamName     string             `json:"stream_name"`
 	Seq            int64              `json:"seq"`
@@ -3191,115 +3100,39 @@ type RunOperation struct {
 	RejectedAt     pgtype.Timestamptz `json:"rejected_at"`
 }
 
-type RunQueueConcurrencyLease struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	WorkerGroupID  string             `json:"worker_group_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
-	QueueName      string             `json:"queue_name"`
-	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
-	SlotOrdinal    int32              `json:"slot_ordinal"`
-	AcquiredAt     pgtype.Timestamptz `json:"acquired_at"`
-	ReleasedAt     pgtype.Timestamptz `json:"released_at"`
-}
-
-type RunQueueItem struct {
-	RunID                      pgtype.UUID        `json:"run_id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	QueueClass                 string             `json:"queue_class"`
-	Status                     RunQueueStatus     `json:"status"`
-	Priority                   int32              `json:"priority"`
-	QueueName                  string             `json:"queue_name"`
-	ConcurrencyKey             pgtype.Text        `json:"concurrency_key"`
-	QueueTimestamp             pgtype.Timestamptz `json:"queue_timestamp"`
-	QueuedExpiresAt            pgtype.Timestamptz `json:"queued_expires_at"`
-	DispatchMessageID          pgtype.Text        `json:"dispatch_message_id"`
-	ReservedByWorkerInstanceID pgtype.UUID        `json:"reserved_by_worker_instance_id"`
-	ReservationExpiresAt       pgtype.Timestamptz `json:"reservation_expires_at"`
-	DispatchGeneration         int64              `json:"dispatch_generation"`
-	LastError                  string             `json:"last_error"`
-	EnqueuedAt                 pgtype.Timestamptz `json:"enqueued_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
-	FinishedAt                 pgtype.Timestamptz `json:"finished_at"`
-}
-
-type RunRetryDecision struct {
-	ID                pgtype.UUID          `json:"id"`
-	OrgID             pgtype.UUID          `json:"org_id"`
-	WorkerGroupID     string               `json:"worker_group_id"`
-	ProjectID         pgtype.UUID          `json:"project_id"`
-	EnvironmentID     pgtype.UUID          `json:"environment_id"`
-	RunID             pgtype.UUID          `json:"run_id"`
-	AttemptID         pgtype.UUID          `json:"attempt_id"`
-	RunLeaseID        pgtype.UUID          `json:"run_lease_id"`
-	SnapshotVersion   int64                `json:"snapshot_version"`
-	Decision          RunRetryDecisionKind `json:"decision"`
-	Reason            string               `json:"reason"`
-	ErrorClass        string               `json:"error_class"`
-	RetryAfter        pgtype.Timestamptz   `json:"retry_after"`
-	NextAttemptNumber pgtype.Int4          `json:"next_attempt_number"`
-	PolicySnapshot    []byte               `json:"policy_snapshot"`
-	Error             []byte               `json:"error"`
-	CreatedAt         pgtype.Timestamptz   `json:"created_at"`
-}
-
-type RunRuntimeRequirement struct {
-	RunID                   pgtype.UUID        `json:"run_id"`
-	OrgID                   pgtype.UUID        `json:"org_id"`
-	WorkerGroupID           string             `json:"worker_group_id"`
-	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
-	RequestedDiskMib        int64              `json:"requested_disk_mib"`
-	RequestedExecutionSlots int32              `json:"requested_execution_slots"`
-	RuntimeID               string             `json:"runtime_id"`
-	RuntimeArch             string             `json:"runtime_arch"`
-	RuntimeABI              string             `json:"runtime_abi"`
-	KernelDigest            string             `json:"kernel_digest"`
-	InitramfsDigest         string             `json:"initramfs_digest"`
-	RootfsDigest            string             `json:"rootfs_digest"`
-	CniProfile              string             `json:"cni_profile"`
-	NetworkPolicy           []byte             `json:"network_policy"`
-	Placement               []byte             `json:"placement"`
-	CreatedAt               pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
-}
-
-type RunSnapshot struct {
-	OrgID           pgtype.UUID            `json:"org_id"`
-	WorkerGroupID   string                 `json:"worker_group_id"`
-	RunID           pgtype.UUID            `json:"run_id"`
-	Version         int64                  `json:"version"`
-	Status          RunStatus              `json:"status"`
-	ExecutionStatus RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome NullRunTerminalOutcome `json:"terminal_outcome"`
-	AttemptID       pgtype.UUID            `json:"attempt_id"`
-	RunLeaseID      pgtype.UUID            `json:"run_lease_id"`
-	OperationID     pgtype.UUID            `json:"operation_id"`
-	PreviousVersion pgtype.Int8            `json:"previous_version"`
-	Transition      string                 `json:"transition"`
-	Reason          []byte                 `json:"reason"`
-	CreatedAt       pgtype.Timestamptz     `json:"created_at"`
+type RunStateSnapshot struct {
+	OrgID               pgtype.UUID            `json:"org_id"`
+	WorkerGroupID       string                 `json:"worker_group_id"`
+	RunID               pgtype.UUID            `json:"run_id"`
+	Version             int64                  `json:"version"`
+	Status              RunStatus              `json:"status"`
+	ExecutionStatus     RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome     NullRunTerminalOutcome `json:"terminal_outcome"`
+	AttemptNumber       pgtype.Int4            `json:"attempt_number"`
+	RunLeaseID          pgtype.UUID            `json:"run_lease_id"`
+	WorkerInstanceID    pgtype.UUID            `json:"worker_instance_id"`
+	RuntimeInstanceID   pgtype.UUID            `json:"runtime_instance_id"`
+	RuntimeCheckpointID pgtype.UUID            `json:"runtime_checkpoint_id"`
+	OperationID         pgtype.UUID            `json:"operation_id"`
+	PreviousVersion     pgtype.Int8            `json:"previous_version"`
+	Transition          string                 `json:"transition"`
+	Reason              []byte                 `json:"reason"`
+	Error               []byte                 `json:"error"`
+	CreatedAt           pgtype.Timestamptz     `json:"created_at"`
 }
 
 type RunWait struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	Kind                       RunWaitKind        `json:"kind"`
-	CorrelationID              string             `json:"correlation_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
 	State                      RunWaitState       `json:"state"`
-	TimeoutAt                  pgtype.Timestamptz `json:"timeout_at"`
 	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
 	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	LiveWaitStartedAt          pgtype.Timestamptz `json:"live_wait_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
 	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
 	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
 	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
@@ -3309,12 +3142,10 @@ type RunWait struct {
 	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
 	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
 	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	ParkedAt                   pgtype.Timestamptz `json:"parked_at"`
-	ResolvedAt                 pgtype.Timestamptz `json:"resolved_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ResumedAt                  pgtype.Timestamptz `json:"resumed_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
@@ -3637,21 +3468,6 @@ type StreamRecord struct {
 	CreatedAt              pgtype.Timestamptz     `json:"created_at"`
 }
 
-type StreamWait struct {
-	ID               pgtype.UUID        `json:"id"`
-	OrgID            pgtype.UUID        `json:"org_id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	EnvironmentID    pgtype.UUID        `json:"environment_id"`
-	RunWaitID        pgtype.UUID        `json:"run_wait_id"`
-	StreamID         pgtype.UUID        `json:"stream_id"`
-	AfterSequence    int64              `json:"after_sequence"`
-	CorrelationID    string             `json:"correlation_id"`
-	MatchedRecordID  pgtype.UUID        `json:"matched_record_id"`
-	CursorAdvancedAt pgtype.Timestamptz `json:"cursor_advanced_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
 type Task struct {
 	ID            pgtype.UUID        `json:"id"`
 	PublicID      string             `json:"public_id"`
@@ -3756,17 +3572,6 @@ type TerminalOutputWatermark struct {
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
-type TimerWait struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	RunWaitID     pgtype.UUID        `json:"run_wait_id"`
-	FireAt        pgtype.Timestamptz `json:"fire_at"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
 type Token struct {
 	ID                        pgtype.UUID        `json:"id"`
 	PublicID                  string             `json:"public_id"`
@@ -3791,18 +3596,6 @@ type Token struct {
 	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
 	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
-}
-
-type TokenWait struct {
-	ID                  pgtype.UUID        `json:"id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	RunWaitID           pgtype.UUID        `json:"run_wait_id"`
-	TokenID             pgtype.UUID        `json:"token_id"`
-	MatchedCompletionAt pgtype.Timestamptz `json:"matched_completion_at"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type UsageLedgerEntry struct {
@@ -3835,6 +3628,30 @@ type User struct {
 	DisabledAt      pgtype.Timestamptz `json:"disabled_at"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type Wait struct {
+	ID               pgtype.UUID        `json:"id"`
+	PublicID         string             `json:"public_id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	Kind             WaitKind           `json:"kind"`
+	State            WaitState          `json:"state"`
+	IdempotencyKey   string             `json:"idempotency_key"`
+	CorrelationKey   string             `json:"correlation_key"`
+	CompletedByRunID pgtype.UUID        `json:"completed_by_run_id"`
+	CompletedAfter   pgtype.Timestamptz `json:"completed_after"`
+	StreamID         pgtype.UUID        `json:"stream_id"`
+	StreamSequence   pgtype.Int8        `json:"stream_sequence"`
+	StreamRecordID   pgtype.UUID        `json:"stream_record_id"`
+	TokenID          pgtype.UUID        `json:"token_id"`
+	Result           []byte             `json:"result"`
+	Error            []byte             `json:"error"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CompletedAt      pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type WorkerBootstrapToken struct {

@@ -32,7 +32,6 @@ type EnqueueResult struct {
 type Queue interface {
 	Enqueue(context.Context, Message) (EnqueueResult, error)
 	Dequeue(context.Context, DequeueRequest) ([]Lease, error)
-	ReadyMessageExists(context.Context, string) (bool, error)
 	Ack(context.Context, Lease) error
 	Nack(context.Context, Lease, NackReason) error
 	Renew(context.Context, Lease, time.Time) (Lease, error)

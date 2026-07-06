@@ -134,11 +134,8 @@ func (s *Server) writeStaleCheckpointCommandIfAdvanced(ctx context.Context, w ht
 func isStaleCheckpointCommandState(state db.RunWaitState) bool {
 	switch state {
 	case db.RunWaitStateCheckpointedWaiting,
-		db.RunWaitStateResolvedLive,
-		db.RunWaitStateResolvedCheckpointed,
-		db.RunWaitStateExpired,
 		db.RunWaitStateResuming,
-		db.RunWaitStateResumed,
+		db.RunWaitStateReleased,
 		db.RunWaitStateCancelled,
 		db.RunWaitStateFailed:
 		return true

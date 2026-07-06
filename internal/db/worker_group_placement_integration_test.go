@@ -74,7 +74,7 @@ func TestWorkerGroupHealthControlsReadiness(t *testing.T) {
 	}
 }
 
-func TestPrepareQueuedRunQueueItemRequiresFreshWorkerGroupHealth(t *testing.T) {
+func TestPrepareQueuedRunDispatchRequiresFreshWorkerGroupHealth(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -99,7 +99,7 @@ func TestPrepareQueuedRunQueueItemRequiresFreshWorkerGroupHealth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := queries.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
+	_, err := queries.PrepareQueuedRunDispatch(ctx, db.PrepareQueuedRunDispatchParams{
 		OrgID: pgvalue.UUID(ids.orgID),
 		RunID: pgvalue.UUID(ids.runID),
 	})

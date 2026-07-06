@@ -29,7 +29,7 @@ type runSummary struct {
 	Metadata             []byte
 	Tags                 []string
 	LockedRetryPolicy    []byte
-	CurrentAttemptNumber pgtype.Int4
+	CurrentAttemptNumber int32
 	ExitCode             pgtype.Int4
 	Output               []byte
 	CreatedAt            pgtype.Timestamptz
@@ -170,10 +170,7 @@ func runResponse(run runSummary) api.RunResponse {
 	if run.ExitCode.Valid {
 		exitCode = &run.ExitCode.Int32
 	}
-	var attemptNumber *int32
-	if run.CurrentAttemptNumber.Valid {
-		attemptNumber = &run.CurrentAttemptNumber.Int32
-	}
+	attemptNumber := run.CurrentAttemptNumber
 	var output json.RawMessage
 	if len(run.Output) > 0 {
 		output = append(json.RawMessage(nil), run.Output...)
@@ -197,7 +194,7 @@ func runResponse(run runSummary) api.RunResponse {
 		TaskID:            run.TaskID,
 		Status:            publicRunStatus(run.Status),
 		Metadata:          metadata,
-		AttemptNumber:     attemptNumber,
+		AttemptNumber:     &attemptNumber,
 		ExitCode:          exitCode,
 		Output:            output,
 		CreatedAt:         pgvalue.Time(run.CreatedAt),

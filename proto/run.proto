@@ -28,12 +28,11 @@ message RunTaskRequest {
   string payload_json = 6;
   RunTaskWorkspace workspace = 7;
   TraceContext trace = 8;
-  string attempt_id = 9;
-  uint32 attempt_number = 10;
-  string run_lease_id = 11;
-  uint64 snapshot_version = 12;
-  string session_id = 13;
-  string retry_reason = 14;
+  uint32 attempt_number = 9;
+  string run_lease_id = 10;
+  uint64 snapshot_version = 11;
+  string session_id = 12;
+  string retry_reason = 13;
 }
 
 message TraceContext {

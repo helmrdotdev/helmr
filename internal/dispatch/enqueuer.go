@@ -16,10 +16,10 @@ import (
 var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 
 type EnqueuerStore interface {
-	PrepareQueuedRunQueueItem(context.Context, db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error)
-	ListQueuedRunQueueItemCandidatesForScope(context.Context, db.ListQueuedRunQueueItemCandidatesForScopeParams) ([]db.ListQueuedRunQueueItemCandidatesForScopeRow, error)
-	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error)
-	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error)
+	PrepareQueuedRunDispatch(context.Context, db.PrepareQueuedRunDispatchParams) (db.PrepareQueuedRunDispatchRow, error)
+	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
+	MarkRunDispatchEnqueued(context.Context, db.MarkRunDispatchEnqueuedParams) (db.Run, error)
+	MarkRunDispatchEnqueueError(context.Context, db.MarkRunDispatchEnqueueErrorParams) (db.Run, error)
 }
 
 type Enqueuer struct {
@@ -52,7 +52,7 @@ func NewEnqueuer(store EnqueuerStore, queue Queue, opts ...EnqueuerOption) (*Enq
 }
 
 func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (EnqueueResult, error) {
-	row, err := e.store.PrepareQueuedRunQueueItem(ctx, db.PrepareQueuedRunQueueItemParams{
+	row, err := e.store.PrepareQueuedRunDispatch(ctx, db.PrepareQueuedRunDispatchParams{
 		OrgID: orgID,
 		RunID: runID,
 	})
@@ -68,7 +68,7 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 	}
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
-		_, markErr := e.store.MarkRunQueueItemEnqueueError(ctx, db.MarkRunQueueItemEnqueueErrorParams{
+		_, markErr := e.store.MarkRunDispatchEnqueueError(ctx, db.MarkRunDispatchEnqueueErrorParams{
 			OrgID:                      orgID,
 			RunID:                      runID,
 			WorkerGroupID:              row.WorkerGroupID,
@@ -78,12 +78,11 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 		})
 		return EnqueueResult{}, errors.Join(err, markErr)
 	}
-	if _, err := e.store.MarkRunQueueItemEnqueued(ctx, db.MarkRunQueueItemEnqueuedParams{
+	if _, err := e.store.MarkRunDispatchEnqueued(ctx, db.MarkRunDispatchEnqueuedParams{
 		OrgID:                      orgID,
 		RunID:                      runID,
 		WorkerGroupID:              row.WorkerGroupID,
 		QueueClass:                 row.QueueClass,
-		DispatchMessageID:          pgtype.Text{String: result.MessageID, Valid: true},
 		ExpectedDispatchGeneration: row.DispatchGeneration,
 	}); err != nil {
 		return EnqueueResult{}, err
@@ -102,7 +101,7 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	if limit <= 0 {
 		limit = 100
 	}
-	candidates, err := e.store.ListQueuedRunQueueItemCandidatesForScope(ctx, db.ListQueuedRunQueueItemCandidatesForScopeParams{
+	candidates, err := e.store.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
 		OrgID:         scope.OrgID,
 		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
@@ -117,18 +116,6 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	stats := QueueReconcileStats{Scanned: len(candidates)}
 	var problems []error
 	for _, candidate := range candidates {
-		if candidate.DispatchMessageID != "" {
-			exists, err := e.queue.ReadyMessageExists(ctx, candidate.DispatchMessageID)
-			if err != nil {
-				stats.Failed++
-				problems = append(problems, err)
-				continue
-			}
-			if exists {
-				stats.Skipped++
-				continue
-			}
-		}
 		if _, err := e.EnqueueRun(ctx, candidate.OrgID, candidate.RunID); err != nil {
 			if errors.Is(err, ErrNoEnqueueCandidate) {
 				stats.Skipped++
@@ -143,7 +130,7 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
+func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 	requirements, err := requirementsFromRow(row)
 	if err != nil {
 		return Message{}, err
@@ -179,6 +166,7 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 		QueueConcurrencyScope: row.QueueName,
 		QueueConcurrencyLimit: limit,
 		ConcurrencyKey:        row.ConcurrencyKey.String,
+		DispatchGeneration:    row.DispatchGeneration,
 		Requirements:          requirements,
 		Priority:              row.Priority,
 		QueueTimestamp:        row.QueueTimestamp.Time,
@@ -187,7 +175,7 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 	}, nil
 }
 
-func requirementsFromRow(row db.PrepareQueuedRunQueueItemRow) (compute.RunRuntimeRequirements, error) {
+func requirementsFromRow(row db.PrepareQueuedRunDispatchRow) (compute.RunRuntimeRequirements, error) {
 	return compute.RunRuntimeRequirementsFromFields(compute.RunRuntimeRequirementFields{
 		RequestedMilliCPU:       row.RequestedMilliCpu,
 		RequestedMemoryMiB:      row.RequestedMemoryMib,

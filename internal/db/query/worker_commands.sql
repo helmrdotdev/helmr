@@ -162,7 +162,7 @@ eligible_resume AS MATERIALIZED (
        AND run_waits.owner_runtime_instance_id = target.runtime_instance_id
        AND run_waits.owner_runtime_epoch = target.runtime_epoch
        AND run_waits.owner_run_state_version = target.run_state_version
-       AND run_waits.state = 'resolved_live'
+       AND run_waits.state = 'resuming'
      JOIN runtime_instances
         ON runtime_instances.org_id = target.org_id
        AND runtime_instances.worker_group_id = target.worker_group_id
@@ -180,8 +180,8 @@ eligible_resume AS MATERIALIZED (
 ),
 resumed_live_wait AS (
     UPDATE run_waits
-       SET resumed_at = COALESCE(run_waits.resumed_at, now()),
-           state = 'resumed',
+       SET released_at = COALESCE(run_waits.released_at, now()),
+           state = 'released',
            updated_at = now()
      FROM eligible_resume
      WHERE run_waits.org_id = eligible_resume.org_id
@@ -193,7 +193,7 @@ resumed_live_wait AS (
        AND run_waits.owner_runtime_instance_id = eligible_resume.runtime_instance_id
        AND run_waits.owner_runtime_epoch = eligible_resume.runtime_epoch
        AND run_waits.owner_run_state_version = eligible_resume.run_state_version
-       AND run_waits.state = 'resolved_live'
+       AND run_waits.state = 'resuming'
     RETURNING run_waits.*
 ),
 resumed_runtime_instance AS (
@@ -308,7 +308,7 @@ WITH due AS (
        )
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
-       AND run_waits.state = 'live_waiting'
+       AND run_waits.state = 'hot_waiting'
        AND run_waits.runtime_checkpoint_due_at IS NOT NULL
        AND (
            run_waits.runtime_checkpoint_due_at <= now()
@@ -319,15 +319,23 @@ WITH due AS (
        AND run_waits.owner_runtime_instance_id IS NOT NULL
        AND run_waits.owner_runtime_epoch IS NOT NULL
        AND run_waits.owner_run_state_version IS NOT NULL
-       AND (run_waits.timeout_at IS NULL OR run_waits.timeout_at > now())
        AND NOT EXISTS (
            SELECT 1
-             FROM timer_waits
-            WHERE timer_waits.org_id = run_waits.org_id
-              AND timer_waits.project_id = run_waits.project_id
-              AND timer_waits.environment_id = run_waits.environment_id
-              AND timer_waits.run_wait_id = run_waits.id
-              AND timer_waits.fire_at <= now()
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.state = 'pending'
+              AND waits.expires_at IS NOT NULL
+              AND waits.expires_at <= now()
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.kind = 'timer'
+              AND waits.state = 'pending'
+              AND waits.completed_after <= now()
        )
        AND NOT EXISTS (
            SELECT 1
@@ -397,7 +405,7 @@ WITH due AS (
            OR runtime_instances.expires_at > now()
        )
      WHERE run_waits.owner_worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_waits.state = 'live_waiting'
+       AND run_waits.state = 'hot_waiting'
        AND run_waits.runtime_checkpoint_due_at IS NOT NULL
        AND (
            run_waits.runtime_checkpoint_due_at <= now()
@@ -408,15 +416,23 @@ WITH due AS (
        AND run_waits.owner_runtime_instance_id IS NOT NULL
        AND run_waits.owner_runtime_epoch IS NOT NULL
        AND run_waits.owner_run_state_version IS NOT NULL
-       AND (run_waits.timeout_at IS NULL OR run_waits.timeout_at > now())
        AND NOT EXISTS (
            SELECT 1
-             FROM timer_waits
-            WHERE timer_waits.org_id = run_waits.org_id
-              AND timer_waits.project_id = run_waits.project_id
-              AND timer_waits.environment_id = run_waits.environment_id
-              AND timer_waits.run_wait_id = run_waits.id
-              AND timer_waits.fire_at <= now()
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.state = 'pending'
+              AND waits.expires_at IS NOT NULL
+              AND waits.expires_at <= now()
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.kind = 'timer'
+              AND waits.state = 'pending'
+              AND waits.completed_after <= now()
        )
        AND NOT EXISTS (
            SELECT 1
@@ -510,22 +526,30 @@ victim AS (
                      AND run_leases.id = run_waits.owner_run_lease_id
                      AND run_leases.worker_instance_id = run_waits.owner_worker_instance_id
                      AND run_leases.status IN ('leased', 'running')
-     WHERE run_waits.state = 'live_waiting'
+     WHERE run_waits.state = 'hot_waiting'
        AND run_waits.owner_worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_waits.owner_run_lease_id IS NOT NULL
        AND run_waits.owner_runtime_instance_id IS NOT NULL
        AND run_waits.owner_runtime_epoch IS NOT NULL
        AND run_waits.owner_run_state_version IS NOT NULL
-       AND (run_waits.timeout_at IS NULL OR run_waits.timeout_at > now())
+       AND NOT EXISTS (
+           SELECT 1
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.state = 'pending'
+              AND waits.expires_at IS NOT NULL
+              AND waits.expires_at <= now()
+       )
        AND EXISTS (SELECT 1 FROM blocked_mount)
        AND NOT EXISTS (
            SELECT 1
-             FROM timer_waits
-            WHERE timer_waits.org_id = run_waits.org_id
-              AND timer_waits.project_id = run_waits.project_id
-              AND timer_waits.environment_id = run_waits.environment_id
-              AND timer_waits.run_wait_id = run_waits.id
-              AND timer_waits.fire_at <= now()
+             FROM waits
+            WHERE waits.org_id = run_waits.org_id
+              AND waits.id = run_waits.wait_id
+              AND waits.kind = 'timer'
+              AND waits.state = 'pending'
+              AND waits.completed_after <= now()
        )
        AND NOT EXISTS (
            SELECT 1
@@ -535,7 +559,7 @@ victim AS (
               AND worker_commands.kind = 'runtime_checkpoint_wait'
               AND worker_commands.acknowledged_at IS NULL
        )
-     ORDER BY run_waits.live_wait_started_at ASC, run_waits.id ASC
+     ORDER BY run_waits.hot_wait_started_at ASC, run_waits.id ASC
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE OF run_waits SKIP LOCKED
 )
@@ -575,48 +599,17 @@ RETURNING *;
 WITH resolved AS (
     SELECT run_waits.*,
            CASE
-             WHEN run_waits.kind = 'timer' THEN 'completed'
-             WHEN run_waits.timeout_at IS NOT NULL
-              AND run_waits.resolved_at IS NOT NULL
-              AND run_waits.timeout_at <= run_waits.resolved_at THEN 'timed_out'
-             WHEN run_waits.kind = 'token' AND tokens.state = 'cancelled' THEN 'cancelled'
-             WHEN run_waits.kind = 'token' AND tokens.state = 'expired' THEN 'timed_out'
-             WHEN run_waits.kind = 'token' THEN 'completed'
+             WHEN waits.state = 'cancelled' THEN 'cancelled'
+             WHEN waits.state = 'expired' THEN 'timed_out'
              ELSE 'completed'
            END AS resume_kind,
            CASE
-             WHEN run_waits.kind = 'timer' THEN 'null'::jsonb
-             WHEN run_waits.timeout_at IS NOT NULL
-              AND run_waits.resolved_at IS NOT NULL
-              AND run_waits.timeout_at <= run_waits.resolved_at THEN 'null'::jsonb
-             WHEN run_waits.kind = 'stream' THEN jsonb_build_object(
-                 'stream', streams.name,
-                 'sequence', stream_records.sequence,
-                 'data', stream_records.data
-             )
-             WHEN run_waits.kind = 'token' AND tokens.state = 'completed' THEN COALESCE(tokens.completion_data, 'null'::jsonb)
+             WHEN waits.state = 'completed' THEN COALESCE(waits.result, 'null'::jsonb)
              ELSE 'null'::jsonb
            END AS resume_payload
       FROM run_waits
-      LEFT JOIN stream_waits ON stream_waits.org_id = run_waits.org_id
-                            AND stream_waits.project_id = run_waits.project_id
-                            AND stream_waits.environment_id = run_waits.environment_id
-                            AND stream_waits.run_wait_id = run_waits.id
-      LEFT JOIN streams ON streams.org_id = stream_waits.org_id
-                       AND streams.project_id = stream_waits.project_id
-                       AND streams.environment_id = stream_waits.environment_id
-                       AND streams.id = stream_waits.stream_id
-      LEFT JOIN stream_records ON stream_records.org_id = stream_waits.org_id
-                              AND stream_records.stream_id = stream_waits.stream_id
-                              AND stream_records.id = stream_waits.matched_record_id
-      LEFT JOIN token_waits ON token_waits.org_id = run_waits.org_id
-                           AND token_waits.project_id = run_waits.project_id
-                           AND token_waits.environment_id = run_waits.environment_id
-                           AND token_waits.run_wait_id = run_waits.id
-      LEFT JOIN tokens ON tokens.org_id = token_waits.org_id
-                      AND tokens.project_id = token_waits.project_id
-                      AND tokens.environment_id = token_waits.environment_id
-                      AND tokens.id = token_waits.token_id
+      JOIN waits ON waits.org_id = run_waits.org_id
+                AND waits.id = run_waits.wait_id
 	      JOIN run_leases ON run_leases.org_id = run_waits.org_id
 	                     AND run_leases.run_id = run_waits.run_id
 	                     AND run_leases.id = run_waits.owner_run_lease_id
@@ -638,7 +631,8 @@ WITH resolved AS (
 	       )
 	     WHERE run_waits.org_id = sqlc.arg(org_id)
 	       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
-	       AND run_waits.state = 'resolved_live'
+	       AND run_waits.state = 'resuming'
+       AND waits.state IN ('completed', 'expired', 'cancelled')
        AND run_waits.owner_run_lease_id IS NOT NULL
        AND run_waits.owner_worker_instance_id IS NOT NULL
        AND run_waits.owner_runtime_instance_id IS NOT NULL
@@ -651,7 +645,7 @@ WITH resolved AS (
               AND worker_commands.run_wait_id = run_waits.id
               AND worker_commands.kind = 'runtime_resume_wait'
        )
-     ORDER BY run_waits.resolved_at ASC, run_waits.id ASC
+     ORDER BY run_waits.resuming_at ASC, run_waits.id ASC
      LIMIT sqlc.arg(limit_count)
 )
 INSERT INTO worker_commands (

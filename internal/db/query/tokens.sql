@@ -140,32 +140,31 @@ selected_token AS (
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
 ),
-matched_token_wait AS (
-    UPDATE token_waits
-       SET matched_completion_at = COALESCE(selected_token.completed_at, now())
+matched_wait AS (
+    UPDATE waits
+       SET state = 'completed',
+           result = COALESCE(selected_token.completion_data, 'null'::jsonb),
+           completed_at = COALESCE(selected_token.completed_at, now()),
+           updated_at = now()
       FROM selected_token
-     WHERE token_waits.org_id = selected_token.org_id
-       AND token_waits.project_id = selected_token.project_id
-       AND token_waits.environment_id = selected_token.environment_id
-       AND token_waits.token_id = selected_token.id
-       AND token_waits.matched_completion_at IS NULL
+     WHERE waits.org_id = selected_token.org_id
+       AND waits.project_id = selected_token.project_id
+       AND waits.environment_id = selected_token.environment_id
+       AND waits.token_id = selected_token.id
+       AND waits.kind = 'token'
+       AND waits.state = 'pending'
        AND selected_token.state = 'completed'
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
+    RETURNING waits.id, waits.org_id
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = CASE
-             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-             ELSE run_waits.state
-           END,
-           resolved_at = now(),
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
-     FROM matched_token_wait
-     WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
-       AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
+     FROM matched_wait
+     WHERE run_waits.org_id = matched_wait.org_id
+       AND run_waits.wait_id = matched_wait.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT selected_token.*,
@@ -195,31 +194,29 @@ WITH cancelled AS (
        AND tokens.timeout_at > now()
     RETURNING tokens.*
 ),
-matched_token_wait AS (
-    UPDATE token_waits
-       SET matched_completion_at = now()
+matched_wait AS (
+    UPDATE waits
+       SET state = 'cancelled',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
      FROM cancelled
-     WHERE token_waits.org_id = cancelled.org_id
-       AND token_waits.project_id = cancelled.project_id
-       AND token_waits.environment_id = cancelled.environment_id
-       AND token_waits.token_id = cancelled.id
-       AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
+     WHERE waits.org_id = cancelled.org_id
+       AND waits.project_id = cancelled.project_id
+       AND waits.environment_id = cancelled.environment_id
+       AND waits.token_id = cancelled.id
+       AND waits.kind = 'token'
+       AND waits.state = 'pending'
+    RETURNING waits.id, waits.org_id
 ),
 resolved_cancelled_wait AS (
     UPDATE run_waits
-       SET state = CASE
-             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-             ELSE run_waits.state
-           END,
-           resolved_at = now(),
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
-     FROM matched_token_wait
-     WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
-       AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
+     FROM matched_wait
+     WHERE run_waits.org_id = matched_wait.org_id
+       AND run_waits.wait_id = matched_wait.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT cancelled.*, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
@@ -236,27 +233,29 @@ WITH expired AS (
        AND tokens.timeout_at <= now()
     RETURNING tokens.*
 ),
-matched_token_wait AS (
-    UPDATE token_waits
-       SET matched_completion_at = now()
+matched_wait AS (
+    UPDATE waits
+       SET state = 'expired',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
       FROM expired
-     WHERE token_waits.org_id = expired.org_id
-       AND token_waits.project_id = expired.project_id
-       AND token_waits.environment_id = expired.environment_id
-       AND token_waits.token_id = expired.id
-       AND token_waits.matched_completion_at IS NULL
-    RETURNING token_waits.run_wait_id, token_waits.org_id, token_waits.worker_group_id
+     WHERE waits.org_id = expired.org_id
+       AND waits.project_id = expired.project_id
+       AND waits.environment_id = expired.environment_id
+       AND waits.token_id = expired.id
+       AND waits.kind = 'token'
+       AND waits.state = 'pending'
+    RETURNING waits.id, waits.org_id
 ),
 expired_wait AS (
     UPDATE run_waits
-       SET state = 'expired'::run_wait_state,
-           resolved_at = now(),
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
-      FROM matched_token_wait
-     WHERE run_waits.org_id = matched_token_wait.org_id
-       AND run_waits.worker_group_id = matched_token_wait.worker_group_id
-       AND run_waits.id = matched_token_wait.run_wait_id
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
+      FROM matched_wait
+     WHERE run_waits.org_id = matched_wait.org_id
+       AND run_waits.wait_id = matched_wait.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
     RETURNING run_waits.id
 )
 SELECT *

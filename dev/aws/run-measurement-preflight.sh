@@ -175,13 +175,13 @@ worker_capacity AS (
            ) AS effective_available_disk_mib
       FROM recent_workers
       LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+          SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+                 COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
+                 COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
+                 COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
             FROM run_leases
-            JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
-                                         AND run_runtime_requirements.run_id = run_leases.run_id
+            JOIN runs ON runs.org_id = run_leases.org_id
+                     AND runs.id = run_leases.run_id
            WHERE run_leases.worker_instance_id = recent_workers.id
              AND run_leases.status IN ('leased', 'running')
       ) active_run_usage ON true

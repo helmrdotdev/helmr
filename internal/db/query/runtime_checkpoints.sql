@@ -3,15 +3,17 @@ SELECT
     runtime_checkpoints.id AS runtime_checkpoint_id,
     runtime_checkpoints.manifest,
     run_waits.id AS run_wait_id,
-    run_waits.correlation_id AS run_wait_correlation_id,
-    run_waits.kind AS run_wait_kind,
+    waits.correlation_key AS run_wait_correlation_key,
+    waits.kind AS run_wait_kind,
+    waits.state AS wait_state,
+    waits.result AS wait_result,
     run_waits.state AS run_wait_state,
     streams.name AS stream_name,
-    matched_stream_record.sequence AS stream_record_sequence,
-    matched_stream_record.data AS stream_record_data,
+    stream_records.sequence AS stream_record_sequence,
+    stream_records.data AS stream_record_data,
     tokens.state AS token_state,
     tokens.completion_data AS token_completion_data,
-    timer_waits.fire_at AS timer_fire_at
+    waits.completed_after AS timer_fire_at
   FROM runs
   JOIN run_leases ON run_leases.org_id = runs.org_id
                       AND run_leases.run_id = runs.id
@@ -40,35 +42,22 @@ SELECT
                 AND run_waits.run_id = runs.id
                 AND run_waits.runtime_checkpoint_id = runtime_checkpoints.id
                 AND run_waits.state = 'resuming'
-  LEFT JOIN stream_waits ON stream_waits.org_id = run_waits.org_id
-                        AND stream_waits.worker_group_id = run_waits.worker_group_id
-                        AND stream_waits.project_id = run_waits.project_id
-                        AND stream_waits.environment_id = run_waits.environment_id
-                        AND stream_waits.run_wait_id = run_waits.id
-  LEFT JOIN streams ON streams.org_id = stream_waits.org_id
-                   AND streams.worker_group_id = stream_waits.worker_group_id
-                   AND streams.project_id = stream_waits.project_id
-                   AND streams.environment_id = stream_waits.environment_id
-                   AND streams.id = stream_waits.stream_id
-  LEFT JOIN stream_records AS matched_stream_record
-         ON matched_stream_record.org_id = stream_waits.org_id
-        AND matched_stream_record.worker_group_id = stream_waits.worker_group_id
-        AND matched_stream_record.stream_id = stream_waits.stream_id
-        AND matched_stream_record.id = stream_waits.matched_record_id
-  LEFT JOIN token_waits ON token_waits.org_id = run_waits.org_id
-                       AND token_waits.worker_group_id = run_waits.worker_group_id
-                       AND token_waits.project_id = run_waits.project_id
-                       AND token_waits.environment_id = run_waits.environment_id
-                       AND token_waits.run_wait_id = run_waits.id
-  LEFT JOIN tokens ON tokens.org_id = token_waits.org_id
-                  AND tokens.project_id = token_waits.project_id
-                  AND tokens.environment_id = token_waits.environment_id
-                  AND tokens.id = token_waits.token_id
-  LEFT JOIN timer_waits ON timer_waits.org_id = run_waits.org_id
-                       AND timer_waits.worker_group_id = run_waits.worker_group_id
-                       AND timer_waits.project_id = run_waits.project_id
-                       AND timer_waits.environment_id = run_waits.environment_id
-                       AND timer_waits.run_wait_id = run_waits.id
+  JOIN waits ON waits.org_id = run_waits.org_id
+            AND waits.project_id = run_waits.project_id
+            AND waits.environment_id = run_waits.environment_id
+            AND waits.id = run_waits.wait_id
+            AND waits.state IN ('completed', 'expired', 'cancelled')
+  LEFT JOIN streams ON streams.org_id = waits.org_id
+                   AND streams.project_id = waits.project_id
+                   AND streams.environment_id = waits.environment_id
+                   AND streams.id = waits.stream_id
+  LEFT JOIN stream_records ON stream_records.org_id = waits.org_id
+                          AND stream_records.stream_id = waits.stream_id
+                          AND stream_records.id = waits.stream_record_id
+  LEFT JOIN tokens ON tokens.org_id = waits.org_id
+                  AND tokens.project_id = waits.project_id
+                  AND tokens.environment_id = waits.environment_id
+                  AND tokens.id = waits.token_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
    AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -122,6 +111,7 @@ SELECT runtime_checkpoints.id AS runtime_checkpoint_id
 -- name: CreateReadyRuntimeCheckpointForRunWait :one
 WITH wait_scope AS (
     SELECT run_waits.*,
+           waits.expires_at AS wait_expires_at,
            runs.workspace_id,
            runs.current_run_lease_id,
            runs.active_started_at,
@@ -130,6 +120,10 @@ WITH wait_scope AS (
            workspace_leases.id AS workspace_lease_id,
            workspace_leases.workspace_mount_id
       FROM run_waits
+      JOIN waits ON waits.org_id = run_waits.org_id
+                AND waits.project_id = run_waits.project_id
+                AND waits.environment_id = run_waits.environment_id
+                AND waits.id = run_waits.wait_id
       JOIN runs ON runs.org_id = run_waits.org_id
                AND runs.worker_group_id = run_waits.worker_group_id
                AND runs.project_id = run_waits.project_id
@@ -266,8 +260,8 @@ created_checkpoint AS (
            substrate_digest = sqlc.narg(substrate_digest)::text,
            manifest = sqlc.arg(manifest)::jsonb,
            expires_at = CASE
-             WHEN wait_scope.timeout_at IS NULL THEN NULL::timestamptz
-             ELSE wait_scope.timeout_at + interval '1 day'
+             WHEN wait_scope.wait_expires_at IS NULL THEN NULL::timestamptz
+             ELSE wait_scope.wait_expires_at + interval '1 day'
            END,
            ready_at = now()
       FROM wait_scope
@@ -383,55 +377,33 @@ parked_run AS (
        SET status = 'waiting',
            execution_status = 'waiting',
            current_run_lease_id = NULL,
-           latest_runtime_checkpoint_id = created_checkpoint.id,
-           active_elapsed_ms = updated_wait.active_elapsed_ms_at_park,
-           active_started_at = NULL,
-           state_version = runs.state_version + 1,
-           updated_at = now()
+	           latest_runtime_checkpoint_id = created_checkpoint.id,
+	           active_elapsed_ms = updated_wait.active_elapsed_ms_at_park,
+	           active_started_at = NULL,
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           last_enqueued_at = NULL,
+	           last_enqueue_error = '',
+	           state_version = runs.state_version + 1,
+	           updated_at = now()
       FROM wait_scope, created_checkpoint, updated_wait
      WHERE runs.org_id = wait_scope.org_id
        AND runs.id = wait_scope.run_id
        AND runs.status = 'running'
     RETURNING runs.id
 ),
-parked_attempt AS (
-    UPDATE run_attempts
-       SET status = 'waiting',
-           updated_at = now()
-      FROM wait_scope, parked_run
-     WHERE run_attempts.org_id = wait_scope.org_id
-       AND run_attempts.run_id = wait_scope.run_id
-       AND run_attempts.id = (
-           SELECT runs.current_attempt_id
-             FROM runs
-            WHERE runs.org_id = wait_scope.org_id
-              AND runs.id = wait_scope.run_id
-       )
-       AND run_attempts.status = 'running'
-    RETURNING run_attempts.run_id
-),
-parked_queue AS (
-    UPDATE run_queue_items
-       SET status = 'parked',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           updated_at = now()
-      FROM wait_scope, parked_run
-     WHERE run_queue_items.org_id = wait_scope.org_id
-       AND run_queue_items.run_id = wait_scope.run_id
-       AND run_queue_items.status IN ('reserved', 'published')
-    RETURNING run_queue_items.run_id
-)
+	parked_marker AS (
+	    SELECT parked_run.id
+	      FROM parked_run
+	)
 SELECT created_checkpoint.*
   FROM created_checkpoint
   JOIN updated_wait ON true
   JOIN released_workspace_lease ON true
   JOIN unmounted_mount ON true
-  JOIN closed_runtime_instance ON true
-  JOIN detached_run_lease ON true
-  JOIN parked_run ON true
-  JOIN parked_attempt ON true;
+	  JOIN closed_runtime_instance ON true
+	  JOIN detached_run_lease ON true
+	  JOIN parked_run ON true
+	  JOIN parked_marker ON true;
 
 -- name: CreateRuntimeCheckpointArtifact :one
 INSERT INTO runtime_checkpoint_artifacts (
@@ -574,7 +546,7 @@ waiting_runtime_instance AS (
 ),
 updated_wait AS (
     UPDATE run_waits
-       SET state = 'live_waiting',
+       SET state = 'hot_waiting',
            runtime_checkpoint_id = NULL,
            runtime_checkpoint_started_at = NULL,
            runtime_checkpoint_due_at = now() + interval '5 seconds',

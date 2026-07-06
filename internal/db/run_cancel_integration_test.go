@@ -2,13 +2,14 @@ package db_test
 
 import (
 	"context"
-	"strings"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -20,7 +21,7 @@ func TestCancelRunTerminalizesQueuedRunAndLeavesSessionOpen(t *testing.T) {
 	queries := db.New(pool)
 	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	seedSessionRun(t, ctx, pool, ids, sessionID)
-	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
+	seedCurrentAttempt(t, ctx, pool, ids)
 	operation := seedCancelOperation(t, ctx, queries, ids, "user requested")
 
 	if _, err := queries.CancelRun(ctx, db.CancelRunParams{
@@ -165,7 +166,7 @@ func TestCancelRunAllowsDisabledWorkerGroupForControlCancellation(t *testing.T) 
 	queries := db.New(pool)
 	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	seedSessionRun(t, ctx, pool, ids, sessionID)
-	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
+	seedCurrentAttempt(t, ctx, pool, ids)
 	operation := seedCancelOperation(t, ctx, queries, ids, "wrong route")
 	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 
@@ -196,14 +197,14 @@ func TestCancelRunAllowsDisabledWorkerGroupForControlCancellation(t *testing.T) 
 	}
 }
 
-func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
+func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	seedSessionRun(t, ctx, pool, ids, sessionID)
-	seedCurrentAttempt(t, ctx, pool, ids, db.RunAttemptStatusQueued)
+	seedCurrentAttempt(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
 		   SET status = 'queued',
@@ -213,44 +214,13 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	`, ids.orgID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
-	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	var workerGroupID string
-	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
-		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_runtime_requirements (
-			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
-			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile
-		)
-		VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test', 'sha256:kernel',
-				'sha256:initramfs', 'sha256:rootfs', 'default')
-		`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_queue_items (run_id, org_id, worker_group_id, status, queue_name, dispatch_message_id)
-		VALUES ($1, $2, $3, 'queued', 'default', 'dispatch-1')
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
-		OrgID:             pgvalue.UUID(ids.orgID),
-		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
-		RunID:             pgvalue.UUID(ids.runID),
-		QueueClass:        "default",
-		DispatchMessageID: pgtype.Text{String: "dispatch-1", Valid: true},
-		LastError:         "dispatch retries exhausted",
-		EventKind:         "run.dead_lettered",
-		EventPayload:      []byte(`{"reason":"dispatch retries exhausted"}`),
+	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		RunID:              pgvalue.UUID(ids.runID),
+		QueueClass:         "default",
+		DispatchGeneration: 1,
+		LastError:          "dispatch retries exhausted",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -285,22 +255,56 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	}
 }
 
-func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, status db.RunAttemptStatus) {
-	t.Helper()
-	attemptID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, worker_group_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, $4, 1, $5)
-	`, attemptID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.runID, status); err != nil {
-		t.Fatal(err)
-	}
+func TestDeadLetterRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
-		   SET current_attempt_id = $1,
-		       current_attempt_number = 1
-		 WHERE org_id = $2
-		   AND id = $3
-	`, attemptID, ids.orgID, ids.runID); err != nil {
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       dispatch_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		RunID:              pgvalue.UUID(ids.runID),
+		QueueClass:         "default",
+		DispatchGeneration: 1,
+		LastError:          "stale redis message",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("dead-letter stale generation error = %v, want pgx.ErrNoRows", err)
+	}
+
+	var status db.RunStatus
+	var generation int64
+	if err := pool.QueryRow(ctx, `
+		SELECT status, dispatch_generation
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&status, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusQueued || generation != 2 {
+		t.Fatalf("run status=%s generation=%d, want queued generation 2", status, generation)
+	}
+}
+
+func seedCurrentAttempt(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET current_attempt_number = 1
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -245,6 +245,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
 			TaskID:              "deploy",
 			Status:              db.RunStatusQueued,
+			DispatchGeneration:  1,
 			Payload:             []byte(`{}`),
 			MaxActiveDurationMs: 3600_000,
 			CreatedAt:           testTime(),

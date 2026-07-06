@@ -16,22 +16,20 @@ import (
 )
 
 const (
-	defaultPrefix              = "helmr:dispatch"
-	defaultLease               = 5 * time.Minute
-	defaultGenerationSafetyTTL = 30 * 24 * time.Hour
-	defaultMaxMessages         = 1
-	defaultReclaim             = 128
-	defaultScanLimit           = 128
+	defaultPrefix           = "helmr:dispatch"
+	defaultLease            = 5 * time.Minute
+	defaultMessageSafetyTTL = 30 * 24 * time.Hour
+	defaultMaxMessages      = 1
+	defaultReclaim          = 128
+	defaultScanLimit        = 128
 )
 
-var errMalformedMessageID = errors.New("message id is malformed")
-
 type Queue struct {
-	client        redis.Cmdable
-	prefix        string
-	leaseTimeout  time.Duration
-	generationTTL time.Duration
-	now           func() time.Time
+	client       redis.Cmdable
+	prefix       string
+	leaseTimeout time.Duration
+	messageTTL   time.Duration
+	now          func() time.Time
 }
 
 type Option func(*Queue)
@@ -41,11 +39,11 @@ func New(client redis.Cmdable, opts ...Option) (*Queue, error) {
 		return nil, errors.New("redis client is required")
 	}
 	queue := &Queue{
-		client:        client,
-		prefix:        defaultPrefix,
-		leaseTimeout:  defaultLease,
-		generationTTL: defaultGenerationSafetyTTL,
-		now:           time.Now,
+		client:       client,
+		prefix:       defaultPrefix,
+		leaseTimeout: defaultLease,
+		messageTTL:   defaultMessageSafetyTTL,
+		now:          time.Now,
 	}
 	for _, opt := range opts {
 		opt(queue)
@@ -56,8 +54,8 @@ func New(client redis.Cmdable, opts ...Option) (*Queue, error) {
 	if queue.leaseTimeout <= 0 {
 		return nil, errors.New("redis lease timeout must be positive")
 	}
-	if queue.generationTTL <= 0 {
-		return nil, errors.New("redis generation safety ttl must be positive")
+	if queue.messageTTL <= 0 {
+		return nil, errors.New("redis message safety ttl must be positive")
 	}
 	if queue.now == nil {
 		return nil, errors.New("redis clock is required")
@@ -77,9 +75,9 @@ func WithLeaseTimeout(timeout time.Duration) Option {
 	}
 }
 
-func WithGenerationSafetyTTL(ttl time.Duration) Option {
+func WithMessageSafetyTTL(ttl time.Duration) Option {
 	return func(q *Queue) {
-		q.generationTTL = ttl
+		q.messageTTL = ttl
 	}
 }
 
@@ -136,9 +134,10 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 		placementLabels,
 		placement.DedicatedKey,
 		placement.SnapshotKey,
-		q.generationTTL.Milliseconds(),
+		q.messageTTL.Milliseconds(),
 		message.QueueConcurrencyLimit,
 		concurrencyActiveKey,
+		message.DispatchGeneration,
 	).Result()
 	if err != nil {
 		return dispatch.EnqueueResult{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
@@ -212,7 +211,7 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 			request.Available.Slots,
 			defaultReclaim,
 			defaultScanLimit,
-			q.generationTTL.Milliseconds(),
+			q.messageTTL.Milliseconds(),
 			request.Runtime.ID,
 			request.Runtime.Arch,
 			request.Runtime.ABI,
@@ -279,32 +278,6 @@ func (q *Queue) Dequeue(ctx context.Context, request dispatch.DequeueRequest) ([
 	}
 }
 
-func (q *Queue) ReadyMessageExists(ctx context.Context, messageID string) (bool, error) {
-	messageID = strings.TrimSpace(messageID)
-	if messageID == "" {
-		return false, errors.New("message id is required")
-	}
-	ready, err := q.readyKeyFromMessageID(messageID)
-	if err != nil {
-		if errors.Is(err, errMalformedMessageID) {
-			return false, nil
-		}
-		return false, err
-	}
-	result, err := q.client.Eval(ctx, readyMessageExistsScript, []string{}, q.prefix, messageID, q.now().UTC().UnixMilli(), q.generationTTL.Milliseconds(), ready).Int()
-	if err != nil {
-		return false, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
-	}
-	switch result {
-	case 0:
-		return false, nil
-	case 1:
-		return true, nil
-	default:
-		return false, fmt.Errorf("%w: unexpected message exists result %d", dispatch.ErrQueueUnavailable, result)
-	}
-}
-
 func (q *Queue) Ack(ctx context.Context, lease dispatch.Lease) error {
 	return q.finishLease(ctx, lease, "ack", "")
 }
@@ -326,7 +299,7 @@ func (q *Queue) Renew(ctx context.Context, lease dispatch.Lease, expiresAt time.
 	if strings.TrimSpace(lease.WorkerInstanceID) == "" {
 		return dispatch.Lease{}, errors.New("worker instance id is required")
 	}
-	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli(), q.generationTTL.Milliseconds()).Int()
+	result, err := q.client.Eval(ctx, renewScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), expiresAt.UTC().UnixMilli(), q.messageTTL.Milliseconds()).Int()
 	if err != nil {
 		return dispatch.Lease{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 	}
@@ -352,7 +325,7 @@ func (q *Queue) finishLease(ctx context.Context, lease dispatch.Lease, action st
 	if strings.TrimSpace(lease.WorkerInstanceID) == "" {
 		return errors.New("worker instance id is required")
 	}
-	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), action, reason, q.generationTTL.Milliseconds(), q.leaseTimeout.Milliseconds()).Int()
+	result, err := q.client.Eval(ctx, finishScript, []string{}, q.prefix, lease.ID, lease.WorkerInstanceID, q.now().UTC().UnixMilli(), action, reason, q.messageTTL.Milliseconds(), q.leaseTimeout.Milliseconds()).Int()
 	if err != nil {
 		return fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)
 	}
@@ -413,18 +386,6 @@ func (q *Queue) queueConcurrencyActiveKey(message dispatch.Message) string {
 		key += ":ck:" + sanitizeKeyPart(message.ConcurrencyKey)
 	}
 	return q.prefix + ":" + key + ":active"
-}
-
-func (q *Queue) readyKeyFromMessageID(messageID string) (string, error) {
-	splitAt := strings.LastIndex(messageID, ":run:")
-	if splitAt <= 0 {
-		return "", errMalformedMessageID
-	}
-	scope := messageID[:splitAt]
-	if !strings.Contains(scope, ":worker_group:") || !strings.Contains(scope, ":class:") {
-		return "", errMalformedMessageID
-	}
-	return q.prefix + ":" + scope + ":ready", nil
 }
 
 func sanitizeKeyPart(value string) string {

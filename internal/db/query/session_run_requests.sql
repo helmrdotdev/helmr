@@ -179,9 +179,13 @@ cancelled_runs AS (
            current_run_lease_id = CASE
              WHEN runs.execution_status = 'executing' THEN runs.current_run_lease_id
              ELSE NULL
-           END,
-           error_message = 'stream record consumed by active run',
-           state_version = runs.state_version + 1,
+	           END,
+	           error_message = 'stream record consumed by active run',
+	           dispatch_generation = CASE
+	             WHEN runs.execution_status = 'executing' THEN runs.dispatch_generation
+	             ELSE runs.dispatch_generation + 1
+	           END,
+	           state_version = runs.state_version + 1,
            finished_at = CASE
              WHEN runs.execution_status = 'executing' THEN runs.finished_at
              ELSE COALESCE(runs.finished_at, now())
@@ -198,38 +202,7 @@ cancelled_runs AS (
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
     RETURNING runs.*
 ),
-cancelled_attempts AS (
-    UPDATE run_attempts
-       SET status = 'cancelled',
-           error_message = 'stream record consumed by active run',
-           finished_at = CASE
-             WHEN cancelled_runs.execution_status = 'pending_cancel' THEN run_attempts.finished_at
-             ELSE COALESCE(run_attempts.finished_at, now())
-           END,
-           updated_at = now()
-      FROM cancelled_runs
-     WHERE run_attempts.org_id = cancelled_runs.org_id
-       AND run_attempts.worker_group_id = cancelled_runs.worker_group_id
-       AND run_attempts.run_id = cancelled_runs.id
-       AND run_attempts.id = cancelled_runs.current_attempt_id
-    RETURNING run_attempts.id
-),
-cancelled_queue AS (
-    UPDATE run_queue_items
-       SET status = 'cancelled',
-           dispatch_generation = dispatch_generation + 1,
-           last_error = 'stream record consumed by active run',
-           updated_at = now(),
-           finished_at = now()
-      FROM cancelled_runs
-     WHERE run_queue_items.org_id = cancelled_runs.org_id
-       AND run_queue_items.worker_group_id = cancelled_runs.worker_group_id
-       AND run_queue_items.run_id = cancelled_runs.id
-       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
-       AND cancelled_runs.execution_status <> 'pending_cancel'
-    RETURNING run_queue_items.run_id
-),
-ended_session_runs AS (
+	ended_session_runs AS (
     UPDATE session_runs
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs

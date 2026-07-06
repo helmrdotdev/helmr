@@ -40,40 +40,6 @@ func (s *Server) matchImmediateWorkerTokenWait(ctx context.Context, scope db.Get
 	return workerTokenResolution(token)
 }
 
-func (s *Server) createWorkerTokenWait(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, runWait db.RunWait, request api.WorkerCreateRunWaitRequest) (string, json.RawMessage, bool, error) {
-	tokenID, err := workerTokenWaitTokenID(request)
-	if err != nil {
-		return "", nil, false, err
-	}
-	tokenWait, err := store.CreateTokenWait(ctx, db.CreateTokenWaitParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         scope.OrgID,
-		WorkerGroupID: scope.WorkerGroupID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RunWaitID:     runWait.ID,
-		TokenID:       pgvalue.UUID(tokenID),
-	})
-	if err != nil {
-		return "", nil, false, err
-	}
-	if _, err := store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, WorkerGroupID: scope.WorkerGroupID, ID: tokenWait.ID}); isNoRows(err) {
-		return "", nil, false, nil
-	} else if err != nil {
-		return "", nil, false, err
-	}
-	token, err := store.GetToken(ctx, db.GetTokenParams{
-		OrgID:         scope.OrgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		ID:            pgvalue.UUID(tokenID),
-	})
-	if err != nil {
-		return "", nil, false, err
-	}
-	return workerTokenResolution(token)
-}
-
 func workerTokenWaitTokenID(request api.WorkerCreateRunWaitRequest) (uuid.UUID, error) {
 	var params workerTokenWaitParams
 	if err := json.Unmarshal(request.Params, &params); err != nil {

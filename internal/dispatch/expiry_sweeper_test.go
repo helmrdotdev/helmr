@@ -353,7 +353,7 @@ func (f *fakeSweeperOrgStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(_
 	return nil, nil
 }
 
-func (f *fakeSweeperOrgStore) ExpireDueRunWaits(_ context.Context, arg db.ExpireDueRunWaitsParams) ([]db.RunWait, error) {
+func (f *fakeSweeperOrgStore) ExpireDueRunWaits(_ context.Context, arg db.ExpireDueRunWaitsParams) ([]db.ExpireDueRunWaitsRow, error) {
 	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
 		return nil, fmt.Errorf("expire-waits worker_group_id = %q", arg.WorkerGroupID)
 	}

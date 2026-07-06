@@ -35,7 +35,6 @@ type EventRecord struct {
 	Seq            uint64     `json:"seq"`
 	RunID          *uuid.UUID `json:"run_id,omitempty"`
 	DeploymentID   *uuid.UUID `json:"deployment_id,omitempty"`
-	AttemptID      *uuid.UUID `json:"attempt_id,omitempty"`
 	RunLeaseID     *uuid.UUID `json:"run_lease_id,omitempty"`
 	AttemptNumber  *int32     `json:"attempt_number,omitempty"`
 	TraceID        string     `json:"trace_id"`
@@ -54,24 +53,23 @@ type EventRecord struct {
 }
 
 type RunLogRecord struct {
-	WorkerGroupID  string     `json:"worker_group_id"`
-	OrgID          uuid.UUID  `json:"org_id"`
-	ProjectID      uuid.UUID  `json:"project_id"`
-	EnvironmentID  uuid.UUID  `json:"environment_id"`
-	RunID          uuid.UUID  `json:"run_id"`
-	AttemptID      *uuid.UUID `json:"attempt_id,omitempty"`
-	RunLeaseID     uuid.UUID  `json:"run_lease_id"`
-	AttemptNumber  int32      `json:"attempt_number"`
-	StreamName     string     `json:"stream_name"`
-	Seq            uint64     `json:"seq"`
-	ObservedSeq    uint64     `json:"observed_seq"`
-	Content        string     `json:"content"`
-	SizeBytes      uint64     `json:"size_bytes"`
-	IdempotencyKey string     `json:"idempotency_key"`
-	RetentionClass string     `json:"retention_class"`
-	RedactionClass string     `json:"redaction_class"`
-	Source         string     `json:"source"`
-	ObservedAt     time.Time  `json:"observed_at"`
+	WorkerGroupID  string    `json:"worker_group_id"`
+	OrgID          uuid.UUID `json:"org_id"`
+	ProjectID      uuid.UUID `json:"project_id"`
+	EnvironmentID  uuid.UUID `json:"environment_id"`
+	RunID          uuid.UUID `json:"run_id"`
+	RunLeaseID     uuid.UUID `json:"run_lease_id"`
+	AttemptNumber  int32     `json:"attempt_number"`
+	StreamName     string    `json:"stream_name"`
+	Seq            uint64    `json:"seq"`
+	ObservedSeq    uint64    `json:"observed_seq"`
+	Content        string    `json:"content"`
+	SizeBytes      uint64    `json:"size_bytes"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	RetentionClass string    `json:"retention_class"`
+	RedactionClass string    `json:"redaction_class"`
+	Source         string    `json:"source"`
+	ObservedAt     time.Time `json:"observed_at"`
 }
 
 type TerminalOutputRecord struct {
@@ -97,7 +95,7 @@ func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery, waterma
 	if watermark <= q.AfterSeq {
 		return nil, q.AfterSeq, nil
 	}
-	sql := `SELECT seq, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
+	sql := `SELECT seq, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
 FROM helmr_telemetry.events FINAL
 WHERE org_id = @org_id
   AND worker_group_id = @worker_group_id
@@ -132,7 +130,7 @@ func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQu
 	if watermark <= q.AfterSeq {
 		return nil, q.AfterSeq, nil
 	}
-	sql := `SELECT run_id, run_lease_id, attempt_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
+	sql := `SELECT run_id, run_lease_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
 FROM helmr_telemetry.run_logs FINAL
 WHERE org_id = @org_id
   AND worker_group_id = @worker_group_id
@@ -208,7 +206,6 @@ type eventRow struct {
 	Seq            uint64     `ch:"seq"`
 	RunID          *uuid.UUID `ch:"run_id"`
 	DeploymentID   *uuid.UUID `ch:"deployment_id"`
-	AttemptID      *uuid.UUID `ch:"attempt_id"`
 	RunLeaseID     *uuid.UUID `ch:"run_lease_id"`
 	AttemptNumber  *int32     `ch:"attempt_number"`
 	TraceID        string     `ch:"trace_id"`
@@ -225,7 +222,7 @@ type eventRow struct {
 }
 
 func (r eventRow) event() api.RunEvent {
-	var runID, deploymentID, runLeaseID, attemptID *string
+	var runID, deploymentID *string
 	if r.RunID != nil {
 		value := r.RunID.String()
 		runID = &value
@@ -233,14 +230,6 @@ func (r eventRow) event() api.RunEvent {
 	if r.DeploymentID != nil {
 		value := r.DeploymentID.String()
 		deploymentID = &value
-	}
-	if r.RunLeaseID != nil {
-		value := r.RunLeaseID.String()
-		runLeaseID = &value
-	}
-	if r.AttemptID != nil {
-		value := r.AttemptID.String()
-		attemptID = &value
 	}
 	at := r.ObservedAt.UTC()
 	attrs := json.RawMessage(r.Body)
@@ -254,8 +243,6 @@ func (r eventRow) event() api.RunEvent {
 		ID:             Cursor(int64(r.Seq)),
 		RunID:          runID,
 		DeploymentID:   deploymentID,
-		RunLeaseID:     runLeaseID,
-		AttemptID:      attemptID,
 		AttemptNumber:  r.AttemptNumber,
 		Trace:          api.TraceContext{TraceID: r.TraceID, SpanID: r.SpanID, Traceparent: r.Traceparent},
 		Category:       r.Category,
@@ -271,16 +258,15 @@ func (r eventRow) event() api.RunEvent {
 }
 
 type runLogRow struct {
-	RunID         uuid.UUID  `ch:"run_id"`
-	RunLeaseID    uuid.UUID  `ch:"run_lease_id"`
-	AttemptID     *uuid.UUID `ch:"attempt_id"`
-	AttemptNumber int32      `ch:"attempt_number"`
-	StreamName    string     `ch:"stream_name"`
-	Seq           uint64     `ch:"seq"`
-	ObservedSeq   uint64     `ch:"observed_seq"`
-	Content       string     `ch:"content"`
-	SizeBytes     uint64     `ch:"size_bytes"`
-	ObservedAt    time.Time  `ch:"observed_at"`
+	RunID         uuid.UUID `ch:"run_id"`
+	RunLeaseID    uuid.UUID `ch:"run_lease_id"`
+	AttemptNumber int32     `ch:"attempt_number"`
+	StreamName    string    `ch:"stream_name"`
+	Seq           uint64    `ch:"seq"`
+	ObservedSeq   uint64    `ch:"observed_seq"`
+	Content       string    `ch:"content"`
+	SizeBytes     uint64    `ch:"size_bytes"`
+	ObservedAt    time.Time `ch:"observed_at"`
 }
 
 type terminalOutputHistoryRow struct {
@@ -321,7 +307,6 @@ func (r runLogRow) chunk() api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            Cursor(int64(r.Seq)),
 		RunID:         r.RunID.String(),
-		RunLeaseID:    r.RunLeaseID.String(),
 		AttemptNumber: r.AttemptNumber,
 		Stream:        r.StreamName,
 		ContentBase64: contentBase64,

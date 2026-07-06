@@ -8,23 +8,19 @@ current_run_lease AS (
            runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
-           runs.trace_id,
-           runs.state_version,
-           run_leases.id AS run_lease_id,
-           run_leases.attempt_id,
-           run_leases.span_id,
-           run_leases.parent_span_id,
-           run_leases.traceparent,
-           run_attempts.attempt_number
-      FROM runs
+	           runs.trace_id,
+	           runs.state_version,
+	           run_leases.id AS run_lease_id,
+	           run_leases.span_id,
+	           run_leases.parent_span_id,
+	           run_leases.traceparent,
+	           run_leases.attempt_number
+	      FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
       JOIN worker_groups ON worker_groups.id = runs.worker_group_id
                         AND worker_groups.state IN ('active', 'draining')
-      JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
-                       AND run_attempts.run_id = run_leases.run_id
-                       AND run_attempts.id = run_leases.attempt_id
 	     WHERE runs.org_id = sqlc.arg(org_id)
 	       AND runs.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runs.id = sqlc.arg(run_id)
@@ -41,8 +37,7 @@ event_input AS (
            current_run_lease.project_id,
            current_run_lease.environment_id,
            current_run_lease.id AS run_id,
-           current_run_lease.attempt_id,
-           current_run_lease.run_lease_id,
+	           current_run_lease.run_lease_id,
            current_run_lease.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
@@ -73,14 +68,13 @@ event_seq AS (
     RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
            event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
            event_seq.seq,
-           event_input.attempt_id,
            event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
@@ -128,8 +122,7 @@ target_run AS (
            runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
-           runs.current_attempt_id,
-           runs.current_attempt_number,
+	           runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
            runs.state_version
@@ -143,8 +136,7 @@ event_input AS (
            target_run.project_id,
            target_run.environment_id,
            target_run.id AS run_id,
-           target_run.current_attempt_id AS attempt_id,
-           NULL::uuid AS run_lease_id,
+	           NULL::uuid AS run_lease_id,
            target_run.current_attempt_number AS attempt_number,
            target_run.trace_id,
            target_run.root_span_id AS span_id,
@@ -175,14 +167,13 @@ event_seq AS (
     RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
 inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
            event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
            event_seq.seq,
-           event_input.attempt_id,
            event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
@@ -363,7 +354,6 @@ SELECT updated.id AS outbox_id,
        events.environment_id,
        events.run_id,
        events.deployment_id,
-       events.attempt_id,
        events.run_lease_id,
        events.attempt_number,
        events.trace_id,

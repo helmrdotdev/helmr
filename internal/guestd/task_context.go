@@ -30,9 +30,6 @@ func adapterTaskContextJSON(request *runv0.RunTaskRequest) (string, error) {
 	run := map[string]any{
 		"id": request.RunId,
 	}
-	if request.AttemptId != "" {
-		run["attemptId"] = request.AttemptId
-	}
 	if request.AttemptNumber > 0 {
 		run["attemptNumber"] = request.AttemptNumber
 	}

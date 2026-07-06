@@ -178,7 +178,6 @@ func runLogChunkResponse(chunk db.RunLogHotChunk) api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            telemetryCursor(chunk.Seq),
 		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
-		RunLeaseID:    pgvalue.MustUUIDValue(chunk.RunLeaseID).String(),
 		AttemptNumber: chunk.AttemptNumber,
 		Stream:        string(chunk.Stream),
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),

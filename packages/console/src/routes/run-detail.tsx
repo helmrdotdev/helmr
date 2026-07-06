@@ -135,7 +135,7 @@ function eventSummary(event: RunEventRecord): string {
   }
   if (kind === "run.cancelled") return stringValue(attrs["reason"]) ?? "Run cancelled";
   if (kind === "run_wait.created") {
-    return [stringValue(attrs["run_wait_id"]), stringValue(attrs["kind"])]
+    return [stringValue(attrs["wait_id"]), stringValue(attrs["kind"])]
       .filter(Boolean)
       .join(" · ") || "Parked wait created";
   }
