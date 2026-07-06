@@ -28,16 +28,16 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	baseVersionID := uuid.Must(uuid.NewV7())
 	baseDigest := "sha256:" + strings.Repeat("a", 64)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 10, 'application/vnd.helmr.workspace.v0.tar')
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 10, 'application/vnd.helmr.workspace.v0.tar')
 		ON CONFLICT DO NOTHING
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, baseDigest); err != nil {
+	`, ids.orgID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 10, 'application/vnd.helmr.workspace.v0.tar')
-	`, baseArtifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, baseDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 10, 'application/vnd.helmr.workspace.v0.tar')
+	`, baseArtifactID, ids.orgID, ids.projectID, ids.environmentID, baseDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -670,7 +670,6 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
@@ -1081,18 +1080,16 @@ func seedWrongWorkerGroupRuntimeSubstrateArtifact(t *testing.T, ctx context.Cont
 	otherWorkerGroupID, otherSandboxID := seedRuntimeSubstrateSourceInOtherWorkerGroup(t, ctx, pool, ids, "run-lease-wrong-worker-group-runtime-substrate")
 	digest := testDigest("run-lease-wrong-worker-group-runtime-substrate")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
-		Digest:        digest,
-		SizeBytes:     1024,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.ext4",
+		OrgID:     pgvalue.UUID(ids.orgID),
+		Digest:    digest,
+		SizeBytes: 1024,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,

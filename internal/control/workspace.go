@@ -359,7 +359,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 				return getWorkspaceErr
 			}
 		}
-		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, placement.WorkerGroupID, projectID, environmentID)
+		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)
 		if err != nil {
 			return err
 		}
@@ -421,7 +421,7 @@ func workspaceFromCreateWorkspaceFromSandbox(row db.CreateWorkspaceFromSandboxRo
 	return db.Workspace(row)
 }
 
-func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, workerGroupID string, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {
+func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {
 	if s.cas == nil {
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, errors.New("workspace artifact CAS is not configured")
 	}
@@ -446,18 +446,16 @@ func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Qu
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, errors.New("initial workspace artifact CAS metadata mismatch")
 	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
-		Digest:        object.Digest,
-		SizeBytes:     object.SizeBytes,
-		MediaType:     object.MediaType,
+		OrgID:     pgvalue.UUID(orgID),
+		Digest:    object.Digest,
+		SizeBytes: object.SizeBytes,
+		MediaType: object.MediaType,
 	}); err != nil {
 		return db.Artifact{}, workspace.WorkspaceArtifact{}, err
 	}
 	workspaceArtifact, err := store.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		Digest:        object.Digest,

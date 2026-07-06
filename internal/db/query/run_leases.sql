@@ -1552,7 +1552,6 @@ leaseable_workspace AS (
           FROM runtime_substrate_artifacts
           JOIN artifacts
             ON artifacts.org_id = runtime_substrate_artifacts.org_id
-           AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
            AND artifacts.project_id = runtime_substrate_artifacts.project_id
            AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
            AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -1582,7 +1581,6 @@ leaseable_workspace AS (
           FROM runtime_substrate_artifacts
           JOIN artifacts
             ON artifacts.org_id = runtime_substrate_artifacts.org_id
-           AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
            AND artifacts.project_id = runtime_substrate_artifacts.project_id
            AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
            AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -2307,7 +2305,6 @@ eligible AS (
                    SELECT 1
                      FROM cas_objects
                     WHERE cas_objects.org_id = runs.org_id
-                      AND cas_objects.worker_group_id = runs.worker_group_id
                       AND cas_objects.digest = sqlc.narg(workspace_artifact_digest)::text
                       AND (
                           cas_objects.size_bytes <> sqlc.narg(workspace_artifact_size_bytes)::bigint
@@ -2579,24 +2576,22 @@ workspace_commit_input AS (
        AND workspaces.current_version_id IS NOT DISTINCT FROM workspace_leases.base_version_id
 ),
 published_workspace_cas_object AS (
-    INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
+    INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
     SELECT workspace_commit_input.org_id,
-           workspace_commit_input.worker_group_id,
            workspace_commit_input.artifact_digest,
            workspace_commit_input.artifact_size_bytes,
            workspace_commit_input.artifact_media_type
       FROM workspace_commit_input
-    ON CONFLICT (org_id, worker_group_id, digest) DO UPDATE
+    ON CONFLICT (org_id, digest) DO UPDATE
        SET size_bytes = cas_objects.size_bytes
      WHERE cas_objects.size_bytes = EXCLUDED.size_bytes
        AND cas_objects.media_type = EXCLUDED.media_type
-    RETURNING org_id, worker_group_id, digest
+    RETURNING org_id, digest
 ),
 inserted_workspace_artifact AS (
     INSERT INTO artifacts (
         id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         digest,
@@ -2607,7 +2602,6 @@ inserted_workspace_artifact AS (
     )
     SELECT workspace_commit_input.artifact_id,
            workspace_commit_input.org_id,
-           workspace_commit_input.worker_group_id,
            workspace_commit_input.project_id,
            workspace_commit_input.environment_id,
            workspace_commit_input.artifact_digest,
@@ -2618,7 +2612,6 @@ inserted_workspace_artifact AS (
       FROM workspace_commit_input
       JOIN published_workspace_cas_object
         ON published_workspace_cas_object.org_id = workspace_commit_input.org_id
-       AND published_workspace_cas_object.worker_group_id = workspace_commit_input.worker_group_id
        AND published_workspace_cas_object.digest = workspace_commit_input.artifact_digest
     RETURNING id
 ),

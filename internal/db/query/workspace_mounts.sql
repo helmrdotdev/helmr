@@ -88,7 +88,6 @@ inserted AS (
        AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = workspaces.worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -104,7 +103,6 @@ inserted AS (
        AND current_workspace_version.state = 'ready'
       JOIN artifacts AS workspace_artifact
         ON workspace_artifact.org_id = current_workspace_version.org_id
-       AND workspace_artifact.worker_group_id = current_workspace_version.worker_group_id
        AND workspace_artifact.project_id = current_workspace_version.project_id
        AND workspace_artifact.environment_id = current_workspace_version.environment_id
        AND workspace_artifact.id = current_workspace_version.artifact_id
@@ -373,7 +371,6 @@ SELECT workspaces.id AS workspace_id,
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   LEFT JOIN artifacts AS image_artifact
     ON image_artifact.org_id = deployment_sandboxes.org_id
-   AND image_artifact.worker_group_id = workspaces.worker_group_id
    AND image_artifact.project_id = deployment_sandboxes.project_id
    AND image_artifact.environment_id = deployment_sandboxes.environment_id
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -386,7 +383,6 @@ SELECT workspaces.id AS workspace_id,
    AND current_workspace_version.id = workspaces.current_version_id
   LEFT JOIN artifacts AS workspace_artifact
     ON workspace_artifact.org_id = current_workspace_version.org_id
-   AND workspace_artifact.worker_group_id = current_workspace_version.worker_group_id
    AND workspace_artifact.project_id = current_workspace_version.project_id
    AND workspace_artifact.environment_id = current_workspace_version.environment_id
    AND workspace_artifact.id = current_workspace_version.artifact_id
@@ -506,7 +502,6 @@ candidate AS (
 	                AND worker_groups.state = 'active'
 	      JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.worker_group_id = workspace_mounts.worker_group_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -801,7 +796,6 @@ candidate AS (
       JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.worker_group_id = workspace_mounts.worker_group_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -1345,12 +1339,10 @@ verified_artifact AS (
       FROM artifacts
       JOIN target
         ON target.org_id = artifacts.org_id
-       AND target.worker_group_id = artifacts.worker_group_id
        AND target.project_id = artifacts.project_id
        AND target.environment_id = artifacts.environment_id
       JOIN cas_objects
         ON cas_objects.org_id = artifacts.org_id
-       AND cas_objects.worker_group_id = artifacts.worker_group_id
        AND cas_objects.digest = artifacts.digest
      WHERE artifacts.org_id = sqlc.arg(org_id)
        AND artifacts.project_id = sqlc.arg(project_id)

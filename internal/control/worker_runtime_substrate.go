@@ -83,18 +83,16 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 			return errors.New("load deployment sandbox")
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:         sandbox.OrgID,
-			WorkerGroupID: worker.WorkerGroupID,
-			Digest:        strings.TrimSpace(request.Artifact.Digest),
-			SizeBytes:     request.Artifact.SizeBytes,
-			MediaType:     strings.TrimSpace(request.Artifact.MediaType),
+			OrgID:     sandbox.OrgID,
+			Digest:    strings.TrimSpace(request.Artifact.Digest),
+			SizeBytes: request.Artifact.SizeBytes,
+			MediaType: strings.TrimSpace(request.Artifact.MediaType),
 		}); err != nil {
 			return errors.New("record runtime substrate CAS object")
 		}
 		artifact, err := work.q.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     sandbox.OrgID,
-			WorkerGroupID:             worker.WorkerGroupID,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			Digest:                    strings.TrimSpace(request.Artifact.Digest),

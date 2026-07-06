@@ -180,19 +180,16 @@ SELECT updated.id,
   FROM updated
   JOIN artifacts AS source_artifacts
     ON source_artifacts.org_id = updated.org_id
-   AND source_artifacts.worker_group_id = updated.build_worker_group_id
    AND source_artifacts.project_id = updated.project_id
    AND source_artifacts.environment_id = updated.environment_id
    AND source_artifacts.id = updated.deployment_source_artifact_id
   LEFT JOIN artifacts AS build_manifest_artifacts
     ON build_manifest_artifacts.org_id = updated.org_id
-   AND build_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND build_manifest_artifacts.project_id = updated.project_id
    AND build_manifest_artifacts.environment_id = updated.environment_id
    AND build_manifest_artifacts.id = updated.build_manifest_artifact_id
   LEFT JOIN artifacts AS deployment_manifest_artifacts
     ON deployment_manifest_artifacts.org_id = updated.org_id
-   AND deployment_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND deployment_manifest_artifacts.project_id = updated.project_id
    AND deployment_manifest_artifacts.environment_id = updated.environment_id
    AND deployment_manifest_artifacts.id = updated.deployment_manifest_artifact_id;
@@ -383,7 +380,6 @@ INSERT INTO deployment_sandboxes (
     deployment_id,
     sandbox_id,
     image_artifact_id,
-    image_artifact_worker_group_id,
     image_artifact_format,
     rootfs_digest,
     image_digest,
@@ -410,7 +406,6 @@ INSERT INTO deployment_sandboxes (
     sqlc.arg(deployment_id),
     sqlc.arg(sandbox_id),
     sqlc.arg(image_artifact_id),
-    sqlc.arg(image_artifact_worker_group_id),
     sqlc.arg(image_artifact_format),
     sqlc.arg(rootfs_digest),
     sqlc.arg(image_digest),
@@ -488,7 +483,6 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_artifact_id,
-    bundle_artifact_worker_group_id,
     bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
@@ -515,7 +509,6 @@ INSERT INTO deployment_tasks (
     sqlc.arg(export_name),
     sqlc.arg(handler_entrypoint),
     sqlc.arg(bundle_artifact_id),
-    sqlc.arg(bundle_artifact_worker_group_id),
     sqlc.arg(bundle_format_version),
     sqlc.arg(requested_milli_cpu),
     sqlc.arg(requested_memory_mib),

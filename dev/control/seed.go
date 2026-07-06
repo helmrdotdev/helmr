@@ -60,27 +60,26 @@ ON CONFLICT (id) DO UPDATE
        is_default = EXCLUDED.is_default,
        updated_at = now();
 
-INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
+INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
-    ('00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), 'sha256:dev-deployment-source', 128, 'application/vnd.helmr.dev-source'),
-    ('00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), 'sha256:dev-deployment-manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
-    ('00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), 'sha256:dev-task-bundle', 512, 'application/vnd.helmr.task-bundle'),
-    ('00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), 'sha256:dev-sandbox-rootfs', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
-    ('00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), 'sha256:dev-workspace-version', 1024, 'application/vnd.helmr.workspace-version')
-ON CONFLICT (org_id, worker_group_id, digest) DO UPDATE
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-deployment-source', 128, 'application/vnd.helmr.dev-source'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-deployment-manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-task-bundle', 512, 'application/vnd.helmr.task-bundle'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-sandbox-rootfs', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-workspace-version', 1024, 'application/vnd.helmr.workspace-version')
+ON CONFLICT (org_id, digest) DO UPDATE
    SET size_bytes = EXCLUDED.size_bytes,
        media_type = EXCLUDED.media_type;
 
-INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 VALUES
-    ('00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-source', 'deployment_source', 128, 'application/vnd.helmr.dev-source'),
-    ('00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-manifest', 'deployment_manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
-    ('00000000-0000-0000-0000-000000000503', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-task-bundle', 'task_bundle', 512, 'application/vnd.helmr.task-bundle'),
-    ('00000000-0000-0000-0000-000000000504', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-sandbox-rootfs', 'sandbox_image', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
-    ('00000000-0000-0000-0000-000000000505', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-workspace-version', 'workspace_version', 1024, 'application/vnd.helmr.workspace-version')
+    ('00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-source', 'deployment_source', 128, 'application/vnd.helmr.dev-source'),
+    ('00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-manifest', 'deployment_manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
+    ('00000000-0000-0000-0000-000000000503', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-task-bundle', 'task_bundle', 512, 'application/vnd.helmr.task-bundle'),
+    ('00000000-0000-0000-0000-000000000504', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-sandbox-rootfs', 'sandbox_image', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
+    ('00000000-0000-0000-0000-000000000505', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-workspace-version', 'workspace_version', 1024, 'application/vnd.helmr.workspace-version')
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       digest = EXCLUDED.digest,
+   SET digest = EXCLUDED.digest,
        kind = EXCLUDED.kind,
        size_bytes = EXCLUDED.size_bytes,
        media_type = EXCLUDED.media_type;
@@ -119,7 +118,7 @@ UPDATE environments
 
 INSERT INTO deployment_sandboxes (
     id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
-    image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest,
+    image_artifact_id, image_artifact_format, rootfs_digest, image_digest,
     image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi,
     filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint
 )
@@ -132,7 +131,6 @@ VALUES (
     '00000000-0000-0000-0000-000000000601',
     'node-22',
     '00000000-0000-0000-0000-000000000504',
-    current_setting('helmr.seed_worker_group_id'),
     'rootfs-tar',
     'sha256:dev-sandbox-rootfs',
     'sha256:dev-sandbox-rootfs',
@@ -151,7 +149,6 @@ VALUES (
 ON CONFLICT (id) DO UPDATE
    SET sandbox_id = EXCLUDED.sandbox_id,
        image_artifact_id = EXCLUDED.image_artifact_id,
-       image_artifact_worker_group_id = EXCLUDED.image_artifact_worker_group_id,
        rootfs_digest = EXCLUDED.rootfs_digest,
        image_digest = EXCLUDED.image_digest,
        workspace_mount_path = EXCLUDED.workspace_mount_path,
@@ -175,19 +172,18 @@ ON CONFLICT (org_id, project_id, environment_id, deployment_id, name) DO NOTHING
 
 INSERT INTO deployment_tasks (
     id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id,
-    file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_worker_group_id, queue_name, max_active_duration_ms
+    file_path, export_name, handler_entrypoint, bundle_artifact_id, queue_name, max_active_duration_ms
 )
 VALUES
-    ('00000000-0000-0000-0000-000000000811', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'code-review', 'tasks/code-review.ts', 'default', 'tasks/code-review.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_worker_group_id'), 'default', 1800000),
-    ('00000000-0000-0000-0000-000000000812', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'approval-message', 'tasks/approval-message.ts', 'default', 'tasks/approval-message.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_worker_group_id'), 'default', 900000),
-    ('00000000-0000-0000-0000-000000000813', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'failure-boundary', 'tasks/failure-boundary.ts', 'default', 'tasks/failure-boundary.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_worker_group_id'), 'default', 600000),
-    ('00000000-0000-0000-0000-000000000814', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'release-summary', 'tasks/release-summary.ts', 'default', 'tasks/release-summary.ts#default', '00000000-0000-0000-0000-000000000503', current_setting('helmr.seed_worker_group_id'), 'default', 1200000)
+    ('00000000-0000-0000-0000-000000000811', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'code-review', 'tasks/code-review.ts', 'default', 'tasks/code-review.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 1800000),
+    ('00000000-0000-0000-0000-000000000812', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'approval-message', 'tasks/approval-message.ts', 'default', 'tasks/approval-message.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 900000),
+    ('00000000-0000-0000-0000-000000000813', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'failure-boundary', 'tasks/failure-boundary.ts', 'default', 'tasks/failure-boundary.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 600000),
+    ('00000000-0000-0000-0000-000000000814', 'dtask_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000701', 'release-summary', 'tasks/release-summary.ts', 'default', 'tasks/release-summary.ts#default', '00000000-0000-0000-0000-000000000503', 'default', 1200000)
 ON CONFLICT (id) DO UPDATE
    SET task_id = EXCLUDED.task_id,
        file_path = EXCLUDED.file_path,
        export_name = EXCLUDED.export_name,
        handler_entrypoint = EXCLUDED.handler_entrypoint,
-       bundle_artifact_worker_group_id = EXCLUDED.bundle_artifact_worker_group_id,
        queue_name = EXCLUDED.queue_name,
        max_active_duration_ms = EXCLUDED.max_active_duration_ms;
 

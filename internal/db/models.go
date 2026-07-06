@@ -11,93 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type ArtifactGrantEventKind string
-
-const (
-	ArtifactGrantEventKindIssued  ArtifactGrantEventKind = "issued"
-	ArtifactGrantEventKindUsed    ArtifactGrantEventKind = "used"
-	ArtifactGrantEventKindDenied  ArtifactGrantEventKind = "denied"
-	ArtifactGrantEventKindRevoked ArtifactGrantEventKind = "revoked"
-	ArtifactGrantEventKindExpired ArtifactGrantEventKind = "expired"
-)
-
-func (e *ArtifactGrantEventKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = ArtifactGrantEventKind(s)
-	case string:
-		*e = ArtifactGrantEventKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for ArtifactGrantEventKind: %T", src)
-	}
-	return nil
-}
-
-type NullArtifactGrantEventKind struct {
-	ArtifactGrantEventKind ArtifactGrantEventKind `json:"artifact_grant_event_kind"`
-	Valid                  bool                   `json:"valid"` // Valid is true if ArtifactGrantEventKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullArtifactGrantEventKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.ArtifactGrantEventKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.ArtifactGrantEventKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullArtifactGrantEventKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.ArtifactGrantEventKind), nil
-}
-
-type ArtifactGrantOperation string
-
-const (
-	ArtifactGrantOperationRead  ArtifactGrantOperation = "read"
-	ArtifactGrantOperationWrite ArtifactGrantOperation = "write"
-)
-
-func (e *ArtifactGrantOperation) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = ArtifactGrantOperation(s)
-	case string:
-		*e = ArtifactGrantOperation(s)
-	default:
-		return fmt.Errorf("unsupported scan type for ArtifactGrantOperation: %T", src)
-	}
-	return nil
-}
-
-type NullArtifactGrantOperation struct {
-	ArtifactGrantOperation ArtifactGrantOperation `json:"artifact_grant_operation"`
-	Valid                  bool                   `json:"valid"` // Valid is true if ArtifactGrantOperation is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullArtifactGrantOperation) Scan(value interface{}) error {
-	if value == nil {
-		ns.ArtifactGrantOperation, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.ArtifactGrantOperation.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullArtifactGrantOperation) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.ArtifactGrantOperation), nil
-}
-
 type ArtifactKind string
 
 const (
@@ -2734,7 +2647,6 @@ type ApiKeyGrant struct {
 type Artifact struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
-	WorkerGroupID             string             `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	Digest                    string             `json:"digest"`
@@ -2743,33 +2655,6 @@ type Artifact struct {
 	MediaType                 string             `json:"media_type"`
 	CreatedByWorkerInstanceID pgtype.UUID        `json:"created_by_worker_instance_id"`
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-}
-
-type ArtifactGrant struct {
-	ID            pgtype.UUID            `json:"id"`
-	OrgID         pgtype.UUID            `json:"org_id"`
-	WorkerGroupID string                 `json:"worker_group_id"`
-	ArtifactID    pgtype.UUID            `json:"artifact_id"`
-	Digest        string                 `json:"digest"`
-	SubjectKind   string                 `json:"subject_kind"`
-	SubjectID     pgtype.UUID            `json:"subject_id"`
-	Operation     ArtifactGrantOperation `json:"operation"`
-	ByteLimit     int64                  `json:"byte_limit"`
-	ExpiresAt     pgtype.Timestamptz     `json:"expires_at"`
-	RevokedAt     pgtype.Timestamptz     `json:"revoked_at"`
-	CreatedAt     pgtype.Timestamptz     `json:"created_at"`
-}
-
-type ArtifactGrantEvent struct {
-	ID              pgtype.UUID            `json:"id"`
-	OrgID           pgtype.UUID            `json:"org_id"`
-	WorkerGroupID   string                 `json:"worker_group_id"`
-	ArtifactGrantID pgtype.UUID            `json:"artifact_grant_id"`
-	EventKind       ArtifactGrantEventKind `json:"event_kind"`
-	SubjectKind     string                 `json:"subject_kind"`
-	SubjectID       pgtype.UUID            `json:"subject_id"`
-	ObservedAt      pgtype.Timestamptz     `json:"observed_at"`
-	Details         []byte                 `json:"details"`
 }
 
 type AuthIdentity struct {
@@ -2796,12 +2681,11 @@ type AuthSession struct {
 }
 
 type CasObject struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
-	Digest        string             `json:"digest"`
-	SizeBytes     int64              `json:"size_bytes"`
-	MediaType     string             `json:"media_type"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	OrgID     pgtype.UUID        `json:"org_id"`
+	Digest    string             `json:"digest"`
+	SizeBytes int64              `json:"size_bytes"`
+	MediaType string             `json:"media_type"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeletionJob struct {
@@ -2879,33 +2763,32 @@ type DeploymentQueue struct {
 }
 
 type DeploymentSandbox struct {
-	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentID               pgtype.UUID        `json:"deployment_id"`
-	SandboxID                  string             `json:"sandbox_id"`
-	ImageArtifactID            pgtype.UUID        `json:"image_artifact_id"`
-	ImageArtifactWorkerGroupID string             `json:"image_artifact_worker_group_id"`
-	ImageArtifactFormat        string             `json:"image_artifact_format"`
-	RootfsDigest               string             `json:"rootfs_digest"`
-	ImageDigest                string             `json:"image_digest"`
-	ImageFormat                string             `json:"image_format"`
-	WorkspaceMountPath         string             `json:"workspace_mount_path"`
-	ResourceFloor              []byte             `json:"resource_floor"`
-	DiskFloorMib               int64              `json:"disk_floor_mib"`
-	NetworkPolicy              []byte             `json:"network_policy"`
-	RuntimeABI                 string             `json:"runtime_abi"`
-	GuestdAbi                  string             `json:"guestd_abi"`
-	AdapterAbi                 string             `json:"adapter_abi"`
-	FilesystemFormat           string             `json:"filesystem_format"`
-	DefaultUid                 pgtype.Int8        `json:"default_uid"`
-	DefaultGid                 pgtype.Int8        `json:"default_gid"`
-	DefaultWorkdir             string             `json:"default_workdir"`
-	ContractVersion            int32              `json:"contract_version"`
-	Fingerprint                string             `json:"fingerprint"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	PublicID            string             `json:"public_id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	DeploymentID        pgtype.UUID        `json:"deployment_id"`
+	SandboxID           string             `json:"sandbox_id"`
+	ImageArtifactID     pgtype.UUID        `json:"image_artifact_id"`
+	ImageArtifactFormat string             `json:"image_artifact_format"`
+	RootfsDigest        string             `json:"rootfs_digest"`
+	ImageDigest         string             `json:"image_digest"`
+	ImageFormat         string             `json:"image_format"`
+	WorkspaceMountPath  string             `json:"workspace_mount_path"`
+	ResourceFloor       []byte             `json:"resource_floor"`
+	DiskFloorMib        int64              `json:"disk_floor_mib"`
+	NetworkPolicy       []byte             `json:"network_policy"`
+	RuntimeABI          string             `json:"runtime_abi"`
+	GuestdAbi           string             `json:"guestd_abi"`
+	AdapterAbi          string             `json:"adapter_abi"`
+	FilesystemFormat    string             `json:"filesystem_format"`
+	DefaultUid          pgtype.Int8        `json:"default_uid"`
+	DefaultGid          pgtype.Int8        `json:"default_gid"`
+	DefaultWorkdir      string             `json:"default_workdir"`
+	ContractVersion     int32              `json:"contract_version"`
+	Fingerprint         string             `json:"fingerprint"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentStream struct {
@@ -2924,35 +2807,34 @@ type DeploymentStream struct {
 }
 
 type DeploymentTask struct {
-	ID                          pgtype.UUID        `json:"id"`
-	PublicID                    string             `json:"public_id"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ProjectID                   pgtype.UUID        `json:"project_id"`
-	EnvironmentID               pgtype.UUID        `json:"environment_id"`
-	DeploymentID                pgtype.UUID        `json:"deployment_id"`
-	DeploymentSandboxID         pgtype.UUID        `json:"deployment_sandbox_id"`
-	TaskID                      string             `json:"task_id"`
-	FilePath                    string             `json:"file_path"`
-	ExportName                  string             `json:"export_name"`
-	HandlerEntrypoint           string             `json:"handler_entrypoint"`
-	BundleArtifactID            pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleArtifactWorkerGroupID string             `json:"bundle_artifact_worker_group_id"`
-	BundleFormatVersion         int32              `json:"bundle_format_version"`
-	RequestedMilliCpu           int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib          int64              `json:"requested_memory_mib"`
-	RequestedDiskMib            int64              `json:"requested_disk_mib"`
-	RequestedExecutionSlots     int32              `json:"requested_execution_slots"`
-	SecretDeclarations          []byte             `json:"secret_declarations"`
-	ResourceRequirements        []byte             `json:"resource_requirements"`
-	NetworkPolicy               []byte             `json:"network_policy"`
-	Placement                   []byte             `json:"placement"`
-	ScheduleDeclarations        []byte             `json:"schedule_declarations"`
-	QueueName                   string             `json:"queue_name"`
-	QueueConcurrencyLimit       pgtype.Int4        `json:"queue_concurrency_limit"`
-	Ttl                         string             `json:"ttl"`
-	MaxActiveDurationMs         int64              `json:"max_active_duration_ms"`
-	RetryPolicy                 []byte             `json:"retry_policy"`
-	CreatedAt                   pgtype.Timestamptz `json:"created_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	PublicID                string             `json:"public_id"`
+	OrgID                   pgtype.UUID        `json:"org_id"`
+	ProjectID               pgtype.UUID        `json:"project_id"`
+	EnvironmentID           pgtype.UUID        `json:"environment_id"`
+	DeploymentID            pgtype.UUID        `json:"deployment_id"`
+	DeploymentSandboxID     pgtype.UUID        `json:"deployment_sandbox_id"`
+	TaskID                  string             `json:"task_id"`
+	FilePath                string             `json:"file_path"`
+	ExportName              string             `json:"export_name"`
+	HandlerEntrypoint       string             `json:"handler_entrypoint"`
+	BundleArtifactID        pgtype.UUID        `json:"bundle_artifact_id"`
+	BundleFormatVersion     int32              `json:"bundle_format_version"`
+	RequestedMilliCpu       int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib      int64              `json:"requested_memory_mib"`
+	RequestedDiskMib        int64              `json:"requested_disk_mib"`
+	RequestedExecutionSlots int32              `json:"requested_execution_slots"`
+	SecretDeclarations      []byte             `json:"secret_declarations"`
+	ResourceRequirements    []byte             `json:"resource_requirements"`
+	NetworkPolicy           []byte             `json:"network_policy"`
+	Placement               []byte             `json:"placement"`
+	ScheduleDeclarations    []byte             `json:"schedule_declarations"`
+	QueueName               string             `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4        `json:"queue_concurrency_limit"`
+	Ttl                     string             `json:"ttl"`
+	MaxActiveDurationMs     int64              `json:"max_active_duration_ms"`
+	RetryPolicy             []byte             `json:"retry_policy"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentVersionCounter struct {

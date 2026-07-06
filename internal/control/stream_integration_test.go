@@ -1030,13 +1030,13 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex) VALUES ($1, $4, $2, $3, 'env', 'Env', '#3366ff')`, ids.environmentID, ids.orgID, ids.projectID, streamTestPublicID(t, publicid.Environment)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type) VALUES ($1, $2, $3, 1, 'application/octet-stream'), ($1, $2, $4, 1, 'application/octet-stream')`, ids.orgID, dbtest.DefaultWorkerGroupID, digest, rootfsDigest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, 'application/octet-stream'), ($1, $3, 1, 'application/octet-stream')`, ids.orgID, digest, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/octet-stream')`, artifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/octet-stream')`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, $6, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $9, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, dbtest.DefaultWorkerGroupID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
@@ -1048,10 +1048,10 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id) VALUES ($5, $1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $9, $2, $3, $4, $5, 'default', $6, $7, 'oci-tar', $8, $8, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, dbtest.DefaultWorkerGroupID, rootfsDigest, streamTestPublicID(t, publicid.Sandbox)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', $7, $7, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, rootfsDigest, streamTestPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_tasks (id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, bundle_artifact_worker_group_id, queue_name, max_active_duration_ms) VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9, 'default', 300000)`, ids.deploymentTaskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, sandboxID, taskID, artifactID, dbtest.DefaultWorkerGroupID, streamTestPublicID(t, publicid.DeploymentTask)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_tasks (id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, queue_name, max_active_duration_ms) VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 'default', 300000)`, ids.deploymentTaskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, sandboxID, taskID, artifactID, streamTestPublicID(t, publicid.DeploymentTask)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sandboxID, streamTestPublicID(t, publicid.Workspace)); err != nil {

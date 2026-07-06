@@ -133,7 +133,6 @@ WITH source_mount AS MATERIALIZED (
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.worker_group_id = workspace_mounts.worker_group_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -373,7 +372,7 @@ WITH worker_scope AS MATERIALIZED (
      FOR UPDATE OF worker_instances
 ),
 source_sandbox AS MATERIALIZED (
-    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
+    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
            deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
@@ -396,7 +395,6 @@ source_sandbox AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -462,7 +460,7 @@ active_runtime_instance_usage AS MATERIALIZED (
        )
 ),
 candidate AS MATERIALIZED (
-    SELECT source_sandbox.id, source_sandbox.public_id, source_sandbox.org_id, source_sandbox.project_id, source_sandbox.environment_id, source_sandbox.deployment_id, source_sandbox.sandbox_id, source_sandbox.image_artifact_id, source_sandbox.image_artifact_worker_group_id, source_sandbox.image_artifact_format, source_sandbox.rootfs_digest, source_sandbox.image_digest, source_sandbox.image_format, source_sandbox.workspace_mount_path, source_sandbox.resource_floor, source_sandbox.disk_floor_mib, source_sandbox.network_policy, source_sandbox.runtime_abi, source_sandbox.guestd_abi, source_sandbox.adapter_abi, source_sandbox.filesystem_format, source_sandbox.default_uid, source_sandbox.default_gid, source_sandbox.default_workdir, source_sandbox.contract_version, source_sandbox.fingerprint, source_sandbox.created_at, source_sandbox.worker_group_id, source_sandbox.worker_group_id, source_sandbox.image_artifact_digest, source_sandbox.image_artifact_media_type, source_sandbox.image_artifact_size_bytes, source_sandbox.requested_cpu_millis, source_sandbox.requested_memory_mib, source_sandbox.requested_disk_mib, source_sandbox.requested_execution_slots
+    SELECT source_sandbox.id, source_sandbox.public_id, source_sandbox.org_id, source_sandbox.project_id, source_sandbox.environment_id, source_sandbox.deployment_id, source_sandbox.sandbox_id, source_sandbox.image_artifact_id, source_sandbox.image_artifact_format, source_sandbox.rootfs_digest, source_sandbox.image_digest, source_sandbox.image_format, source_sandbox.workspace_mount_path, source_sandbox.resource_floor, source_sandbox.disk_floor_mib, source_sandbox.network_policy, source_sandbox.runtime_abi, source_sandbox.guestd_abi, source_sandbox.adapter_abi, source_sandbox.filesystem_format, source_sandbox.default_uid, source_sandbox.default_gid, source_sandbox.default_workdir, source_sandbox.contract_version, source_sandbox.fingerprint, source_sandbox.created_at, source_sandbox.worker_group_id, source_sandbox.worker_group_id, source_sandbox.image_artifact_digest, source_sandbox.image_artifact_media_type, source_sandbox.image_artifact_size_bytes, source_sandbox.requested_cpu_millis, source_sandbox.requested_memory_mib, source_sandbox.requested_disk_mib, source_sandbox.requested_execution_slots
       FROM source_sandbox, worker_scope, active_run_usage, active_runtime_instance_usage
      WHERE source_sandbox.requested_cpu_millis <= GREATEST(worker_scope.available_milli_cpu - active_run_usage.used_milli_cpu - active_runtime_instance_usage.used_milli_cpu, 0)
        AND source_sandbox.requested_memory_mib <= GREATEST(worker_scope.available_memory_mib - active_run_usage.used_memory_mib - active_runtime_instance_usage.used_memory_mib, 0)
@@ -539,7 +537,6 @@ SELECT inserted.id, inserted.org_id, inserted.worker_group_id, inserted.project_
   FROM inserted
   JOIN artifacts
     ON artifacts.org_id = inserted.org_id
-   AND artifacts.worker_group_id = inserted.worker_group_id
    AND artifacts.project_id = inserted.project_id
    AND artifacts.environment_id = inserted.environment_id
    AND artifacts.id = inserted.sandbox_image_artifact_id
@@ -807,7 +804,7 @@ func (q *Queries) CreateSupersededPreparedRuntimeStopCommands(ctx context.Contex
 
 const listRuntimeInstanceWarmTargets = `-- name: ListRuntimeInstanceWarmTargets :many
 WITH current_sandboxes AS MATERIALIZED (
-    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
+    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
            deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
@@ -830,7 +827,6 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -1195,7 +1191,7 @@ func (q *Queries) ListRuntimeInstanceWarmTargets(ctx context.Context, arg ListRu
 
 const listRuntimeSubstratePrepareTargets = `-- name: ListRuntimeSubstratePrepareTargets :many
 WITH current_sandboxes AS MATERIALIZED (
-    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
+    SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
            deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
@@ -1214,7 +1210,6 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -1311,8 +1306,9 @@ SELECT worker_sandbox_scope.org_id,
  WHERE sandbox_demand.demand_count > 0
    AND NOT EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+            FROM runtime_substrate_artifacts
             WHERE runtime_substrate_artifacts.org_id = worker_sandbox_scope.org_id
+              AND runtime_substrate_artifacts.worker_group_id = worker_sandbox_scope.worker_group_id
               AND runtime_substrate_artifacts.project_id = worker_sandbox_scope.project_id
               AND runtime_substrate_artifacts.environment_id = worker_sandbox_scope.environment_id
               AND runtime_substrate_artifacts.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
@@ -1906,7 +1902,6 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -2047,7 +2042,6 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id

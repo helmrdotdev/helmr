@@ -19,7 +19,6 @@ SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runti
   FROM runtime_substrate_artifacts
   JOIN artifacts
     ON artifacts.org_id = runtime_substrate_artifacts.org_id
-   AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
    AND artifacts.project_id = runtime_substrate_artifacts.project_id
    AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
    AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -33,7 +32,6 @@ SELECT runtime_substrate_artifacts.id, runtime_substrate_artifacts.org_id, runti
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.build_worker_group_id = runtime_substrate_artifacts.worker_group_id
   JOIN (
     SELECT placement_project.org_id,
            placement_project.id AS project_id,

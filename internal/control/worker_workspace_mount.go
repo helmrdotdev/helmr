@@ -305,18 +305,16 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 			return errors.New("authorize workspace mount capture")
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:         params.OrgID,
-			WorkerGroupID: params.WorkerGroupID,
-			Digest:        digest,
-			SizeBytes:     request.ArtifactSizeBytes,
-			MediaType:     strings.TrimSpace(request.ArtifactMediaType),
+			OrgID:     params.OrgID,
+			Digest:    digest,
+			SizeBytes: request.ArtifactSizeBytes,
+			MediaType: strings.TrimSpace(request.ArtifactMediaType),
 		}); err != nil {
 			return errors.New("record workspace capture CAS object")
 		}
 		artifact, err := work.q.CreateArtifact(r.Context(), db.CreateArtifactParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     params.OrgID,
-			WorkerGroupID:             params.WorkerGroupID,
 			ProjectID:                 pgvalue.UUID(projectID),
 			EnvironmentID:             pgvalue.UUID(environmentID),
 			Digest:                    digest,

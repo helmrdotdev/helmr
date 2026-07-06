@@ -335,7 +335,6 @@ INSERT INTO deployment_sandboxes (
     deployment_id,
     sandbox_id,
     image_artifact_id,
-    image_artifact_worker_group_id,
     image_artifact_format,
     rootfs_digest,
     image_digest,
@@ -367,10 +366,10 @@ INSERT INTO deployment_sandboxes (
     $11,
     $12,
     $13,
-    $14,
-    coalesce($15::jsonb, '{}'::jsonb),
-    $16,
-    coalesce($17::jsonb, '{}'::jsonb),
+    coalesce($14::jsonb, '{}'::jsonb),
+    $15,
+    coalesce($16::jsonb, '{}'::jsonb),
+    $17,
     $18,
     $19,
     $20,
@@ -378,39 +377,37 @@ INSERT INTO deployment_sandboxes (
     $22,
     $23,
     $24,
-    $25,
-    $26
+    $25
 )
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
 `
 
 type CreateDeploymentSandboxParams struct {
-	ID                         pgtype.UUID `json:"id"`
-	PublicID                   string      `json:"public_id"`
-	OrgID                      pgtype.UUID `json:"org_id"`
-	ProjectID                  pgtype.UUID `json:"project_id"`
-	EnvironmentID              pgtype.UUID `json:"environment_id"`
-	DeploymentID               pgtype.UUID `json:"deployment_id"`
-	SandboxID                  string      `json:"sandbox_id"`
-	ImageArtifactID            pgtype.UUID `json:"image_artifact_id"`
-	ImageArtifactWorkerGroupID string      `json:"image_artifact_worker_group_id"`
-	ImageArtifactFormat        string      `json:"image_artifact_format"`
-	RootfsDigest               string      `json:"rootfs_digest"`
-	ImageDigest                string      `json:"image_digest"`
-	ImageFormat                string      `json:"image_format"`
-	WorkspaceMountPath         string      `json:"workspace_mount_path"`
-	ResourceFloor              []byte      `json:"resource_floor"`
-	DiskFloorMib               int64       `json:"disk_floor_mib"`
-	NetworkPolicy              []byte      `json:"network_policy"`
-	RuntimeABI                 string      `json:"runtime_abi"`
-	GuestdAbi                  string      `json:"guestd_abi"`
-	AdapterAbi                 string      `json:"adapter_abi"`
-	FilesystemFormat           string      `json:"filesystem_format"`
-	DefaultUid                 pgtype.Int8 `json:"default_uid"`
-	DefaultGid                 pgtype.Int8 `json:"default_gid"`
-	DefaultWorkdir             string      `json:"default_workdir"`
-	ContractVersion            int32       `json:"contract_version"`
-	Fingerprint                string      `json:"fingerprint"`
+	ID                  pgtype.UUID `json:"id"`
+	PublicID            string      `json:"public_id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	DeploymentID        pgtype.UUID `json:"deployment_id"`
+	SandboxID           string      `json:"sandbox_id"`
+	ImageArtifactID     pgtype.UUID `json:"image_artifact_id"`
+	ImageArtifactFormat string      `json:"image_artifact_format"`
+	RootfsDigest        string      `json:"rootfs_digest"`
+	ImageDigest         string      `json:"image_digest"`
+	ImageFormat         string      `json:"image_format"`
+	WorkspaceMountPath  string      `json:"workspace_mount_path"`
+	ResourceFloor       []byte      `json:"resource_floor"`
+	DiskFloorMib        int64       `json:"disk_floor_mib"`
+	NetworkPolicy       []byte      `json:"network_policy"`
+	RuntimeABI          string      `json:"runtime_abi"`
+	GuestdAbi           string      `json:"guestd_abi"`
+	AdapterAbi          string      `json:"adapter_abi"`
+	FilesystemFormat    string      `json:"filesystem_format"`
+	DefaultUid          pgtype.Int8 `json:"default_uid"`
+	DefaultGid          pgtype.Int8 `json:"default_gid"`
+	DefaultWorkdir      string      `json:"default_workdir"`
+	ContractVersion     int32       `json:"contract_version"`
+	Fingerprint         string      `json:"fingerprint"`
 }
 
 func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploymentSandboxParams) (DeploymentSandbox, error) {
@@ -423,7 +420,6 @@ func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploym
 		arg.DeploymentID,
 		arg.SandboxID,
 		arg.ImageArtifactID,
-		arg.ImageArtifactWorkerGroupID,
 		arg.ImageArtifactFormat,
 		arg.RootfsDigest,
 		arg.ImageDigest,
@@ -452,7 +448,6 @@ func (q *Queries) CreateDeploymentSandbox(ctx context.Context, arg CreateDeploym
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -487,7 +482,7 @@ WITH catalog_task AS (
         updated_at
     ) VALUES (
         $3,
-        $27,
+        $26,
         $4,
         $5,
         $8,
@@ -512,7 +507,6 @@ INSERT INTO deployment_tasks (
     export_name,
     handler_entrypoint,
     bundle_artifact_id,
-    bundle_artifact_worker_group_id,
     bundle_format_version,
     requested_milli_cpu,
     requested_memory_mib,
@@ -546,45 +540,43 @@ INSERT INTO deployment_tasks (
     $17,
     $18,
     $19,
-    $20,
-    coalesce($21::jsonb, '[]'::jsonb),
+    coalesce($20::jsonb, '[]'::jsonb),
+    $21,
     $22,
     $23,
     $24,
-    $25,
-    coalesce($26::jsonb, '{"enabled": false}'::jsonb)
+    coalesce($25::jsonb, '{"enabled": false}'::jsonb)
   FROM catalog_task
-RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_worker_group_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
 `
 
 type CreateDeploymentTaskParams struct {
-	ID                          pgtype.UUID `json:"id"`
-	PublicID                    string      `json:"public_id"`
-	OrgID                       pgtype.UUID `json:"org_id"`
-	ProjectID                   pgtype.UUID `json:"project_id"`
-	EnvironmentID               pgtype.UUID `json:"environment_id"`
-	DeploymentID                pgtype.UUID `json:"deployment_id"`
-	DeploymentSandboxID         pgtype.UUID `json:"deployment_sandbox_id"`
-	TaskID                      string      `json:"task_id"`
-	FilePath                    string      `json:"file_path"`
-	ExportName                  string      `json:"export_name"`
-	HandlerEntrypoint           string      `json:"handler_entrypoint"`
-	BundleArtifactID            pgtype.UUID `json:"bundle_artifact_id"`
-	BundleArtifactWorkerGroupID string      `json:"bundle_artifact_worker_group_id"`
-	BundleFormatVersion         int32       `json:"bundle_format_version"`
-	RequestedMilliCpu           int64       `json:"requested_milli_cpu"`
-	RequestedMemoryMib          int64       `json:"requested_memory_mib"`
-	RequestedDiskMib            int64       `json:"requested_disk_mib"`
-	SecretDeclarations          []byte      `json:"secret_declarations"`
-	ResourceRequirements        []byte      `json:"resource_requirements"`
-	NetworkPolicy               []byte      `json:"network_policy"`
-	ScheduleDeclarations        []byte      `json:"schedule_declarations"`
-	QueueName                   string      `json:"queue_name"`
-	QueueConcurrencyLimit       pgtype.Int4 `json:"queue_concurrency_limit"`
-	Ttl                         string      `json:"ttl"`
-	MaxActiveDurationMs         int64       `json:"max_active_duration_ms"`
-	RetryPolicy                 []byte      `json:"retry_policy"`
-	TaskPublicID                string      `json:"task_public_id"`
+	ID                    pgtype.UUID `json:"id"`
+	PublicID              string      `json:"public_id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	DeploymentID          pgtype.UUID `json:"deployment_id"`
+	DeploymentSandboxID   pgtype.UUID `json:"deployment_sandbox_id"`
+	TaskID                string      `json:"task_id"`
+	FilePath              string      `json:"file_path"`
+	ExportName            string      `json:"export_name"`
+	HandlerEntrypoint     string      `json:"handler_entrypoint"`
+	BundleArtifactID      pgtype.UUID `json:"bundle_artifact_id"`
+	BundleFormatVersion   int32       `json:"bundle_format_version"`
+	RequestedMilliCpu     int64       `json:"requested_milli_cpu"`
+	RequestedMemoryMib    int64       `json:"requested_memory_mib"`
+	RequestedDiskMib      int64       `json:"requested_disk_mib"`
+	SecretDeclarations    []byte      `json:"secret_declarations"`
+	ResourceRequirements  []byte      `json:"resource_requirements"`
+	NetworkPolicy         []byte      `json:"network_policy"`
+	ScheduleDeclarations  []byte      `json:"schedule_declarations"`
+	QueueName             string      `json:"queue_name"`
+	QueueConcurrencyLimit pgtype.Int4 `json:"queue_concurrency_limit"`
+	Ttl                   string      `json:"ttl"`
+	MaxActiveDurationMs   int64       `json:"max_active_duration_ms"`
+	RetryPolicy           []byte      `json:"retry_policy"`
+	TaskPublicID          string      `json:"task_public_id"`
 }
 
 func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeploymentTaskParams) (DeploymentTask, error) {
@@ -601,7 +593,6 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		arg.ExportName,
 		arg.HandlerEntrypoint,
 		arg.BundleArtifactID,
-		arg.BundleArtifactWorkerGroupID,
 		arg.BundleFormatVersion,
 		arg.RequestedMilliCpu,
 		arg.RequestedMemoryMib,
@@ -631,7 +622,6 @@ func (q *Queries) CreateDeploymentTask(ctx context.Context, arg CreateDeployment
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -864,7 +854,7 @@ func (q *Queries) GetCurrentDeploymentForRoute(ctx context.Context, arg GetCurre
 }
 
 const getCurrentDeploymentSandbox = `-- name: GetCurrentDeploymentSandbox :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN environments ON environments.org_id = deployment_sandboxes.org_id
                    AND environments.project_id = deployment_sandboxes.project_id
@@ -906,7 +896,6 @@ func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurren
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -930,7 +919,7 @@ func (q *Queries) GetCurrentDeploymentSandbox(ctx context.Context, arg GetCurren
 }
 
 const getCurrentDeploymentTask = `-- name: GetCurrentDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -1002,7 +991,6 @@ type GetCurrentDeploymentTaskRow struct {
 	ExportName                        string             `json:"export_name"`
 	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
 	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleArtifactWorkerGroupID       string             `json:"bundle_artifact_worker_group_id"`
 	BundleFormatVersion               int32              `json:"bundle_format_version"`
 	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
@@ -1061,7 +1049,6 @@ func (q *Queries) GetCurrentDeploymentTask(ctx context.Context, arg GetCurrentDe
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -1381,7 +1368,7 @@ func (q *Queries) GetDeploymentQueueConfig(ctx context.Context, arg GetDeploymen
 }
 
 const getDeploymentSandboxByID = `-- name: GetDeploymentSandboxByID :one
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, resource_floor, disk_floor_mib, network_policy, runtime_abi, guestd_abi, adapter_abi, filesystem_format, default_uid, default_gid, default_workdir, contract_version, fingerprint, created_at
   FROM deployment_sandboxes
  WHERE id = $1
  LIMIT 1
@@ -1399,7 +1386,6 @@ func (q *Queries) GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) 
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -1423,7 +1409,7 @@ func (q *Queries) GetDeploymentSandboxByID(ctx context.Context, id pgtype.UUID) 
 }
 
 const getDeploymentSandboxForWorkerGroup = `-- name: GetDeploymentSandboxForWorkerGroup :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN worker_groups
     ON worker_groups.id = $1
@@ -1456,7 +1442,6 @@ func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg Ge
 		&i.DeploymentID,
 		&i.SandboxID,
 		&i.ImageArtifactID,
-		&i.ImageArtifactWorkerGroupID,
 		&i.ImageArtifactFormat,
 		&i.RootfsDigest,
 		&i.ImageDigest,
@@ -1480,7 +1465,7 @@ func (q *Queries) GetDeploymentSandboxForWorkerGroup(ctx context.Context, arg Ge
 }
 
 const getDeploymentTask = `-- name: GetDeploymentTask :one
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
        deployment_sandboxes.sandbox_id,
        deployment_sandboxes.fingerprint AS sandbox_fingerprint,
        deployment_sandboxes.workspace_mount_path,
@@ -1557,7 +1542,6 @@ type GetDeploymentTaskRow struct {
 	ExportName                        string             `json:"export_name"`
 	HandlerEntrypoint                 string             `json:"handler_entrypoint"`
 	BundleArtifactID                  pgtype.UUID        `json:"bundle_artifact_id"`
-	BundleArtifactWorkerGroupID       string             `json:"bundle_artifact_worker_group_id"`
 	BundleFormatVersion               int32              `json:"bundle_format_version"`
 	RequestedMilliCpu                 int64              `json:"requested_milli_cpu"`
 	RequestedMemoryMib                int64              `json:"requested_memory_mib"`
@@ -1618,7 +1602,6 @@ func (q *Queries) GetDeploymentTask(ctx context.Context, arg GetDeploymentTaskPa
 		&i.ExportName,
 		&i.HandlerEntrypoint,
 		&i.BundleArtifactID,
-		&i.BundleArtifactWorkerGroupID,
 		&i.BundleFormatVersion,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
@@ -1788,19 +1771,16 @@ SELECT updated.id,
   FROM updated
   JOIN artifacts AS source_artifacts
     ON source_artifacts.org_id = updated.org_id
-   AND source_artifacts.worker_group_id = updated.build_worker_group_id
    AND source_artifacts.project_id = updated.project_id
    AND source_artifacts.environment_id = updated.environment_id
    AND source_artifacts.id = updated.deployment_source_artifact_id
   LEFT JOIN artifacts AS build_manifest_artifacts
     ON build_manifest_artifacts.org_id = updated.org_id
-   AND build_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND build_manifest_artifacts.project_id = updated.project_id
    AND build_manifest_artifacts.environment_id = updated.environment_id
    AND build_manifest_artifacts.id = updated.build_manifest_artifact_id
   LEFT JOIN artifacts AS deployment_manifest_artifacts
     ON deployment_manifest_artifacts.org_id = updated.org_id
-   AND deployment_manifest_artifacts.worker_group_id = updated.build_worker_group_id
    AND deployment_manifest_artifacts.project_id = updated.project_id
    AND deployment_manifest_artifacts.environment_id = updated.environment_id
    AND deployment_manifest_artifacts.id = updated.deployment_manifest_artifact_id
@@ -1886,7 +1866,7 @@ func (q *Queries) LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueue
 }
 
 const listCurrentDeploymentSandboxes = `-- name: ListCurrentDeploymentSandboxes :many
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_worker_group_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
+SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
   FROM deployment_sandboxes
   JOIN environments ON environments.org_id = deployment_sandboxes.org_id
                    AND environments.project_id = deployment_sandboxes.project_id
@@ -1927,7 +1907,6 @@ func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCu
 			&i.DeploymentID,
 			&i.SandboxID,
 			&i.ImageArtifactID,
-			&i.ImageArtifactWorkerGroupID,
 			&i.ImageArtifactFormat,
 			&i.RootfsDigest,
 			&i.ImageDigest,
@@ -1958,7 +1937,7 @@ func (q *Queries) ListCurrentDeploymentSandboxes(ctx context.Context, arg ListCu
 }
 
 const listCurrentDeploymentTasks = `-- name: ListCurrentDeploymentTasks :many
-SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_artifact_worker_group_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
+SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
   FROM deployment_tasks
   JOIN environments ON environments.org_id = deployment_tasks.org_id
                    AND environments.project_id = deployment_tasks.project_id
@@ -2003,7 +1982,6 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 			&i.ExportName,
 			&i.HandlerEntrypoint,
 			&i.BundleArtifactID,
-			&i.BundleArtifactWorkerGroupID,
 			&i.BundleFormatVersion,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
@@ -2032,7 +2010,7 @@ func (q *Queries) ListCurrentDeploymentTasks(ctx context.Context, arg ListCurren
 }
 
 const listDeploymentTasks = `-- name: ListDeploymentTasks :many
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_artifact_worker_group_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, file_path, export_name, handler_entrypoint, bundle_artifact_id, bundle_format_version, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, secret_declarations, resource_requirements, network_policy, placement, schedule_declarations, queue_name, queue_concurrency_limit, ttl, max_active_duration_ms, retry_policy, created_at
   FROM deployment_tasks
  WHERE org_id = $1
    AND project_id = $2
@@ -2075,7 +2053,6 @@ func (q *Queries) ListDeploymentTasks(ctx context.Context, arg ListDeploymentTas
 			&i.ExportName,
 			&i.HandlerEntrypoint,
 			&i.BundleArtifactID,
-			&i.BundleArtifactWorkerGroupID,
 			&i.BundleFormatVersion,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,

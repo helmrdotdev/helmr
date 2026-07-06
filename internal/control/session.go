@@ -719,7 +719,7 @@ func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
 
 func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, placementWorkerGroupID string, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
 	if !requestedWorkspaceID.Valid {
-		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, placementWorkerGroupID, projectID, environmentID)
+		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, projectID, environmentID)
 		if err != nil {
 			return db.Workspace{}, err
 		}

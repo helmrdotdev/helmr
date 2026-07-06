@@ -257,7 +257,6 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 		artifacts: []db.Artifact{{
 			ID:            testArtifactID(),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: "us-east-1-worker-group-1",
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Digest:        digest,
@@ -954,7 +953,6 @@ func (f *fakeStore) CreateArtifact(_ context.Context, arg db.CreateArtifactParam
 	artifact := db.Artifact{
 		ID:                        arg.ID,
 		OrgID:                     arg.OrgID,
-		WorkerGroupID:             arg.WorkerGroupID,
 		ProjectID:                 arg.ProjectID,
 		EnvironmentID:             arg.EnvironmentID,
 		Digest:                    arg.Digest,
@@ -972,12 +970,11 @@ func (f *fakeStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectPar
 	f.artifactAuthorityEvents = append(f.artifactAuthorityEvents, "cas:"+arg.Digest)
 	f.casObjects = append(f.casObjects, arg)
 	return db.CasObject{
-		OrgID:         arg.OrgID,
-		WorkerGroupID: arg.WorkerGroupID,
-		Digest:        arg.Digest,
-		SizeBytes:     arg.SizeBytes,
-		MediaType:     arg.MediaType,
-		CreatedAt:     testTime(),
+		OrgID:     arg.OrgID,
+		Digest:    arg.Digest,
+		SizeBytes: arg.SizeBytes,
+		MediaType: arg.MediaType,
+		CreatedAt: testTime(),
 	}, nil
 }
 
@@ -986,14 +983,13 @@ func (f *fakeStore) GetCasObject(_ context.Context, arg db.GetCasObjectParams) (
 		return db.CasObject{}, f.getCasObjectErr
 	}
 	for _, object := range f.casObjects {
-		if object.OrgID == arg.OrgID && object.WorkerGroupID == arg.WorkerGroupID && object.Digest == arg.Digest {
+		if object.OrgID == arg.OrgID && object.Digest == arg.Digest {
 			return db.CasObject{
-				OrgID:         object.OrgID,
-				WorkerGroupID: object.WorkerGroupID,
-				Digest:        object.Digest,
-				SizeBytes:     object.SizeBytes,
-				MediaType:     object.MediaType,
-				CreatedAt:     testTime(),
+				OrgID:     object.OrgID,
+				Digest:    object.Digest,
+				SizeBytes: object.SizeBytes,
+				MediaType: object.MediaType,
+				CreatedAt: testTime(),
 			}, nil
 		}
 	}

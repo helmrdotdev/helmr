@@ -1453,7 +1453,6 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7
@@ -2206,18 +2205,16 @@ func TestCreateRuntimeCheckpointArtifactRejectsWrongWorkerGroupArtifact(t *testi
 	}
 	digest := testDigest("wrong-worker-group-runtime-checkpoint-artifact")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
-		Digest:        digest,
-		SizeBytes:     256,
-		MediaType:     "application/vnd.helmr.runtime-checkpoint.config.v0+json",
+		OrgID:     pgvalue.UUID(ids.orgID),
+		Digest:    digest,
+		SizeBytes: 256,
+		MediaType: "application/vnd.helmr.runtime-checkpoint.config.v0+json",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	artifact, err := queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -2472,15 +2469,15 @@ func TestDirtyRunWaitCapturePromotesSystemVersionBeforeCheckpointReady(t *testin
 	captureVersionID := uuid.Must(uuid.NewV7())
 	captureDigest := "sha256:" + strings.Repeat("b", 64)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, captureDigest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 42, 'application/vnd.helmr.workspace.v0.tar')
+	`, ids.orgID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 42, 'application/vnd.helmr.workspace.v0.tar')
-	`, captureArtifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, captureDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 42, 'application/vnd.helmr.workspace.v0.tar')
+	`, captureArtifactID, ids.orgID, ids.projectID, ids.environmentID, captureDigest); err != nil {
 		t.Fatal(err)
 	}
 	var workspaceLeaseID uuid.UUID
@@ -4609,7 +4606,6 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $7

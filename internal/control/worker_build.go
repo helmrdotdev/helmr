@@ -236,20 +236,19 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		for _, object := range casObjects {
 			casObjectByDigest[strings.TrimSpace(object.Digest)] = object
 			if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-				OrgID:         orgID,
-				WorkerGroupID: workerGroupID,
-				Digest:        object.Digest,
-				SizeBytes:     object.SizeBytes,
-				MediaType:     object.MediaType,
+				OrgID:     orgID,
+				Digest:    object.Digest,
+				SizeBytes: object.SizeBytes,
+				MediaType: object.MediaType,
 			}); err != nil {
 				return failBuild("record deployment build artifact: " + err.Error())
 			}
 		}
-		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, workerGroupID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
+		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record build manifest artifact: " + err.Error())
 		}
-		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, workerGroupID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
+		deploymentManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.DeploymentManifestDigest), db.ArtifactKindDeploymentManifest, casObjectByDigest)
 		if err != nil {
 			return failBuild("record deployment manifest artifact: " + err.Error())
 		}
@@ -271,7 +270,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		deploymentSandboxIDs := map[string]pgtype.UUID{}
 		for _, task := range request.Result.Tasks {
-			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, workerGroupID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
+			bundleArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.BundleDigest), db.ArtifactKindTaskBundle, casObjectByDigest)
 			if err != nil {
 				return failBuild("record task bundle artifact: " + err.Error())
 			}
@@ -290,7 +289,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			sandboxID := strings.TrimSpace(task.SandboxID)
 			deploymentSandboxID, ok := deploymentSandboxIDs[sandboxID]
 			if !ok {
-				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, workerGroupID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
+				imageArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(task.SandboxImageArtifact.Digest), db.ArtifactKindSandboxImage, casObjectByDigest)
 				if err != nil {
 					return failBuild("record deployment sandbox image artifact: " + err.Error())
 				}
@@ -318,32 +317,31 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				var sandboxPublicID string
 				row, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.Sandbox, value: &sandboxPublicID}}, func() (db.DeploymentSandbox, error) {
 					return work.q.CreateDeploymentSandbox(r.Context(), db.CreateDeploymentSandboxParams{
-						ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-						PublicID:                   sandboxPublicID,
-						OrgID:                      orgID,
-						ProjectID:                  projectID,
-						EnvironmentID:              environmentID,
-						DeploymentID:               deploymentID,
-						SandboxID:                  sandboxID,
-						ImageArtifactID:            imageArtifact.ID,
-						ImageArtifactWorkerGroupID: workerGroupID,
-						ImageArtifactFormat:        strings.TrimSpace(task.SandboxImageArtifactFormat),
-						RootfsDigest:               workerState.RootfsDigest,
-						ImageDigest:                imageArtifact.Digest,
-						ImageFormat:                strings.TrimSpace(task.SandboxImageFormat),
-						WorkspaceMountPath:         strings.TrimSpace(task.WorkspaceMountPath),
-						ResourceFloor:              resourceFloor,
-						DiskFloorMib:               task.RequestedDiskMiB,
-						NetworkPolicy:              networkPolicy,
-						RuntimeABI:                 workerState.RuntimeABI,
-						GuestdAbi:                  currentGuestdABI,
-						AdapterAbi:                 currentAdapterABI,
-						FilesystemFormat:           strings.TrimSpace(task.FilesystemFormat),
-						DefaultUid:                 pgtype.Int8{},
-						DefaultGid:                 pgtype.Int8{},
-						DefaultWorkdir:             "",
-						ContractVersion:            1,
-						Fingerprint:                fingerprint,
+						ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+						PublicID:            sandboxPublicID,
+						OrgID:               orgID,
+						ProjectID:           projectID,
+						EnvironmentID:       environmentID,
+						DeploymentID:        deploymentID,
+						SandboxID:           sandboxID,
+						ImageArtifactID:     imageArtifact.ID,
+						ImageArtifactFormat: strings.TrimSpace(task.SandboxImageArtifactFormat),
+						RootfsDigest:        workerState.RootfsDigest,
+						ImageDigest:         imageArtifact.Digest,
+						ImageFormat:         strings.TrimSpace(task.SandboxImageFormat),
+						WorkspaceMountPath:  strings.TrimSpace(task.WorkspaceMountPath),
+						ResourceFloor:       resourceFloor,
+						DiskFloorMib:        task.RequestedDiskMiB,
+						NetworkPolicy:       networkPolicy,
+						RuntimeABI:          workerState.RuntimeABI,
+						GuestdAbi:           currentGuestdABI,
+						AdapterAbi:          currentAdapterABI,
+						FilesystemFormat:    strings.TrimSpace(task.FilesystemFormat),
+						DefaultUid:          pgtype.Int8{},
+						DefaultGid:          pgtype.Int8{},
+						DefaultWorkdir:      "",
+						ContractVersion:     1,
+						Fingerprint:         fingerprint,
 					})
 				})
 				if err != nil {
@@ -367,33 +365,32 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				{prefix: publicid.Task, value: &taskPublicID},
 			}, func() (db.DeploymentTask, error) {
 				return work.q.CreateDeploymentTask(r.Context(), db.CreateDeploymentTaskParams{
-					ID:                          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-					PublicID:                    deploymentTaskPublicID,
-					OrgID:                       orgID,
-					ProjectID:                   projectID,
-					EnvironmentID:               environmentID,
-					DeploymentID:                deploymentID,
-					DeploymentSandboxID:         deploymentSandboxID,
-					TaskID:                      strings.TrimSpace(task.TaskID),
-					TaskPublicID:                taskPublicID,
-					FilePath:                    strings.TrimSpace(task.FilePath),
-					ExportName:                  strings.TrimSpace(task.ExportName),
-					HandlerEntrypoint:           strings.TrimSpace(task.HandlerEntrypoint),
-					BundleArtifactID:            bundleArtifact.ID,
-					BundleArtifactWorkerGroupID: workerGroupID,
-					BundleFormatVersion:         firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
-					RequestedMilliCpu:           task.RequestedMilliCPU,
-					RequestedMemoryMib:          task.RequestedMemoryMiB,
-					RequestedDiskMib:            task.RequestedDiskMiB,
-					SecretDeclarations:          secretDeclarations,
-					ResourceRequirements:        []byte("{}"),
-					NetworkPolicy:               networkPolicy,
-					ScheduleDeclarations:        scheduleDeclarations,
-					QueueName:                   queueName,
-					QueueConcurrencyLimit:       pgvalue.Int4Ptr(queueConcurrencyLimit),
-					Ttl:                         strings.TrimSpace(task.TTL),
-					MaxActiveDurationMs:         int64(task.MaxDurationSeconds) * 1000,
-					RetryPolicy:                 retryPolicy,
+					ID:                    pgvalue.UUID(uuid.Must(uuid.NewV7())),
+					PublicID:              deploymentTaskPublicID,
+					OrgID:                 orgID,
+					ProjectID:             projectID,
+					EnvironmentID:         environmentID,
+					DeploymentID:          deploymentID,
+					DeploymentSandboxID:   deploymentSandboxID,
+					TaskID:                strings.TrimSpace(task.TaskID),
+					TaskPublicID:          taskPublicID,
+					FilePath:              strings.TrimSpace(task.FilePath),
+					ExportName:            strings.TrimSpace(task.ExportName),
+					HandlerEntrypoint:     strings.TrimSpace(task.HandlerEntrypoint),
+					BundleArtifactID:      bundleArtifact.ID,
+					BundleFormatVersion:   firstPositiveInt32(task.BundleFormatVersion, api.CurrentBundleFormatVersion),
+					RequestedMilliCpu:     task.RequestedMilliCPU,
+					RequestedMemoryMib:    task.RequestedMemoryMiB,
+					RequestedDiskMib:      task.RequestedDiskMiB,
+					SecretDeclarations:    secretDeclarations,
+					ResourceRequirements:  []byte("{}"),
+					NetworkPolicy:         networkPolicy,
+					ScheduleDeclarations:  scheduleDeclarations,
+					QueueName:             queueName,
+					QueueConcurrencyLimit: pgvalue.Int4Ptr(queueConcurrencyLimit),
+					Ttl:                   strings.TrimSpace(task.TTL),
+					MaxActiveDurationMs:   int64(task.MaxDurationSeconds) * 1000,
+					RetryPolicy:           retryPolicy,
 				})
 			}); err != nil {
 				return failBuild("record deployment task: " + err.Error())
@@ -566,7 +563,7 @@ func deploymentSandboxContractFingerprint(input deploymentSandboxContractFingerp
 	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
-func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, workerGroupID string, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
+func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, workerInstanceID pgtype.UUID, digest string, kind db.ArtifactKind, objects map[string]api.CASObject) (db.Artifact, error) {
 	object, ok := objects[strings.TrimSpace(digest)]
 	if !ok {
 		return db.Artifact{}, fmt.Errorf("missing CAS object %s", digest)
@@ -574,7 +571,6 @@ func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgI
 	return queries.CreateArtifact(ctx, db.CreateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     orgID,
-		WorkerGroupID:             workerGroupID,
 		ProjectID:                 projectID,
 		EnvironmentID:             environmentID,
 		Digest:                    strings.TrimSpace(object.Digest),

@@ -1029,18 +1029,16 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	queries := db.New(pool)
 	digest := testDigest("runtime-substrate-blob")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		Digest:        digest,
-		SizeBytes:     10,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.tar",
+		OrgID:     pgvalue.UUID(ids.orgID),
+		Digest:    digest,
+		SizeBytes: 10,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.tar",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -1053,7 +1051,6 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	second, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -1210,18 +1207,16 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 	otherWorkerGroupID, otherSandboxID := seedRuntimeSubstrateSourceInOtherWorkerGroup(t, ctx, pool, ids, "runtime-substrate-wrong-worker-group")
 	digest := testDigest("runtime-substrate-wrong-worker-group")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
-		Digest:        digest,
-		SizeBytes:     1024,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.ext4",
+		OrgID:     pgvalue.UUID(ids.orgID),
+		Digest:    digest,
+		SizeBytes: 1024,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: otherWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -1452,18 +1447,16 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 	t.Helper()
 	digest := testDigest(label)
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		Digest:        digest,
-		SizeBytes:     1024,
-		MediaType:     "application/vnd.helmr.runtime-substrate.v0.ext4",
+		OrgID:     pgvalue.UUID(ids.orgID),
+		Digest:    digest,
+		SizeBytes: 1024,
+		MediaType: "application/vnd.helmr.runtime-substrate.v0.ext4",
 	}); err != nil {
 		t.Fatal(err)
 	}
 	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		Digest:        digest,
@@ -1660,6 +1653,43 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	}
 	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
 		t.Fatalf("targets after stale substrate command = %+v, want current sandbox target", targets)
+	}
+	otherWorkerGroupID := dbtest.DefaultWorkerGroupID + "-cache-only"
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_groups (id, region_id, name, state, health_state, routing_fresh_until)
+		VALUES ($1, $2, $1, 'active', 'healthy', now() + interval '5 minutes')
+	`, otherWorkerGroupID, dbtest.DefaultRegionID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:                     pgvalue.UUID(ids.orgID),
+		WorkerGroupID:             otherWorkerGroupID,
+		ProjectID:                 pgvalue.UUID(ids.projectID),
+		EnvironmentID:             pgvalue.UUID(ids.environmentID),
+		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
+		ArtifactID:                artifact.ID,
+		SubstrateDigest:           "sha256:prepared-substrate-other-worker-group",
+		SubstrateFormat:           substrate.Format,
+		BuilderAbi:                substrate.BuilderABI,
+		LayoutAbi:                 substrate.LayoutABI,
+		SubstrateSizeBytes:        1024,
+		Source:                    runtimeSubstrateArtifactSourceForTarget(t, target, nil),
+		CreatedByWorkerInstanceID: pgtype.UUID{},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	targets, err = queries.ListRuntimeSubstratePrepareTargets(ctx, db.ListRuntimeSubstratePrepareTargetsParams{
+		SubstrateFormat:     substrate.Format,
+		SubstrateBuilderAbi: substrate.BuilderABI,
+		SubstrateLayoutAbi:  substrate.LayoutABI,
+		RowLimit:            10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
+		t.Fatalf("targets after other worker group substrate artifact = %+v, want current worker group target", targets)
 	}
 	exactCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),

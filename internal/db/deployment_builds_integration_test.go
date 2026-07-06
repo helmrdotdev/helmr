@@ -50,15 +50,15 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongWorkerGroupDeployment(t *te
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json')
-	`, ids.orgID, otherWorkerGroupID, otherDigest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json')
+	`, ids.orgID, otherDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json')
-	`, otherArtifactID, ids.orgID, otherWorkerGroupID, ids.projectID, ids.environmentID, otherDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, otherArtifactID, ids.orgID, ids.projectID, ids.environmentID, otherDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -129,15 +129,15 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json')
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, digest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json')
+	`, ids.orgID, digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json')
-	`, artifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

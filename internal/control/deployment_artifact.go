@@ -237,9 +237,8 @@ func (s *Server) deleteUnreferencedDeploymentSourceArtifact(ctx context.Context,
 	}
 	if store, ok := s.db.(casObjectLookupStore); ok {
 		if _, err := store.GetCasObject(ctx, db.GetCasObjectParams{
-			OrgID:         pgvalue.UUID(orgID),
-			WorkerGroupID: s.workerGroupID,
-			Digest:        digest,
+			OrgID:  pgvalue.UUID(orgID),
+			Digest: digest,
 		}); err == nil {
 			return
 		} else if !isNoRows(err) {

@@ -14,7 +14,6 @@ WITH source_mount AS MATERIALIZED (
        AND deployment_sandboxes.id = workspace_mounts.deployment_sandbox_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
-       AND image_artifact.worker_group_id = workspace_mounts.worker_group_id
        AND image_artifact.project_id = workspace_mounts.project_id
        AND image_artifact.environment_id = workspace_mounts.environment_id
        AND image_artifact.id = workspace_mounts.image_artifact_id
@@ -189,7 +188,6 @@ source_sandbox AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -332,7 +330,6 @@ SELECT inserted.*,
   FROM inserted
   JOIN artifacts
     ON artifacts.org_id = inserted.org_id
-   AND artifacts.worker_group_id = inserted.worker_group_id
    AND artifacts.project_id = inserted.project_id
    AND artifacts.environment_id = inserted.environment_id
    AND artifacts.id = inserted.sandbox_image_artifact_id
@@ -382,7 +379,6 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -448,7 +444,6 @@ UPDATE runtime_instances
              FROM runtime_substrate_artifacts
              JOIN artifacts
                ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.worker_group_id = runtime_substrate_artifacts.worker_group_id
               AND artifacts.project_id = runtime_substrate_artifacts.project_id
               AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
               AND artifacts.id = runtime_substrate_artifacts.artifact_id
@@ -751,7 +746,6 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -1060,7 +1054,6 @@ WITH current_sandboxes AS MATERIALIZED (
        AND environments.current_deployment_id = deployment_sandboxes.deployment_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = deployment_sandboxes.org_id
-       AND image_artifact.worker_group_id = deployments.build_worker_group_id
        AND image_artifact.project_id = deployment_sandboxes.project_id
        AND image_artifact.environment_id = deployment_sandboxes.environment_id
        AND image_artifact.id = deployment_sandboxes.image_artifact_id
@@ -1157,8 +1150,9 @@ SELECT worker_sandbox_scope.org_id,
  WHERE sandbox_demand.demand_count > 0
    AND NOT EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+            FROM runtime_substrate_artifacts
             WHERE runtime_substrate_artifacts.org_id = worker_sandbox_scope.org_id
+              AND runtime_substrate_artifacts.worker_group_id = worker_sandbox_scope.worker_group_id
               AND runtime_substrate_artifacts.project_id = worker_sandbox_scope.project_id
               AND runtime_substrate_artifacts.environment_id = worker_sandbox_scope.environment_id
               AND runtime_substrate_artifacts.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id

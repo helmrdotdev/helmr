@@ -522,7 +522,6 @@ SELECT runtime_checkpoints.org_id,
        sqlc.arg(store_duration_ms)::bigint
   FROM runtime_checkpoints
   JOIN artifacts ON artifacts.org_id = runtime_checkpoints.org_id
-                AND artifacts.worker_group_id = runtime_checkpoints.worker_group_id
                 AND artifacts.project_id = runtime_checkpoints.project_id
                 AND artifacts.environment_id = runtime_checkpoints.environment_id
                 AND artifacts.id = sqlc.arg(artifact_id)

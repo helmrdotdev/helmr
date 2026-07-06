@@ -142,15 +142,15 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	}
 	imageArtifactID, imageDigest := seedSandboxImageArtifact(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json')
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, taskBundleDigest); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json')
+	`, ids.orgID, taskBundleDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json')
-	`, taskBundleArtifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, taskBundleDigest); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
+	`, taskBundleArtifactID, ids.orgID, ids.projectID, ids.environmentID, taskBundleDigest); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -168,13 +168,13 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
 			id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
-			image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
 			disk_floor_mib, contract_version, fingerprint
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, 'default', $6, $7, 'oci-tar', 'sha256:rootfs', $8, 'oci-tar', '/workspace',
+		VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', 'sha256:rootfs', $7, 'oci-tar', '/workspace',
 			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, 'sandbox-fingerprint')
-	`, ids.deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, dbtest.DefaultWorkerGroupID, imageDigest, testPublicID(t, publicid.Sandbox)); err != nil {
+	`, ids.deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, imageDigest, testPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -186,11 +186,11 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_tasks (
-			id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, bundle_artifact_worker_group_id,
+			id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id,
 			queue_name, max_active_duration_ms
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'approval-task', $7, $8, 'default', 300000)
-	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, taskBundleArtifactID, dbtest.DefaultWorkerGroupID, testPublicID(t, publicid.DeploymentTask)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, $6, 'approval-task', $7, 'default', 300000)
+	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, taskBundleArtifactID, testPublicID(t, publicid.DeploymentTask)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -212,7 +212,6 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		       artifacts.id, $7, 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.worker_group_id = $3
 		   AND artifacts.project_id = $4
 		   AND artifacts.environment_id = $5
 		   AND artifacts.id = $8
@@ -476,17 +475,17 @@ func seedRuntimeSubstrateSourceInOtherWorkerGroup(t *testing.T, ctx context.Cont
 	taskBundleDigest := testDigest(label + "-task-bundle")
 	imageDigest := testDigest(label + "-sandbox-image")
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 1, 'application/json'),
-		       ($1, $2, $4, 6, $5)
-	`, ids.orgID, workerGroupID, taskBundleDigest, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 1, 'application/json'),
+		       ($1, $3, 6, $4)
+	`, ids.orgID, taskBundleDigest, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'task_bundle', 1, 'application/json'),
-		       ($7, $2, $3, $4, $5, $8, 'sandbox_image', 6, $9)
-	`, taskBundleArtifactID, ids.orgID, workerGroupID, ids.projectID, ids.environmentID, taskBundleDigest, imageArtifactID, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json'),
+		       ($6, $2, $3, $4, $7, 'sandbox_image', 6, $8)
+	`, taskBundleArtifactID, ids.orgID, ids.projectID, ids.environmentID, taskBundleDigest, imageArtifactID, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -501,13 +500,13 @@ func seedRuntimeSubstrateSourceInOtherWorkerGroup(t *testing.T, ctx context.Cont
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
 			id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
-			image_artifact_id, image_artifact_worker_group_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
 			disk_floor_mib, contract_version, fingerprint
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, 'wrong-worker-group', $6, $7, 'oci-tar', 'sha256:rootfs', $8, 'oci-tar', '/workspace',
-			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, $9)
-	`, deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, workerGroupID, imageDigest, "wrong-worker-group-"+shortUUID(deploymentSandboxID), testPublicID(t, publicid.Sandbox)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'wrong-worker-group', $6, 'oci-tar', 'sha256:rootfs', $7, 'oci-tar', '/workspace',
+			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, $8)
+	`, deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, imageDigest, "wrong-worker-group-"+shortUUID(deploymentSandboxID), testPublicID(t, publicid.Sandbox)); err != nil {
 		t.Fatal(err)
 	}
 	return workerGroupID, deploymentSandboxID
@@ -518,15 +517,15 @@ func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpo
 	artifactID := uuid.Must(uuid.NewV7())
 	digest := testDigest("workspace-version-" + artifactID.String())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 10, $4)
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, digest, workspace.ArtifactMediaType); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 10, $3)
+	`, ids.orgID, digest, workspace.ArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'workspace_version', 10, $7)
-	`, artifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, workspace.ArtifactMediaType); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 10, $6)
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, workspace.ArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	return artifactID
@@ -537,15 +536,15 @@ func seedSandboxImageArtifact(t *testing.T, ctx context.Context, pool *pgxpool.P
 	artifactID := uuid.Must(uuid.NewV7())
 	digest := testDigest("sandbox-image-" + artifactID.String())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, worker_group_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, $3, 6, $4)
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, digest, api.SandboxImageArtifactMediaType); err != nil {
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+		VALUES ($1, $2, 6, $3)
+	`, ids.orgID, digest, api.SandboxImageArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, worker_group_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, $6, 'sandbox_image', 6, $7)
-	`, artifactID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, api.SandboxImageArtifactMediaType); err != nil {
+		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+		VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 6, $6)
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, api.SandboxImageArtifactMediaType); err != nil {
 		t.Fatal(err)
 	}
 	return artifactID, digest
