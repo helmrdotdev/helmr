@@ -367,6 +367,349 @@ func TestAbandonLeasedRunLeaseWritesLifecycleHistory(t *testing.T) {
 	assertRunDispatchRequeuedLifecycle(t, ctx, pool, ids, params.RunLeaseID)
 }
 
+func TestFailExpiredRunningRunLeasesSchedulesRetry(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	sessionID, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET locked_retry_policy = '{"enabled":true,"maxAttempts":3,"backoff":{"minMs":0,"maxMs":0,"factor":1,"jitter":"none"}}'::jsonb,
+		       active_started_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE run_leases
+		   SET lease_expires_at = now() - interval '1 second'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runLeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var status db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var terminalOutcome string
+	var currentRunLeaseID uuid.NullUUID
+	var currentAttempt int32
+	var dispatchGeneration int64
+	var leaseStatus db.RunLeaseStatus
+	var sessionRunEndedAt pgtype.Timestamptz
+	var outboxCount, usageCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT runs.status,
+		       runs.execution_status,
+		       coalesce(runs.terminal_outcome::text, ''),
+		       runs.current_run_lease_id,
+		       runs.current_attempt_number,
+		       runs.dispatch_generation,
+		       run_leases.status,
+		       session_runs.ended_at,
+		       (SELECT count(*)::int FROM telemetry_outbox WHERE org_id = runs.org_id AND source_kind = 'run' AND source_id = runs.id AND stream_kind = 'event'),
+		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		  FROM runs
+		  JOIN run_leases ON run_leases.org_id = runs.org_id
+		                 AND run_leases.run_id = runs.id
+		                 AND run_leases.id = $3
+		  JOIN session_runs ON session_runs.org_id = runs.org_id
+		                   AND session_runs.project_id = runs.project_id
+		                   AND session_runs.environment_id = runs.environment_id
+		                   AND session_runs.session_id = runs.session_id
+		                   AND session_runs.run_id = runs.id
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+	`, ids.orgID, ids.runID, runLeaseID).Scan(
+		&status,
+		&executionStatus,
+		&terminalOutcome,
+		&currentRunLeaseID,
+		&currentAttempt,
+		&dispatchGeneration,
+		&leaseStatus,
+		&sessionRunEndedAt,
+		&outboxCount,
+		&usageCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusQueued || executionStatus != db.RunExecutionStatusQueued || terminalOutcome != "" || currentRunLeaseID.Valid {
+		t.Fatalf("run state = %s/%s terminal=%q currentLease=%v, want queued/queued/no terminal/no current lease", status, executionStatus, terminalOutcome, currentRunLeaseID.Valid)
+	}
+	if currentAttempt != 2 || dispatchGeneration != 2 {
+		t.Fatalf("attempt=%d generation=%d, want 2/2", currentAttempt, dispatchGeneration)
+	}
+	if leaseStatus != db.RunLeaseStatusLost {
+		t.Fatalf("run lease status = %s, want lost", leaseStatus)
+	}
+	if sessionRunEndedAt.Valid {
+		t.Fatal("session run ended on retry, want open")
+	}
+	if outboxCount != 2 || usageCount != 1 {
+		t.Fatalf("outbox=%d usage=%d, want 2/1", outboxCount, usageCount)
+	}
+	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.failed", "run.retry_scheduled"}, []string{"run.failed", "run.retry_scheduled"})
+}
+
+func TestFailExpiredRunningRunLeasesTerminalizesWithoutRetry(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	sessionID, runLeaseID, _ := seedRunningSessionLease(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET locked_retry_policy = '{"enabled":false}'::jsonb,
+		       active_started_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE run_leases
+		   SET lease_expires_at = now() - interval '1 second'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, runLeaseID); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := queries.FailExpiredRunningRunLeases(ctx, db.FailExpiredRunningRunLeasesParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var status db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var terminalOutcome string
+	var currentRunLeaseID uuid.NullUUID
+	var currentAttempt int32
+	var leaseStatus db.RunLeaseStatus
+	var sessionRunEndedAt pgtype.Timestamptz
+	var outboxCount, usageCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT runs.status,
+		       runs.execution_status,
+		       coalesce(runs.terminal_outcome::text, ''),
+		       runs.current_run_lease_id,
+		       runs.current_attempt_number,
+		       run_leases.status,
+		       session_runs.ended_at,
+		       (SELECT count(*)::int FROM telemetry_outbox WHERE org_id = runs.org_id AND source_kind = 'run' AND source_id = runs.id AND stream_kind = 'event'),
+		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		  FROM runs
+		  JOIN run_leases ON run_leases.org_id = runs.org_id
+		                 AND run_leases.run_id = runs.id
+		                 AND run_leases.id = $3
+		  JOIN session_runs ON session_runs.org_id = runs.org_id
+		                   AND session_runs.project_id = runs.project_id
+		                   AND session_runs.environment_id = runs.environment_id
+		                   AND session_runs.session_id = runs.session_id
+		                   AND session_runs.run_id = runs.id
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+	`, ids.orgID, ids.runID, runLeaseID).Scan(
+		&status,
+		&executionStatus,
+		&terminalOutcome,
+		&currentRunLeaseID,
+		&currentAttempt,
+		&leaseStatus,
+		&sessionRunEndedAt,
+		&outboxCount,
+		&usageCount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusFailed || executionStatus != db.RunExecutionStatusFinished || terminalOutcome != "failed" || currentRunLeaseID.Valid {
+		t.Fatalf("run state = %s/%s terminal=%q currentLease=%v, want failed/finished/failed/no current lease", status, executionStatus, terminalOutcome, currentRunLeaseID.Valid)
+	}
+	if currentAttempt != 1 {
+		t.Fatalf("attempt=%d, want 1", currentAttempt)
+	}
+	if leaseStatus != db.RunLeaseStatusLost {
+		t.Fatalf("run lease status = %s, want lost", leaseStatus)
+	}
+	if !sessionRunEndedAt.Valid {
+		t.Fatal("session run ended_at was not set")
+	}
+	if outboxCount != 1 || usageCount != 1 {
+		t.Fatalf("outbox=%d usage=%d, want 1/1", outboxCount, usageCount)
+	}
+	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.failed"}, []string{"run.failed"})
+}
+
+func TestReleaseRunLeaseRetryFailsPendingCheckpointRestore(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
+	checkpointed := createCheckpointedRunWait(t, ctx, queries, ids, runLeaseID, workerID)
+
+	if _, err := queries.ResolveRunWait(ctx, db.ResolveRunWaitParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		ID:     pgvalue.UUID(checkpointed.runWaitID),
+		Result: []byte(`{"timer":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeued) != 1 {
+		t.Fatalf("requeued waits = %d, want 1", len(requeued))
+	}
+	mount, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RequestPriority: requeued[0].Priority,
+		Request:         []byte(`{"reason":"retry_restore_failure_test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		WorkspaceID:      pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET locked_retry_policy = '{"enabled":true,"maxAttempts":2,"backoff":{"minMs":0,"maxMs":0,"factor":1,"jitter":"none"}}'::jsonb
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	dispatchGeneration := currentRunDispatchGeneration(t, ctx, pool, ids.orgID, ids.runID)
+	leased, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "restore-retry-failure", dispatchGeneration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	leasedRunLeaseID := pgvalue.MustUUIDValue(leased.RunLeaseID)
+	if got := pgvalue.MustUUIDValue(leased.RunLeaseRestoreRuntimeCheckpointID); got != checkpointed.runtimeCheckpointID {
+		t.Fatalf("restore runtime checkpoint id = %s, want %s", got, checkpointed.runtimeCheckpointID)
+	}
+	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusRestoring)
+
+	started, err := queries.StartRunLease(ctx, db.StartRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		RunLeaseID:        leased.RunLeaseID,
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		DispatchMessageID: leased.RunLeaseDispatchMessageID,
+		DispatchLeaseID:   leased.RunLeaseDispatchLeaseID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Status != db.RunLeaseStatusRunning {
+		t.Fatalf("started run lease status = %s, want running", started.Status)
+	}
+
+	released, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+		OrgID:                pgvalue.UUID(ids.orgID),
+		RunID:                pgvalue.UUID(ids.runID),
+		RunLeaseID:           leased.RunLeaseID,
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		DispatchMessageID:    leased.RunLeaseDispatchMessageID,
+		DispatchLeaseID:      leased.RunLeaseDispatchLeaseID,
+		RunStatus:            db.RunStatusFailed,
+		Output:               []byte(`{"ok":false}`),
+		ErrorMessage:         pgtype.Text{String: "restore failed after resume", Valid: true},
+		TerminalEventPayload: []byte(`{"failure_kind":"transient_error","detail":{"message":"restore failed after resume"}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if released.Status != db.RunStatusQueued || released.ExecutionStatus != db.RunExecutionStatusQueued || released.CurrentAttemptNumber != 2 {
+		t.Fatalf("released run state = %s/%s attempt=%d, want queued/queued/2", released.Status, released.ExecutionStatus, released.CurrentAttemptNumber)
+	}
+	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusFailed)
+	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.waiting", "run.resumed", "run_lease.leased", "run.started", "run.failed", "run.retry_scheduled"}, []string{"run.waiting", "run.resumed", "run.failed", "run.retry_scheduled"})
+}
+
+func TestReleaseRunLeaseRetryBackoffPreventsImmediateLease(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	sessionID, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	seedSessionRun(t, ctx, pool, ids, sessionID)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET locked_retry_policy = '{"enabled":true,"maxAttempts":2,"backoff":{"minMs":3600000,"maxMs":3600000,"factor":1,"jitter":"none"}}'::jsonb,
+		       active_started_at = now() - interval '2 seconds'
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
+		OrgID:                pgvalue.UUID(ids.orgID),
+		RunID:                pgvalue.UUID(ids.runID),
+		RunLeaseID:           pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:     pgvalue.UUID(workerID),
+		DispatchMessageID:    "dispatch-" + runLeaseID.String()[:8],
+		DispatchLeaseID:      "lease-" + runLeaseID.String()[:8],
+		RunStatus:            db.RunStatusFailed,
+		Output:               []byte(`{"ok":false}`),
+		ErrorMessage:         pgtype.Text{String: "transient failure", Valid: true},
+		TerminalEventPayload: []byte(`{"failure_kind":"transient_error","detail":{"message":"transient failure"}}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var dispatchGeneration int64
+	var queueTimestamp time.Time
+	if err := pool.QueryRow(ctx, `
+		SELECT dispatch_generation, queue_timestamp
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&dispatchGeneration, &queueTimestamp); err != nil {
+		t.Fatal(err)
+	}
+	if time.Until(queueTimestamp) < 30*time.Minute {
+		t.Fatalf("queue timestamp = %s, want future retry backoff", queueTimestamp)
+	}
+	if _, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "backoff", dispatchGeneration)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("immediate retry lease error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
 func TestRenewRunLeaseRejectsStaleDispatchGeneration(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -598,6 +941,71 @@ func assertRunDispatchRequeuedLifecycle(t *testing.T, ctx context.Context, pool 
 	}
 	if snapshotTransition != "run.dispatch_requeued" || eventKind != "run.dispatch_requeued" || outboxCount != 1 {
 		t.Fatalf("requeue lifecycle = snapshot %q event %q outbox %d, want run.dispatch_requeued/run.dispatch_requeued/1", snapshotTransition, eventKind, outboxCount)
+	}
+}
+
+func assertRunLifecycleTransitions(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, wantSnapshots []string, wantEvents []string) {
+	t.Helper()
+	rows, err := pool.Query(ctx, `
+		SELECT transition
+		  FROM run_state_snapshots
+		 WHERE org_id = $1
+		   AND run_id = $2
+		 ORDER BY version ASC
+	`, ids.orgID, ids.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var snapshots []string
+	for rows.Next() {
+		var transition string
+		if err := rows.Scan(&transition); err != nil {
+			t.Fatal(err)
+		}
+		snapshots = append(snapshots, transition)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != len(wantSnapshots) {
+		t.Fatalf("snapshot transitions = %v, want %v", snapshots, wantSnapshots)
+	}
+	for i := range wantSnapshots {
+		if snapshots[i] != wantSnapshots[i] {
+			t.Fatalf("snapshot transitions = %v, want %v", snapshots, wantSnapshots)
+		}
+	}
+
+	rows, err = pool.Query(ctx, `
+		SELECT kind
+		  FROM event_hot_payloads
+		 WHERE org_id = $1
+		   AND run_id = $2
+		 ORDER BY seq ASC
+	`, ids.orgID, ids.runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var events []string
+	for rows.Next() {
+		var kind string
+		if err := rows.Scan(&kind); err != nil {
+			t.Fatal(err)
+		}
+		events = append(events, kind)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != len(wantEvents) {
+		t.Fatalf("event kinds = %v, want %v", events, wantEvents)
+	}
+	for i := range wantEvents {
+		if events[i] != wantEvents[i] {
+			t.Fatalf("event kinds = %v, want %v", events, wantEvents)
+		}
 	}
 }
 
