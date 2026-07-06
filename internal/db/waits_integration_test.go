@@ -250,6 +250,335 @@ func TestCancelRunCancelsPendingWaits(t *testing.T) {
 	assertWaitAndRunWaitState(t, ctx, pool, ids.orgID, waitID, db.WaitStateCancelled, runWaitID, db.RunWaitStateCancelled)
 }
 
+func TestCheckpointRunWaitRestoreLifecycle(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
+	checkpointed := createCheckpointedRunWait(t, ctx, queries, ids, runLeaseID, workerID)
+	assertCheckpointedRunWaitParked(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, runLeaseID, checkpointed.runtimeInstanceID, checkpointed.runtimeCheckpointID)
+	assertLatestRunTransition(t, ctx, pool, ids.orgID, ids.runID, "run.waiting")
+
+	if _, err := queries.ResolveRunWait(ctx, db.ResolveRunWaitParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		ID:     pgvalue.UUID(checkpointed.runWaitID),
+		Result: []byte(`{"timer":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeued) != 1 {
+		t.Fatalf("requeued waits = %d, want 1", len(requeued))
+	}
+	assertWaitAndRunWaitState(t, ctx, pool, ids.orgID, checkpointed.waitID, db.WaitStateCompleted, checkpointed.runWaitID, db.RunWaitStateResuming)
+	assertRunQueuedAfterWaitResume(t, ctx, pool, ids.orgID, ids.runID)
+	assertLatestRunTransition(t, ctx, pool, ids.orgID, ids.runID, "run.resumed")
+
+	mount, err := queries.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
+		OrgID:           pgvalue.UUID(ids.orgID),
+		ProjectID:       pgvalue.UUID(ids.projectID),
+		EnvironmentID:   pgvalue.UUID(ids.environmentID),
+		WorkspaceID:     pgvalue.UUID(ids.workspaceID),
+		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RequestPriority: requeued[0].Priority,
+		Request:         []byte(`{"reason":"checkpoint_restore_test"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := queries.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
+		WorkspaceMountID: mount.ID,
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		WorkspaceID:      pgvalue.UUID(ids.workspaceID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	dispatchGeneration := currentRunDispatchGeneration(t, ctx, pool, ids.orgID, ids.runID)
+	leased, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "restore", dispatchGeneration))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pgvalue.MustUUIDValue(leased.RunLeaseRestoreRuntimeCheckpointID); got != checkpointed.runtimeCheckpointID {
+		t.Fatalf("restore runtime checkpoint id = %s, want %s", got, checkpointed.runtimeCheckpointID)
+	}
+	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, pgvalue.MustUUIDValue(leased.RunLeaseID), workerID, db.RuntimeCheckpointRestoreStatusRestoring)
+
+	payload, err := queries.GetRunRestorePayload(ctx, db.GetRunRestorePayloadParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       leased.RunLeaseID,
+		WorkerInstanceID: pgvalue.UUID(workerID),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pgvalue.MustUUIDValue(payload.RuntimeCheckpointID); got != checkpointed.runtimeCheckpointID {
+		t.Fatalf("restore payload checkpoint id = %s, want %s", got, checkpointed.runtimeCheckpointID)
+	}
+	if got := pgvalue.MustUUIDValue(payload.RunWaitID); got != checkpointed.runWaitID {
+		t.Fatalf("restore payload run wait id = %s, want %s", got, checkpointed.runWaitID)
+	}
+	if payload.WaitState != db.WaitStateCompleted {
+		t.Fatalf("restore payload wait state = %s, want completed", payload.WaitState)
+	}
+	var payloadResult map[string]bool
+	if err := json.Unmarshal(payload.WaitResult, &payloadResult); err != nil {
+		t.Fatal(err)
+	}
+	if !payloadResult["timer"] {
+		t.Fatalf("restore payload wait result = %s, want timer payload", string(payload.WaitResult))
+	}
+
+	started, err := queries.StartRunLease(ctx, db.StartRunLeaseParams{
+		OrgID:             pgvalue.UUID(ids.orgID),
+		RunID:             pgvalue.UUID(ids.runID),
+		RunLeaseID:        leased.RunLeaseID,
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		DispatchMessageID: leased.RunLeaseDispatchMessageID,
+		DispatchLeaseID:   leased.RunLeaseDispatchLeaseID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Status != db.RunLeaseStatusRunning {
+		t.Fatalf("started run lease status = %s, want running", started.Status)
+	}
+	resumed, err := queries.MarkRuntimeResumeWaitResumed(ctx, db.MarkRuntimeResumeWaitResumedParams{
+		OrgID:               pgvalue.UUID(ids.orgID),
+		ID:                  pgvalue.UUID(checkpointed.runWaitID),
+		RunID:               pgvalue.UUID(ids.runID),
+		RuntimeCheckpointID: pgvalue.UUID(checkpointed.runtimeCheckpointID),
+		RunLeaseID:          leased.RunLeaseID,
+		RestorePhases:       []byte(`[{"name":"load","duration_ms":12}]`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.State != db.RunWaitStateReleased {
+		t.Fatalf("resumed run wait state = %s, want released", resumed.State)
+	}
+	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, pgvalue.MustUUIDValue(leased.RunLeaseID), workerID, db.RuntimeCheckpointRestoreStatusRestored)
+}
+
+func TestRequeueResolvedRunWaitsRequiresLatestRuntimeCheckpoint(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
+	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
+	otherRuntimeCheckpointID := uuid.Must(uuid.NewV7())
+	checkpointed := createCheckpointedRunWait(t, ctx, queries, ids, runLeaseID, workerID)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_checkpoints (
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
+			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
+			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id,
+			owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id,
+			owner_worker_instance_id, source_worker_instance_id, cni_profile, manifest, ready_at
+		)
+		SELECT $1, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
+		       source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
+		       'ready', runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+		       initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id,
+		       owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id,
+		       owner_worker_instance_id, source_worker_instance_id, cni_profile, '{"checkpoint":"other"}'::jsonb, now()
+		  FROM runtime_checkpoints
+		 WHERE org_id = $2
+		   AND run_id = $3
+		   AND id = $4
+	`, otherRuntimeCheckpointID, ids.orgID, ids.runID, checkpointed.runtimeCheckpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET latest_runtime_checkpoint_id = $3
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID, otherRuntimeCheckpointID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ResolveRunWait(ctx, db.ResolveRunWaitParams{
+		OrgID:  pgvalue.UUID(ids.orgID),
+		ID:     pgvalue.UUID(checkpointed.runWaitID),
+		Result: []byte(`{"timer":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	requeued, err := queries.RequeueResolvedRunWaits(ctx, db.RequeueResolvedRunWaitsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(requeued) != 0 {
+		t.Fatalf("requeued waits = %d, want 0", len(requeued))
+	}
+	failed, err := queries.FailStaleResolvedRunWaits(ctx, db.FailStaleResolvedRunWaitsParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		LimitCount:    10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(failed) != 1 {
+		t.Fatalf("failed stale waits = %d, want 1", len(failed))
+	}
+	assertRunFailedAfterStaleWaitResume(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, checkpointed.runtimeCheckpointID, otherRuntimeCheckpointID, checkpointed.runtimeInstanceID)
+}
+
+type checkpointedRunWaitFixture struct {
+	waitID              uuid.UUID
+	runWaitID           uuid.UUID
+	runtimeCheckpointID uuid.UUID
+	runtimeInstanceID   uuid.UUID
+}
+
+func createCheckpointedRunWait(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, runLeaseID uuid.UUID, workerID uuid.UUID) checkpointedRunWaitFixture {
+	t.Helper()
+	waitID := uuid.Must(uuid.NewV7())
+	runWaitID := uuid.Must(uuid.NewV7())
+	runtimeCheckpointID := uuid.Must(uuid.NewV7())
+
+	if _, err := queries.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
+		OrgID:            pgvalue.UUID(ids.orgID),
+		ProjectID:        pgvalue.UUID(ids.projectID),
+		EnvironmentID:    pgvalue.UUID(ids.environmentID),
+		RunID:            pgvalue.UUID(ids.runID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		WaitID:           pgvalue.UUID(waitID),
+		PublicID:         testWaitPublicID(t),
+		Kind:             db.WaitKindTimer,
+		CompletedAfter:   timestamptz(time.Now().Add(time.Hour)),
+		ExpiresAt:        timestamptz(time.Now().Add(2 * time.Hour)),
+		RunWaitID:        pgvalue.UUID(runWaitID),
+		CheckpointDelay:  interval(0),
+	}); err != nil {
+		t.Fatalf("create hot run wait: %v", err)
+	}
+	if _, err := queries.SetRunWaitWorkspaceVersion(ctx, db.SetRunWaitWorkspaceVersionParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		ProjectID:          pgvalue.UUID(ids.projectID),
+		EnvironmentID:      pgvalue.UUID(ids.environmentID),
+		ID:                 pgvalue.UUID(runWaitID),
+		RunID:              pgvalue.UUID(ids.runID),
+		WorkspaceVersionID: currentWorkspaceVersionID(t, ctx, queries, ids),
+	}); err != nil {
+		t.Fatalf("set run wait workspace version: %v", err)
+	}
+	commands, err := queries.CreateDueLiveRuntimeCheckpointWaitCommandsForWorker(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForWorkerParams{
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		LimitCount:       10,
+	})
+	if err != nil {
+		t.Fatalf("create checkpoint wait command: %v", err)
+	}
+	if len(commands) != 1 {
+		t.Fatalf("checkpoint wait commands = %d, want 1", len(commands))
+	}
+	command := commands[0]
+	if command.Kind != db.WorkerCommandKindRuntimeCheckpointWait {
+		t.Fatalf("checkpoint command kind = %s, want runtime_checkpoint_wait", command.Kind)
+	}
+	if _, err := queries.AcceptWorkerCommand(ctx, db.AcceptWorkerCommandParams{
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ID:               command.ID,
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
+	}); err != nil {
+		t.Fatalf("accept checkpoint wait command: %v", err)
+	}
+	claimed, err := queries.ClaimRuntimeCheckpointWait(ctx, db.ClaimRuntimeCheckpointWaitParams{
+		OrgID:               pgvalue.UUID(ids.orgID),
+		ProjectID:           pgvalue.UUID(ids.projectID),
+		EnvironmentID:       pgvalue.UUID(ids.environmentID),
+		RunID:               pgvalue.UUID(ids.runID),
+		RunWaitID:           pgvalue.UUID(runWaitID),
+		RunLeaseID:          pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RuntimeCheckpointID: pgvalue.UUID(runtimeCheckpointID),
+	})
+	if err != nil {
+		t.Fatalf("claim runtime checkpoint wait: %v", err)
+	}
+	checkpoint, err := queries.CreateReadyRuntimeCheckpointForRunWait(ctx, db.CreateReadyRuntimeCheckpointForRunWaitParams{
+		WorkerCommandID:     command.ID,
+		OrgID:               pgvalue.UUID(ids.orgID),
+		ProjectID:           pgvalue.UUID(ids.projectID),
+		EnvironmentID:       pgvalue.UUID(ids.environmentID),
+		RunWaitID:           pgvalue.UUID(runWaitID),
+		RunID:               pgvalue.UUID(ids.runID),
+		RuntimeCheckpointID: pgvalue.UUID(runtimeCheckpointID),
+		RunLeaseID:          pgvalue.UUID(runLeaseID),
+		WorkerInstanceID:    pgvalue.UUID(workerID),
+		RuntimeBackend:      "firecracker",
+		RuntimeID:           "test-runtime",
+		RuntimeArch:         "arm64",
+		RuntimeABI:          "test",
+		KernelDigest:        "sha256:kernel",
+		InitramfsDigest:     "sha256:initramfs",
+		RootfsDigest:        "sha256:rootfs",
+		RuntimeConfigDigest: "sha256:runtime-config",
+		CniProfile:          "default",
+		Manifest:            []byte(`{"checkpoint":"ready"}`),
+	})
+	if err != nil {
+		t.Fatalf("create ready runtime checkpoint for run wait: %v", err)
+	}
+	if checkpoint.State != db.RuntimeCheckpointStateReady {
+		t.Fatalf("runtime checkpoint state = %s, want ready", checkpoint.State)
+	}
+	if _, err := queries.AcknowledgeWorkerCommandForRunWait(ctx, db.AcknowledgeWorkerCommandForRunWaitParams{
+		WorkerInstanceID: pgvalue.UUID(workerID),
+		ID:               command.ID,
+		OrgID:            pgvalue.UUID(ids.orgID),
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
+		RunID:            pgvalue.UUID(ids.runID),
+		RunWaitID:        pgvalue.UUID(runWaitID),
+		RunLeaseID:       pgvalue.UUID(runLeaseID),
+		Kind:             db.WorkerCommandKindRuntimeCheckpointWait,
+	}); err != nil {
+		t.Fatalf("acknowledge checkpoint wait command: %v", err)
+	}
+	return checkpointedRunWaitFixture{
+		waitID:              waitID,
+		runWaitID:           runWaitID,
+		runtimeCheckpointID: runtimeCheckpointID,
+		runtimeInstanceID:   pgvalue.MustUUIDValue(claimed.RuntimeInstanceID),
+	}
+}
+
+func currentWorkspaceVersionID(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs) pgtype.UUID {
+	t.Helper()
+	workspace, err := queries.GetWorkspace(ctx, db.GetWorkspaceParams{
+		OrgID:         pgvalue.UUID(ids.orgID),
+		ProjectID:     pgvalue.UUID(ids.projectID),
+		EnvironmentID: pgvalue.UUID(ids.environmentID),
+		ID:            pgvalue.UUID(ids.workspaceID),
+	})
+	if err != nil {
+		t.Fatalf("get workspace: %v", err)
+	}
+	if !workspace.CurrentVersionID.Valid {
+		t.Fatalf("workspace current version id is null")
+	}
+	return workspace.CurrentVersionID
+}
+
 func assertWaitAndRunWaitState(t *testing.T, ctx context.Context, pool interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }, orgID uuid.UUID, waitID uuid.UUID, wantWaitState db.WaitState, runWaitID uuid.UUID, wantRunWaitState db.RunWaitState) {
@@ -272,6 +601,327 @@ func assertWaitAndRunWaitState(t *testing.T, ctx context.Context, pool interface
 	}
 	if runWaitState != wantRunWaitState {
 		t.Fatalf("run wait state = %s, want %s", runWaitState, wantRunWaitState)
+	}
+}
+
+func assertCheckpointedRunWaitParked(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID, runWaitID uuid.UUID, runLeaseID uuid.UUID, runtimeInstanceID uuid.UUID, runtimeCheckpointID uuid.UUID) {
+	t.Helper()
+	var runStatus db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var currentRunLeaseID pgtype.UUID
+	var latestRuntimeCheckpointID pgtype.UUID
+	var runWaitState db.RunWaitState
+	var runLeaseStatus db.RunLeaseStatus
+	var runtimeInstanceState db.RuntimeInstanceState
+	var activeWorkspaceLeases int
+	if err := pool.QueryRow(ctx, `
+		SELECT runs.status,
+		       runs.execution_status,
+		       runs.current_run_lease_id,
+		       runs.latest_runtime_checkpoint_id,
+		       run_waits.state,
+		       run_leases.status,
+		       runtime_instances.state,
+		       (
+		           SELECT count(*)
+		             FROM workspace_leases
+		            WHERE workspace_leases.org_id = runs.org_id
+		              AND workspace_leases.owner_run_id = runs.id
+		              AND workspace_leases.state = 'active'
+		       )::int
+		  FROM runs
+		  JOIN run_waits ON run_waits.org_id = runs.org_id
+		                AND run_waits.run_id = runs.id
+		                AND run_waits.id = $3
+		  JOIN run_leases ON run_leases.org_id = runs.org_id
+		                 AND run_leases.run_id = runs.id
+		                 AND run_leases.id = $4
+		  JOIN runtime_instances ON runtime_instances.org_id = runs.org_id
+		                        AND runtime_instances.id = $5
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+	`, orgID, runID, runWaitID, runLeaseID, runtimeInstanceID).Scan(
+		&runStatus,
+		&executionStatus,
+		&currentRunLeaseID,
+		&latestRuntimeCheckpointID,
+		&runWaitState,
+		&runLeaseStatus,
+		&runtimeInstanceState,
+		&activeWorkspaceLeases,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusWaiting {
+		t.Fatalf("run status = %s, want waiting", runStatus)
+	}
+	if executionStatus != db.RunExecutionStatusWaiting {
+		t.Fatalf("run execution status = %s, want waiting", executionStatus)
+	}
+	if currentRunLeaseID.Valid {
+		t.Fatalf("current run lease id is valid, want null")
+	}
+	if got := pgvalue.MustUUIDValue(latestRuntimeCheckpointID); got != runtimeCheckpointID {
+		t.Fatalf("latest runtime checkpoint id = %s, want %s", got, runtimeCheckpointID)
+	}
+	if runWaitState != db.RunWaitStateCheckpointedWaiting {
+		t.Fatalf("run wait state = %s, want checkpointed_waiting", runWaitState)
+	}
+	if runLeaseStatus != db.RunLeaseStatusDetached {
+		t.Fatalf("run lease status = %s, want detached", runLeaseStatus)
+	}
+	if runtimeInstanceState != db.RuntimeInstanceStateClosed {
+		t.Fatalf("runtime instance state = %s, want closed", runtimeInstanceState)
+	}
+	if activeWorkspaceLeases != 0 {
+		t.Fatalf("active workspace leases = %d, want 0", activeWorkspaceLeases)
+	}
+}
+
+func assertRunQueuedAfterWaitResume(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID) {
+	t.Helper()
+	var runStatus db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var currentRunLeaseID pgtype.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT status, execution_status, current_run_lease_id
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, orgID, runID).Scan(&runStatus, &executionStatus, &currentRunLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusQueued {
+		t.Fatalf("run status = %s, want queued", runStatus)
+	}
+	if executionStatus != db.RunExecutionStatusQueued {
+		t.Fatalf("run execution status = %s, want queued", executionStatus)
+	}
+	if currentRunLeaseID.Valid {
+		t.Fatalf("current run lease id is valid, want null")
+	}
+}
+
+func assertLatestRunTransition(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID, wantTransition string) {
+	t.Helper()
+	var snapshotTransition string
+	var eventKind string
+	var outboxCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT (
+		           SELECT transition
+		             FROM run_state_snapshots
+		            WHERE org_id = $1
+		              AND run_id = $2
+		            ORDER BY version DESC
+		            LIMIT 1
+		       ),
+		       (
+		           SELECT kind
+		             FROM event_hot_payloads
+		            WHERE org_id = $1
+		              AND run_id = $2
+		            ORDER BY seq DESC
+		            LIMIT 1
+		       ),
+		       (
+		           SELECT count(*)
+		             FROM telemetry_outbox
+		            WHERE org_id = $1
+		              AND source_kind = 'run'
+		              AND source_id = $2
+		       )::int
+	`, orgID, runID).Scan(&snapshotTransition, &eventKind, &outboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotTransition != wantTransition {
+		t.Fatalf("latest run snapshot transition = %s, want %s", snapshotTransition, wantTransition)
+	}
+	if eventKind != wantTransition {
+		t.Fatalf("latest run event kind = %s, want %s", eventKind, wantTransition)
+	}
+	if outboxCount == 0 {
+		t.Fatalf("telemetry outbox count = 0, want at least 1")
+	}
+}
+
+func currentRunDispatchGeneration(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID) int64 {
+	t.Helper()
+	var dispatchGeneration int64
+	if err := pool.QueryRow(ctx, `
+		SELECT dispatch_generation
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, orgID, runID).Scan(&dispatchGeneration); err != nil {
+		t.Fatal(err)
+	}
+	return dispatchGeneration
+}
+
+func assertRuntimeCheckpointRestore(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID, runWaitID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID, wantStatus db.RuntimeCheckpointRestoreStatus) {
+	t.Helper()
+	var status db.RuntimeCheckpointRestoreStatus
+	var gotRunWaitID pgtype.UUID
+	var gotRunLeaseID pgtype.UUID
+	var gotWorkerID pgtype.UUID
+	var acknowledgedAt pgtype.Timestamptz
+	var finishedAt pgtype.Timestamptz
+	var phases []byte
+	if err := pool.QueryRow(ctx, `
+		SELECT status,
+		       run_wait_id,
+		       run_lease_id,
+		       worker_instance_id,
+		       acknowledged_at,
+		       finished_at,
+		       phases
+		  FROM runtime_checkpoint_restores
+		 WHERE org_id = $1
+		   AND run_id = $2
+		   AND run_wait_id = $3
+		   AND run_lease_id = $4
+	`, orgID, runID, runWaitID, runLeaseID).Scan(
+		&status,
+		&gotRunWaitID,
+		&gotRunLeaseID,
+		&gotWorkerID,
+		&acknowledgedAt,
+		&finishedAt,
+		&phases,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if status != wantStatus {
+		t.Fatalf("restore status = %s, want %s", status, wantStatus)
+	}
+	if got := pgvalue.MustUUIDValue(gotRunWaitID); got != runWaitID {
+		t.Fatalf("restore run wait id = %s, want %s", got, runWaitID)
+	}
+	if got := pgvalue.MustUUIDValue(gotRunLeaseID); got != runLeaseID {
+		t.Fatalf("restore run lease id = %s, want %s", got, runLeaseID)
+	}
+	if got := pgvalue.MustUUIDValue(gotWorkerID); got != workerID {
+		t.Fatalf("restore worker id = %s, want %s", got, workerID)
+	}
+	if wantStatus != db.RuntimeCheckpointRestoreStatusRestored {
+		return
+	}
+	if !acknowledgedAt.Valid {
+		t.Fatalf("restore acknowledged_at is null, want set")
+	}
+	if !finishedAt.Valid {
+		t.Fatalf("restore finished_at is null, want set")
+	}
+	var phasePayload []map[string]any
+	if err := json.Unmarshal(phases, &phasePayload); err != nil {
+		t.Fatal(err)
+	}
+	if len(phasePayload) != 1 || phasePayload[0]["name"] != "load" {
+		t.Fatalf("restore phases = %s, want load phase", string(phases))
+	}
+}
+
+func assertRunFailedAfterStaleWaitResume(t *testing.T, ctx context.Context, pool interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, orgID uuid.UUID, runID uuid.UUID, runWaitID uuid.UUID, runtimeCheckpointID uuid.UUID, latestRuntimeCheckpointID uuid.UUID, runtimeInstanceID uuid.UUID) {
+	t.Helper()
+	var runStatus db.RunStatus
+	var executionStatus db.RunExecutionStatus
+	var terminalOutcome db.NullRunTerminalOutcome
+	var errorMessage string
+	var currentRunLeaseID pgtype.UUID
+	var gotLatestRuntimeCheckpointID pgtype.UUID
+	var runWaitState db.RunWaitState
+	var gotRunWaitRuntimeCheckpointID pgtype.UUID
+	var runtimeInstanceState db.RuntimeInstanceState
+	var staleCheckpointState db.RuntimeCheckpointState
+	var latestCheckpointState db.RuntimeCheckpointState
+	if err := pool.QueryRow(ctx, `
+		SELECT runs.status,
+		       runs.execution_status,
+		       runs.terminal_outcome,
+		       runs.error_message,
+		       runs.current_run_lease_id,
+		       runs.latest_runtime_checkpoint_id,
+		       run_waits.state,
+		       run_waits.runtime_checkpoint_id,
+		       runtime_instances.state,
+		       stale_checkpoint.state,
+		       latest_checkpoint.state
+		  FROM runs
+		  JOIN run_waits ON run_waits.org_id = runs.org_id
+		                AND run_waits.run_id = runs.id
+		                AND run_waits.id = $3
+		  JOIN runtime_instances ON runtime_instances.org_id = runs.org_id
+		                        AND runtime_instances.id = $6
+		  JOIN runtime_checkpoints stale_checkpoint
+		    ON stale_checkpoint.org_id = runs.org_id
+		   AND stale_checkpoint.run_id = runs.id
+		   AND stale_checkpoint.id = $4
+		  JOIN runtime_checkpoints latest_checkpoint
+		    ON latest_checkpoint.org_id = runs.org_id
+		   AND latest_checkpoint.run_id = runs.id
+		   AND latest_checkpoint.id = $5
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+	`, orgID, runID, runWaitID, runtimeCheckpointID, latestRuntimeCheckpointID, runtimeInstanceID).Scan(
+		&runStatus,
+		&executionStatus,
+		&terminalOutcome,
+		&errorMessage,
+		&currentRunLeaseID,
+		&gotLatestRuntimeCheckpointID,
+		&runWaitState,
+		&gotRunWaitRuntimeCheckpointID,
+		&runtimeInstanceState,
+		&staleCheckpointState,
+		&latestCheckpointState,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if runStatus != db.RunStatusFailed {
+		t.Fatalf("run status = %s, want failed", runStatus)
+	}
+	if executionStatus != db.RunExecutionStatusFinished {
+		t.Fatalf("run execution status = %s, want finished", executionStatus)
+	}
+	if !terminalOutcome.Valid || terminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeFailed {
+		t.Fatalf("terminal outcome = %+v, want failed", terminalOutcome)
+	}
+	if errorMessage != "resolved wait is not attached to the latest runtime checkpoint" {
+		t.Fatalf("error message = %q, want non-latest checkpoint message", errorMessage)
+	}
+	if currentRunLeaseID.Valid {
+		t.Fatalf("current run lease id is valid, want null")
+	}
+	if got := pgvalue.MustUUIDValue(gotLatestRuntimeCheckpointID); got != latestRuntimeCheckpointID {
+		t.Fatalf("latest runtime checkpoint id = %s, want %s", got, latestRuntimeCheckpointID)
+	}
+	if runWaitState != db.RunWaitStateFailed {
+		t.Fatalf("run wait state = %s, want failed", runWaitState)
+	}
+	if got := pgvalue.MustUUIDValue(gotRunWaitRuntimeCheckpointID); got != runtimeCheckpointID {
+		t.Fatalf("run wait runtime checkpoint id = %s, want %s", got, runtimeCheckpointID)
+	}
+	if runtimeInstanceState != db.RuntimeInstanceStateClosed {
+		t.Fatalf("runtime instance state = %s, want closed", runtimeInstanceState)
+	}
+	if staleCheckpointState != db.RuntimeCheckpointStateInvalid {
+		t.Fatalf("stale checkpoint state = %s, want invalid", staleCheckpointState)
+	}
+	if latestCheckpointState != db.RuntimeCheckpointStateReady {
+		t.Fatalf("latest checkpoint state = %s, want ready", latestCheckpointState)
 	}
 }
 
