@@ -2415,7 +2415,7 @@ CREATE TABLE run_leases (
         ON DELETE CASCADE
 );
 
-CREATE TABLE run_snapshots (
+CREATE TABLE run_state_snapshots (
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     run_id UUID NOT NULL,
@@ -2441,8 +2441,8 @@ CREATE TABLE run_snapshots (
         ON DELETE SET NULL (run_lease_id)
 );
 
-ALTER TABLE run_snapshots
-    ADD CONSTRAINT run_snapshots_operation_id_fkey
+ALTER TABLE run_state_snapshots
+    ADD CONSTRAINT run_state_snapshots_operation_id_fkey
     FOREIGN KEY (org_id, run_id, operation_id)
     REFERENCES run_operations(org_id, run_id, id)
     ON DELETE SET NULL (operation_id);
@@ -3126,7 +3126,7 @@ CREATE INDEX run_leases_active_lease_idx ON run_leases(org_id, worker_group_id, 
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, worker_group_id, worker_instance_id, status);
 CREATE INDEX run_leases_worker_group_idx ON run_leases(worker_group_id);
-CREATE INDEX run_snapshots_run_created_idx ON run_snapshots(org_id, run_id, created_at DESC);
+CREATE INDEX run_state_snapshots_run_created_idx ON run_state_snapshots(org_id, run_id, created_at DESC);
 CREATE INDEX runtime_checkpoints_run_state_idx ON runtime_checkpoints(run_id, state, created_at DESC);
 CREATE INDEX runtime_checkpoint_artifacts_role_idx ON runtime_checkpoint_artifacts(org_id, run_id, runtime_checkpoint_id, role, ordinal);
 CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC);

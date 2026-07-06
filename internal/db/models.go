@@ -3100,7 +3100,7 @@ type RunOperation struct {
 	RejectedAt     pgtype.Timestamptz `json:"rejected_at"`
 }
 
-type RunSnapshot struct {
+type RunStateSnapshot struct {
 	OrgID           pgtype.UUID            `json:"org_id"`
 	WorkerGroupID   string                 `json:"worker_group_id"`
 	RunID           pgtype.UUID            `json:"run_id"`

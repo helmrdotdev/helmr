@@ -252,7 +252,7 @@ failed_runtime_checkpoint_restores AS (
     RETURNING runtime_checkpoint_restores.id
 ),
 failed_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -270,7 +270,7 @@ failed_snapshot AS (
              ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'detail', jsonb_build_object('message', 'worker lease expired while run was executing'))
            END
       FROM failed_runs
-    RETURNING run_snapshots.run_id, run_snapshots.version
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -540,7 +540,7 @@ updated AS (
     RETURNING runs.*
 ),
 leased_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.worker_group_id,
            updated.id,
@@ -553,7 +553,7 @@ leased_snapshot AS (
            'run_lease.leased',
            jsonb_build_object('worker_instance_id', leased_run_lease.worker_instance_id)
       FROM updated, leased_run_lease
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 )
 SELECT
     updated.id,
@@ -737,7 +737,7 @@ started_run AS (
     RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.current_run_lease_id, runs.state_version
 ),
 started_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT started_run.org_id,
            started_run.worker_group_id,
            started_run.id,
@@ -750,7 +750,7 @@ started_snapshot AS (
            'run_lease.started',
            '{}'::jsonb
       FROM started_run, started_lease
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 )
 SELECT started_lease.*
   FROM started_lease
@@ -1482,7 +1482,7 @@ output_usage_event AS (
     RETURNING id
 ),
 released_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT released.org_id,
            released.worker_group_id,
            released.id,
@@ -1502,10 +1502,10 @@ released_snapshot AS (
       FROM released
       JOIN effective_release ON effective_release.id = released.id
       LEFT JOIN retry_plan ON retry_plan.run_id = released.id
-    RETURNING run_snapshots.run_id, run_snapshots.version
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
 retry_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, previous_version, transition, reason)
     SELECT released.org_id,
            released.worker_group_id,
            released.id,
@@ -1524,7 +1524,7 @@ retry_snapshot AS (
            )
       FROM released
       JOIN retry_plan ON retry_plan.run_id = released.id
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 event_inputs(
     event_ordinal,

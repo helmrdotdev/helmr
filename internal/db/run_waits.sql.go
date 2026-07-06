@@ -896,7 +896,7 @@ failed_sessions AS (
       FROM failed_runs
 ),
 	failed_snapshots AS (
-	    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+	    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -916,7 +916,7 @@ failed_sessions AS (
                'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
            )
 	      FROM failed_runs
-	    RETURNING run_snapshots.run_id
+	    RETURNING run_state_snapshots.run_id
 	),
 failed_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)

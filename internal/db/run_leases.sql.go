@@ -222,7 +222,7 @@ failed_runtime_checkpoint_restores AS (
     RETURNING runtime_checkpoint_restores.id
 ),
 failed_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -240,7 +240,7 @@ failed_snapshot AS (
              ELSE jsonb_build_object('failure_kind', 'worker_lease_expired', 'detail', jsonb_build_object('message', 'worker lease expired while run was executing'))
            END
       FROM failed_runs
-    RETURNING run_snapshots.run_id, run_snapshots.version
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -765,7 +765,7 @@ updated AS (
     RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
 leased_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.worker_group_id,
            updated.id,
@@ -778,7 +778,7 @@ leased_snapshot AS (
            'run_lease.leased',
            jsonb_build_object('worker_instance_id', leased_run_lease.worker_instance_id)
       FROM updated, leased_run_lease
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 )
 SELECT
     updated.id,
@@ -1757,7 +1757,7 @@ output_usage_event AS (
     RETURNING id
 ),
 released_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT released.org_id,
            released.worker_group_id,
            released.id,
@@ -1777,10 +1777,10 @@ released_snapshot AS (
       FROM released
       JOIN effective_release ON effective_release.id = released.id
       LEFT JOIN retry_plan ON retry_plan.run_id = released.id
-    RETURNING run_snapshots.run_id, run_snapshots.version
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
 retry_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, previous_version, transition, reason)
     SELECT released.org_id,
            released.worker_group_id,
            released.id,
@@ -1799,7 +1799,7 @@ retry_snapshot AS (
            )
       FROM released
       JOIN retry_plan ON retry_plan.run_id = released.id
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 event_inputs(
     event_ordinal,
@@ -2451,7 +2451,7 @@ started_run AS (
     RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.current_run_lease_id, runs.state_version
 ),
 started_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason)
     SELECT started_run.org_id,
            started_run.worker_group_id,
            started_run.id,
@@ -2464,7 +2464,7 @@ started_snapshot AS (
            'run_lease.started',
            '{}'::jsonb
       FROM started_run, started_lease
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 )
 SELECT started_lease.id, started_lease.org_id, started_lease.queue_class, started_lease.run_id, started_lease.worker_instance_id, started_lease.worker_group_id, started_lease.project_id, started_lease.environment_id, started_lease.dispatch_message_id, started_lease.dispatch_generation, started_lease.dispatch_lease_id, started_lease.dispatch_attempt, started_lease.attempt_number, started_lease.queue_name, started_lease.concurrency_key, started_lease.status, started_lease.lease_expires_at, started_lease.runtime_id, started_lease.worker_protocol_version, started_lease.active_duration_ms, started_lease.trace_id, started_lease.span_id, started_lease.parent_span_id, started_lease.traceparent, started_lease.restore_runtime_checkpoint_id, started_lease.leased_at, started_lease.started_at, started_lease.renewed_at, started_lease.released_at, started_lease.lost_at
   FROM started_lease

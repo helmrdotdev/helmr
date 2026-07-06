@@ -180,7 +180,7 @@ selected_runtime AS MATERIALIZED (
 		    RETURNING *
 ),
 created_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, operation_id, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, operation_id, transition, reason)
     SELECT created.org_id,
            created.worker_group_id,
            created.id,
@@ -192,7 +192,7 @@ created_snapshot AS (
            'run.created',
            sqlc.arg(event_payload)
       FROM created
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 created_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -314,7 +314,7 @@ expired_sessions AS (
       FROM expired_runs
 ),
 expired_snapshots AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
     SELECT expired_runs.org_id,
            expired_runs.worker_group_id,
            expired_runs.id,
@@ -326,7 +326,7 @@ expired_snapshots AS (
            'run.expired',
            jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
       FROM expired_runs
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 expired_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -459,7 +459,7 @@ failed_session AS (
       FROM failed_run
 ),
 failed_snapshot AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
     SELECT failed_run.org_id,
            failed_run.worker_group_id,
            failed_run.id,
@@ -471,7 +471,7 @@ failed_snapshot AS (
            'run.failed',
            COALESCE(sqlc.arg(reason)::jsonb, '{}'::jsonb)
       FROM failed_run
-    RETURNING run_snapshots.run_id
+    RETURNING run_state_snapshots.run_id
 ),
 failed_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
@@ -753,7 +753,7 @@ cancelled_session AS (
     RETURNING run_leases.id
 ),
 	snapshot AS (
-	    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, operation_id, previous_version, transition, reason)
+	    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, operation_id, previous_version, transition, reason)
     SELECT updated.org_id,
            updated.worker_group_id,
            updated.id,
@@ -771,7 +771,7 @@ cancelled_session AS (
                'force', sqlc.arg(force)::bool
            )
 	      FROM updated
-	    RETURNING run_snapshots.run_id
+	    RETURNING run_state_snapshots.run_id
 	),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)

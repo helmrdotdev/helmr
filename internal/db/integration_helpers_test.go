@@ -431,7 +431,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_snapshots (
+		INSERT INTO run_state_snapshots (
 			org_id, worker_group_id, run_id, version, status, execution_status,
 			attempt_number, run_lease_id, transition, reason
 		)
