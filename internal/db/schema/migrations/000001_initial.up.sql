@@ -533,10 +533,18 @@ CREATE TYPE public_access_token_scope_type AS ENUM (
     'session.output.read'
 );
 
-CREATE TYPE run_wait_kind AS ENUM (
+CREATE TYPE wait_kind AS ENUM (
     'stream',
     'token',
     'timer'
+);
+
+CREATE TYPE wait_state AS ENUM (
+    'pending',
+    'completed',
+    'failed',
+    'expired',
+    'cancelled'
 );
 
 CREATE TYPE worker_command_kind AS ENUM (
@@ -548,14 +556,11 @@ CREATE TYPE worker_command_kind AS ENUM (
 );
 
 CREATE TYPE run_wait_state AS ENUM (
-    'live_waiting',
+    'hot_waiting',
     'checkpointing',
     'checkpointed_waiting',
-    'resolved_live',
-    'resolved_checkpointed',
-    'expired',
     'resuming',
-    'resumed',
+    'released',
     'cancelled',
     'failed'
 );
@@ -2618,21 +2623,76 @@ CREATE INDEX usage_ledger_entries_run_meter_idx
     ON usage_ledger_entries (org_id, run_id, meter)
     INCLUDE (quantity);
 
-CREATE TABLE run_waits (
+CREATE TABLE waits (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wait_[a-z2-7]{26}$'),
+    org_id UUID NOT NULL,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
+    kind wait_kind NOT NULL,
+    state wait_state NOT NULL DEFAULT 'pending',
+    idempotency_key TEXT NOT NULL DEFAULT '',
+    correlation_key TEXT NOT NULL DEFAULT '',
+    completed_by_run_id UUID,
+    completed_after TIMESTAMPTZ,
+    stream_id UUID,
+    stream_sequence BIGINT CHECK (stream_sequence IS NULL OR stream_sequence >= 0),
+    stream_record_id UUID,
+    token_id UUID,
+    result JSONB,
+    error JSONB,
+    expires_at TIMESTAMPTZ,
+    completed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (org_id, id),
+    UNIQUE (org_id, project_id, environment_id, id),
+    CHECK (
+        (
+            kind = 'stream'
+            AND stream_id IS NOT NULL
+            AND token_id IS NULL
+            AND completed_after IS NULL
+        )
+        OR (
+            kind = 'token'
+            AND token_id IS NOT NULL
+            AND stream_id IS NULL
+            AND completed_after IS NULL
+        )
+        OR (
+            kind = 'timer'
+            AND completed_after IS NOT NULL
+            AND stream_id IS NULL
+            AND token_id IS NULL
+        )
+    ),
+    FOREIGN KEY (org_id, project_id, environment_id, completed_by_run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE SET NULL (completed_by_run_id),
+    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, stream_id, stream_record_id)
+        REFERENCES stream_records(org_id, stream_id, id)
+        ON DELETE SET NULL (stream_record_id),
+    FOREIGN KEY (org_id, project_id, environment_id, token_id)
+        REFERENCES tokens(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE
+);
+
+CREATE TABLE run_waits (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    kind run_wait_kind NOT NULL,
-    correlation_id TEXT NOT NULL DEFAULT '',
-    state run_wait_state NOT NULL DEFAULT 'live_waiting',
-    timeout_at TIMESTAMPTZ,
+    wait_id UUID NOT NULL,
+    state run_wait_state NOT NULL DEFAULT 'hot_waiting',
     runtime_checkpoint_due_at TIMESTAMPTZ,
     runtime_checkpoint_started_at TIMESTAMPTZ,
-    live_wait_started_at TIMESTAMPTZ,
+    hot_wait_started_at TIMESTAMPTZ,
     owner_runtime_instance_id UUID,
     owner_runtime_epoch BIGINT CHECK (owner_runtime_epoch IS NULL OR owner_runtime_epoch > 0),
     owner_run_id UUID,
@@ -2642,12 +2702,10 @@ CREATE TABLE run_waits (
     runtime_checkpoint_id UUID,
     workspace_version_id UUID,
     active_elapsed_ms_at_park BIGINT CHECK (active_elapsed_ms_at_park IS NULL OR active_elapsed_ms_at_park >= 0),
-    parked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    resolved_at TIMESTAMPTZ,
-    resuming_at TIMESTAMPTZ,
-    resumed_at TIMESTAMPTZ,
-    cancelled_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resuming_at TIMESTAMPTZ,
+    released_at TIMESTAMPTZ,
+    cancelled_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     UNIQUE (org_id, worker_group_id, id),
@@ -2655,8 +2713,12 @@ CREATE TABLE run_waits (
     UNIQUE (org_id, worker_group_id, project_id, environment_id, id),
     UNIQUE (org_id, run_id, id),
     UNIQUE (org_id, worker_group_id, run_id, id),
+    UNIQUE (org_id, run_id, wait_id),
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE CASCADE,
+    FOREIGN KEY (org_id, project_id, environment_id, wait_id)
+        REFERENCES waits(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_id, runtime_checkpoint_id)
         REFERENCES runtime_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
@@ -2671,9 +2733,9 @@ CREATE TABLE run_waits (
         REFERENCES workspace_versions(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (workspace_version_id),
     CHECK (
-        state <> 'live_waiting'
+        state <> 'hot_waiting'
         OR (
-            live_wait_started_at IS NOT NULL
+            hot_wait_started_at IS NOT NULL
             AND owner_runtime_instance_id IS NOT NULL
             AND owner_runtime_epoch IS NOT NULL
             AND owner_run_id IS NOT NULL
@@ -2686,71 +2748,6 @@ CREATE TABLE run_waits (
         state <> 'checkpointed_waiting'
         OR (runtime_checkpoint_id IS NOT NULL AND workspace_version_id IS NOT NULL AND active_elapsed_ms_at_park IS NOT NULL)
     )
-);
-
-CREATE TABLE stream_waits (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_wait_id UUID NOT NULL,
-    stream_id UUID NOT NULL,
-    after_sequence BIGINT NOT NULL DEFAULT 0 CHECK (after_sequence >= 0),
-    correlation_id TEXT NOT NULL DEFAULT '',
-    matched_record_id UUID,
-    cursor_advanced_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_wait_id),
-    UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, worker_group_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
-        REFERENCES streams(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, stream_id, matched_record_id)
-        REFERENCES stream_records(org_id, stream_id, id)
-        ON DELETE SET NULL (matched_record_id)
-);
-
-CREATE TABLE token_waits (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_wait_id UUID NOT NULL,
-    token_id UUID NOT NULL,
-    matched_completion_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_wait_id),
-    UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, worker_group_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, token_id)
-        REFERENCES tokens(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE timer_waits (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_wait_id UUID NOT NULL,
-    fire_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_wait_id),
-    UNIQUE (org_id, project_id, environment_id, run_wait_id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, run_wait_id),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_wait_id)
-        REFERENCES run_waits(org_id, worker_group_id, project_id, environment_id, id)
-        ON DELETE CASCADE
 );
 
 CREATE TABLE worker_commands (
@@ -3139,15 +3136,18 @@ CREATE INDEX tokens_timeout_pending_idx ON tokens(org_id, timeout_at)
     WHERE state = 'pending';
 CREATE INDEX tokens_callback_fingerprint_pending_idx ON tokens(callback_key_id, callback_secret_fingerprint)
     WHERE state = 'pending' AND callback_key_id <> '' AND callback_secret_fingerprint <> '';
-CREATE INDEX run_waits_run_state_idx ON run_waits(org_id, run_id, state, parked_at DESC);
-CREATE INDEX run_waits_timeout_idx ON run_waits(org_id, timeout_at)
-    WHERE state IN ('live_waiting', 'checkpointed_waiting') AND timeout_at IS NOT NULL;
-CREATE INDEX stream_waits_open_idx ON stream_waits(org_id, worker_group_id, stream_id, after_sequence, run_wait_id)
-    WHERE matched_record_id IS NULL;
-CREATE INDEX stream_waits_matched_record_idx ON stream_waits(org_id, worker_group_id, stream_id, matched_record_id)
-    WHERE matched_record_id IS NOT NULL;
-CREATE INDEX token_waits_token_idx ON token_waits(org_id, worker_group_id, token_id, run_wait_id);
-CREATE INDEX timer_waits_fire_idx ON timer_waits(org_id, worker_group_id, fire_at, run_wait_id);
+CREATE INDEX waits_scope_state_idx ON waits(org_id, project_id, environment_id, state, created_at DESC);
+CREATE INDEX waits_stream_pending_idx ON waits(org_id, stream_id, stream_sequence, id)
+    WHERE kind = 'stream' AND state = 'pending';
+CREATE INDEX waits_stream_record_idx ON waits(org_id, stream_id, stream_record_id)
+    WHERE stream_record_id IS NOT NULL;
+CREATE INDEX waits_token_idx ON waits(org_id, token_id, id)
+    WHERE kind = 'token';
+CREATE INDEX waits_timer_due_idx ON waits(org_id, completed_after, id)
+    WHERE kind = 'timer' AND state = 'pending';
+CREATE INDEX waits_expiry_idx ON waits(org_id, expires_at, id)
+    WHERE expires_at IS NOT NULL AND state = 'pending';
+CREATE INDEX run_waits_run_state_idx ON run_waits(org_id, run_id, state, created_at DESC);
 CREATE INDEX tasks_scope_updated_idx ON tasks(org_id, project_id, environment_id, updated_at DESC);
 CREATE UNIQUE INDEX task_schedules_internal_dedup_active_idx
     ON task_schedules (org_id, project_id, schedule_type, dedup_key);

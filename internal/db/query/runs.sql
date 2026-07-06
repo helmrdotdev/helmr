@@ -701,7 +701,7 @@ updated AS (
        )
     RETURNING runs.*, target.current_run_lease_id AS previous_run_lease_id
 ),
-	cancelled_run_waits AS (
+cancelled_run_waits AS (
     UPDATE run_waits
        SET state = 'cancelled',
            cancelled_at = now(),
@@ -709,8 +709,19 @@ updated AS (
       FROM updated
      WHERE run_waits.org_id = updated.org_id
        AND run_waits.run_id = updated.id
-       AND run_waits.state IN ('live_waiting', 'checkpointing', 'checkpointed_waiting', 'resolved_live', 'resolved_checkpointed', 'resuming')
-    RETURNING run_waits.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming')
+    RETURNING run_waits.org_id, run_waits.wait_id
+),
+cancelled_waits AS (
+    UPDATE waits
+       SET state = 'cancelled',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
+      FROM cancelled_run_waits
+     WHERE waits.org_id = cancelled_run_waits.org_id
+       AND waits.id = cancelled_run_waits.wait_id
+       AND waits.state = 'pending'
+    RETURNING waits.id
 ),
 terminal_session_runs AS (
     UPDATE session_runs

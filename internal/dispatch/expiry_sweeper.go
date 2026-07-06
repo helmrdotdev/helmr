@@ -36,7 +36,7 @@ type ExpirySweepOrgStore interface {
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
 	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
-	ExpireDueRunWaits(ctx context.Context, arg db.ExpireDueRunWaitsParams) ([]db.RunWait, error)
+	ExpireDueRunWaits(ctx context.Context, arg db.ExpireDueRunWaitsParams) ([]db.ExpireDueRunWaitsRow, error)
 	FailStaleResolvedRunWaits(ctx context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error)
 	RequeueResolvedRunWaits(ctx context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
 }

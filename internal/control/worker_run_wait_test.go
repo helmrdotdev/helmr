@@ -54,37 +54,10 @@ func TestCreateWorkerRunWaitRejectsMissingTokenBeforeParking(t *testing.T) {
 	}
 }
 
-func TestCreateWorkerRunWaitRollsBackWhenTypedWaitCreateFails(t *testing.T) {
-	store := newRunWaitControlStore()
-	txStore := newRunWaitControlStore()
-	txStore.createTokenWaitErr = errors.New("typed wait failed")
-	store.txStore = txStore
-	server := &Server{db: store}
-
-	_, err := server.createWorkerRunWait(context.Background(), store.scope, tokenWaitRequest(t, pgvalue.MustUUIDValue(store.token.ID)))
-
-	if err == nil || !strings.Contains(err.Error(), "typed wait failed") {
-		t.Fatalf("err = %v, want typed wait failure", err)
-	}
-	if store.beginCalls != 1 {
-		t.Fatalf("begin calls = %d, want 1", store.beginCalls)
-	}
-	if txStore.createHotRunWaitCalls != 1 || txStore.createTokenWaitCalls != 1 {
-		t.Fatalf("tx side effects = create_hot_run_wait %d create_token_wait %d", txStore.createHotRunWaitCalls, txStore.createTokenWaitCalls)
-	}
-	if txStore.commitCalls != 0 || txStore.rollbackCalls != 1 {
-		t.Fatalf("tx finalization = commit %d rollback %d, want rollback only", txStore.commitCalls, txStore.rollbackCalls)
-	}
-}
-
 func TestCreateWorkerRunWaitRollsBackWhenTokenCompletesAfterInitialCheck(t *testing.T) {
 	store := newRunWaitControlStore()
-	txStore := newRunWaitControlStore()
-	txStore.token = store.token
-	txStore.token.State = db.TokenStateCompleted
-	txStore.token.CompletionData = []byte(`{"ok":true}`)
-	txStore.resolveImmediateTokenWaitMatched = true
-	store.txStore = txStore
+	store.token.State = db.TokenStateCompleted
+	store.token.CompletionData = []byte(`{"ok":true}`)
 	server := &Server{db: store}
 
 	response, err := server.createWorkerRunWait(context.Background(), store.scope, tokenWaitRequest(t, pgvalue.MustUUIDValue(store.token.ID)))
@@ -95,11 +68,8 @@ func TestCreateWorkerRunWaitRollsBackWhenTokenCompletesAfterInitialCheck(t *test
 	if response.RunWaitID != "" || response.ResolutionKind != "completed" || string(response.Resolution) != `{"ok":true}` {
 		t.Fatalf("response = %+v, want inline completed resolution without parked wait", response)
 	}
-	if txStore.createHotRunWaitCalls != 1 || txStore.createTokenWaitCalls != 1 || txStore.resolveImmediateTokenWaitCalls != 1 {
-		t.Fatalf("tx side effects = create_hot_run_wait %d create_token_wait %d resolve_immediate %d, want one each", txStore.createHotRunWaitCalls, txStore.createTokenWaitCalls, txStore.resolveImmediateTokenWaitCalls)
-	}
-	if txStore.commitCalls != 0 || txStore.rollbackCalls != 1 {
-		t.Fatalf("tx finalization = commit %d rollback %d, want rollback only", txStore.commitCalls, txStore.rollbackCalls)
+	if store.beginCalls != 0 || store.createHotRunWaitCalls != 0 {
+		t.Fatalf("inline token completion should not park: begin=%d create_hot_run_wait=%d", store.beginCalls, store.createHotRunWaitCalls)
 	}
 }
 
@@ -118,8 +88,8 @@ func TestCreateWorkerRunWaitRequiresWorkspaceCaptureBeforeCheckpointReady(t *tes
 	if response.RunWaitID == "" {
 		t.Fatalf("response = %+v, want run wait handle without checkpoint id", response)
 	}
-	if store.beginCalls != 1 || txStore.createHotRunWaitCalls != 1 || txStore.createStreamWaitCalls != 1 || txStore.commitCalls != 1 {
-		t.Fatalf("parking side effects = begin %d create_hot_run_wait %d create_stream_wait %d commit %d", store.beginCalls, txStore.createHotRunWaitCalls, txStore.createStreamWaitCalls, txStore.commitCalls)
+	if store.beginCalls != 1 || txStore.createHotRunWaitCalls != 1 || txStore.commitCalls != 1 {
+		t.Fatalf("parking side effects = begin %d create_hot_run_wait %d commit %d", store.beginCalls, txStore.createHotRunWaitCalls, txStore.commitCalls)
 	}
 }
 
@@ -156,14 +126,11 @@ func TestCreateWorkerRunWaitDoesNotTreatTimerDurationAsTimeout(t *testing.T) {
 	if response.RunWaitID == "" {
 		t.Fatalf("response = %+v, want run wait id", response)
 	}
-	if txStore.createHotRunWaitCalls != 1 || txStore.createTimerWaitCalls != 1 {
-		t.Fatalf("side effects = create_hot_run_wait %d create_timer_wait %d, want one each", txStore.createHotRunWaitCalls, txStore.createTimerWaitCalls)
+	if txStore.createHotRunWaitCalls != 1 {
+		t.Fatalf("create_hot_run_wait calls = %d, want 1", txStore.createHotRunWaitCalls)
 	}
-	if txStore.createHotRunWaitParams.TimeoutAt.Valid {
-		t.Fatalf("timer hot wait timeout_at = %+v, want unset", txStore.createHotRunWaitParams.TimeoutAt)
-	}
-	if !txStore.createTimerWaitParams.FireAt.Valid {
-		t.Fatal("timer wait fire_at is unset")
+	if !txStore.createHotRunWaitParams.CompletedAfter.Valid {
+		t.Fatal("timer wait completed_after is unset")
 	}
 	if got := intervalDuration(txStore.createHotRunWaitParams.CheckpointDelay); got != 6*time.Second {
 		t.Fatalf("timer checkpoint delay = %s, want 6s", got)
@@ -690,24 +657,16 @@ type runWaitControlStore struct {
 	token  db.Token
 	stream db.Stream
 
-	scopeErr           error
-	runWaitByRun       db.RunWait
-	runWaitByRunErr    error
-	tokenErr           error
-	streamErr          error
-	records            []db.StreamRecord
-	createTokenWaitErr error
-
+	scopeErr                              error
+	runWaitByRun                          db.RunWait
+	runWaitByRunErr                       error
+	tokenErr                              error
+	streamErr                             error
+	records                               []db.StreamRecord
 	txStore                               *runWaitControlStore
 	beginCalls                            int
 	createHotRunWaitCalls                 int
 	createHotRunWaitParams                db.CreateHotRunWaitParams
-	createTokenWaitCalls                  int
-	createStreamWaitCalls                 int
-	createTimerWaitCalls                  int
-	createTimerWaitParams                 db.CreateTimerWaitParams
-	resolveImmediateTokenWaitCalls        int
-	resolveImmediateTokenWaitMatched      bool
 	setRunWaitWorkspaceVersionCalls       int
 	failRuntimeCheckpointAttemptCalls     int
 	failRuntimeCheckpointAttemptParams    db.FailRuntimeCheckpointAttemptParams
@@ -808,13 +767,14 @@ func (s *runWaitControlStore) CreateHotRunWait(_ context.Context, arg db.CreateH
 	s.createHotRunWaitCalls++
 	s.createHotRunWaitParams = arg
 	return db.CreateHotRunWaitRow{
-		ID:            arg.ID,
+		ID:            arg.RunWaitID,
 		OrgID:         arg.OrgID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		RunID:         arg.RunID,
-		Kind:          db.RunWaitKind(arg.Kind),
-		State:         db.RunWaitStateLiveWaiting,
+		WaitID:        arg.WaitID,
+		State:         db.RunWaitStateHotWaiting,
 	}, nil
 }
 
@@ -826,45 +786,9 @@ func (s *runWaitControlStore) SetRunWaitWorkspaceVersion(_ context.Context, arg 
 		ProjectID:          arg.ProjectID,
 		EnvironmentID:      arg.EnvironmentID,
 		RunID:              arg.RunID,
-		Kind:               db.RunWaitKindStream,
 		State:              db.RunWaitStateCheckpointing,
 		WorkspaceVersionID: arg.WorkspaceVersionID,
 	}, nil
-}
-
-func (s *runWaitControlStore) CreateTokenWait(context.Context, db.CreateTokenWaitParams) (db.TokenWait, error) {
-	s.createTokenWaitCalls++
-	if s.createTokenWaitErr != nil {
-		return db.TokenWait{}, s.createTokenWaitErr
-	}
-	return db.TokenWait{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}, nil
-}
-
-func (s *runWaitControlStore) CreateStreamWait(context.Context, db.CreateStreamWaitParams) (db.StreamWait, error) {
-	s.createStreamWaitCalls++
-	return db.StreamWait{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}, nil
-}
-
-func (s *runWaitControlStore) CreateTimerWait(_ context.Context, arg db.CreateTimerWaitParams) (db.TimerWait, error) {
-	s.createTimerWaitCalls++
-	s.createTimerWaitParams = arg
-	return db.TimerWait{ID: pgvalue.UUID(uuid.Must(uuid.NewV7()))}, nil
-}
-
-func (s *runWaitControlStore) ResolveImmediateTokenWait(_ context.Context, arg db.ResolveImmediateTokenWaitParams) (db.ResolveImmediateTokenWaitRow, error) {
-	s.resolveImmediateTokenWaitCalls++
-	if s.resolveImmediateTokenWaitMatched {
-		return db.ResolveImmediateTokenWaitRow{
-			ID:            arg.ID,
-			OrgID:         s.scope.OrgID,
-			ProjectID:     s.scope.ProjectID,
-			EnvironmentID: s.scope.EnvironmentID,
-			RunWaitID:     s.createHotRunWaitParams.ID,
-			TokenID:       s.token.ID,
-			TokenState:    s.token.State,
-		}, nil
-	}
-	return db.ResolveImmediateTokenWaitRow{}, pgx.ErrNoRows
 }
 
 func (s *runWaitControlStore) FailRuntimeCheckpointAttempt(_ context.Context, arg db.FailRuntimeCheckpointAttemptParams) (db.FailRuntimeCheckpointAttemptRow, error) {
@@ -879,7 +803,7 @@ func (s *runWaitControlStore) FailRuntimeCheckpointAttempt(_ context.Context, ar
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		RunID:         arg.RunID,
-		State:         db.RunWaitStateLiveWaiting,
+		State:         db.RunWaitStateHotWaiting,
 	}, nil
 }
 
@@ -956,9 +880,31 @@ func (s *runWaitControlStore) GetRunWait(_ context.Context, arg db.GetRunWaitPar
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
 		RunID:         s.scope.RunID,
-		Kind:          "",
 		State:         db.RunWaitStateCheckpointedWaiting,
 	}, nil
+}
+
+func (s *runWaitControlStore) GetWaitForRunWait(_ context.Context, arg db.GetWaitForRunWaitParams) (db.Wait, error) {
+	return db.Wait{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		OrgID:         arg.OrgID,
+		ProjectID:     arg.ProjectID,
+		EnvironmentID: arg.EnvironmentID,
+		Kind:          db.WaitKindTimer,
+		State:         db.WaitStatePending,
+	}, nil
+}
+
+func (s *runWaitControlStore) ResolveStreamWaitForRunWait(context.Context, db.ResolveStreamWaitForRunWaitParams) (db.ResolveStreamWaitForRunWaitRow, error) {
+	return db.ResolveStreamWaitForRunWaitRow{}, pgx.ErrNoRows
+}
+
+func (s *runWaitControlStore) ResolveImmediateTokenWaitForRunWait(context.Context, db.ResolveImmediateTokenWaitForRunWaitParams) (db.ResolveImmediateTokenWaitForRunWaitRow, error) {
+	return db.ResolveImmediateTokenWaitForRunWaitRow{}, pgx.ErrNoRows
+}
+
+func (s *runWaitControlStore) ResolveDueTimerWaitForRunWait(context.Context, db.ResolveDueTimerWaitForRunWaitParams) (db.ResolveDueTimerWaitForRunWaitRow, error) {
+	return db.ResolveDueTimerWaitForRunWaitRow{}, pgx.ErrNoRows
 }
 
 func (s *runWaitControlStore) GetRunWaitByRun(_ context.Context, arg db.GetRunWaitByRunParams) (db.RunWait, error) {
@@ -974,7 +920,6 @@ func (s *runWaitControlStore) GetRunWaitByRun(_ context.Context, arg db.GetRunWa
 		ProjectID:             s.scope.ProjectID,
 		EnvironmentID:         s.scope.EnvironmentID,
 		RunID:                 arg.RunID,
-		Kind:                  "",
 		State:                 db.RunWaitStateCheckpointedWaiting,
 		OwnerRunLeaseID:       s.scope.CurrentRunLeaseID,
 		OwnerWorkerInstanceID: s.scope.WorkerInstanceID,

@@ -155,7 +155,10 @@ func workerRestoreRunWait(payload db.GetRunRestorePayloadRow) (api.WorkerRestore
 
 func workerRestoreRunWaitDecision(payload db.GetRunRestorePayloadRow) (string, json.RawMessage, error) {
 	switch payload.RunWaitKind {
-	case db.RunWaitKindStream:
+	case db.WaitKindStream:
+		if len(payload.WaitResult) > 0 {
+			return "completed", json.RawMessage(payload.WaitResult), nil
+		}
 		if payload.StreamRecordSequence.Valid {
 			data := json.RawMessage(payload.StreamRecordData)
 			if len(data) == 0 {
@@ -172,7 +175,16 @@ func workerRestoreRunWaitDecision(payload db.GetRunRestorePayloadRow) (string, j
 			return "", nil, fmt.Errorf("encode stream wait resume payload: %w", err)
 		}
 		return "timed_out", json.RawMessage(`null`), nil
-	case db.RunWaitKindToken:
+	case db.WaitKindToken:
+		if len(payload.WaitResult) > 0 {
+			return "completed", json.RawMessage(payload.WaitResult), nil
+		}
+		if payload.WaitState == db.WaitStateCancelled {
+			return "cancelled", json.RawMessage(`null`), nil
+		}
+		if payload.WaitState == db.WaitStateExpired {
+			return "timed_out", json.RawMessage(`null`), nil
+		}
 		if payload.TokenState.Valid {
 			switch payload.TokenState.TokenState {
 			case db.TokenStateCompleted:
@@ -188,8 +200,8 @@ func workerRestoreRunWaitDecision(payload db.GetRunRestorePayloadRow) (string, j
 			}
 		}
 		return "timed_out", json.RawMessage(`null`), nil
-	case db.RunWaitKindTimer:
-		return "timed_out", json.RawMessage(`null`), nil
+	case db.WaitKindTimer:
+		return "completed", json.RawMessage(`null`), nil
 	default:
 		return "failed", json.RawMessage(`null`), nil
 	}

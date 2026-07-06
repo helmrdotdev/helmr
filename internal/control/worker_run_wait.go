@@ -29,12 +29,12 @@ const (
 	workerRunWaitPolicyDefaultCheckpointDelay  workerRunWaitPolicyReason = "default_checkpoint_delay"
 )
 
-var errWorkerTokenWaitResolvedRollback = errors.New("worker token wait resolved inline")
-
 type workerRunWaitPolicy struct {
 	CheckpointDelay time.Duration
 	Reason          workerRunWaitPolicyReason
 }
+
+var errWorkerTokenWaitResolvedRollback = errors.New("worker token wait resolved inline")
 
 func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerCreateRunWaitRequest
@@ -111,18 +111,44 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 			return api.WorkerCreateRunWaitResponse{}, badRequest(errors.New("timer wait requires timeout_seconds"))
 		}
 	}
-	runWaitID := uuid.Must(uuid.NewV7())
-	var timeoutAt pgtype.Timestamptz
-	if request.Kind != api.WorkerRunWaitKindTimer {
-		timeoutAt = workerWaitTimeoutAt(request.TimeoutSeconds)
+	correlationKey := strings.TrimSpace(request.CorrelationID)
+	var streamID pgtype.UUID
+	var streamSequence pgtype.Int8
+	var tokenID pgtype.UUID
+	var completedAfter pgtype.Timestamptz
+	var expiresAt pgtype.Timestamptz
+	switch request.Kind {
+	case api.WorkerRunWaitKindStream:
+		params, stream, err := s.workerInputStreamWaitTarget(ctx, s.db, scope, request)
+		if err != nil {
+			return api.WorkerCreateRunWaitResponse{}, err
+		}
+		streamID = stream.ID
+		streamSequence = pgtype.Int8{Int64: params.AfterSequence, Valid: true}
+		if params.CorrelationID != "" {
+			correlationKey = strings.TrimSpace(params.CorrelationID)
+		}
+		expiresAt = workerWaitTimeoutAt(request.TimeoutSeconds)
+	case api.WorkerRunWaitKindToken:
+		parsedTokenID, err := workerTokenWaitTokenID(request)
+		if err != nil {
+			return api.WorkerCreateRunWaitResponse{}, err
+		}
+		tokenID = pgvalue.UUID(parsedTokenID)
+		expiresAt = workerWaitTimeoutAt(request.TimeoutSeconds)
+	case api.WorkerRunWaitKindTimer:
+		completedAfter = pgvalue.Timestamptz(time.Now().Add(time.Duration(*request.TimeoutSeconds) * time.Second))
 	}
+	runWaitID := uuid.Must(uuid.NewV7())
+	waitID := uuid.Must(uuid.NewV7())
 	waitPolicy := selectWorkerRunWaitPolicy(request)
 	var response api.WorkerCreateRunWaitResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		var publicID string
 		createdRunWait, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Wait, value: &publicID}}, func() (db.CreateHotRunWaitRow, error) {
 			return work.q.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
-				ID:               pgvalue.UUID(runWaitID),
+				RunWaitID:        pgvalue.UUID(runWaitID),
+				WaitID:           pgvalue.UUID(waitID),
 				PublicID:         publicID,
 				OrgID:            scope.OrgID,
 				ProjectID:        scope.ProjectID,
@@ -130,9 +156,13 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 				RunID:            scope.RunID,
 				RunLeaseID:       scope.CurrentRunLeaseID,
 				WorkerInstanceID: scope.WorkerInstanceID,
-				Kind:             db.RunWaitKind(request.Kind),
-				CorrelationID:    strings.TrimSpace(request.CorrelationID),
-				TimeoutAt:        timeoutAt,
+				Kind:             db.WaitKind(request.Kind),
+				CorrelationKey:   correlationKey,
+				StreamID:         streamID,
+				StreamSequence:   streamSequence,
+				TokenID:          tokenID,
+				CompletedAfter:   completedAfter,
+				ExpiresAt:        expiresAt,
 				CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
 			})
 		})
@@ -161,6 +191,46 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 			RuntimeEpoch:      pgvalue.Int8Value(runWait.OwnerRuntimeEpoch),
 			CheckpointDelayMs: waitPolicy.CheckpointDelay.Milliseconds(),
 		}
+		if request.Kind == api.WorkerRunWaitKindToken {
+			tokenResolved := true
+			_, err := work.q.ResolveImmediateTokenWaitForRunWait(ctx, db.ResolveImmediateTokenWaitForRunWaitParams{
+				OrgID:         scope.OrgID,
+				WorkerGroupID: scope.WorkerGroupID,
+				ProjectID:     scope.ProjectID,
+				EnvironmentID: scope.EnvironmentID,
+				RunWaitID:     runWait.ID,
+			})
+			if isNoRows(err) {
+				err = nil
+				tokenResolved = false
+			}
+			if err != nil {
+				return err
+			}
+			if tokenResolved {
+				token, tokenErr := work.q.GetToken(ctx, db.GetTokenParams{
+					OrgID:         scope.OrgID,
+					ProjectID:     scope.ProjectID,
+					EnvironmentID: scope.EnvironmentID,
+					ID:            tokenID,
+				})
+				if tokenErr != nil {
+					return tokenErr
+				}
+				resolutionKind, resolution, matched, resolutionErr := workerTokenResolution(token)
+				if resolutionErr != nil {
+					return resolutionErr
+				}
+				if matched {
+					response = api.WorkerCreateRunWaitResponse{
+						RunID:          pgvalue.MustUUIDValue(scope.RunID).String(),
+						ResolutionKind: resolutionKind,
+						Resolution:     resolution,
+					}
+					return errWorkerTokenWaitResolvedRollback
+				}
+			}
+		}
 		if scope.DirtyGeneration == 0 {
 			runWait, err = work.q.SetRunWaitWorkspaceVersion(ctx, db.SetRunWaitWorkspaceVersionParams{
 				OrgID:              scope.OrgID,
@@ -177,61 +247,21 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 		}
 		switch request.Kind {
 		case api.WorkerRunWaitKindStream:
-			if err := s.createWorkerStreamWait(ctx, work.q, scope, runWait, request); err != nil {
-				return err
-			}
+			return nil
 		case api.WorkerRunWaitKindToken:
-			resolutionKind, resolution, matched, err := s.createWorkerTokenWait(ctx, work.q, scope, runWait, request)
-			if err != nil {
-				return err
-			}
-			if matched {
-				response = api.WorkerCreateRunWaitResponse{
-					RunID:          pgvalue.MustUUIDValue(scope.RunID).String(),
-					ResolutionKind: resolutionKind,
-					Resolution:     resolution,
-				}
-				return errWorkerTokenWaitResolvedRollback
-			}
+			return nil
 		case api.WorkerRunWaitKindTimer:
-			if err := s.createWorkerTimerWait(ctx, work.q, scope, runWait, request); err != nil {
-				return err
-			}
+			return nil
 		}
 		return nil
 	})
-	if errorIsOnly(err, errWorkerTokenWaitResolvedRollback) {
+	if err == errWorkerTokenWaitResolvedRollback {
 		return response, nil
 	}
 	if err != nil {
 		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return response, nil
-}
-
-func errorIsOnly(err error, target error) bool {
-	if err == nil || target == nil {
-		return false
-	}
-	if err == target {
-		return true
-	}
-	if unwrapped, ok := err.(interface{ Unwrap() []error }); ok {
-		children := unwrapped.Unwrap()
-		if len(children) == 0 {
-			return false
-		}
-		for _, child := range children {
-			if !errorIsOnly(child, target) {
-				return false
-			}
-		}
-		return true
-	}
-	if unwrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return errorIsOnly(unwrapped.Unwrap(), target)
-	}
-	return errors.Is(err, target) && err.Error() == target.Error()
 }
 
 func runWaitFromCreateHotRunWait(row db.CreateHotRunWaitRow) db.RunWait {
@@ -308,81 +338,47 @@ func workerTokenResolution(token db.Token) (string, json.RawMessage, bool, error
 	}
 }
 
-func (s *Server) createWorkerTimerWait(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, runWait db.RunWait, request api.WorkerCreateRunWaitRequest) error {
-	if request.TimeoutSeconds == nil || *request.TimeoutSeconds <= 0 {
-		return badRequest(errors.New("timer wait requires timeout_seconds"))
-	}
-	_, err := store.CreateTimerWait(ctx, db.CreateTimerWaitParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         scope.OrgID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		RunWaitID:     runWait.ID,
-		FireAt:        pgvalue.Timestamptz(time.Now().Add(time.Duration(*request.TimeoutSeconds) * time.Second)),
-	})
-	return err
-}
-
 func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, runWaitID pgtype.UUID) error {
-	wait, err := store.GetRunWait(ctx, db.GetRunWaitParams{
+	wait, err := store.GetWaitForRunWait(ctx, db.GetWaitForRunWaitParams{
 		OrgID:         scope.OrgID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
-		ID:            runWaitID,
+		RunWaitID:     runWaitID,
 	})
 	if err != nil {
 		return err
 	}
 	switch wait.Kind {
-	case db.RunWaitKindStream:
-		streamWait, err := store.GetStreamWaitForRunWait(ctx, db.GetStreamWaitForRunWaitParams{
-			OrgID:         scope.OrgID,
-			ProjectID:     scope.ProjectID,
-			EnvironmentID: scope.EnvironmentID,
-			RunWaitID:     wait.ID,
-		})
-		if isNoRows(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
+	case db.WaitKindStream:
 		_, err = store.ResolveStreamWaitForRunWait(ctx, db.ResolveStreamWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
 			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
-			RunWaitID:     streamWait.RunWaitID,
+			RunWaitID:     runWaitID,
 		})
 		if isNoRows(err) {
 			return nil
 		}
 		return err
-	case db.RunWaitKindToken:
-		tokenWait, err := store.GetTokenWaitForRunWait(ctx, db.GetTokenWaitForRunWaitParams{
+	case db.WaitKindToken:
+		_, err = store.ResolveImmediateTokenWaitForRunWait(ctx, db.ResolveImmediateTokenWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
 			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
-			RunWaitID:     wait.ID,
+			RunWaitID:     runWaitID,
 		})
 		if isNoRows(err) {
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		_, err = store.ResolveImmediateTokenWait(ctx, db.ResolveImmediateTokenWaitParams{OrgID: scope.OrgID, WorkerGroupID: scope.WorkerGroupID, ID: tokenWait.ID})
-		if isNoRows(err) {
-			return nil
-		}
 		return err
-	case db.RunWaitKindTimer:
+	case db.WaitKindTimer:
 		_, err := store.ResolveDueTimerWaitForRunWait(ctx, db.ResolveDueTimerWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
-			RunWaitID:     wait.ID,
+			RunWaitID:     runWaitID,
 		})
 		if isNoRows(err) {
 			return nil

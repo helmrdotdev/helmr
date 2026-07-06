@@ -142,30 +142,33 @@ WITH target AS MATERIALIZED (
 )
 SELECT 'wait' AS section,
        run_waits.id,
-       run_waits.kind,
-       run_waits.state,
+       waits.kind,
+       waits.state AS wait_state,
+       run_waits.state AS run_wait_state,
        run_waits.owner_runtime_instance_id,
        run_waits.owner_worker_instance_id,
        run_waits.owner_runtime_instance_id IS NOT NULL AS had_runtime_owner,
        run_waits.runtime_checkpoint_id IS NOT NULL AS has_runtime_checkpoint,
-       run_waits.live_wait_started_at,
+       run_waits.hot_wait_started_at,
        run_waits.runtime_checkpoint_due_at,
        run_waits.runtime_checkpoint_started_at,
-       run_waits.resolved_at,
-       run_waits.resumed_at,
+       waits.completed_at,
+       run_waits.released_at,
        CASE
-         WHEN run_waits.live_wait_started_at IS NOT NULL
+         WHEN run_waits.hot_wait_started_at IS NOT NULL
           AND run_waits.runtime_checkpoint_started_at IS NOT NULL
-         THEN round(extract(epoch FROM run_waits.runtime_checkpoint_started_at - run_waits.live_wait_started_at) * 1000)::bigint
+         THEN round(extract(epoch FROM run_waits.runtime_checkpoint_started_at - run_waits.hot_wait_started_at) * 1000)::bigint
        END AS live_to_checkpoint_start_ms,
        CASE
-         WHEN run_waits.resolved_at IS NOT NULL
-          AND run_waits.resumed_at IS NOT NULL
-         THEN round(extract(epoch FROM run_waits.resumed_at - run_waits.resolved_at) * 1000)::bigint
-       END AS resolved_to_resumed_ms
+         WHEN waits.completed_at IS NOT NULL
+          AND run_waits.released_at IS NOT NULL
+         THEN round(extract(epoch FROM run_waits.released_at - waits.completed_at) * 1000)::bigint
+       END AS completed_to_released_ms
   FROM target
   JOIN run_waits ON run_waits.org_id = target.org_id
                 AND run_waits.run_id = target.id
+  JOIN waits ON waits.org_id = run_waits.org_id
+            AND waits.id = run_waits.wait_id
  ORDER BY run_waits.created_at, run_waits.id;
 
 WITH target AS MATERIALIZED (
@@ -621,18 +624,18 @@ WITH target AS MATERIALIZED (
 evidence AS (
     SELECT EXISTS (
                SELECT 1
-                 FROM run_waits
+                FROM run_waits
                 WHERE run_waits.org_id = target.org_id
                   AND run_waits.run_id = target.id
-                  AND run_waits.live_wait_started_at IS NOT NULL
+                  AND run_waits.hot_wait_started_at IS NOT NULL
            ) AS has_live_wait,
            EXISTS (
                SELECT 1
                  FROM run_waits
                 WHERE run_waits.org_id = target.org_id
                   AND run_waits.run_id = target.id
-                  AND run_waits.state = 'resumed'
-                  AND run_waits.live_wait_started_at IS NOT NULL
+                  AND run_waits.state = 'released'
+                  AND run_waits.hot_wait_started_at IS NOT NULL
                   AND run_waits.runtime_checkpoint_id IS NULL
            ) AS has_resident_live_resume_evidence,
            EXISTS (

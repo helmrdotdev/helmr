@@ -357,79 +357,84 @@ func (q *Queries) ListStreamRecords(ctx context.Context, arg ListStreamRecordsPa
 
 const resolveStreamWaitForRunWait = `-- name: ResolveStreamWaitForRunWait :one
 WITH candidate_raw AS (
-    SELECT stream_waits.id AS stream_wait_id,
-           stream_waits.org_id,
-           stream_waits.worker_group_id,
-           stream_waits.project_id,
-           stream_waits.environment_id,
-           stream_waits.run_wait_id,
-           stream_waits.stream_id,
+    SELECT waits.id AS wait_id,
+           waits.org_id,
+           waits.project_id,
+           waits.environment_id,
+           run_waits.id AS run_wait_id,
+           run_waits.worker_group_id,
+           run_waits.run_id,
+           waits.stream_id,
            next_record.id AS record_id,
            next_record.sequence,
            next_record.data
-      FROM stream_waits
-      JOIN run_waits ON run_waits.org_id = stream_waits.org_id
-                    AND run_waits.worker_group_id = stream_waits.worker_group_id
-                    AND run_waits.id = stream_waits.run_wait_id
+      FROM waits
+      JOIN run_waits ON run_waits.org_id = waits.org_id
+                    AND run_waits.wait_id = waits.id
       JOIN LATERAL (
           SELECT stream_records.id, stream_records.public_id, stream_records.org_id, stream_records.worker_group_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
            FROM stream_records
-           WHERE stream_records.org_id = stream_waits.org_id
-             AND stream_records.worker_group_id = stream_waits.worker_group_id
-             AND stream_records.stream_id = stream_waits.stream_id
-             AND stream_records.sequence > stream_waits.after_sequence
+           WHERE stream_records.org_id = waits.org_id
+             AND stream_records.stream_id = waits.stream_id
+             AND stream_records.sequence > COALESCE(waits.stream_sequence, 0)
              AND (
-                 stream_waits.correlation_id = ''
-                 OR stream_records.correlation_id = stream_waits.correlation_id
+                 waits.correlation_key = ''
+                 OR stream_records.correlation_id = waits.correlation_key
              )
            ORDER BY stream_records.sequence ASC, stream_records.id ASC
            LIMIT 1
       ) next_record ON true
-     WHERE stream_waits.org_id = $1
-       AND stream_waits.worker_group_id = $2
-       AND stream_waits.project_id = $3
-       AND stream_waits.environment_id = $4
-       AND stream_waits.run_wait_id = $5
-       AND stream_waits.matched_record_id IS NULL
-       AND run_waits.kind = 'stream'
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-     FOR UPDATE OF stream_waits, run_waits
+     WHERE waits.org_id = $1
+       AND run_waits.worker_group_id = $2
+       AND waits.project_id = $3
+       AND waits.environment_id = $4
+       AND run_waits.id = $5
+       AND waits.kind = 'stream'
+       AND waits.state = 'pending'
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     FOR UPDATE OF waits, run_waits
 ),
 matched_wait AS (
-    UPDATE stream_waits
-       SET matched_record_id = candidate_raw.record_id,
-           cursor_advanced_at = now()
+    UPDATE waits
+       SET stream_record_id = candidate_raw.record_id,
+           stream_sequence = candidate_raw.sequence,
+           result = jsonb_build_object(
+               'stream', streams.name,
+               'sequence', candidate_raw.sequence,
+               'data', candidate_raw.data
+           ),
+           state = 'completed',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
       FROM candidate_raw
-     WHERE stream_waits.org_id = candidate_raw.org_id
-       AND stream_waits.worker_group_id = candidate_raw.worker_group_id
-       AND stream_waits.id = candidate_raw.stream_wait_id
-       AND stream_waits.matched_record_id IS NULL
-    RETURNING stream_waits.id,
-              stream_waits.org_id,
-              stream_waits.worker_group_id,
-              stream_waits.project_id,
-              stream_waits.environment_id,
-              stream_waits.run_wait_id,
-              stream_waits.stream_id,
+      JOIN streams ON streams.org_id = candidate_raw.org_id
+                  AND streams.id = candidate_raw.stream_id
+     WHERE waits.org_id = candidate_raw.org_id
+       AND waits.id = candidate_raw.wait_id
+       AND waits.state = 'pending'
+    RETURNING waits.id AS wait_id,
+              candidate_raw.run_wait_id,
+              waits.org_id,
+              candidate_raw.worker_group_id,
+              waits.project_id,
+              waits.environment_id,
+              candidate_raw.run_id,
+              waits.stream_id,
               candidate_raw.record_id,
               candidate_raw.sequence,
               candidate_raw.data
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = CASE
-             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-             ELSE run_waits.state
-           END,
-           resolved_at = now(),
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.worker_group_id = matched_wait.worker_group_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
@@ -494,81 +499,86 @@ func (q *Queries) ResolveStreamWaitForRunWait(ctx context.Context, arg ResolveSt
 
 const resolveStreamWaitsForStream = `-- name: ResolveStreamWaitsForStream :many
 WITH candidate_raw AS (
-    SELECT stream_waits.id AS stream_wait_id,
-           stream_waits.org_id,
-           stream_waits.worker_group_id,
-           stream_waits.project_id,
-           stream_waits.environment_id,
-           stream_waits.run_wait_id,
-           stream_waits.stream_id,
-           stream_waits.created_at,
+    SELECT waits.id AS wait_id,
+           waits.org_id,
+           waits.project_id,
+           waits.environment_id,
+           run_waits.id AS run_wait_id,
+           run_waits.worker_group_id,
+           run_waits.run_id,
+           waits.stream_id,
+           waits.created_at,
            next_record.id AS record_id,
            next_record.sequence,
            next_record.data
-      FROM stream_waits
-      JOIN run_waits ON run_waits.org_id = stream_waits.org_id
-                    AND run_waits.worker_group_id = stream_waits.worker_group_id
-                    AND run_waits.id = stream_waits.run_wait_id
+      FROM waits
+      JOIN run_waits ON run_waits.org_id = waits.org_id
+                    AND run_waits.wait_id = waits.id
       JOIN LATERAL (
           SELECT stream_records.id, stream_records.public_id, stream_records.org_id, stream_records.worker_group_id, stream_records.project_id, stream_records.environment_id, stream_records.session_id, stream_records.stream_id, stream_records.direction, stream_records.sequence, stream_records.data, stream_records.correlation_id, stream_records.content_type, stream_records.idempotency_key, stream_records.idempotency_fingerprint, stream_records.source_type, stream_records.source_id, stream_records.public_access_token_id, stream_records.created_at
            FROM stream_records
-           WHERE stream_records.org_id = stream_waits.org_id
-             AND stream_records.worker_group_id = stream_waits.worker_group_id
-             AND stream_records.stream_id = stream_waits.stream_id
-             AND stream_records.sequence > stream_waits.after_sequence
+           WHERE stream_records.org_id = waits.org_id
+             AND stream_records.stream_id = waits.stream_id
+             AND stream_records.sequence > COALESCE(waits.stream_sequence, 0)
              AND (
-                 stream_waits.correlation_id = ''
-                 OR stream_records.correlation_id = stream_waits.correlation_id
+                 waits.correlation_key = ''
+                 OR stream_records.correlation_id = waits.correlation_key
              )
            ORDER BY stream_records.sequence ASC, stream_records.id ASC
            LIMIT 1
       ) next_record ON true
-     WHERE stream_waits.org_id = $1
-       AND stream_waits.worker_group_id = $2
-       AND stream_waits.project_id = $3
-       AND stream_waits.environment_id = $4
-       AND stream_waits.stream_id = $5
-       AND stream_waits.matched_record_id IS NULL
-       AND run_waits.kind = 'stream'
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-     ORDER BY stream_waits.created_at ASC, stream_waits.id ASC
-     FOR UPDATE OF stream_waits, run_waits
+     WHERE waits.org_id = $1
+       AND run_waits.worker_group_id = $2
+       AND waits.project_id = $3
+       AND waits.environment_id = $4
+       AND waits.stream_id = $5
+       AND waits.kind = 'stream'
+       AND waits.state = 'pending'
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     ORDER BY waits.created_at ASC, waits.id ASC
+     FOR UPDATE OF waits, run_waits
 ),
 matched_wait AS (
-    UPDATE stream_waits
-       SET matched_record_id = candidate_raw.record_id,
-           cursor_advanced_at = now()
+    UPDATE waits
+       SET stream_record_id = candidate_raw.record_id,
+           stream_sequence = candidate_raw.sequence,
+           result = jsonb_build_object(
+               'stream', streams.name,
+               'sequence', candidate_raw.sequence,
+               'data', candidate_raw.data
+           ),
+           state = 'completed',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
       FROM candidate_raw
-     WHERE stream_waits.org_id = candidate_raw.org_id
-       AND stream_waits.worker_group_id = candidate_raw.worker_group_id
-       AND stream_waits.id = candidate_raw.stream_wait_id
-       AND stream_waits.matched_record_id IS NULL
-    RETURNING stream_waits.id,
-              stream_waits.org_id,
-              stream_waits.worker_group_id,
-              stream_waits.project_id,
-              stream_waits.environment_id,
-              stream_waits.run_wait_id,
-              stream_waits.stream_id,
+      JOIN streams ON streams.org_id = candidate_raw.org_id
+                  AND streams.id = candidate_raw.stream_id
+     WHERE waits.org_id = candidate_raw.org_id
+       AND waits.id = candidate_raw.wait_id
+       AND waits.state = 'pending'
+    RETURNING waits.id AS wait_id,
+              candidate_raw.run_wait_id,
+              waits.org_id,
+              candidate_raw.worker_group_id,
+              waits.project_id,
+              waits.environment_id,
+              candidate_raw.run_id,
+              waits.stream_id,
               candidate_raw.record_id,
               candidate_raw.sequence,
               candidate_raw.data
 ),
 resolved_wait AS (
     UPDATE run_waits
-       SET state = CASE
-             WHEN run_waits.state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-             WHEN run_waits.state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-             ELSE run_waits.state
-           END,
-           resolved_at = now(),
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
            updated_at = now()
       FROM matched_wait
      WHERE run_waits.org_id = matched_wait.org_id
        AND run_waits.worker_group_id = matched_wait.worker_group_id
        AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state IN ('live_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,

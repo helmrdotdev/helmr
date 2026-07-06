@@ -238,7 +238,7 @@ func TestWorkerRunLeaseRequeuesPayloadFailureWhenDurableReleaseFails(t *testing.
 
 func TestWorkerRestoreRunWaitDecisionRejectsInvalidStreamPayload(t *testing.T) {
 	_, _, err := workerRestoreRunWaitDecision(db.GetRunRestorePayloadRow{
-		RunWaitKind:          db.RunWaitKindStream,
+		RunWaitKind:          db.WaitKindStream,
 		StreamName:           pgtype.Text{String: "reply", Valid: true},
 		StreamRecordSequence: pgtype.Int8{Int64: 1, Valid: true},
 		StreamRecordData:     []byte(`{`),
@@ -251,9 +251,8 @@ func TestWorkerRestoreRunWaitDecisionRejectsInvalidStreamPayload(t *testing.T) {
 func TestWorkerRestoreRunWaitUsesUUIDAuthority(t *testing.T) {
 	runWaitID := uuid.Must(uuid.NewV7())
 	runWait, err := workerRestoreRunWait(db.GetRunRestorePayloadRow{
-		RunWaitID:            pgvalue.UUID(runWaitID),
-		RunWaitCorrelationID: "1",
-		RunWaitKind:          db.RunWaitKindTimer,
+		RunWaitID:   pgvalue.UUID(runWaitID),
+		RunWaitKind: db.WaitKindTimer,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1500,7 +1499,7 @@ func (f *fakeStore) ResolveDueTimerWaits(context.Context, db.ResolveDueTimerWait
 	return nil, nil
 }
 
-func (f *fakeStore) ExpireDueRunWaits(context.Context, db.ExpireDueRunWaitsParams) ([]db.RunWait, error) {
+func (f *fakeStore) ExpireDueRunWaits(context.Context, db.ExpireDueRunWaitsParams) ([]db.ExpireDueRunWaitsRow, error) {
 	return nil, nil
 }
 

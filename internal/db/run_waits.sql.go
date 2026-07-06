@@ -19,7 +19,7 @@ UPDATE run_waits
  WHERE org_id = $1
    AND id = $2
    AND state = 'checkpointed_waiting'
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
 `
 
 type CancelRunWaitParams struct {
@@ -32,19 +32,16 @@ func (q *Queries) CancelRunWait(ctx context.Context, arg CancelRunWaitParams) (R
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -54,12 +51,10 @@ func (q *Queries) CancelRunWait(ctx context.Context, arg CancelRunWaitParams) (R
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -73,7 +68,7 @@ UPDATE run_waits
  WHERE org_id = $1
    AND run_id = $2
    AND state = 'checkpointed_waiting'
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
 `
 
 type CancelRunWaitsForRunParams struct {
@@ -92,19 +87,16 @@ func (q *Queries) CancelRunWaitsForRun(ctx context.Context, arg CancelRunWaitsFo
 		var i RunWait
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.OrgID,
 			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.Kind,
-			&i.CorrelationID,
+			&i.WaitID,
 			&i.State,
-			&i.TimeoutAt,
 			&i.RuntimeCheckpointDueAt,
 			&i.RuntimeCheckpointStartedAt,
-			&i.LiveWaitStartedAt,
+			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
 			&i.OwnerRunID,
@@ -114,12 +106,10 @@ func (q *Queries) CancelRunWaitsForRun(ctx context.Context, arg CancelRunWaitsFo
 			&i.RuntimeCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
-			&i.ParkedAt,
-			&i.ResolvedAt,
-			&i.ResumingAt,
-			&i.ResumedAt,
-			&i.CancelledAt,
 			&i.CreatedAt,
+			&i.ResumingAt,
+			&i.ReleasedAt,
+			&i.CancelledAt,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -134,7 +124,7 @@ func (q *Queries) CancelRunWaitsForRun(ctx context.Context, arg CancelRunWaitsFo
 
 const claimRuntimeCheckpointWait = `-- name: ClaimRuntimeCheckpointWait :one
 WITH scope AS (
-    SELECT run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+    SELECT run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at,
            runs.workspace_id,
            workspace_leases.id AS workspace_lease_id,
            workspace_leases.workspace_mount_id,
@@ -202,7 +192,7 @@ WITH scope AS (
        AND run_waits.id = $5
        AND run_waits.owner_run_lease_id = $6
        AND run_waits.owner_worker_instance_id = $7
-       AND run_waits.state IN ('live_waiting', 'checkpointing')
+       AND run_waits.state IN ('hot_waiting', 'checkpointing')
        AND runs.status = 'running'
        AND runs.current_run_lease_id = $6
        AND run_leases.worker_instance_id = $7
@@ -272,7 +262,7 @@ claimed_checkpoint AS (
            '{}'::jsonb,
            scope.runtime_checkpoint_due_at + interval '5 minutes'
       FROM scope
-     WHERE scope.state = 'live_waiting'
+     WHERE scope.state = 'hot_waiting'
        AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
     ON CONFLICT (id) DO NOTHING
     RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id, source_workspace_lease_id, workspace_mount_id, base_workspace_version_id, state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id, owner_worker_instance_id, source_worker_instance_id, substrate_digest, runtime_substrate_artifact_id, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, manifest, error_message, expires_at, creation_started_at, creation_expires_at, created_at, ready_at, invalidated_at
@@ -286,15 +276,15 @@ claimed_wait AS (
       FROM scope
      WHERE run_waits.org_id = scope.org_id
        AND run_waits.id = scope.id
-       AND scope.state = 'live_waiting'
+       AND scope.state = 'hot_waiting'
        AND EXISTS (SELECT 1 FROM claimed_checkpoint)
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 ),
 selected_wait AS (
-    SELECT claimed_wait.id, claimed_wait.public_id, claimed_wait.org_id, claimed_wait.worker_group_id, claimed_wait.project_id, claimed_wait.environment_id, claimed_wait.run_id, claimed_wait.kind, claimed_wait.correlation_id, claimed_wait.state, claimed_wait.timeout_at, claimed_wait.runtime_checkpoint_due_at, claimed_wait.runtime_checkpoint_started_at, claimed_wait.live_wait_started_at, claimed_wait.owner_runtime_instance_id, claimed_wait.owner_runtime_epoch, claimed_wait.owner_run_id, claimed_wait.owner_run_lease_id, claimed_wait.owner_run_state_version, claimed_wait.owner_worker_instance_id, claimed_wait.runtime_checkpoint_id, claimed_wait.workspace_version_id, claimed_wait.active_elapsed_ms_at_park, claimed_wait.parked_at, claimed_wait.resolved_at, claimed_wait.resuming_at, claimed_wait.resumed_at, claimed_wait.cancelled_at, claimed_wait.created_at, claimed_wait.updated_at
+    SELECT claimed_wait.id, claimed_wait.org_id, claimed_wait.worker_group_id, claimed_wait.project_id, claimed_wait.environment_id, claimed_wait.run_id, claimed_wait.wait_id, claimed_wait.state, claimed_wait.runtime_checkpoint_due_at, claimed_wait.runtime_checkpoint_started_at, claimed_wait.hot_wait_started_at, claimed_wait.owner_runtime_instance_id, claimed_wait.owner_runtime_epoch, claimed_wait.owner_run_id, claimed_wait.owner_run_lease_id, claimed_wait.owner_run_state_version, claimed_wait.owner_worker_instance_id, claimed_wait.runtime_checkpoint_id, claimed_wait.workspace_version_id, claimed_wait.active_elapsed_ms_at_park, claimed_wait.created_at, claimed_wait.resuming_at, claimed_wait.released_at, claimed_wait.cancelled_at, claimed_wait.updated_at
       FROM claimed_wait
     UNION ALL
-    SELECT run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
       FROM run_waits
       JOIN scope ON scope.org_id = run_waits.org_id
                 AND scope.id = run_waits.id
@@ -465,20 +455,49 @@ WITH scope AS MATERIALIZED (
      FOR UPDATE OF runtime_instances
 ),
 inserted_wait AS (
-    INSERT INTO run_waits (
+    INSERT INTO waits (
         id,
         public_id,
+        org_id,
+        project_id,
+        environment_id,
+        kind,
+        state,
+        correlation_key,
+        stream_id,
+        stream_sequence,
+        token_id,
+        completed_after,
+        expires_at
+    )
+    SELECT $7,
+           $8,
+           scope.org_id,
+           scope.project_id,
+           scope.environment_id,
+           $9::wait_kind,
+           'pending'::wait_state,
+           COALESCE($10::text, ''),
+           $11::uuid,
+           $12::bigint,
+           $13::uuid,
+           $14::timestamptz,
+           $15::timestamptz
+      FROM scope
+    RETURNING id, public_id, org_id, project_id, environment_id, kind, state, idempotency_key, correlation_key, completed_by_run_id, completed_after, stream_id, stream_sequence, stream_record_id, token_id, result, error, expires_at, completed_at, created_at, updated_at
+),
+inserted_run_wait AS (
+    INSERT INTO run_waits (
+        id,
         org_id,
         worker_group_id,
         project_id,
         environment_id,
         run_id,
-        kind,
-        correlation_id,
+        wait_id,
         state,
-        timeout_at,
         runtime_checkpoint_due_at,
-        live_wait_started_at,
+        hot_wait_started_at,
         owner_runtime_instance_id,
         owner_runtime_epoch,
         owner_run_id,
@@ -486,20 +505,17 @@ inserted_wait AS (
         owner_worker_instance_id,
         owner_run_state_version
     )
-    SELECT $7,
-           $8,
+    SELECT $16,
            scope.org_id,
            scope.worker_group_id,
            scope.project_id,
            scope.environment_id,
            scope.run_id,
-           $9::run_wait_kind,
-           COALESCE($10::text, ''),
-           'live_waiting'::run_wait_state,
-           $11::timestamptz,
+           inserted_wait.id,
+           'hot_waiting'::run_wait_state,
            CASE
-             WHEN $12::interval <= interval '0 seconds' THEN now()
-             ELSE now() + $12::interval
+             WHEN $17::interval <= interval '0 seconds' THEN now()
+             ELSE now() + $17::interval
            END,
            now(),
            scope.runtime_instance_id,
@@ -509,7 +525,8 @@ inserted_wait AS (
            scope.worker_instance_id,
            scope.state_version
       FROM scope
-    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+      JOIN inserted_wait ON true
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
 ),
 waiting_runtime_instance AS (
     UPDATE runtime_instances
@@ -520,14 +537,14 @@ waiting_runtime_instance AS (
            owner_run_state_version = inserted_wait.owner_run_state_version,
            waiting_at = now(),
            updated_at = now()
-      FROM scope, inserted_wait
+      FROM scope, inserted_run_wait AS inserted_wait
      WHERE runtime_instances.org_id = scope.org_id
        AND runtime_instances.id = scope.runtime_instance_id
        AND runtime_instances.state IN ('running', 'waiting_hot')
     RETURNING runtime_instances.id
 )
-SELECT inserted_wait.id, inserted_wait.public_id, inserted_wait.org_id, inserted_wait.worker_group_id, inserted_wait.project_id, inserted_wait.environment_id, inserted_wait.run_id, inserted_wait.kind, inserted_wait.correlation_id, inserted_wait.state, inserted_wait.timeout_at, inserted_wait.runtime_checkpoint_due_at, inserted_wait.runtime_checkpoint_started_at, inserted_wait.live_wait_started_at, inserted_wait.owner_runtime_instance_id, inserted_wait.owner_runtime_epoch, inserted_wait.owner_run_id, inserted_wait.owner_run_lease_id, inserted_wait.owner_run_state_version, inserted_wait.owner_worker_instance_id, inserted_wait.runtime_checkpoint_id, inserted_wait.workspace_version_id, inserted_wait.active_elapsed_ms_at_park, inserted_wait.parked_at, inserted_wait.resolved_at, inserted_wait.resuming_at, inserted_wait.resumed_at, inserted_wait.cancelled_at, inserted_wait.created_at, inserted_wait.updated_at
-  FROM inserted_wait
+SELECT inserted_run_wait.id, inserted_run_wait.org_id, inserted_run_wait.worker_group_id, inserted_run_wait.project_id, inserted_run_wait.environment_id, inserted_run_wait.run_id, inserted_run_wait.wait_id, inserted_run_wait.state, inserted_run_wait.runtime_checkpoint_due_at, inserted_run_wait.runtime_checkpoint_started_at, inserted_run_wait.hot_wait_started_at, inserted_run_wait.owner_runtime_instance_id, inserted_run_wait.owner_runtime_epoch, inserted_run_wait.owner_run_id, inserted_run_wait.owner_run_lease_id, inserted_run_wait.owner_run_state_version, inserted_run_wait.owner_worker_instance_id, inserted_run_wait.runtime_checkpoint_id, inserted_run_wait.workspace_version_id, inserted_run_wait.active_elapsed_ms_at_park, inserted_run_wait.created_at, inserted_run_wait.resuming_at, inserted_run_wait.released_at, inserted_run_wait.cancelled_at, inserted_run_wait.updated_at
+  FROM inserted_run_wait
  WHERE EXISTS (SELECT 1 FROM waiting_runtime_instance)
 `
 
@@ -538,29 +555,31 @@ type CreateHotRunWaitParams struct {
 	RunID            pgtype.UUID        `json:"run_id"`
 	RunLeaseID       pgtype.UUID        `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
-	ID               pgtype.UUID        `json:"id"`
+	WaitID           pgtype.UUID        `json:"wait_id"`
 	PublicID         string             `json:"public_id"`
-	Kind             RunWaitKind        `json:"kind"`
-	CorrelationID    string             `json:"correlation_id"`
-	TimeoutAt        pgtype.Timestamptz `json:"timeout_at"`
+	Kind             WaitKind           `json:"kind"`
+	CorrelationKey   string             `json:"correlation_key"`
+	StreamID         pgtype.UUID        `json:"stream_id"`
+	StreamSequence   pgtype.Int8        `json:"stream_sequence"`
+	TokenID          pgtype.UUID        `json:"token_id"`
+	CompletedAfter   pgtype.Timestamptz `json:"completed_after"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	RunWaitID        pgtype.UUID        `json:"run_wait_id"`
 	CheckpointDelay  pgtype.Interval    `json:"checkpoint_delay"`
 }
 
 type CreateHotRunWaitRow struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	Kind                       RunWaitKind        `json:"kind"`
-	CorrelationID              string             `json:"correlation_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
 	State                      RunWaitState       `json:"state"`
-	TimeoutAt                  pgtype.Timestamptz `json:"timeout_at"`
 	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
 	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	LiveWaitStartedAt          pgtype.Timestamptz `json:"live_wait_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
 	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
 	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
 	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
@@ -570,12 +589,10 @@ type CreateHotRunWaitRow struct {
 	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
 	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
 	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	ParkedAt                   pgtype.Timestamptz `json:"parked_at"`
-	ResolvedAt                 pgtype.Timestamptz `json:"resolved_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ResumedAt                  pgtype.Timestamptz `json:"resumed_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
@@ -587,29 +604,31 @@ func (q *Queries) CreateHotRunWait(ctx context.Context, arg CreateHotRunWaitPara
 		arg.RunID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,
-		arg.ID,
+		arg.WaitID,
 		arg.PublicID,
 		arg.Kind,
-		arg.CorrelationID,
-		arg.TimeoutAt,
+		arg.CorrelationKey,
+		arg.StreamID,
+		arg.StreamSequence,
+		arg.TokenID,
+		arg.CompletedAfter,
+		arg.ExpiresAt,
+		arg.RunWaitID,
 		arg.CheckpointDelay,
 	)
 	var i CreateHotRunWaitRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -619,31 +638,55 @@ func (q *Queries) CreateHotRunWait(ctx context.Context, arg CreateHotRunWaitPara
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const expireDueRunWaits = `-- name: ExpireDueRunWaits :many
-UPDATE run_waits
-   SET state = CASE
-         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-         ELSE 'expired'::run_wait_state
-       END,
-       resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
- WHERE org_id = $1
-   AND worker_group_id = $2
-   AND state IN ('live_waiting', 'checkpointed_waiting')
-   AND timeout_at IS NOT NULL
-   AND timeout_at <= now()
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+WITH candidate_waits AS MATERIALIZED (
+    SELECT waits.id,
+           waits.org_id
+      FROM waits
+      JOIN run_waits ON run_waits.org_id = waits.org_id
+                    AND run_waits.wait_id = waits.id
+     WHERE waits.org_id = $1
+       AND run_waits.worker_group_id = $2
+       AND waits.state = 'pending'
+       AND waits.expires_at IS NOT NULL
+       AND waits.expires_at <= now()
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     FOR UPDATE OF waits, run_waits
+),
+expired_waits AS (
+    UPDATE waits
+       SET state = 'expired',
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
+      FROM candidate_waits
+     WHERE waits.org_id = candidate_waits.org_id
+       AND waits.id = candidate_waits.id
+       AND waits.state = 'pending'
+    RETURNING waits.id, waits.public_id, waits.org_id, waits.project_id, waits.environment_id, waits.kind, waits.state, waits.idempotency_key, waits.correlation_key, waits.completed_by_run_id, waits.completed_after, waits.stream_id, waits.stream_sequence, waits.stream_record_id, waits.token_id, waits.result, waits.error, waits.expires_at, waits.completed_at, waits.created_at, waits.updated_at
+),
+expired_run_waits AS (
+    UPDATE run_waits
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
+           updated_at = now()
+      FROM expired_waits
+     WHERE run_waits.org_id = expired_waits.org_id
+       AND run_waits.wait_id = expired_waits.id
+       AND run_waits.worker_group_id = $2
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+)
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
+  FROM expired_run_waits
 `
 
 type ExpireDueRunWaitsParams struct {
@@ -651,30 +694,55 @@ type ExpireDueRunWaitsParams struct {
 	WorkerGroupID string      `json:"worker_group_id"`
 }
 
-func (q *Queries) ExpireDueRunWaits(ctx context.Context, arg ExpireDueRunWaitsParams) ([]RunWait, error) {
+type ExpireDueRunWaitsRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RunID                      pgtype.UUID        `json:"run_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
+	State                      RunWaitState       `json:"state"`
+	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
+	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
+	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerRunStateVersion       pgtype.Int8        `json:"owner_run_state_version"`
+	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
+	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
+	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
+	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ExpireDueRunWaits(ctx context.Context, arg ExpireDueRunWaitsParams) ([]ExpireDueRunWaitsRow, error) {
 	rows, err := q.db.Query(ctx, expireDueRunWaits, arg.OrgID, arg.WorkerGroupID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RunWait
+	var items []ExpireDueRunWaitsRow
 	for rows.Next() {
-		var i RunWait
+		var i ExpireDueRunWaitsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.OrgID,
 			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.Kind,
-			&i.CorrelationID,
+			&i.WaitID,
 			&i.State,
-			&i.TimeoutAt,
 			&i.RuntimeCheckpointDueAt,
 			&i.RuntimeCheckpointStartedAt,
-			&i.LiveWaitStartedAt,
+			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
 			&i.OwnerRunID,
@@ -684,12 +752,10 @@ func (q *Queries) ExpireDueRunWaits(ctx context.Context, arg ExpireDueRunWaitsPa
 			&i.RuntimeCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
-			&i.ParkedAt,
-			&i.ResolvedAt,
-			&i.ResumingAt,
-			&i.ResumedAt,
-			&i.CancelledAt,
 			&i.CreatedAt,
+			&i.ResumingAt,
+			&i.ReleasedAt,
+			&i.CancelledAt,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -752,7 +818,7 @@ WITH stale_waits AS MATERIALIZED (
      WHERE run_waits.org_id = $1
        AND run_waits.worker_group_id = $2
        AND (
-           (run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired') AND runs.status = 'waiting')
+           (run_waits.state = 'resuming' AND runs.status = 'waiting')
            OR (run_waits.state = 'resuming' AND runs.status = 'queued')
        )
        AND run_waits.runtime_checkpoint_id IS NOT NULL
@@ -763,7 +829,7 @@ WITH stale_waits AS MATERIALIZED (
            workspaces.current_version_id IS DISTINCT FROM runtime_checkpoints.base_workspace_version_id
            OR runtime_checkpoints.expires_at <= now()
        )
-     ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
+     ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT $3
      FOR UPDATE OF run_waits, runs, sessions
 ),
@@ -775,7 +841,7 @@ failed_waits AS (
      WHERE run_waits.org_id = stale_waits.org_id
        AND run_waits.id = stale_waits.run_wait_id
        AND run_waits.state = stale_waits.run_wait_state
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 ),
 failed_runs AS (
     UPDATE runs
@@ -914,7 +980,7 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
         (SELECT count(*) FROM failed_telemetry_outbox) AS failed_telemetry_outboxes
 )
-SELECT failed_waits.id, failed_waits.public_id, failed_waits.org_id, failed_waits.worker_group_id, failed_waits.project_id, failed_waits.environment_id, failed_waits.run_id, failed_waits.kind, failed_waits.correlation_id, failed_waits.state, failed_waits.timeout_at, failed_waits.runtime_checkpoint_due_at, failed_waits.runtime_checkpoint_started_at, failed_waits.live_wait_started_at, failed_waits.owner_runtime_instance_id, failed_waits.owner_runtime_epoch, failed_waits.owner_run_id, failed_waits.owner_run_lease_id, failed_waits.owner_run_state_version, failed_waits.owner_worker_instance_id, failed_waits.runtime_checkpoint_id, failed_waits.workspace_version_id, failed_waits.active_elapsed_ms_at_park, failed_waits.parked_at, failed_waits.resolved_at, failed_waits.resuming_at, failed_waits.resumed_at, failed_waits.cancelled_at, failed_waits.created_at, failed_waits.updated_at
+SELECT failed_waits.id, failed_waits.org_id, failed_waits.worker_group_id, failed_waits.project_id, failed_waits.environment_id, failed_waits.run_id, failed_waits.wait_id, failed_waits.state, failed_waits.runtime_checkpoint_due_at, failed_waits.runtime_checkpoint_started_at, failed_waits.hot_wait_started_at, failed_waits.owner_runtime_instance_id, failed_waits.owner_runtime_epoch, failed_waits.owner_run_id, failed_waits.owner_run_lease_id, failed_waits.owner_run_state_version, failed_waits.owner_worker_instance_id, failed_waits.runtime_checkpoint_id, failed_waits.workspace_version_id, failed_waits.active_elapsed_ms_at_park, failed_waits.created_at, failed_waits.resuming_at, failed_waits.released_at, failed_waits.cancelled_at, failed_waits.updated_at
   FROM failed_waits
   JOIN failed_runs ON failed_runs.org_id = failed_waits.org_id
                   AND failed_runs.id = failed_waits.run_id
@@ -929,19 +995,16 @@ type FailStaleResolvedRunWaitsParams struct {
 
 type FailStaleResolvedRunWaitsRow struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	Kind                       RunWaitKind        `json:"kind"`
-	CorrelationID              string             `json:"correlation_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
 	State                      RunWaitState       `json:"state"`
-	TimeoutAt                  pgtype.Timestamptz `json:"timeout_at"`
 	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
 	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	LiveWaitStartedAt          pgtype.Timestamptz `json:"live_wait_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
 	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
 	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
 	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
@@ -951,12 +1014,10 @@ type FailStaleResolvedRunWaitsRow struct {
 	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
 	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
 	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	ParkedAt                   pgtype.Timestamptz `json:"parked_at"`
-	ResolvedAt                 pgtype.Timestamptz `json:"resolved_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ResumedAt                  pgtype.Timestamptz `json:"resumed_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
@@ -971,19 +1032,16 @@ func (q *Queries) FailStaleResolvedRunWaits(ctx context.Context, arg FailStaleRe
 		var i FailStaleResolvedRunWaitsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.OrgID,
 			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.Kind,
-			&i.CorrelationID,
+			&i.WaitID,
 			&i.State,
-			&i.TimeoutAt,
 			&i.RuntimeCheckpointDueAt,
 			&i.RuntimeCheckpointStartedAt,
-			&i.LiveWaitStartedAt,
+			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
 			&i.OwnerRunID,
@@ -993,12 +1051,10 @@ func (q *Queries) FailStaleResolvedRunWaits(ctx context.Context, arg FailStaleRe
 			&i.RuntimeCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
-			&i.ParkedAt,
-			&i.ResolvedAt,
-			&i.ResumingAt,
-			&i.ResumedAt,
-			&i.CancelledAt,
 			&i.CreatedAt,
+			&i.ResumingAt,
+			&i.ReleasedAt,
+			&i.CancelledAt,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -1012,7 +1068,7 @@ func (q *Queries) FailStaleResolvedRunWaits(ctx context.Context, arg FailStaleRe
 }
 
 const getRunWait = `-- name: GetRunWait :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
      FROM run_waits
  WHERE org_id = $1
    AND project_id = $2
@@ -1037,19 +1093,16 @@ func (q *Queries) GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -1059,19 +1112,17 @@ func (q *Queries) GetRunWait(ctx context.Context, arg GetRunWaitParams) (RunWait
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getRunWaitByRun = `-- name: GetRunWaitByRun :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
   FROM run_waits
  WHERE org_id = $1
    AND run_id = $2
@@ -1089,19 +1140,16 @@ func (q *Queries) GetRunWaitByRun(ctx context.Context, arg GetRunWaitByRunParams
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -1111,12 +1159,10 @@ func (q *Queries) GetRunWaitByRun(ctx context.Context, arg GetRunWaitByRunParams
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -1244,13 +1290,13 @@ func (q *Queries) GetWorkerRunWaitScope(ctx context.Context, arg GetWorkerRunWai
 
 const listRunWaits = `-- name: ListRunWaits :many
 WITH cursor_wait AS (
-    SELECT parked_at, id
+    SELECT created_at, id
       FROM run_waits
      WHERE org_id = $1
        AND run_id = $2
        AND id = $4::uuid
 )
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
   FROM run_waits
  WHERE run_waits.org_id = $1
    AND run_waits.run_id = $2
@@ -1260,9 +1306,9 @@ SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_i
    )
    AND (
        $4::uuid IS NULL
-       OR (run_waits.parked_at, run_waits.id) > (SELECT cursor_wait.parked_at, cursor_wait.id FROM cursor_wait)
+       OR (run_waits.created_at, run_waits.id) > (SELECT cursor_wait.created_at, cursor_wait.id FROM cursor_wait)
    )
- ORDER BY run_waits.parked_at ASC, run_waits.id ASC
+ ORDER BY run_waits.created_at ASC, run_waits.id ASC
  LIMIT $5
 `
 
@@ -1291,19 +1337,16 @@ func (q *Queries) ListRunWaits(ctx context.Context, arg ListRunWaitsParams) ([]R
 		var i RunWait
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.OrgID,
 			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.Kind,
-			&i.CorrelationID,
+			&i.WaitID,
 			&i.State,
-			&i.TimeoutAt,
 			&i.RuntimeCheckpointDueAt,
 			&i.RuntimeCheckpointStartedAt,
-			&i.LiveWaitStartedAt,
+			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
 			&i.OwnerRunID,
@@ -1313,12 +1356,10 @@ func (q *Queries) ListRunWaits(ctx context.Context, arg ListRunWaitsParams) ([]R
 			&i.RuntimeCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
-			&i.ParkedAt,
-			&i.ResolvedAt,
-			&i.ResumingAt,
-			&i.ResumedAt,
-			&i.CancelledAt,
 			&i.CreatedAt,
+			&i.ResumingAt,
+			&i.ReleasedAt,
+			&i.CancelledAt,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -1333,7 +1374,7 @@ func (q *Queries) ListRunWaits(ctx context.Context, arg ListRunWaitsParams) ([]R
 
 const markRuntimeResumeWaitResumed = `-- name: MarkRuntimeResumeWaitResumed :one
 WITH current_wait AS (
-    SELECT run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    SELECT run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
       FROM run_waits
       JOIN runs ON runs.org_id = run_waits.org_id
                AND runs.project_id = run_waits.project_id
@@ -1382,16 +1423,16 @@ updated_restore AS (
 ),
 updated_wait AS (
     UPDATE run_waits
-       SET resumed_at = COALESCE(run_waits.resumed_at, now()),
-           state = 'resumed',
+       SET released_at = COALESCE(run_waits.released_at, now()),
+           state = 'released',
            updated_at = now()
       FROM current_wait
       JOIN updated_restore ON true
      WHERE run_waits.org_id = current_wait.org_id
        AND run_waits.id = current_wait.id
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
-SELECT updated_wait.id, updated_wait.public_id, updated_wait.org_id, updated_wait.worker_group_id, updated_wait.project_id, updated_wait.environment_id, updated_wait.run_id, updated_wait.kind, updated_wait.correlation_id, updated_wait.state, updated_wait.timeout_at, updated_wait.runtime_checkpoint_due_at, updated_wait.runtime_checkpoint_started_at, updated_wait.live_wait_started_at, updated_wait.owner_runtime_instance_id, updated_wait.owner_runtime_epoch, updated_wait.owner_run_id, updated_wait.owner_run_lease_id, updated_wait.owner_run_state_version, updated_wait.owner_worker_instance_id, updated_wait.runtime_checkpoint_id, updated_wait.workspace_version_id, updated_wait.active_elapsed_ms_at_park, updated_wait.parked_at, updated_wait.resolved_at, updated_wait.resuming_at, updated_wait.resumed_at, updated_wait.cancelled_at, updated_wait.created_at, updated_wait.updated_at
+SELECT updated_wait.id, updated_wait.org_id, updated_wait.worker_group_id, updated_wait.project_id, updated_wait.environment_id, updated_wait.run_id, updated_wait.wait_id, updated_wait.state, updated_wait.runtime_checkpoint_due_at, updated_wait.runtime_checkpoint_started_at, updated_wait.hot_wait_started_at, updated_wait.owner_runtime_instance_id, updated_wait.owner_runtime_epoch, updated_wait.owner_run_id, updated_wait.owner_run_lease_id, updated_wait.owner_run_state_version, updated_wait.owner_worker_instance_id, updated_wait.runtime_checkpoint_id, updated_wait.workspace_version_id, updated_wait.active_elapsed_ms_at_park, updated_wait.created_at, updated_wait.resuming_at, updated_wait.released_at, updated_wait.cancelled_at, updated_wait.updated_at
   FROM updated_wait
 `
 
@@ -1406,19 +1447,16 @@ type MarkRuntimeResumeWaitResumedParams struct {
 
 type MarkRuntimeResumeWaitResumedRow struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	Kind                       RunWaitKind        `json:"kind"`
-	CorrelationID              string             `json:"correlation_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
 	State                      RunWaitState       `json:"state"`
-	TimeoutAt                  pgtype.Timestamptz `json:"timeout_at"`
 	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
 	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	LiveWaitStartedAt          pgtype.Timestamptz `json:"live_wait_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
 	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
 	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
 	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
@@ -1428,12 +1466,10 @@ type MarkRuntimeResumeWaitResumedRow struct {
 	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
 	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
 	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	ParkedAt                   pgtype.Timestamptz `json:"parked_at"`
-	ResolvedAt                 pgtype.Timestamptz `json:"resolved_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ResumedAt                  pgtype.Timestamptz `json:"resumed_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
@@ -1449,19 +1485,16 @@ func (q *Queries) MarkRuntimeResumeWaitResumed(ctx context.Context, arg MarkRunt
 	var i MarkRuntimeResumeWaitResumedRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -1471,12 +1504,10 @@ func (q *Queries) MarkRuntimeResumeWaitResumed(ctx context.Context, arg MarkRunt
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -1484,7 +1515,7 @@ func (q *Queries) MarkRuntimeResumeWaitResumed(ctx context.Context, arg MarkRunt
 
 const requeueResolvedRunWaits = `-- name: RequeueResolvedRunWaits :many
 WITH eligible_waits AS (
-    SELECT run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
+    SELECT run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at,
            runs.queued_expires_at,
            runs.workspace_id,
            runs.priority
@@ -1505,13 +1536,13 @@ WITH eligible_waits AS (
                      AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
      WHERE run_waits.org_id = $1
        AND run_waits.worker_group_id = $2
-       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
+       AND run_waits.state = 'resuming'
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
        AND runtime_checkpoints.state = 'ready'
        AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
-     ORDER BY COALESCE(run_waits.resolved_at, run_waits.timeout_at, run_waits.updated_at), run_waits.id
+     ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT $3
      FOR UPDATE OF run_waits, runs
 ),
@@ -1523,8 +1554,8 @@ updated_waits AS (
       FROM eligible_waits
      WHERE run_waits.org_id = eligible_waits.org_id
        AND run_waits.id = eligible_waits.id
-       AND run_waits.state IN ('resolved_live', 'resolved_checkpointed', 'expired')
-    RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+       AND run_waits.state = 'resuming'
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 ),
 updated_runs AS (
     UPDATE runs
@@ -1544,7 +1575,7 @@ updated_runs AS (
        AND runs.current_run_lease_id IS NULL
 	    RETURNING runs.id, runs.org_id, runs.queued_expires_at
 	)
-SELECT updated_waits.id, updated_waits.public_id, updated_waits.org_id, updated_waits.worker_group_id, updated_waits.project_id, updated_waits.environment_id, updated_waits.run_id, updated_waits.kind, updated_waits.correlation_id, updated_waits.state, updated_waits.timeout_at, updated_waits.runtime_checkpoint_due_at, updated_waits.runtime_checkpoint_started_at, updated_waits.live_wait_started_at, updated_waits.owner_runtime_instance_id, updated_waits.owner_runtime_epoch, updated_waits.owner_run_id, updated_waits.owner_run_lease_id, updated_waits.owner_run_state_version, updated_waits.owner_worker_instance_id, updated_waits.runtime_checkpoint_id, updated_waits.workspace_version_id, updated_waits.active_elapsed_ms_at_park, updated_waits.parked_at, updated_waits.resolved_at, updated_waits.resuming_at, updated_waits.resumed_at, updated_waits.cancelled_at, updated_waits.created_at, updated_waits.updated_at,
+SELECT updated_waits.id, updated_waits.org_id, updated_waits.worker_group_id, updated_waits.project_id, updated_waits.environment_id, updated_waits.run_id, updated_waits.wait_id, updated_waits.state, updated_waits.runtime_checkpoint_due_at, updated_waits.runtime_checkpoint_started_at, updated_waits.hot_wait_started_at, updated_waits.owner_runtime_instance_id, updated_waits.owner_runtime_epoch, updated_waits.owner_run_id, updated_waits.owner_run_lease_id, updated_waits.owner_run_state_version, updated_waits.owner_worker_instance_id, updated_waits.runtime_checkpoint_id, updated_waits.workspace_version_id, updated_waits.active_elapsed_ms_at_park, updated_waits.created_at, updated_waits.resuming_at, updated_waits.released_at, updated_waits.cancelled_at, updated_waits.updated_at,
        eligible_waits.workspace_id,
        eligible_waits.priority
   FROM updated_waits
@@ -1562,19 +1593,16 @@ type RequeueResolvedRunWaitsParams struct {
 
 type RequeueResolvedRunWaitsRow struct {
 	ID                         pgtype.UUID        `json:"id"`
-	PublicID                   string             `json:"public_id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
 	WorkerGroupID              string             `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID        `json:"project_id"`
 	EnvironmentID              pgtype.UUID        `json:"environment_id"`
 	RunID                      pgtype.UUID        `json:"run_id"`
-	Kind                       RunWaitKind        `json:"kind"`
-	CorrelationID              string             `json:"correlation_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
 	State                      RunWaitState       `json:"state"`
-	TimeoutAt                  pgtype.Timestamptz `json:"timeout_at"`
 	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
 	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	LiveWaitStartedAt          pgtype.Timestamptz `json:"live_wait_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
 	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
 	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
 	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
@@ -1584,12 +1612,10 @@ type RequeueResolvedRunWaitsRow struct {
 	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
 	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
 	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	ParkedAt                   pgtype.Timestamptz `json:"parked_at"`
-	ResolvedAt                 pgtype.Timestamptz `json:"resolved_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ResumedAt                  pgtype.Timestamptz `json:"resumed_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
 	Priority                   int32              `json:"priority"`
@@ -1606,19 +1632,16 @@ func (q *Queries) RequeueResolvedRunWaits(ctx context.Context, arg RequeueResolv
 		var i RequeueResolvedRunWaitsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.PublicID,
 			&i.OrgID,
 			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.Kind,
-			&i.CorrelationID,
+			&i.WaitID,
 			&i.State,
-			&i.TimeoutAt,
 			&i.RuntimeCheckpointDueAt,
 			&i.RuntimeCheckpointStartedAt,
-			&i.LiveWaitStartedAt,
+			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
 			&i.OwnerRunID,
@@ -1628,12 +1651,10 @@ func (q *Queries) RequeueResolvedRunWaits(ctx context.Context, arg RequeueResolv
 			&i.RuntimeCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
-			&i.ParkedAt,
-			&i.ResolvedAt,
-			&i.ResumingAt,
-			&i.ResumedAt,
-			&i.CancelledAt,
 			&i.CreatedAt,
+			&i.ResumingAt,
+			&i.ReleasedAt,
+			&i.CancelledAt,
 			&i.UpdatedAt,
 			&i.WorkspaceID,
 			&i.Priority,
@@ -1649,43 +1670,93 @@ func (q *Queries) RequeueResolvedRunWaits(ctx context.Context, arg RequeueResolv
 }
 
 const resolveRunWait = `-- name: ResolveRunWait :one
-UPDATE run_waits
-   SET state = CASE
-         WHEN state = 'live_waiting' THEN 'resolved_live'::run_wait_state
-         WHEN state = 'checkpointed_waiting' THEN 'resolved_checkpointed'::run_wait_state
-         ELSE state
-       END,
-       resolved_at = COALESCE(run_waits.resolved_at, now()),
-       updated_at = now()
- WHERE org_id = $1
-   AND id = $2
-   AND state IN ('live_waiting', 'checkpointed_waiting')
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, correlation_id, state, timeout_at, runtime_checkpoint_due_at, runtime_checkpoint_started_at, live_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, parked_at, resolved_at, resuming_at, resumed_at, cancelled_at, created_at, updated_at
+WITH target AS MATERIALIZED (
+    SELECT run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+      FROM run_waits
+      JOIN waits ON waits.org_id = run_waits.org_id
+                AND waits.id = run_waits.wait_id
+     WHERE run_waits.org_id = $1
+       AND run_waits.id = $2
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+       AND waits.state = 'pending'
+     FOR UPDATE OF run_waits, waits
+),
+completed_wait AS (
+    UPDATE waits
+       SET state = 'completed',
+           result = COALESCE($3::jsonb, waits.result, 'null'::jsonb),
+           completed_at = COALESCE(waits.completed_at, now()),
+           updated_at = now()
+      FROM target
+     WHERE waits.org_id = target.org_id
+       AND waits.id = target.wait_id
+    RETURNING waits.id
+),
+updated_run_wait AS (
+    UPDATE run_waits
+       SET state = 'resuming',
+           resuming_at = COALESCE(run_waits.resuming_at, now()),
+           updated_at = now()
+      FROM target
+      JOIN completed_wait ON completed_wait.id = target.wait_id
+     WHERE run_waits.org_id = target.org_id
+       AND run_waits.id = target.id
+       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+)
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
+  FROM updated_run_wait
 `
 
 type ResolveRunWaitParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
+	OrgID  pgtype.UUID `json:"org_id"`
+	ID     pgtype.UUID `json:"id"`
+	Result []byte      `json:"result"`
 }
 
-func (q *Queries) ResolveRunWait(ctx context.Context, arg ResolveRunWaitParams) (RunWait, error) {
-	row := q.db.QueryRow(ctx, resolveRunWait, arg.OrgID, arg.ID)
-	var i RunWait
+type ResolveRunWaitRow struct {
+	ID                         pgtype.UUID        `json:"id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	WorkerGroupID              string             `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	RunID                      pgtype.UUID        `json:"run_id"`
+	WaitID                     pgtype.UUID        `json:"wait_id"`
+	State                      RunWaitState       `json:"state"`
+	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
+	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
+	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
+	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerRunStateVersion       pgtype.Int8        `json:"owner_run_state_version"`
+	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
+	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
+	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
+	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
+	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) ResolveRunWait(ctx context.Context, arg ResolveRunWaitParams) (ResolveRunWaitRow, error) {
+	row := q.db.QueryRow(ctx, resolveRunWait, arg.OrgID, arg.ID, arg.Result)
+	var i ResolveRunWaitRow
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -1695,12 +1766,10 @@ func (q *Queries) ResolveRunWait(ctx context.Context, arg ResolveRunWaitParams) 
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -1723,13 +1792,13 @@ UPDATE run_waits
    AND run_waits.environment_id = $3
    AND run_waits.id = $4
    AND run_waits.run_id = $5
-   AND run_waits.state IN ('live_waiting', 'checkpointing')
+   AND run_waits.state IN ('hot_waiting', 'checkpointing')
    AND run_waits.workspace_version_id IS NULL
    AND runs.org_id = run_waits.org_id
    AND runs.project_id = run_waits.project_id
    AND runs.environment_id = run_waits.environment_id
    AND runs.id = run_waits.run_id
-RETURNING run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at
+RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 `
 
 type SetRunWaitWorkspaceVersionParams struct {
@@ -1753,19 +1822,16 @@ func (q *Queries) SetRunWaitWorkspaceVersion(ctx context.Context, arg SetRunWait
 	var i RunWait
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
-		&i.Kind,
-		&i.CorrelationID,
+		&i.WaitID,
 		&i.State,
-		&i.TimeoutAt,
 		&i.RuntimeCheckpointDueAt,
 		&i.RuntimeCheckpointStartedAt,
-		&i.LiveWaitStartedAt,
+		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
 		&i.OwnerRunID,
@@ -1775,12 +1841,10 @@ func (q *Queries) SetRunWaitWorkspaceVersion(ctx context.Context, arg SetRunWait
 		&i.RuntimeCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
-		&i.ParkedAt,
-		&i.ResolvedAt,
-		&i.ResumingAt,
-		&i.ResumedAt,
-		&i.CancelledAt,
 		&i.CreatedAt,
+		&i.ResumingAt,
+		&i.ReleasedAt,
+		&i.CancelledAt,
 		&i.UpdatedAt,
 	)
 	return i, err
