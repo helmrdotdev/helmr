@@ -130,13 +130,14 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name) VALUES ($1, $5, $2, $3, $4, 'Project')
+			INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
+			VALUES ($1, $5::text, $2, $3::text, $4::text, 'Project')
 	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug, testPublicID(t, publicid.Project)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-		VALUES ($1, $5, $2, $3, $4, 'Env', '#3366ff')
+			INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
+			VALUES ($1, $5::text, $2, $3, $4::text, 'Env', '#3366ff')
 	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug, testPublicID(t, publicid.Environment)); err != nil {
 		t.Fatal(err)
 	}

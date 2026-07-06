@@ -141,7 +141,7 @@ UPDATE worker_groups
        health_checked_at = now(),
        routing_fresh_until = now() + $2::interval,
        health_details = $3::jsonb
- WHERE id = $4
+ WHERE id = $4::text
 RETURNING id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
 `
 

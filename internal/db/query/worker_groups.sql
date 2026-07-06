@@ -18,7 +18,7 @@ UPDATE worker_groups
        health_checked_at = now(),
        routing_fresh_until = now() + sqlc.arg(fresh_for)::interval,
        health_details = sqlc.arg(health_details)::jsonb
- WHERE id = sqlc.arg(worker_group_id)
+ WHERE id = sqlc.arg(worker_group_id)::text
 RETURNING *;
 
 -- name: GetControlWorkerGroupReadiness :one
