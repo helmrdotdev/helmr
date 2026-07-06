@@ -407,7 +407,6 @@ func TestStreamsAndTokensRoutesWithAuthBoundaries(t *testing.T) {
 		PublicID:                 streamTestPublicID(t, publicid.Token),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(-time.Minute)),
@@ -884,7 +883,6 @@ func createPublicStreamScope(t *testing.T, ctx context.Context, queries *db.Quer
 		PublicID:      streamTestPublicID(t, publicid.PublicAccessToken),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TokenHash:     hash,
@@ -898,7 +896,6 @@ func createPublicStreamScope(t *testing.T, ctx context.Context, queries *db.Quer
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -1039,7 +1036,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $9, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, dbtest.DefaultWorkerGroupID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
@@ -1177,7 +1174,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, streamID uuid.UUID, name string, direction string) {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, worker_group_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, '{}')`, deploymentStreamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name, streamTestPublicID(t, publicid.Stream)); err != nil {
@@ -1226,7 +1223,7 @@ func seedControlStreamSession(t *testing.T, ctx context.Context, pool *pgxpool.P
 func seedControlDeploymentStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids streamTokenRouteFixture, deploymentID uuid.UUID, name string, direction string, schemaFingerprint string, schemaJSON string) uuid.UUID {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, worker_group_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, deploymentStreamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, schemaFingerprint, schemaJSON); err != nil {
 		t.Fatal(err)
 	}
 	return deploymentStreamID

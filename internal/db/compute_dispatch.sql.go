@@ -1229,7 +1229,7 @@ inserted_requirements AS (
                       AND deployments.project_id = target_run.project_id
                       AND deployments.environment_id = target_run.environment_id
                       AND deployments.id = target_run.deployment_id
-                      AND deployments.build_worker_group_id = target_run.worker_group_id
+                      AND deployments.status = 'deployed'
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING
@@ -2251,8 +2251,7 @@ INSERT INTO run_runtime_requirements (
     rootfs_digest,
     cni_profile,
     network_policy,
-    placement,
-    worker_group_id
+    placement
 )
 SELECT $1,
        $2,
@@ -2269,8 +2268,7 @@ SELECT $1,
        $12,
        $13,
        $14,
-       $15,
-       $16
+       $15
   FROM runs
  WHERE runs.org_id = $2
    AND runs.id = $1
@@ -2309,7 +2307,6 @@ type UpsertRunRuntimeRequirementsParams struct {
 	CniProfile              string      `json:"cni_profile"`
 	NetworkPolicy           []byte      `json:"network_policy"`
 	Placement               []byte      `json:"placement"`
-	WorkerGroupID           string      `json:"worker_group_id"`
 }
 
 func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRunRuntimeRequirementsParams) (RunRuntimeRequirement, error) {
@@ -2329,7 +2326,6 @@ func (q *Queries) UpsertRunRuntimeRequirements(ctx context.Context, arg UpsertRu
 		arg.CniProfile,
 		arg.NetworkPolicy,
 		arg.Placement,
-		arg.WorkerGroupID,
 	)
 	var i RunRuntimeRequirement
 	err := row.Scan(

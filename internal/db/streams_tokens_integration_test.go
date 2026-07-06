@@ -1446,17 +1446,17 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $7, $2, $3, $4, $5, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $4
-		   AND artifacts.environment_id = $5
-		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
+		   AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4
+		   AND artifacts.id = $6
+	`, nextVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -3375,7 +3375,6 @@ func TestDeploymentStreamNameResolutionAndSessionEnsure(t *testing.T) {
 
 	deployed, err := queries.GetDeploymentStreamByName(ctx, db.GetDeploymentStreamByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		DeploymentID:  pgvalue.UUID(ids.deploymentID),
@@ -3416,7 +3415,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                  testTokenPublicID(t),
 		ID:                        pgvalue.UUID(tokenID),
 		OrgID:                     pgvalue.UUID(ids.orgID),
-		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                 pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3434,7 +3432,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3452,7 +3449,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3482,7 +3478,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	completionData := []byte(`{"approved":true}`)
 	completed, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3498,7 +3493,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 	again, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3514,7 +3508,6 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 	different, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 		OrgID:                 pgvalue.UUID(ids.orgID),
-		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 		ProjectID:             pgvalue.UUID(ids.projectID),
 		EnvironmentID:         pgvalue.UUID(ids.environmentID),
 		ID:                    token.ID,
@@ -3530,7 +3523,7 @@ func TestTokenCreateAndCompletionIdempotency(t *testing.T) {
 	}
 }
 
-func TestTokenQueriesRejectWrongWorkerGroup(t *testing.T) {
+func TestTokenWaitRejectsWrongWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -3540,7 +3533,6 @@ func TestTokenQueriesRejectWrongWorkerGroup(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3549,28 +3541,6 @@ func TestTokenQueriesRejectWrongWorkerGroup(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := queries.GetToken(ctx, db.GetTokenParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: wrongWorkerGroupID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		ID:            token.ID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetToken wrong worker group err = %v, want no rows", err)
-	}
-	listed, err := queries.ListTokens(ctx, db.ListTokensParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: wrongWorkerGroupID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		LimitCount:    10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(listed) != 0 {
-		t.Fatalf("ListTokens wrong worker group returned %d rows", len(listed))
 	}
 	runWait := seedRunWait(t, ctx, pool, ids, db.RunWaitKindToken)
 	if _, err := queries.CreateTokenWait(ctx, db.CreateTokenWaitParams{
@@ -3584,95 +3554,6 @@ func TestTokenQueriesRejectWrongWorkerGroup(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("CreateTokenWait wrong worker group err = %v, want no rows", err)
 	}
-	if _, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
-		OrgID:                 pgvalue.UUID(ids.orgID),
-		WorkerGroupID:         wrongWorkerGroupID,
-		ProjectID:             pgvalue.UUID(ids.projectID),
-		EnvironmentID:         pgvalue.UUID(ids.environmentID),
-		ID:                    token.ID,
-		CompletionData:        []byte(`{"ok":true}`),
-		CompletionContentType: "application/json",
-		CompletionFingerprint: canonicalFingerprint(t, []byte(`{"ok":true}`)),
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CompleteToken wrong worker group err = %v, want no rows", err)
-	}
-	if _, err := queries.CancelToken(ctx, db.CancelTokenParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: wrongWorkerGroupID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		ID:            token.ID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CancelToken wrong worker group err = %v, want no rows", err)
-	}
-	publicToken, err := queries.CreatePublicAccessToken(ctx, db.CreatePublicAccessTokenParams{
-		PublicID:      testPublicAccessTokenPublicID(t),
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		ProjectID:     pgvalue.UUID(ids.projectID),
-		EnvironmentID: pgvalue.UUID(ids.environmentID),
-		TokenHash:     []byte("wrong-worker-group-public-token-hash"),
-		ExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		Metadata:      []byte(`{}`),
-		CreatedBy:     []byte(`{}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
-		ProjectID:           pgvalue.UUID(ids.projectID),
-		EnvironmentID:       pgvalue.UUID(ids.environmentID),
-		PublicAccessTokenID: publicToken.ID,
-		ScopeType:           db.PublicAccessTokenScopeTypeTokencomplete,
-		TokenID:             token.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.GetPublicAccessTokenTokenScope(ctx, db.GetPublicAccessTokenTokenScopeParams{
-		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       wrongWorkerGroupID,
-		ProjectID:           pgvalue.UUID(ids.projectID),
-		EnvironmentID:       pgvalue.UUID(ids.environmentID),
-		PublicAccessTokenID: publicToken.ID,
-		TokenID:             token.ID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetPublicAccessTokenTokenScope wrong worker group err = %v, want no rows", err)
-	}
-	inputStream := seedSessionStream(t, ctx, queries, ids, db.StreamDirectionInput, "wrong-worker-group-input")
-	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
-		ProjectID:           pgvalue.UUID(ids.projectID),
-		EnvironmentID:       pgvalue.UUID(ids.environmentID),
-		PublicAccessTokenID: publicToken.ID,
-		ScopeType:           db.PublicAccessTokenScopeTypeSessioninputsend,
-		StreamID:            inputStream.ID,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queries.GetPublicAccessTokenStreamScope(ctx, db.GetPublicAccessTokenStreamScopeParams{
-		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       wrongWorkerGroupID,
-		ProjectID:           pgvalue.UUID(ids.projectID),
-		EnvironmentID:       pgvalue.UUID(ids.environmentID),
-		PublicAccessTokenID: publicToken.ID,
-		ScopeType:           db.PublicAccessTokenScopeTypeSessioninputsend,
-		StreamID:            inputStream.ID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetPublicAccessTokenStreamScope wrong worker group err = %v, want no rows", err)
-	}
-	if _, err := queries.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: wrongWorkerGroupID,
-		ID:            publicToken.ID,
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("ConsumePublicAccessToken wrong worker group err = %v, want no rows", err)
-	}
 }
 
 func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
@@ -3684,7 +3565,6 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3705,7 +3585,6 @@ func TestConcurrentTokenCompletionIsFirstResolveWins(t *testing.T) {
 			data := []byte(`{"winner":` + string(rune('0'+i)) + `}`)
 			row, err := queries.CompleteToken(ctx, db.CompleteTokenParams{
 				OrgID:                 pgvalue.UUID(ids.orgID),
-				WorkerGroupID:         dbtest.DefaultWorkerGroupID,
 				ProjectID:             pgvalue.UUID(ids.projectID),
 				EnvironmentID:         pgvalue.UUID(ids.environmentID),
 				ID:                    token.ID,
@@ -3750,7 +3629,6 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(-time.Second)),
@@ -3773,10 +3651,7 @@ func TestTokenAndTimerWaitExpiryBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	markRunWaitLiveWaiting(t, ctx, pool, ids, tokenRunWait)
-	expired, err := queries.ExpireDueTokens(ctx, db.ExpireDueTokensParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-	})
+	expired, err := queries.ExpireDueTokens(ctx, pgvalue.UUID(ids.orgID))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -3903,7 +3778,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		PublicID:                 testTokenPublicID(t),
 		ID:                       pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                    pgvalue.UUID(ids.orgID),
-		WorkerGroupID:            dbtest.DefaultWorkerGroupID,
 		ProjectID:                pgvalue.UUID(ids.projectID),
 		EnvironmentID:            pgvalue.UUID(ids.environmentID),
 		TimeoutAt:                pgvalue.Timestamptz(time.Now().Add(time.Hour)),
@@ -3917,7 +3791,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 		PublicID:      testPublicAccessTokenPublicID(t),
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		TokenHash:     []byte("public-token-hash"),
@@ -3931,7 +3804,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3943,7 +3815,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3955,7 +3826,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	if _, err := queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3967,7 +3837,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3980,7 +3849,6 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	_, err = queries.CreatePublicAccessTokenScope(ctx, db.CreatePublicAccessTokenScopeParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(ids.orgID),
-		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
 		EnvironmentID:       pgvalue.UUID(ids.environmentID),
 		PublicAccessTokenID: publicToken.ID,
@@ -3992,10 +3860,10 @@ func TestPublicAccessTokenScopesUseTypedResourceFKs(t *testing.T) {
 	}
 	_, err = pool.Exec(ctx, `
 			INSERT INTO public_access_token_scopes (
-				id, org_id, worker_group_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
+				id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, 'session.input.send', $7, NULL)
-		`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
+			VALUES ($1, $2, $3, $4, $5, 'session.input.send', $6, NULL)
+		`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, pgvalue.MustUUIDValue(publicToken.ID), pgvalue.MustUUIDValue(token.ID))
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
 		t.Fatalf("invalid direct scope err = %v, want check violation", err)
@@ -4007,7 +3875,6 @@ func seedSessionStream(t *testing.T, ctx context.Context, queries *db.Queries, i
 	deploymentStream, err := queries.UpsertDeploymentStream(ctx, db.UpsertDeploymentStreamParams{
 		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:             pgvalue.UUID(ids.orgID),
-		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		DeploymentID:      pgvalue.UUID(ids.deploymentID),
@@ -4599,17 +4466,17 @@ func advanceWorkspaceCurrentVersion(t *testing.T, ctx context.Context, pool *pgx
 	nextVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $7, $2, $3, $4, $5, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $4
-		   AND artifacts.environment_id = $5
-		   AND artifacts.id = $7
-	`, nextVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
+		   AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4
+		   AND artifacts.id = $6
+	`, nextVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, nextArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

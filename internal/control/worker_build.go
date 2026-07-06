@@ -404,7 +404,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			if _, err := work.q.UpsertDeploymentStream(r.Context(), db.UpsertDeploymentStreamParams{
 				ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:             orgID,
-				WorkerGroupID:     workerGroupID,
 				ProjectID:         projectID,
 				EnvironmentID:     environmentID,
 				DeploymentID:      deploymentID,

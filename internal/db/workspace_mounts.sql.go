@@ -86,9 +86,7 @@ candidate AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_worker_group_id = workspace_mounts.worker_group_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
-                       AND worker_scope.worker_group_id = workspace_mounts.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
       JOIN (
     SELECT placement_project.org_id,
            placement_project.id AS project_id,
@@ -825,7 +823,6 @@ inserted AS (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN workspace_versions AS current_workspace_version
         ON current_workspace_version.org_id = workspaces.org_id
-       AND current_workspace_version.worker_group_id = workspaces.worker_group_id
        AND current_workspace_version.project_id = workspaces.project_id
        AND current_workspace_version.environment_id = workspaces.environment_id
        AND current_workspace_version.workspace_id = workspaces.id
@@ -1609,7 +1606,6 @@ SELECT workspaces.id AS workspace_id,
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
   LEFT JOIN workspace_versions AS current_workspace_version
     ON current_workspace_version.org_id = workspaces.org_id
-   AND current_workspace_version.worker_group_id = workspaces.worker_group_id
    AND current_workspace_version.project_id = workspaces.project_id
    AND current_workspace_version.environment_id = workspaces.environment_id
    AND current_workspace_version.workspace_id = workspaces.id
@@ -2227,7 +2223,6 @@ created_version AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -2247,7 +2242,6 @@ created_version AS (
     SELECT $12,
            $13::text,
            target.org_id,
-           target.worker_group_id,
            target.project_id,
            target.environment_id,
            target.workspace_id,
@@ -2265,7 +2259,7 @@ created_version AS (
            'worker'
       FROM target
       JOIN verified_artifact ON verified_artifact.id = $8
-    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -2290,7 +2284,7 @@ promoted_mount AS (
        AND workspace_mounts.state = 'unmounting'
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.worker_group_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN promoted_mount ON promoted_mount.id = created_version.source_workspace_mount_id
@@ -2318,7 +2312,6 @@ type PromoteWorkspaceMountStopCaptureRow struct {
 	ID                     pgtype.UUID           `json:"id"`
 	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
-	WorkerGroupID          string                `json:"worker_group_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`
 	EnvironmentID          pgtype.UUID           `json:"environment_id"`
 	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
@@ -2365,7 +2358,6 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -3297,8 +3289,7 @@ candidate AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_worker_group_id = workspace_mounts.worker_group_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
        AND image_artifact.project_id = workspace_mounts.project_id

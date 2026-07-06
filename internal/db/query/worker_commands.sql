@@ -571,7 +571,7 @@ blocked_mount AS MATERIALIZED (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
      WHERE workspace_mounts.state = 'mounting'
        AND NOT EXISTS (
            SELECT 1

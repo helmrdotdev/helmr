@@ -3501,7 +3501,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 	f.startIdempotency = db.GetSessionStartIdempotencyRow{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
-		WorkerGroupID:              arg.WorkerGroupID,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		TaskID:                     arg.TaskID,
@@ -3513,6 +3512,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		LastUsedAt:                 testTime(),
 		SessionID:                  f.session.ID,
 		SessionOrgID:               f.session.OrgID,
+		SessionWorkerGroupID:       f.session.WorkerGroupID,
 		SessionProjectID:           f.session.ProjectID,
 		SessionEnvironmentID:       f.session.EnvironmentID,
 		SessionTaskID:              f.session.TaskID,
@@ -3534,6 +3534,7 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 		SessionUpdatedAt:           f.session.UpdatedAt,
 		RunID:                      f.run.ID,
 		RunOrgID:                   f.run.OrgID,
+		RunWorkerGroupID:           f.run.WorkerGroupID,
 		RunProjectID:               f.run.ProjectID,
 		RunEnvironmentID:           f.run.EnvironmentID,
 		RunDeploymentID:            f.run.DeploymentID,
@@ -3557,7 +3558,6 @@ func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.Crea
 	return db.SessionStartIdempotency{
 		ID:                 arg.ID,
 		OrgID:              arg.OrgID,
-		WorkerGroupID:      arg.WorkerGroupID,
 		ProjectID:          arg.ProjectID,
 		EnvironmentID:      arg.EnvironmentID,
 		TaskID:             arg.TaskID,

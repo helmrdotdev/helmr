@@ -213,6 +213,7 @@ RETURNING *;
 SELECT session_start_idempotencies.*,
        sessions.id AS session_id,
        sessions.org_id AS session_org_id,
+       sessions.worker_group_id AS session_worker_group_id,
        sessions.project_id AS session_project_id,
        sessions.environment_id AS session_environment_id,
        sessions.task_id AS session_task_id,
@@ -234,6 +235,7 @@ SELECT session_start_idempotencies.*,
        sessions.updated_at AS session_updated_at,
        runs.id AS run_id,
        runs.org_id AS run_org_id,
+       runs.worker_group_id AS run_worker_group_id,
        runs.project_id AS run_project_id,
        runs.environment_id AS run_environment_id,
        runs.deployment_id AS run_deployment_id,
@@ -257,12 +259,10 @@ SELECT session_start_idempotencies.*,
        runs.updated_at AS run_updated_at
   FROM session_start_idempotencies
   JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
-                    AND sessions.worker_group_id = session_start_idempotencies.worker_group_id
                     AND sessions.project_id = session_start_idempotencies.project_id
                     AND sessions.environment_id = session_start_idempotencies.environment_id
                     AND sessions.id = session_start_idempotencies.session_id
   JOIN runs ON runs.org_id = session_start_idempotencies.org_id
-           AND runs.worker_group_id = session_start_idempotencies.worker_group_id
            AND runs.project_id = session_start_idempotencies.project_id
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
@@ -286,7 +286,6 @@ DELETE FROM session_start_idempotencies
 INSERT INTO session_start_idempotencies (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     task_id,
@@ -298,7 +297,6 @@ INSERT INTO session_start_idempotencies (
 ) VALUES (
     sqlc.arg(id),
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(task_id),
@@ -309,16 +307,13 @@ INSERT INTO session_start_idempotencies (
     sqlc.arg(expires_at)
 )
 ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       request_fingerprint = EXCLUDED.request_fingerprint,
+   SET request_fingerprint = EXCLUDED.request_fingerprint,
        session_id = EXCLUDED.session_id,
        first_run_id = EXCLUDED.first_run_id,
        expires_at = EXCLUDED.expires_at,
        last_used_at = now()
  WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
-   AND (
-       session_start_idempotencies.worker_group_id <> EXCLUDED.worker_group_id
-   )
+   AND session_start_idempotencies.expires_at <= now()
 RETURNING *;
 
 -- name: TouchSessionStartIdempotency :exec

@@ -32,7 +32,7 @@ type ExpirySweepOrgStore interface {
 	FailExpiredRunningRunLeases(ctx context.Context, arg db.FailExpiredRunningRunLeasesParams) error
 	ExpireQueuedRuns(ctx context.Context, arg db.ExpireQueuedRunsParams) error
 	ExpireDueSessions(ctx context.Context, arg db.ExpireDueSessionsParams) ([]db.Session, error)
-	ExpireDueTokens(ctx context.Context, arg db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error)
+	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
 	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
@@ -226,7 +226,7 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, workerGr
 	if _, err := store.ExpireDueSessions(ctx, db.ExpireDueSessionsParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if _, err := store.ExpireDueTokens(ctx, db.ExpireDueTokensParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
+	if _, err := store.ExpireDueTokens(ctx, orgID); err != nil {
 		return err
 	}
 	if _, err := store.ResolveDueTimerWaits(ctx, db.ResolveDueTimerWaitsParams{

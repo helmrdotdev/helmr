@@ -92,7 +92,6 @@ WITH wait_scope AS (
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
       JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
-                             AND workspace_versions.worker_group_id = workspaces.worker_group_id
                              AND workspace_versions.project_id = workspaces.project_id
                              AND workspace_versions.environment_id = workspaces.environment_id
                              AND workspace_versions.workspace_id = workspaces.id
@@ -976,7 +975,6 @@ SELECT
                        AND token_waits.environment_id = run_waits.environment_id
                        AND token_waits.run_wait_id = run_waits.id
   LEFT JOIN tokens ON tokens.org_id = token_waits.org_id
-                  AND tokens.worker_group_id = token_waits.worker_group_id
                   AND tokens.project_id = token_waits.project_id
                   AND tokens.environment_id = token_waits.environment_id
                   AND tokens.id = token_waits.token_id

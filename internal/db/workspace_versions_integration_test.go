@@ -24,11 +24,11 @@ func TestWorkspaceMountRequiresReadyCurrentVersion(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'system', 'capturing', $7, 'tar', 1, $8, 1)
-	`, versionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, digest, testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'system', 'capturing', $6, 'tar', 1, $7, 1)
+	`, versionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, digest, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := pool.Exec(ctx, `
@@ -69,11 +69,11 @@ func TestWorkspaceCurrentVersionAllowsReadyVersionCreatedInSameTransaction(t *te
 	}
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'system', 'ready', $7, 'tar', 1, $8, 1, now())
-	`, versionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, workspaceID, artifactID, digest, testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'system', 'ready', $6, 'tar', 1, $7, 1, now())
+	`, versionID, ids.orgID, ids.projectID, ids.environmentID, workspaceID, artifactID, digest, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -149,38 +149,38 @@ func TestWorkspaceVersionReadQueriesRequireReadySameWorkspace(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, 'user', 'ready', $7, $8, 1, $9, 10, now(), now() - interval '1 minute')
-	`, readyVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now(), now() - interval '1 minute')
+	`, readyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, 'user', 'ready', $7, $8, 1, $9, 10, now(), now())
-	`, newerReadyVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("newer-ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now(), now())
+	`, newerReadyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("newer-ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at, created_at
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, 'system', 'ready', $7, $8, 1, $9, 10, now(), now() + interval '1 minute')
-	`, systemReadyVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("system-ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'system', 'ready', $6, $7, 1, $8, 10, now(), now() + interval '1 minute')
+	`, systemReadyVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("system-ready-version"), testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, 'user', 'capturing', $7, $8, 1, $9, 10)
-	`, capturingVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("capturing-version"), testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'user', 'capturing', $6, $7, 1, $8, 10)
+	`, capturingVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, workspace.ArtifactEncoding, testDigest("capturing-version"), testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -193,11 +193,11 @@ func TestWorkspaceVersionReadQueriesRequireReadySameWorkspace(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, 'user', 'ready', $7, $8, 1, $9, 10, now())
-	`, otherVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, otherWorkspaceID, artifactID, workspace.ArtifactEncoding, testDigest("other-workspace-version"), testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, 'user', 'ready', $6, $7, 1, $8, 10, now())
+	`, otherVersionID, ids.orgID, ids.projectID, ids.environmentID, otherWorkspaceID, artifactID, workspace.ArtifactEncoding, testDigest("other-workspace-version"), testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 

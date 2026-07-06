@@ -12,7 +12,6 @@ INSERT INTO deployments (
     cli_version,
     bundle_format_version,
     worker_protocol_version,
-    worker_group_id,
     content_hash,
     deployment_source_artifact_id,
     status
@@ -29,7 +28,6 @@ SELECT sqlc.arg(id),
        sqlc.arg(cli_version),
        sqlc.arg(bundle_format_version),
        sqlc.arg(worker_protocol_version),
-       sqlc.arg(worker_group_id),
        sqlc.arg(content_hash),
        sqlc.arg(deployment_source_artifact_id),
        sqlc.arg(status)::deployment_status
@@ -48,7 +46,6 @@ SELECT sqlc.arg(id),
         WHERE projects.org_id = sqlc.arg(org_id)
           AND projects.id = sqlc.arg(project_id)
           AND environments.id = sqlc.arg(environment_id)
-          AND sqlc.arg(worker_group_id) = sqlc.arg(build_worker_group_id)
 	 )
 RETURNING *;
 
@@ -61,7 +58,6 @@ SELECT pg_advisory_xact_lock(
             sqlc.arg(build_worker_group_id)::text,
             sqlc.arg(project_id)::uuid::text,
             sqlc.arg(environment_id)::uuid::text,
-            sqlc.arg(worker_group_id)::text,
             sqlc.arg(content_hash)::text
         ),
         0
@@ -76,7 +72,6 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
@@ -132,7 +127,6 @@ WITH candidate AS (
             )
      )
        AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
-       AND deployments.worker_group_id = sqlc.arg(worker_group_id)
      ORDER BY deployments.created_at ASC
      LIMIT 1
      FOR UPDATE OF deployments SKIP LOCKED
@@ -270,20 +264,13 @@ RETURNING *;
 WITH target AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
-      JOIN worker_groups
-        ON worker_groups.id = deployments.build_worker_group_id
-       AND worker_groups.state = 'active'
-       AND worker_groups.health_state IN ('healthy', 'degraded')
-       AND worker_groups.routing_fresh_until > now()
      WHERE deployments.org_id = sqlc.arg(org_id)
        AND deployments.project_id = sqlc.arg(project_id)
        AND deployments.environment_id = sqlc.arg(environment_id)
        AND deployments.id = sqlc.arg(deployment_id)
-       AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
        AND deployments.status = 'deployed'
 ),
 previous AS (
@@ -308,7 +295,6 @@ promotion AS (
     INSERT INTO deployment_promotions (
         id,
         org_id,
-        promotion_worker_group_id,
         project_id,
         environment_id,
         deployment_id,
@@ -318,7 +304,6 @@ promotion AS (
     )
     SELECT sqlc.arg(id),
            target.org_id,
-           target.build_worker_group_id,
            target.project_id,
            target.environment_id,
            target.id,
@@ -545,18 +530,18 @@ SELECT deployments.*
                    AND environments.project_id = deployments.project_id
                    AND environments.id = deployments.environment_id
                    AND environments.current_deployment_id = deployments.id
+  JOIN projects ON projects.org_id = deployments.org_id
+               AND projects.id = deployments.project_id
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.region_id = projects.default_region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.health_state IN ('healthy', 'degraded')
+   AND worker_groups.routing_fresh_until > now()
  WHERE deployments.org_id = sqlc.arg(org_id)
    AND deployments.project_id = sqlc.arg(project_id)
    AND deployments.environment_id = sqlc.arg(environment_id)
    AND deployments.status = 'deployed'
-   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
-   AND EXISTS (
-       SELECT 1
-         FROM worker_groups
-        WHERE worker_groups.id = deployments.build_worker_group_id
-          AND worker_groups.id = sqlc.arg(worker_group_id)
-          AND worker_groups.state = 'active'
-	   )
  LIMIT 1;
 
 -- name: ListDeploymentTasks :many
@@ -629,16 +614,20 @@ SELECT *
 -- name: GetDeploymentSandboxForWorkerGroup :one
 SELECT deployment_sandboxes.*
   FROM deployment_sandboxes
-  JOIN worker_groups
-    ON worker_groups.id = sqlc.arg(worker_group_id)
-   AND worker_groups.state IN ('active', 'draining')
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.worker_group_id = worker_groups.id
-   AND deployments.build_worker_group_id = worker_groups.id
+  JOIN projects
+    ON projects.org_id = deployment_sandboxes.org_id
+   AND projects.id = deployment_sandboxes.project_id
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.region_id = projects.default_region_id
+   AND worker_groups.state IN ('active', 'draining')
+   AND worker_groups.health_state IN ('healthy', 'degraded')
+   AND worker_groups.routing_fresh_until > now()
  WHERE deployment_sandboxes.id = sqlc.arg(id)
  LIMIT 1;
 
@@ -748,6 +737,12 @@ SELECT deployment_tasks.*,
    AND source_artifacts.id = deployments.deployment_source_artifact_id
   JOIN worker_groups
     ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.region_id = (
+       SELECT projects.default_region_id
+         FROM projects
+        WHERE projects.org_id = deployment_tasks.org_id
+          AND projects.id = deployment_tasks.project_id
+   )
    AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.health_state IN ('healthy', 'degraded')
    AND worker_groups.routing_fresh_until > now()
@@ -757,5 +752,4 @@ WHERE deployment_tasks.org_id = sqlc.arg(org_id)
    AND deployment_tasks.deployment_id = sqlc.arg(deployment_id)
    AND deployment_tasks.task_id = sqlc.arg(task_id)
    AND deployments.status = 'deployed'
-   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
  LIMIT 1;

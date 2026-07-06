@@ -426,10 +426,10 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	}
 	if _, err := pool.Exec(ctx, `
 			INSERT INTO workspace_versions (
-				id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+				id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 				artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 			)
-			SELECT $1, $5, org_id, worker_group_id, project_id, environment_id, $2, kind, state,
+			SELECT $1, $5, org_id, project_id, environment_id, $2, kind, state,
 			       artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, now()
 			  FROM workspace_versions
 			 WHERE org_id = $3

@@ -36,7 +36,6 @@ WITH created_workspace AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
        AND deployments.status = 'deployed'
       JOIN (
     SELECT placement_project.org_id,
@@ -73,7 +72,6 @@ created_version AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -91,7 +89,6 @@ created_version AS (
     SELECT sqlc.arg(initial_version_id),
            sqlc.arg(initial_version_public_id),
            created_workspace.org_id,
-           created_workspace.worker_group_id,
            created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
@@ -124,35 +121,19 @@ SELECT deployment_sandboxes.*
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-   AND deployments.build_worker_group_id = sqlc.arg(worker_group_id)
-  JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_project.default_region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON placement_worker_group.region_id = placement_project.default_region_id
-) AS project_worker_group_placement
-    ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
-   AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
-   AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-   AND project_worker_group_placement.worker_group_id = sqlc.arg(worker_group_id)
-   AND project_worker_group_placement.worker_group_state = 'active'
-  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-            AND worker_groups.region_id = project_worker_group_placement.region_id
-            AND worker_groups.state = 'active'
-            AND worker_groups.health_state IN ('healthy', 'degraded')
-            AND worker_groups.routing_fresh_until > now()
+  JOIN projects
+    ON projects.org_id = deployment_sandboxes.org_id
+   AND projects.id = deployment_sandboxes.project_id
   JOIN environments
     ON environments.org_id = deployment_sandboxes.org_id
    AND environments.project_id = deployment_sandboxes.project_id
    AND environments.id = deployment_sandboxes.environment_id
+  JOIN worker_groups
+    ON worker_groups.id = sqlc.arg(worker_group_id)
+   AND worker_groups.region_id = projects.default_region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.health_state IN ('healthy', 'degraded')
+   AND worker_groups.routing_fresh_until > now()
  WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
    AND deployment_sandboxes.project_id = sqlc.arg(project_id)
    AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)

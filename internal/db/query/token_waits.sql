@@ -22,7 +22,6 @@ SELECT sqlc.arg(id),
        END
   FROM run_waits
   JOIN tokens ON tokens.org_id = run_waits.org_id
-             AND tokens.worker_group_id = run_waits.worker_group_id
              AND tokens.project_id = run_waits.project_id
              AND tokens.environment_id = run_waits.environment_id
              AND tokens.id = sqlc.arg(token_id)
@@ -42,7 +41,8 @@ WITH target_wait AS (
                     AND run_waits.worker_group_id = token_waits.worker_group_id
                     AND run_waits.id = token_waits.run_wait_id
       JOIN tokens ON tokens.org_id = token_waits.org_id
-                 AND tokens.worker_group_id = token_waits.worker_group_id
+                 AND tokens.project_id = token_waits.project_id
+                 AND tokens.environment_id = token_waits.environment_id
                  AND tokens.id = token_waits.token_id
      WHERE token_waits.org_id = sqlc.arg(org_id)
        AND token_waits.worker_group_id = sqlc.arg(worker_group_id)

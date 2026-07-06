@@ -41,7 +41,6 @@ SELECT $1,
   FROM sessions
   JOIN deployment_streams
     ON deployment_streams.org_id = sessions.org_id
-   AND deployment_streams.worker_group_id = sessions.worker_group_id
    AND deployment_streams.project_id = sessions.project_id
    AND deployment_streams.environment_id = sessions.environment_id
    AND deployment_streams.id = $4

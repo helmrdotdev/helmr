@@ -144,7 +144,7 @@ type Querier interface {
 	EnsureWorkspaceOperationIdempotency(ctx context.Context, arg EnsureWorkspaceOperationIdempotencyParams) (EnsureWorkspaceOperationIdempotencyRow, error)
 	ExpireDueRunWaits(ctx context.Context, arg ExpireDueRunWaitsParams) ([]RunWait, error)
 	ExpireDueSessions(ctx context.Context, arg ExpireDueSessionsParams) ([]Session, error)
-	ExpireDueTokens(ctx context.Context, arg ExpireDueTokensParams) ([]ExpireDueTokensRow, error)
+	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]ExpireDueTokensRow, error)
 	ExpireQueuedRuns(ctx context.Context, arg ExpireQueuedRunsParams) error
 	ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDueParams) (Session, error)
 	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)

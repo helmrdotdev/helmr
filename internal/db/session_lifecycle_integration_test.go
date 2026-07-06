@@ -114,9 +114,9 @@ func seedPendingSessionRunRequest(t *testing.T, ctx context.Context, pool *pgxpo
 	streamRecordID := uuid.Must(uuid.NewV7())
 	requestID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployment_streams (id, org_id, worker_group_id, project_id, environment_id, deployment_id, name, direction)
-		VALUES ($1, $2, $3, $4, $5, $6, 'user.input', 'input')
-	`, deploymentStreamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction)
+		VALUES ($1, $2, $3, $4, $5, 'user.input', 'input')
+	`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

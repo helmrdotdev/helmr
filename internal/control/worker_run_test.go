@@ -1507,7 +1507,7 @@ func (f *fakeStore) RequeueExpiredLeasedRunLeases(context.Context, db.RequeueExp
 	return nil
 }
 
-func (f *fakeStore) ExpireDueTokens(context.Context, db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error) {
+func (f *fakeStore) ExpireDueTokens(context.Context, pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
 	return nil, nil
 }
 

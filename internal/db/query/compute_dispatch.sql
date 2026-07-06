@@ -301,8 +301,7 @@ INSERT INTO run_runtime_requirements (
     rootfs_digest,
     cni_profile,
     network_policy,
-    placement,
-    worker_group_id
+    placement
 )
 SELECT sqlc.arg(run_id),
        sqlc.arg(org_id),
@@ -319,8 +318,7 @@ SELECT sqlc.arg(run_id),
        sqlc.arg(rootfs_digest),
        sqlc.arg(cni_profile),
        sqlc.arg(network_policy),
-       sqlc.arg(placement),
-       sqlc.arg(worker_group_id)
+       sqlc.arg(placement)
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
@@ -515,7 +513,7 @@ inserted_requirements AS (
                       AND deployments.project_id = target_run.project_id
                       AND deployments.environment_id = target_run.environment_id
                       AND deployments.id = target_run.deployment_id
-                      AND deployments.build_worker_group_id = target_run.worker_group_id
+                      AND deployments.status = 'deployed'
       JOIN selected_runtime ON true
      WHERE NOT EXISTS (SELECT 1 FROM existing_requirements)
     ON CONFLICT (run_id) DO NOTHING

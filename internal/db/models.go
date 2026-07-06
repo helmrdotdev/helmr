@@ -2713,7 +2713,6 @@ type Deployment struct {
 	BuildWorkerGroupID           string             `json:"build_worker_group_id"`
 	ProjectID                    pgtype.UUID        `json:"project_id"`
 	EnvironmentID                pgtype.UUID        `json:"environment_id"`
-	WorkerGroupID                string             `json:"worker_group_id"`
 	Version                      string             `json:"version"`
 	ContentHash                  string             `json:"content_hash"`
 	ApiVersion                   string             `json:"api_version"`
@@ -2739,16 +2738,15 @@ type Deployment struct {
 }
 
 type DeploymentPromotion struct {
-	ID                     pgtype.UUID        `json:"id"`
-	OrgID                  pgtype.UUID        `json:"org_id"`
-	PromotionWorkerGroupID string             `json:"promotion_worker_group_id"`
-	ProjectID              pgtype.UUID        `json:"project_id"`
-	EnvironmentID          pgtype.UUID        `json:"environment_id"`
-	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	PreviousDeploymentID   pgtype.UUID        `json:"previous_deployment_id"`
-	PromotedByPrincipal    string             `json:"promoted_by_principal"`
-	Reason                 string             `json:"reason"`
-	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ID                   pgtype.UUID        `json:"id"`
+	OrgID                pgtype.UUID        `json:"org_id"`
+	ProjectID            pgtype.UUID        `json:"project_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	DeploymentID         pgtype.UUID        `json:"deployment_id"`
+	PreviousDeploymentID pgtype.UUID        `json:"previous_deployment_id"`
+	PromotedByPrincipal  string             `json:"promoted_by_principal"`
+	Reason               string             `json:"reason"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentQueue struct {
@@ -2794,7 +2792,6 @@ type DeploymentSandbox struct {
 type DeploymentStream struct {
 	ID                pgtype.UUID        `json:"id"`
 	OrgID             pgtype.UUID        `json:"org_id"`
-	WorkerGroupID     string             `json:"worker_group_id"`
 	ProjectID         pgtype.UUID        `json:"project_id"`
 	EnvironmentID     pgtype.UUID        `json:"environment_id"`
 	DeploymentID      pgtype.UUID        `json:"deployment_id"`
@@ -2994,7 +2991,6 @@ type PublicAccessToken struct {
 	ID            pgtype.UUID            `json:"id"`
 	PublicID      string                 `json:"public_id"`
 	OrgID         pgtype.UUID            `json:"org_id"`
-	WorkerGroupID string                 `json:"worker_group_id"`
 	ProjectID     pgtype.UUID            `json:"project_id"`
 	EnvironmentID pgtype.UUID            `json:"environment_id"`
 	TokenHash     []byte                 `json:"token_hash"`
@@ -3014,7 +3010,6 @@ type PublicAccessToken struct {
 type PublicAccessTokenScope struct {
 	ID                  pgtype.UUID                `json:"id"`
 	OrgID               pgtype.UUID                `json:"org_id"`
-	WorkerGroupID       string                     `json:"worker_group_id"`
 	ProjectID           pgtype.UUID                `json:"project_id"`
 	EnvironmentID       pgtype.UUID                `json:"environment_id"`
 	PublicAccessTokenID pgtype.UUID                `json:"public_access_token_id"`
@@ -3592,7 +3587,6 @@ type SessionRunRequest struct {
 type SessionStartIdempotency struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	TaskID             string             `json:"task_id"`
@@ -3778,7 +3772,6 @@ type Token struct {
 	ID                        pgtype.UUID        `json:"id"`
 	PublicID                  string             `json:"public_id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
-	WorkerGroupID             string             `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	State                     TokenState         `json:"state"`
@@ -4160,7 +4153,6 @@ type WorkspaceOperation struct {
 type WorkspaceOperationIdempotency struct {
 	ID                   pgtype.UUID                       `json:"id"`
 	OrgID                pgtype.UUID                       `json:"org_id"`
-	WorkerGroupID        string                            `json:"worker_group_id"`
 	ProjectID            pgtype.UUID                       `json:"project_id"`
 	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
 	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
@@ -4261,7 +4253,6 @@ type WorkspaceVersion struct {
 	ID                     pgtype.UUID           `json:"id"`
 	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
-	WorkerGroupID          string                `json:"worker_group_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`
 	EnvironmentID          pgtype.UUID           `json:"environment_id"`
 	WorkspaceID            pgtype.UUID           `json:"workspace_id"`

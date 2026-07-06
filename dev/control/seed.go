@@ -85,7 +85,7 @@ ON CONFLICT (id) DO UPDATE
        media_type = EXCLUDED.media_type;
 
 INSERT INTO deployments (
-    id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash,
+    id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash,
     deployment_source_artifact_id, deployment_manifest_artifact_id, status, built_at, deployed_at
 )
 SELECT '00000000-0000-0000-0000-000000000601',
@@ -94,7 +94,6 @@ SELECT '00000000-0000-0000-0000-000000000601',
        current_setting('helmr.seed_worker_group_id'),
        '00000000-0000-0000-0000-000000000301',
        '00000000-0000-0000-0000-000000000401',
-       current_setting('helmr.seed_worker_group_id'),
        'dev-2026-06-22',
        'sha256:dev-console-demo',
        '00000000-0000-0000-0000-000000000501',
@@ -199,15 +198,14 @@ ON CONFLICT (id) DO UPDATE
        tags = EXCLUDED.tags,
        updated_at = now();
 
-INSERT INTO workspace_versions (id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, promoted_at, created_by_subject_type, created_by_subject_id)
+INSERT INTO workspace_versions (id, public_id, org_id, project_id, environment_id, workspace_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, promoted_at, created_by_subject_type, created_by_subject_id)
 VALUES
-    ('00000000-0000-0000-0000-000000000911', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000901', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '3 hours', 'system', 'dev-seed'),
-    ('00000000-0000-0000-0000-000000000912', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000902', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '2 hours', 'system', 'dev-seed'),
-    ('00000000-0000-0000-0000-000000000913', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000903', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '90 minutes', 'system', 'dev-seed'),
-    ('00000000-0000-0000-0000-000000000914', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000904', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '1 hour', 'system', 'dev-seed')
+    ('00000000-0000-0000-0000-000000000911', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000901', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '3 hours', 'system', 'dev-seed'),
+    ('00000000-0000-0000-0000-000000000912', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000902', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '2 hours', 'system', 'dev-seed'),
+    ('00000000-0000-0000-0000-000000000913', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000903', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '90 minutes', 'system', 'dev-seed'),
+    ('00000000-0000-0000-0000-000000000914', 'wsv_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000904', 'system', 'ready', '00000000-0000-0000-0000-000000000505', 'tar', 8, 'sha256:dev-workspace-version', 1024, 'Initial dev workspace', now() - interval '1 hour', 'system', 'dev-seed')
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       state = EXCLUDED.state,
+   SET state = EXCLUDED.state,
        artifact_id = EXCLUDED.artifact_id,
        artifact_encoding = EXCLUDED.artifact_encoding,
        content_digest = EXCLUDED.content_digest,

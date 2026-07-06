@@ -389,7 +389,6 @@ const createSessionStartIdempotency = `-- name: CreateSessionStartIdempotency :o
 INSERT INTO session_start_idempotencies (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     task_id,
@@ -408,27 +407,22 @@ INSERT INTO session_start_idempotencies (
     $7,
     $8,
     $9,
-    $10,
-    $11
+    $10
 )
 ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       request_fingerprint = EXCLUDED.request_fingerprint,
+   SET request_fingerprint = EXCLUDED.request_fingerprint,
        session_id = EXCLUDED.session_id,
        first_run_id = EXCLUDED.first_run_id,
        expires_at = EXCLUDED.expires_at,
        last_used_at = now()
  WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
-   AND (
-       session_start_idempotencies.worker_group_id <> EXCLUDED.worker_group_id
-   )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
+   AND session_start_idempotencies.expires_at <= now()
+RETURNING id, org_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
 `
 
 type CreateSessionStartIdempotencyParams struct {
 	ID                 pgtype.UUID        `json:"id"`
 	OrgID              pgtype.UUID        `json:"org_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
 	ProjectID          pgtype.UUID        `json:"project_id"`
 	EnvironmentID      pgtype.UUID        `json:"environment_id"`
 	TaskID             string             `json:"task_id"`
@@ -443,7 +437,6 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 	row := q.db.QueryRow(ctx, createSessionStartIdempotency,
 		arg.ID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.TaskID,
@@ -457,7 +450,6 @@ func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateS
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1197,9 +1189,10 @@ func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByR
 }
 
 const getSessionStartIdempotency = `-- name: GetSessionStartIdempotency :one
-SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.worker_group_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
+SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
        sessions.id AS session_id,
        sessions.org_id AS session_org_id,
+       sessions.worker_group_id AS session_worker_group_id,
        sessions.project_id AS session_project_id,
        sessions.environment_id AS session_environment_id,
        sessions.task_id AS session_task_id,
@@ -1221,6 +1214,7 @@ SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, sessi
        sessions.updated_at AS session_updated_at,
        runs.id AS run_id,
        runs.org_id AS run_org_id,
+       runs.worker_group_id AS run_worker_group_id,
        runs.project_id AS run_project_id,
        runs.environment_id AS run_environment_id,
        runs.deployment_id AS run_deployment_id,
@@ -1244,12 +1238,10 @@ SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, sessi
        runs.updated_at AS run_updated_at
   FROM session_start_idempotencies
   JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
-                    AND sessions.worker_group_id = session_start_idempotencies.worker_group_id
                     AND sessions.project_id = session_start_idempotencies.project_id
                     AND sessions.environment_id = session_start_idempotencies.environment_id
                     AND sessions.id = session_start_idempotencies.session_id
   JOIN runs ON runs.org_id = session_start_idempotencies.org_id
-           AND runs.worker_group_id = session_start_idempotencies.worker_group_id
            AND runs.project_id = session_start_idempotencies.project_id
            AND runs.environment_id = session_start_idempotencies.environment_id
            AND runs.id = session_start_idempotencies.first_run_id
@@ -1272,7 +1264,6 @@ type GetSessionStartIdempotencyParams struct {
 type GetSessionStartIdempotencyRow struct {
 	ID                         pgtype.UUID            `json:"id"`
 	OrgID                      pgtype.UUID            `json:"org_id"`
-	WorkerGroupID              string                 `json:"worker_group_id"`
 	ProjectID                  pgtype.UUID            `json:"project_id"`
 	EnvironmentID              pgtype.UUID            `json:"environment_id"`
 	TaskID                     string                 `json:"task_id"`
@@ -1285,6 +1276,7 @@ type GetSessionStartIdempotencyRow struct {
 	LastUsedAt                 pgtype.Timestamptz     `json:"last_used_at"`
 	SessionID_2                pgtype.UUID            `json:"session_id_2"`
 	SessionOrgID               pgtype.UUID            `json:"session_org_id"`
+	SessionWorkerGroupID       string                 `json:"session_worker_group_id"`
 	SessionProjectID           pgtype.UUID            `json:"session_project_id"`
 	SessionEnvironmentID       pgtype.UUID            `json:"session_environment_id"`
 	SessionTaskID              string                 `json:"session_task_id"`
@@ -1306,6 +1298,7 @@ type GetSessionStartIdempotencyRow struct {
 	SessionUpdatedAt           pgtype.Timestamptz     `json:"session_updated_at"`
 	RunID                      pgtype.UUID            `json:"run_id"`
 	RunOrgID                   pgtype.UUID            `json:"run_org_id"`
+	RunWorkerGroupID           string                 `json:"run_worker_group_id"`
 	RunProjectID               pgtype.UUID            `json:"run_project_id"`
 	RunEnvironmentID           pgtype.UUID            `json:"run_environment_id"`
 	RunDeploymentID            pgtype.UUID            `json:"run_deployment_id"`
@@ -1341,7 +1334,6 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TaskID,
@@ -1354,6 +1346,7 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 		&i.LastUsedAt,
 		&i.SessionID_2,
 		&i.SessionOrgID,
+		&i.SessionWorkerGroupID,
 		&i.SessionProjectID,
 		&i.SessionEnvironmentID,
 		&i.SessionTaskID,
@@ -1375,6 +1368,7 @@ func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSession
 		&i.SessionUpdatedAt,
 		&i.RunID,
 		&i.RunOrgID,
+		&i.RunWorkerGroupID,
 		&i.RunProjectID,
 		&i.RunEnvironmentID,
 		&i.RunDeploymentID,

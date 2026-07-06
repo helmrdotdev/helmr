@@ -104,7 +104,7 @@ func TestSweepExpiredForOrgUsesProvidedOrg(t *testing.T) {
 	if len(store.sweptOrgIDs) != 11 || store.sweptOrgIDs[0] != orgID {
 		t.Fatalf("swept org IDs = %+v", store.sweptOrgIDs)
 	}
-	if len(store.expireDueTokensParams) != 1 || store.expireDueTokensParams[0].WorkerGroupID != expirySweeperTestWorkerGroupID {
+	if len(store.expireDueTokensParams) != 1 || store.expireDueTokensParams[0] != orgID {
 		t.Fatalf("expire token params = %+v", store.expireDueTokensParams)
 	}
 }
@@ -274,7 +274,7 @@ type fakeSweeperOrgStore struct {
 	timerErr                       error
 	waitErr                        error
 	requeueErrs                    map[pgtype.UUID]error
-	expireDueTokensParams          []db.ExpireDueTokensParams
+	expireDueTokensParams          []pgtype.UUID
 	createExpiredRuntimeStopParams []db.CreateExpiredRuntimeStopCommandsParams
 	markExpiredRuntimeLostParams   []db.MarkExpiredRuntimeInstancesLostParams
 	requeueResolvedRunWaitsParams  db.RequeueResolvedRunWaitsParams
@@ -319,9 +319,9 @@ func (f *fakeSweeperOrgStore) ExpireDueSessions(_ context.Context, arg db.Expire
 	return nil, nil
 }
 
-func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, arg db.ExpireDueTokensParams) ([]db.ExpireDueTokensRow, error) {
-	f.expireDueTokensParams = append(f.expireDueTokensParams, arg)
-	f.sweptOrgIDs = append(f.sweptOrgIDs, arg.OrgID)
+func (f *fakeSweeperOrgStore) ExpireDueTokens(_ context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error) {
+	f.expireDueTokensParams = append(f.expireDueTokensParams, orgID)
+	f.sweptOrgIDs = append(f.sweptOrgIDs, orgID)
 	f.calls = appendCall(f.calls, "expire-tokens")
 	return nil, f.tokenErr
 }

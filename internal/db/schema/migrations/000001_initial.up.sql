@@ -809,7 +809,6 @@ CREATE TABLE deployments (
     build_worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (btrim(content_hash) <> ''),
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (btrim(api_version) <> ''),
@@ -850,7 +849,7 @@ CREATE TABLE deployments (
     FOREIGN KEY (org_id, project_id, environment_id, deployment_manifest_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (build_worker_instance_id, worker_group_id)
+    FOREIGN KEY (build_worker_instance_id, build_worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         DEFERRABLE INITIALLY DEFERRED
 );
@@ -875,7 +874,6 @@ CREATE TABLE deployment_version_counters (
 CREATE TABLE deployment_promotions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    promotion_worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1369,7 +1367,6 @@ CREATE TABLE session_runs (
 CREATE TABLE session_start_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
@@ -1384,11 +1381,11 @@ CREATE TABLE session_start_idempotencies (
     FOREIGN KEY (org_id, project_id, environment_id, task_id)
         REFERENCES tasks(org_id, project_id, environment_id, task_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, session_id)
+        REFERENCES sessions(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, first_run_id)
-        REFERENCES runs(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, first_run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -1643,7 +1640,6 @@ CREATE TABLE workspace_versions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^wsv_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
@@ -1665,23 +1661,18 @@ CREATE TABLE workspace_versions (
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, worker_group_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, id),
     UNIQUE (org_id, workspace_id, id),
-    UNIQUE (org_id, worker_group_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id, state),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, workspace_id, id, state),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
+        REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, workspace_id, parent_version_id)
         REFERENCES workspace_versions(org_id, workspace_id, id)
         ON DELETE SET NULL (parent_version_id),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, workspace_id, source_workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, worker_group_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_workspace_mount_id)
+        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
         ON DELETE SET NULL (source_workspace_mount_id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_write_lease_id)
         REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
@@ -1690,8 +1681,8 @@ CREATE TABLE workspace_versions (
         REFERENCES artifacts(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (artifact_id)
         DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, produced_by_run_id)
-        REFERENCES runs(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, produced_by_run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (produced_by_run_id),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, produced_by_exec_id)
         REFERENCES workspace_execs(org_id, project_id, environment_id, workspace_id, id)
@@ -1730,15 +1721,15 @@ ALTER TABLE workspace_leases
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_current_version_id_fkey
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, id, current_version_id)
-    REFERENCES workspace_versions(org_id, worker_group_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id)
+    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (current_version_id)
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE workspaces
     ADD CONSTRAINT workspaces_current_version_ready_fkey
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, id, current_version_id, current_version_required_state)
-    REFERENCES workspace_versions(org_id, worker_group_id, project_id, environment_id, workspace_id, id, state)
+    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id, current_version_required_state)
+    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id, state)
     DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE workspace_exec_stream_chunks (
@@ -1828,7 +1819,6 @@ CREATE TABLE workspace_pty_stream_chunk_receipts (
 CREATE TABLE workspace_operation_idempotencies (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     workspace_id UUID,
@@ -1911,7 +1901,6 @@ CREATE TABLE workspace_operations (
 CREATE TABLE deployment_streams (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
@@ -1922,11 +1911,8 @@ CREATE TABLE deployment_streams (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_group_id, id),
     UNIQUE (org_id, project_id, environment_id, id, name, direction),
     UNIQUE (org_id, deployment_id, name, direction),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, id, name, direction),
-    UNIQUE (org_id, worker_group_id, deployment_id, name, direction),
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
@@ -1965,7 +1951,6 @@ CREATE TABLE tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^tok_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     state token_state NOT NULL DEFAULT 'pending',
@@ -1987,9 +1972,7 @@ CREATE TABLE tokens (
     expired_at TIMESTAMPTZ,
     cancelled_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_group_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, id),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
         ON DELETE CASCADE
@@ -1999,7 +1982,6 @@ CREATE TABLE public_access_tokens (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     public_id TEXT NOT NULL UNIQUE CHECK (public_id ~ '^pat_[a-z2-7]{26}$'),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     token_hash BYTEA NOT NULL UNIQUE,
@@ -2015,9 +1997,7 @@ CREATE TABLE public_access_tokens (
     max_uses INTEGER CHECK (max_uses IS NULL OR max_uses > 0),
     used_count INTEGER NOT NULL DEFAULT 0 CHECK (used_count >= 0),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_group_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, id),
     CHECK (max_uses IS NULL OR used_count <= max_uses),
     FOREIGN KEY (org_id, project_id, environment_id)
         REFERENCES environments(org_id, project_id, id)
@@ -2027,7 +2007,6 @@ CREATE TABLE public_access_tokens (
 CREATE TABLE public_access_token_scopes (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     public_access_token_id UUID NOT NULL,
@@ -2037,9 +2016,7 @@ CREATE TABLE public_access_token_scopes (
     correlation_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
-    UNIQUE (org_id, worker_group_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
-    UNIQUE (org_id, worker_group_id, project_id, environment_id, id),
     CHECK (
         (
             scope_type = 'token.complete'
@@ -2052,14 +2029,14 @@ CREATE TABLE public_access_token_scopes (
             AND stream_id IS NOT NULL
         )
     ),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, public_access_token_id)
-        REFERENCES public_access_tokens(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
+        REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, token_id)
-        REFERENCES tokens(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, token_id)
+        REFERENCES tokens(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, stream_id)
-        REFERENCES streams(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, stream_id)
+        REFERENCES streams(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -2091,8 +2068,8 @@ CREATE TABLE stream_records (
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, stream_id, session_id, direction)
         REFERENCES streams(org_id, worker_group_id, project_id, environment_id, id, session_id, direction)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, public_access_token_id)
-        REFERENCES public_access_tokens(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, public_access_token_id)
+        REFERENCES public_access_tokens(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (public_access_token_id)
 );
 
@@ -2903,8 +2880,8 @@ CREATE TABLE token_waits (
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_wait_id)
         REFERENCES run_waits(org_id, worker_group_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, token_id)
-        REFERENCES tokens(org_id, worker_group_id, project_id, environment_id, id)
+    FOREIGN KEY (org_id, project_id, environment_id, token_id)
+        REFERENCES tokens(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -3131,8 +3108,8 @@ CREATE TABLE runtime_instances (
     CONSTRAINT runtime_instances_owner_workspace_id_fkey FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, owner_workspace_id)
         REFERENCES workspaces(org_id, worker_group_id, project_id, environment_id, id)
         ON DELETE SET NULL (owner_workspace_id),
-    CONSTRAINT runtime_instances_owner_workspace_version_id_fkey FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, owner_workspace_version_id)
-        REFERENCES workspace_versions(org_id, worker_group_id, project_id, environment_id, id)
+    CONSTRAINT runtime_instances_owner_workspace_version_id_fkey FOREIGN KEY (org_id, project_id, environment_id, owner_workspace_version_id)
+        REFERENCES workspace_versions(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (owner_workspace_version_id)
 );
 
@@ -3279,10 +3256,10 @@ CREATE INDEX deployment_promotions_deployment_idx
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
-    ON deployments(org_id, build_worker_group_id, project_id, environment_id, worker_group_id, content_hash)
+    ON deployments(org_id, build_worker_group_id, project_id, environment_id, content_hash)
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_worker_group_status_idx
-    ON deployments(worker_group_id, status, created_at)
+    ON deployments(build_worker_group_id, status, created_at)
     WHERE status IN ('queued', 'building');
 CREATE INDEX artifacts_scope_kind_created_idx
     ON artifacts(org_id, project_id, environment_id, kind, created_at DESC);
@@ -3352,7 +3329,7 @@ CREATE UNIQUE INDEX sessions_external_id_idx ON sessions(org_id, project_id, env
     WHERE external_id <> '';
 CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, environment_id, status, updated_at DESC);
 CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
-CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, worker_group_id, project_id, environment_id, expires_at);
+CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
 CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
 CREATE INDEX session_run_requests_pending_idx ON session_run_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');
@@ -3415,7 +3392,7 @@ CREATE INDEX workspace_operations_worker_claim_idx
 CREATE UNIQUE INDEX workspace_operations_active_resource_idx
     ON workspace_operations(org_id, project_id, environment_id, workspace_mount_id, operation_kind, resource_kind, resource_id)
     WHERE state IN ('queued', 'claimed', 'running') AND resource_id IS NOT NULL;
-CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, worker_group_id, project_id, environment_id, deployment_id, name, direction);
+CREATE INDEX deployment_streams_lookup_idx ON deployment_streams(org_id, project_id, environment_id, deployment_id, name, direction);
 CREATE UNIQUE INDEX streams_session_name_idx ON streams(org_id, worker_group_id, session_id, name, direction);
 CREATE INDEX stream_records_sequence_idx ON stream_records(org_id, worker_group_id, stream_id, sequence, id);
 CREATE INDEX stream_records_correlation_sequence_idx ON stream_records(org_id, worker_group_id, stream_id, correlation_id, sequence, id)
@@ -3424,9 +3401,9 @@ CREATE UNIQUE INDEX stream_records_idempotency_idx ON stream_records(org_id, wor
     WHERE idempotency_key <> '';
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
     WHERE state = 'active';
-CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, worker_group_id, token_id, scope_type)
+CREATE INDEX public_access_token_scopes_token_idx ON public_access_token_scopes(org_id, project_id, environment_id, token_id, scope_type)
     WHERE token_id IS NOT NULL;
-CREATE INDEX public_access_token_scopes_stream_idx ON public_access_token_scopes(org_id, worker_group_id, stream_id, scope_type)
+CREATE INDEX public_access_token_scopes_stream_idx ON public_access_token_scopes(org_id, project_id, environment_id, stream_id, scope_type)
     WHERE stream_id IS NOT NULL;
 
 CREATE TRIGGER organizations_set_updated_at

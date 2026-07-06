@@ -350,15 +350,9 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(err))
 		return
 	}
-	placement, err := s.resolveEnvironmentPlacement(r.Context(), s.db, actor.OrgID, projectID, environmentID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	params := db.PromoteDeploymentParams{
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:               pgvalue.UUID(actor.OrgID),
-		WorkerGroupID:       placement.WorkerGroupID,
 		ProjectID:           projectID,
 		EnvironmentID:       environmentID,
 		DeploymentID:        deployment.ID,
@@ -433,7 +427,6 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, workerG
 		BuildWorkerGroupID: workerGroupID,
 		ProjectID:          projectID,
 		EnvironmentID:      environmentID,
-		WorkerGroupID:      workerGroupID,
 		ContentHash:        contentHash,
 	}); err != nil {
 		return api.DeploymentResponse{}, err
@@ -444,7 +437,6 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, workerG
 		ProjectID:          projectID,
 		EnvironmentID:      environmentID,
 		ContentHash:        contentHash,
-		WorkerGroupID:      workerGroupID,
 	})
 	if isNoRows(err) {
 		deployment, err = createQueuedDeployment(ctx, store, workerGroupID, orgID, projectID, environmentID, contentHash, artifact, metadata)
@@ -492,7 +484,6 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, workerGr
 			CliVersion:                 metadata.CLIVersion,
 			BundleFormatVersion:        metadata.BundleFormatVersion,
 			WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
-			WorkerGroupID:              workerGroupID,
 			ContentHash:                contentHash,
 			DeploymentSourceArtifactID: sourceArtifact.ID,
 			Status:                     db.DeploymentStatusQueued,

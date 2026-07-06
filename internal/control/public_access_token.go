@@ -130,7 +130,6 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 				ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:      publicTokenPublicID,
 				OrgID:         session.OrgID,
-				WorkerGroupID: session.WorkerGroupID,
 				ProjectID:     session.ProjectID,
 				EnvironmentID: session.EnvironmentID,
 				TokenHash:     tokenHash,
@@ -146,7 +145,6 @@ func (s *Server) createPublicAccessToken(w http.ResponseWriter, r *http.Request)
 		scope, err = work.q.CreatePublicAccessTokenScope(r.Context(), db.CreatePublicAccessTokenScopeParams{
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:               session.OrgID,
-			WorkerGroupID:       session.WorkerGroupID,
 			ProjectID:           session.ProjectID,
 			EnvironmentID:       session.EnvironmentID,
 			PublicAccessTokenID: publicToken.ID,
@@ -256,10 +254,6 @@ func (s *Server) completeTokenWithPublicAccessToken(w http.ResponseWriter, r *ht
 		writeError(w, errors.New("load token"))
 		return
 	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, pgvalue.MustUUIDValue(token.OrgID), token.ProjectID, token.EnvironmentID, token.WorkerGroupID); err != nil {
-		writeError(w, err)
-		return
-	}
 	publicAccessToken, ok := bearerToken(r.Header.Get("authorization"))
 	if !ok {
 		writeError(w, unauthorized(errTokenScopeDenied))
@@ -306,7 +300,6 @@ func (s *Server) authorizePublicAccessTokenScope(ctx context.Context, store db.Q
 	}
 	if _, err := store.GetPublicAccessTokenTokenScope(ctx, db.GetPublicAccessTokenTokenScopeParams{
 		OrgID:               token.OrgID,
-		WorkerGroupID:       token.WorkerGroupID,
 		ProjectID:           token.ProjectID,
 		EnvironmentID:       token.EnvironmentID,
 		PublicAccessTokenID: publicToken.ID,
@@ -321,9 +314,8 @@ func (s *Server) authorizePublicAccessTokenScope(ctx context.Context, store db.Q
 
 func (s *Server) consumePublicAccessToken(ctx context.Context, store db.Querier, publicToken db.PublicAccessToken) (db.PublicAccessToken, error) {
 	consumed, err := store.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:         publicToken.OrgID,
-		WorkerGroupID: publicToken.WorkerGroupID,
-		ID:            publicToken.ID,
+		OrgID: publicToken.OrgID,
+		ID:    publicToken.ID,
 	})
 	if isNoRows(err) {
 		return db.PublicAccessToken{}, forbidden(errTokenScopeDenied)
@@ -347,10 +339,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	if err := s.requireRoutableRecordWorkerGroup(ctx, store, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, publicToken.WorkerGroupID); err != nil {
-		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
-	}
-	session, err := loadSessionAddressInWorkerGroup(ctx, store, publicToken.WorkerGroupID, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, address)
+	session, err := loadSessionAddressInScope(ctx, store, pgvalue.MustUUIDValue(publicToken.OrgID), publicToken.ProjectID, publicToken.EnvironmentID, address)
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, notFound(errStreamNotFound)
 	}
@@ -362,7 +351,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{
 		OrgID:         publicToken.OrgID,
-		WorkerGroupID: publicToken.WorkerGroupID,
+		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     publicToken.ProjectID,
 		EnvironmentID: publicToken.EnvironmentID,
 		SessionID:     session.ID,
@@ -377,7 +366,6 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	}
 	if _, err := store.GetPublicAccessTokenStreamScope(ctx, db.GetPublicAccessTokenStreamScopeParams{
 		OrgID:               publicToken.OrgID,
-		WorkerGroupID:       publicToken.WorkerGroupID,
 		ProjectID:           publicToken.ProjectID,
 		EnvironmentID:       publicToken.EnvironmentID,
 		PublicAccessTokenID: publicToken.ID,
@@ -390,9 +378,8 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	consumed, err := store.ConsumePublicAccessToken(ctx, db.ConsumePublicAccessTokenParams{
-		OrgID:         publicToken.OrgID,
-		WorkerGroupID: publicToken.WorkerGroupID,
-		ID:            publicToken.ID,
+		OrgID: publicToken.OrgID,
+		ID:    publicToken.ID,
 	})
 	if isNoRows(err) {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, forbidden(errTokenScopeDenied)

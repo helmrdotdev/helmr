@@ -475,7 +475,6 @@ created_version AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -495,7 +494,6 @@ created_version AS (
     SELECT $9,
            $10,
            active_writer.org_id,
-           active_writer.worker_group_id,
            active_writer.project_id,
            active_writer.environment_id,
            active_writer.workspace_id,
@@ -514,7 +512,7 @@ created_version AS (
       FROM active_writer
       JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = $5
-    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -542,7 +540,7 @@ cleaned_mount AS (
        AND workspace_mounts.dirty_generation = $4
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.worker_group_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id
@@ -568,7 +566,6 @@ type PromoteWorkspaceCaptureRow struct {
 	ID                     pgtype.UUID           `json:"id"`
 	PublicID               string                `json:"public_id"`
 	OrgID                  pgtype.UUID           `json:"org_id"`
-	WorkerGroupID          string                `json:"worker_group_id"`
 	ProjectID              pgtype.UUID           `json:"project_id"`
 	EnvironmentID          pgtype.UUID           `json:"environment_id"`
 	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
@@ -613,7 +610,6 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,

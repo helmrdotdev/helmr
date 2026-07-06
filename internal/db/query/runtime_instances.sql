@@ -166,7 +166,6 @@ WITH worker_scope AS MATERIALIZED (
 ),
 source_sandbox AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -194,9 +193,7 @@ source_sandbox AS MATERIALIZED (
        AND image_artifact.digest = deployment_sandboxes.image_digest
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-      JOIN worker_scope
-        ON worker_scope.worker_group_id = deployments.worker_group_id
-       AND worker_scope.worker_group_id = deployments.build_worker_group_id
+      JOIN worker_scope ON true
       JOIN (
     SELECT placement_project.org_id,
            placement_project.id AS project_id,
@@ -209,12 +206,12 @@ source_sandbox AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
+       AND project_worker_group_placement.worker_group_id = worker_scope.worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'
@@ -724,7 +721,6 @@ RETURNING *;
 -- name: ListRuntimeInstanceWarmTargets :many
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -764,12 +760,11 @@ WITH current_sandboxes AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'
@@ -1036,7 +1031,6 @@ SELECT org_id,
 -- name: ListRuntimeSubstratePrepareTargets :many
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.*,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -1072,12 +1066,11 @@ WITH current_sandboxes AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'

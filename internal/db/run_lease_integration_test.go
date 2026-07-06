@@ -42,11 +42,11 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, artifact_id,
+			id, public_id, org_id, project_id, environment_id, workspace_id, artifact_id,
 			artifact_encoding, artifact_entry_count, content_digest, size_bytes, state, promoted_at
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'tar', 1, $8, 10, 'ready', now())
-	`, baseVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest, testWorkspaceVersionPublicID(t)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, $6, 'tar', 1, $7, 10, 'ready', now())
+	`, baseVersionID, ids.orgID, ids.projectID, ids.environmentID, workspaceID, baseArtifactID, baseDigest, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -663,17 +663,17 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $8, $2, $3, $4, $5, $6, 'system', 'ready',
+		SELECT $1, $7, $2, $3, $4, $5, 'system', 'ready',
 		       artifacts.id, 'tar', 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $4
-		   AND artifacts.environment_id = $5
-		   AND artifacts.id = $7
-	`, staleVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
+		   AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4
+		   AND artifacts.id = $6
+	`, staleVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, staleArtifactID, testWorkspaceVersionPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

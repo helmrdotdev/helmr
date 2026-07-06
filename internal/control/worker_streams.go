@@ -225,7 +225,6 @@ func (s *Server) ensureSessionStream(ctx context.Context, store db.Querier, sess
 	}
 	deploymentStream, err := store.GetDeploymentStreamByName(ctx, db.GetDeploymentStreamByNameParams{
 		OrgID:         session.OrgID,
-		WorkerGroupID: session.WorkerGroupID,
 		ProjectID:     session.ProjectID,
 		EnvironmentID: session.EnvironmentID,
 		DeploymentID:  deploymentID,

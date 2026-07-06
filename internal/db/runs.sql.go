@@ -644,11 +644,13 @@ created AS (
                AND deployments.project_id = deployment_tasks.project_id
                AND deployments.environment_id = deployment_tasks.environment_id
                AND deployments.id = deployment_tasks.deployment_id
-               AND deployments.build_worker_group_id = $4
                AND deployments.status = 'deployed'
+              JOIN projects
+                ON projects.org_id = deployment_tasks.org_id
+               AND projects.id = deployment_tasks.project_id
               JOIN worker_groups
-                ON worker_groups.id = deployments.build_worker_group_id
-               AND worker_groups.id = $4
+                ON worker_groups.id = $4
+               AND worker_groups.region_id = projects.default_region_id
                AND (
                    worker_groups.state = 'active'
                    OR (

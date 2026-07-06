@@ -154,9 +154,9 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version, content_hash, deployment_source_artifact_id, status)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'v1', $7, $8, 'deployed')
-	`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, dbtest.DefaultWorkerGroupID, taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
+		INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash, deployment_source_artifact_id, status)
+		VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')
+	`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -205,17 +205,17 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	initialVersionID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspace_versions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, workspace_id, kind, state,
+			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $9, $2, $3, $4, $5, $6, 'system', 'ready',
-		       artifacts.id, $7, 0, artifacts.digest, artifacts.size_bytes, now()
+		SELECT $1, $8, $2, $3, $4, $5, 'system', 'ready',
+		       artifacts.id, $6, 0, artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
 		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $4
-		   AND artifacts.environment_id = $5
-		   AND artifacts.id = $8
-	`, initialVersionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID, testPublicID(t, publicid.WorkspaceVersion)); err != nil {
+		   AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4
+		   AND artifacts.id = $7
+	`, initialVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID, testPublicID(t, publicid.WorkspaceVersion)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -490,11 +490,11 @@ func seedRuntimeSubstrateSourceInOtherWorkerGroup(t *testing.T, ctx context.Cont
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id,
+			id, public_id, org_id, build_worker_group_id, project_id, environment_id,
 			version, content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9, 'deployed')
-	`, deploymentID, ids.orgID, workerGroupID, ids.projectID, ids.environmentID, workerGroupID, "wrong-worker-group-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 'deployed')
+	`, deploymentID, ids.orgID, workerGroupID, ids.projectID, ids.environmentID, "wrong-worker-group-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

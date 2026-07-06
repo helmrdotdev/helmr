@@ -95,7 +95,6 @@ inserted AS (
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
       JOIN workspace_versions AS current_workspace_version
         ON current_workspace_version.org_id = workspaces.org_id
-       AND current_workspace_version.worker_group_id = workspaces.worker_group_id
        AND current_workspace_version.project_id = workspaces.project_id
        AND current_workspace_version.environment_id = workspaces.environment_id
        AND current_workspace_version.workspace_id = workspaces.id
@@ -376,7 +375,6 @@ SELECT workspaces.id AS workspace_id,
    AND image_artifact.id = deployment_sandboxes.image_artifact_id
   LEFT JOIN workspace_versions AS current_workspace_version
     ON current_workspace_version.org_id = workspaces.org_id
-   AND current_workspace_version.worker_group_id = workspaces.worker_group_id
    AND current_workspace_version.project_id = workspaces.project_id
    AND current_workspace_version.environment_id = workspaces.environment_id
    AND current_workspace_version.workspace_id = workspaces.id
@@ -476,9 +474,7 @@ candidate AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_worker_group_id = workspace_mounts.worker_group_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
-                       AND worker_scope.worker_group_id = workspace_mounts.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
       JOIN (
     SELECT placement_project.org_id,
            placement_project.id AS project_id,
@@ -792,8 +788,7 @@ candidate AS (
        AND deployments.project_id = deployment_sandboxes.project_id
        AND deployments.environment_id = deployment_sandboxes.environment_id
        AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.build_worker_group_id = workspace_mounts.worker_group_id
-      JOIN worker_scope ON worker_scope.worker_group_id = deployments.worker_group_id
+      JOIN worker_scope ON worker_scope.worker_group_id = workspace_mounts.worker_group_id
       JOIN artifacts AS image_artifact
         ON image_artifact.org_id = workspace_mounts.org_id
        AND image_artifact.project_id = workspace_mounts.project_id
@@ -1361,7 +1356,6 @@ created_version AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -1381,7 +1375,6 @@ created_version AS (
     SELECT sqlc.arg(version_id),
            sqlc.arg(version_public_id)::text,
            target.org_id,
-           target.worker_group_id,
            target.project_id,
            target.environment_id,
            target.workspace_id,

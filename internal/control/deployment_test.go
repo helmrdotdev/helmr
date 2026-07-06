@@ -785,9 +785,6 @@ func (f *fakeStore) GetCurrentDeploymentForRoute(ctx context.Context, arg db.Get
 	if err != nil {
 		return db.Deployment{}, err
 	}
-	if deployment.BuildWorkerGroupID != arg.WorkerGroupID {
-		return db.Deployment{}, pgx.ErrNoRows
-	}
 	return deployment, nil
 }
 
@@ -904,9 +901,6 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if f.deployment.WorkerProtocolVersion == "" {
 			f.deployment.WorkerProtocolVersion = arg.WorkerProtocolVersion
 		}
-		if f.deployment.WorkerGroupID == "" {
-			f.deployment.WorkerGroupID = arg.WorkerGroupID
-		}
 		if f.deployment.BuildWorkerGroupID == "" {
 			f.deployment.BuildWorkerGroupID = arg.BuildWorkerGroupID
 		}
@@ -925,7 +919,6 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		CliVersion:                 arg.CliVersion,
 		BundleFormatVersion:        arg.BundleFormatVersion,
 		WorkerProtocolVersion:      arg.WorkerProtocolVersion,
-		WorkerGroupID:              arg.WorkerGroupID,
 		ContentHash:                arg.ContentHash,
 		DeploymentSourceArtifactID: arg.DeploymentSourceArtifactID,
 		Status:                     arg.Status,
@@ -1047,7 +1040,7 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 }
 
 func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
-	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash && f.deployment.WorkerGroupID == arg.WorkerGroupID {
+	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash && f.deployment.BuildWorkerGroupID == arg.BuildWorkerGroupID {
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows

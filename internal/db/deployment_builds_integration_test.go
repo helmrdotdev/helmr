@@ -63,11 +63,11 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongWorkerGroupDeployment(t *te
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, build_worker_group_id, project_id, environment_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'wrong-worker-group-build', $7, $8, 'queued')
-	`, otherDeploymentID, ids.orgID, otherWorkerGroupID, ids.projectID, ids.environmentID, otherWorkerGroupID, otherDigest, otherArtifactID, testDeploymentPublicID(t)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'wrong-worker-group-build', $6, $7, 'queued')
+	`, otherDeploymentID, ids.orgID, otherWorkerGroupID, ids.projectID, ids.environmentID, otherDigest, otherArtifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
@@ -142,11 +142,11 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployments (
-			id, public_id, org_id, build_worker_group_id, project_id, environment_id, worker_group_id, version,
+			id, public_id, org_id, build_worker_group_id, project_id, environment_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, 'stale-route-build', $7, $8, 'queued')
-	`, deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, dbtest.DefaultWorkerGroupID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, $5, 'stale-route-build', $6, $7, 'queued')
+	`, deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{

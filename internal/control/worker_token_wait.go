@@ -27,7 +27,6 @@ func (s *Server) matchImmediateWorkerTokenWait(ctx context.Context, scope db.Get
 	}
 	token, err := s.db.GetToken(ctx, db.GetTokenParams{
 		OrgID:         scope.OrgID,
-		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ID:            pgvalue.UUID(tokenID),
@@ -65,7 +64,6 @@ func (s *Server) createWorkerTokenWait(ctx context.Context, store db.Querier, sc
 	}
 	token, err := store.GetToken(ctx, db.GetTokenParams{
 		OrgID:         scope.OrgID,
-		WorkerGroupID: scope.WorkerGroupID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		ID:            pgvalue.UUID(tokenID),
@@ -126,7 +124,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string]int32{"seconds": *request.TimeoutInSeconds})
 		timeout = b
 	}
-	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: orgID}, scope.WorkerGroupID, scope.ProjectID, scope.EnvironmentID, api.CreateTokenRequest{
+	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: orgID}, scope.ProjectID, scope.EnvironmentID, api.CreateTokenRequest{
 		Timeout:  timeout,
 		Tags:     request.Tags,
 		Metadata: request.Metadata,

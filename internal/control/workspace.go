@@ -418,7 +418,35 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 }
 
 func workspaceFromCreateWorkspaceFromSandbox(row db.CreateWorkspaceFromSandboxRow) db.Workspace {
-	return db.Workspace(row)
+	return db.Workspace{
+		ID:                          row.ID,
+		PublicID:                    row.PublicID,
+		OrgID:                       row.OrgID,
+		WorkerGroupID:               row.WorkerGroupID,
+		ProjectID:                   row.ProjectID,
+		EnvironmentID:               row.EnvironmentID,
+		DeploymentSandboxID:         row.DeploymentSandboxID,
+		SandboxID:                   row.SandboxID,
+		SandboxFingerprint:          row.SandboxFingerprint,
+		ExternalID:                  row.ExternalID,
+		CurrentVersionID:            row.CurrentVersionID,
+		CurrentVersionRequiredState: row.CurrentVersionRequiredState,
+		State:                       row.State,
+		DesiredState:                row.DesiredState,
+		DirtyState:                  row.DirtyState,
+		LastWorkspaceMountID:        row.LastWorkspaceMountID,
+		Metadata:                    row.Metadata,
+		Tags:                        row.Tags,
+		RetentionPolicy:             row.RetentionPolicy,
+		AutoStopAt:                  row.AutoStopAt,
+		AutoArchiveAt:               row.AutoArchiveAt,
+		AutoDeleteAt:                row.AutoDeleteAt,
+		LastActivityAt:              row.LastActivityAt,
+		CreatedAt:                   row.CreatedAt,
+		UpdatedAt:                   row.UpdatedAt,
+		ArchivedAt:                  row.ArchivedAt,
+		DeletedAt:                   row.DeletedAt,
+	}
 }
 
 func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {

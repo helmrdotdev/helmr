@@ -373,7 +373,6 @@ WITH worker_scope AS MATERIALIZED (
 ),
 source_sandbox AS MATERIALIZED (
     SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -401,9 +400,7 @@ source_sandbox AS MATERIALIZED (
        AND image_artifact.digest = deployment_sandboxes.image_digest
        AND image_artifact.kind = 'sandbox_image'
        AND image_artifact.media_type = 'application/vnd.helmr.sandbox-image.v0.oci-tar'
-      JOIN worker_scope
-        ON worker_scope.worker_group_id = deployments.worker_group_id
-       AND worker_scope.worker_group_id = deployments.build_worker_group_id
+      JOIN worker_scope ON true
       JOIN (
     SELECT placement_project.org_id,
            placement_project.id AS project_id,
@@ -416,12 +413,12 @@ source_sandbox AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
+       AND project_worker_group_placement.worker_group_id = worker_scope.worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'
@@ -460,7 +457,7 @@ active_runtime_instance_usage AS MATERIALIZED (
        )
 ),
 candidate AS MATERIALIZED (
-    SELECT source_sandbox.id, source_sandbox.public_id, source_sandbox.org_id, source_sandbox.project_id, source_sandbox.environment_id, source_sandbox.deployment_id, source_sandbox.sandbox_id, source_sandbox.image_artifact_id, source_sandbox.image_artifact_format, source_sandbox.rootfs_digest, source_sandbox.image_digest, source_sandbox.image_format, source_sandbox.workspace_mount_path, source_sandbox.resource_floor, source_sandbox.disk_floor_mib, source_sandbox.network_policy, source_sandbox.runtime_abi, source_sandbox.guestd_abi, source_sandbox.adapter_abi, source_sandbox.filesystem_format, source_sandbox.default_uid, source_sandbox.default_gid, source_sandbox.default_workdir, source_sandbox.contract_version, source_sandbox.fingerprint, source_sandbox.created_at, source_sandbox.worker_group_id, source_sandbox.worker_group_id, source_sandbox.image_artifact_digest, source_sandbox.image_artifact_media_type, source_sandbox.image_artifact_size_bytes, source_sandbox.requested_cpu_millis, source_sandbox.requested_memory_mib, source_sandbox.requested_disk_mib, source_sandbox.requested_execution_slots
+    SELECT source_sandbox.id, source_sandbox.public_id, source_sandbox.org_id, source_sandbox.project_id, source_sandbox.environment_id, source_sandbox.deployment_id, source_sandbox.sandbox_id, source_sandbox.image_artifact_id, source_sandbox.image_artifact_format, source_sandbox.rootfs_digest, source_sandbox.image_digest, source_sandbox.image_format, source_sandbox.workspace_mount_path, source_sandbox.resource_floor, source_sandbox.disk_floor_mib, source_sandbox.network_policy, source_sandbox.runtime_abi, source_sandbox.guestd_abi, source_sandbox.adapter_abi, source_sandbox.filesystem_format, source_sandbox.default_uid, source_sandbox.default_gid, source_sandbox.default_workdir, source_sandbox.contract_version, source_sandbox.fingerprint, source_sandbox.created_at, source_sandbox.worker_group_id, source_sandbox.image_artifact_digest, source_sandbox.image_artifact_media_type, source_sandbox.image_artifact_size_bytes, source_sandbox.requested_cpu_millis, source_sandbox.requested_memory_mib, source_sandbox.requested_disk_mib, source_sandbox.requested_execution_slots
       FROM source_sandbox, worker_scope, active_run_usage, active_runtime_instance_usage
      WHERE source_sandbox.requested_cpu_millis <= GREATEST(worker_scope.available_milli_cpu - active_run_usage.used_milli_cpu - active_runtime_instance_usage.used_milli_cpu, 0)
        AND source_sandbox.requested_memory_mib <= GREATEST(worker_scope.available_memory_mib - active_run_usage.used_memory_mib - active_runtime_instance_usage.used_memory_mib, 0)
@@ -805,7 +802,6 @@ func (q *Queries) CreateSupersededPreparedRuntimeStopCommands(ctx context.Contex
 const listRuntimeInstanceWarmTargets = `-- name: ListRuntimeInstanceWarmTargets :many
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -845,12 +841,11 @@ WITH current_sandboxes AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'
@@ -1192,7 +1187,6 @@ func (q *Queries) ListRuntimeInstanceWarmTargets(ctx context.Context, arg ListRu
 const listRuntimeSubstratePrepareTargets = `-- name: ListRuntimeSubstratePrepareTargets :many
 WITH current_sandboxes AS MATERIALIZED (
     SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at,
-           deployments.worker_group_id,
            project_worker_group_placement.worker_group_id,
            image_artifact.digest AS image_artifact_digest,
            image_artifact.media_type AS image_artifact_media_type,
@@ -1228,12 +1222,11 @@ WITH current_sandboxes AS MATERIALIZED (
         ON target_environment.org_id = placement_project.org_id
        AND target_environment.project_id = placement_project.id
       JOIN worker_groups AS placement_worker_group
-        ON true
+        ON placement_worker_group.region_id = placement_project.default_region_id
 ) AS project_worker_group_placement
         ON project_worker_group_placement.org_id = deployment_sandboxes.org_id
        AND project_worker_group_placement.project_id = deployment_sandboxes.project_id
        AND project_worker_group_placement.environment_id = deployment_sandboxes.environment_id
-       AND project_worker_group_placement.worker_group_id = deployments.build_worker_group_id
        AND project_worker_group_placement.worker_group_state = 'active'
       JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
                 AND worker_groups.state = 'active'
