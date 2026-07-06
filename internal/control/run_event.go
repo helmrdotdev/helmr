@@ -65,7 +65,7 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, actor, summary) {
+	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, summary) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {

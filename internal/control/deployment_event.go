@@ -77,7 +77,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID, deployment.BuildWorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, deployment.BuildWorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}

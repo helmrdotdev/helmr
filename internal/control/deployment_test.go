@@ -1178,15 +1178,6 @@ func (f *fakeStore) GetDeploymentQueueConfig(_ context.Context, arg db.GetDeploy
 	return db.GetDeploymentQueueConfigRow{}, pgx.ErrNoRows
 }
 
-func firstNonZeroInt64(values ...int64) int64 {
-	for _, value := range values {
-		if value != 0 {
-			return value
-		}
-	}
-	return 0
-}
-
 func (f *fakeStore) ListDeploymentStreamsForDeployment(_ context.Context, arg db.ListDeploymentStreamsForDeploymentParams) ([]db.DeploymentStream, error) {
 	streams := make([]db.DeploymentStream, 0, len(f.deploymentStreams))
 	for _, stream := range f.deploymentStreams {

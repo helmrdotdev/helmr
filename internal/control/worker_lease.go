@@ -561,7 +561,7 @@ func workerRunLeaseResponse(row db.LeaseRunLeaseRow) api.WorkerRunLease {
 }
 
 func (s *Server) workerRunFromLease(ctx context.Context, row db.LeaseRunLeaseRow) (api.WorkerRun, error) {
-	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, pgvalue.MustUUIDValue(row.OrgID), row.ProjectID, row.EnvironmentID, row.WorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, row.WorkerGroupID); err != nil {
 		return api.WorkerRun{}, err
 	}
 	restore, err := s.workerRestorePayload(ctx, row)

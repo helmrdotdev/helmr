@@ -71,13 +71,12 @@ func main() {
 		os.Exit(1)
 	}
 	if err := workergroup.Bootstrap(ctx, db.New(tx), workergroup.BootstrapConfig{
-		RegionID:           cfg.regionID,
-		DefaultRegionID:    cfg.defaultRegionID,
-		Provider:           cfg.provider,
-		ProviderRegion:     cfg.providerRegion,
-		RegionDisplayName:  cfg.regionDisplayName,
-		WorkerGroupID:      cfg.workerGroupID,
-		RequiredComponents: workergroup.DevRoutingRequiredComponents(),
+		RegionID:          cfg.regionID,
+		DefaultRegionID:   cfg.defaultRegionID,
+		Provider:          cfg.provider,
+		ProviderRegion:    cfg.providerRegion,
+		RegionDisplayName: cfg.regionDisplayName,
+		WorkerGroupID:     cfg.workerGroupID,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		log.Error("bootstrap worker group", "error", err)

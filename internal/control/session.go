@@ -256,7 +256,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return sessionStartResult{}, err
 		}
-		if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, actor.OrgID, projectID, environmentID, workspace.WorkerGroupID); err != nil {
+		if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, workspace.WorkerGroupID); err != nil {
 			return sessionStartResult{}, err
 		}
 		placementWorkerGroupID = workspace.WorkerGroupID
@@ -1774,7 +1774,7 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 		writeError(w, forbidden(errPermissionRequired))
 		return db.Session{}, false
 	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.WorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, session.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return db.Session{}, false
 	}
@@ -1796,25 +1796,6 @@ func loadSessionAddressInScope(ctx context.Context, store db.Querier, orgID uuid
 	}
 	return store.GetSession(ctx, db.GetSessionParams{
 		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ID:            pgvalue.UUID(address.id),
-	})
-}
-
-func loadSessionAddressInWorkerGroup(ctx context.Context, store db.Querier, workerGroupID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, address sessionAddress) (db.Session, error) {
-	if address.kind == sessionAddressExternalID {
-		return store.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
-			OrgID:         pgvalue.UUID(orgID),
-			WorkerGroupID: workerGroupID,
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ExternalID:    address.externalID,
-		})
-	}
-	return store.GetSessionInWorkerGroup(ctx, db.GetSessionInWorkerGroupParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		ID:            pgvalue.UUID(address.id),

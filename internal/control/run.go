@@ -302,7 +302,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, actor.OrgID, summary.ProjectID, summary.EnvironmentID, summary.WorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, summary.WorkerGroupID); err != nil {
 		writeError(w, err)
 		return
 	}

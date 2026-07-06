@@ -222,7 +222,7 @@ func (s *Server) resolvePublicAccessTokenScopeRequest(ctx context.Context, actor
 	if !actor.HasPermission(permission, scope) {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, forbidden(errPermissionRequired)
 	}
-	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, actor.OrgID, session.ProjectID, session.EnvironmentID, session.WorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, session.WorkerGroupID); err != nil {
 		return db.Session{}, db.Stream{}, "", pgtype.Text{}, err
 	}
 	stream, err := s.ensureSessionStream(ctx, s.db, session, session.ActiveDeploymentID, streamName, direction)
@@ -346,7 +346,7 @@ func (s *Server) authorizePublicAccessTokenStream(ctx context.Context, r *http.R
 	if err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
-	if err := s.requireRoutableRecordWorkerGroup(ctx, store, pgvalue.MustUUIDValue(session.OrgID), session.ProjectID, session.EnvironmentID, session.WorkerGroupID); err != nil {
+	if err := s.requireRoutableRecordWorkerGroup(ctx, store, session.WorkerGroupID); err != nil {
 		return db.Session{}, db.Stream{}, db.PublicAccessToken{}, err
 	}
 	stream, err := store.GetSessionStreamByName(ctx, db.GetSessionStreamByNameParams{

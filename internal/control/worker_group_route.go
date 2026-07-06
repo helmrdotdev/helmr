@@ -21,7 +21,7 @@ func (s *Server) requireEnvironmentPlacementWorkerGroup(ctx context.Context, sto
 	return placement.WorkerGroupID, nil
 }
 
-func (s *Server) requireRoutableRecordWorkerGroup(ctx context.Context, store workerGroupPlacementResolver, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, recordWorkerGroupID string) error {
+func (s *Server) requireRoutableRecordWorkerGroup(ctx context.Context, store workerGroupPlacementResolver, recordWorkerGroupID string) error {
 	if _, err := store.GetWorkerGroupPlacementForRecord(ctx, recordWorkerGroupID); isNoRows(err) {
 		return unavailable(errors.New("record placement is not available"))
 	} else if err != nil {

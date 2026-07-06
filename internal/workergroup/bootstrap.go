@@ -21,13 +21,12 @@ type BootstrapStore interface {
 }
 
 type BootstrapConfig struct {
-	RegionID           string
-	DefaultRegionID    string
-	Provider           string
-	ProviderRegion     string
-	RegionDisplayName  string
-	WorkerGroupID      string
-	RequiredComponents []string
+	RegionID          string
+	DefaultRegionID   string
+	Provider          string
+	ProviderRegion    string
+	RegionDisplayName string
+	WorkerGroupID     string
 }
 
 func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) error {
@@ -40,7 +39,6 @@ func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) e
 	displayName := strings.TrimSpace(cfg.RegionDisplayName)
 	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
 	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
-	requiredComponents := normalizeRequiredComponents(cfg.RequiredComponents)
 	if regionID == "" {
 		return errors.New("region id is required")
 	}
@@ -58,9 +56,6 @@ func Bootstrap(ctx context.Context, store BootstrapStore, cfg BootstrapConfig) e
 	}
 	if workerGroupID == "" {
 		return errors.New("worker group id is required")
-	}
-	if len(requiredComponents) == 0 {
-		requiredComponents = RoutingRequiredComponents()
 	}
 	region, err := store.EnsureRegion(ctx, db.EnsureRegionParams{
 		ID:             regionID,
