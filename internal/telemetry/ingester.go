@@ -21,8 +21,6 @@ const (
 	defaultIngestIdleEvery     = 250 * time.Millisecond
 	defaultIngestRetryAfter    = 2 * time.Second
 	defaultOutboxRetainFor     = 24 * time.Hour
-	defaultHotPruneGrace       = 30 * time.Second
-	runLogWatermarkStream      = "__run__"
 )
 
 type Ingestor struct {
@@ -34,7 +32,6 @@ type Ingestor struct {
 	idleEvery     time.Duration
 	retryAfter    time.Duration
 	outboxRetain  time.Duration
-	hotPruneGrace time.Duration
 }
 
 type IngestorOption func(*Ingestor)
@@ -58,7 +55,6 @@ func NewIngestor(log *slog.Logger, queries db.Querier, writer IngestWriter, opts
 		idleEvery:     defaultIngestIdleEvery,
 		retryAfter:    defaultIngestRetryAfter,
 		outboxRetain:  defaultOutboxRetainFor,
-		hotPruneGrace: defaultHotPruneGrace,
 	}
 	for _, opt := range opts {
 		opt(ingester)
@@ -134,8 +130,6 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 	}
 	total := len(execRows) + len(ptyRows)
 	ids := make([]int64, 0, len(execRows)+len(ptyRows))
-	groups := make(map[terminalWatermarkGroup]int64)
-	groupIDs := make(map[terminalWatermarkGroup][]int64)
 	candidates := make([]terminalIngestCandidate, 0, total)
 	var firstErr error
 	for _, row := range execRows {
@@ -150,16 +144,13 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 			ResourceID:     row.ResourceID,
 			StreamName:     row.StreamName,
 			OffsetStart:    row.OffsetStart,
-			OffsetEnd:      row.OffsetEnd,
+			OffsetEnd:      pgvalue.Int8Value(row.OffsetEnd),
 			Data:           row.Data,
 			ObservedAt:     row.ObservedAt,
 		})
-		group := terminalGroupFromRow(row.OrgID, row.WorkerGroupID, row.WorkspaceID, row.ResourceKind, row.ResourceID, row.StreamName)
 		candidates = append(candidates, terminalIngestCandidate{
-			outboxID:  row.OutboxID,
-			record:    record,
-			group:     group,
-			watermark: row.OffsetEnd,
+			outboxID: row.OutboxID,
+			record:   record,
 		})
 	}
 	for _, row := range ptyRows {
@@ -174,16 +165,13 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 			ResourceID:     row.ResourceID,
 			StreamName:     row.StreamName,
 			OffsetStart:    row.OffsetStart,
-			OffsetEnd:      row.OffsetEnd,
+			OffsetEnd:      pgvalue.Int8Value(row.OffsetEnd),
 			Data:           row.Data,
 			ObservedAt:     row.ObservedAt,
 		})
-		group := terminalGroupFromRow(row.OrgID, row.WorkerGroupID, row.WorkspaceID, row.ResourceKind, row.ResourceID, row.StreamName)
 		candidates = append(candidates, terminalIngestCandidate{
-			outboxID:  row.OutboxID,
-			record:    record,
-			group:     group,
-			watermark: row.OffsetEnd,
+			outboxID: row.OutboxID,
+			record:   record,
 		})
 	}
 	if len(candidates) > 0 {
@@ -193,10 +181,6 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 		}
 		for _, candidate := range successes {
 			ids = append(ids, candidate.outboxID)
-			if candidate.watermark > groups[candidate.group] {
-				groups[candidate.group] = candidate.watermark
-			}
-			groupIDs[candidate.group] = append(groupIDs[candidate.group], candidate.outboxID)
 		}
 	}
 	if len(ids) == 0 {
@@ -204,61 +188,6 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 	}
 	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
 		return total, err
-	}
-	for group, maxOffset := range groups {
-		watermark, err := i.terminalFrontier(ctx, group, maxOffset)
-		if err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if _, err := i.db.UpsertTerminalOutputWatermark(ctx, db.UpsertTerminalOutputWatermarkParams{
-			OrgID:           pgvalue.UUID(group.orgID),
-			WorkerGroupID:   group.workerGroupID,
-			WorkspaceID:     pgvalue.UUID(group.workspaceID),
-			ResourceKind:    group.resourceKind,
-			ResourceID:      pgvalue.UUID(group.resourceID),
-			StreamName:      group.streamName,
-			WatermarkOffset: watermark,
-		}); err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		switch group.resourceKind {
-		case "workspace_exec":
-			if _, err := i.db.PruneWorkspaceExecStreamChunksPastWatermark(ctx, db.PruneWorkspaceExecStreamChunksPastWatermarkParams{
-				OrgID:         pgvalue.UUID(group.orgID),
-				WorkerGroupID: group.workerGroupID,
-				WorkspaceID:   pgvalue.UUID(group.workspaceID),
-				ExecID:        pgvalue.UUID(group.resourceID),
-				PruneGrace:    pgvalue.Interval(i.hotPruneGrace),
-			}); err != nil {
-				_ = i.requeueWritten(ctx, groupIDs[group], err)
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-		case "workspace_pty":
-			if _, err := i.db.PruneWorkspacePtyStreamChunksPastWatermark(ctx, db.PruneWorkspacePtyStreamChunksPastWatermarkParams{
-				OrgID:         pgvalue.UUID(group.orgID),
-				WorkerGroupID: group.workerGroupID,
-				WorkspaceID:   pgvalue.UUID(group.workspaceID),
-				PtySessionID:  pgvalue.UUID(group.resourceID),
-				PruneGrace:    pgvalue.Interval(i.hotPruneGrace),
-			}); err != nil {
-				_ = i.requeueWritten(ctx, groupIDs[group], err)
-				if firstErr == nil {
-					firstErr = err
-				}
-				continue
-			}
-		}
 	}
 	return total, firstErr
 }
@@ -272,23 +201,12 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 		return len(rows), err
 	}
 	ids := make([]int64, 0, len(rows))
-	groups := make(map[watermarkGroup]int64)
-	groupIDs := make(map[watermarkGroup][]int64)
 	candidates := make([]eventIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
-		group := watermarkGroup{
-			orgID:         pgvalue.MustUUIDValue(row.OrgID),
-			workerGroupID: row.WorkerGroupID,
-			streamKind:    db.TelemetryStreamKindEvent,
-			sourceKind:    string(row.SubjectType),
-			sourceID:      pgvalue.MustUUIDValue(row.SubjectID),
-		}
 		candidates = append(candidates, eventIngestCandidate{
-			outboxID:  row.OutboxID,
-			record:    eventRecord(row),
-			group:     group,
-			watermark: row.Seq,
+			outboxID: row.OutboxID,
+			record:   eventRecord(row),
 		})
 	}
 	if len(candidates) > 0 {
@@ -298,10 +216,6 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 		}
 		for _, candidate := range successes {
 			ids = append(ids, candidate.outboxID)
-			if candidate.watermark > groups[candidate.group] {
-				groups[candidate.group] = candidate.watermark
-			}
-			groupIDs[candidate.group] = append(groupIDs[candidate.group], candidate.outboxID)
 		}
 	}
 	if len(ids) == 0 {
@@ -309,42 +223,6 @@ func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {
 	}
 	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
 		return len(rows), err
-	}
-	for group, maxSeq := range groups {
-		watermark, err := i.frontier(ctx, group, maxSeq)
-		if err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if _, err := i.db.UpsertEventWatermark(ctx, db.UpsertEventWatermarkParams{
-			OrgID:         pgvalue.UUID(group.orgID),
-			WorkerGroupID: group.workerGroupID,
-			SubjectType:   db.EventSubjectType(group.sourceKind),
-			SubjectID:     pgvalue.UUID(group.sourceID),
-			WatermarkSeq:  watermark,
-		}); err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if _, err := i.db.PruneEventsPastWatermark(ctx, db.PruneEventsPastWatermarkParams{
-			OrgID:         pgvalue.UUID(group.orgID),
-			WorkerGroupID: group.workerGroupID,
-			SubjectType:   db.EventSubjectType(group.sourceKind),
-			SubjectID:     pgvalue.UUID(group.sourceID),
-			PruneGrace:    pgvalue.Interval(i.hotPruneGrace),
-		}); err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
 	}
 	return len(rows), firstErr
 }
@@ -358,24 +236,12 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 		return len(rows), err
 	}
 	ids := make([]int64, 0, len(rows))
-	groups := make(map[watermarkGroup]int64)
-	groupIDs := make(map[watermarkGroup][]int64)
 	candidates := make([]runLogIngestCandidate, 0, len(rows))
 	var firstErr error
 	for _, row := range rows {
-		group := watermarkGroup{
-			orgID:         pgvalue.MustUUIDValue(row.OrgID),
-			workerGroupID: row.WorkerGroupID,
-			streamKind:    db.TelemetryStreamKindRunLog,
-			sourceKind:    "run",
-			sourceID:      pgvalue.MustUUIDValue(row.RunID),
-			streamName:    runLogWatermarkStream,
-		}
 		candidates = append(candidates, runLogIngestCandidate{
-			outboxID:  row.OutboxID,
-			record:    runLogRecord(row),
-			group:     group,
-			watermark: row.Seq,
+			outboxID: row.OutboxID,
+			record:   runLogRecord(row),
 		})
 	}
 	if len(candidates) > 0 {
@@ -385,10 +251,6 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 		}
 		for _, candidate := range successes {
 			ids = append(ids, candidate.outboxID)
-			if candidate.watermark > groups[candidate.group] {
-				groups[candidate.group] = candidate.watermark
-			}
-			groupIDs[candidate.group] = append(groupIDs[candidate.group], candidate.outboxID)
 		}
 	}
 	if len(ids) == 0 {
@@ -397,74 +259,7 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
 		return len(rows), err
 	}
-	for group, maxSeq := range groups {
-		watermark, err := i.runLogFrontier(ctx, group, maxSeq)
-		if err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if _, err := i.db.UpsertRunLogWatermark(ctx, db.UpsertRunLogWatermarkParams{
-			OrgID:         pgvalue.UUID(group.orgID),
-			WorkerGroupID: group.workerGroupID,
-			RunID:         pgvalue.UUID(group.sourceID),
-			StreamName:    group.streamName,
-			WatermarkSeq:  watermark,
-		}); err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		if _, err := i.db.PruneRunLogChunksPastWatermark(ctx, db.PruneRunLogChunksPastWatermarkParams{
-			OrgID:         pgvalue.UUID(group.orgID),
-			WorkerGroupID: group.workerGroupID,
-			RunID:         pgvalue.UUID(group.sourceID),
-			PruneGrace:    pgvalue.Interval(i.hotPruneGrace),
-		}); err != nil {
-			_ = i.requeueWritten(ctx, groupIDs[group], err)
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-	}
 	return len(rows), firstErr
-}
-
-func (i *Ingestor) frontier(ctx context.Context, group watermarkGroup, maxWrittenSeq int64) (int64, error) {
-	return i.db.GetTelemetryIngestFrontier(ctx, db.GetTelemetryIngestFrontierParams{
-		OrgID:         pgvalue.UUID(group.orgID),
-		WorkerGroupID: group.workerGroupID,
-		StreamKind:    group.streamKind,
-		SourceKind:    group.sourceKind,
-		SourceID:      pgvalue.UUID(group.sourceID),
-		StreamName:    group.streamName,
-		MaxWrittenSeq: maxWrittenSeq,
-	})
-}
-
-func (i *Ingestor) runLogFrontier(ctx context.Context, group watermarkGroup, maxWrittenSeq int64) (int64, error) {
-	return i.db.GetRunLogIngestFrontier(ctx, db.GetRunLogIngestFrontierParams{
-		OrgID:         pgvalue.UUID(group.orgID),
-		WorkerGroupID: group.workerGroupID,
-		RunID:         pgvalue.UUID(group.sourceID),
-		MaxWrittenSeq: maxWrittenSeq,
-	})
-}
-
-func (i *Ingestor) terminalFrontier(ctx context.Context, group terminalWatermarkGroup, maxWrittenOffset int64) (int64, error) {
-	return i.db.GetTerminalOutputIngestFrontier(ctx, db.GetTerminalOutputIngestFrontierParams{
-		OrgID:            pgvalue.UUID(group.orgID),
-		WorkerGroupID:    group.workerGroupID,
-		SourceKind:       group.resourceKind,
-		SourceID:         pgvalue.UUID(group.resourceID),
-		StreamName:       group.streamName,
-		MaxWrittenOffset: maxWrittenOffset,
-	})
 }
 
 func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventIngestCandidate) ([]eventIngestCandidate, error) {
@@ -556,54 +351,19 @@ func (i *Ingestor) markFailed(ctx context.Context, ids []int64, cause error) err
 	})
 }
 
-func (i *Ingestor) requeueWritten(ctx context.Context, ids []int64, cause error) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	return i.db.RequeueWrittenTelemetryOutbox(ctx, db.RequeueWrittenTelemetryOutboxParams{
-		Ids:        ids,
-		RetryAfter: pgvalue.Interval(i.retryAfter),
-		LastError:  truncateError(cause),
-	})
-}
-
-type watermarkGroup struct {
-	orgID         uuid.UUID
-	workerGroupID string
-	streamKind    db.TelemetryStreamKind
-	sourceKind    string
-	sourceID      uuid.UUID
-	streamName    string
-}
-
-type terminalWatermarkGroup struct {
-	orgID         uuid.UUID
-	workerGroupID string
-	workspaceID   uuid.UUID
-	resourceKind  string
-	resourceID    uuid.UUID
-	streamName    string
-}
-
 type eventIngestCandidate struct {
-	outboxID  int64
-	record    EventRecord
-	group     watermarkGroup
-	watermark int64
+	outboxID int64
+	record   EventRecord
 }
 
 type runLogIngestCandidate struct {
-	outboxID  int64
-	record    RunLogRecord
-	group     watermarkGroup
-	watermark int64
+	outboxID int64
+	record   RunLogRecord
 }
 
 type terminalIngestCandidate struct {
-	outboxID  int64
-	record    TerminalOutputRecord
-	group     terminalWatermarkGroup
-	watermark int64
+	outboxID int64
+	record   TerminalOutputRecord
 }
 
 type terminalOutputRow struct {
@@ -620,17 +380,6 @@ type terminalOutputRow struct {
 	OffsetEnd      int64
 	Data           []byte
 	ObservedAt     pgtype.Timestamptz
-}
-
-func terminalGroupFromRow(orgID pgtype.UUID, workerGroupID string, workspaceID pgtype.UUID, resourceKind string, resourceID pgtype.UUID, streamName string) terminalWatermarkGroup {
-	return terminalWatermarkGroup{
-		orgID:         pgvalue.MustUUIDValue(orgID),
-		workerGroupID: workerGroupID,
-		workspaceID:   pgvalue.MustUUIDValue(workspaceID),
-		resourceKind:  resourceKind,
-		resourceID:    pgvalue.MustUUIDValue(resourceID),
-		streamName:    streamName,
-	}
 }
 
 func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
@@ -696,12 +445,12 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
 		RunID:          pgvalue.MustUUIDValue(row.RunID),
 		RunLeaseID:     pgvalue.MustUUIDValue(row.RunLeaseID),
-		AttemptNumber:  row.AttemptNumber,
+		AttemptNumber:  int4Value(row.AttemptNumber),
 		StreamName:     string(row.Stream),
 		Seq:            uint64(row.Seq),
-		ObservedSeq:    uint64(row.ObservedSeq),
+		ObservedSeq:    uint64(pgvalue.Int8Value(row.ObservedSeq)),
 		Content:        base64.StdEncoding.EncodeToString(row.Content),
-		SizeBytes:      uint64(row.SizeBytes),
+		SizeBytes:      uint64(pgvalue.Int8Value(row.SizeBytes)),
 		IdempotencyKey: row.IdempotencyKey,
 		RetentionClass: "standard",
 		RedactionClass: "standard",
@@ -723,6 +472,13 @@ func optionalInt32(value pgtype.Int4) *int32 {
 		return nil
 	}
 	return &value.Int32
+}
+
+func int4Value(value pgtype.Int4) int32 {
+	if !value.Valid {
+		return 0
+	}
+	return value.Int32
 }
 
 func observedAt(primary pgtype.Timestamptz, fallback pgtype.Timestamptz) time.Time {

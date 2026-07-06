@@ -24,71 +24,37 @@ WITH target_deployment AS (
        AND deployments.environment_id = $3
        AND deployments.id = $4
 ),
-event_input AS (
+appended AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, deployment_id, category, severity, source, kind, message,
+        payload, redaction_class, observed_at
+    )
     SELECT target_deployment.org_id,
            target_deployment.worker_group_id,
+           'event',
+           'deployment',
+           target_deployment.id,
            target_deployment.project_id,
            target_deployment.environment_id,
-           target_deployment.id AS deployment_id,
-           $5::text AS category,
-           $6::text AS severity,
-           $7::text AS source,
-           $8::text AS kind,
-           $9::text AS message,
-           $10::jsonb AS payload,
-           $11::text AS redaction_class
-  FROM target_deployment
-),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           'deployment',
-           event_input.deployment_id,
-           1
-      FROM event_input
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
-),
-inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, deployment_id, seq, category, severity, source, kind, message, payload, redaction_class)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           event_input.project_id,
-           event_input.environment_id,
-           event_input.deployment_id,
-           event_seq.seq,
-           event_input.category,
-           event_input.severity,
-           event_input.source,
-           event_input.kind,
-           event_input.message,
-           event_input.payload,
-           event_input.redaction_class
-      FROM event_input
-      JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.worker_group_id = event_input.worker_group_id
-                    AND event_seq.subject_kind = 'deployment'
-                    AND event_seq.subject_id = event_input.deployment_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT inserted_event.org_id,
-           inserted_event.worker_group_id,
-           'event',
-           inserted_event.subject_type,
-           inserted_event.subject_id,
-           inserted_event.seq,
-           'event:' || inserted_event.subject_type::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text
-      FROM inserted_event
-    RETURNING id
+           target_deployment.id,
+           COALESCE(NULLIF($5::text, ''), 'system'),
+           COALESCE(NULLIF($6::text, ''), 'info'),
+           COALESCE(NULLIF($7::text, ''), 'control'),
+           $8::text,
+           COALESCE($9::text, ''),
+           COALESCE($10::jsonb, '{}'::jsonb),
+           COALESCE(NULLIF($11::text, ''), 'internal'),
+           now()
+      FROM target_deployment
+    RETURNING telemetry_outbox.deployment_id AS id,
+              telemetry_outbox.org_id,
+              telemetry_outbox.worker_group_id,
+              telemetry_outbox.project_id,
+              telemetry_outbox.environment_id
 )
-SELECT inserted_event.id, inserted_event.subject_type, inserted_event.subject_id, inserted_event.seq, inserted_event.org_id, inserted_event.worker_group_id, inserted_event.project_id, inserted_event.environment_id, inserted_event.run_id, inserted_event.deployment_id, inserted_event.run_lease_id, inserted_event.attempt_number, inserted_event.trace_id, inserted_event.span_id, inserted_event.parent_span_id, inserted_event.traceparent, inserted_event.category, inserted_event.severity, inserted_event.source, inserted_event.kind, inserted_event.message, inserted_event.payload, inserted_event.redaction_class, inserted_event.snapshot_version, inserted_event.expires_at, inserted_event.occurred_at, inserted_event.created_at
-FROM inserted_event
-JOIN inserted_outbox ON true
+SELECT id, org_id, worker_group_id, project_id, environment_id
+  FROM appended
 `
 
 type AppendDeploymentEventParams struct {
@@ -106,33 +72,11 @@ type AppendDeploymentEventParams struct {
 }
 
 type AppendDeploymentEventRow struct {
-	ID              pgtype.Int8        `json:"id"`
-	SubjectType     EventSubjectType   `json:"subject_type"`
-	SubjectID       pgtype.UUID        `json:"subject_id"`
-	Seq             int64              `json:"seq"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID   string             `json:"worker_group_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         pgtype.Text        `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
 
 func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error) {
@@ -152,32 +96,10 @@ func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymen
 	var i AppendDeploymentEventRow
 	err := row.Scan(
 		&i.ID,
-		&i.SubjectType,
-		&i.SubjectID,
-		&i.Seq,
 		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.RunID,
-		&i.DeploymentID,
-		&i.RunLeaseID,
-		&i.AttemptNumber,
-		&i.TraceID,
-		&i.SpanID,
-		&i.ParentSpanID,
-		&i.Traceparent,
-		&i.Category,
-		&i.Severity,
-		&i.Source,
-		&i.Kind,
-		&i.Message,
-		&i.Payload,
-		&i.RedactionClass,
-		&i.SnapshotVersion,
-		&i.ExpiresAt,
-		&i.OccurredAt,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -192,7 +114,7 @@ target_run AS (
            runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
-	           runs.current_attempt_number,
+           runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
            runs.state_version
@@ -200,86 +122,49 @@ target_run AS (
      WHERE runs.org_id = $3
        AND runs.id = $4
 ),
-event_input AS (
-    SELECT $3 AS org_id,
+appended AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, attempt_number, trace_id, span_id, traceparent,
+        category, severity, source, kind, message, payload, redaction_class,
+        snapshot_version, observed_at
+    )
+    SELECT $3::uuid,
            target_run.worker_group_id,
+           'event',
+           'run',
+           target_run.id,
            target_run.project_id,
            target_run.environment_id,
-           target_run.id AS run_id,
-	           NULL::uuid AS run_lease_id,
-           target_run.current_attempt_number AS attempt_number,
+           target_run.id,
+           target_run.current_attempt_number,
            target_run.trace_id,
-           target_run.root_span_id AS span_id,
-           NULL::text AS parent_span_id,
-           '00-' || target_run.trace_id || '-' || target_run.root_span_id || '-01' AS traceparent,
-           'system' AS category,
-           'info' AS severity,
-           'control' AS source,
-           event_args.event_kind AS kind,
-           event_args.event_kind AS message,
-           event_args.event_payload AS payload,
-           'internal' AS redaction_class,
-           target_run.state_version AS snapshot_version
-  FROM target_run
-  CROSS JOIN event_args
-),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           'run',
-           event_input.run_id,
-           1
-      FROM event_input
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
-),
-inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           event_input.project_id,
-           event_input.environment_id,
-           event_input.run_id,
-           event_seq.seq,
-           event_input.run_lease_id,
-           event_input.attempt_number,
-           event_input.trace_id,
-           event_input.span_id,
-           event_input.parent_span_id,
-           event_input.traceparent,
-           event_input.category,
-           event_input.severity,
-           event_input.source,
-           event_input.kind,
-           event_input.message,
-           event_input.payload,
-           event_input.redaction_class,
-           event_input.snapshot_version
-      FROM event_input
-      JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.worker_group_id = event_input.worker_group_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = event_input.run_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT inserted_event.org_id,
-           inserted_event.worker_group_id,
-           'event',
-           inserted_event.subject_type,
-           inserted_event.subject_id,
-           inserted_event.seq,
-           'event:' || inserted_event.subject_type::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text
-      FROM inserted_event
-    RETURNING id
+           target_run.root_span_id,
+           '00-' || target_run.trace_id || '-' || target_run.root_span_id || '-01',
+           'system',
+           'info',
+           'control',
+           event_args.event_kind,
+           event_args.event_kind,
+           event_args.event_payload,
+           'internal',
+           target_run.state_version,
+           now()
+      FROM target_run
+      CROSS JOIN event_args
+    RETURNING telemetry_outbox.run_id AS id,
+              telemetry_outbox.worker_group_id,
+              telemetry_outbox.project_id,
+              telemetry_outbox.environment_id,
+              COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
+              telemetry_outbox.trace_id,
+              COALESCE(telemetry_outbox.span_id, '')::text AS root_span_id,
+              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS state_version,
+              telemetry_outbox.kind AS event_kind,
+              telemetry_outbox.payload AS event_payload
 )
-SELECT inserted_event.id, inserted_event.subject_type, inserted_event.subject_id, inserted_event.seq, inserted_event.org_id, inserted_event.worker_group_id, inserted_event.project_id, inserted_event.environment_id, inserted_event.run_id, inserted_event.deployment_id, inserted_event.run_lease_id, inserted_event.attempt_number, inserted_event.trace_id, inserted_event.span_id, inserted_event.parent_span_id, inserted_event.traceparent, inserted_event.category, inserted_event.severity, inserted_event.source, inserted_event.kind, inserted_event.message, inserted_event.payload, inserted_event.redaction_class, inserted_event.snapshot_version, inserted_event.expires_at, inserted_event.occurred_at, inserted_event.created_at
-FROM inserted_event
-JOIN inserted_outbox ON true
+SELECT id, worker_group_id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, state_version, event_kind, event_payload
+  FROM appended
 `
 
 type AppendRunEventParams struct {
@@ -290,33 +175,16 @@ type AppendRunEventParams struct {
 }
 
 type AppendRunEventRow struct {
-	ID              pgtype.Int8        `json:"id"`
-	SubjectType     EventSubjectType   `json:"subject_type"`
-	SubjectID       pgtype.UUID        `json:"subject_id"`
-	Seq             int64              `json:"seq"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID   string             `json:"worker_group_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         pgtype.Text        `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ID                   pgtype.UUID `json:"id"`
+	WorkerGroupID        string      `json:"worker_group_id"`
+	ProjectID            pgtype.UUID `json:"project_id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	CurrentAttemptNumber int32       `json:"current_attempt_number"`
+	TraceID              pgtype.Text `json:"trace_id"`
+	RootSpanID           string      `json:"root_span_id"`
+	StateVersion         int64       `json:"state_version"`
+	EventKind            string      `json:"event_kind"`
+	EventPayload         []byte      `json:"event_payload"`
 }
 
 func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (AppendRunEventRow, error) {
@@ -329,32 +197,15 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 	var i AppendRunEventRow
 	err := row.Scan(
 		&i.ID,
-		&i.SubjectType,
-		&i.SubjectID,
-		&i.Seq,
-		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.RunID,
-		&i.DeploymentID,
-		&i.RunLeaseID,
-		&i.AttemptNumber,
+		&i.CurrentAttemptNumber,
 		&i.TraceID,
-		&i.SpanID,
-		&i.ParentSpanID,
-		&i.Traceparent,
-		&i.Category,
-		&i.Severity,
-		&i.Source,
-		&i.Kind,
-		&i.Message,
-		&i.Payload,
-		&i.RedactionClass,
-		&i.SnapshotVersion,
-		&i.ExpiresAt,
-		&i.OccurredAt,
-		&i.CreatedAt,
+		&i.RootSpanID,
+		&i.StateVersion,
+		&i.EventKind,
+		&i.EventPayload,
 	)
 	return i, err
 }
@@ -369,109 +220,77 @@ current_run_lease AS (
            runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
-	           runs.trace_id,
-	           runs.state_version,
-	           run_leases.id AS run_lease_id,
-	           run_leases.span_id,
-	           run_leases.parent_span_id,
-	           run_leases.traceparent,
-	           run_leases.attempt_number
-	      FROM runs
+           runs.trace_id,
+           runs.state_version,
+           run_leases.id AS run_lease_id,
+           run_leases.span_id,
+           run_leases.parent_span_id,
+           run_leases.traceparent,
+           run_leases.attempt_number
+      FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-                          AND run_leases.org_id = runs.org_id
-                          AND run_leases.run_id = runs.id
+                     AND run_leases.org_id = runs.org_id
+                     AND run_leases.run_id = runs.id
       JOIN worker_groups ON worker_groups.id = runs.worker_group_id
                         AND worker_groups.state IN ('active', 'draining')
-	     WHERE runs.org_id = $3
-	       AND runs.worker_group_id = $4
-	       AND runs.id = $5
-	       AND runs.status = 'running'
-	       AND run_leases.worker_group_id = $4
-	       AND run_leases.id = $6
+     WHERE runs.org_id = $3
+       AND runs.worker_group_id = $4
+       AND runs.id = $5
+       AND runs.status = 'running'
+       AND run_leases.worker_group_id = $4
+       AND run_leases.id = $6
        AND run_leases.worker_instance_id = $7
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()
 ),
-event_input AS (
-    SELECT $3 AS org_id,
+appended AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
+        parent_span_id, traceparent, category, severity, source, kind, message,
+        payload, redaction_class, snapshot_version, observed_at
+    )
+    SELECT $3::uuid,
            current_run_lease.worker_group_id,
+           'event',
+           'run',
+           current_run_lease.id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
-           current_run_lease.id AS run_id,
-	           current_run_lease.run_lease_id,
+           current_run_lease.id,
+           current_run_lease.run_lease_id,
            current_run_lease.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
            current_run_lease.parent_span_id,
            current_run_lease.traceparent,
-           CASE WHEN event_args.event_kind = 'log' THEN 'log' ELSE 'guest' END AS category,
-           'info' AS severity,
-           'worker' AS source,
-           event_args.event_kind AS kind,
-           event_args.event_kind AS message,
-           event_args.event_payload AS payload,
-           'sensitive' AS redaction_class,
-           current_run_lease.state_version AS snapshot_version
-  FROM current_run_lease
-  CROSS JOIN event_args
-),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           'run',
-           event_input.run_id,
-           1
-      FROM event_input
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
-),
-inserted_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
-           event_input.project_id,
-           event_input.environment_id,
-           event_input.run_id,
-           event_seq.seq,
-           event_input.run_lease_id,
-           event_input.attempt_number,
-           event_input.trace_id,
-           event_input.span_id,
-           event_input.parent_span_id,
-           event_input.traceparent,
-           event_input.category,
-           event_input.severity,
-           event_input.source,
-           event_input.kind,
-           event_input.message,
-           event_input.payload,
-           event_input.redaction_class,
-           event_input.snapshot_version
-      FROM event_input
-      JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.worker_group_id = event_input.worker_group_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = event_input.run_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-inserted_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT inserted_event.org_id,
-           inserted_event.worker_group_id,
-           'event',
-           inserted_event.subject_type,
-           inserted_event.subject_id,
-           inserted_event.seq,
-           'event:' || inserted_event.subject_type::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text
-      FROM inserted_event
-    RETURNING id
+           CASE WHEN event_args.event_kind = 'log' THEN 'log' ELSE 'guest' END,
+           'info',
+           'worker',
+           event_args.event_kind,
+           event_args.event_kind,
+           event_args.event_payload,
+           'sensitive',
+           current_run_lease.state_version,
+           now()
+      FROM current_run_lease
+      CROSS JOIN event_args
+    RETURNING telemetry_outbox.run_id AS id,
+              telemetry_outbox.worker_group_id,
+              telemetry_outbox.project_id,
+              telemetry_outbox.environment_id,
+              telemetry_outbox.trace_id,
+              COALESCE(telemetry_outbox.snapshot_version, 0)::bigint AS state_version,
+              telemetry_outbox.run_lease_id,
+              COALESCE(telemetry_outbox.span_id, '')::text AS span_id,
+              telemetry_outbox.parent_span_id,
+              COALESCE(telemetry_outbox.traceparent, '')::text AS traceparent,
+              COALESCE(telemetry_outbox.attempt_number, 0)::integer AS attempt_number,
+              telemetry_outbox.kind AS event_kind,
+              telemetry_outbox.payload AS event_payload
 )
-SELECT inserted_event.id, inserted_event.subject_type, inserted_event.subject_id, inserted_event.seq, inserted_event.org_id, inserted_event.worker_group_id, inserted_event.project_id, inserted_event.environment_id, inserted_event.run_id, inserted_event.deployment_id, inserted_event.run_lease_id, inserted_event.attempt_number, inserted_event.trace_id, inserted_event.span_id, inserted_event.parent_span_id, inserted_event.traceparent, inserted_event.category, inserted_event.severity, inserted_event.source, inserted_event.kind, inserted_event.message, inserted_event.payload, inserted_event.redaction_class, inserted_event.snapshot_version, inserted_event.expires_at, inserted_event.occurred_at, inserted_event.created_at
-FROM inserted_event
-JOIN inserted_outbox ON true
+SELECT id, worker_group_id, project_id, environment_id, trace_id, state_version, run_lease_id, span_id, parent_span_id, traceparent, attempt_number, event_kind, event_payload
+  FROM appended
 `
 
 type AppendRunEventForExecutionParams struct {
@@ -485,33 +304,19 @@ type AppendRunEventForExecutionParams struct {
 }
 
 type AppendRunEventForExecutionRow struct {
-	ID              pgtype.Int8        `json:"id"`
-	SubjectType     EventSubjectType   `json:"subject_type"`
-	SubjectID       pgtype.UUID        `json:"subject_id"`
-	Seq             int64              `json:"seq"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID   string             `json:"worker_group_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         pgtype.Text        `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ID            pgtype.UUID `json:"id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	TraceID       pgtype.Text `json:"trace_id"`
+	StateVersion  int64       `json:"state_version"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+	SpanID        string      `json:"span_id"`
+	ParentSpanID  pgtype.Text `json:"parent_span_id"`
+	Traceparent   string      `json:"traceparent"`
+	AttemptNumber int32       `json:"attempt_number"`
+	EventKind     string      `json:"event_kind"`
+	EventPayload  []byte      `json:"event_payload"`
 }
 
 func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (AppendRunEventForExecutionRow, error) {
@@ -527,32 +332,18 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 	var i AppendRunEventForExecutionRow
 	err := row.Scan(
 		&i.ID,
-		&i.SubjectType,
-		&i.SubjectID,
-		&i.Seq,
-		&i.OrgID,
 		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.RunID,
-		&i.DeploymentID,
-		&i.RunLeaseID,
-		&i.AttemptNumber,
 		&i.TraceID,
+		&i.StateVersion,
+		&i.RunLeaseID,
 		&i.SpanID,
 		&i.ParentSpanID,
 		&i.Traceparent,
-		&i.Category,
-		&i.Severity,
-		&i.Source,
-		&i.Kind,
-		&i.Message,
-		&i.Payload,
-		&i.RedactionClass,
-		&i.SnapshotVersion,
-		&i.ExpiresAt,
-		&i.OccurredAt,
-		&i.CreatedAt,
+		&i.AttemptNumber,
+		&i.EventKind,
+		&i.EventPayload,
 	)
 	return i, err
 }
@@ -564,6 +355,7 @@ WITH claimed AS (
      WHERE telemetry_outbox.stream_kind = 'event'
        AND telemetry_outbox.published_at IS NULL
        AND (telemetry_outbox.publish_locked_until IS NULL OR telemetry_outbox.publish_locked_until < now())
+       AND telemetry_outbox.state <> 'dead_lettered'
        AND NOT EXISTS (
             SELECT 1
               FROM telemetry_outbox AS earlier_outbox
@@ -574,16 +366,7 @@ WITH claimed AS (
                AND earlier_outbox.worker_group_id = telemetry_outbox.worker_group_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
-               AND earlier_outbox.seq < telemetry_outbox.seq
-       )
-       AND EXISTS (
-             SELECT 1
-               FROM event_hot_payloads AS events
-              WHERE events.org_id = telemetry_outbox.org_id
-                AND events.worker_group_id = telemetry_outbox.worker_group_id
-                AND events.subject_type = telemetry_outbox.source_kind::event_subject_type
-                AND events.subject_id = telemetry_outbox.source_id
-                AND events.seq = telemetry_outbox.seq
+               AND earlier_outbox.id < telemetry_outbox.id
        )
      ORDER BY telemetry_outbox.id ASC
      LIMIT $1
@@ -597,42 +380,37 @@ updated AS (
            last_error = ''
       FROM claimed
      WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.seq, telemetry_outbox.idempotency_key, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.created_at, telemetry_outbox.updated_at
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.workspace_id, telemetry_outbox.resource_kind, telemetry_outbox.resource_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.offset_start, telemetry_outbox.offset_end, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at
 )
 SELECT updated.id AS outbox_id,
        ('helmr:events:' || updated.org_id::text || ':' || updated.worker_group_id || ':' || updated.source_kind || ':' || updated.source_id::text)::text AS stream_key,
        updated.publish_attempts AS attempts,
-       events.id AS event_record_id,
-       events.subject_type,
-       events.subject_id,
-       events.seq,
-       events.org_id,
-       events.project_id,
-       events.environment_id,
-       events.run_id,
-       events.deployment_id,
-       events.run_lease_id,
-       events.attempt_number,
-       events.trace_id,
-       events.span_id,
-       events.parent_span_id,
-       events.traceparent,
-       events.category,
-       events.severity,
-       events.source,
-       events.kind,
-       events.message,
-       events.payload,
-       events.redaction_class,
-       events.snapshot_version,
-       events.occurred_at,
-       events.created_at
+       updated.id AS event_record_id,
+       updated.source_kind::event_subject_type AS subject_type,
+       updated.source_id AS subject_id,
+       updated.id AS seq,
+       updated.org_id,
+       updated.project_id,
+       updated.environment_id,
+       updated.run_id,
+       updated.deployment_id,
+       updated.run_lease_id,
+       updated.attempt_number,
+       updated.trace_id,
+       updated.span_id,
+       updated.parent_span_id,
+       updated.traceparent,
+       updated.category,
+       updated.severity,
+       updated.source,
+       updated.kind,
+       updated.message,
+       updated.payload,
+       updated.redaction_class,
+       updated.snapshot_version,
+       updated.observed_at AS occurred_at,
+       updated.created_at
   FROM updated
-  JOIN event_hot_payloads AS events ON events.org_id = updated.org_id
-                                   AND events.worker_group_id = updated.worker_group_id
-                                   AND events.subject_type = updated.source_kind::event_subject_type
-                                   AND events.subject_id = updated.source_id
-                                   AND events.seq = updated.seq
  ORDER BY updated.id ASC
 `
 
@@ -645,7 +423,7 @@ type ClaimEventOutboxRow struct {
 	OutboxID        int64              `json:"outbox_id"`
 	StreamKey       string             `json:"stream_key"`
 	Attempts        int32              `json:"attempts"`
-	EventRecordID   pgtype.Int8        `json:"event_record_id"`
+	EventRecordID   int64              `json:"event_record_id"`
 	SubjectType     EventSubjectType   `json:"subject_type"`
 	SubjectID       pgtype.UUID        `json:"subject_id"`
 	Seq             int64              `json:"seq"`
@@ -708,79 +486,6 @@ func (q *Queries) ClaimEventOutbox(ctx context.Context, arg ClaimEventOutboxPara
 			&i.Payload,
 			&i.RedactionClass,
 			&i.SnapshotVersion,
-			&i.OccurredAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listSubjectEvents = `-- name: ListSubjectEvents :many
-SELECT id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-  FROM event_hot_payloads AS events
- WHERE org_id = $1
-   AND subject_type = $2::event_subject_type
-   AND subject_id = $3
-   AND seq > $4
- ORDER BY seq ASC
- LIMIT $5
-`
-
-type ListSubjectEventsParams struct {
-	OrgID       pgtype.UUID      `json:"org_id"`
-	SubjectType EventSubjectType `json:"subject_type"`
-	SubjectID   pgtype.UUID      `json:"subject_id"`
-	Seq         int64            `json:"seq"`
-	RowLimit    int32            `json:"row_limit"`
-}
-
-func (q *Queries) ListSubjectEvents(ctx context.Context, arg ListSubjectEventsParams) ([]EventHotPayload, error) {
-	rows, err := q.db.Query(ctx, listSubjectEvents,
-		arg.OrgID,
-		arg.SubjectType,
-		arg.SubjectID,
-		arg.Seq,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []EventHotPayload
-	for rows.Next() {
-		var i EventHotPayload
-		if err := rows.Scan(
-			&i.ID,
-			&i.SubjectType,
-			&i.SubjectID,
-			&i.Seq,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.RunID,
-			&i.DeploymentID,
-			&i.RunLeaseID,
-			&i.AttemptNumber,
-			&i.TraceID,
-			&i.SpanID,
-			&i.ParentSpanID,
-			&i.Traceparent,
-			&i.Category,
-			&i.Severity,
-			&i.Source,
-			&i.Kind,
-			&i.Message,
-			&i.Payload,
-			&i.RedactionClass,
-			&i.SnapshotVersion,
-			&i.ExpiresAt,
 			&i.OccurredAt,
 			&i.CreatedAt,
 		); err != nil {

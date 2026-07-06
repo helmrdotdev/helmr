@@ -131,10 +131,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer clickHouseClient.Close()
-	telemetryReader := telemetry.NewCompositeReader(
-		telemetry.NewHotReader(queries),
-		telemetry.NewHistoricalReader(clickHouseClient),
-	)
+	telemetryReader := telemetry.NewHistoricalReader(clickHouseClient)
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
 		WorkerGroupID:   cfg.workerGroupID,
 		TelemetryReader: telemetryReader,

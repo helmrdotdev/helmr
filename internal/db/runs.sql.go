@@ -263,56 +263,42 @@ snapshot AS (
       FROM updated
     RETURNING run_state_snapshots.run_id
 ),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT updated.org_id, updated.worker_group_id, 'run', updated.id, 1
-      FROM updated
-      JOIN snapshot ON true
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT updated.org_id,
            updated.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, updated.id),
            updated.project_id,
            updated.environment_id,
            updated.id,
-           event_seq.seq,
+           NULL::uuid,
            updated.previous_run_lease_id,
            updated.current_attempt_number,
            updated.trace_id,
            updated.root_span_id,
+           NULL::text,
            '00-' || updated.trace_id || '-' || updated.root_span_id || '-01',
-           'lifecycle',
-           'warn',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('warn', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
-           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
-           jsonb_build_object(
-               'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-               'force', $5::bool
-           ),
-           'internal',
-           updated.state_version
+           COALESCE(CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END, ''),
+           COALESCE(jsonb_build_object(
+              'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
+              'force', $5::bool
+          ), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           updated.state_version,
+           now()
       FROM updated
-      JOIN event_seq ON event_seq.org_id = updated.org_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = updated.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT event.org_id,
-                  event.worker_group_id,
-                  'event',
-                  event.subject_type,
-                  event.subject_id,
-                  event.seq,
-                  'event:' || event.subject_type::text || ':' || event.subject_id::text || ':' || event.seq::text
-      FROM event
+      JOIN snapshot ON true
     RETURNING id
 ),
 operation_applied AS (
@@ -334,7 +320,7 @@ operation_applied AS (
 SELECT updated.id, updated.public_id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.workspace_id, updated.workspace_mount_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.session_id, updated.schedule_id, updated.schedule_instance_id, updated.scheduled_at, updated.status, updated.execution_status, updated.terminal_outcome, updated.payload, updated.output, updated.metadata, updated.tags, updated.locked_retry_policy, updated.queue_class, updated.queue_name, updated.queue_concurrency_limit, updated.concurrency_key, updated.priority, updated.queue_timestamp, updated.ttl, updated.queued_expires_at, updated.dispatch_generation, updated.dispatch_attempt_count, updated.last_enqueue_error, updated.last_enqueued_at, updated.requested_milli_cpu, updated.requested_memory_mib, updated.requested_disk_mib, updated.requested_execution_slots, updated.runtime_id, updated.runtime_arch, updated.runtime_abi, updated.kernel_digest, updated.initramfs_digest, updated.rootfs_digest, updated.cni_profile, updated.network_policy, updated.placement, updated.max_active_duration_ms, updated.active_elapsed_ms, updated.active_started_at, updated.trace_id, updated.root_span_id, updated.state_version, updated.current_attempt_number, updated.current_run_lease_id, updated.latest_runtime_checkpoint_id, updated.exit_code, updated.error_message, updated.created_at, updated.updated_at, updated.started_at, updated.finished_at, updated.previous_run_lease_id
   FROM updated
   JOIN operation_applied ON true
-  JOIN telemetry_outbox ON true
+  JOIN event ON true
  WHERE (SELECT count(*) FROM cancelled_run_waits) >= 0
    AND (SELECT count(*) FROM terminal_session_runs) >= 0
    AND (SELECT count(*) FROM terminal_sessions) >= 0
@@ -852,58 +838,45 @@ created_snapshot AS (
       FROM created
     RETURNING run_state_snapshots.run_id
 ),
-created_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT created.org_id, created.worker_group_id, 'run', created.id, 1
-      FROM created
-      JOIN created_snapshot ON true
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 created_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT created.org_id,
            created.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, created.id),
            created.project_id,
            created.environment_id,
            created.id,
-           created_event_seq.seq,
+           NULL::uuid,
+           NULL::uuid,
            created.current_attempt_number,
            created.trace_id,
            created.root_span_id,
+           NULL::text,
            '00-' || created.trace_id || '-' || created.root_span_id || '-01',
-           'lifecycle',
-           'info',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('info', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.created',
-           'run.created',
-           $34,
-           'internal',
-           created.state_version
+           COALESCE('run.created', ''),
+           COALESCE($34, '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           created.state_version,
+           now()
       FROM created
-      JOIN created_event_seq ON created_event_seq.org_id = created.org_id
-                            AND created_event_seq.subject_kind = 'run'
-                            AND created_event_seq.subject_id = created.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-created_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT created_event.org_id,
-                  created_event.worker_group_id,
-                  'event',
-                  created_event.subject_type,
-                  created_event.subject_id,
-                  created_event.seq,
-                  'event:' || created_event.subject_type::text || ':' || created_event.subject_id::text || ':' || created_event.seq::text
-      FROM created_event
+      JOIN created_snapshot ON true
     RETURNING id
 )
 SELECT created.id, created.public_id, created.org_id, created.worker_group_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.workspace_mount_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.session_id, created.schedule_id, created.schedule_instance_id, created.scheduled_at, created.status, created.execution_status, created.terminal_outcome, created.payload, created.output, created.metadata, created.tags, created.locked_retry_policy, created.queue_class, created.queue_name, created.queue_concurrency_limit, created.concurrency_key, created.priority, created.queue_timestamp, created.ttl, created.queued_expires_at, created.dispatch_generation, created.dispatch_attempt_count, created.last_enqueue_error, created.last_enqueued_at, created.requested_milli_cpu, created.requested_memory_mib, created.requested_disk_mib, created.requested_execution_slots, created.runtime_id, created.runtime_arch, created.runtime_abi, created.kernel_digest, created.initramfs_digest, created.rootfs_digest, created.cni_profile, created.network_policy, created.placement, created.max_active_duration_ms, created.active_elapsed_ms, created.active_started_at, created.trace_id, created.root_span_id, created.state_version, created.current_attempt_number, created.current_run_lease_id, created.latest_runtime_checkpoint_id, created.exit_code, created.error_message, created.created_at, created.updated_at, created.started_at, created.finished_at
   FROM created
   JOIN created_snapshot ON true
-  JOIN created_telemetry_outbox ON true
+  JOIN created_event ON true
 `
 
 type CreateScopedRunParams struct {
@@ -1201,58 +1174,43 @@ expired_snapshots AS (
       FROM expired_runs
     RETURNING run_state_snapshots.run_id
 ),
-expired_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT expired_runs.org_id, expired_runs.worker_group_id, 'run', expired_runs.id, 1
-      FROM expired_runs
-      JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 expired_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT expired_runs.org_id,
            expired_runs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, expired_runs.id),
            expired_runs.project_id,
            expired_runs.environment_id,
            expired_runs.id,
-           expired_event_seq.seq,
+           NULL::uuid,
+           NULL::uuid,
            expired_runs.current_attempt_number,
            expired_runs.trace_id,
            expired_runs.root_span_id,
+           NULL::text,
            '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
-           'lifecycle',
-           'warn',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('warn', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.expired',
-           'run.expired',
-           jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
-           'internal',
-           expired_runs.state_version
-  FROM expired_runs
-  JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
-  JOIN expired_event_seq ON expired_event_seq.org_id = expired_runs.org_id
-                        AND expired_event_seq.subject_kind = 'run'
-                        AND expired_event_seq.subject_id = expired_runs.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-expired_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT expired_event.org_id,
-                  expired_event.worker_group_id,
-                  'event',
-                  expired_event.subject_type,
-                  expired_event.subject_id,
-                  expired_event.seq,
-                  'event:' || expired_event.subject_type::text || ':' || expired_event.subject_id::text || ':' || expired_event.seq::text
-      FROM expired_event
+           COALESCE('run.expired', ''),
+           COALESCE(jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           expired_runs.state_version,
+           now()
+      FROM expired_runs
+      JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
     RETURNING id
 )
-SELECT expired_event.id, expired_event.subject_type, expired_event.subject_id, expired_event.seq, expired_event.org_id, expired_event.worker_group_id, expired_event.project_id, expired_event.environment_id, expired_event.run_id, expired_event.deployment_id, expired_event.run_lease_id, expired_event.attempt_number, expired_event.trace_id, expired_event.span_id, expired_event.parent_span_id, expired_event.traceparent, expired_event.category, expired_event.severity, expired_event.source, expired_event.kind, expired_event.message, expired_event.payload, expired_event.redaction_class, expired_event.snapshot_version, expired_event.expires_at, expired_event.occurred_at, expired_event.created_at
+SELECT expired_event.id
   FROM expired_event
-  JOIN expired_telemetry_outbox ON true
 `
 
 type ExpireQueuedRunsParams struct {
@@ -1338,58 +1296,43 @@ failed_snapshot AS (
       FROM failed_run
     RETURNING run_state_snapshots.run_id
 ),
-failed_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT failed_run.org_id, failed_run.worker_group_id, 'run', failed_run.id, 1
-      FROM failed_run
-      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 failed_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT failed_run.org_id,
            failed_run.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, failed_run.id),
            failed_run.project_id,
            failed_run.environment_id,
            failed_run.id,
-           failed_event_seq.seq,
+           NULL::uuid,
+           NULL::uuid,
            failed_run.current_attempt_number,
            failed_run.trace_id,
            failed_run.root_span_id,
+           NULL::text,
            '00-' || failed_run.trace_id || '-' || failed_run.root_span_id || '-01',
-           'lifecycle',
-           'error',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('error', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.failed',
-           'run.failed',
-           COALESCE($4::jsonb, '{}'::jsonb),
-           'internal',
-           failed_run.state_version
+           COALESCE('run.failed', ''),
+           COALESCE(COALESCE($4::jsonb, '{}'::jsonb), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           failed_run.state_version,
+           now()
       FROM failed_run
       JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-      JOIN failed_event_seq ON failed_event_seq.org_id = failed_run.org_id
-                           AND failed_event_seq.subject_kind = 'run'
-                           AND failed_event_seq.subject_id = failed_run.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-failed_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT failed_event.org_id,
-                  failed_event.worker_group_id,
-                  'event',
-                  failed_event.subject_type,
-                  failed_event.subject_id,
-                  failed_event.seq,
-                  'event:' || failed_event.subject_type::text || ':' || failed_event.subject_id::text || ':' || failed_event.seq::text
-      FROM failed_event
     RETURNING id
 )
-SELECT failed_event.id, failed_event.subject_type, failed_event.subject_id, failed_event.seq, failed_event.org_id, failed_event.worker_group_id, failed_event.project_id, failed_event.environment_id, failed_event.run_id, failed_event.deployment_id, failed_event.run_lease_id, failed_event.attempt_number, failed_event.trace_id, failed_event.span_id, failed_event.parent_span_id, failed_event.traceparent, failed_event.category, failed_event.severity, failed_event.source, failed_event.kind, failed_event.message, failed_event.payload, failed_event.redaction_class, failed_event.snapshot_version, failed_event.expires_at, failed_event.occurred_at, failed_event.created_at
+SELECT failed_event.id
   FROM failed_event
-  JOIN failed_telemetry_outbox ON true
 `
 
 type FailQueuedRunParams struct {
@@ -1976,28 +1919,22 @@ updated AS (
       JOIN current_run_lease ON current_run_lease.org_id = updated.org_id
                            AND current_run_lease.id = updated.id
 ),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+inserted_event AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
+        parent_span_id, traceparent, category, severity, source, kind, message,
+        payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT updated_with_context.org_id,
            updated_with_context.worker_group_id,
+           'event',
            'run',
            updated_with_context.id,
-           1
-      FROM updated_with_context
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
-	inserted_event AS (
-	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT updated_with_context.org_id,
-           updated_with_context.worker_group_id,
            updated_with_context.project_id,
            updated_with_context.environment_id,
-	           updated_with_context.id,
-	           event_seq.seq,
-	           updated_with_context.run_lease_id,
+           updated_with_context.id,
+           updated_with_context.run_lease_id,
            updated_with_context.attempt_number,
            updated_with_context.trace_id,
            updated_with_context.span_id,
@@ -2013,29 +1950,14 @@ event_seq AS (
                'key', NULLIF($5::text, '')
            ),
            'sensitive',
-           updated_with_context.state_version
+           updated_with_context.state_version,
+           now()
       FROM updated_with_context
-      JOIN event_seq ON event_seq.org_id = updated_with_context.org_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = updated_with_context.id
     RETURNING id
-),
-telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT inserted_event.org_id,
-                  inserted_event.worker_group_id,
-                  'event',
-                  inserted_event.subject_type,
-                  inserted_event.subject_id,
-                  inserted_event.seq,
-                  'event:' || inserted_event.subject_type::text || ':' || inserted_event.subject_id::text || ':' || inserted_event.seq::text
-      FROM inserted_event
-      JOIN updated_with_context ON true
-    RETURNING id, org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key, object_key, cas_digest, state, retry_count, next_retry_at, written_at, published_at, publish_attempts, publish_locked_until, last_error, created_at, updated_at
 )
 SELECT updated.id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at, false AS metadata_too_large
   FROM updated
-  JOIN telemetry_outbox ON true
+  JOIN inserted_event ON true
 UNION ALL
 SELECT runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at, true AS metadata_too_large
   FROM current_run_lease

@@ -22,139 +22,118 @@ current_run_lease AS (
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
-	           runs.state_version,
-	           runs.id,
-	           run_leases.id AS run_lease_id,
-	           run_leases.span_id,
-	           run_leases.parent_span_id,
-	           run_leases.traceparent,
-	           run_leases.attempt_number
+           runs.state_version,
+           runs.id,
+           run_leases.id AS run_lease_id,
+           run_leases.span_id,
+           run_leases.parent_span_id,
+           run_leases.traceparent,
+           run_leases.attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-                          AND run_leases.org_id = runs.org_id
-                          AND run_leases.run_id = runs.id
+                     AND run_leases.org_id = runs.org_id
+                     AND run_leases.run_id = runs.id
       JOIN worker_groups
         ON worker_groups.id = runs.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
-	     WHERE runs.org_id = $3
-	       AND runs.worker_group_id = $4
-	       AND runs.id = $5
-	       AND runs.status = 'running'
-	       AND run_leases.worker_group_id = $4
-	       AND run_leases.id = $6
+     WHERE runs.org_id = $3
+       AND runs.worker_group_id = $4
+       AND runs.id = $5
+       AND runs.status = 'running'
+       AND run_leases.worker_group_id = $4
+       AND run_leases.id = $6
        AND run_leases.worker_instance_id = $7
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()
 ),
-inserted_run_log_cursor AS (
-    INSERT INTO run_log_cursors (org_id, run_id, stream_name, seq, cursor, idempotency_key)
-    SELECT current_run_lease.org_id,
-           current_run_lease.id,
-           '__run__',
-           1,
-           'rlc1.' || current_run_lease.org_id::text || '.' || current_run_lease.id::text || '.__run__.1',
-           '__head__'
+candidate AS (
+    SELECT current_run_lease.org_id, current_run_lease.worker_group_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
+           $8::run_log_stream AS stream,
+           $9::bigint AS observed_seq,
+           $10::bytea AS content,
+           octet_length($10::bytea)::bigint AS size_bytes,
+           'run_log:' || current_run_lease.run_lease_id::text || ':' || ($8::run_log_stream)::text || ':' || ($9::bigint)::text AS idempotency_key
       FROM current_run_lease
-    ON CONFLICT (org_id, run_id, stream_name, idempotency_key) DO NOTHING
-    RETURNING run_log_cursors.org_id,
-              run_log_cursors.run_id,
-              run_log_cursors.seq,
-              true AS inserted
 ),
-existing_run_log_cursor AS (
-    SELECT run_log_cursors.org_id,
-           run_log_cursors.run_id,
-           run_log_cursors.seq,
-           false AS inserted
-      FROM run_log_cursors
-      JOIN current_run_lease ON current_run_lease.org_id = run_log_cursors.org_id
-                            AND current_run_lease.id = run_log_cursors.run_id
-     WHERE run_log_cursors.stream_name = '__run__'
-       AND run_log_cursors.idempotency_key = '__head__'
-       AND NOT EXISTS (SELECT 1 FROM inserted_run_log_cursor)
-     FOR UPDATE OF run_log_cursors
+inserted_chunk AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name,
+        idempotency_key, project_id, environment_id, run_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, source, kind, message, payload,
+        content, size_bytes, observed_seq, redaction_class, retention_class, observed_at
+    )
+    SELECT candidate.org_id,
+           candidate.worker_group_id,
+           'run_log',
+           'run',
+           candidate.id,
+           candidate.stream::text,
+           candidate.idempotency_key,
+           candidate.project_id,
+           candidate.environment_id,
+           candidate.id,
+           candidate.run_lease_id,
+           candidate.attempt_number,
+           candidate.trace_id,
+           candidate.span_id,
+           candidate.parent_span_id,
+           candidate.traceparent,
+           'worker',
+           'run.log',
+           'run.log',
+           jsonb_build_object('stream', candidate.stream, 'observed_seq', candidate.observed_seq, 'bytes', candidate.size_bytes),
+           candidate.content,
+           candidate.size_bytes,
+           candidate.observed_seq,
+           'standard',
+           'standard',
+           now()
+      FROM candidate
+    ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
+    RETURNING telemetry_outbox.org_id,
+              telemetry_outbox.worker_group_id,
+              telemetry_outbox.run_id,
+              telemetry_outbox.run_lease_id,
+              telemetry_outbox.attempt_number,
+              telemetry_outbox.stream_name::run_log_stream AS stream,
+              telemetry_outbox.id AS seq,
+              telemetry_outbox.observed_seq,
+              telemetry_outbox.content,
+              telemetry_outbox.size_bytes,
+              telemetry_outbox.created_at,
+              true AS is_new
 ),
-locked_run_log_cursor AS (
-    SELECT org_id, run_id, seq, inserted FROM inserted_run_log_cursor
-    UNION ALL
-    SELECT org_id, run_id, seq, inserted FROM existing_run_log_cursor
-),
-	selected_cursor AS (
-	    INSERT INTO run_log_cursors (org_id, run_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
-    SELECT locked_run_log_cursor.org_id,
-           locked_run_log_cursor.run_id,
-	           current_run_lease.run_lease_id,
-           ($8::run_log_stream)::text,
-           CASE WHEN locked_run_log_cursor.inserted THEN locked_run_log_cursor.seq ELSE locked_run_log_cursor.seq + 1 END,
-           'rlc1.' || locked_run_log_cursor.org_id::text || '.' || locked_run_log_cursor.run_id::text || '.' || ($8::run_log_stream)::text || '.' || (CASE WHEN locked_run_log_cursor.inserted THEN locked_run_log_cursor.seq ELSE locked_run_log_cursor.seq + 1 END)::text,
-           'log:' || current_run_lease.run_lease_id::text || ':' || ($8::run_log_stream)::text || ':' || ($9::bigint)::text
-      FROM locked_run_log_cursor
-      JOIN current_run_lease ON current_run_lease.org_id = locked_run_log_cursor.org_id
-                            AND current_run_lease.id = locked_run_log_cursor.run_id
-    ON CONFLICT (org_id, run_id, stream_name, idempotency_key)
-    DO UPDATE SET observed_at = run_log_cursors.observed_at
-    RETURNING run_log_cursors.org_id,
-              run_log_cursors.run_id,
-              run_log_cursors.stream_name,
-              run_log_cursors.seq
-),
-advanced_run_log_cursor AS (
-    UPDATE run_log_cursors
-       SET seq = selected_cursor.seq,
-           cursor = 'rlc1.' || run_log_cursors.org_id::text || '.' || run_log_cursors.run_id::text || '.__run__.' || selected_cursor.seq::text,
-           observed_at = now()
-      FROM selected_cursor
-      JOIN locked_run_log_cursor ON locked_run_log_cursor.org_id = selected_cursor.org_id
-                                AND locked_run_log_cursor.run_id = selected_cursor.run_id
-     WHERE run_log_cursors.org_id = selected_cursor.org_id
-       AND run_log_cursors.run_id = selected_cursor.run_id
-       AND run_log_cursors.stream_name = '__run__'
-       AND run_log_cursors.idempotency_key = '__head__'
-       AND NOT locked_run_log_cursor.inserted
-       AND selected_cursor.seq > run_log_cursors.seq
-    RETURNING run_log_cursors.id
+existing_chunk AS (
+    SELECT telemetry_outbox.org_id,
+           telemetry_outbox.worker_group_id,
+           telemetry_outbox.run_id,
+           telemetry_outbox.run_lease_id,
+           telemetry_outbox.attempt_number,
+           telemetry_outbox.stream_name::run_log_stream AS stream,
+           telemetry_outbox.id AS seq,
+           telemetry_outbox.observed_seq,
+           telemetry_outbox.content,
+           telemetry_outbox.size_bytes,
+           telemetry_outbox.created_at,
+           false AS is_new
+      FROM telemetry_outbox
+      JOIN candidate ON candidate.worker_group_id = telemetry_outbox.worker_group_id
+                    AND telemetry_outbox.stream_kind = 'run_log'
+                    AND telemetry_outbox.idempotency_key = candidate.idempotency_key
+     WHERE NOT EXISTS (SELECT 1 FROM inserted_chunk)
 ),
 selected_chunk AS (
-    INSERT INTO run_log_hot_chunks (org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at)
-    SELECT current_run_lease.org_id,
-           current_run_lease.worker_group_id,
-           current_run_lease.id,
-           current_run_lease.run_lease_id,
-           current_run_lease.attempt_number,
-           $8::run_log_stream,
-           selected_cursor.seq,
-           $9::bigint,
-           $10::bytea,
-           octet_length($10::bytea)::bigint,
-           now()
-      FROM current_run_lease
-      JOIN selected_cursor ON selected_cursor.org_id = current_run_lease.org_id
-                          AND selected_cursor.run_id = current_run_lease.id
-    ON CONFLICT (org_id, run_id, run_lease_id, stream, observed_seq)
-    DO UPDATE SET size_bytes = run_log_hot_chunks.size_bytes
-    RETURNING run_log_hot_chunks.org_id,
-              run_log_hot_chunks.worker_group_id,
-              run_log_hot_chunks.run_id,
-              run_log_hot_chunks.run_lease_id,
-              run_log_hot_chunks.attempt_number,
-              run_log_hot_chunks.stream,
-              run_log_hot_chunks.seq,
-              run_log_hot_chunks.observed_seq,
-              run_log_hot_chunks.content,
-              run_log_hot_chunks.size_bytes,
-              run_log_hot_chunks.created_at,
-              (
-                  (SELECT locked_run_log_cursor.inserted FROM locked_run_log_cursor)
-                  OR EXISTS (SELECT 1 FROM advanced_run_log_cursor)
-              ) AS is_new
+    SELECT org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at, is_new FROM inserted_chunk
+    UNION ALL
+    SELECT org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at, is_new FROM existing_chunk
 ),
 event_input AS (
     SELECT current_run_lease.org_id,
-	           current_run_lease.worker_group_id,
-	           current_run_lease.project_id,
-	           current_run_lease.environment_id,
-	           selected_chunk.run_id,
-	           selected_chunk.run_lease_id,
+           current_run_lease.worker_group_id,
+           current_run_lease.project_id,
+           current_run_lease.environment_id,
+           selected_chunk.run_id,
+           selected_chunk.run_lease_id,
            selected_chunk.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
@@ -175,28 +154,22 @@ event_input AS (
       CROSS JOIN event_args
      WHERE selected_chunk.is_new
 ),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+event AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
+        parent_span_id, traceparent, category, severity, source, kind, message,
+        payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT event_input.org_id,
            event_input.worker_group_id,
+           'event',
            'run',
            event_input.run_id,
-           1
-      FROM event_input
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
-),
-	event AS (
-	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
-    SELECT event_input.org_id,
-           event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
-           event_seq.seq,
-	           event_input.run_lease_id,
+           event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
            event_input.span_id,
@@ -209,38 +182,9 @@ event_seq AS (
            event_input.message,
            event_input.payload,
            event_input.redaction_class,
-           event_input.snapshot_version
+           event_input.snapshot_version,
+           now()
       FROM event_input
-      JOIN event_seq ON event_seq.org_id = event_input.org_id
-                    AND event_seq.worker_group_id = event_input.worker_group_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = event_input.run_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-event_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT event.org_id,
-                  event.worker_group_id,
-                  'event',
-                  event.subject_type,
-                  event.subject_id,
-                  event.seq,
-                  'event:' || event.subject_type::text || ':' || event.subject_id::text || ':' || event.seq::text
-      FROM event
-    RETURNING id
-),
-run_log_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
-    SELECT selected_chunk.org_id,
-           selected_chunk.worker_group_id,
-           'run_log',
-           'run',
-           selected_chunk.run_id,
-           selected_chunk.stream::text,
-           selected_chunk.seq,
-           'run_log:' || selected_chunk.run_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.seq::text
-      FROM selected_chunk
-     WHERE selected_chunk.is_new
     RETURNING id
 ),
 usage_event AS (
@@ -279,9 +223,7 @@ SELECT selected_chunk.org_id,
        selected_chunk.size_bytes,
        selected_chunk.created_at
   FROM selected_chunk
- WHERE (SELECT count(*) FROM event_telemetry_outbox) >= 0
-   AND (SELECT count(*) FROM run_log_telemetry_outbox) >= 0
-   AND (SELECT count(*) FROM advanced_run_log_cursor) >= 0
+ WHERE (SELECT count(*) FROM event) >= 0
    AND (SELECT count(*) FROM usage_event) >= 0
 `
 
@@ -302,12 +244,12 @@ type AppendRunLogChunkRow struct {
 	OrgID         pgtype.UUID        `json:"org_id"`
 	RunID         pgtype.UUID        `json:"run_id"`
 	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber int32              `json:"attempt_number"`
+	AttemptNumber pgtype.Int4        `json:"attempt_number"`
 	Stream        RunLogStream       `json:"stream"`
 	Seq           int64              `json:"seq"`
-	ObservedSeq   int64              `json:"observed_seq"`
+	ObservedSeq   pgtype.Int8        `json:"observed_seq"`
 	Content       []byte             `json:"content"`
-	SizeBytes     int64              `json:"size_bytes"`
+	SizeBytes     pgtype.Int8        `json:"size_bytes"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 }
 
@@ -338,175 +280,4 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		&i.CreatedAt,
 	)
 	return i, err
-}
-
-const getRunLogSnapshot = `-- name: GetRunLogSnapshot :one
-WITH run_scope AS (
-    SELECT runs.org_id, runs.id
-      FROM runs
-     WHERE runs.org_id = $3
-       AND runs.id = $4
-),
-chunks AS (
-    SELECT run_log_hot_chunks.stream,
-           run_log_hot_chunks.seq,
-           run_log_hot_chunks.content,
-           octet_length(run_log_hot_chunks.content)::bigint AS size_bytes,
-           SUM(octet_length(run_log_hot_chunks.content)::bigint) OVER (
-               PARTITION BY run_log_hot_chunks.stream
-               ORDER BY run_log_hot_chunks.seq DESC
-           ) AS reverse_bytes,
-           SUM(octet_length(run_log_hot_chunks.content)::bigint) OVER (
-               PARTITION BY run_log_hot_chunks.stream
-           ) AS total_bytes
-      FROM run_scope
-      JOIN run_log_hot_chunks ON run_log_hot_chunks.org_id = run_scope.org_id
-                         AND run_log_hot_chunks.run_id = run_scope.id
-),
-sliced AS (
-    SELECT stream,
-           seq,
-           total_bytes,
-           CASE stream
-             WHEN 'stdout' THEN
-               CASE
-                 WHEN reverse_bytes - size_bytes >= $1::bigint THEN NULL
-                 WHEN reverse_bytes > $1::bigint THEN
-                   substr(
-                     content,
-                     (size_bytes - ($1::bigint - (reverse_bytes - size_bytes)) + 1)::int
-                   )
-                 ELSE content
-               END
-             WHEN 'stderr' THEN
-               CASE
-                 WHEN reverse_bytes - size_bytes >= $2::bigint THEN NULL
-                 WHEN reverse_bytes > $2::bigint THEN
-                   substr(
-                     content,
-                     (size_bytes - ($2::bigint - (reverse_bytes - size_bytes)) + 1)::int
-                   )
-                 ELSE content
-               END
-           END AS content
-      FROM chunks
-)
-SELECT run_scope.id AS run_id,
-       COALESCE(
-           string_agg(sliced.content, ''::bytea ORDER BY sliced.seq)
-             FILTER (WHERE sliced.stream = 'stdout' AND sliced.content IS NOT NULL),
-           ''::bytea
-       )::bytea AS stdout,
-       COALESCE(
-           string_agg(sliced.content, ''::bytea ORDER BY sliced.seq)
-             FILTER (WHERE sliced.stream = 'stderr' AND sliced.content IS NOT NULL),
-           ''::bytea
-       )::bytea AS stderr,
-       (
-           COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0) > $1::bigint
-           OR COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0) > $2::bigint
-       ) AS truncated,
-       COALESCE(MAX(chunks.seq), 0)::bigint AS cursor,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stdout'), 0)::bigint AS stdout_bytes,
-       COALESCE(MAX(sliced.total_bytes) FILTER (WHERE sliced.stream = 'stderr'), 0)::bigint AS stderr_bytes,
-       now()::timestamptz AS updated_at
-  FROM run_scope
-  LEFT JOIN chunks ON true
-  LEFT JOIN sliced ON sliced.stream = chunks.stream
-                  AND sliced.seq = chunks.seq
- GROUP BY run_scope.id
-`
-
-type GetRunLogSnapshotParams struct {
-	StdoutLimit int64       `json:"stdout_limit"`
-	StderrLimit int64       `json:"stderr_limit"`
-	OrgID       pgtype.UUID `json:"org_id"`
-	RunID       pgtype.UUID `json:"run_id"`
-}
-
-type GetRunLogSnapshotRow struct {
-	RunID       pgtype.UUID        `json:"run_id"`
-	Stdout      []byte             `json:"stdout"`
-	Stderr      []byte             `json:"stderr"`
-	Truncated   pgtype.Bool        `json:"truncated"`
-	Cursor      int64              `json:"cursor"`
-	StdoutBytes int64              `json:"stdout_bytes"`
-	StderrBytes int64              `json:"stderr_bytes"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) GetRunLogSnapshot(ctx context.Context, arg GetRunLogSnapshotParams) (GetRunLogSnapshotRow, error) {
-	row := q.db.QueryRow(ctx, getRunLogSnapshot,
-		arg.StdoutLimit,
-		arg.StderrLimit,
-		arg.OrgID,
-		arg.RunID,
-	)
-	var i GetRunLogSnapshotRow
-	err := row.Scan(
-		&i.RunID,
-		&i.Stdout,
-		&i.Stderr,
-		&i.Truncated,
-		&i.Cursor,
-		&i.StdoutBytes,
-		&i.StderrBytes,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
-const listRunLogChunksAfter = `-- name: ListRunLogChunksAfter :many
-SELECT org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, expires_at, created_at
-  FROM run_log_hot_chunks
- WHERE run_log_hot_chunks.org_id = $1
-   AND run_log_hot_chunks.run_id = $2
-   AND run_log_hot_chunks.seq > $3
- ORDER BY run_log_hot_chunks.seq
- LIMIT $4
-`
-
-type ListRunLogChunksAfterParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	RunID    pgtype.UUID `json:"run_id"`
-	Seq      int64       `json:"seq"`
-	RowLimit int32       `json:"row_limit"`
-}
-
-func (q *Queries) ListRunLogChunksAfter(ctx context.Context, arg ListRunLogChunksAfterParams) ([]RunLogHotChunk, error) {
-	rows, err := q.db.Query(ctx, listRunLogChunksAfter,
-		arg.OrgID,
-		arg.RunID,
-		arg.Seq,
-		arg.RowLimit,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []RunLogHotChunk
-	for rows.Next() {
-		var i RunLogHotChunk
-		if err := rows.Scan(
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.RunID,
-			&i.RunLeaseID,
-			&i.AttemptNumber,
-			&i.Stream,
-			&i.Seq,
-			&i.ObservedSeq,
-			&i.Content,
-			&i.SizeBytes,
-			&i.ExpiresAt,
-			&i.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }

@@ -1241,7 +1241,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 }
 
 func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error) {
-	event := db.EventHotPayload{
+	event := db.ClaimEventOutboxRow{
 		Seq:             int64(len(f.deploymentEvents) + 1),
 		OrgID:           arg.OrgID,
 		ProjectID:       arg.ProjectID,
@@ -1260,21 +1260,10 @@ func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploy
 	}
 	f.deploymentEvents = append(f.deploymentEvents, event)
 	return db.AppendDeploymentEventRow{
-		Seq:             event.Seq,
-		OrgID:           event.OrgID,
-		ProjectID:       event.ProjectID,
-		EnvironmentID:   event.EnvironmentID,
-		DeploymentID:    event.DeploymentID,
-		Category:        event.Category,
-		Severity:        event.Severity,
-		Source:          event.Source,
-		Kind:            event.Kind,
-		Message:         event.Message,
-		Payload:         event.Payload,
-		RedactionClass:  event.RedactionClass,
-		CreatedAt:       event.CreatedAt,
-		OccurredAt:      event.OccurredAt,
-		SnapshotVersion: event.SnapshotVersion,
+		OrgID:         event.OrgID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
+		ProjectID:     event.ProjectID,
+		EnvironmentID: event.EnvironmentID,
 	}, nil
 }
 

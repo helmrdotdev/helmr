@@ -356,7 +356,30 @@ WITH inserted AS (
     RETURNING *
 ),
 terminal_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, idempotency_key)
+    INSERT INTO telemetry_outbox (
+        org_id,
+        worker_group_id,
+        stream_kind,
+        source_kind,
+        source_id,
+        stream_name,
+        offset_start,
+        idempotency_key,
+        project_id,
+        environment_id,
+        workspace_id,
+        resource_kind,
+        resource_id,
+        content,
+        size_bytes,
+        offset_end,
+        source,
+        kind,
+        message,
+        redaction_class,
+        retention_class,
+        observed_at
+    )
     SELECT inserted.org_id,
            inserted.worker_group_id,
            'terminal_output',
@@ -364,7 +387,21 @@ terminal_telemetry_outbox AS (
            inserted.exec_id,
            inserted.stream::text,
            inserted.offset_start,
-           'terminal_output:workspace_exec:' || inserted.exec_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text
+           'terminal_output:workspace_exec:' || inserted.exec_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text,
+           inserted.project_id,
+           inserted.environment_id,
+           inserted.workspace_id,
+           'workspace_exec',
+           inserted.exec_id,
+           inserted.data,
+           octet_length(inserted.data)::bigint,
+           inserted.offset_end,
+           'worker',
+           'terminal.output',
+           'terminal.output',
+           'standard',
+           'standard',
+           inserted.observed_at
       FROM inserted
     ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
     RETURNING id
@@ -444,44 +481,7 @@ DELETE FROM workspace_exec_stream_chunks
    AND workspace_exec_stream_chunks.workspace_id = sqlc.arg(workspace_id)
    AND workspace_exec_stream_chunks.exec_id = sqlc.arg(exec_id)
    AND workspace_exec_stream_chunks.stream = sqlc.arg(stream)::workspace_exec_stream
-   AND workspace_exec_stream_chunks.offset_end <= sqlc.arg(retain_after_offset)
-   AND (
-         NOT EXISTS (
-             SELECT 1
-               FROM telemetry_outbox
-              WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
-                AND telemetry_outbox.worker_group_id = workspace_exec_stream_chunks.worker_group_id
-                AND telemetry_outbox.stream_kind = 'terminal_output'
-                AND telemetry_outbox.source_kind = 'workspace_exec'
-                AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
-                AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
-                AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
-         )
-         OR EXISTS (
-             SELECT 1
-               FROM terminal_output_watermarks
-              WHERE terminal_output_watermarks.org_id = workspace_exec_stream_chunks.org_id
-                AND terminal_output_watermarks.worker_group_id = workspace_exec_stream_chunks.worker_group_id
-                AND terminal_output_watermarks.workspace_id = workspace_exec_stream_chunks.workspace_id
-                AND terminal_output_watermarks.resource_kind = 'workspace_exec'
-                AND terminal_output_watermarks.resource_id = workspace_exec_stream_chunks.exec_id
-                AND terminal_output_watermarks.stream_name = workspace_exec_stream_chunks.stream::text
-                AND terminal_output_watermarks.watermark_offset >= workspace_exec_stream_chunks.offset_end
-         )
-   )
-   AND NOT EXISTS (
-         SELECT 1
-           FROM telemetry_outbox
-          WHERE telemetry_outbox.org_id = workspace_exec_stream_chunks.org_id
-            AND telemetry_outbox.worker_group_id = workspace_exec_stream_chunks.worker_group_id
-            AND telemetry_outbox.stream_kind = 'terminal_output'
-            AND telemetry_outbox.source_kind = 'workspace_exec'
-            AND telemetry_outbox.source_id = workspace_exec_stream_chunks.exec_id
-            AND telemetry_outbox.stream_name = workspace_exec_stream_chunks.stream::text
-            AND telemetry_outbox.seq = workspace_exec_stream_chunks.offset_start
-            AND telemetry_outbox.written_at IS NULL
-            AND telemetry_outbox.state <> 'dead_lettered'
-   );
+   AND workspace_exec_stream_chunks.offset_end <= sqlc.arg(retain_after_offset);
 
 -- name: GetWorkspaceExecStreamChunkAtOffset :one
 SELECT *

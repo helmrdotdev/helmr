@@ -187,7 +187,7 @@ func TestRunEventsPaginationUsesLookahead(t *testing.T) {
 		},
 	}
 	for i := int64(1); i <= 201; i++ {
-		store.events = append(store.events, db.EventHotPayload{
+		store.events = append(store.events, db.ClaimEventOutboxRow{
 			Seq:       i,
 			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
 			RunID:     pgvalue.UUID(runID),
@@ -293,7 +293,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 
 func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParams) (db.AppendRunEventRow, error) {
 	f.runEvent = arg
-	event := db.EventHotPayload{
+	event := db.ClaimEventOutboxRow{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.RunID,
@@ -303,41 +303,20 @@ func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParam
 	}
 	f.events = append(f.events, event)
 	return db.AppendRunEventRow{
-		Seq:       event.Seq,
-		OrgID:     event.OrgID,
-		RunID:     event.RunID,
-		Kind:      event.Kind,
-		Payload:   event.Payload,
-		CreatedAt: event.CreatedAt,
+		ID:                   event.RunID,
+		CurrentAttemptNumber: 1,
+		EventKind:            event.Kind,
+		EventPayload:         event.Payload,
 	}, nil
-}
-
-func (f *fakeStore) ListSubjectEvents(_ context.Context, arg db.ListSubjectEventsParams) ([]db.EventHotPayload, error) {
-	var events []db.EventHotPayload
-	for _, event := range f.events {
-		if arg.SubjectType == db.EventSubjectTypeRun && event.RunID == arg.SubjectID && event.Seq > arg.Seq {
-			events = append(events, event)
-		}
-	}
-	for _, event := range f.deploymentEvents {
-		if arg.SubjectType == db.EventSubjectTypeDeployment && event.DeploymentID == arg.SubjectID && event.Seq > arg.Seq {
-			events = append(events, event)
-		}
-	}
-	if int32(len(events)) > arg.RowLimit {
-		events = events[:arg.RowLimit]
-	}
-	return events, nil
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
 	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
-	event := db.EventHotPayload{
+	event := db.ClaimEventOutboxRow{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
-		WorkerGroupID:  arg.WorkerGroupID,
 		RunID:          arg.RunID,
 		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
@@ -348,16 +327,12 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 	}
 	f.events = append(f.events, event)
 	return db.AppendRunEventForExecutionRow{
-		Seq:             event.Seq,
-		OrgID:           event.OrgID,
-		RunID:           event.RunID,
-		RunLeaseID:      event.RunLeaseID,
-		AttemptNumber:   event.AttemptNumber,
-		Kind:            event.Kind,
-		Payload:         event.Payload,
-		RedactionClass:  event.RedactionClass,
-		CreatedAt:       event.CreatedAt,
-		SnapshotVersion: event.SnapshotVersion,
+		ID:            event.RunID,
+		WorkerGroupID: arg.WorkerGroupID,
+		RunLeaseID:    event.RunLeaseID,
+		AttemptNumber: 1,
+		EventKind:     event.Kind,
+		EventPayload:  event.Payload,
 	}, nil
 }
 

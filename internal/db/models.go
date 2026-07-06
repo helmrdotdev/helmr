@@ -2777,56 +2777,6 @@ type Environment struct {
 	CurrentDeploymentID pgtype.UUID        `json:"current_deployment_id"`
 }
 
-type EventCursor struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
-	SubjectKind   EventSubjectType   `json:"subject_kind"`
-	SubjectID     pgtype.UUID        `json:"subject_id"`
-	Seq           int64              `json:"seq"`
-	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-type EventHotPayload struct {
-	ID              pgtype.Int8        `json:"id"`
-	SubjectType     EventSubjectType   `json:"subject_type"`
-	SubjectID       pgtype.UUID        `json:"subject_id"`
-	Seq             int64              `json:"seq"`
-	OrgID           pgtype.UUID        `json:"org_id"`
-	WorkerGroupID   string             `json:"worker_group_id"`
-	ProjectID       pgtype.UUID        `json:"project_id"`
-	EnvironmentID   pgtype.UUID        `json:"environment_id"`
-	RunID           pgtype.UUID        `json:"run_id"`
-	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
-	TraceID         pgtype.Text        `json:"trace_id"`
-	SpanID          pgtype.Text        `json:"span_id"`
-	ParentSpanID    pgtype.Text        `json:"parent_span_id"`
-	Traceparent     pgtype.Text        `json:"traceparent"`
-	Category        string             `json:"category"`
-	Severity        string             `json:"severity"`
-	Source          string             `json:"source"`
-	Kind            string             `json:"kind"`
-	Message         string             `json:"message"`
-	Payload         []byte             `json:"payload"`
-	RedactionClass  string             `json:"redaction_class"`
-	SnapshotVersion pgtype.Int8        `json:"snapshot_version"`
-	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	OccurredAt      pgtype.Timestamptz `json:"occurred_at"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-}
-
-type EventWatermark struct {
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	SubjectKind         EventSubjectType   `json:"subject_kind"`
-	SubjectID           pgtype.UUID        `json:"subject_id"`
-	WatermarkSeq        int64              `json:"watermark_seq"`
-	WatermarkObservedAt pgtype.Timestamptz `json:"watermark_observed_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
-}
-
 type Invitation struct {
 	ID               pgtype.UUID        `json:"id"`
 	PublicID         string             `json:"public_id"`
@@ -3038,44 +2988,6 @@ type RunLease struct {
 	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
 	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
 	LostAt                     pgtype.Timestamptz `json:"lost_at"`
-}
-
-type RunLogCursor struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
-	StreamName     string             `json:"stream_name"`
-	Seq            int64              `json:"seq"`
-	Cursor         string             `json:"cursor"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	ObservedAt     pgtype.Timestamptz `json:"observed_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-}
-
-type RunLogHotChunk struct {
-	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
-	RunID         pgtype.UUID        `json:"run_id"`
-	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
-	AttemptNumber int32              `json:"attempt_number"`
-	Stream        RunLogStream       `json:"stream"`
-	Seq           int64              `json:"seq"`
-	ObservedSeq   int64              `json:"observed_seq"`
-	Content       []byte             `json:"content"`
-	SizeBytes     int64              `json:"size_bytes"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-type RunLogWatermark struct {
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	RunID               pgtype.UUID        `json:"run_id"`
-	StreamName          string             `json:"stream_name"`
-	WatermarkSeq        int64              `json:"watermark_seq"`
-	WatermarkObservedAt pgtype.Timestamptz `json:"watermark_observed_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RunOperation struct {
@@ -3527,8 +3439,34 @@ type TelemetryOutbox struct {
 	SourceKind         string               `json:"source_kind"`
 	SourceID           pgtype.UUID          `json:"source_id"`
 	StreamName         string               `json:"stream_name"`
-	Seq                int64                `json:"seq"`
-	IdempotencyKey     string               `json:"idempotency_key"`
+	IdempotencyKey     pgtype.Text          `json:"idempotency_key"`
+	ProjectID          pgtype.UUID          `json:"project_id"`
+	EnvironmentID      pgtype.UUID          `json:"environment_id"`
+	RunID              pgtype.UUID          `json:"run_id"`
+	DeploymentID       pgtype.UUID          `json:"deployment_id"`
+	WorkspaceID        pgtype.UUID          `json:"workspace_id"`
+	ResourceKind       string               `json:"resource_kind"`
+	ResourceID         pgtype.UUID          `json:"resource_id"`
+	RunLeaseID         pgtype.UUID          `json:"run_lease_id"`
+	AttemptNumber      pgtype.Int4          `json:"attempt_number"`
+	TraceID            pgtype.Text          `json:"trace_id"`
+	SpanID             pgtype.Text          `json:"span_id"`
+	ParentSpanID       pgtype.Text          `json:"parent_span_id"`
+	Traceparent        pgtype.Text          `json:"traceparent"`
+	Category           string               `json:"category"`
+	Severity           string               `json:"severity"`
+	Source             string               `json:"source"`
+	Kind               string               `json:"kind"`
+	Message            string               `json:"message"`
+	Payload            []byte               `json:"payload"`
+	Content            []byte               `json:"content"`
+	SizeBytes          pgtype.Int8          `json:"size_bytes"`
+	ObservedSeq        pgtype.Int8          `json:"observed_seq"`
+	OffsetStart        pgtype.Int8          `json:"offset_start"`
+	OffsetEnd          pgtype.Int8          `json:"offset_end"`
+	RedactionClass     string               `json:"redaction_class"`
+	RetentionClass     string               `json:"retention_class"`
+	SnapshotVersion    pgtype.Int8          `json:"snapshot_version"`
 	ObjectKey          pgtype.Text          `json:"object_key"`
 	CasDigest          pgtype.Text          `json:"cas_digest"`
 	State              TelemetryOutboxState `json:"state"`
@@ -3539,6 +3477,7 @@ type TelemetryOutbox struct {
 	PublishAttempts    int32                `json:"publish_attempts"`
 	PublishLockedUntil pgtype.Timestamptz   `json:"publish_locked_until"`
 	LastError          string               `json:"last_error"`
+	ObservedAt         pgtype.Timestamptz   `json:"observed_at"`
 	CreatedAt          pgtype.Timestamptz   `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz   `json:"updated_at"`
 }
@@ -3558,18 +3497,6 @@ type TelemetryReplayError struct {
 	NextRetryAt   pgtype.Timestamptz        `json:"next_retry_at"`
 	CreatedAt     pgtype.Timestamptz        `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz        `json:"updated_at"`
-}
-
-type TerminalOutputWatermark struct {
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	ResourceKind        string             `json:"resource_kind"`
-	ResourceID          pgtype.UUID        `json:"resource_id"`
-	StreamName          string             `json:"stream_name"`
-	WatermarkOffset     int64              `json:"watermark_offset"`
-	WatermarkObservedAt pgtype.Timestamptz `json:"watermark_observed_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Token struct {
