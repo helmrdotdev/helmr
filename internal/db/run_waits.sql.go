@@ -711,8 +711,7 @@ WITH stale_waits AS MATERIALIZED (
            run_waits.environment_id,
            run_waits.run_id,
            runs.session_id,
-           runs.current_attempt_id,
-           runs.current_attempt_number,
+	           runs.current_attempt_number,
            runs.trace_id,
            runs.root_span_id,
            runs.state_version + 1 AS next_state_version,
@@ -783,8 +782,9 @@ failed_runs AS (
        SET status = 'failed',
            execution_status = 'finished',
            terminal_outcome = 'failed',
-           error_message = stale_waits.failure_message,
-           state_version = stale_waits.next_state_version,
+	           error_message = stale_waits.failure_message,
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           state_version = stale_waits.next_state_version,
            finished_at = now(),
            updated_at = now()
       FROM stale_waits
@@ -794,8 +794,8 @@ failed_runs AS (
        AND runs.id = stale_waits.run_id
        AND runs.status = stale_waits.run_status
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id,
-              runs.current_attempt_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id,
+	    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id,
+	              runs.current_attempt_number, runs.trace_id, runs.root_span_id,
               runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
               stale_waits.runtime_checkpoint_expires_at, stale_waits.failure_reason
@@ -829,32 +829,8 @@ failed_sessions AS (
     SELECT failed_runs.session_id AS id
       FROM failed_runs
 ),
-failed_attempts AS (
-    UPDATE run_attempts
-       SET status = 'failed',
-           error_message = failed_runs.error_message,
-           finished_at = now(),
-           updated_at = now()
-      FROM failed_runs
-     WHERE run_attempts.org_id = failed_runs.org_id
-       AND run_attempts.run_id = failed_runs.id
-       AND run_attempts.id = failed_runs.current_attempt_id
-    RETURNING run_attempts.id, run_attempts.run_id
-),
-completed_queue_entries AS (
-    UPDATE run_queue_items
-       SET status = 'completed',
-           dispatch_generation = dispatch_generation + 1,
-           updated_at = now(),
-           finished_at = now()
-     FROM failed_runs
-     WHERE run_queue_items.org_id = failed_runs.org_id
-       AND run_queue_items.run_id = failed_runs.id
-       AND run_queue_items.status IN ('parked', 'queued', 'published', 'reserved')
-    RETURNING run_queue_items.run_id
-),
-failed_snapshots AS (
-    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_id, transition, reason)
+	failed_snapshots AS (
+	    INSERT INTO run_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -862,7 +838,7 @@ failed_snapshots AS (
            'failed',
            'finished',
            'failed',
-           failed_runs.current_attempt_id,
+	           failed_runs.current_attempt_number,
            'run.failed',
            jsonb_build_object(
                'origin', 'runtime_resume_wait',
@@ -873,10 +849,9 @@ failed_snapshots AS (
                'current_workspace_version_id', failed_runs.current_version_id,
                'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
            )
-      FROM failed_runs
-      JOIN failed_attempts ON failed_attempts.run_id = failed_runs.id
-    RETURNING run_snapshots.run_id
-),
+	      FROM failed_runs
+	    RETURNING run_snapshots.run_id
+	),
 failed_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT failed_runs.org_id, failed_runs.worker_group_id, 'run', failed_runs.id, 1
@@ -887,16 +862,15 @@ failed_event_seq AS (
                   observed_at = now()
     RETURNING org_id, subject_kind, subject_id, seq
 ),
-failed_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	failed_events AS (
+	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.project_id,
            failed_runs.environment_id,
            failed_runs.id,
            failed_event_seq.seq,
-           failed_runs.current_attempt_id,
-           failed_runs.current_attempt_number,
+	           failed_runs.current_attempt_number,
            failed_runs.trace_id,
            failed_runs.root_span_id,
            '00-' || failed_runs.trace_id || '-' || failed_runs.root_span_id || '-01',
@@ -921,7 +895,7 @@ failed_events AS (
       JOIN failed_event_seq ON failed_event_seq.org_id = failed_runs.org_id
                            AND failed_event_seq.subject_kind = 'run'
                            AND failed_event_seq.subject_id = failed_runs.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
+    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
 ),
 failed_telemetry_outbox AS (
     INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
@@ -1511,7 +1485,6 @@ func (q *Queries) MarkRuntimeResumeWaitResumed(ctx context.Context, arg MarkRunt
 const requeueResolvedRunWaits = `-- name: RequeueResolvedRunWaits :many
 WITH eligible_waits AS (
     SELECT run_waits.id, run_waits.public_id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.kind, run_waits.correlation_id, run_waits.state, run_waits.timeout_at, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.live_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.parked_at, run_waits.resolved_at, run_waits.resuming_at, run_waits.resumed_at, run_waits.cancelled_at, run_waits.created_at, run_waits.updated_at,
-           runs.current_attempt_id,
            runs.queued_expires_at,
            runs.workspace_id,
            runs.priority
@@ -1555,10 +1528,13 @@ updated_waits AS (
 ),
 updated_runs AS (
     UPDATE runs
-       SET status = 'queued',
-           execution_status = 'queued',
-           state_version = runs.state_version + 1,
-           updated_at = now()
+	       SET status = 'queued',
+	           execution_status = 'queued',
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           last_enqueue_error = '',
+	           last_enqueued_at = NULL,
+	           state_version = runs.state_version + 1,
+	           updated_at = now()
       FROM eligible_waits
       JOIN updated_waits ON updated_waits.org_id = eligible_waits.org_id
                         AND updated_waits.id = eligible_waits.id
@@ -1566,49 +1542,16 @@ updated_runs AS (
        AND runs.id = eligible_waits.run_id
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
-    RETURNING runs.id, runs.org_id, runs.current_attempt_id, runs.queued_expires_at
-),
-updated_attempts AS (
-    UPDATE run_attempts
-       SET status = 'queued',
-           updated_at = now()
-      FROM updated_runs
-     WHERE run_attempts.org_id = updated_runs.org_id
-       AND run_attempts.run_id = updated_runs.id
-       AND run_attempts.id = updated_runs.current_attempt_id
-       AND run_attempts.status = 'waiting'
-    RETURNING run_attempts.run_id
-),
-updated_queue AS (
-    UPDATE run_queue_items
-       SET status = 'queued',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           queued_expires_at = updated_runs.queued_expires_at,
-           dispatch_generation = run_queue_items.dispatch_generation + 1,
-           last_error = '',
-           enqueued_at = now(),
-           updated_at = now(),
-           finished_at = NULL
-      FROM updated_runs
-      JOIN eligible_waits ON eligible_waits.org_id = updated_runs.org_id
-                         AND eligible_waits.run_id = updated_runs.id
-    WHERE run_queue_items.org_id = updated_runs.org_id
-       AND run_queue_items.run_id = updated_runs.id
-       AND run_queue_items.status = 'parked'
-    RETURNING run_queue_items.run_id
-)
+	    RETURNING runs.id, runs.org_id, runs.queued_expires_at
+	)
 SELECT updated_waits.id, updated_waits.public_id, updated_waits.org_id, updated_waits.worker_group_id, updated_waits.project_id, updated_waits.environment_id, updated_waits.run_id, updated_waits.kind, updated_waits.correlation_id, updated_waits.state, updated_waits.timeout_at, updated_waits.runtime_checkpoint_due_at, updated_waits.runtime_checkpoint_started_at, updated_waits.live_wait_started_at, updated_waits.owner_runtime_instance_id, updated_waits.owner_runtime_epoch, updated_waits.owner_run_id, updated_waits.owner_run_lease_id, updated_waits.owner_run_state_version, updated_waits.owner_worker_instance_id, updated_waits.runtime_checkpoint_id, updated_waits.workspace_version_id, updated_waits.active_elapsed_ms_at_park, updated_waits.parked_at, updated_waits.resolved_at, updated_waits.resuming_at, updated_waits.resumed_at, updated_waits.cancelled_at, updated_waits.created_at, updated_waits.updated_at,
        eligible_waits.workspace_id,
        eligible_waits.priority
   FROM updated_waits
-  JOIN eligible_waits ON eligible_waits.org_id = updated_waits.org_id
-                     AND eligible_waits.id = updated_waits.id
-  JOIN updated_runs ON updated_runs.org_id = updated_waits.org_id
-                   AND updated_runs.id = updated_waits.run_id
-  JOIN updated_attempts ON updated_attempts.run_id = updated_waits.run_id
-  JOIN updated_queue ON updated_queue.run_id = updated_waits.run_id
+	  JOIN eligible_waits ON eligible_waits.org_id = updated_waits.org_id
+	                     AND eligible_waits.id = updated_waits.id
+	  JOIN updated_runs ON updated_runs.org_id = updated_waits.org_id
+	                   AND updated_runs.id = updated_waits.run_id
 `
 
 type RequeueResolvedRunWaitsParams struct {

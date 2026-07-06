@@ -383,55 +383,33 @@ parked_run AS (
        SET status = 'waiting',
            execution_status = 'waiting',
            current_run_lease_id = NULL,
-           latest_runtime_checkpoint_id = created_checkpoint.id,
-           active_elapsed_ms = updated_wait.active_elapsed_ms_at_park,
-           active_started_at = NULL,
-           state_version = runs.state_version + 1,
-           updated_at = now()
+	           latest_runtime_checkpoint_id = created_checkpoint.id,
+	           active_elapsed_ms = updated_wait.active_elapsed_ms_at_park,
+	           active_started_at = NULL,
+	           dispatch_generation = runs.dispatch_generation + 1,
+	           last_enqueued_at = NULL,
+	           last_enqueue_error = '',
+	           state_version = runs.state_version + 1,
+	           updated_at = now()
       FROM wait_scope, created_checkpoint, updated_wait
      WHERE runs.org_id = wait_scope.org_id
        AND runs.id = wait_scope.run_id
        AND runs.status = 'running'
     RETURNING runs.id
 ),
-parked_attempt AS (
-    UPDATE run_attempts
-       SET status = 'waiting',
-           updated_at = now()
-      FROM wait_scope, parked_run
-     WHERE run_attempts.org_id = wait_scope.org_id
-       AND run_attempts.run_id = wait_scope.run_id
-       AND run_attempts.id = (
-           SELECT runs.current_attempt_id
-             FROM runs
-            WHERE runs.org_id = wait_scope.org_id
-              AND runs.id = wait_scope.run_id
-       )
-       AND run_attempts.status = 'running'
-    RETURNING run_attempts.run_id
-),
-parked_queue AS (
-    UPDATE run_queue_items
-       SET status = 'parked',
-           dispatch_message_id = NULL,
-           reserved_by_worker_instance_id = NULL,
-           reservation_expires_at = NULL,
-           updated_at = now()
-      FROM wait_scope, parked_run
-     WHERE run_queue_items.org_id = wait_scope.org_id
-       AND run_queue_items.run_id = wait_scope.run_id
-       AND run_queue_items.status IN ('reserved', 'published')
-    RETURNING run_queue_items.run_id
-)
+	parked_marker AS (
+	    SELECT parked_run.id
+	      FROM parked_run
+	)
 SELECT created_checkpoint.*
   FROM created_checkpoint
   JOIN updated_wait ON true
   JOIN released_workspace_lease ON true
   JOIN unmounted_mount ON true
-  JOIN closed_runtime_instance ON true
-  JOIN detached_run_lease ON true
-  JOIN parked_run ON true
-  JOIN parked_attempt ON true;
+	  JOIN closed_runtime_instance ON true
+	  JOIN detached_run_lease ON true
+	  JOIN parked_run ON true
+	  JOIN parked_marker ON true;
 
 -- name: CreateRuntimeCheckpointArtifact :one
 INSERT INTO runtime_checkpoint_artifacts (

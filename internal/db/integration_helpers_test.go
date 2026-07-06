@@ -276,7 +276,6 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	t.Helper()
 	sessionID = seedSessionForRun(t, ctx, pool, ids)
 	runLeaseID = uuid.Must(uuid.NewV7())
-	attemptID := uuid.Must(uuid.NewV7())
 	workerID = uuid.Must(uuid.NewV7())
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
@@ -303,22 +302,18 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_attempts (id, org_id, worker_group_id, run_id, attempt_number, status)
-		VALUES ($1, $2, $3, $4, 1, 'running')
-	`, attemptID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.runID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_leases (
-			id, org_id, worker_group_id, run_id, attempt_id, worker_instance_id, dispatch_message_id,
-			dispatch_lease_id, dispatch_attempt, status, lease_expires_at, runtime_id, trace_id,
+			id, org_id, worker_group_id, project_id, environment_id, queue_class, queue_name,
+			run_id, worker_instance_id, dispatch_message_id, dispatch_generation,
+			dispatch_lease_id, dispatch_attempt, attempt_number, status, lease_expires_at, runtime_id,
+			worker_protocol_version, trace_id,
 			span_id, parent_span_id, traceparent
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8,
-			1, 'running', now() + interval '1 hour', $9,
+		VALUES ($1, $2, $3, $4, $5, 'default', 'default',
+			$6, $7, $8, 1, $9, 1, 1, 'running', now() + interval '1 hour', $10, $11,
 			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
 			'00-11111111111111111111111111111111-3333333333333333-01')
-	`, runLeaseID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.runID, attemptID, workerID, dispatchMessageID, dispatchLeaseID, runtimeID); err != nil {
+	`, runLeaseID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.runID, workerID, dispatchMessageID, dispatchLeaseID, runtimeID, api.CurrentWorkerProtocolVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -415,48 +410,38 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       workspace_id = $6,
 		       workspace_mount_id = $7,
 		       current_run_lease_id = $2,
-		       current_attempt_id = $3,
 		       current_attempt_number = 1,
 		       status = 'running',
 		       execution_status = 'executing',
-		       active_started_at = now()
+		       active_started_at = now(),
+		       requested_milli_cpu = 1000,
+		       requested_memory_mib = 1024,
+		       requested_disk_mib = 4096,
+		       requested_execution_slots = 1,
+		       runtime_id = $3,
+		       runtime_arch = 'arm64',
+		       runtime_abi = 'test',
+		       kernel_digest = 'sha256:kernel',
+		       initramfs_digest = 'sha256:initramfs',
+		       rootfs_digest = 'sha256:rootfs',
+		       cni_profile = 'default'
 		 WHERE org_id = $4
 		   AND id = $5
-	`, sessionID, runLeaseID, attemptID, ids.orgID, ids.runID, ids.workspaceID, workspaceMountID); err != nil {
+	`, sessionID, runLeaseID, runtimeID, ids.orgID, ids.runID, ids.workspaceID, workspaceMountID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_snapshots (
 			org_id, worker_group_id, run_id, version, status, execution_status,
-			attempt_id, run_lease_id, transition, reason
+			attempt_number, run_lease_id, transition, reason
 		)
 		SELECT org_id, worker_group_id, id, state_version, status, execution_status,
-		       current_attempt_id, current_run_lease_id, 'run.started', '{}'::jsonb
+		       current_attempt_number, current_run_lease_id, 'run.started', '{}'::jsonb
 		  FROM runs
 		 WHERE org_id = $1
 		   AND id = $2
 		ON CONFLICT DO NOTHING
 	`, ids.orgID, ids.runID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-			INSERT INTO run_runtime_requirements (
-				run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
-				requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-				initramfs_digest, rootfs_digest, cni_profile
-			)
-			VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test', 'sha256:kernel',
-				'sha256:initramfs', 'sha256:rootfs', 'default')
-		`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_queue_items (
-			run_id, org_id, worker_group_id, status, queue_name, dispatch_message_id,
-			reserved_by_worker_instance_id, reservation_expires_at
-		)
-		VALUES ($1, $2, $3, 'reserved', 'default', $4, $5, now() + interval '1 hour')
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, dispatchMessageID, workerID); err != nil {
 		t.Fatal(err)
 	}
 	return sessionID, runLeaseID, workerID

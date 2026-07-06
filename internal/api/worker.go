@@ -288,7 +288,6 @@ type WorkerRun struct {
 	CLIVersion            string                         `json:"cli_version,omitempty"`
 	WorkerProtocolVersion string                         `json:"worker_protocol_version"`
 	AttemptNumber         int32                          `json:"attempt_number"`
-	AttemptID             string                         `json:"attempt_id"`
 	RunLeaseID            string                         `json:"run_lease_id"`
 	SnapshotVersion       int64                          `json:"snapshot_version"`
 	SessionID             string                         `json:"session_id"`

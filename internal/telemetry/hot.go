@@ -156,7 +156,7 @@ func (r *HotReader) ListTerminalOutputAboveWatermark(ctx context.Context, q Term
 }
 
 func eventFromHot(event db.EventHotPayload) api.RunEvent {
-	return eventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
+	return eventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 
 func runLogChunkFromHot(chunk db.RunLogHotChunk) api.RunLogChunk {
@@ -197,7 +197,7 @@ func terminalOutputFromPtyHot(row db.WorkspacePtyStreamChunk) TerminalOutputChun
 	}
 }
 
-func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLeaseID pgtype.UUID, attemptID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
+func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLeaseID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
 	var runIDValue *string
 	if runID.Valid {
 		value := pgvalue.MustUUIDValue(runID).String()
@@ -212,11 +212,6 @@ func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLe
 	if runLeaseID.Valid {
 		value := pgvalue.MustUUIDValue(runLeaseID).String()
 		runLeaseIDValue = &value
-	}
-	var attemptIDValue *string
-	if attemptID.Valid {
-		value := pgvalue.MustUUIDValue(attemptID).String()
-		attemptIDValue = &value
 	}
 	var attemptNumber *int32
 	if attemptNumberValue.Valid {
@@ -251,7 +246,6 @@ func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLe
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
 		RunLeaseID:     runLeaseIDValue,
-		AttemptID:      attemptIDValue,
 		AttemptNumber:  attemptNumber,
 		Trace:          api.TraceContext{TraceID: traceID, SpanID: spanID, Traceparent: traceparent},
 		Category:       category,

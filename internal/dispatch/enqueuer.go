@@ -18,8 +18,8 @@ var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 type EnqueuerStore interface {
 	PrepareQueuedRunQueueItem(context.Context, db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error)
 	ListQueuedRunQueueItemCandidatesForScope(context.Context, db.ListQueuedRunQueueItemCandidatesForScopeParams) ([]db.ListQueuedRunQueueItemCandidatesForScopeRow, error)
-	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error)
-	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error)
+	MarkRunQueueItemEnqueued(context.Context, db.MarkRunQueueItemEnqueuedParams) (db.Run, error)
+	MarkRunQueueItemEnqueueError(context.Context, db.MarkRunQueueItemEnqueueErrorParams) (db.Run, error)
 }
 
 type Enqueuer struct {
@@ -83,7 +83,6 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 		RunID:                      runID,
 		WorkerGroupID:              row.WorkerGroupID,
 		QueueClass:                 row.QueueClass,
-		DispatchMessageID:          pgtype.Text{String: result.MessageID, Valid: true},
 		ExpectedDispatchGeneration: row.DispatchGeneration,
 	}); err != nil {
 		return EnqueueResult{}, err
@@ -117,18 +116,6 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	stats := QueueReconcileStats{Scanned: len(candidates)}
 	var problems []error
 	for _, candidate := range candidates {
-		if candidate.DispatchMessageID != "" {
-			exists, err := e.queue.ReadyMessageExists(ctx, candidate.DispatchMessageID)
-			if err != nil {
-				stats.Failed++
-				problems = append(problems, err)
-				continue
-			}
-			if exists {
-				stats.Skipped++
-				continue
-			}
-		}
 		if _, err := e.EnqueueRun(ctx, candidate.OrgID, candidate.RunID); err != nil {
 			if errors.Is(err, ErrNoEnqueueCandidate) {
 				stats.Skipped++
@@ -179,6 +166,7 @@ func queueMessage(row db.PrepareQueuedRunQueueItemRow) (Message, error) {
 		QueueConcurrencyScope: row.QueueName,
 		QueueConcurrencyLimit: limit,
 		ConcurrencyKey:        row.ConcurrencyKey.String,
+		DispatchGeneration:    row.DispatchGeneration,
 		Requirements:          requirements,
 		Priority:              row.Priority,
 		QueueTimestamp:        row.QueueTimestamp.Time,

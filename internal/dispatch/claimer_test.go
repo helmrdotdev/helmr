@@ -12,7 +12,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
@@ -26,32 +25,26 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:         orgID.String(),
-				WorkerGroupID: "us-east-1-worker-group-1",
-				QueueClass:    "default",
-				RunID:         runID.String(),
-				QueueName:     "queue-a",
-				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              orgID.String(),
+				WorkerGroupID:      "us-east-1-worker-group-1",
+				QueueClass:         "default",
+				RunID:              runID.String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
 			ExpiresAt:        expiresAt,
 		}},
 	}
-	store := &fakeClaimerStore{dispatch: db.RunQueueItem{
-		OrgID:                      pgvalue.UUID(orgID),
-		RunID:                      pgvalue.UUID(runID),
-		Status:                     db.RunQueueStatusReserved,
-		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerInstanceID: pgvalue.UUID(hostID),
-		ReservationExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		QueueName:                  "queue-a",
-		Priority:                   0,
-		DispatchGeneration:         1,
-		LastError:                  "",
-		EnqueuedAt:                 pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		UpdatedAt:                  pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		FinishedAt:                 pgtype.Timestamptz{},
+	store := &fakeClaimerStore{dispatch: db.Run{
+		OrgID:              pgvalue.UUID(orgID),
+		ID:                 pgvalue.UUID(runID),
+		Status:             db.RunStatusQueued,
+		QueueName:          "queue-a",
+		Priority:           0,
+		DispatchGeneration: 1,
 	}}
 
 	claimer, err := NewClaimer(store, queue)
@@ -70,10 +63,10 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Lease.MessageID != "message-1" || result.Entry.Status != db.RunQueueStatusReserved {
+	if result.Lease.MessageID != "message-1" || result.Entry.Status != db.RunStatusQueued {
 		t.Fatalf("claim result = %+v", result)
 	}
-	if store.marked.DispatchMessageID.String != "message-1" || store.marked.WorkerInstanceID != pgvalue.UUID(hostID) {
+	if store.marked.DispatchGeneration != 1 || store.marked.WorkerInstanceID != pgvalue.UUID(hostID) {
 		t.Fatalf("marked params = %+v", store.marked)
 	}
 	if len(queue.requeued) != 0 {
@@ -91,12 +84,13 @@ func TestClaimNacksActiveLeaseConflictWithoutDeletingMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:         orgID.String(),
-				WorkerGroupID: "us-east-1-worker-group-1",
-				QueueClass:    "default",
-				RunID:         runID.String(),
-				QueueName:     "queue-a",
-				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              orgID.String(),
+				WorkerGroupID:      "us-east-1-worker-group-1",
+				QueueClass:         "default",
+				RunID:              runID.String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -136,12 +130,13 @@ func TestClaimRetriesWhenLeaseConflictProbeFails(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:         orgID.String(),
-				WorkerGroupID: "us-east-1-worker-group-1",
-				QueueClass:    "default",
-				RunID:         runID.String(),
-				QueueName:     "queue-a",
-				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              orgID.String(),
+				WorkerGroupID:      "us-east-1-worker-group-1",
+				QueueClass:         "default",
+				RunID:              runID.String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -182,12 +177,13 @@ func TestClaimDeletesStaleNonReservableMessage(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-stale",
 			Message: Message{
-				OrgID:         orgID.String(),
-				WorkerGroupID: "us-east-1-worker-group-1",
-				QueueClass:    "default",
-				RunID:         runID.String(),
-				QueueName:     "queue-a",
-				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              orgID.String(),
+				WorkerGroupID:      "us-east-1-worker-group-1",
+				QueueClass:         "default",
+				RunID:              runID.String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -225,10 +221,11 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-invalid",
 			Message: Message{
-				OrgID:        "not-a-uuid",
-				RunID:        uuid.Must(uuid.NewV7()).String(),
-				QueueName:    "queue-a",
-				Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              "not-a-uuid",
+				RunID:              uuid.Must(uuid.NewV7()).String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    1,
@@ -264,12 +261,13 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:         orgID.String(),
-			WorkerGroupID: "us-east-1-worker-group-1",
-			QueueClass:    "default",
-			RunID:         runID.String(),
-			QueueName:     "queue-a",
-			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:              orgID.String(),
+			WorkerGroupID:      "us-east-1-worker-group-1",
+			QueueClass:         "default",
+			RunID:              runID.String(),
+			QueueName:          "queue-a",
+			DispatchGeneration: 1,
+			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -294,14 +292,11 @@ func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
 	if !errors.Is(err, ErrNoClaim) {
 		t.Fatalf("claim error = %v, want ErrNoClaim", err)
 	}
-	if store.marked.DispatchMessageID.Valid {
+	if store.marked.RunID.Valid {
 		t.Fatalf("marked leased params = %+v", store.marked)
 	}
-	if store.deadLettered.DispatchMessageID.String != "message-dead" || store.deadLettered.RunID != pgvalue.UUID(runID) {
+	if store.deadLettered.RunID != pgvalue.UUID(runID) {
 		t.Fatalf("dead letter params = %+v", store.deadLettered)
-	}
-	if store.deadLettered.EventKind != "run.dead_lettered" || len(store.deadLettered.EventPayload) == 0 {
-		t.Fatalf("dead letter event = %q %s", store.deadLettered.EventKind, string(store.deadLettered.EventPayload))
 	}
 	if len(queue.acked) != 1 || queue.acked[0].ID != lease.ID {
 		t.Fatalf("acked leases = %+v", queue.acked)
@@ -320,12 +315,13 @@ func TestClaimDoesNotAckWhenDeadLetterFails(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:         orgID.String(),
-			WorkerGroupID: "us-east-1-worker-group-1",
-			QueueClass:    "default",
-			RunID:         runID.String(),
-			QueueName:     "queue-a",
-			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:              orgID.String(),
+			WorkerGroupID:      "us-east-1-worker-group-1",
+			QueueClass:         "default",
+			RunID:              runID.String(),
+			QueueName:          "queue-a",
+			DispatchGeneration: 1,
+			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -368,12 +364,13 @@ func TestClaimDrainsNonMatchingDeadLetterLease(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:         orgID.String(),
-			WorkerGroupID: "us-east-1-worker-group-1",
-			QueueClass:    "default",
-			RunID:         runID.String(),
-			QueueName:     "queue-a",
-			Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:              orgID.String(),
+			WorkerGroupID:      "us-east-1-worker-group-1",
+			QueueClass:         "default",
+			RunID:              runID.String(),
+			QueueName:          "queue-a",
+			DispatchGeneration: 1,
+			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -415,10 +412,11 @@ func TestClaimDrainsInvalidDeadLetterLeaseWithoutAck(t *testing.T) {
 		ID:        "lease-1",
 		MessageID: "message-dead",
 		Message: Message{
-			OrgID:        orgID.String(),
-			RunID:        runID.String(),
-			QueueName:    "queue-a",
-			Requirements: compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+			OrgID:              orgID.String(),
+			RunID:              runID.String(),
+			QueueName:          "queue-a",
+			DispatchGeneration: 1,
+			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 		},
 		WorkerInstanceID: hostID.String(),
 		AttemptNumber:    3,
@@ -443,7 +441,7 @@ func TestClaimDrainsInvalidDeadLetterLeaseWithoutAck(t *testing.T) {
 	if !errors.Is(err, ErrNoClaim) {
 		t.Fatalf("claim error = %v, want ErrNoClaim", err)
 	}
-	if store.deadLettered.DispatchMessageID.Valid {
+	if store.deadLettered.RunID.Valid {
 		t.Fatalf("dead letter params = %+v", store.deadLettered)
 	}
 	if len(queue.acked) != 0 {
@@ -465,32 +463,26 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 			ID:        "lease-1",
 			MessageID: "message-1",
 			Message: Message{
-				OrgID:         orgID.String(),
-				WorkerGroupID: "us-east-1-worker-group-1",
-				QueueClass:    "default",
-				RunID:         runID.String(),
-				QueueName:     "queue-a",
-				Requirements:  compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
+				OrgID:              orgID.String(),
+				WorkerGroupID:      "us-east-1-worker-group-1",
+				QueueClass:         "default",
+				RunID:              runID.String(),
+				QueueName:          "queue-a",
+				DispatchGeneration: 1,
+				Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    DefaultMaxDispatchAttempts + 10,
 			ExpiresAt:        expiresAt,
 		}},
 	}
-	store := &fakeClaimerStore{dispatch: db.RunQueueItem{
-		OrgID:                      pgvalue.UUID(orgID),
-		RunID:                      pgvalue.UUID(runID),
-		Status:                     db.RunQueueStatusReserved,
-		DispatchMessageID:          pgtype.Text{String: "message-1", Valid: true},
-		ReservedByWorkerInstanceID: pgvalue.UUID(hostID),
-		ReservationExpiresAt:       pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		QueueName:                  "queue-a",
-		Priority:                   0,
-		DispatchGeneration:         1,
-		LastError:                  "",
-		EnqueuedAt:                 pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		UpdatedAt:                  pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
-		FinishedAt:                 pgtype.Timestamptz{},
+	store := &fakeClaimerStore{dispatch: db.Run{
+		OrgID:              pgvalue.UUID(orgID),
+		ID:                 pgvalue.UUID(runID),
+		Status:             db.RunStatusQueued,
+		QueueName:          "queue-a",
+		Priority:           0,
+		DispatchGeneration: 1,
 	}}
 	claimer, err := NewClaimer(store, queue)
 	if err != nil {
@@ -509,13 +501,13 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Entry.Status != db.RunQueueStatusReserved || store.deadLettered.DispatchMessageID.Valid {
+	if result.Entry.Status != db.RunStatusQueued || store.deadLettered.RunID.Valid {
 		t.Fatalf("result = %+v dead letter = %+v", result, store.deadLettered)
 	}
 }
 
 type fakeClaimerStore struct {
-	dispatch          db.RunQueueItem
+	dispatch          db.Run
 	marked            db.ReserveRunQueueItemParams
 	deadLettered      db.DeadLetterRunQueueItemParams
 	err               error
@@ -532,18 +524,15 @@ func (f *fakeClaimerStore) DeadLetterRunQueueItem(_ context.Context, arg db.Dead
 		return db.DeadLetterRunQueueItemRow{}, f.deadErr
 	}
 	return db.DeadLetterRunQueueItemRow{
-		OrgID:             arg.OrgID,
-		RunID:             arg.RunID,
-		Status:            db.RunQueueStatusDeadLettered,
-		DispatchMessageID: arg.DispatchMessageID,
-		LastError:         arg.LastError,
+		OrgID: arg.OrgID,
+		RunID: arg.RunID,
 	}, nil
 }
 
-func (f *fakeClaimerStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.RunQueueItem, error) {
+func (f *fakeClaimerStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.Run, error) {
 	f.marked = arg
 	if f.err != nil {
-		return db.RunQueueItem{}, f.err
+		return db.Run{}, f.err
 	}
 	return f.dispatch, nil
 }
@@ -555,7 +544,7 @@ func (f *fakeClaimerStore) IsRunQueueLeaseConflict(context.Context, db.IsRunQueu
 	return f.leaseConflict, nil
 }
 
-func (f *fakeClaimerStore) RunLeaseDispatchAttemptsExhausted(_ context.Context, _ db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
+func (f *fakeClaimerStore) RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
 	if f.exhaustedErr != nil {
 		return false, f.exhaustedErr
 	}

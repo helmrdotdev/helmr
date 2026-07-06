@@ -3,6 +3,7 @@ package db_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -277,41 +278,35 @@ func TestLeaseRunLeaseCreatesRuntimeCheckpointRestoreAttempt(t *testing.T) {
 	if !requeued[0].ResumingAt.Valid {
 		t.Fatalf("requeued resuming_at is invalid")
 	}
-	var queuedStatus db.RunQueueStatus
-	var queuedDispatchMessageID pgtype.Text
-	var queuedReservationExpiresAt pgtype.Timestamptz
+	var queuedStatus db.RunStatus
+	var currentRunLeaseID pgtype.UUID
 	if err := pool.QueryRow(ctx, `
-		SELECT status, dispatch_message_id, reservation_expires_at
-		  FROM run_queue_items
+		SELECT status, current_run_lease_id
+		  FROM runs
 		 WHERE org_id = $1
-		   AND run_id = $2
-	`, ids.orgID, ids.runID).Scan(&queuedStatus, &queuedDispatchMessageID, &queuedReservationExpiresAt); err != nil {
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&queuedStatus, &currentRunLeaseID); err != nil {
 		t.Fatal(err)
 	}
-	if queuedStatus != db.RunQueueStatusQueued || queuedDispatchMessageID.Valid || queuedReservationExpiresAt.Valid {
-		t.Fatalf("queued item status=%s dispatch=%+v reservation=%+v, want queued without dispatch reservation", queuedStatus, queuedDispatchMessageID, queuedReservationExpiresAt)
+	if queuedStatus != db.RunStatusQueued || currentRunLeaseID.Valid {
+		t.Fatalf("run queue state status=%s lease=%+v, want queued without current lease", queuedStatus, currentRunLeaseID)
 	}
 	seedRestoreReadyWorkspaceMount(t, ctx, pool, ids, workerID)
 	restoreRunLeaseID := uuid.Must(uuid.NewV7())
-	reserved, err := queries.ReserveCheckpointRestoreRunQueueItemForWorker(ctx, db.ReserveCheckpointRestoreRunQueueItemForWorkerParams{
-		WorkerInstanceID:     pgvalue.UUID(workerID),
-		ReservationExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
-	})
+	reserved, err := queries.ReserveCheckpointRestoreRunQueueItemForWorker(ctx, pgvalue.UUID(workerID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reserved.RunID != pgvalue.UUID(ids.runID) ||
-		reserved.ReservedByWorkerInstanceID != pgvalue.UUID(workerID) ||
-		!strings.HasPrefix(reserved.DispatchMessageID.String, "restore-source:") {
+	restoreDispatchMessageID := strings.TrimSpace(fmt.Sprint(reserved.DispatchMessageID))
+	if reserved.RunID != pgvalue.UUID(ids.runID) || restoreDispatchMessageID == "" {
 		t.Fatalf("reserved source restore queue item = %+v, want run %s on source worker %s", reserved, ids.runID, workerID)
 	}
-	restoreDispatchMessageID := reserved.DispatchMessageID.String
 	leased, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
 		RunID:             pgvalue.UUID(ids.runID),
 		WorkerInstanceID:  pgvalue.UUID(workerID),
 		RunLeaseID:        pgvalue.UUID(restoreRunLeaseID),
-		DispatchMessageID: pgtype.Text{String: restoreDispatchMessageID, Valid: true},
+		DispatchMessageID: restoreDispatchMessageID,
 		DispatchLeaseID:   "lease-restore-" + shortUUID(restoreRunLeaseID),
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
@@ -1515,18 +1510,6 @@ func TestFailStaleResolvedRunWaitsTerminalizesWorkspaceVersionMismatch(t *testin
 	}
 	if sessionStatus != db.SessionStatusOpen || string(sessionReason) != "{}" {
 		t.Fatalf("session status=%s reason=%s", sessionStatus, string(sessionReason))
-	}
-	var queueStatus db.RunQueueStatus
-	if err := pool.QueryRow(ctx, `
-		SELECT status
-		  FROM run_queue_items
-		 WHERE org_id = $1
-		   AND run_id = $2
-	`, ids.orgID, ids.runID).Scan(&queueStatus); err != nil {
-		t.Fatal(err)
-	}
-	if queueStatus != db.RunQueueStatusCompleted {
-		t.Fatalf("queue status = %s, want completed", queueStatus)
 	}
 }
 
@@ -4042,9 +4025,9 @@ func readyRuntimeCheckpointParamsForRun(t *testing.T, ctx context.Context, pool 
 		       initramfs_digest,
 		       rootfs_digest,
 		       cni_profile
-		  FROM run_runtime_requirements
+		  FROM runs
 		 WHERE org_id = $1
-		   AND run_id = $2
+		   AND id = $2
 	`, ids.orgID, ids.runID).Scan(
 		&params.RuntimeID,
 		&params.RuntimeArch,
@@ -4105,9 +4088,9 @@ func seedRestoreReadyWorkspaceMount(t *testing.T, ctx context.Context, pool *pgx
 	var runtimeID string
 	if err := pool.QueryRow(ctx, `
 		SELECT runtime_id
-		  FROM run_runtime_requirements
+		  FROM runs
 		 WHERE org_id = $1
-		   AND run_id = $2
+		   AND id = $2
 	`, ids.orgID, ids.runID).Scan(&runtimeID); err != nil {
 		t.Fatal(err)
 	}

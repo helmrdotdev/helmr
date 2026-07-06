@@ -2747,7 +2747,7 @@ type fakeStore struct {
 	claimWorkspaceMountCalls                int
 	residentRunQueueItem                    db.ReserveResidentRunQueueItemForWorkerRow
 	residentRunQueueItemSet                 bool
-	residentRunQueueItemReservation         db.ReserveResidentRunQueueItemForWorkerParams
+	residentRunQueueItemReservation         pgtype.UUID
 	residentRunQueueItemReservationCalls    int
 	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
 	requestCapacityPressureStopsCalls       int
@@ -3827,15 +3827,15 @@ func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, erro
 	return run, nil
 }
 
-func (f *fakeStore) GetRunLeaseRuntimeRelease(_ context.Context, arg db.GetRunLeaseRuntimeReleaseParams) (db.GetRunLeaseRuntimeReleaseRow, error) {
+func (f *fakeStore) GetRunLeaseRuntimeRelease(_ context.Context, arg db.GetRunLeaseRuntimeReleaseParams) (db.RuntimeRelease, error) {
 	if f.activeQueueLeaseMissing {
-		return db.GetRunLeaseRuntimeReleaseRow{}, pgx.ErrNoRows
+		return db.RuntimeRelease{}, pgx.ErrNoRows
 	}
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.GetRunLeaseRuntimeReleaseRow{}, pgx.ErrNoRows
+		return db.RuntimeRelease{}, pgx.ErrNoRows
 	}
 	capabilities := testWorkerCapabilities()
-	return db.GetRunLeaseRuntimeReleaseRow{
+	return db.RuntimeRelease{
 		RuntimeID:       capabilities.RuntimeID,
 		RuntimeArch:     capabilities.RuntimeArch,
 		RuntimeABI:      capabilities.RuntimeABI,

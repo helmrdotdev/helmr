@@ -9,14 +9,13 @@ current_run_lease AS (
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
-           runs.state_version,
-           runs.id,
-           run_leases.id AS run_lease_id,
-           run_leases.attempt_id,
-           run_leases.span_id,
-           run_leases.parent_span_id,
-           run_leases.traceparent,
-           run_attempts.attempt_number
+	           runs.state_version,
+	           runs.id,
+	           run_leases.id AS run_lease_id,
+	           run_leases.span_id,
+	           run_leases.parent_span_id,
+	           run_leases.traceparent,
+	           run_leases.attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
@@ -24,9 +23,6 @@ current_run_lease AS (
       JOIN worker_groups
         ON worker_groups.id = runs.worker_group_id
        AND worker_groups.state IN ('active', 'draining')
-      JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
-                       AND run_attempts.run_id = run_leases.run_id
-                       AND run_attempts.id = run_leases.attempt_id
 	     WHERE runs.org_id = sqlc.arg(org_id)
 	       AND runs.worker_group_id = sqlc.arg(worker_group_id)
 	       AND runs.id = sqlc.arg(run_id)
@@ -70,12 +66,11 @@ locked_run_log_cursor AS (
     UNION ALL
     SELECT * FROM existing_run_log_cursor
 ),
-selected_cursor AS (
-    INSERT INTO run_log_cursors (org_id, run_id, attempt_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
+	selected_cursor AS (
+	    INSERT INTO run_log_cursors (org_id, run_id, run_lease_id, stream_name, seq, cursor, idempotency_key)
     SELECT locked_run_log_cursor.org_id,
            locked_run_log_cursor.run_id,
-           current_run_lease.attempt_id,
-           current_run_lease.run_lease_id,
+	           current_run_lease.run_lease_id,
            (sqlc.arg(stream)::run_log_stream)::text,
            CASE WHEN locked_run_log_cursor.inserted THEN locked_run_log_cursor.seq ELSE locked_run_log_cursor.seq + 1 END,
            'rlc1.' || locked_run_log_cursor.org_id::text || '.' || locked_run_log_cursor.run_id::text || '.' || (sqlc.arg(stream)::run_log_stream)::text || '.' || (CASE WHEN locked_run_log_cursor.inserted THEN locked_run_log_cursor.seq ELSE locked_run_log_cursor.seq + 1 END)::text,
@@ -142,12 +137,11 @@ selected_chunk AS (
 ),
 event_input AS (
     SELECT current_run_lease.org_id,
-           current_run_lease.worker_group_id,
-           current_run_lease.project_id,
-           current_run_lease.environment_id,
-           selected_chunk.run_id,
-           current_run_lease.attempt_id,
-           selected_chunk.run_lease_id,
+	           current_run_lease.worker_group_id,
+	           current_run_lease.project_id,
+	           current_run_lease.environment_id,
+	           selected_chunk.run_id,
+	           selected_chunk.run_lease_id,
            selected_chunk.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
@@ -181,16 +175,15 @@ event_seq AS (
                   observed_at = now()
     RETURNING event_cursors.org_id, event_cursors.worker_group_id, event_cursors.subject_kind, event_cursors.subject_id, event_cursors.seq
 ),
-event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+	event AS (
+	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
     SELECT event_input.org_id,
            event_input.worker_group_id,
            event_input.project_id,
            event_input.environment_id,
            event_input.run_id,
            event_seq.seq,
-           event_input.attempt_id,
-           event_input.run_lease_id,
+	           event_input.run_lease_id,
            event_input.attempt_number,
            event_input.trace_id,
            event_input.span_id,

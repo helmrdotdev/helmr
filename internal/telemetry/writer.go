@@ -25,7 +25,7 @@ func (w *ClickHouseWriter) WriteEvents(ctx context.Context, rows []EventRecord) 
 	}
 	batch, err := w.client.PrepareBatch(ctx, `INSERT INTO helmr_telemetry.events (
     worker_group_id, org_id, project_id, environment_id, subject_kind, subject_id, event_kind, seq,
-    run_id, deployment_id, attempt_id, run_lease_id, attempt_number, trace_id, span_id,
+    run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id,
     parent_span_id, traceparent, category, severity, source, message, body, idempotency_key,
     retention_class, redaction_class, observed_at
 )`)
@@ -45,7 +45,6 @@ func (w *ClickHouseWriter) WriteEvents(ctx context.Context, rows []EventRecord) 
 			row.Seq,
 			row.RunID,
 			row.DeploymentID,
-			row.AttemptID,
 			row.RunLeaseID,
 			row.AttemptNumber,
 			row.TraceID,
@@ -73,7 +72,7 @@ func (w *ClickHouseWriter) WriteRunLogs(ctx context.Context, rows []RunLogRecord
 		return nil
 	}
 	batch, err := w.client.PrepareBatch(ctx, `INSERT INTO helmr_telemetry.run_logs (
-    worker_group_id, org_id, project_id, environment_id, run_id, attempt_id, run_lease_id,
+    worker_group_id, org_id, project_id, environment_id, run_id, run_lease_id,
     attempt_number, stream_name, seq, observed_seq, content, size_bytes, idempotency_key,
     retention_class, redaction_class, source, observed_at
 )`)
@@ -88,7 +87,6 @@ func (w *ClickHouseWriter) WriteRunLogs(ctx context.Context, rows []RunLogRecord
 			row.ProjectID,
 			row.EnvironmentID,
 			row.RunID,
-			row.AttemptID,
 			row.RunLeaseID,
 			row.AttemptNumber,
 			row.StreamName,

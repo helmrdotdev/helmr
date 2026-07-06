@@ -624,26 +624,6 @@ CREATE TYPE run_lease_status AS ENUM (
     'cancelled'
 );
 
-CREATE TYPE run_attempt_status AS ENUM (
-    'queued',
-    'running',
-    'waiting',
-    'succeeded',
-    'failed',
-    'cancelled',
-    'expired'
-);
-
-CREATE TYPE run_queue_status AS ENUM (
-    'queued',
-    'published',
-    'reserved',
-    'parked',
-    'completed',
-    'cancelled',
-    'dead_lettered'
-);
-
 CREATE TYPE run_operation_kind AS ENUM (
     'cancel'
 );
@@ -652,12 +632,6 @@ CREATE TYPE run_operation_status AS ENUM (
     'requested',
     'applied',
     'rejected'
-);
-
-CREATE TYPE run_retry_decision_kind AS ENUM (
-    'retry',
-    'fail_run',
-    'cancel_run'
 );
 
 CREATE TYPE session_status AS ENUM (
@@ -1241,6 +1215,7 @@ CREATE TABLE runs (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     locked_retry_policy JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+    queue_class TEXT NOT NULL DEFAULT 'default' CHECK (btrim(queue_class) <> ''),
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
     queue_concurrency_limit INTEGER,
     concurrency_key TEXT,
@@ -1248,14 +1223,30 @@ CREATE TABLE runs (
     queue_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
     ttl TEXT NOT NULL DEFAULT '',
     queued_expires_at TIMESTAMPTZ,
+    dispatch_generation BIGINT NOT NULL DEFAULT 1 CHECK (dispatch_generation > 0),
+    dispatch_attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (dispatch_attempt_count >= 0),
+    last_enqueue_error TEXT NOT NULL DEFAULT '',
+    last_enqueued_at TIMESTAMPTZ,
+    requested_milli_cpu BIGINT NOT NULL CHECK (requested_milli_cpu > 0),
+    requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
+    requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
+    requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
+    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
+    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
+    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
+    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
+    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
+    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
+    network_policy JSONB NOT NULL DEFAULT '{"internet": true}'::jsonb,
+    placement JSONB NOT NULL DEFAULT '{}'::jsonb,
     max_active_duration_ms BIGINT NOT NULL CHECK (max_active_duration_ms > 0),
     active_elapsed_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_elapsed_ms >= 0),
     active_started_at TIMESTAMPTZ,
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     root_span_id TEXT NOT NULL CHECK (root_span_id ~ '^[0-9a-f]{16}$' AND root_span_id <> '0000000000000000'),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
-    current_attempt_id UUID,
-    current_attempt_number INTEGER CHECK (current_attempt_number IS NULL OR current_attempt_number > 0),
+    current_attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (current_attempt_number > 0),
     current_run_lease_id UUID,
     latest_runtime_checkpoint_id UUID,
     exit_code INTEGER,
@@ -1282,6 +1273,9 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
         REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
         ON DELETE CASCADE,
+    FOREIGN KEY (runtime_id)
+        REFERENCES runtime_releases(runtime_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
@@ -2137,103 +2131,6 @@ ALTER TABLE runs
         )
     );
 
-CREATE TABLE run_attempts (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    run_id UUID NOT NULL,
-    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
-    status run_attempt_status NOT NULL DEFAULT 'queued',
-    previous_attempt_id UUID,
-    output JSONB,
-    error_message TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at TIMESTAMPTZ,
-    finished_at TIMESTAMPTZ,
-    UNIQUE (org_id, run_id, id),
-    UNIQUE (org_id, worker_group_id, run_id, id),
-    UNIQUE (org_id, run_id, attempt_number),
-    UNIQUE (org_id, worker_group_id, run_id, attempt_number),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
-        ON DELETE CASCADE
-);
-
-ALTER TABLE run_attempts
-    ADD CONSTRAINT run_attempts_previous_attempt_id_fkey
-    FOREIGN KEY (org_id, worker_group_id, run_id, previous_attempt_id)
-    REFERENCES run_attempts(org_id, worker_group_id, run_id, id)
-    ON DELETE SET NULL;
-
-ALTER TABLE runs
-    ADD CONSTRAINT runs_current_attempt_id_fkey
-    FOREIGN KEY (org_id, id, current_attempt_id)
-    REFERENCES run_attempts(org_id, run_id, id)
-    ON DELETE SET NULL (current_attempt_id)
-    DEFERRABLE INITIALLY DEFERRED;
-
-CREATE TABLE run_runtime_requirements (
-    run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
-    requested_milli_cpu BIGINT NOT NULL CHECK (requested_milli_cpu > 0),
-    requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
-    requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
-    requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
-    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
-    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
-    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
-    kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
-    initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
-    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
-    cni_profile TEXT NOT NULL CHECK (btrim(cni_profile) <> ''),
-    network_policy JSONB NOT NULL DEFAULT '{"internet": true}'::jsonb,
-    placement JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_id),
-    UNIQUE (org_id, worker_group_id, run_id),
-    FOREIGN KEY (runtime_id)
-        REFERENCES runtime_releases(runtime_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE run_queue_items (
-    run_id UUID PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    queue_class TEXT NOT NULL DEFAULT 'default' CHECK (btrim(queue_class) <> ''),
-    status run_queue_status NOT NULL DEFAULT 'queued',
-    priority INTEGER NOT NULL DEFAULT 0,
-    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    concurrency_key TEXT,
-    queue_timestamp TIMESTAMPTZ NOT NULL DEFAULT now(),
-    queued_expires_at TIMESTAMPTZ,
-    dispatch_message_id TEXT,
-    reserved_by_worker_instance_id UUID,
-    reservation_expires_at TIMESTAMPTZ,
-    dispatch_generation BIGINT NOT NULL DEFAULT 0 CHECK (dispatch_generation >= 0),
-    last_error TEXT NOT NULL DEFAULT '',
-    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    finished_at TIMESTAMPTZ,
-    UNIQUE (org_id, run_id),
-    UNIQUE (org_id, worker_group_id, run_id),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id)
-        REFERENCES run_runtime_requirements(org_id, worker_group_id, run_id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (reserved_by_worker_instance_id)
-        REFERENCES worker_instances(id)
-        ON DELETE SET NULL (reserved_by_worker_instance_id)
-);
-
 CREATE TYPE event_subject_type AS ENUM (
     'run',
     'deployment'
@@ -2255,7 +2152,6 @@ CREATE TABLE event_hot_payloads (
     environment_id UUID NOT NULL,
     run_id UUID,
     deployment_id UUID,
-    attempt_id UUID,
     run_lease_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
@@ -2290,9 +2186,7 @@ CREATE TABLE event_hot_payloads (
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
         REFERENCES deployments(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, worker_group_id, run_id, id)
-        ON DELETE SET NULL (attempt_id)
+    CHECK (run_id IS NULL OR attempt_number IS NULL OR attempt_number > 0)
 );
 
 CREATE INDEX event_hot_payloads_scope_created_idx
@@ -2446,7 +2340,6 @@ CREATE TABLE run_log_cursors (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     run_id UUID NOT NULL,
-    attempt_id UUID,
     run_lease_id UUID,
     stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
     seq BIGINT NOT NULL CHECK (seq >= 0),
@@ -2474,12 +2367,17 @@ CREATE TABLE run_leases (
     org_id UUID NOT NULL,
     queue_class TEXT NOT NULL DEFAULT 'default' CHECK (btrim(queue_class) <> ''),
     run_id UUID NOT NULL,
-    attempt_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL REFERENCES worker_groups(id) ON DELETE RESTRICT,
+    project_id UUID NOT NULL,
+    environment_id UUID NOT NULL,
     dispatch_message_id TEXT NOT NULL CHECK (btrim(dispatch_message_id) <> ''),
+    dispatch_generation BIGINT NOT NULL CHECK (dispatch_generation >= 0),
     dispatch_lease_id TEXT NOT NULL CHECK (btrim(dispatch_lease_id) <> ''),
     dispatch_attempt INTEGER NOT NULL CHECK (dispatch_attempt > 0),
+    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
+    concurrency_key TEXT,
     status run_lease_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
     runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
@@ -2509,9 +2407,6 @@ CREATE TABLE run_leases (
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, worker_group_id, run_id, id)
         ON DELETE CASCADE
 );
 
@@ -2523,7 +2418,7 @@ CREATE TABLE run_snapshots (
     status run_status NOT NULL,
     execution_status run_execution_status NOT NULL DEFAULT 'queued',
     terminal_outcome run_terminal_outcome,
-    attempt_id UUID,
+    attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     run_lease_id UUID,
     operation_id UUID,
     previous_version BIGINT CHECK (previous_version IS NULL OR previous_version > 0),
@@ -2536,9 +2431,6 @@ CREATE TABLE run_snapshots (
     FOREIGN KEY (org_id, run_id)
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, worker_group_id, run_id, id)
-        ON DELETE SET NULL (attempt_id),
     FOREIGN KEY (org_id, worker_group_id, run_id, run_lease_id)
         REFERENCES run_leases(org_id, worker_group_id, run_id, id)
         ON DELETE SET NULL (run_lease_id)
@@ -2549,61 +2441,6 @@ ALTER TABLE run_snapshots
     FOREIGN KEY (org_id, run_id, operation_id)
     REFERENCES run_operations(org_id, run_id, id)
     ON DELETE SET NULL (operation_id);
-
-CREATE TABLE run_retry_decisions (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    attempt_id UUID NOT NULL,
-    run_lease_id UUID,
-    snapshot_version BIGINT NOT NULL CHECK (snapshot_version > 0),
-    decision run_retry_decision_kind NOT NULL,
-    reason TEXT NOT NULL DEFAULT '',
-    error_class TEXT NOT NULL DEFAULT '',
-    retry_after TIMESTAMPTZ,
-    next_attempt_number INTEGER CHECK (next_attempt_number IS NULL OR next_attempt_number > 0),
-    policy_snapshot JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
-    error JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_id, attempt_id),
-    UNIQUE (org_id, worker_group_id, run_id, attempt_id),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id, attempt_id)
-        REFERENCES run_attempts(org_id, worker_group_id, run_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, worker_group_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, worker_group_id, run_id, id)
-        ON DELETE SET NULL (run_lease_id),
-    FOREIGN KEY (org_id, worker_group_id, run_id, snapshot_version)
-        REFERENCES run_snapshots(org_id, worker_group_id, run_id, version)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE run_queue_concurrency_leases (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    run_lease_id UUID NOT NULL,
-    queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    concurrency_key TEXT,
-    slot_ordinal INTEGER NOT NULL CHECK (slot_ordinal > 0),
-    acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    released_at TIMESTAMPTZ,
-    UNIQUE (org_id, run_id, run_lease_id),
-    UNIQUE (org_id, worker_group_id, run_id, run_lease_id),
-    FOREIGN KEY (org_id, worker_group_id, run_id, run_lease_id)
-        REFERENCES run_leases(org_id, worker_group_id, run_id, id)
-        ON DELETE CASCADE
-        DEFERRABLE INITIALLY DEFERRED
-);
 
 ALTER TABLE run_log_hot_chunks
     ADD CONSTRAINT run_log_hot_chunks_run_lease_id_fkey
@@ -3208,21 +3045,11 @@ CREATE INDEX runs_queued_expiry_idx
     ON runs(org_id, queued_expires_at)
     WHERE status = 'queued' AND queued_expires_at IS NOT NULL;
 CREATE INDEX runs_queued_queue_scope_idx
-    ON runs(org_id, project_id, environment_id, queue_name, priority DESC, queue_timestamp, id)
+    ON runs(org_id, worker_group_id, project_id, environment_id, queue_class, queue_name, priority DESC, queue_timestamp, id)
     WHERE status = 'queued' AND current_run_lease_id IS NULL;
-CREATE INDEX run_queue_items_status_priority_idx ON run_queue_items(worker_group_id, queue_class, org_id, status, queue_timestamp, priority DESC, enqueued_at)
-    WHERE status IN ('queued', 'published', 'reserved');
-CREATE INDEX run_queue_items_active_scope_idx
-    ON run_queue_items(status, worker_group_id, queue_class, org_id, queue_name, run_id)
-    WHERE status IN ('queued', 'published', 'reserved');
-CREATE INDEX run_queue_items_queued_expiry_idx ON run_queue_items(worker_group_id, org_id, queued_expires_at)
-    WHERE status IN ('queued', 'published') AND queued_expires_at IS NOT NULL;
-CREATE INDEX run_queue_items_reservation_expiry_idx ON run_queue_items(worker_group_id, org_id, reservation_expires_at)
-    WHERE status = 'reserved' AND reservation_expires_at IS NOT NULL;
-CREATE INDEX run_queue_concurrency_leases_active_idx ON run_queue_concurrency_leases(org_id, worker_group_id, environment_id, queue_name, COALESCE(concurrency_key, ''))
-    WHERE released_at IS NULL;
-CREATE UNIQUE INDEX run_queue_concurrency_leases_active_scope_slot_idx ON run_queue_concurrency_leases(org_id, worker_group_id, environment_id, queue_name, COALESCE(concurrency_key, ''), slot_ordinal)
-    WHERE released_at IS NULL;
+CREATE INDEX runs_dispatch_repair_idx
+    ON runs(worker_group_id, org_id, status, last_enqueued_at, dispatch_generation)
+    WHERE status = 'queued' AND current_run_lease_id IS NULL;
 CREATE INDEX org_members_user_active_idx ON org_members(user_id, org_id) WHERE disabled_at IS NULL;
 CREATE INDEX auth_sessions_user_active_idx ON auth_sessions(user_id) WHERE revoked_at IS NULL;
 CREATE INDEX auth_sessions_expiry_active_idx ON auth_sessions(expires_at) WHERE revoked_at IS NULL;
@@ -3293,20 +3120,15 @@ CREATE INDEX event_hot_payloads_deployment_id_idx ON event_hot_payloads(deployme
     WHERE deployment_id IS NOT NULL;
 CREATE INDEX event_hot_payloads_run_lease_idx ON event_hot_payloads(org_id, run_id, run_lease_id, seq)
     WHERE run_lease_id IS NOT NULL;
-CREATE INDEX event_hot_payloads_run_attempt_idx ON event_hot_payloads(org_id, run_id, attempt_number, seq)
+CREATE INDEX event_hot_payloads_run_attempt_number_idx ON event_hot_payloads(org_id, run_id, attempt_number, seq)
     WHERE attempt_number IS NOT NULL;
-CREATE INDEX run_attempts_run_status_idx ON run_attempts(org_id, run_id, status, attempt_number);
 CREATE UNIQUE INDEX run_leases_one_active_per_run_idx ON run_leases(run_id)
     WHERE status IN ('leased', 'running');
-CREATE INDEX run_leases_attempt_idx ON run_leases(org_id, worker_group_id, run_id, attempt_id, leased_at DESC);
+CREATE INDEX run_leases_attempt_number_idx ON run_leases(org_id, worker_group_id, run_id, attempt_number, leased_at DESC);
 CREATE INDEX run_leases_active_lease_idx ON run_leases(org_id, worker_group_id, status, lease_expires_at)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, worker_group_id, worker_instance_id, status);
 CREATE INDEX run_leases_worker_group_idx ON run_leases(worker_group_id);
-CREATE INDEX run_runtime_requirements_worker_group_idx
-    ON run_runtime_requirements(worker_group_id);
-CREATE INDEX run_runtime_requirements_worker_scope_idx
-    ON run_runtime_requirements(worker_group_id, org_id, run_id);
 CREATE INDEX run_snapshots_run_created_idx ON run_snapshots(org_id, run_id, created_at DESC);
 CREATE INDEX runtime_checkpoints_run_state_idx ON runtime_checkpoints(run_id, state, created_at DESC);
 CREATE INDEX runtime_checkpoint_artifacts_role_idx ON runtime_checkpoint_artifacts(org_id, run_id, runtime_checkpoint_id, role, ordinal);
@@ -3467,16 +3289,6 @@ CREATE TRIGGER deployments_set_updated_at
 
 CREATE TRIGGER runs_set_updated_at
     BEFORE UPDATE ON runs
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER run_runtime_requirements_set_updated_at
-    BEFORE UPDATE ON run_runtime_requirements
-    FOR EACH ROW
-    EXECUTE FUNCTION set_updated_at();
-
-CREATE TRIGGER run_queue_items_set_updated_at
-    BEFORE UPDATE ON run_queue_items
     FOR EACH ROW
     EXECUTE FUNCTION set_updated_at();
 

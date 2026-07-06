@@ -1306,7 +1306,7 @@ type GetSessionStartIdempotencyRow struct {
 	RunSdkVersion              string                 `json:"run_sdk_version"`
 	RunCliVersion              string                 `json:"run_cli_version"`
 	RunTaskID                  string                 `json:"run_task_id"`
-	RunAttemptNumber           pgtype.Int4            `json:"run_attempt_number"`
+	RunAttemptNumber           int32                  `json:"run_attempt_number"`
 	RunStatus                  RunStatus              `json:"run_status"`
 	RunExecutionStatus         RunExecutionStatus     `json:"run_execution_status"`
 	RunTerminalOutcome         NullRunTerminalOutcome `json:"run_terminal_outcome"`

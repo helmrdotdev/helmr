@@ -44,7 +44,6 @@ func runTaskRequest(request Request) (*runv0.RunTaskRequest, error) {
 		RunId:           request.Run.RunID,
 		PayloadJson:     string(request.Run.Payload),
 		Workspace:       workspaceProto,
-		AttemptId:       request.Run.AttemptID,
 		AttemptNumber:   uint32(request.Run.AttemptNumber),
 		RunLeaseId:      request.Run.RunLeaseID,
 		SnapshotVersion: uint64(request.Run.SnapshotVersion),

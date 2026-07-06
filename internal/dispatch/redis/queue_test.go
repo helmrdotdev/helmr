@@ -86,7 +86,9 @@ func TestQueueReadyMessageExistsTracksReadyCurrentGeneration(t *testing.T) {
 	if !exists {
 		t.Fatal("leased message exists = false")
 	}
-	second, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
+	secondMessage := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
+	secondMessage.DispatchGeneration = 2
+	second, err := queue.Enqueue(ctx, secondMessage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -763,7 +765,9 @@ func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
 	queue, cleanup := newTestQueue(t)
 	defer cleanup()
 
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
+	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
+	requeued.DispatchGeneration = 2
+	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
 	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
@@ -852,7 +856,9 @@ func TestQueueReenqueueIsLeaseFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
+	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
+	requeued.DispatchGeneration = 2
+	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
 	if err := queue.Ack(ctx, oldLease); !errors.Is(err, dispatch.ErrLeaseConflict) {
@@ -920,7 +926,9 @@ func TestQueueReenqueuePreventsExpiredOldLeaseReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
+	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
+	requeued.DispatchGeneration = 2
+	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
 	}
 	now = now.Add(2 * time.Second)
@@ -941,6 +949,7 @@ func TestQueueReenqueueFencesOldLeaseAcrossQueues(t *testing.T) {
 	}
 	oldLease := mustDequeueOne(t, ctx, queue, "host-1")
 	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
+	requeued.DispatchGeneration = 2
 	requeued.QueueName = "queue-b"
 	if _, err := queue.Enqueue(ctx, requeued); err != nil {
 		t.Fatal(err)
@@ -1066,16 +1075,17 @@ func testMessage(runID string, priority int32, resources compute.ResourceVector)
 		resources.DiskMiB = 1024
 	}
 	return dispatch.Message{
-		RunID:         runID,
-		OrgID:         "org-1",
-		WorkerGroupID: "worker-group-1",
-		ProjectID:     "project-1",
-		EnvironmentID: "env-1",
-		QueueClass:    "default",
-		QueueName:     "queue-a",
-		Requirements:  dispatchRequirements(resources),
-		Priority:      priority,
-		EnqueuedAt:    time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
+		RunID:              runID,
+		OrgID:              "org-1",
+		WorkerGroupID:      "worker-group-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		QueueClass:         "default",
+		QueueName:          "queue-a",
+		DispatchGeneration: 1,
+		Requirements:       dispatchRequirements(resources),
+		Priority:           priority,
+		EnqueuedAt:         time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
 	}
 }
 

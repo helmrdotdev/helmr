@@ -155,18 +155,16 @@ worker_scope AS MATERIALIZED (
      FOR UPDATE OF worker_instances
 ),
 active_run_usage AS MATERIALIZED (
-    SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-           COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-           COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-           COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+	    SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+	           COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
+	           COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
+	           COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
       FROM worker_scope
       JOIN run_leases ON run_leases.worker_instance_id = worker_scope.id
                      AND run_leases.status IN ('leased', 'running')
       JOIN runs ON runs.org_id = run_leases.org_id
                AND runs.id = run_leases.run_id
                AND runs.workspace_mount_id IS NULL
-      JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
-                                   AND run_runtime_requirements.run_id = run_leases.run_id
 ),
 active_runtime_instance_usage AS MATERIALIZED (
     SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
@@ -397,18 +395,16 @@ source_sandbox AS MATERIALIZED (
        AND deployment_sandboxes.runtime_abi = $4
 ),
 active_run_usage AS MATERIALIZED (
-    SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-           COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-           COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-           COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+	    SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+	           COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
+	           COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
+	           COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
       FROM worker_scope
       JOIN run_leases ON run_leases.worker_instance_id = worker_scope.id
                      AND run_leases.status IN ('leased', 'running')
       JOIN runs ON runs.org_id = run_leases.org_id
                AND runs.id = run_leases.run_id
                AND runs.workspace_mount_id IS NULL
-      JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
-                                   AND run_runtime_requirements.run_id = run_leases.run_id
 ),
 active_runtime_instance_usage AS MATERIALIZED (
     SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
@@ -857,18 +853,16 @@ worker_usage_scope AS MATERIALIZED (
 ),
 active_run_usage AS MATERIALIZED (
     SELECT worker_usage_scope.worker_instance_id,
-           COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-           COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-           COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-           COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+	           COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+	           COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
+	           COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
+	           COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
       FROM worker_usage_scope
       LEFT JOIN run_leases ON run_leases.worker_instance_id = worker_usage_scope.worker_instance_id
                            AND run_leases.status IN ('leased', 'running')
-      LEFT JOIN runs ON runs.org_id = run_leases.org_id
-                    AND runs.id = run_leases.run_id
-      LEFT JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
-                                        AND run_runtime_requirements.run_id = run_leases.run_id
-                                        AND runs.workspace_mount_id IS NULL
+	      LEFT JOIN runs ON runs.org_id = run_leases.org_id
+	                    AND runs.id = run_leases.run_id
+	                    AND runs.workspace_mount_id IS NULL
      GROUP BY worker_usage_scope.worker_instance_id
 ),
 active_runtime_instance_usage AS MATERIALIZED (

@@ -11,7 +11,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -74,28 +73,21 @@ func terminalPayloadFailure(err error) (payloadFailure, bool) {
 }
 
 func (s *Server) failLeasedRunPayload(ctx context.Context, worker workerActor, row db.LeaseRunLeaseRow, lease dispatch.Lease, failure payloadFailure) error {
-	kind, payload, err := payloadFailureRunEvent(failure)
-	if err != nil {
-		return err
-	}
-	workspaceVersionPublicID, err := newPublicID(publicid.WorkspaceVersion)
+	_, payload, err := payloadFailureRunEvent(failure)
 	if err != nil {
 		return err
 	}
 	_, err = s.db.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                    row.OrgID,
-		RunID:                    row.ID,
-		RunLeaseID:               row.RunLeaseID,
-		WorkerInstanceID:         row.RunLeaseWorkerInstanceID,
-		DispatchMessageID:        row.RunLeaseDispatchMessageID,
-		DispatchLeaseID:          row.RunLeaseDispatchLeaseID,
-		RunStatus:                db.RunStatusFailed,
-		AttemptStatus:            db.RunAttemptStatusFailed,
-		ExitCode:                 pgtype.Int4{},
-		ErrorMessage:             pgtype.Text{String: failure.message, Valid: true},
-		TerminalEventKind:        kind,
-		TerminalEventPayload:     payload,
-		WorkspaceVersionPublicID: workspaceVersionPublicID,
+		OrgID:                row.OrgID,
+		RunID:                row.ID,
+		RunLeaseID:           row.RunLeaseID,
+		WorkerInstanceID:     row.RunLeaseWorkerInstanceID,
+		DispatchMessageID:    row.RunLeaseDispatchMessageID,
+		DispatchLeaseID:      row.RunLeaseDispatchLeaseID,
+		RunStatus:            db.RunStatusFailed,
+		ExitCode:             pgtype.Int4{},
+		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
+		TerminalEventPayload: payload,
 	})
 	if err != nil {
 		s.requeueWorkerQueueItem(ctx, worker, row.ID, lease, dispatch.NackReasonRetry, err.Error())

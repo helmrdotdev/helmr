@@ -214,7 +214,6 @@ type RunEvent struct {
 	RunID          *string         `json:"run_id,omitempty"`
 	DeploymentID   *string         `json:"deployment_id,omitempty"`
 	RunLeaseID     *string         `json:"run_lease_id,omitempty"`
-	AttemptID      *string         `json:"attempt_id,omitempty"`
 	AttemptNumber  *int32          `json:"attempt_number,omitempty"`
 	Trace          TraceContext    `json:"trace"`
 	Category       string          `json:"category"`

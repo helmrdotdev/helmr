@@ -73,12 +73,12 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 
 func TestHistoricalRowsDeclareClickHouseTagsForSelectedColumns(t *testing.T) {
 	assertClickHouseTags(t, eventRow{}, []string{
-		"seq", "run_id", "deployment_id", "attempt_id", "run_lease_id", "attempt_number",
+		"seq", "run_id", "deployment_id", "run_lease_id", "attempt_number",
 		"trace_id", "span_id", "traceparent", "category", "severity", "source",
 		"event_kind", "message", "body", "redaction_class", "observed_at",
 	})
 	assertClickHouseTags(t, runLogRow{}, []string{
-		"run_id", "run_lease_id", "attempt_id", "attempt_number", "stream_name",
+		"run_id", "run_lease_id", "attempt_number", "stream_name",
 		"seq", "observed_seq", "content", "size_bytes", "observed_at",
 	})
 	assertClickHouseTags(t, terminalOutputHistoryRow{}, []string{

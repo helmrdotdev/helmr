@@ -37,7 +37,7 @@ updated AS (
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        updated.idempotency_key,
-       events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
+       events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
   FROM updated
   JOIN event_hot_payloads AS events ON events.org_id = updated.org_id
                                    AND events.worker_group_id = updated.worker_group_id
@@ -66,7 +66,6 @@ type ClaimEventIngestBatchRow struct {
 	EnvironmentID   pgtype.UUID        `json:"environment_id"`
 	RunID           pgtype.UUID        `json:"run_id"`
 	DeploymentID    pgtype.UUID        `json:"deployment_id"`
-	AttemptID       pgtype.UUID        `json:"attempt_id"`
 	RunLeaseID      pgtype.UUID        `json:"run_lease_id"`
 	AttemptNumber   pgtype.Int4        `json:"attempt_number"`
 	TraceID         pgtype.Text        `json:"trace_id"`
@@ -109,7 +108,6 @@ func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventInges
 			&i.EnvironmentID,
 			&i.RunID,
 			&i.DeploymentID,
-			&i.AttemptID,
 			&i.RunLeaseID,
 			&i.AttemptNumber,
 			&i.TraceID,
@@ -166,11 +164,10 @@ SELECT updated.id AS outbox_id,
        updated.idempotency_key,
        chunks.org_id,
        chunks.worker_group_id,
-       runs.project_id,
-       runs.environment_id,
-       chunks.run_id,
-       run_leases.attempt_id,
-       chunks.run_lease_id,
+	       runs.project_id,
+	       runs.environment_id,
+	       chunks.run_id,
+	       chunks.run_lease_id,
        chunks.attempt_number,
        chunks.stream,
        chunks.seq,
@@ -206,7 +203,6 @@ type ClaimRunLogIngestBatchRow struct {
 	ProjectID      pgtype.UUID        `json:"project_id"`
 	EnvironmentID  pgtype.UUID        `json:"environment_id"`
 	RunID          pgtype.UUID        `json:"run_id"`
-	AttemptID      pgtype.UUID        `json:"attempt_id"`
 	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
 	AttemptNumber  int32              `json:"attempt_number"`
 	Stream         RunLogStream       `json:"stream"`
@@ -235,7 +231,6 @@ func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIng
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RunID,
-			&i.AttemptID,
 			&i.RunLeaseID,
 			&i.AttemptNumber,
 			&i.Stream,

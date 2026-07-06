@@ -175,12 +175,11 @@ type RunTaskRequest struct {
 	PayloadJson     string                 `protobuf:"bytes,6,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
 	Workspace       *RunTaskWorkspace      `protobuf:"bytes,7,opt,name=workspace,proto3" json:"workspace,omitempty"`
 	Trace           *TraceContext          `protobuf:"bytes,8,opt,name=trace,proto3" json:"trace,omitempty"`
-	AttemptId       string                 `protobuf:"bytes,9,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
-	AttemptNumber   uint32                 `protobuf:"varint,10,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
-	RunLeaseId      string                 `protobuf:"bytes,11,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	SnapshotVersion uint64                 `protobuf:"varint,12,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
-	SessionId       string                 `protobuf:"bytes,13,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	RetryReason     string                 `protobuf:"bytes,14,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
+	AttemptNumber   uint32                 `protobuf:"varint,9,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunLeaseId      string                 `protobuf:"bytes,10,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	SnapshotVersion uint64                 `protobuf:"varint,11,opt,name=snapshot_version,json=snapshotVersion,proto3" json:"snapshot_version,omitempty"`
+	SessionId       string                 `protobuf:"bytes,12,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	RetryReason     string                 `protobuf:"bytes,13,opt,name=retry_reason,json=retryReason,proto3" json:"retry_reason,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -269,13 +268,6 @@ func (x *RunTaskRequest) GetTrace() *TraceContext {
 		return x.Trace
 	}
 	return nil
-}
-
-func (x *RunTaskRequest) GetAttemptId() string {
-	if x != nil {
-		return x.AttemptId
-	}
-	return ""
 }
 
 func (x *RunTaskRequest) GetAttemptNumber() uint32 {
@@ -2043,7 +2035,7 @@ const file_run_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\x91\x04\n" +
+	"entryCount\"\xf2\x03\n" +
 	"\x0eRunTaskRequest\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12\x1f\n" +
 	"\vmodule_path\x18\x02 \x01(\tR\n" +
@@ -2053,17 +2045,15 @@ const file_run_proto_rawDesc = "" +
 	"\x06run_id\x18\x05 \x01(\tR\x05runId\x12!\n" +
 	"\fpayload_json\x18\x06 \x01(\tR\vpayloadJson\x12<\n" +
 	"\tworkspace\x18\a \x01(\v2\x1e.helmr.run.v0.RunTaskWorkspaceR\tworkspace\x120\n" +
-	"\x05trace\x18\b \x01(\v2\x1a.helmr.run.v0.TraceContextR\x05trace\x12\x1d\n" +
-	"\n" +
-	"attempt_id\x18\t \x01(\tR\tattemptId\x12%\n" +
-	"\x0eattempt_number\x18\n" +
-	" \x01(\rR\rattemptNumber\x12 \n" +
-	"\frun_lease_id\x18\v \x01(\tR\n" +
+	"\x05trace\x18\b \x01(\v2\x1a.helmr.run.v0.TraceContextR\x05trace\x12%\n" +
+	"\x0eattempt_number\x18\t \x01(\rR\rattemptNumber\x12 \n" +
+	"\frun_lease_id\x18\n" +
+	" \x01(\tR\n" +
 	"runLeaseId\x12)\n" +
-	"\x10snapshot_version\x18\f \x01(\x04R\x0fsnapshotVersion\x12\x1d\n" +
+	"\x10snapshot_version\x18\v \x01(\x04R\x0fsnapshotVersion\x12\x1d\n" +
 	"\n" +
-	"session_id\x18\r \x01(\tR\tsessionId\x12!\n" +
-	"\fretry_reason\x18\x0e \x01(\tR\vretryReason\"d\n" +
+	"session_id\x18\f \x01(\tR\tsessionId\x12!\n" +
+	"\fretry_reason\x18\r \x01(\tR\vretryReason\"d\n" +
 	"\fTraceContext\x12\x19\n" +
 	"\btrace_id\x18\x01 \x01(\tR\atraceId\x12\x17\n" +
 	"\aspan_id\x18\x02 \x01(\tR\x06spanId\x12 \n" +

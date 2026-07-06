@@ -139,6 +139,7 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 		q.generationTTL.Milliseconds(),
 		message.QueueConcurrencyLimit,
 		concurrencyActiveKey,
+		message.DispatchGeneration,
 	).Result()
 	if err != nil {
 		return dispatch.EnqueueResult{}, fmt.Errorf("%w: %v", dispatch.ErrQueueUnavailable, err)

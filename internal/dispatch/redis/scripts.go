@@ -26,12 +26,16 @@ local placement_snapshot_key = ARGV[21]
 local generation_ttl_ms = tonumber(ARGV[22])
 local queue_concurrency_limit = tonumber(ARGV[23] or "0")
 local queue_concurrency_active_key = ARGV[24]
+local generation = tonumber(ARGV[25])
 
 local run_generation_key = run_scope .. ":run:" .. run_id .. ":generation"
-local generation = redis.call("INCR", run_generation_key)
 local message_id = scope .. ":run:" .. run_id .. ":" .. tostring(generation)
 local message_key = prefix .. ":message:" .. message_id
 local active_message_key = prefix .. ":message_active:" .. message_id
+
+if not generation or generation <= 0 then
+  return redis.error_reply("dispatch_generation is required")
+end
 
 redis.call("HSET", message_key,
   "payload", payload,
@@ -57,6 +61,7 @@ redis.call("HSET", message_key,
   "generation", generation,
   "run_generation_key", run_generation_key
 )
+redis.call("SET", run_generation_key, generation, "PX", generation_ttl_ms)
 redis.call("PEXPIRE", run_generation_key, generation_ttl_ms)
 redis.call("DEL", active_message_key)
 redis.call("ZADD", ready, tonumber(score), message_id)

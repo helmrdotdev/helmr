@@ -49,8 +49,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	if message.Requirements.Resources.MilliCPU != 3000 || message.Requirements.Resources.MemoryMiB != 4096 || message.Requirements.Resources.Slots != 1 {
 		t.Fatalf("message requirements = %+v", message.Requirements)
 	}
-	if store.markEnqueued.DispatchMessageID.String != "message-1" ||
-		store.markEnqueued.WorkerGroupID != store.prepare.WorkerGroupID || store.markEnqueued.QueueClass != store.prepare.QueueClass ||
+	if store.markEnqueued.WorkerGroupID != store.prepare.WorkerGroupID || store.markEnqueued.QueueClass != store.prepare.QueueClass ||
 		store.markEnqueued.ExpectedDispatchGeneration != store.prepare.DispatchGeneration ||
 		store.markError.RunID.Valid {
 		t.Fatalf("mark enqueued = %+v mark error = %+v", store.markEnqueued, store.markError)
@@ -135,37 +134,6 @@ func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 	}
 }
 
-func TestReconcileQueueScopeSkipsQueuedRunWhenRedisReadyMessageExists(t *testing.T) {
-	ctx := context.Background()
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
-			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-existing"},
-		},
-	}
-	queue := &fakeEnqueuerQueue{existingMessages: map[string]bool{"message-existing": true}}
-	enqueuer, err := NewEnqueuer(store, queue)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Scanned != 1 || stats.Enqueued != 0 || stats.Skipped != 1 || stats.Failed != 0 {
-		t.Fatalf("stats = %+v", stats)
-	}
-	if len(queue.messages) != 0 {
-		t.Fatalf("messages = %+v", queue.messages)
-	}
-}
-
 func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testing.T) {
 	ctx := context.Background()
 	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
@@ -192,7 +160,7 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testin
 	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
-	if len(queue.messages) != 1 || !store.markEnqueued.DispatchMessageID.Valid {
+	if len(queue.messages) != 1 || store.markEnqueued.RunID != runID {
 		t.Fatalf("messages = %+v mark enqueued = %+v", queue.messages, store.markEnqueued)
 	}
 }
@@ -223,7 +191,7 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageInvalidated(t *te
 	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
 		t.Fatalf("stats = %+v", stats)
 	}
-	if len(queue.messages) != 1 || !store.markEnqueued.DispatchMessageID.Valid || !queue.invalidatedMessages["message-invalidated"] {
+	if len(queue.messages) != 1 || store.markEnqueued.RunID != runID || !queue.invalidatedMessages["message-invalidated"] {
 		t.Fatalf("messages = %+v mark enqueued = %+v invalidated = %+v", queue.messages, store.markEnqueued, queue.invalidatedMessages)
 	}
 }
@@ -267,14 +235,14 @@ func (f *fakeEnqueuerStore) ListQueuedRunQueueItemCandidatesForScope(_ context.C
 	return f.candidates, nil
 }
 
-func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueued(_ context.Context, arg db.MarkRunQueueItemEnqueuedParams) (db.RunQueueItem, error) {
+func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueued(_ context.Context, arg db.MarkRunQueueItemEnqueuedParams) (db.Run, error) {
 	f.markEnqueued = arg
-	return db.RunQueueItem{}, nil
+	return db.Run{}, nil
 }
 
-func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueueError(_ context.Context, arg db.MarkRunQueueItemEnqueueErrorParams) (db.RunQueueItem, error) {
+func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueueError(_ context.Context, arg db.MarkRunQueueItemEnqueueErrorParams) (db.Run, error) {
 	f.markError = arg
-	return db.RunQueueItem{}, nil
+	return db.Run{}, nil
 }
 
 type fakeEnqueuerQueue struct {

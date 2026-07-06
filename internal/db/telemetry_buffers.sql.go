@@ -204,7 +204,7 @@ func (q *Queries) ListRunLogChunksAfterWatermark(ctx context.Context, arg ListRu
 }
 
 const listSubjectEventsAfterWatermark = `-- name: ListSubjectEventsAfterWatermark :many
-SELECT events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.attempt_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
+SELECT events.id, events.subject_type, events.subject_id, events.seq, events.org_id, events.worker_group_id, events.project_id, events.environment_id, events.run_id, events.deployment_id, events.run_lease_id, events.attempt_number, events.trace_id, events.span_id, events.parent_span_id, events.traceparent, events.category, events.severity, events.source, events.kind, events.message, events.payload, events.redaction_class, events.snapshot_version, events.expires_at, events.occurred_at, events.created_at
   FROM event_hot_payloads AS events
  WHERE events.org_id = $1
    AND events.worker_group_id = $2
@@ -253,7 +253,6 @@ func (q *Queries) ListSubjectEventsAfterWatermark(ctx context.Context, arg ListS
 			&i.EnvironmentID,
 			&i.RunID,
 			&i.DeploymentID,
-			&i.AttemptID,
 			&i.RunLeaseID,
 			&i.AttemptNumber,
 			&i.TraceID,

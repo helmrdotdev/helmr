@@ -19,17 +19,14 @@ import (
 
 func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker workerActor) (dispatch.ClaimedRun, db.LeaseRunLeaseRow, bool, error) {
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	entry, err := s.db.ReserveCheckpointRestoreRunQueueItemForWorker(ctx, db.ReserveCheckpointRestoreRunQueueItemForWorkerParams{
-		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
-		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
-	})
+	entry, err := s.db.ReserveCheckpointRestoreRunQueueItemForWorker(ctx, pgvalue.UUID(worker.WorkerInstanceID))
 	if isNoRows(err) {
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
 	}
 	if err != nil {
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
 	}
-	messageID := strings.TrimSpace(entry.DispatchMessageID.String)
+	messageID := strings.TrimSpace(fmt.Sprint(entry.DispatchMessageID))
 	dispatchLeaseID := "restore-source-" + uuid.Must(uuid.NewV7()).String()
 	lease := dispatch.Lease{
 		ID:               dispatchLeaseID,
@@ -38,14 +35,15 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 		AttemptNumber:    1,
 		ExpiresAt:        expiresAt,
 		Message: dispatch.Message{
-			RunID:           pgvalue.UUIDString(entry.RunID),
-			OrgID:           pgvalue.UUIDString(entry.OrgID),
-			WorkerGroupID:   entry.WorkerGroupID,
-			QueueClass:      entry.QueueClass,
-			QueueName:       entry.QueueName,
-			Priority:        entry.Priority,
-			QueueTimestamp:  pgvalue.Time(entry.QueueTimestamp),
-			QueuedExpiresAt: pgvalue.Time(entry.QueuedExpiresAt),
+			RunID:              pgvalue.UUIDString(entry.RunID),
+			OrgID:              pgvalue.UUIDString(entry.OrgID),
+			WorkerGroupID:      entry.WorkerGroupID,
+			QueueClass:         entry.QueueClass,
+			QueueName:          entry.QueueName,
+			DispatchGeneration: entry.DispatchGeneration,
+			Priority:           entry.Priority,
+			QueueTimestamp:     pgvalue.Time(entry.QueueTimestamp),
+			QueuedExpiresAt:    pgvalue.Time(entry.QueuedExpiresAt),
 		},
 	}
 	sessionSpanID, err := tracing.NewSpanID()
@@ -56,15 +54,16 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
 	}
 	leasedRun, err := s.db.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
-		OrgID:             entry.OrgID,
-		RunID:             entry.RunID,
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		DispatchMessageID: pgtype.Text{String: messageID, Valid: true},
-		DispatchLeaseID:   dispatchLeaseID,
-		DispatchAttempt:   1,
-		LeaseExpiresAt:    pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		RunLeaseSpanID:    sessionSpanID,
+		OrgID:              entry.OrgID,
+		RunID:              entry.RunID,
+		DispatchGeneration: entry.DispatchGeneration,
+		WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+		RunLeaseID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		DispatchMessageID:  messageID,
+		DispatchLeaseID:    dispatchLeaseID,
+		DispatchAttempt:    1,
+		LeaseExpiresAt:     pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		RunLeaseSpanID:     sessionSpanID,
 	})
 	if isNoRows(err) {
 		s.logRunWorkspaceReuseDiagnostics(ctx, entry.OrgID, entry.RunID, pgvalue.UUID(worker.WorkerInstanceID), "checkpoint_restore_source_lease_no_rows")
@@ -88,15 +87,26 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 			"restore_runtime_checkpoint_id", pgvalue.UUIDString(leasedRun.RunLeaseRestoreRuntimeCheckpointID),
 		)
 	}
-	return dispatch.ClaimedRun{Lease: lease, Entry: checkpointRestoreRunQueueItem(entry)}, leasedRun, true, nil
+	return dispatch.ClaimedRun{Lease: lease, Entry: checkpointRestoreRun(entry)}, leasedRun, true, nil
 }
 
 func (s *Server) requeueCheckpointRestoreRunQueueItem(ctx context.Context, worker workerActor, entry db.ReserveCheckpointRestoreRunQueueItemForWorkerRow, messageID string, lastError string) error {
-	return s.requeueRunQueueItem(ctx, worker, checkpointRestoreRunQueueItem(entry), messageID, lastError)
+	return s.requeueRunQueueItem(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, lastError)
 }
 
-func checkpointRestoreRunQueueItem(row db.ReserveCheckpointRestoreRunQueueItemForWorkerRow) db.RunQueueItem {
-	return db.RunQueueItem(row)
+func checkpointRestoreRun(row db.ReserveCheckpointRestoreRunQueueItemForWorkerRow) db.Run {
+	return db.Run{
+		OrgID:              row.OrgID,
+		WorkerGroupID:      row.WorkerGroupID,
+		ID:                 row.RunID,
+		QueueClass:         row.QueueClass,
+		QueueName:          row.QueueName,
+		Priority:           row.Priority,
+		QueueTimestamp:     row.QueueTimestamp,
+		QueuedExpiresAt:    row.QueuedExpiresAt,
+		DispatchGeneration: row.DispatchGeneration,
+		Status:             db.RunStatusQueued,
+	}
 }
 
 func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseRow) (*api.WorkerRestore, error) {

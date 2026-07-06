@@ -12,7 +12,6 @@ import (
 func TestResolveRun(t *testing.T) {
 	run := api.WorkerRun{
 		ID:                 "run-1",
-		AttemptID:          "attempt-1",
 		AttemptNumber:      1,
 		RunLeaseID:         "run-lease-1",
 		SnapshotVersion:    2,
@@ -55,7 +54,6 @@ func TestResolveDefaultsJSON(t *testing.T) {
 func TestResolveRestoreDoesNotRequireSources(t *testing.T) {
 	_, err := Resolve(api.WorkerRun{
 		ID:                 "run-1",
-		AttemptID:          "attempt-1",
 		AttemptNumber:      1,
 		RunLeaseID:         "run-lease-1",
 		SnapshotVersion:    2,
@@ -97,7 +95,6 @@ func TestResolveRejectsInvalidRun(t *testing.T) {
 func validRun() api.WorkerRun {
 	return api.WorkerRun{
 		ID:                 "run-1",
-		AttemptID:          "attempt-1",
 		AttemptNumber:      1,
 		RunLeaseID:         "run-lease-1",
 		SnapshotVersion:    2,

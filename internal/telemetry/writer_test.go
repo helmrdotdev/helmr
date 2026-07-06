@@ -12,7 +12,6 @@ import (
 )
 
 func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
-	attemptID := uuid.Must(uuid.NewV7())
 	deploymentID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
 	runLeaseID := uuid.Must(uuid.NewV7())
@@ -32,7 +31,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		Seq:            7,
 		RunID:          &runID,
 		DeploymentID:   &deploymentID,
-		AttemptID:      &attemptID,
 		RunLeaseID:     &runLeaseID,
 		AttemptNumber:  &attemptNumber,
 		TraceID:        "trace",
@@ -53,11 +51,11 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	eventBatch := client.takeLast(t)
 	assertQueryContains(t, eventBatch.query, "INSERT INTO helmr_telemetry.events", "observed_at")
-	assertRowShape(t, eventBatch.rows, 1, 26)
+	assertRowShape(t, eventBatch.rows, 1, 25)
 	if got := eventBatch.rows[0][7]; got != uint64(7) {
 		t.Fatalf("event seq = %v, want 7", got)
 	}
-	if got := eventBatch.rows[0][25]; got != observedAt {
+	if got := eventBatch.rows[0][24]; got != observedAt {
 		t.Fatalf("event observed_at = %v, want %v", got, observedAt)
 	}
 
@@ -67,7 +65,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
 		RunID:          runID,
-		AttemptID:      &attemptID,
 		RunLeaseID:     runLeaseID,
 		AttemptNumber:  attemptNumber,
 		StreamName:     "stdout",
@@ -84,10 +81,14 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	runLogBatch := client.takeLast(t)
-	assertQueryContains(t, runLogBatch.query, "INSERT INTO helmr_telemetry.run_logs", "attempt_id", "observed_at")
-	assertRowShape(t, runLogBatch.rows, 1, 18)
-	if got := runLogBatch.rows[0][5]; got != &attemptID {
-		t.Fatalf("run log attempt_id = %v, want pointer to %s", got, attemptID)
+	assertQueryContains(t, runLogBatch.query, "INSERT INTO helmr_telemetry.run_logs", "run_lease_id", "observed_at")
+	forbiddenAttemptColumn := "attempt" + "_id"
+	if strings.Contains(runLogBatch.query, forbiddenAttemptColumn) {
+		t.Fatalf("run log query contains removed attempt column: %s", runLogBatch.query)
+	}
+	assertRowShape(t, runLogBatch.rows, 1, 17)
+	if got := runLogBatch.rows[0][5]; got != runLeaseID {
+		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
 
 	if err := writer.WriteTerminalOutput(context.Background(), []TerminalOutputRecord{{

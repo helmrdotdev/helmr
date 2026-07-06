@@ -21,18 +21,16 @@ WITH worker_scope AS MATERIALIZED (
      FOR UPDATE OF worker_instances
 ),
 active_run_usage AS MATERIALIZED (
-    SELECT COALESCE(sum(run_runtime_requirements.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-           COALESCE(sum(run_runtime_requirements.requested_memory_mib), 0)::bigint AS used_memory_mib,
-           COALESCE(sum(run_runtime_requirements.requested_disk_mib), 0)::bigint AS used_disk_mib,
-           COALESCE(sum(run_runtime_requirements.requested_execution_slots), 0)::int AS used_slots
+	    SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
+	           COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
+	           COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
+	           COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
       FROM worker_scope
       JOIN run_leases ON run_leases.worker_instance_id = worker_scope.id
                      AND run_leases.status IN ('leased', 'running')
       JOIN runs ON runs.org_id = run_leases.org_id
                AND runs.id = run_leases.run_id
                AND runs.workspace_mount_id IS NULL
-      JOIN run_runtime_requirements ON run_runtime_requirements.org_id = run_leases.org_id
-                                   AND run_runtime_requirements.run_id = run_leases.run_id
 ),
 active_runtime_instance_usage AS MATERIALIZED (
     SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
@@ -512,26 +510,23 @@ WITH run_scope AS MATERIALIZED (
     SELECT runs.id AS run_id,
            runs.org_id,
            runs.project_id,
-           runs.environment_id,
-           runs.workspace_id,
-           runs.workspace_mount_id AS queued_workspace_mount_id,
-           run_runtime_requirements.worker_group_id AS required_worker_group_id,
-           run_runtime_requirements.requested_milli_cpu,
-           run_runtime_requirements.requested_memory_mib,
-           run_runtime_requirements.requested_disk_mib,
-           run_runtime_requirements.requested_execution_slots,
-           run_runtime_requirements.runtime_id,
-           run_runtime_requirements.runtime_arch,
-           run_runtime_requirements.runtime_abi,
-           run_runtime_requirements.kernel_digest,
-           run_runtime_requirements.initramfs_digest,
-           run_runtime_requirements.rootfs_digest,
-           run_runtime_requirements.cni_profile
-      FROM runs
-      JOIN run_runtime_requirements
-        ON run_runtime_requirements.org_id = runs.org_id
-       AND run_runtime_requirements.run_id = runs.id
-     WHERE runs.org_id = $2
+	           runs.environment_id,
+	           runs.workspace_id,
+	           runs.workspace_mount_id AS queued_workspace_mount_id,
+	           runs.worker_group_id AS required_worker_group_id,
+	           runs.requested_milli_cpu,
+	           runs.requested_memory_mib,
+	           runs.requested_disk_mib,
+	           runs.requested_execution_slots,
+	           runs.runtime_id,
+	           runs.runtime_arch,
+	           runs.runtime_abi,
+	           runs.kernel_digest,
+	           runs.initramfs_digest,
+	           runs.rootfs_digest,
+	           runs.cni_profile
+	      FROM runs
+	     WHERE runs.org_id = $2
        AND runs.id = $3
        AND runs.workspace_id IS NOT NULL
 ),

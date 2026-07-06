@@ -19,6 +19,7 @@ type Message struct {
 	QueueConcurrencyScope string
 	QueueConcurrencyLimit int32
 	ConcurrencyKey        string
+	DispatchGeneration    int64
 	Requirements          compute.RunRuntimeRequirements
 	Priority              int32
 	QueueTimestamp        time.Time
@@ -94,6 +95,9 @@ func (m Message) Validate() error {
 	}
 	if m.QueueConcurrencyLimit < 0 {
 		problems = append(problems, errors.New("queue concurrency limit must be non-negative"))
+	}
+	if m.DispatchGeneration <= 0 {
+		problems = append(problems, errors.New("dispatch generation must be positive"))
 	}
 	if err := m.Requirements.Validate(); err != nil {
 		problems = append(problems, err)

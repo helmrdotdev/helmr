@@ -15,7 +15,6 @@ import (
 
 type ResolvedRun struct {
 	RunID            string
-	AttemptID        string
 	AttemptNumber    int32
 	RunLeaseID       string
 	SnapshotVersion  int64
@@ -42,9 +41,6 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 	}
 	if run.TaskID == "" {
 		return ResolvedRun{}, errors.New("worker run task_id is required")
-	}
-	if run.AttemptID == "" {
-		return ResolvedRun{}, errors.New("worker run attempt_id is required")
 	}
 	if run.AttemptNumber <= 0 {
 		return ResolvedRun{}, errors.New("worker run attempt_number must be positive")
@@ -80,7 +76,6 @@ func Resolve(run api.WorkerRun) (ResolvedRun, error) {
 
 	return ResolvedRun{
 		RunID:            run.ID,
-		AttemptID:        run.AttemptID,
 		AttemptNumber:    run.AttemptNumber,
 		RunLeaseID:       run.RunLeaseID,
 		SnapshotVersion:  run.SnapshotVersion,

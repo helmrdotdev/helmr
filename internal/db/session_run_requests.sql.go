@@ -286,9 +286,13 @@ cancelled_runs AS (
            current_run_lease_id = CASE
              WHEN runs.execution_status = 'executing' THEN runs.current_run_lease_id
              ELSE NULL
-           END,
-           error_message = 'stream record consumed by active run',
-           state_version = runs.state_version + 1,
+	           END,
+	           error_message = 'stream record consumed by active run',
+	           dispatch_generation = CASE
+	             WHEN runs.execution_status = 'executing' THEN runs.dispatch_generation
+	             ELSE runs.dispatch_generation + 1
+	           END,
+	           state_version = runs.state_version + 1,
            finished_at = CASE
              WHEN runs.execution_status = 'executing' THEN runs.finished_at
              ELSE COALESCE(runs.finished_at, now())
@@ -303,40 +307,9 @@ cancelled_runs AS (
        AND runs.environment_id = target.environment_id
        AND runs.id = target.run_id
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
-    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 ),
-cancelled_attempts AS (
-    UPDATE run_attempts
-       SET status = 'cancelled',
-           error_message = 'stream record consumed by active run',
-           finished_at = CASE
-             WHEN cancelled_runs.execution_status = 'pending_cancel' THEN run_attempts.finished_at
-             ELSE COALESCE(run_attempts.finished_at, now())
-           END,
-           updated_at = now()
-      FROM cancelled_runs
-     WHERE run_attempts.org_id = cancelled_runs.org_id
-       AND run_attempts.worker_group_id = cancelled_runs.worker_group_id
-       AND run_attempts.run_id = cancelled_runs.id
-       AND run_attempts.id = cancelled_runs.current_attempt_id
-    RETURNING run_attempts.id
-),
-cancelled_queue AS (
-    UPDATE run_queue_items
-       SET status = 'cancelled',
-           dispatch_generation = dispatch_generation + 1,
-           last_error = 'stream record consumed by active run',
-           updated_at = now(),
-           finished_at = now()
-      FROM cancelled_runs
-     WHERE run_queue_items.org_id = cancelled_runs.org_id
-       AND run_queue_items.worker_group_id = cancelled_runs.worker_group_id
-       AND run_queue_items.run_id = cancelled_runs.id
-       AND run_queue_items.status IN ('queued', 'published', 'reserved', 'parked')
-       AND cancelled_runs.execution_status <> 'pending_cancel'
-    RETURNING run_queue_items.run_id
-),
-ended_session_runs AS (
+	ended_session_runs AS (
     UPDATE session_runs
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs

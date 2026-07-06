@@ -98,10 +98,12 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status, err := s.db.StartRunLease(r.Context(), db.StartRunLeaseParams{
-		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		RunID:            pgvalue.UUID(leaseIDs.runID),
-		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		OrgID:             pgvalue.UUID(leaseIDs.orgID),
+		RunID:             pgvalue.UUID(leaseIDs.runID),
+		RunLeaseID:        pgvalue.UUID(leaseIDs.runLeaseID),
+		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
+		DispatchMessageID: leaseIDs.queueMessageID,
+		DispatchLeaseID:   leaseIDs.queueLeaseID,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
@@ -112,7 +114,7 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("start run"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(status)})
+	writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(status.Status)})
 }
 
 func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
@@ -153,13 +155,12 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
 	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
-		OrgID:                pgvalue.UUID(leaseIDs.orgID),
-		WorkerGroupID:        queueLease.Message.WorkerGroupID,
-		RunID:                pgvalue.UUID(leaseIDs.runID),
-		QueueClass:           queueLease.Message.QueueClass,
-		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
-		DispatchMessageID:    pgtype.Text{String: leaseRow.DispatchMessageID, Valid: true},
-		ReservationExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		OrgID:             pgvalue.UUID(leaseIDs.orgID),
+		WorkerGroupID:     queueLease.Message.WorkerGroupID,
+		RunID:             pgvalue.UUID(leaseIDs.runID),
+		QueueClass:        queueLease.Message.QueueClass,
+		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
+		DispatchMessageID: leaseRow.DispatchMessageID,
 	}); isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
@@ -258,13 +259,13 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(err))
 		return
 	}
-	terminalEventKind, terminalEventPayload, err := terminalRunEventForFields(status, exitCode, errorMessage, request.Result)
+	_, terminalEventPayload, err := terminalRunEventForFields(status, exitCode, errorMessage, request.Result)
 	if err != nil {
 		writeError(w, errors.New("encode terminal run event"))
 		return
 	}
 	var workspaceVersionPublicID string
-	run, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &workspaceVersionPublicID}}, func() (db.ReleaseRunLeaseRow, error) {
+	release := func() (db.ReleaseRunLeaseRow, error) {
 		return s.db.ReleaseRunLease(r.Context(), db.ReleaseRunLeaseParams{
 			OrgID:                       pgvalue.UUID(leaseIDs.orgID),
 			RunID:                       pgvalue.UUID(leaseIDs.runID),
@@ -280,17 +281,20 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 			WorkspaceArtifactMediaType:  workspaceFields.artifactMediaType,
 			WorkspaceArtifactEncoding:   workspaceFields.artifactEncoding,
 			WorkspaceArtifactEntryCount: workspaceFields.artifactEntryCount,
-			WorkspaceMountPath:          workspaceFields.mountPath,
 			WorkspaceBaseVersionID:      workspaceFields.baseVersionID,
-			AttemptStatus:               db.RunAttemptStatus(status),
 			ExitCode:                    exitCode,
 			Output:                      output,
 			ErrorMessage:                errorMessage,
-			TerminalEventKind:           terminalEventKind,
 			TerminalEventPayload:        terminalEventPayload,
-			WorkspaceVersionPublicID:    workspaceVersionPublicID,
+			WorkspaceVersionPublicID:    pgvalue.Text(workspaceVersionPublicID),
 		})
-	})
+	}
+	var run db.ReleaseRunLeaseRow
+	if status == db.RunStatusSucceeded && workspaceFields.leaseID.Valid {
+		run, err = createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &workspaceVersionPublicID}}, release)
+	} else {
+		run, err = release()
+	}
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
