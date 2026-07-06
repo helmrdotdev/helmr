@@ -520,6 +520,7 @@ WITH eligible_waits AS (
                               AND runtime_checkpoints.environment_id = run_waits.environment_id
                               AND runtime_checkpoints.run_id = run_waits.run_id
                               AND runtime_checkpoints.id = run_waits.runtime_checkpoint_id
+                              AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
@@ -672,11 +673,15 @@ WITH stale_waits AS MATERIALIZED (
            run_waits.state AS run_wait_state,
            runs.status AS run_status,
            CASE
+             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
+             THEN 'non_latest_runtime_checkpoint'
              WHEN runtime_checkpoints.expires_at <= now()
              THEN 'runtime_checkpoint_expired'
              ELSE 'workspace_version_mismatch'
            END AS failure_reason,
            CASE
+             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
+             THEN 'resolved wait is not attached to the latest runtime checkpoint'
              WHEN runtime_checkpoints.expires_at <= now()
              THEN 'runtime checkpoint expired while run was parked'
              ELSE 'workspace advanced while run was parked'
@@ -708,9 +713,9 @@ WITH stale_waits AS MATERIALIZED (
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.current_run_lease_id IS NULL
        AND runtime_checkpoints.state = 'ready'
-       AND runs.latest_runtime_checkpoint_id = runtime_checkpoints.id
        AND (
-           workspaces.current_version_id IS DISTINCT FROM runtime_checkpoints.base_workspace_version_id
+           runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
+           OR workspaces.current_version_id IS DISTINCT FROM runtime_checkpoints.base_workspace_version_id
            OR runtime_checkpoints.expires_at <= now()
        )
      ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
