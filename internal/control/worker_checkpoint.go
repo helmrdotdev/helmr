@@ -423,7 +423,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			)
 			return errors.New("resolve ready run wait")
 		}
-		if err := acknowledgeCheckpointWorkerCommand(r.Context(), work.q, scope, request.WorkerCommandID, runID, runWaitID, runLeaseID, worker.WorkerInstanceID); err != nil {
+		if err := acknowledgeCheckpointWorkerCommand(r.Context(), work.q, scope, request.WorkerCommandID, runID, runWaitID, runLeaseID, worker.WorkerInstanceID, runtimeCheckpointID); err != nil {
 			return err
 		}
 		work.AfterCommit(func(ctx context.Context) {
@@ -481,16 +481,17 @@ func (s *Server) writeAcknowledgedReadyRuntimeCheckpointReplay(ctx context.Conte
 	return true, nil
 }
 
-func acknowledgeCheckpointWorkerCommand(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, commandID int64, runID uuid.UUID, runWaitID uuid.UUID, runLeaseID uuid.UUID, workerInstanceID uuid.UUID) error {
+func acknowledgeCheckpointWorkerCommand(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, commandID int64, runID uuid.UUID, runWaitID uuid.UUID, runLeaseID uuid.UUID, workerInstanceID uuid.UUID, runtimeCheckpointID uuid.UUID) error {
 	_, err := store.AcknowledgeWorkerCommandForRunWait(ctx, db.AcknowledgeWorkerCommandForRunWaitParams{
-		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
-		ID:               commandID,
-		OrgID:            scope.OrgID,
-		WorkerGroupID:    scope.WorkerGroupID,
-		RunID:            pgvalue.UUID(runID),
-		RunWaitID:        pgvalue.UUID(runWaitID),
-		RunLeaseID:       pgvalue.UUID(runLeaseID),
-		Kind:             db.WorkerCommandKindRuntimeCheckpointWait,
+		WorkerInstanceID:    pgvalue.UUID(workerInstanceID),
+		ID:                  commandID,
+		OrgID:               scope.OrgID,
+		WorkerGroupID:       scope.WorkerGroupID,
+		RunID:               pgvalue.UUID(runID),
+		RunWaitID:           pgvalue.UUID(runWaitID),
+		RunLeaseID:          pgvalue.UUID(runLeaseID),
+		Kind:                db.WorkerCommandKindRuntimeCheckpointWait,
+		RuntimeCheckpointID: pgvalue.UUID(runtimeCheckpointID),
 	})
 	if isNoRows(err) {
 		return conflict(errors.New("worker checkpoint command is not active for this run wait"))
@@ -560,7 +561,7 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		} else if err != nil {
 			return errors.New("mark runtime checkpoint attempt failed")
 		}
-		return acknowledgeCheckpointWorkerCommand(r.Context(), work.q, scope, request.WorkerCommandID, runID, runWaitID, runLeaseID, worker.WorkerInstanceID)
+		return acknowledgeCheckpointWorkerCommand(r.Context(), work.q, scope, request.WorkerCommandID, runID, runWaitID, runLeaseID, worker.WorkerInstanceID, runtimeCheckpointID)
 	})
 	if err != nil {
 		writeError(w, err)
