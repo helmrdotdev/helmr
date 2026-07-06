@@ -64,20 +64,9 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("reap stale workspace mounts"))
 		return
 	}
-	queueLease, leasedRun, foundLease, err := s.tryLeaseResidentRun(r.Context(), worker)
-	if err != nil {
-		s.log.Error("worker resident run lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("lease resident run"))
-		return
-	}
-	if !foundLease {
-		queueLease, leasedRun, foundLease, err = s.tryLeaseCheckpointRestoreRun(r.Context(), worker)
-		if err != nil {
-			s.log.Error("worker checkpoint restore run lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-			writeError(w, errors.New("lease checkpoint restore run"))
-			return
-		}
-	}
+	var queueLease dispatch.ClaimedRun
+	var leasedRun db.LeaseRunLeaseRow
+	var foundLease bool
 	if !foundLease {
 		capacity, err := s.db.GetWorkerInstanceRunDispatchCapacity(r.Context(), db.GetWorkerInstanceRunDispatchCapacityParams{
 			ID:            pgvalue.UUID(worker.WorkerInstanceID),
@@ -110,7 +99,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 			return
 		}
-		runClaimer, err := dispatch.NewClaimer(s.db, s.dispatchQueue)
+		runClaimer, err := dispatch.NewClaimer(s.dispatchQueue)
 		if err != nil {
 			writeError(w, unavailable(errors.New("run dispatch queue is not configured")))
 			return
@@ -190,6 +179,15 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 						return
 					}
 					if candidateLease.Lease.MessageID == "" {
+						continue
+					}
+					exhausted, err := s.deadLetterExhaustedRunDispatch(r.Context(), candidateLease)
+					if err != nil {
+						s.log.Error("worker queue lease exhaustion check failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+						writeError(w, errors.New("check run dispatch attempts"))
+						return
+					}
+					if exhausted {
 						continue
 					}
 					sessionSpanID, err := tracing.NewSpanID()
@@ -280,107 +278,32 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{Lease: &lease, Run: &run})
 }
 
-func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (dispatch.ClaimedRun, db.LeaseRunLeaseRow, bool, error) {
-	expiresAt := time.Now().Add(workerLeaseDuration)
-	entry, err := s.db.ReserveResidentRunForWorker(ctx, pgvalue.UUID(worker.WorkerInstanceID))
-	if isNoRows(err) {
-		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
+func (s *Server) deadLetterExhaustedRunDispatch(ctx context.Context, candidate dispatch.ClaimedRun) (bool, error) {
+	if candidate.Lease.AttemptNumber <= dispatch.DefaultMaxDispatchAttempts {
+		return false, nil
 	}
-	if err != nil {
-		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
-	}
-	messageID := strings.TrimSpace(fmt.Sprint(entry.DispatchMessageID))
-	dispatchLeaseID := "resident-" + uuid.Must(uuid.NewV7()).String()
-	lease := dispatch.Lease{
-		ID:               dispatchLeaseID,
-		MessageID:        messageID,
-		WorkerInstanceID: worker.WorkerInstanceID.String(),
-		AttemptNumber:    1,
-		ExpiresAt:        expiresAt,
-		Message: dispatch.Message{
-			RunID:              pgvalue.UUIDString(entry.RunID),
-			OrgID:              pgvalue.UUIDString(entry.OrgID),
-			WorkerGroupID:      entry.WorkerGroupID,
-			QueueClass:         entry.QueueClass,
-			QueueName:          entry.QueueName,
-			DispatchGeneration: entry.DispatchGeneration,
-			Priority:           entry.Priority,
-			QueueTimestamp:     pgvalue.Time(entry.QueueTimestamp),
-			QueuedExpiresAt:    pgvalue.Time(entry.QueuedExpiresAt),
-		},
-	}
-	sessionSpanID, err := tracing.NewSpanID()
-	if err != nil {
-		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, "resident trace span failed"); requeueErr != nil {
-			err = errors.Join(err, requeueErr)
+	lastError := fmt.Sprintf("run exceeded max dispatch attempts (%d)", dispatch.DefaultMaxDispatchAttempts)
+	if _, err := s.db.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
+		DispatchAttempt:     candidate.Lease.AttemptNumber,
+		LastError:           lastError,
+		OrgID:               candidate.Entry.OrgID,
+		WorkerGroupID:       candidate.Entry.WorkerGroupID,
+		QueueClass:          candidate.Entry.QueueClass,
+		RunID:               candidate.Entry.ID,
+		DispatchGeneration:  candidate.Entry.DispatchGeneration,
+		MaxDispatchAttempts: dispatch.DefaultMaxDispatchAttempts,
+	}); isNoRows(err) {
+		if nackErr := s.dispatchQueue.Nack(ctx, candidate.Lease, dispatch.NackReasonInvalid); nackErr != nil {
+			return false, nackErr
 		}
-		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
+		return true, nil
+	} else if err != nil {
+		return false, err
 	}
-	leasedRun, err := s.db.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
-		OrgID:              entry.OrgID,
-		RunID:              entry.RunID,
-		DispatchGeneration: entry.DispatchGeneration,
-		WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
-		RunLeaseID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		DispatchMessageID:  messageID,
-		DispatchLeaseID:    dispatchLeaseID,
-		DispatchAttempt:    1,
-		LeaseExpiresAt:     pgtype.Timestamptz{Time: expiresAt, Valid: true},
-		RunLeaseSpanID:     sessionSpanID,
-	})
-	if isNoRows(err) {
-		s.logRunWorkspaceReuseDiagnostics(ctx, entry.OrgID, entry.RunID, pgvalue.UUID(worker.WorkerInstanceID), "resident_lease_no_rows")
-		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, "resident execution lease conflict"); requeueErr != nil {
-			return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, requeueErr
-		}
-		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
+	if err := s.dispatchQueue.Ack(ctx, candidate.Lease); err != nil {
+		return false, err
 	}
-	if err != nil {
-		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, err.Error()); requeueErr != nil {
-			err = errors.Join(err, requeueErr)
-		}
-		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
-	}
-	if s.log != nil {
-		s.log.Info("worker resident run lease acquired",
-			"worker_instance_id", worker.WorkerInstanceID.String(),
-			"run_id", pgvalue.UUIDString(leasedRun.ID),
-			"workspace_id", pgvalue.UUIDString(leasedRun.WorkspaceID),
-			"workspace_mount_id", pgvalue.UUIDString(leasedRun.WorkspaceMountID),
-		)
-	}
-	return dispatch.ClaimedRun{Lease: lease, Entry: residentRun(entry)}, leasedRun, true, nil
-}
-
-func (s *Server) requeueResidentRunDispatch(ctx context.Context, entry db.ReserveResidentRunForWorkerRow, lastError string) error {
-	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, entry.DispatchGeneration, lastError)
-}
-
-func (s *Server) requeueRunDispatch(ctx context.Context, orgID pgtype.UUID, workerGroupID string, queueClass string, runID pgtype.UUID, dispatchGeneration int64, lastError string) error {
-	_, err := s.db.RequeueRunDispatch(ctx, db.RequeueRunDispatchParams{
-		OrgID:                      orgID,
-		WorkerGroupID:              workerGroupID,
-		QueueClass:                 queueClass,
-		RunID:                      runID,
-		ExpectedDispatchGeneration: dispatchGeneration,
-		LastError:                  strings.TrimSpace(lastError),
-	})
-	return err
-}
-
-func residentRun(row db.ReserveResidentRunForWorkerRow) db.Run {
-	return db.Run{
-		OrgID:              row.OrgID,
-		WorkerGroupID:      row.WorkerGroupID,
-		ID:                 row.RunID,
-		QueueClass:         row.QueueClass,
-		QueueName:          row.QueueName,
-		Priority:           row.Priority,
-		QueueTimestamp:     row.QueueTimestamp,
-		QueuedExpiresAt:    row.QueuedExpiresAt,
-		DispatchGeneration: row.DispatchGeneration,
-		Status:             db.RunStatusQueued,
-	}
+	return true, nil
 }
 
 func (s *Server) ensureQueuedRunWorkspaceMountForLeaseConflict(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) error {

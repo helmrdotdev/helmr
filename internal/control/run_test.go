@@ -2737,6 +2737,9 @@ type fakeStore struct {
 	ackedLeases                             []dispatch.Lease
 	nackedLeases                            []dispatch.Lease
 	nackReasons                             []dispatch.NackReason
+	dispatchLeaseAttempt                    int32
+	deadLetterRunDispatch                   db.DeadLetterRunDispatchParams
+	deadLetterRunDispatchCalls              int
 	activeQueueLeaseMissing                 bool
 	renewErr                                error
 	listQueueScopes                         db.ListQueueScopesParams
@@ -2745,10 +2748,6 @@ type fakeStore struct {
 	workerQueueCapacitySet                  bool
 	claimWorkspaceMount                     db.ClaimWorkspaceMountParams
 	claimWorkspaceMountCalls                int
-	residentRunDispatch                     db.ReserveResidentRunForWorkerRow
-	residentRunDispatchSet                  bool
-	residentRunDispatchReservation          pgtype.UUID
-	residentRunDispatchReservationCalls     int
 	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
 	requestCapacityPressureStopsCalls       int
 	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams
@@ -3844,10 +3843,6 @@ func (f *fakeStore) GetRunLeaseRuntimeRelease(_ context.Context, arg db.GetRunLe
 		RootfsDigest:    capabilities.RootfsDigest,
 		CniProfile:      capabilities.CNIProfile,
 	}, nil
-}
-
-func (f *fakeStore) RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
-	return false, nil
 }
 
 func (f *fakeStore) FailExpiredRunningRunLeases(context.Context, db.FailExpiredRunningRunLeasesParams) error {

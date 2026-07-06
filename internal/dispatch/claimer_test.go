@@ -11,10 +11,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 )
 
-func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
+func TestClaimReturnsDequeuedRedisLease(t *testing.T) {
 	ctx := context.Background()
 	orgID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
@@ -38,16 +37,8 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 			ExpiresAt:        expiresAt,
 		}},
 	}
-	store := &fakeClaimerStore{dispatch: db.Run{
-		OrgID:              pgvalue.UUID(orgID),
-		ID:                 pgvalue.UUID(runID),
-		Status:             db.RunStatusQueued,
-		QueueName:          "queue-a",
-		Priority:           0,
-		DispatchGeneration: 1,
-	}}
 
-	claimer, err := NewClaimer(store, queue)
+	claimer, err := NewClaimer(queue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +60,8 @@ func TestClaimMarksDequeuedDispatchLeased(t *testing.T) {
 	if result.Entry.DispatchGeneration != 1 || result.Entry.ID != pgvalue.UUID(runID) {
 		t.Fatalf("claimed entry = %+v", result.Entry)
 	}
-	if len(queue.requeued) != 0 {
-		t.Fatalf("requeued leases = %+v", queue.requeued)
+	if len(queue.acked) != 0 || len(queue.nacked) != 0 {
+		t.Fatalf("acked=%+v nacked=%+v, want none", queue.acked, queue.nacked)
 	}
 }
 
@@ -93,7 +84,7 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 			ExpiresAt:        time.Now().Add(time.Minute).UTC(),
 		}},
 	}
-	claimer, err := NewClaimer(&fakeClaimerStore{}, queue)
+	claimer, err := NewClaimer(queue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,205 +99,8 @@ func TestClaimDeletesInvalidDispatchLease(t *testing.T) {
 	if !errors.Is(err, ErrNoClaim) {
 		t.Fatalf("claim error = %v, want ErrNoClaim", err)
 	}
-	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
-		t.Fatalf("requeued = %+v", queue.requeued)
-	}
-}
-
-func TestClaimDeadLettersAfterMaxAttempts(t *testing.T) {
-	ctx := context.Background()
-	orgID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	hostID := uuid.Must(uuid.NewV7())
-	lease := Lease{
-		ID:        "lease-1",
-		MessageID: "message-dead",
-		Message: Message{
-			OrgID:              orgID.String(),
-			WorkerGroupID:      "us-east-1-worker-group-1",
-			QueueClass:         "default",
-			RunID:              runID.String(),
-			QueueName:          "queue-a",
-			DispatchGeneration: 1,
-			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
-		},
-		WorkerInstanceID: hostID.String(),
-		AttemptNumber:    3,
-		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
-	}
-	queue := &fakeClaimerQueue{leases: []Lease{lease}}
-	store := &fakeClaimerStore{attemptsExhausted: true}
-	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
-		OrgID:            orgID.String(),
-		WorkerGroupID:    "us-east-1-worker-group-1",
-		QueueClass:       "default",
-		WorkerInstanceID: hostID.String(),
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
-		MaxMessages:      1,
-	}})
-	if !errors.Is(err, ErrNoClaim) {
-		t.Fatalf("claim error = %v, want ErrNoClaim", err)
-	}
-	if store.deadLettered.RunID != pgvalue.UUID(runID) {
-		t.Fatalf("dead letter params = %+v", store.deadLettered)
-	}
-	if len(queue.acked) != 1 || queue.acked[0].ID != lease.ID {
-		t.Fatalf("acked leases = %+v", queue.acked)
-	}
-	if len(queue.requeued) != 0 {
-		t.Fatalf("requeued leases = %+v", queue.requeued)
-	}
-}
-
-func TestClaimDoesNotAckWhenDeadLetterFails(t *testing.T) {
-	ctx := context.Background()
-	orgID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	hostID := uuid.Must(uuid.NewV7())
-	lease := Lease{
-		ID:        "lease-1",
-		MessageID: "message-dead",
-		Message: Message{
-			OrgID:              orgID.String(),
-			WorkerGroupID:      "us-east-1-worker-group-1",
-			QueueClass:         "default",
-			RunID:              runID.String(),
-			QueueName:          "queue-a",
-			DispatchGeneration: 1,
-			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
-		},
-		WorkerInstanceID: hostID.String(),
-		AttemptNumber:    3,
-		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
-	}
-	queue := &fakeClaimerQueue{leases: []Lease{lease}}
-	deadErr := errors.New("route authority denied")
-	store := &fakeClaimerStore{attemptsExhausted: true, deadErr: deadErr}
-	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
-		OrgID:            orgID.String(),
-		WorkerGroupID:    "us-east-1-worker-group-1",
-		QueueClass:       "default",
-		WorkerInstanceID: hostID.String(),
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
-		MaxMessages:      1,
-	}})
-	if !errors.Is(err, deadErr) {
-		t.Fatalf("claim error = %v, want dead-letter error", err)
-	}
-	if len(queue.acked) != 0 {
-		t.Fatalf("acked leases = %+v", queue.acked)
-	}
-	if len(queue.requeued) != 0 {
-		t.Fatalf("requeued leases = %+v", queue.requeued)
-	}
-}
-
-func TestClaimDrainsNonMatchingDeadLetterLease(t *testing.T) {
-	ctx := context.Background()
-	orgID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	hostID := uuid.Must(uuid.NewV7())
-	lease := Lease{
-		ID:        "lease-1",
-		MessageID: "message-dead",
-		Message: Message{
-			OrgID:              orgID.String(),
-			WorkerGroupID:      "us-east-1-worker-group-1",
-			QueueClass:         "default",
-			RunID:              runID.String(),
-			QueueName:          "queue-a",
-			DispatchGeneration: 1,
-			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
-		},
-		WorkerInstanceID: hostID.String(),
-		AttemptNumber:    3,
-		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
-	}
-	queue := &fakeClaimerQueue{leases: []Lease{lease}}
-	store := &fakeClaimerStore{attemptsExhausted: true, deadErr: pgx.ErrNoRows}
-	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
-		OrgID:            orgID.String(),
-		WorkerGroupID:    "us-east-1-worker-group-1",
-		QueueClass:       "default",
-		WorkerInstanceID: hostID.String(),
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
-		MaxMessages:      1,
-	}})
-	if !errors.Is(err, ErrNoClaim) {
-		t.Fatalf("claim error = %v, want ErrNoClaim", err)
-	}
-	if len(queue.acked) != 0 {
-		t.Fatalf("acked leases = %+v", queue.acked)
-	}
-	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
-		t.Fatalf("requeued leases = %+v", queue.requeued)
-	}
-}
-
-func TestClaimDrainsInvalidDeadLetterLeaseWithoutAck(t *testing.T) {
-	ctx := context.Background()
-	orgID := uuid.Must(uuid.NewV7())
-	runID := uuid.Must(uuid.NewV7())
-	hostID := uuid.Must(uuid.NewV7())
-	lease := Lease{
-		ID:        "lease-1",
-		MessageID: "message-dead",
-		Message: Message{
-			OrgID:              orgID.String(),
-			RunID:              runID.String(),
-			QueueName:          "queue-a",
-			DispatchGeneration: 1,
-			Requirements:       compute.RunRuntimeRequirements{Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1}},
-		},
-		WorkerInstanceID: hostID.String(),
-		AttemptNumber:    3,
-		ExpiresAt:        time.Now().Add(time.Minute).UTC(),
-	}
-	queue := &fakeClaimerQueue{leases: []Lease{lease}}
-	store := &fakeClaimerStore{attemptsExhausted: true}
-	claimer, err := NewClaimer(store, queue, WithMaxDispatchAttempts(2))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = claimer.Claim(ctx, ClaimRequest{DequeueRequest: DequeueRequest{
-		OrgID:            orgID.String(),
-		WorkerGroupID:    "us-east-1-worker-group-1",
-		QueueClass:       "default",
-		WorkerInstanceID: hostID.String(),
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1},
-		MaxMessages:      1,
-	}})
-	if !errors.Is(err, ErrNoClaim) {
-		t.Fatalf("claim error = %v, want ErrNoClaim", err)
-	}
-	if store.deadLettered.RunID.Valid {
-		t.Fatalf("dead letter params = %+v", store.deadLettered)
-	}
-	if len(queue.acked) != 0 {
-		t.Fatalf("acked leases = %+v", queue.acked)
-	}
-	if len(queue.requeued) != 1 || queue.requeued[0].reason != NackReasonInvalid {
-		t.Fatalf("requeued leases = %+v", queue.requeued)
+	if len(queue.nacked) != 1 || queue.nacked[0].reason != NackReasonInvalid {
+		t.Fatalf("nacked = %+v", queue.nacked)
 	}
 }
 
@@ -315,7 +109,6 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	orgID := uuid.Must(uuid.NewV7())
 	runID := uuid.Must(uuid.NewV7())
 	hostID := uuid.Must(uuid.NewV7())
-	expiresAt := time.Now().Add(time.Minute).UTC()
 	queue := &fakeClaimerQueue{
 		leases: []Lease{{
 			ID:        "lease-1",
@@ -331,18 +124,10 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 			},
 			WorkerInstanceID: hostID.String(),
 			AttemptNumber:    DefaultMaxDispatchAttempts + 10,
-			ExpiresAt:        expiresAt,
+			ExpiresAt:        time.Now().Add(time.Minute).UTC(),
 		}},
 	}
-	store := &fakeClaimerStore{dispatch: db.Run{
-		OrgID:              pgvalue.UUID(orgID),
-		ID:                 pgvalue.UUID(runID),
-		Status:             db.RunStatusQueued,
-		QueueName:          "queue-a",
-		Priority:           0,
-		DispatchGeneration: 1,
-	}}
-	claimer, err := NewClaimer(store, queue)
+	claimer, err := NewClaimer(queue)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,45 +144,28 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Entry.Status != db.RunStatusQueued || store.deadLettered.RunID.Valid {
-		t.Fatalf("result = %+v dead letter = %+v", result, store.deadLettered)
+	if result.Entry.Status != db.RunStatusQueued || result.Lease.AttemptNumber <= DefaultMaxDispatchAttempts {
+		t.Fatalf("result = %+v", result)
+	}
+	if len(queue.acked) != 0 || len(queue.nacked) != 0 {
+		t.Fatalf("acked=%+v nacked=%+v, want none", queue.acked, queue.nacked)
 	}
 }
 
-type fakeClaimerStore struct {
-	dispatch          db.Run
-	deadLettered      db.DeadLetterRunDispatchParams
-	deadErr           error
-	exhaustedErr      error
-	attemptsExhausted bool
-}
-
-func (f *fakeClaimerStore) DeadLetterRunDispatch(_ context.Context, arg db.DeadLetterRunDispatchParams) (db.DeadLetterRunDispatchRow, error) {
-	f.deadLettered = arg
-	if f.deadErr != nil {
-		return db.DeadLetterRunDispatchRow{}, f.deadErr
+func TestNewClaimerRejectsMissingQueue(t *testing.T) {
+	if _, err := NewClaimer(nil); err == nil {
+		t.Fatal("NewClaimer(nil) error = nil, want error")
 	}
-	return db.DeadLetterRunDispatchRow{
-		OrgID: arg.OrgID,
-		RunID: arg.RunID,
-	}, nil
-}
-
-func (f *fakeClaimerStore) RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
-	if f.exhaustedErr != nil {
-		return false, f.exhaustedErr
-	}
-	return f.attemptsExhausted, nil
 }
 
 type fakeClaimerQueue struct {
-	leases   []Lease
-	acked    []Lease
-	requeued []requeuedLease
-	err      error
+	leases []Lease
+	acked  []Lease
+	nacked []nackedLease
+	err    error
 }
 
-type requeuedLease struct {
+type nackedLease struct {
 	lease  Lease
 	reason NackReason
 }
@@ -424,7 +192,7 @@ func (f *fakeClaimerQueue) Ack(_ context.Context, lease Lease) error {
 }
 
 func (f *fakeClaimerQueue) Nack(_ context.Context, lease Lease, reason NackReason) error {
-	f.requeued = append(f.requeued, requeuedLease{lease: lease, reason: reason})
+	f.nacked = append(f.nacked, nackedLease{lease: lease, reason: reason})
 	return nil
 }
 

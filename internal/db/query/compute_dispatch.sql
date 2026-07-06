@@ -450,16 +450,6 @@ UPDATE runs
    AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
--- name: RunLeaseDispatchAttemptsExhausted :one
-SELECT runs.dispatch_attempt_count >= sqlc.arg(max_dispatch_attempts)::int AS exhausted
-  FROM runs
-WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
-   AND runs.queue_class = sqlc.arg(queue_class)
-   AND runs.id = sqlc.arg(run_id)
-   AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
-   AND runs.status = 'queued';
-
 -- name: CompleteRunDispatch :one
 SELECT runs.*
   FROM runs
@@ -484,68 +474,6 @@ UPDATE runs
    AND runs.current_run_lease_id IS NULL
 RETURNING *;
 
--- name: ReserveResidentRunForWorker :one
-SELECT runs.org_id,
-       runs.worker_group_id,
-       runs.id AS run_id,
-       runs.queue_class,
-       runs.queue_name,
-       runs.priority,
-       runs.queue_timestamp,
-       runs.queued_expires_at,
-       runs.dispatch_generation,
-       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
-  FROM runs
-  JOIN worker_instances
-    ON worker_instances.id = sqlc.arg(worker_instance_id)
-   AND worker_instances.worker_group_id = runs.worker_group_id
-   AND worker_instances.status = 'active'
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND runs.latest_runtime_checkpoint_id IS NULL
-   AND EXISTS (
-       SELECT 1
-         FROM runtime_instances
-        WHERE runtime_instances.org_id = runs.org_id
-          AND runtime_instances.project_id = runs.project_id
-          AND runtime_instances.environment_id = runs.environment_id
-          AND runtime_instances.workspace_id = runs.workspace_id
-          AND runtime_instances.worker_instance_id = worker_instances.id
-          AND runtime_instances.state IN ('ready', 'waiting_hot')
-   )
- ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
- LIMIT 1;
-
--- name: ReserveCheckpointRestoreRunForWorker :one
-SELECT runs.org_id,
-       runs.worker_group_id,
-       runs.id AS run_id,
-       runs.queue_class,
-       runs.queue_name,
-       runs.priority,
-       runs.queue_timestamp,
-       runs.queued_expires_at,
-       runs.dispatch_generation,
-       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
-  FROM runs
-  JOIN worker_instances
-    ON worker_instances.id = sqlc.arg(worker_instance_id)
-   AND worker_instances.worker_group_id = runs.worker_group_id
-   AND worker_instances.status = 'active'
-  JOIN runtime_checkpoints
-    ON runtime_checkpoints.org_id = runs.org_id
-   AND runtime_checkpoints.run_id = runs.id
-   AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
-   AND runtime_checkpoints.source_worker_instance_id = worker_instances.id
-   AND runtime_checkpoints.state = 'ready'
-   AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
- ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
- LIMIT 1;
-
 -- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
@@ -554,6 +482,7 @@ WITH terminalized AS (
            terminal_outcome = 'dead_lettered',
            current_run_lease_id = NULL,
            dispatch_generation = dispatch_generation + 1,
+           dispatch_attempt_count = GREATEST(dispatch_attempt_count, sqlc.arg(dispatch_attempt)::int),
            last_enqueue_error = sqlc.arg(last_error),
            state_version = state_version + 1,
            finished_at = COALESCE(finished_at, now()),
@@ -564,6 +493,7 @@ WITH terminalized AS (
        AND runs.id = sqlc.arg(run_id)
        AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
        AND runs.status = 'queued'
+       AND sqlc.arg(dispatch_attempt)::int > sqlc.arg(max_dispatch_attempts)::int
     RETURNING *
 ),
 ended_session_run AS (

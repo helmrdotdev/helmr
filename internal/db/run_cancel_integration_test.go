@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -345,12 +346,14 @@ func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
-		OrgID:              pgvalue.UUID(ids.orgID),
-		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
-		RunID:              pgvalue.UUID(ids.runID),
-		QueueClass:         "default",
-		DispatchGeneration: 1,
-		LastError:          "dispatch retries exhausted",
+		DispatchAttempt:     dispatch.DefaultMaxDispatchAttempts + 1,
+		LastError:           "dispatch retries exhausted",
+		OrgID:               pgvalue.UUID(ids.orgID),
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
+		RunID:               pgvalue.UUID(ids.runID),
+		QueueClass:          "default",
+		DispatchGeneration:  1,
+		MaxDispatchAttempts: dispatch.DefaultMaxDispatchAttempts,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -416,12 +419,14 @@ func TestDeadLetterRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {
 	}
 
 	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
-		OrgID:              pgvalue.UUID(ids.orgID),
-		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
-		RunID:              pgvalue.UUID(ids.runID),
-		QueueClass:         "default",
-		DispatchGeneration: 1,
-		LastError:          "stale redis message",
+		DispatchAttempt:     dispatch.DefaultMaxDispatchAttempts + 1,
+		LastError:           "stale redis message",
+		OrgID:               pgvalue.UUID(ids.orgID),
+		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
+		RunID:               pgvalue.UUID(ids.runID),
+		QueueClass:          "default",
+		DispatchGeneration:  1,
+		MaxDispatchAttempts: dispatch.DefaultMaxDispatchAttempts,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("dead-letter stale generation error = %v, want pgx.ErrNoRows", err)
 	}
