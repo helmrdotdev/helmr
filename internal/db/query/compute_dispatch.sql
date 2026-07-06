@@ -275,7 +275,7 @@ SELECT * FROM (
        AND worker_instances.status = 'active'
 ) capacity;
 
--- name: PrepareQueuedRunQueueItem :one
+-- name: PrepareQueuedRunDispatch :one
 SELECT runs.id AS run_id,
        runs.org_id,
        runs.worker_group_id,
@@ -393,7 +393,7 @@ SELECT candidate_scopes.org_id,
           candidate_scopes.queue_name ASC
  LIMIT sqlc.arg(row_limit);
 
--- name: ListQueuedRunQueueItemCandidatesForScope :many
+-- name: ListQueuedRunDispatchCandidatesForScope :many
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -425,7 +425,7 @@ SELECT runs.org_id,
  ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
  LIMIT sqlc.arg(row_limit);
 
--- name: MarkRunQueueItemEnqueueError :one
+-- name: MarkRunDispatchEnqueueError :one
 UPDATE runs
    SET last_enqueue_error = sqlc.arg(last_error),
        updated_at = now()
@@ -437,7 +437,7 @@ UPDATE runs
    AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
--- name: MarkRunQueueItemEnqueued :one
+-- name: MarkRunDispatchEnqueued :one
 UPDATE runs
    SET last_enqueue_error = '',
        last_enqueued_at = now(),
@@ -450,7 +450,7 @@ UPDATE runs
    AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
--- name: ReserveRunQueueItem :one
+-- name: ReserveRunDispatch :one
 UPDATE runs
    SET updated_at = now()
  WHERE runs.org_id = sqlc.arg(org_id)
@@ -507,7 +507,7 @@ SELECT runs.*
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.id = sqlc.arg(run_id);
 
--- name: CompleteRunQueueItem :one
+-- name: CompleteRunDispatch :one
 SELECT runs.*
   FROM runs
  WHERE runs.org_id = sqlc.arg(org_id)
@@ -515,7 +515,7 @@ SELECT runs.*
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.id = sqlc.arg(run_id);
 
--- name: RequeueRunQueueItem :one
+-- name: RequeueRunDispatch :one
 UPDATE runs
    SET dispatch_generation = dispatch_generation + 1,
        dispatch_attempt_count = dispatch_attempt_count + 1,
@@ -530,7 +530,7 @@ UPDATE runs
    AND runs.current_run_lease_id IS NULL
 RETURNING *;
 
--- name: ReserveResidentRunQueueItemForWorker :one
+-- name: ReserveResidentRunForWorker :one
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -562,7 +562,7 @@ SELECT runs.org_id,
  ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
  LIMIT 1;
 
--- name: ReserveCheckpointRestoreRunQueueItemForWorker :one
+-- name: ReserveCheckpointRestoreRunForWorker :one
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -590,7 +590,7 @@ SELECT runs.org_id,
  ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
  LIMIT 1;
 
--- name: DeadLetterRunQueueItem :one
+-- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
        SET status = 'failed',

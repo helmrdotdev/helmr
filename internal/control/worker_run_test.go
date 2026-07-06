@@ -877,8 +877,8 @@ func TestWorkerRunLeaseClaimsResidentRunWhenDispatchCapacityIsUnavailable(t *tes
 			AvailableDiskMib:        0,
 			AvailableExecutionSlots: 0,
 		},
-		residentRunQueueItemSet: true,
-		residentRunQueueItem: db.ReserveResidentRunQueueItemForWorkerRow{
+		residentRunDispatchSet: true,
+		residentRunDispatch: db.ReserveResidentRunForWorkerRow{
 			RunID:              pgvalue.UUID(runID),
 			OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
 			WorkerGroupID:      dbtest.DefaultWorkerGroupID,
@@ -914,8 +914,8 @@ func TestWorkerRunLeaseClaimsResidentRunWhenDispatchCapacityIsUnavailable(t *tes
 	if response.Lease.DispatchMessageID != "resident-message-1" {
 		t.Fatalf("dispatch message = %q, want resident-message-1", response.Lease.DispatchMessageID)
 	}
-	if store.residentRunQueueItemReservationCalls != 1 {
-		t.Fatalf("resident reservation calls = %d, want 1", store.residentRunQueueItemReservationCalls)
+	if store.residentRunDispatchReservationCalls != 1 {
+		t.Fatalf("resident reservation calls = %d, want 1", store.residentRunDispatchReservationCalls)
 	}
 	if store.requestCapacityPressureStopsCalls != 0 || store.createCapacityPressureCheckpointsCalls != 0 {
 		t.Fatalf("capacity pressure calls = stops:%d checkpoints:%d, want none", store.requestCapacityPressureStopsCalls, store.createCapacityPressureCheckpointsCalls)
@@ -1128,21 +1128,21 @@ func (f *fakeStore) GetWorkerInstanceRunDispatchCapacity(context.Context, db.Get
 	}, nil
 }
 
-func (f *fakeStore) ReserveResidentRunQueueItemForWorker(_ context.Context, workerInstanceID pgtype.UUID) (db.ReserveResidentRunQueueItemForWorkerRow, error) {
-	f.residentRunQueueItemReservation = workerInstanceID
-	f.residentRunQueueItemReservationCalls++
-	if !f.residentRunQueueItemSet {
-		return db.ReserveResidentRunQueueItemForWorkerRow{}, pgx.ErrNoRows
+func (f *fakeStore) ReserveResidentRunForWorker(_ context.Context, workerInstanceID pgtype.UUID) (db.ReserveResidentRunForWorkerRow, error) {
+	f.residentRunDispatchReservation = workerInstanceID
+	f.residentRunDispatchReservationCalls++
+	if !f.residentRunDispatchSet {
+		return db.ReserveResidentRunForWorkerRow{}, pgx.ErrNoRows
 	}
-	row := f.residentRunQueueItem
+	row := f.residentRunDispatch
 	if row.DispatchMessageID == nil {
 		row.DispatchMessageID = "resident-message-1"
 	}
 	return row, nil
 }
 
-func (f *fakeStore) ReserveCheckpointRestoreRunQueueItemForWorker(context.Context, pgtype.UUID) (db.ReserveCheckpointRestoreRunQueueItemForWorkerRow, error) {
-	return db.ReserveCheckpointRestoreRunQueueItemForWorkerRow{}, pgx.ErrNoRows
+func (f *fakeStore) ReserveCheckpointRestoreRunForWorker(context.Context, pgtype.UUID) (db.ReserveCheckpointRestoreRunForWorkerRow, error) {
+	return db.ReserveCheckpointRestoreRunForWorkerRow{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) ClaimWorkspaceMount(_ context.Context, arg db.ClaimWorkspaceMountParams) (db.ClaimWorkspaceMountRow, error) {
@@ -1226,7 +1226,7 @@ func (f *fakeStore) Renew(_ context.Context, lease dispatch.Lease, expiresAt tim
 	return lease, nil
 }
 
-func (f *fakeStore) CompleteRunQueueItem(_ context.Context, arg db.CompleteRunQueueItemParams) (db.Run, error) {
+func (f *fakeStore) CompleteRunDispatch(_ context.Context, arg db.CompleteRunDispatchParams) (db.Run, error) {
 	if f.run.ID != arg.RunID {
 		return db.Run{}, pgx.ErrNoRows
 	}
@@ -1240,7 +1240,7 @@ func (f *fakeStore) CompleteRunQueueItem(_ context.Context, arg db.CompleteRunQu
 	}, nil
 }
 
-func (f *fakeStore) RequeueRunQueueItem(_ context.Context, arg db.RequeueRunQueueItemParams) (db.Run, error) {
+func (f *fakeStore) RequeueRunDispatch(_ context.Context, arg db.RequeueRunDispatchParams) (db.Run, error) {
 	if f.run.ID != arg.RunID {
 		return db.Run{}, pgx.ErrNoRows
 	}
@@ -1291,7 +1291,7 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 	}, nil
 }
 
-func (f *fakeStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.Run, error) {
+func (f *fakeStore) ReserveRunDispatch(_ context.Context, arg db.ReserveRunDispatchParams) (db.Run, error) {
 	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
 		return db.Run{}, pgx.ErrNoRows
 	}
@@ -1306,11 +1306,11 @@ func (f *fakeStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueu
 	}, nil
 }
 
-func (f *fakeStore) DeadLetterRunQueueItem(_ context.Context, arg db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error) {
+func (f *fakeStore) DeadLetterRunDispatch(_ context.Context, arg db.DeadLetterRunDispatchParams) (db.DeadLetterRunDispatchRow, error) {
 	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued {
-		return db.DeadLetterRunQueueItemRow{}, pgx.ErrNoRows
+		return db.DeadLetterRunDispatchRow{}, pgx.ErrNoRows
 	}
-	return db.DeadLetterRunQueueItemRow{
+	return db.DeadLetterRunDispatchRow{
 		RunID: arg.RunID,
 		OrgID: arg.OrgID,
 	}, nil

@@ -20,9 +20,9 @@ var errInvalidLease = errors.New("invalid queue lease")
 const DefaultMaxDispatchAttempts int32 = 5
 
 type ClaimerStore interface {
-	DeadLetterRunQueueItem(context.Context, db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error)
+	DeadLetterRunDispatch(context.Context, db.DeadLetterRunDispatchParams) (db.DeadLetterRunDispatchRow, error)
 	IsRunQueueLeaseConflict(context.Context, db.IsRunQueueLeaseConflictParams) (bool, error)
-	ReserveRunQueueItem(context.Context, db.ReserveRunQueueItemParams) (db.Run, error)
+	ReserveRunDispatch(context.Context, db.ReserveRunDispatchParams) (db.Run, error)
 	RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error)
 }
 
@@ -175,7 +175,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 		return fmt.Errorf("%w: queue class is required", errInvalidLease)
 	}
 	lastError := fmt.Sprintf("run exceeded max dispatch attempts (%d)", c.maxDispatchAttempts)
-	_, err = c.store.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
+	_, err = c.store.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
 		OrgID:         orgID,
 		WorkerGroupID: workerGroupID,
 		QueueClass:    queueClass,
@@ -209,7 +209,7 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.Run, error) {
 	if lease.Message.DispatchGeneration <= 0 {
 		return db.Run{}, fmt.Errorf("%w: dispatch generation is required", errInvalidLease)
 	}
-	return c.store.ReserveRunQueueItem(ctx, db.ReserveRunQueueItemParams{
+	return c.store.ReserveRunDispatch(ctx, db.ReserveRunDispatchParams{
 		OrgID:              orgID,
 		WorkerGroupID:      workerGroupID,
 		QueueClass:         queueClass,

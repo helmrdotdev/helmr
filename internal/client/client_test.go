@@ -532,7 +532,6 @@ func TestFollowRunLogsSendsCursorAndDecodesChunks(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(api.RunLogChunk{
 			ID:            "tc1.eyJzIjo5fQ",
 			RunID:         "run-1",
-			RunLeaseID:    "run-lease-1",
 			AttemptNumber: 1,
 			Stream:        "stdout",
 			ContentBase64: base64.StdEncoding.EncodeToString([]byte("hello\n")),

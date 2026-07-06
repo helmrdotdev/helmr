@@ -90,7 +90,7 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, worker workerActor, r
 		TerminalEventPayload: payload,
 	})
 	if err != nil {
-		s.requeueWorkerQueueItem(ctx, worker, row.ID, lease, dispatch.NackReasonRetry, err.Error())
+		s.requeueWorkerDispatch(ctx, worker, row.ID, lease, dispatch.NackReasonRetry, err.Error())
 		return err
 	}
 	s.ackWorkerQueueLease(ctx, row.ID, lease)

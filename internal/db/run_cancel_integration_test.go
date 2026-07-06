@@ -195,7 +195,7 @@ func TestCancelRunAllowsDisabledWorkerGroupForControlCancellation(t *testing.T) 
 	}
 }
 
-func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
+func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -212,7 +212,7 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 	`, ids.orgID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.DeadLetterRunQueueItem(ctx, db.DeadLetterRunQueueItemParams{
+	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		RunID:         pgvalue.UUID(ids.runID),

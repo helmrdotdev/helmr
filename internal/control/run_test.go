@@ -2745,10 +2745,10 @@ type fakeStore struct {
 	workerQueueCapacitySet                  bool
 	claimWorkspaceMount                     db.ClaimWorkspaceMountParams
 	claimWorkspaceMountCalls                int
-	residentRunQueueItem                    db.ReserveResidentRunQueueItemForWorkerRow
-	residentRunQueueItemSet                 bool
-	residentRunQueueItemReservation         pgtype.UUID
-	residentRunQueueItemReservationCalls    int
+	residentRunDispatch                     db.ReserveResidentRunForWorkerRow
+	residentRunDispatchSet                  bool
+	residentRunDispatchReservation          pgtype.UUID
+	residentRunDispatchReservationCalls     int
 	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
 	requestCapacityPressureStopsCalls       int
 	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams

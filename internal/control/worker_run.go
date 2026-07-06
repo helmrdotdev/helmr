@@ -123,7 +123,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
+		writeError(w, unavailable(errors.New("run dispatch queue is not configured")))
 		return
 	}
 	var request api.WorkerRenewRequest
@@ -215,7 +215,7 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.dispatchQueue == nil {
-		writeError(w, unavailable(errors.New("run queue item queue is not configured")))
+		writeError(w, unavailable(errors.New("run dispatch queue is not configured")))
 		return
 	}
 	var request api.WorkerReleaseRequest

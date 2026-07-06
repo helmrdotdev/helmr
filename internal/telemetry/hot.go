@@ -163,7 +163,6 @@ func runLogChunkFromHot(chunk db.RunLogHotChunk) api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            Cursor(chunk.Seq),
 		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
-		RunLeaseID:    pgvalue.MustUUIDValue(chunk.RunLeaseID).String(),
 		AttemptNumber: chunk.AttemptNumber,
 		Stream:        string(chunk.Stream),
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),
@@ -197,7 +196,7 @@ func terminalOutputFromPtyHot(row db.WorkspacePtyStreamChunk) TerminalOutputChun
 	}
 }
 
-func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLeaseID pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
+func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {
 	var runIDValue *string
 	if runID.Valid {
 		value := pgvalue.MustUUIDValue(runID).String()
@@ -207,11 +206,6 @@ func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLe
 	if deploymentID.Valid {
 		value := pgvalue.MustUUIDValue(deploymentID).String()
 		deploymentIDValue = &value
-	}
-	var runLeaseIDValue *string
-	if runLeaseID.Valid {
-		value := pgvalue.MustUUIDValue(runLeaseID).String()
-		runLeaseIDValue = &value
 	}
 	var attemptNumber *int32
 	if attemptNumberValue.Valid {
@@ -245,7 +239,6 @@ func eventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, runLe
 		ID:             Cursor(seq),
 		RunID:          runIDValue,
 		DeploymentID:   deploymentIDValue,
-		RunLeaseID:     runLeaseIDValue,
 		AttemptNumber:  attemptNumber,
 		Trace:          api.TraceContext{TraceID: traceID, SpanID: spanID, Traceparent: traceparent},
 		Category:       category,

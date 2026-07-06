@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const completeRunQueueItem = `-- name: CompleteRunQueueItem :one
+const completeRunDispatch = `-- name: CompleteRunDispatch :one
 SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
   FROM runs
  WHERE runs.org_id = $1
@@ -20,15 +20,15 @@ SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_
    AND runs.id = $4
 `
 
-type CompleteRunQueueItemParams struct {
+type CompleteRunDispatchParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
 	QueueClass    string      `json:"queue_class"`
 	RunID         pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueueItemParams) (Run, error) {
-	row := q.db.QueryRow(ctx, completeRunQueueItem,
+func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispatchParams) (Run, error) {
+	row := q.db.QueryRow(ctx, completeRunDispatch,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.QueueClass,
@@ -107,7 +107,7 @@ func (q *Queries) CompleteRunQueueItem(ctx context.Context, arg CompleteRunQueue
 	return i, err
 }
 
-const deadLetterRunQueueItem = `-- name: DeadLetterRunQueueItem :one
+const deadLetterRunDispatch = `-- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
        SET status = 'failed',
@@ -135,7 +135,7 @@ SELECT terminalized.id AS run_id,
   FROM terminalized
 `
 
-type DeadLetterRunQueueItemParams struct {
+type DeadLetterRunDispatchParams struct {
 	LastError     string      `json:"last_error"`
 	OrgID         pgtype.UUID `json:"org_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
@@ -143,7 +143,7 @@ type DeadLetterRunQueueItemParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 }
 
-type DeadLetterRunQueueItemRow struct {
+type DeadLetterRunDispatchRow struct {
 	RunID         pgtype.UUID `json:"run_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
@@ -152,15 +152,15 @@ type DeadLetterRunQueueItemRow struct {
 	StateVersion  int64       `json:"state_version"`
 }
 
-func (q *Queries) DeadLetterRunQueueItem(ctx context.Context, arg DeadLetterRunQueueItemParams) (DeadLetterRunQueueItemRow, error) {
-	row := q.db.QueryRow(ctx, deadLetterRunQueueItem,
+func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error) {
+	row := q.db.QueryRow(ctx, deadLetterRunDispatch,
 		arg.LastError,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.QueueClass,
 		arg.RunID,
 	)
-	var i DeadLetterRunQueueItemRow
+	var i DeadLetterRunDispatchRow
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
@@ -652,7 +652,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 	return items, nil
 }
 
-const listQueuedRunQueueItemCandidatesForScope = `-- name: ListQueuedRunQueueItemCandidatesForScope :many
+const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchCandidatesForScope :many
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -685,7 +685,7 @@ SELECT runs.org_id,
  LIMIT $7
 `
 
-type ListQueuedRunQueueItemCandidatesForScopeParams struct {
+type ListQueuedRunDispatchCandidatesForScopeParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
@@ -695,15 +695,15 @@ type ListQueuedRunQueueItemCandidatesForScopeParams struct {
 	RowLimit      int32       `json:"row_limit"`
 }
 
-type ListQueuedRunQueueItemCandidatesForScopeRow struct {
+type ListQueuedRunDispatchCandidatesForScopeRow struct {
 	OrgID             pgtype.UUID `json:"org_id"`
 	WorkerGroupID     string      `json:"worker_group_id"`
 	RunID             pgtype.UUID `json:"run_id"`
 	DispatchMessageID interface{} `json:"dispatch_message_id"`
 }
 
-func (q *Queries) ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, arg ListQueuedRunQueueItemCandidatesForScopeParams) ([]ListQueuedRunQueueItemCandidatesForScopeRow, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunQueueItemCandidatesForScope,
+func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopeParams) ([]ListQueuedRunDispatchCandidatesForScopeRow, error) {
+	rows, err := q.db.Query(ctx, listQueuedRunDispatchCandidatesForScope,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.ProjectID,
@@ -716,9 +716,9 @@ func (q *Queries) ListQueuedRunQueueItemCandidatesForScope(ctx context.Context, 
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListQueuedRunQueueItemCandidatesForScopeRow
+	var items []ListQueuedRunDispatchCandidatesForScopeRow
 	for rows.Next() {
-		var i ListQueuedRunQueueItemCandidatesForScopeRow
+		var i ListQueuedRunDispatchCandidatesForScopeRow
 		if err := rows.Scan(
 			&i.OrgID,
 			&i.WorkerGroupID,
@@ -801,7 +801,7 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 	return items, nil
 }
 
-const markRunQueueItemEnqueueError = `-- name: MarkRunQueueItemEnqueueError :one
+const markRunDispatchEnqueueError = `-- name: MarkRunDispatchEnqueueError :one
 UPDATE runs
    SET last_enqueue_error = $1,
        updated_at = now()
@@ -814,7 +814,7 @@ UPDATE runs
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
-type MarkRunQueueItemEnqueueErrorParams struct {
+type MarkRunDispatchEnqueueErrorParams struct {
 	LastError                  string      `json:"last_error"`
 	OrgID                      pgtype.UUID `json:"org_id"`
 	WorkerGroupID              string      `json:"worker_group_id"`
@@ -823,8 +823,8 @@ type MarkRunQueueItemEnqueueErrorParams struct {
 	ExpectedDispatchGeneration int64       `json:"expected_dispatch_generation"`
 }
 
-func (q *Queries) MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQueueItemEnqueueErrorParams) (Run, error) {
-	row := q.db.QueryRow(ctx, markRunQueueItemEnqueueError,
+func (q *Queries) MarkRunDispatchEnqueueError(ctx context.Context, arg MarkRunDispatchEnqueueErrorParams) (Run, error) {
+	row := q.db.QueryRow(ctx, markRunDispatchEnqueueError,
 		arg.LastError,
 		arg.OrgID,
 		arg.WorkerGroupID,
@@ -905,7 +905,7 @@ func (q *Queries) MarkRunQueueItemEnqueueError(ctx context.Context, arg MarkRunQ
 	return i, err
 }
 
-const markRunQueueItemEnqueued = `-- name: MarkRunQueueItemEnqueued :one
+const markRunDispatchEnqueued = `-- name: MarkRunDispatchEnqueued :one
 UPDATE runs
    SET last_enqueue_error = '',
        last_enqueued_at = now(),
@@ -919,7 +919,7 @@ UPDATE runs
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
-type MarkRunQueueItemEnqueuedParams struct {
+type MarkRunDispatchEnqueuedParams struct {
 	OrgID                      pgtype.UUID `json:"org_id"`
 	WorkerGroupID              string      `json:"worker_group_id"`
 	QueueClass                 string      `json:"queue_class"`
@@ -927,8 +927,8 @@ type MarkRunQueueItemEnqueuedParams struct {
 	ExpectedDispatchGeneration int64       `json:"expected_dispatch_generation"`
 }
 
-func (q *Queries) MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueueItemEnqueuedParams) (Run, error) {
-	row := q.db.QueryRow(ctx, markRunQueueItemEnqueued,
+func (q *Queries) MarkRunDispatchEnqueued(ctx context.Context, arg MarkRunDispatchEnqueuedParams) (Run, error) {
+	row := q.db.QueryRow(ctx, markRunDispatchEnqueued,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.QueueClass,
@@ -1008,7 +1008,7 @@ func (q *Queries) MarkRunQueueItemEnqueued(ctx context.Context, arg MarkRunQueue
 	return i, err
 }
 
-const prepareQueuedRunQueueItem = `-- name: PrepareQueuedRunQueueItem :one
+const prepareQueuedRunDispatch = `-- name: PrepareQueuedRunDispatch :one
 SELECT runs.id AS run_id,
        runs.org_id,
        runs.worker_group_id,
@@ -1063,12 +1063,12 @@ SELECT runs.id AS run_id,
    )
 `
 
-type PrepareQueuedRunQueueItemParams struct {
+type PrepareQueuedRunDispatchParams struct {
 	OrgID pgtype.UUID `json:"org_id"`
 	RunID pgtype.UUID `json:"run_id"`
 }
 
-type PrepareQueuedRunQueueItemRow struct {
+type PrepareQueuedRunDispatchRow struct {
 	RunID                   pgtype.UUID        `json:"run_id"`
 	OrgID                   pgtype.UUID        `json:"org_id"`
 	WorkerGroupID           string             `json:"worker_group_id"`
@@ -1098,9 +1098,9 @@ type PrepareQueuedRunQueueItemRow struct {
 	Placement               []byte             `json:"placement"`
 }
 
-func (q *Queries) PrepareQueuedRunQueueItem(ctx context.Context, arg PrepareQueuedRunQueueItemParams) (PrepareQueuedRunQueueItemRow, error) {
-	row := q.db.QueryRow(ctx, prepareQueuedRunQueueItem, arg.OrgID, arg.RunID)
-	var i PrepareQueuedRunQueueItemRow
+func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueuedRunDispatchParams) (PrepareQueuedRunDispatchRow, error) {
+	row := q.db.QueryRow(ctx, prepareQueuedRunDispatch, arg.OrgID, arg.RunID)
+	var i PrepareQueuedRunDispatchRow
 	err := row.Scan(
 		&i.RunID,
 		&i.OrgID,
@@ -1241,7 +1241,7 @@ func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueu
 	return i, err
 }
 
-const requeueRunQueueItem = `-- name: RequeueRunQueueItem :one
+const requeueRunDispatch = `-- name: RequeueRunDispatch :one
 UPDATE runs
    SET dispatch_generation = dispatch_generation + 1,
        dispatch_attempt_count = dispatch_attempt_count + 1,
@@ -1257,7 +1257,7 @@ UPDATE runs
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
-type RequeueRunQueueItemParams struct {
+type RequeueRunDispatchParams struct {
 	LastError     string      `json:"last_error"`
 	OrgID         pgtype.UUID `json:"org_id"`
 	WorkerGroupID string      `json:"worker_group_id"`
@@ -1265,8 +1265,8 @@ type RequeueRunQueueItemParams struct {
 	RunID         pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueItemParams) (Run, error) {
-	row := q.db.QueryRow(ctx, requeueRunQueueItem,
+func (q *Queries) RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatchParams) (Run, error) {
+	row := q.db.QueryRow(ctx, requeueRunDispatch,
 		arg.LastError,
 		arg.OrgID,
 		arg.WorkerGroupID,
@@ -1346,7 +1346,7 @@ func (q *Queries) RequeueRunQueueItem(ctx context.Context, arg RequeueRunQueueIt
 	return i, err
 }
 
-const reserveCheckpointRestoreRunQueueItemForWorker = `-- name: ReserveCheckpointRestoreRunQueueItemForWorker :one
+const reserveCheckpointRestoreRunForWorker = `-- name: ReserveCheckpointRestoreRunForWorker :one
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -1375,7 +1375,7 @@ SELECT runs.org_id,
  LIMIT 1
 `
 
-type ReserveCheckpointRestoreRunQueueItemForWorkerRow struct {
+type ReserveCheckpointRestoreRunForWorkerRow struct {
 	OrgID              pgtype.UUID        `json:"org_id"`
 	WorkerGroupID      string             `json:"worker_group_id"`
 	RunID              pgtype.UUID        `json:"run_id"`
@@ -1388,9 +1388,9 @@ type ReserveCheckpointRestoreRunQueueItemForWorkerRow struct {
 	DispatchMessageID  interface{}        `json:"dispatch_message_id"`
 }
 
-func (q *Queries) ReserveCheckpointRestoreRunQueueItemForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveCheckpointRestoreRunQueueItemForWorkerRow, error) {
-	row := q.db.QueryRow(ctx, reserveCheckpointRestoreRunQueueItemForWorker, workerInstanceID)
-	var i ReserveCheckpointRestoreRunQueueItemForWorkerRow
+func (q *Queries) ReserveCheckpointRestoreRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveCheckpointRestoreRunForWorkerRow, error) {
+	row := q.db.QueryRow(ctx, reserveCheckpointRestoreRunForWorker, workerInstanceID)
+	var i ReserveCheckpointRestoreRunForWorkerRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1406,7 +1406,7 @@ func (q *Queries) ReserveCheckpointRestoreRunQueueItemForWorker(ctx context.Cont
 	return i, err
 }
 
-const reserveResidentRunQueueItemForWorker = `-- name: ReserveResidentRunQueueItemForWorker :one
+const reserveResidentRunForWorker = `-- name: ReserveResidentRunForWorker :one
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
@@ -1439,7 +1439,7 @@ SELECT runs.org_id,
  LIMIT 1
 `
 
-type ReserveResidentRunQueueItemForWorkerRow struct {
+type ReserveResidentRunForWorkerRow struct {
 	OrgID              pgtype.UUID        `json:"org_id"`
 	WorkerGroupID      string             `json:"worker_group_id"`
 	RunID              pgtype.UUID        `json:"run_id"`
@@ -1452,9 +1452,9 @@ type ReserveResidentRunQueueItemForWorkerRow struct {
 	DispatchMessageID  interface{}        `json:"dispatch_message_id"`
 }
 
-func (q *Queries) ReserveResidentRunQueueItemForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveResidentRunQueueItemForWorkerRow, error) {
-	row := q.db.QueryRow(ctx, reserveResidentRunQueueItemForWorker, workerInstanceID)
-	var i ReserveResidentRunQueueItemForWorkerRow
+func (q *Queries) ReserveResidentRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveResidentRunForWorkerRow, error) {
+	row := q.db.QueryRow(ctx, reserveResidentRunForWorker, workerInstanceID)
+	var i ReserveResidentRunForWorkerRow
 	err := row.Scan(
 		&i.OrgID,
 		&i.WorkerGroupID,
@@ -1470,7 +1470,7 @@ func (q *Queries) ReserveResidentRunQueueItemForWorker(ctx context.Context, work
 	return i, err
 }
 
-const reserveRunQueueItem = `-- name: ReserveRunQueueItem :one
+const reserveRunDispatch = `-- name: ReserveRunDispatch :one
 UPDATE runs
    SET updated_at = now()
  WHERE runs.org_id = $1
@@ -1491,7 +1491,7 @@ UPDATE runs
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
-type ReserveRunQueueItemParams struct {
+type ReserveRunDispatchParams struct {
 	OrgID              pgtype.UUID `json:"org_id"`
 	WorkerGroupID      string      `json:"worker_group_id"`
 	QueueClass         string      `json:"queue_class"`
@@ -1500,8 +1500,8 @@ type ReserveRunQueueItemParams struct {
 	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
 }
 
-func (q *Queries) ReserveRunQueueItem(ctx context.Context, arg ReserveRunQueueItemParams) (Run, error) {
-	row := q.db.QueryRow(ctx, reserveRunQueueItem,
+func (q *Queries) ReserveRunDispatch(ctx context.Context, arg ReserveRunDispatchParams) (Run, error) {
+	row := q.db.QueryRow(ctx, reserveRunDispatch,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.QueueClass,

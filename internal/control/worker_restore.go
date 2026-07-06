@@ -19,7 +19,7 @@ import (
 
 func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker workerActor) (dispatch.ClaimedRun, db.LeaseRunLeaseRow, bool, error) {
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	entry, err := s.db.ReserveCheckpointRestoreRunQueueItemForWorker(ctx, pgvalue.UUID(worker.WorkerInstanceID))
+	entry, err := s.db.ReserveCheckpointRestoreRunForWorker(ctx, pgvalue.UUID(worker.WorkerInstanceID))
 	if isNoRows(err) {
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
 	}
@@ -48,7 +48,7 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	}
 	sessionSpanID, err := tracing.NewSpanID()
 	if err != nil {
-		if requeueErr := s.requeueCheckpointRestoreRunQueueItem(ctx, worker, entry, messageID, "checkpoint restore trace span failed"); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, "checkpoint restore trace span failed"); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -67,13 +67,13 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	})
 	if isNoRows(err) {
 		s.logRunWorkspaceReuseDiagnostics(ctx, entry.OrgID, entry.RunID, pgvalue.UUID(worker.WorkerInstanceID), "checkpoint_restore_source_lease_no_rows")
-		if requeueErr := s.requeueCheckpointRestoreRunQueueItem(ctx, worker, entry, messageID, "checkpoint restore source lease conflict"); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, "checkpoint restore source lease conflict"); requeueErr != nil {
 			return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, requeueErr
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
 	}
 	if err != nil {
-		if requeueErr := s.requeueCheckpointRestoreRunQueueItem(ctx, worker, entry, messageID, err.Error()); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, err.Error()); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -90,11 +90,11 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	return dispatch.ClaimedRun{Lease: lease, Entry: checkpointRestoreRun(entry)}, leasedRun, true, nil
 }
 
-func (s *Server) requeueCheckpointRestoreRunQueueItem(ctx context.Context, worker workerActor, entry db.ReserveCheckpointRestoreRunQueueItemForWorkerRow, messageID string, lastError string) error {
-	return s.requeueRunQueueItem(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, lastError)
+func (s *Server) requeueCheckpointRestoreRunDispatch(ctx context.Context, worker workerActor, entry db.ReserveCheckpointRestoreRunForWorkerRow, messageID string, lastError string) error {
+	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, lastError)
 }
 
-func checkpointRestoreRun(row db.ReserveCheckpointRestoreRunQueueItemForWorkerRow) db.Run {
+func checkpointRestoreRun(row db.ReserveCheckpointRestoreRunForWorkerRow) db.Run {
 	return db.Run{
 		OrgID:              row.OrgID,
 		WorkerGroupID:      row.WorkerGroupID,

@@ -140,7 +140,6 @@ export type RunEvent =
 export interface RunEventRecord {
   readonly id: string
   readonly run_id?: string | null
-  readonly run_lease_id?: string | null
   readonly attempt_number?: number | null
   readonly kind: string
   readonly message: string

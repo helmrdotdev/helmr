@@ -95,7 +95,7 @@ if (false) {
   const rawLeaseEventRecord: RunEventRecord = {
     id: "event-1",
     run_id: "run-1",
-    run_lease_id: "lease-1",
+    attempt_number: 1,
     kind: "run",
     message: "run.started",
     at: "2026-04-28T00:00:00Z",
@@ -316,7 +316,7 @@ if (false) {
   const rawEventRecord: RunEventRecord = {
     id: "event-1",
     run_id: "run-1",
-    run_lease_id: "lease-1",
+    attempt_number: 1,
     kind: "run",
     message: "run.started",
     at: "2026-04-28T00:00:00Z",

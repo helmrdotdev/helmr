@@ -222,7 +222,7 @@ type eventRow struct {
 }
 
 func (r eventRow) event() api.RunEvent {
-	var runID, deploymentID, runLeaseID *string
+	var runID, deploymentID *string
 	if r.RunID != nil {
 		value := r.RunID.String()
 		runID = &value
@@ -230,10 +230,6 @@ func (r eventRow) event() api.RunEvent {
 	if r.DeploymentID != nil {
 		value := r.DeploymentID.String()
 		deploymentID = &value
-	}
-	if r.RunLeaseID != nil {
-		value := r.RunLeaseID.String()
-		runLeaseID = &value
 	}
 	at := r.ObservedAt.UTC()
 	attrs := json.RawMessage(r.Body)
@@ -247,7 +243,6 @@ func (r eventRow) event() api.RunEvent {
 		ID:             Cursor(int64(r.Seq)),
 		RunID:          runID,
 		DeploymentID:   deploymentID,
-		RunLeaseID:     runLeaseID,
 		AttemptNumber:  r.AttemptNumber,
 		Trace:          api.TraceContext{TraceID: r.TraceID, SpanID: r.SpanID, Traceparent: r.Traceparent},
 		Category:       r.Category,
@@ -312,7 +307,6 @@ func (r runLogRow) chunk() api.RunLogChunk {
 	return api.RunLogChunk{
 		ID:            Cursor(int64(r.Seq)),
 		RunID:         r.RunID.String(),
-		RunLeaseID:    r.RunLeaseID.String(),
 		AttemptNumber: r.AttemptNumber,
 		Stream:        r.StreamName,
 		ContentBase64: contentBase64,

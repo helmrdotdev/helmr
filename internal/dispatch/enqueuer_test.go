@@ -19,7 +19,7 @@ func TestEnqueueRunPublishesPreparedMessageAndMarksEnqueued(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunQueueItem(orgID, runID),
+		prepare: testPreparedRunDispatch(orgID, runID),
 	}
 	store.prepare.QueueConcurrencyLimit = pgtype.Int4{Int32: 3, Valid: true}
 	queue := &fakeEnqueuerQueue{result: EnqueueResult{QueueName: "queue-a", MessageID: "message-1", Depth: 1}}
@@ -61,7 +61,7 @@ func TestEnqueueRunMarksQueueErrors(t *testing.T) {
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunQueueItem(orgID, runID),
+		prepare: testPreparedRunDispatch(orgID, runID),
 	}
 	queue := &fakeEnqueuerQueue{err: errors.New("redis unavailable")}
 	enqueuer, err := NewEnqueuer(store, queue)
@@ -99,11 +99,11 @@ func TestReconcileQueueScopeContinuesAfterFailures(t *testing.T) {
 	firstRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	secondRunID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
-		prepareByRun: map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow{
-			firstRunID:  testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, firstRunID),
-			secondRunID: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, secondRunID),
+		prepareByRun: map[pgtype.UUID]db.PrepareQueuedRunDispatchRow{
+			firstRunID:  testPreparedRunDispatchWithScope(orgID, projectID, environmentID, firstRunID),
+			secondRunID: testPreparedRunDispatchWithScope(orgID, projectID, environmentID, secondRunID),
 		},
-		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
+		candidates: []db.ListQueuedRunDispatchCandidatesForScopeRow{
 			{OrgID: orgID, RunID: firstRunID},
 			{OrgID: orgID, RunID: secondRunID},
 		},
@@ -142,8 +142,8 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testin
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
+		prepare: testPreparedRunDispatchWithScope(orgID, projectID, environmentID, runID),
+		candidates: []db.ListQueuedRunDispatchCandidatesForScopeRow{
 			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-missing"},
 		},
 	}
@@ -173,8 +173,8 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageInvalidated(t *te
 	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
 	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunQueueItemWithScope(orgID, projectID, environmentID, runID),
-		candidates: []db.ListQueuedRunQueueItemCandidatesForScopeRow{
+		prepare: testPreparedRunDispatchWithScope(orgID, projectID, environmentID, runID),
+		candidates: []db.ListQueuedRunDispatchCandidatesForScopeRow{
 			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-invalidated"},
 		},
 	}
@@ -208,18 +208,18 @@ func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 }
 
 type fakeEnqueuerStore struct {
-	prepare      db.PrepareQueuedRunQueueItemRow
-	prepareByRun map[pgtype.UUID]db.PrepareQueuedRunQueueItemRow
+	prepare      db.PrepareQueuedRunDispatchRow
+	prepareByRun map[pgtype.UUID]db.PrepareQueuedRunDispatchRow
 	prepareErr   error
-	candidates   []db.ListQueuedRunQueueItemCandidatesForScopeRow
-	scopeArgs    db.ListQueuedRunQueueItemCandidatesForScopeParams
-	markEnqueued db.MarkRunQueueItemEnqueuedParams
-	markError    db.MarkRunQueueItemEnqueueErrorParams
+	candidates   []db.ListQueuedRunDispatchCandidatesForScopeRow
+	scopeArgs    db.ListQueuedRunDispatchCandidatesForScopeParams
+	markEnqueued db.MarkRunDispatchEnqueuedParams
+	markError    db.MarkRunDispatchEnqueueErrorParams
 }
 
-func (f *fakeEnqueuerStore) PrepareQueuedRunQueueItem(_ context.Context, arg db.PrepareQueuedRunQueueItemParams) (db.PrepareQueuedRunQueueItemRow, error) {
+func (f *fakeEnqueuerStore) PrepareQueuedRunDispatch(_ context.Context, arg db.PrepareQueuedRunDispatchParams) (db.PrepareQueuedRunDispatchRow, error) {
 	if f.prepareErr != nil {
-		return db.PrepareQueuedRunQueueItemRow{}, f.prepareErr
+		return db.PrepareQueuedRunDispatchRow{}, f.prepareErr
 	}
 	if row, ok := f.prepareByRun[arg.RunID]; ok {
 		return row, nil
@@ -227,7 +227,7 @@ func (f *fakeEnqueuerStore) PrepareQueuedRunQueueItem(_ context.Context, arg db.
 	return f.prepare, nil
 }
 
-func (f *fakeEnqueuerStore) ListQueuedRunQueueItemCandidatesForScope(_ context.Context, arg db.ListQueuedRunQueueItemCandidatesForScopeParams) ([]db.ListQueuedRunQueueItemCandidatesForScopeRow, error) {
+func (f *fakeEnqueuerStore) ListQueuedRunDispatchCandidatesForScope(_ context.Context, arg db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error) {
 	f.scopeArgs = arg
 	if int32(len(f.candidates)) > arg.RowLimit {
 		return f.candidates[:arg.RowLimit], nil
@@ -235,12 +235,12 @@ func (f *fakeEnqueuerStore) ListQueuedRunQueueItemCandidatesForScope(_ context.C
 	return f.candidates, nil
 }
 
-func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueued(_ context.Context, arg db.MarkRunQueueItemEnqueuedParams) (db.Run, error) {
+func (f *fakeEnqueuerStore) MarkRunDispatchEnqueued(_ context.Context, arg db.MarkRunDispatchEnqueuedParams) (db.Run, error) {
 	f.markEnqueued = arg
 	return db.Run{}, nil
 }
 
-func (f *fakeEnqueuerStore) MarkRunQueueItemEnqueueError(_ context.Context, arg db.MarkRunQueueItemEnqueueErrorParams) (db.Run, error) {
+func (f *fakeEnqueuerStore) MarkRunDispatchEnqueueError(_ context.Context, arg db.MarkRunDispatchEnqueueErrorParams) (db.Run, error) {
 	f.markError = arg
 	return db.Run{}, nil
 }
@@ -296,12 +296,12 @@ func (f *fakeEnqueuerQueue) Renew(_ context.Context, lease Lease, expiresAt time
 	return lease, nil
 }
 
-func testPreparedRunQueueItem(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueItemRow {
-	return testPreparedRunQueueItemWithScope(orgID, pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())), runID)
+func testPreparedRunDispatch(orgID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunDispatchRow {
+	return testPreparedRunDispatchWithScope(orgID, pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())), runID)
 }
 
-func testPreparedRunQueueItemWithScope(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunQueueItemRow {
-	return db.PrepareQueuedRunQueueItemRow{
+func testPreparedRunDispatchWithScope(orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, runID pgtype.UUID) db.PrepareQueuedRunDispatchRow {
+	return db.PrepareQueuedRunDispatchRow{
 		RunID:                   runID,
 		OrgID:                   orgID,
 		WorkerGroupID:           "worker-group-1",
@@ -331,7 +331,7 @@ var _ EnqueuerStore = (*fakeEnqueuerStore)(nil)
 var _ Queue = (*fakeEnqueuerQueue)(nil)
 
 func TestRequirementsFromRowRejectsInvalidJSON(t *testing.T) {
-	row := testPreparedRunQueueItem(pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())))
+	row := testPreparedRunDispatch(pgvalue.UUID(uuid.Must(uuid.NewV7())), pgvalue.UUID(uuid.Must(uuid.NewV7())))
 	row.NetworkPolicy = []byte(`{`)
 	if _, err := queueMessage(row); err == nil {
 		t.Fatal("queueMessage error = nil")

@@ -508,8 +508,8 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 
 type fakeClaimerStore struct {
 	dispatch          db.Run
-	marked            db.ReserveRunQueueItemParams
-	deadLettered      db.DeadLetterRunQueueItemParams
+	marked            db.ReserveRunDispatchParams
+	deadLettered      db.DeadLetterRunDispatchParams
 	err               error
 	deadErr           error
 	exhaustedErr      error
@@ -518,18 +518,18 @@ type fakeClaimerStore struct {
 	leaseConflictErr  error
 }
 
-func (f *fakeClaimerStore) DeadLetterRunQueueItem(_ context.Context, arg db.DeadLetterRunQueueItemParams) (db.DeadLetterRunQueueItemRow, error) {
+func (f *fakeClaimerStore) DeadLetterRunDispatch(_ context.Context, arg db.DeadLetterRunDispatchParams) (db.DeadLetterRunDispatchRow, error) {
 	f.deadLettered = arg
 	if f.deadErr != nil {
-		return db.DeadLetterRunQueueItemRow{}, f.deadErr
+		return db.DeadLetterRunDispatchRow{}, f.deadErr
 	}
-	return db.DeadLetterRunQueueItemRow{
+	return db.DeadLetterRunDispatchRow{
 		OrgID: arg.OrgID,
 		RunID: arg.RunID,
 	}, nil
 }
 
-func (f *fakeClaimerStore) ReserveRunQueueItem(_ context.Context, arg db.ReserveRunQueueItemParams) (db.Run, error) {
+func (f *fakeClaimerStore) ReserveRunDispatch(_ context.Context, arg db.ReserveRunDispatchParams) (db.Run, error) {
 	f.marked = arg
 	if f.err != nil {
 		return db.Run{}, f.err
