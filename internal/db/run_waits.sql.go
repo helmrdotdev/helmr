@@ -895,8 +895,21 @@ failed_sessions AS (
     SELECT failed_runs.session_id AS id
       FROM failed_runs
 ),
-	failed_snapshots AS (
-	    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+failed_snapshots AS (
+    INSERT INTO run_state_snapshots (
+        org_id,
+        worker_group_id,
+        run_id,
+        version,
+        status,
+        execution_status,
+        terminal_outcome,
+        attempt_number,
+        transition,
+        runtime_checkpoint_id,
+        reason,
+        error
+    )
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -904,20 +917,25 @@ failed_sessions AS (
            'failed',
            'finished',
            'failed',
-	           failed_runs.current_attempt_number,
+           failed_runs.current_attempt_number,
            'run.failed',
+           failed_runs.runtime_checkpoint_id,
            jsonb_build_object(
                'origin', 'runtime_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message,
-               'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
                'base_workspace_version_id', failed_runs.base_workspace_version_id,
                'current_workspace_version_id', failed_runs.current_version_id,
                'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
+           ),
+           jsonb_build_object(
+               'origin', 'runtime_resume_wait',
+               'reason', failed_runs.failure_reason,
+               'message', failed_runs.error_message
            )
-	      FROM failed_runs
-	    RETURNING run_state_snapshots.run_id
-	),
+      FROM failed_runs
+    RETURNING run_state_snapshots.run_id
+),
 failed_event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
     SELECT failed_runs.org_id, failed_runs.worker_group_id, 'run', failed_runs.id, 1

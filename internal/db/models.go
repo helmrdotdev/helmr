@@ -3101,20 +3101,24 @@ type RunOperation struct {
 }
 
 type RunStateSnapshot struct {
-	OrgID           pgtype.UUID            `json:"org_id"`
-	WorkerGroupID   string                 `json:"worker_group_id"`
-	RunID           pgtype.UUID            `json:"run_id"`
-	Version         int64                  `json:"version"`
-	Status          RunStatus              `json:"status"`
-	ExecutionStatus RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome NullRunTerminalOutcome `json:"terminal_outcome"`
-	AttemptNumber   pgtype.Int4            `json:"attempt_number"`
-	RunLeaseID      pgtype.UUID            `json:"run_lease_id"`
-	OperationID     pgtype.UUID            `json:"operation_id"`
-	PreviousVersion pgtype.Int8            `json:"previous_version"`
-	Transition      string                 `json:"transition"`
-	Reason          []byte                 `json:"reason"`
-	CreatedAt       pgtype.Timestamptz     `json:"created_at"`
+	OrgID               pgtype.UUID            `json:"org_id"`
+	WorkerGroupID       string                 `json:"worker_group_id"`
+	RunID               pgtype.UUID            `json:"run_id"`
+	Version             int64                  `json:"version"`
+	Status              RunStatus              `json:"status"`
+	ExecutionStatus     RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome     NullRunTerminalOutcome `json:"terminal_outcome"`
+	AttemptNumber       pgtype.Int4            `json:"attempt_number"`
+	RunLeaseID          pgtype.UUID            `json:"run_lease_id"`
+	WorkerInstanceID    pgtype.UUID            `json:"worker_instance_id"`
+	RuntimeInstanceID   pgtype.UUID            `json:"runtime_instance_id"`
+	RuntimeCheckpointID pgtype.UUID            `json:"runtime_checkpoint_id"`
+	OperationID         pgtype.UUID            `json:"operation_id"`
+	PreviousVersion     pgtype.Int8            `json:"previous_version"`
+	Transition          string                 `json:"transition"`
+	Reason              []byte                 `json:"reason"`
+	Error               []byte                 `json:"error"`
+	CreatedAt           pgtype.Timestamptz     `json:"created_at"`
 }
 
 type RunWait struct {

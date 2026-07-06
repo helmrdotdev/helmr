@@ -1076,7 +1076,7 @@ expired_sessions AS (
       FROM expired_runs
 ),
 expired_snapshots AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason, error)
     SELECT expired_runs.org_id,
            expired_runs.worker_group_id,
            expired_runs.id,
@@ -1086,7 +1086,8 @@ expired_snapshots AS (
            'expired',
            expired_runs.current_attempt_number,
            'run.expired',
-           jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started')
+           jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
+           jsonb_build_object('message', 'run ttl expired before execution started')
       FROM expired_runs
     RETURNING run_state_snapshots.run_id
 ),
@@ -1212,7 +1213,7 @@ failed_session AS (
       FROM failed_run
 ),
 failed_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason, error)
     SELECT failed_run.org_id,
            failed_run.worker_group_id,
            failed_run.id,
@@ -1222,6 +1223,7 @@ failed_snapshot AS (
            'failed',
            failed_run.current_attempt_number,
            'run.failed',
+           COALESCE($4::jsonb, '{}'::jsonb),
            COALESCE($4::jsonb, '{}'::jsonb)
       FROM failed_run
     RETURNING run_state_snapshots.run_id
