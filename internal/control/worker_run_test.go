@@ -1250,19 +1250,6 @@ func (f *fakeStore) RequeueRunDispatch(_ context.Context, arg db.RequeueRunDispa
 	}, nil
 }
 
-func (f *fakeStore) ValidateRunLeaseDispatchRenewal(_ context.Context, arg db.ValidateRunLeaseDispatchRenewalParams) (db.Run, error) {
-	if f.run.ID != arg.RunID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" {
-		return db.Run{}, pgx.ErrNoRows
-	}
-	return db.Run{
-		ID:        arg.RunID,
-		OrgID:     arg.OrgID,
-		Status:    db.RunStatusRunning,
-		QueueName: "queue-a",
-		UpdatedAt: testTime(),
-	}, nil
-}
-
 func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQueueLeaseParams) (db.GetRunLeaseQueueLeaseRow, error) {
 	if f.activeQueueLeaseMissing {
 		return db.GetRunLeaseQueueLeaseRow{}, pgx.ErrNoRows

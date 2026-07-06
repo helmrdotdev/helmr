@@ -18,6 +18,7 @@ WITH abandoned AS (
            execution_status = 'queued',
            current_run_lease_id = NULL,
            dispatch_generation = dispatch_generation + 1,
+           dispatch_attempt_count = dispatch_attempt_count + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = 'worker payload build abandoned',
            state_version = state_version + 1,
@@ -35,7 +36,82 @@ WITH abandoned AS (
               AND run_leases.worker_instance_id = $2
               AND run_leases.status = 'leased'
        )
-    RETURNING runs.id, runs.org_id
+    RETURNING runs.id,
+              runs.org_id,
+              runs.worker_group_id,
+              runs.project_id,
+              runs.environment_id,
+              runs.current_attempt_number,
+              runs.trace_id,
+              runs.root_span_id,
+              runs.state_version
+),
+abandoned_snapshots AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, worker_instance_id, previous_version, transition, reason, error)
+    SELECT abandoned.org_id,
+           abandoned.worker_group_id,
+           abandoned.id,
+           abandoned.state_version,
+           'queued',
+           'queued',
+           abandoned.current_attempt_number,
+           $1,
+           $2,
+           abandoned.state_version - 1,
+           'run.dispatch_requeued',
+           jsonb_build_object('message', 'worker payload build abandoned'),
+           jsonb_build_object('message', 'worker payload build abandoned')
+      FROM abandoned
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
+),
+abandoned_event_seq AS (
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT abandoned.org_id, abandoned.worker_group_id, 'run', abandoned.id, 1
+      FROM abandoned
+      JOIN abandoned_snapshots ON abandoned_snapshots.run_id = abandoned.id
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
+abandoned_events AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT abandoned.org_id,
+           abandoned.worker_group_id,
+           abandoned.project_id,
+           abandoned.environment_id,
+           abandoned.id,
+           abandoned_event_seq.seq,
+           $1,
+           abandoned.current_attempt_number,
+           abandoned.trace_id,
+           abandoned.root_span_id,
+           '00-' || abandoned.trace_id || '-' || abandoned.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           'run.dispatch_requeued',
+           'run.dispatch_requeued',
+           jsonb_build_object('message', 'worker payload build abandoned'),
+           'internal',
+           abandoned.state_version
+      FROM abandoned
+      JOIN abandoned_event_seq ON abandoned_event_seq.org_id = abandoned.org_id
+                              AND abandoned_event_seq.subject_kind = 'run'
+                              AND abandoned_event_seq.subject_id = abandoned.id
+    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
+),
+abandoned_telemetry_outboxes AS (
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    SELECT abandoned_events.org_id,
+           abandoned_events.worker_group_id,
+           'event',
+           abandoned_events.subject_type,
+           abandoned_events.subject_id,
+           abandoned_events.seq,
+           'event:' || abandoned_events.subject_type::text || ':' || abandoned_events.subject_id::text || ':' || abandoned_events.seq::text
+      FROM abandoned_events
+    RETURNING id
 ),
 released_workspace_leases AS (
     UPDATE workspace_leases
@@ -52,7 +128,8 @@ released_workspace_leases AS (
     RETURNING workspace_leases.id
 ),
 cleanup AS (
-    SELECT count(*) AS released_workspace_lease_count FROM released_workspace_leases
+    SELECT (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
+           (SELECT count(*) FROM abandoned_telemetry_outboxes) AS abandoned_telemetry_outbox_count
 )
 UPDATE run_leases
    SET lost_at = COALESCE(lost_at, now()),
@@ -64,7 +141,7 @@ UPDATE run_leases
    AND run_leases.id = $1
    AND run_leases.worker_instance_id = $2
    AND run_leases.status = 'leased'
-   AND (SELECT released_workspace_lease_count FROM cleanup) >= 0
+   AND (SELECT released_workspace_lease_count + abandoned_telemetry_outbox_count FROM cleanup) >= 0
 `
 
 type AbandonLeasedRunLeaseParams struct {
@@ -642,6 +719,30 @@ candidate AS MATERIALIZED (
        AND runs.current_run_lease_id IS NULL
        AND runs.dispatch_generation = $4
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (
+           runs.latest_runtime_checkpoint_id IS NULL
+           OR EXISTS (
+               SELECT 1
+                 FROM runtime_checkpoints
+                WHERE runtime_checkpoints.org_id = runs.org_id
+                  AND runtime_checkpoints.worker_group_id = runs.worker_group_id
+                  AND runtime_checkpoints.project_id = runs.project_id
+                  AND runtime_checkpoints.environment_id = runs.environment_id
+                  AND runtime_checkpoints.run_id = runs.id
+                  AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
+                  AND runtime_checkpoints.state = 'ready'
+                  AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+                  AND EXISTS (
+                      SELECT 1
+                        FROM workspaces
+                       WHERE workspaces.org_id = runs.org_id
+                         AND workspaces.project_id = runs.project_id
+                         AND workspaces.environment_id = runs.environment_id
+                         AND workspaces.id = runs.workspace_id
+                         AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
+                  )
+           )
+       )
      FOR UPDATE OF runs
 ),
 concurrency_lock AS (
@@ -822,6 +923,44 @@ leased_snapshot AS (
            '{}'::jsonb
       FROM updated, leased_run_lease
     RETURNING run_state_snapshots.run_id
+),
+runtime_checkpoint_restore AS (
+    INSERT INTO runtime_checkpoint_restores (
+        org_id,
+        worker_group_id,
+        project_id,
+        environment_id,
+        run_id,
+        runtime_checkpoint_id,
+        run_wait_id,
+        run_lease_id,
+        worker_instance_id
+    )
+    SELECT leased_run_lease.org_id,
+           leased_run_lease.worker_group_id,
+           leased_run_lease.project_id,
+           leased_run_lease.environment_id,
+           leased_run_lease.run_id,
+           leased_run_lease.restore_runtime_checkpoint_id,
+           runtime_checkpoints.owner_run_wait_id,
+           leased_run_lease.id,
+           leased_run_lease.worker_instance_id
+      FROM leased_run_lease
+      JOIN runtime_checkpoints
+        ON runtime_checkpoints.org_id = leased_run_lease.org_id
+       AND runtime_checkpoints.worker_group_id = leased_run_lease.worker_group_id
+       AND runtime_checkpoints.project_id = leased_run_lease.project_id
+       AND runtime_checkpoints.environment_id = leased_run_lease.environment_id
+       AND runtime_checkpoints.run_id = leased_run_lease.run_id
+       AND runtime_checkpoints.id = leased_run_lease.restore_runtime_checkpoint_id
+       AND runtime_checkpoints.state = 'ready'
+       AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+     WHERE leased_run_lease.restore_runtime_checkpoint_id IS NOT NULL
+    RETURNING id
+),
+runtime_checkpoint_restore_cleanup AS (
+    SELECT count(*) AS restore_count
+      FROM runtime_checkpoint_restore
 )
 SELECT
     updated.id,
@@ -921,6 +1060,7 @@ FROM updated
 JOIN leased_run_lease ON true
 JOIN workspace_lease_guard ON true
 JOIN leased_snapshot ON true
+JOIN runtime_checkpoint_restore_cleanup ON runtime_checkpoint_restore_cleanup.restore_count >= 0
 JOIN deployments ON deployments.org_id = updated.org_id
                 AND deployments.id = updated.deployment_id
 JOIN deployment_tasks ON deployment_tasks.org_id = updated.org_id
@@ -2305,6 +2445,7 @@ WITH renewed_lease AS (
     UPDATE run_leases
        SET lease_expires_at = $1,
            renewed_at = now()
+      FROM runs
      WHERE run_leases.org_id = $2
        AND run_leases.run_id = $3
        AND run_leases.id = $4
@@ -2313,6 +2454,12 @@ WITH renewed_lease AS (
        AND run_leases.dispatch_lease_id = $7
        AND run_leases.status IN ('leased', 'running')
        AND run_leases.lease_expires_at > now()
+       AND runs.org_id = run_leases.org_id
+       AND runs.id = run_leases.run_id
+       AND runs.worker_group_id = run_leases.worker_group_id
+       AND runs.current_run_lease_id = run_leases.id
+       AND runs.dispatch_generation = run_leases.dispatch_generation
+       AND runs.status = 'running'
     RETURNING run_leases.id, run_leases.org_id, run_leases.queue_class, run_leases.run_id, run_leases.worker_instance_id, run_leases.worker_group_id, run_leases.project_id, run_leases.environment_id, run_leases.dispatch_message_id, run_leases.dispatch_generation, run_leases.dispatch_lease_id, run_leases.dispatch_attempt, run_leases.attempt_number, run_leases.queue_name, run_leases.concurrency_key, run_leases.status, run_leases.lease_expires_at, run_leases.runtime_id, run_leases.worker_protocol_version, run_leases.active_duration_ms, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.restore_runtime_checkpoint_id, run_leases.leased_at, run_leases.started_at, run_leases.renewed_at, run_leases.released_at, run_leases.lost_at
 ),
 renewed_workspace_lease AS (
@@ -2424,7 +2571,82 @@ updated_runs AS (
       FROM expired
      WHERE runs.org_id = expired.org_id
        AND runs.id = expired.run_id
-    RETURNING runs.id, runs.org_id, runs.worker_group_id
+    RETURNING runs.id,
+              runs.org_id,
+              runs.worker_group_id,
+              runs.project_id,
+              runs.environment_id,
+              runs.current_attempt_number,
+              runs.trace_id,
+              runs.root_span_id,
+              runs.state_version,
+              expired.run_lease_id
+),
+requeued_snapshots AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, previous_version, transition, reason, error)
+    SELECT updated_runs.org_id,
+           updated_runs.worker_group_id,
+           updated_runs.id,
+           updated_runs.state_version,
+           'queued',
+           'queued',
+           updated_runs.current_attempt_number,
+           updated_runs.run_lease_id,
+           updated_runs.state_version - 1,
+           'run.dispatch_requeued',
+           jsonb_build_object('message', 'worker lease expired before execution started'),
+           jsonb_build_object('message', 'worker lease expired before execution started')
+      FROM updated_runs
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
+),
+requeued_event_seq AS (
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT updated_runs.org_id, updated_runs.worker_group_id, 'run', updated_runs.id, 1
+      FROM updated_runs
+      JOIN requeued_snapshots ON requeued_snapshots.run_id = updated_runs.id
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
+requeued_events AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT updated_runs.org_id,
+           updated_runs.worker_group_id,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.id,
+           requeued_event_seq.seq,
+           updated_runs.run_lease_id,
+           updated_runs.current_attempt_number,
+           updated_runs.trace_id,
+           updated_runs.root_span_id,
+           '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01',
+           'lifecycle',
+           'warn',
+           'control',
+           'run.dispatch_requeued',
+           'run.dispatch_requeued',
+           jsonb_build_object('message', 'worker lease expired before execution started'),
+           'internal',
+           updated_runs.state_version
+      FROM updated_runs
+      JOIN requeued_event_seq ON requeued_event_seq.org_id = updated_runs.org_id
+                            AND requeued_event_seq.subject_kind = 'run'
+                            AND requeued_event_seq.subject_id = updated_runs.id
+    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
+),
+requeued_telemetry_outboxes AS (
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    SELECT requeued_events.org_id,
+           requeued_events.worker_group_id,
+           'event',
+           requeued_events.subject_type,
+           requeued_events.subject_id,
+           requeued_events.seq,
+           'event:' || requeued_events.subject_type::text || ':' || requeued_events.subject_id::text || ':' || requeued_events.seq::text
+      FROM requeued_events
+    RETURNING id
 ),
 released_workspace_leases AS (
     UPDATE workspace_leases
@@ -2441,7 +2663,8 @@ released_workspace_leases AS (
     RETURNING workspace_leases.id
 ),
 cleanup AS (
-    SELECT count(*) AS released_workspace_lease_count FROM released_workspace_leases
+    SELECT (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
+           (SELECT count(*) FROM requeued_telemetry_outboxes) AS requeued_telemetry_outbox_count
 )
 UPDATE run_leases
    SET lost_at = COALESCE(lost_at, now()),
@@ -2450,7 +2673,7 @@ UPDATE run_leases
   FROM expired
  WHERE run_leases.org_id = expired.org_id
    AND run_leases.id = expired.run_lease_id
-   AND (SELECT released_workspace_lease_count FROM cleanup) >= 0
+   AND (SELECT released_workspace_lease_count + requeued_telemetry_outbox_count FROM cleanup) >= 0
 `
 
 type RequeueExpiredLeasedRunLeasesParams struct {

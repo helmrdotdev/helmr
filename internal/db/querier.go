@@ -457,7 +457,6 @@ type Querier interface {
 	UpsertTerminalOutputWatermark(ctx context.Context, arg UpsertTerminalOutputWatermarkParams) (TerminalOutputWatermark, error)
 	UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error)
 	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error)
-	ValidateRunLeaseDispatchRenewal(ctx context.Context, arg ValidateRunLeaseDispatchRenewalParams) (Run, error)
 	WorkspaceHasActivePrimitiveWriter(ctx context.Context, arg WorkspaceHasActivePrimitiveWriterParams) (bool, error)
 }
 

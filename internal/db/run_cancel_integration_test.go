@@ -253,6 +253,20 @@ func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 	if runStatus != db.RunStatusFailed || !terminalOutcome.Valid || terminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeDeadLettered {
 		t.Fatalf("run terminal state = %s/%v, want failed/dead_lettered", runStatus, terminalOutcome)
 	}
+
+	var snapshotTransition, eventKind string
+	var outboxCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+			(SELECT transition FROM run_state_snapshots WHERE org_id = $1 AND run_id = $2 ORDER BY version DESC LIMIT 1),
+			(SELECT kind FROM event_hot_payloads WHERE org_id = $1 AND run_id = $2 ORDER BY seq DESC LIMIT 1),
+			(SELECT count(*)::int FROM telemetry_outbox WHERE org_id = $1 AND source_kind = 'run' AND source_id = $2 AND stream_kind = 'event')
+	`, ids.orgID, ids.runID).Scan(&snapshotTransition, &eventKind, &outboxCount); err != nil {
+		t.Fatal(err)
+	}
+	if snapshotTransition != "run.dead_lettered" || eventKind != "run.dead_lettered" || outboxCount != 1 {
+		t.Fatalf("dead-letter lifecycle = snapshot %q event %q outbox %d, want run.dead_lettered/run.dead_lettered/1", snapshotTransition, eventKind, outboxCount)
+	}
 }
 
 func TestDeadLetterRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {

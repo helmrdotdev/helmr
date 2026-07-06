@@ -154,21 +154,6 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	if _, err := s.db.ValidateRunLeaseDispatchRenewal(r.Context(), db.ValidateRunLeaseDispatchRenewalParams{
-		OrgID:             pgvalue.UUID(leaseIDs.orgID),
-		WorkerGroupID:     queueLease.Message.WorkerGroupID,
-		RunID:             pgvalue.UUID(leaseIDs.runID),
-		QueueClass:        queueLease.Message.QueueClass,
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		DispatchMessageID: leaseRow.DispatchMessageID,
-	}); isNoRows(err) {
-		writeError(w, conflict(errors.New("worker run lease is stale")))
-		return
-	} else if err != nil {
-		s.log.Error("worker queue lease renewal failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, errors.New("renew queue lease"))
-		return
-	}
 	renewed, err := s.db.RenewRunLease(r.Context(), db.RenewRunLeaseParams{
 		OrgID:             pgvalue.UUID(leaseIDs.orgID),
 		RunID:             pgvalue.UUID(leaseIDs.runID),

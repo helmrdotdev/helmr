@@ -292,7 +292,79 @@ parked_run AS (
      WHERE runs.org_id = wait_scope.org_id
        AND runs.id = wait_scope.run_id
        AND runs.status = 'running'
-    RETURNING runs.id
+    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at,
+              wait_scope.current_run_lease_id AS source_run_lease_id,
+              wait_scope.owner_worker_instance_id AS source_worker_instance_id,
+              wait_scope.owner_runtime_instance_id AS source_runtime_instance_id,
+              created_checkpoint.id AS source_runtime_checkpoint_id
+),
+parked_snapshot AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, worker_instance_id, runtime_instance_id, runtime_checkpoint_id, previous_version, transition, reason)
+    SELECT parked_run.org_id,
+           parked_run.worker_group_id,
+           parked_run.id,
+           parked_run.state_version,
+           parked_run.status,
+           parked_run.execution_status,
+           parked_run.current_attempt_number,
+           parked_run.source_run_lease_id,
+           parked_run.source_worker_instance_id,
+           parked_run.source_runtime_instance_id,
+           parked_run.source_runtime_checkpoint_id,
+           parked_run.state_version - 1,
+           'run.waiting',
+           jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id)
+      FROM parked_run
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
+),
+parked_event_seq AS (
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT parked_run.org_id, parked_run.worker_group_id, 'run', parked_run.id, 1
+      FROM parked_run
+      JOIN parked_snapshot ON parked_snapshot.run_id = parked_run.id
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
+parked_event AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT parked_run.org_id,
+           parked_run.worker_group_id,
+           parked_run.project_id,
+           parked_run.environment_id,
+           parked_run.id,
+           parked_event_seq.seq,
+           parked_run.source_run_lease_id,
+           parked_run.current_attempt_number,
+           parked_run.trace_id,
+           parked_run.root_span_id,
+           '00-' || parked_run.trace_id || '-' || parked_run.root_span_id || '-01',
+           'lifecycle',
+           'info',
+           'control',
+           'run.waiting',
+           'run.waiting',
+           jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id),
+           'internal',
+           parked_run.state_version
+      FROM parked_run
+      JOIN parked_event_seq ON parked_event_seq.org_id = parked_run.org_id
+                           AND parked_event_seq.subject_kind = 'run'
+                           AND parked_event_seq.subject_id = parked_run.id
+    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
+),
+parked_telemetry_outbox AS (
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    SELECT parked_event.org_id,
+           parked_event.worker_group_id,
+           'event',
+           parked_event.subject_type,
+           parked_event.subject_id,
+           parked_event.seq,
+           'event:' || parked_event.subject_type::text || ':' || parked_event.subject_id::text || ':' || parked_event.seq::text
+      FROM parked_event
+    RETURNING id
 ),
 	parked_marker AS (
 	    SELECT parked_run.id
@@ -306,6 +378,7 @@ SELECT created_checkpoint.id, created_checkpoint.org_id, created_checkpoint.work
 	  JOIN closed_runtime_instance ON true
 	  JOIN detached_run_lease ON true
 	  JOIN parked_run ON true
+	  JOIN parked_telemetry_outbox ON true
 	  JOIN parked_marker ON true
 `
 
