@@ -21,7 +21,7 @@ updated_runs AS (
        SET status = 'queued',
            execution_status = 'queued',
            current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
+           dispatch_generation = runs.dispatch_generation + 1,
            dispatch_attempt_count = dispatch_attempt_count + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = 'worker lease expired before execution started',
@@ -141,7 +141,7 @@ WITH abandoned AS (
        SET status = 'queued',
            execution_status = 'queued',
            current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
+           dispatch_generation = runs.dispatch_generation + 1,
            dispatch_attempt_count = dispatch_attempt_count + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = 'worker payload build abandoned',
@@ -371,11 +371,11 @@ failed_runs AS (
            current_run_lease_id = NULL,
            current_attempt_number = COALESCE(retry_plan.next_attempt_number, runs.current_attempt_number),
            queue_timestamp = COALESCE(retry_plan.retry_after, runs.queue_timestamp),
-           dispatch_generation = dispatch_generation + 1,
+           dispatch_generation = runs.dispatch_generation + 1,
            last_enqueued_at = NULL,
            last_enqueue_error = '',
            error_message = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE effective_expiry.error_message END,
-           state_version = state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
+           state_version = runs.state_version + CASE WHEN retry_plan.run_id IS NOT NULL THEN 2 ELSE 1 END,
            active_elapsed_ms = LEAST(
                runs.active_elapsed_ms
                + CASE
@@ -385,7 +385,7 @@ failed_runs AS (
                runs.max_active_duration_ms
            ),
            active_started_at = NULL,
-           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE COALESCE(finished_at, now()) END,
+           finished_at = CASE WHEN retry_plan.run_id IS NOT NULL THEN NULL ELSE COALESCE(runs.finished_at, now()) END,
            updated_at = now()
       FROM expired
       JOIN effective_expiry ON effective_expiry.id = expired.id

@@ -657,7 +657,7 @@ func TestReleaseRunLeaseRetryFailsPendingCheckpointRestore(t *testing.T) {
 		t.Fatalf("released run state = %s/%s attempt=%d, want queued/queued/2", released.Status, released.ExecutionStatus, released.CurrentAttemptNumber)
 	}
 	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusFailed)
-	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.waiting", "run.resumed", "run_lease.leased", "run.started", "run.failed", "run.retry_scheduled"}, []string{"run.waiting", "run.resumed", "run.failed", "run.retry_scheduled"})
+	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.waiting", "run.resumed", "run_lease.leased", "run_lease.started", "run.failed", "run.retry_scheduled"}, []string{"run.waiting", "run.resumed", "run.failed", "run.retry_scheduled"})
 }
 
 func TestReleaseRunLeaseRetryBackoffPreventsImmediateLease(t *testing.T) {
