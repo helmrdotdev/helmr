@@ -568,10 +568,15 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name,
+			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
+			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'queued', 'queued', '{}', 'default', 300000,
-			'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'queued', 'queued', '{}', 'default',
+			1000, 1024, 4096, 1,
+			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			300000, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
 	`, continuationRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
@@ -1031,6 +1036,20 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_release_selections (runtime_id)
+		VALUES ('test-runtime')
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id) VALUES ($5, $1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
@@ -1080,11 +1099,16 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name,
+			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
+			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'running', 'executing', '{}', 'default', 300000,
-			'11111111111111111111111111111111', '2222222222222222')
-	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'running', 'executing', '{}', 'default',
+			1000, 1024, 4096, 1,
+			$11, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			300000, '11111111111111111111111111111111', '2222222222222222')
+	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run), runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

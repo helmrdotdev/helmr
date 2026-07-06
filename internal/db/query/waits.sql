@@ -8,7 +8,7 @@ SELECT waits.*
  WHERE waits.org_id = sqlc.arg(org_id)
    AND waits.project_id = sqlc.arg(project_id)
    AND waits.environment_id = sqlc.arg(environment_id)
-   AND run_waits.id = sqlc.arg(run_wait_id);
+   AND run_waits.id = sqlc.arg(run_wait_id)::uuid;
 
 -- name: ResolveImmediateTokenWaitForRunWait :one
 WITH target AS MATERIALIZED (
@@ -31,7 +31,7 @@ WITH target AS MATERIALIZED (
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND waits.project_id = sqlc.arg(project_id)
        AND waits.environment_id = sqlc.arg(environment_id)
-       AND run_waits.id = sqlc.arg(run_wait_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)::uuid
        AND waits.kind = 'token'
        AND (
            (
@@ -136,7 +136,7 @@ WITH due_wait AS MATERIALIZED (
      WHERE waits.org_id = sqlc.arg(org_id)
        AND waits.project_id = sqlc.arg(project_id)
        AND waits.environment_id = sqlc.arg(environment_id)
-       AND run_waits.id = sqlc.arg(run_wait_id)
+       AND run_waits.id = sqlc.arg(run_wait_id)::uuid
        AND waits.kind = 'timer'
        AND waits.state = 'pending'
        AND waits.completed_after <= now()

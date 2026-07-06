@@ -367,7 +367,6 @@ func TestClaimDoesNotDeadLetterInflatedRedisAttempts(t *testing.T) {
 type fakeClaimerStore struct {
 	dispatch          db.Run
 	deadLettered      db.DeadLetterRunDispatchParams
-	err               error
 	deadErr           error
 	exhaustedErr      error
 	attemptsExhausted bool

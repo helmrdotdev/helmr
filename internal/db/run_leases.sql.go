@@ -660,19 +660,17 @@ concurrency_lock AS (
      WHERE COALESCE(candidate.queue_concurrency_limit, 0) > 0
 ),
 active_concurrency AS (
-    SELECT count(run_leases.id)::int AS active_count
+    SELECT active_run_lease_count_for_concurrency_scope(
+               candidate.org_id,
+               candidate.worker_group_id,
+               candidate.project_id,
+               candidate.environment_id,
+               candidate.queue_class,
+               candidate.queue_name,
+               candidate.concurrency_key
+           ) AS active_count
       FROM candidate
       JOIN concurrency_lock ON true
-      LEFT JOIN run_leases
-        ON run_leases.org_id = candidate.org_id
-       AND run_leases.worker_group_id = candidate.worker_group_id
-       AND run_leases.project_id = candidate.project_id
-       AND run_leases.environment_id = candidate.environment_id
-       AND run_leases.queue_class = candidate.queue_class
-       AND run_leases.queue_name = candidate.queue_name
-       AND run_leases.concurrency_key IS NOT DISTINCT FROM candidate.concurrency_key
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
 ),
 concurrency_guard AS (
     SELECT candidate.id, candidate.public_id, candidate.org_id, candidate.worker_group_id, candidate.project_id, candidate.environment_id, candidate.deployment_id, candidate.deployment_task_id, candidate.workspace_id, candidate.workspace_mount_id, candidate.deployment_version, candidate.api_version, candidate.sdk_version, candidate.cli_version, candidate.task_id, candidate.session_id, candidate.schedule_id, candidate.schedule_instance_id, candidate.scheduled_at, candidate.status, candidate.execution_status, candidate.terminal_outcome, candidate.payload, candidate.output, candidate.metadata, candidate.tags, candidate.locked_retry_policy, candidate.queue_class, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.priority, candidate.queue_timestamp, candidate.ttl, candidate.queued_expires_at, candidate.dispatch_generation, candidate.dispatch_attempt_count, candidate.last_enqueue_error, candidate.last_enqueued_at, candidate.requested_milli_cpu, candidate.requested_memory_mib, candidate.requested_disk_mib, candidate.requested_execution_slots, candidate.runtime_id, candidate.runtime_arch, candidate.runtime_abi, candidate.kernel_digest, candidate.initramfs_digest, candidate.rootfs_digest, candidate.cni_profile, candidate.network_policy, candidate.placement, candidate.max_active_duration_ms, candidate.active_elapsed_ms, candidate.active_started_at, candidate.trace_id, candidate.root_span_id, candidate.state_version, candidate.current_attempt_number, candidate.current_run_lease_id, candidate.latest_runtime_checkpoint_id, candidate.exit_code, candidate.error_message, candidate.created_at, candidate.updated_at, candidate.started_at, candidate.finished_at, candidate.worker_protocol_version
@@ -798,8 +796,8 @@ updated AS (
        SET status = 'running',
            execution_status = 'leased',
            current_run_lease_id = leased_run_lease.id,
-           active_started_at = COALESCE(active_started_at, now()),
-           started_at = COALESCE(started_at, now()),
+           active_started_at = COALESCE(runs.active_started_at, now()),
+           started_at = COALESCE(runs.started_at, now()),
            state_version = runs.state_version + 1,
            updated_at = now()
       FROM leased_run_lease

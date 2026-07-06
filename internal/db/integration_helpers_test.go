@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/url"
 	"os"
 	"strings"
@@ -79,10 +78,6 @@ func testSessionRunPublicID(t *testing.T) string {
 	return testPublicID(t, publicid.SessionRun)
 }
 
-func testRunPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Run)
-}
-
 func testRunOperationPublicID(t *testing.T) string {
 	return testPublicID(t, publicid.RunOperation)
 }
@@ -101,10 +96,6 @@ func testStreamRecordPublicID(t *testing.T) string {
 
 func testTokenPublicID(t *testing.T) string {
 	return testPublicID(t, publicid.Token)
-}
-
-func testPublicAccessTokenPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.PublicAccessToken)
 }
 
 func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) integrationIDs {
@@ -164,6 +155,20 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name)
 		VALUES ($1, $2, $3, $4, 'default')
 	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		ON CONFLICT DO NOTHING
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_release_selections (runtime_id)
+		VALUES ('test-runtime')
+		ON CONFLICT DO NOTHING
+	`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -240,10 +245,15 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
 			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			session_id, status, execution_status, payload, queue_name, max_active_duration_ms, trace_id, root_span_id
+			session_id, status, execution_status, payload, queue_name,
+			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
+			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default', 300000,
-			'11111111111111111111111111111111', '2222222222222222')
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default',
+			1000, 1024, 4096, 1,
+			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			300000, '11111111111111111111111111111111', '2222222222222222')
 	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
@@ -606,22 +616,6 @@ func databaseDSN(t *testing.T, dsn string, database string) string {
 	}
 	parsed.Path = "/" + database
 	return parsed.String()
-}
-
-func canonicalFingerprint(t *testing.T, data []byte) string {
-	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(string(data)))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		t.Fatal(err)
-	}
-	canonical, err := json.Marshal(value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(canonical)
-	return hex.EncodeToString(sum[:])
 }
 
 func markDefaultWorkerGroupDrainingWithStaleHealth(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {

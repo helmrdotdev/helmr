@@ -194,7 +194,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 					}
 					sessionSpanID, err := tracing.NewSpanID()
 					if err != nil {
-						s.requeueWorkerDispatch(r.Context(), worker, candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
+						s.requeueWorkerDispatch(r.Context(), candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
 						s.log.Error("worker run trace span failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 						writeError(w, errors.New("lease run"))
 						return
@@ -229,10 +229,10 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 						if ensureErr := s.ensureQueuedRunWorkspaceMountForLeaseConflict(r.Context(), candidateLease.Entry.OrgID, candidateLease.Entry.ID); ensureErr != nil {
 							s.log.Warn("ensure queued run workspace mount after lease conflict failed", "worker_instance_id", worker.WorkerInstanceID.String(), "run_id", pgvalue.UUIDString(candidateLease.Entry.ID), "error", ensureErr)
 						}
-						s.requeueWorkerDispatch(r.Context(), worker, candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
+						s.requeueWorkerDispatch(r.Context(), candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonLeaseConflict, "execution lease conflict")
 						continue
 					}
-					s.requeueWorkerDispatch(r.Context(), worker, candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
+					s.requeueWorkerDispatch(r.Context(), candidateLease.Entry.ID, candidateLease.Lease, dispatch.NackReasonRetry, err.Error())
 					s.log.Error("worker run lease failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 					writeError(w, errors.New("lease run"))
 					return
@@ -255,7 +255,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 	run, err := s.workerRunFromLease(r.Context(), leasedRun)
 	if err != nil {
 		if failure, ok := terminalPayloadFailure(err); ok {
-			if failErr := s.failLeasedRunPayload(r.Context(), worker, leasedRun, queueLease.Lease, failure); failErr != nil {
+			if failErr := s.failLeasedRunPayload(r.Context(), leasedRun, queueLease.Lease, failure); failErr != nil {
 				s.log.Error("fail worker run payload failed", "run_id", pgvalue.MustUUIDValue(leasedRun.ID).String(), "run_lease_id", pgvalue.MustUUIDValue(leasedRun.RunLeaseID).String(), "error", failErr)
 				writeError(w, errors.New("fail worker run payload"))
 				return
@@ -272,7 +272,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}); abandonErr != nil {
 			s.log.Error("abandon worker run lease failed", "run_id", pgvalue.MustUUIDValue(leasedRun.ID).String(), "run_lease_id", pgvalue.MustUUIDValue(leasedRun.RunLeaseID).String(), "error", abandonErr)
 		}
-		s.requeueWorkerDispatch(r.Context(), worker, leasedRun.ID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
+		s.requeueWorkerDispatch(r.Context(), leasedRun.ID, queueLease.Lease, dispatch.NackReasonRetry, err.Error())
 		s.log.Error("build worker run payload failed", "run_id", pgvalue.MustUUIDValue(leasedRun.ID).String(), "run_lease_id", pgvalue.MustUUIDValue(leasedRun.RunLeaseID).String(), "error", err)
 		writeError(w, badGateway(errors.New("build worker run payload")))
 		return
@@ -311,7 +311,7 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 	}
 	sessionSpanID, err := tracing.NewSpanID()
 	if err != nil {
-		if requeueErr := s.requeueResidentRunDispatch(ctx, worker, entry, messageID, "resident trace span failed"); requeueErr != nil {
+		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, "resident trace span failed"); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -330,13 +330,13 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 	})
 	if isNoRows(err) {
 		s.logRunWorkspaceReuseDiagnostics(ctx, entry.OrgID, entry.RunID, pgvalue.UUID(worker.WorkerInstanceID), "resident_lease_no_rows")
-		if requeueErr := s.requeueResidentRunDispatch(ctx, worker, entry, messageID, "resident execution lease conflict"); requeueErr != nil {
+		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, "resident execution lease conflict"); requeueErr != nil {
 			return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, requeueErr
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
 	}
 	if err != nil {
-		if requeueErr := s.requeueResidentRunDispatch(ctx, worker, entry, messageID, err.Error()); requeueErr != nil {
+		if requeueErr := s.requeueResidentRunDispatch(ctx, entry, err.Error()); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -352,7 +352,7 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 	return dispatch.ClaimedRun{Lease: lease, Entry: residentRun(entry)}, leasedRun, true, nil
 }
 
-func (s *Server) requeueResidentRunDispatch(ctx context.Context, worker workerActor, entry db.ReserveResidentRunForWorkerRow, messageID string, lastError string) error {
+func (s *Server) requeueResidentRunDispatch(ctx context.Context, entry db.ReserveResidentRunForWorkerRow, lastError string) error {
 	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, entry.DispatchGeneration, lastError)
 }
 
@@ -396,7 +396,7 @@ func (s *Server) ackWorkerQueueLease(ctx context.Context, runID pgtype.UUID, lea
 	}
 }
 
-func (s *Server) requeueWorkerDispatch(ctx context.Context, worker workerActor, runID pgtype.UUID, lease dispatch.Lease, reason dispatch.NackReason, lastError string) {
+func (s *Server) requeueWorkerDispatch(ctx context.Context, runID pgtype.UUID, lease dispatch.Lease, reason dispatch.NackReason, lastError string) {
 	orgID, err := uuid.Parse(lease.Message.OrgID)
 	if err != nil {
 		s.log.Warn("requeue run dispatch failed", "run_id", pgvalue.MustUUIDValue(runID).String(), "reason", reason, "error", err)

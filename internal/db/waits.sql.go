@@ -21,7 +21,7 @@ SELECT waits.id, waits.public_id, waits.org_id, waits.project_id, waits.environm
  WHERE waits.org_id = $1
    AND waits.project_id = $2
    AND waits.environment_id = $3
-   AND run_waits.id = $4
+   AND run_waits.id = $4::uuid
 `
 
 type GetWaitForRunWaitParams struct {
@@ -76,7 +76,7 @@ WITH due_wait AS MATERIALIZED (
      WHERE waits.org_id = $1
        AND waits.project_id = $2
        AND waits.environment_id = $3
-       AND run_waits.id = $4
+       AND run_waits.id = $4::uuid
        AND waits.kind = 'timer'
        AND waits.state = 'pending'
        AND waits.completed_after <= now()
@@ -331,7 +331,7 @@ WITH target AS MATERIALIZED (
        AND run_waits.worker_group_id = $2
        AND waits.project_id = $3
        AND waits.environment_id = $4
-       AND run_waits.id = $5
+       AND run_waits.id = $5::uuid
        AND waits.kind = 'token'
        AND (
            (

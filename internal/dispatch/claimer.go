@@ -104,7 +104,7 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 			}
 			continue
 		}
-		leased, err := c.markLeased(ctx, lease)
+		leased, err := c.markLeased(lease)
 		if err == nil {
 			return ClaimedRun{Lease: lease, Entry: leased}, nil
 		}
@@ -178,7 +178,7 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	return err
 }
 
-func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.Run, error) {
+func (c *Claimer) markLeased(lease Lease) (db.Run, error) {
 	orgID, err := parseUUID("org id", lease.Message.OrgID)
 	if err != nil {
 		return db.Run{}, err

@@ -126,6 +126,20 @@ WITH terminalized AS (
        AND runs.dispatch_generation = $6
        AND runs.status = 'queued'
     RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+),
+ended_session_run AS (
+    UPDATE session_runs
+       SET ended_at = COALESCE(session_runs.ended_at, terminalized.finished_at)
+      FROM terminalized
+     WHERE session_runs.org_id = terminalized.org_id
+       AND session_runs.project_id = terminalized.project_id
+       AND session_runs.environment_id = terminalized.environment_id
+       AND session_runs.session_id = terminalized.session_id
+       AND session_runs.run_id = terminalized.id
+    RETURNING session_runs.id
+),
+cleanup AS (
+    SELECT count(*) AS ended_session_run_count FROM ended_session_run
 )
 SELECT terminalized.id AS run_id,
        terminalized.org_id,
@@ -134,6 +148,7 @@ SELECT terminalized.id AS run_id,
        terminalized.environment_id,
        terminalized.state_version
   FROM terminalized
+ WHERE (SELECT ended_session_run_count FROM cleanup) >= 0
 `
 
 type DeadLetterRunDispatchParams struct {
@@ -1679,7 +1694,7 @@ SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_
    AND runs.worker_group_id = $4
    AND runs.queue_class = $5
    AND runs.id = $6
-   AND runs.status IN ('leased', 'running')
+   AND runs.status = 'running'
 `
 
 type ValidateRunLeaseDispatchRenewalParams struct {

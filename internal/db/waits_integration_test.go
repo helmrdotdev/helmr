@@ -29,7 +29,7 @@ func TestResolveImmediateTokenWaitForRunWaitCompletesNewWait(t *testing.T) {
 			id, public_id, org_id, project_id, environment_id, state,
 			timeout_at, completion_data, completion_fingerprint, completed_at
 		)
-		VALUES ($1, $6, $2, $3, $4, 'completed', now() + interval '1 hour', '{"ok":true}'::jsonb, 'done', now())
+		VALUES ($1, $5, $2, $3, $4, 'completed', now() + interval '1 hour', '{"ok":true}'::jsonb, 'done', now())
 	`, tokenID, ids.orgID, ids.projectID, ids.environmentID, testTokenPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestResolveImmediateTokenWaitForRunWaitResumesTerminalWait(t *testing.T) {
 			id, public_id, org_id, project_id, environment_id, state,
 			timeout_at, completion_data, completion_fingerprint, completed_at
 		)
-		VALUES ($1, $6, $2, $3, $4, 'completed', now() + interval '1 hour', '{"ok":true}'::jsonb, 'done', now())
+		VALUES ($1, $5, $2, $3, $4, 'completed', now() + interval '1 hour', '{"ok":true}'::jsonb, 'done', now())
 	`, tokenID, ids.orgID, ids.projectID, ids.environmentID, testTokenPublicID(t)); err != nil {
 		t.Fatal(err)
 	}

@@ -2415,6 +2415,38 @@ CREATE TABLE run_leases (
         ON DELETE CASCADE
 );
 
+CREATE FUNCTION active_run_lease_count_for_concurrency_scope(
+    p_org_id UUID,
+    p_worker_group_id TEXT,
+    p_project_id UUID,
+    p_environment_id UUID,
+    p_queue_class TEXT,
+    p_queue_name TEXT,
+    p_concurrency_key TEXT
+) RETURNS INTEGER
+LANGUAGE plpgsql
+VOLATILE
+AS $$
+DECLARE
+    active_count INTEGER;
+BEGIN
+    SELECT count(run_leases.id)::int
+      INTO active_count
+      FROM run_leases
+     WHERE run_leases.org_id = p_org_id
+       AND run_leases.worker_group_id = p_worker_group_id
+       AND run_leases.project_id = p_project_id
+       AND run_leases.environment_id = p_environment_id
+       AND run_leases.queue_class = p_queue_class
+       AND run_leases.queue_name = p_queue_name
+       AND run_leases.concurrency_key IS NOT DISTINCT FROM p_concurrency_key
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now();
+
+    RETURN COALESCE(active_count, 0);
+END;
+$$;
+
 CREATE TABLE run_state_snapshots (
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,

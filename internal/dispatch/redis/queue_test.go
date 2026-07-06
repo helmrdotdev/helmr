@@ -925,7 +925,3 @@ func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInsta
 	}
 	return leases[0]
 }
-
-func activeMessageKey(queue *Queue, messageID string) string {
-	return queue.prefix + ":message_active:" + messageID
-}

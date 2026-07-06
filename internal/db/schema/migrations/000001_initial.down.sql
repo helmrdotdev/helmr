@@ -284,6 +284,7 @@ DROP TYPE IF EXISTS deployment_status;
 DROP TYPE IF EXISTS run_lease_status;
 DROP TYPE IF EXISTS run_status;
 DROP TYPE IF EXISTS artifact_kind;
+DROP FUNCTION IF EXISTS active_run_lease_count_for_concurrency_scope(UUID, TEXT, UUID, UUID, TEXT, TEXT, TEXT);
 DROP TABLE IF EXISTS cas_objects;
 DROP TABLE IF EXISTS secrets;
 DROP TABLE IF EXISTS device_codes;

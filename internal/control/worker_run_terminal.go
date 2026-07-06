@@ -72,7 +72,7 @@ func terminalPayloadFailure(err error) (payloadFailure, bool) {
 	return payloadFailure{kind: terminal.kind, message: terminal.err.Error()}, true
 }
 
-func (s *Server) failLeasedRunPayload(ctx context.Context, worker workerActor, row db.LeaseRunLeaseRow, lease dispatch.Lease, failure payloadFailure) error {
+func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunLeaseRow, lease dispatch.Lease, failure payloadFailure) error {
 	_, payload, err := payloadFailureRunEvent(failure)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func (s *Server) failLeasedRunPayload(ctx context.Context, worker workerActor, r
 		TerminalEventPayload: payload,
 	})
 	if err != nil {
-		s.requeueWorkerDispatch(ctx, worker, row.ID, lease, dispatch.NackReasonRetry, err.Error())
+		s.requeueWorkerDispatch(ctx, row.ID, lease, dispatch.NackReasonRetry, err.Error())
 		return err
 	}
 	s.ackWorkerQueueLease(ctx, row.ID, lease)

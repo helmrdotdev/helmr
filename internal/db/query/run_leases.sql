@@ -435,19 +435,17 @@ concurrency_lock AS (
      WHERE COALESCE(candidate.queue_concurrency_limit, 0) > 0
 ),
 active_concurrency AS (
-    SELECT count(run_leases.id)::int AS active_count
+    SELECT active_run_lease_count_for_concurrency_scope(
+               candidate.org_id,
+               candidate.worker_group_id,
+               candidate.project_id,
+               candidate.environment_id,
+               candidate.queue_class,
+               candidate.queue_name,
+               candidate.concurrency_key
+           ) AS active_count
       FROM candidate
       JOIN concurrency_lock ON true
-      LEFT JOIN run_leases
-        ON run_leases.org_id = candidate.org_id
-       AND run_leases.worker_group_id = candidate.worker_group_id
-       AND run_leases.project_id = candidate.project_id
-       AND run_leases.environment_id = candidate.environment_id
-       AND run_leases.queue_class = candidate.queue_class
-       AND run_leases.queue_name = candidate.queue_name
-       AND run_leases.concurrency_key IS NOT DISTINCT FROM candidate.concurrency_key
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
 ),
 concurrency_guard AS (
     SELECT candidate.*
@@ -573,8 +571,8 @@ updated AS (
        SET status = 'running',
            execution_status = 'leased',
            current_run_lease_id = leased_run_lease.id,
-           active_started_at = COALESCE(active_started_at, now()),
-           started_at = COALESCE(started_at, now()),
+           active_started_at = COALESCE(runs.active_started_at, now()),
+           started_at = COALESCE(runs.started_at, now()),
            state_version = runs.state_version + 1,
            updated_at = now()
       FROM leased_run_lease

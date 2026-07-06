@@ -477,7 +477,7 @@ SELECT runs.*
    AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.status IN ('leased', 'running');
+   AND runs.status = 'running';
 
 -- name: CompleteRunDispatch :one
 SELECT runs.*
@@ -582,6 +582,20 @@ WITH terminalized AS (
        AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
        AND runs.status = 'queued'
     RETURNING *
+),
+ended_session_run AS (
+    UPDATE session_runs
+       SET ended_at = COALESCE(session_runs.ended_at, terminalized.finished_at)
+      FROM terminalized
+     WHERE session_runs.org_id = terminalized.org_id
+       AND session_runs.project_id = terminalized.project_id
+       AND session_runs.environment_id = terminalized.environment_id
+       AND session_runs.session_id = terminalized.session_id
+       AND session_runs.run_id = terminalized.id
+    RETURNING session_runs.id
+),
+cleanup AS (
+    SELECT count(*) AS ended_session_run_count FROM ended_session_run
 )
 SELECT terminalized.id AS run_id,
        terminalized.org_id,
@@ -589,4 +603,5 @@ SELECT terminalized.id AS run_id,
        terminalized.project_id,
        terminalized.environment_id,
        terminalized.state_version
-  FROM terminalized;
+  FROM terminalized
+ WHERE (SELECT ended_session_run_count FROM cleanup) >= 0;

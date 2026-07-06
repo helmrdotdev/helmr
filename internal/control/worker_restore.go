@@ -48,7 +48,7 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	}
 	sessionSpanID, err := tracing.NewSpanID()
 	if err != nil {
-		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, "checkpoint restore trace span failed"); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, entry, "checkpoint restore trace span failed"); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -67,13 +67,13 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	})
 	if isNoRows(err) {
 		s.logRunWorkspaceReuseDiagnostics(ctx, entry.OrgID, entry.RunID, pgvalue.UUID(worker.WorkerInstanceID), "checkpoint_restore_source_lease_no_rows")
-		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, "checkpoint restore source lease conflict"); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, entry, "checkpoint restore source lease conflict"); requeueErr != nil {
 			return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, requeueErr
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, nil
 	}
 	if err != nil {
-		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, worker, entry, messageID, err.Error()); requeueErr != nil {
+		if requeueErr := s.requeueCheckpointRestoreRunDispatch(ctx, entry, err.Error()); requeueErr != nil {
 			err = errors.Join(err, requeueErr)
 		}
 		return dispatch.ClaimedRun{}, db.LeaseRunLeaseRow{}, false, err
@@ -90,7 +90,7 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 	return dispatch.ClaimedRun{Lease: lease, Entry: checkpointRestoreRun(entry)}, leasedRun, true, nil
 }
 
-func (s *Server) requeueCheckpointRestoreRunDispatch(ctx context.Context, worker workerActor, entry db.ReserveCheckpointRestoreRunForWorkerRow, messageID string, lastError string) error {
+func (s *Server) requeueCheckpointRestoreRunDispatch(ctx context.Context, entry db.ReserveCheckpointRestoreRunForWorkerRow, lastError string) error {
 	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, entry.DispatchGeneration, lastError)
 }
 
