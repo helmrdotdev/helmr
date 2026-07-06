@@ -564,8 +564,84 @@ updated_runs AS (
        AND runs.id = eligible_waits.run_id
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.id, runs.org_id, runs.queued_expires_at
-	)
+	    RETURNING runs.*,
+	              eligible_waits.id AS source_run_wait_id,
+	              eligible_waits.runtime_checkpoint_id AS source_runtime_checkpoint_id
+),
+resumed_snapshots AS (
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, runtime_checkpoint_id, previous_version, transition, reason)
+    SELECT updated_runs.org_id,
+           updated_runs.worker_group_id,
+           updated_runs.id,
+           updated_runs.state_version,
+           updated_runs.status,
+           updated_runs.execution_status,
+           updated_runs.current_attempt_number,
+           updated_runs.source_runtime_checkpoint_id,
+           updated_runs.state_version - 1,
+           'run.resumed',
+           jsonb_build_object(
+               'run_wait_id', updated_runs.source_run_wait_id,
+               'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
+           )
+      FROM updated_runs
+    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
+),
+resumed_event_seq AS (
+    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
+    SELECT updated_runs.org_id, updated_runs.worker_group_id, 'run', updated_runs.id, 1
+      FROM updated_runs
+      JOIN resumed_snapshots ON resumed_snapshots.run_id = updated_runs.id
+    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
+    DO UPDATE SET seq = event_cursors.seq + 1,
+                  observed_at = now()
+    RETURNING org_id, subject_kind, subject_id, seq
+),
+resumed_events AS (
+    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    SELECT updated_runs.org_id,
+           updated_runs.worker_group_id,
+           updated_runs.project_id,
+           updated_runs.environment_id,
+           updated_runs.id,
+           resumed_event_seq.seq,
+           updated_runs.current_attempt_number,
+           updated_runs.trace_id,
+           updated_runs.root_span_id,
+           '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01',
+           'lifecycle',
+           'info',
+           'control',
+           'run.resumed',
+           'run.resumed',
+           jsonb_build_object(
+               'run_wait_id', updated_runs.source_run_wait_id,
+               'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
+           ),
+           'internal',
+           updated_runs.state_version
+      FROM updated_runs
+      JOIN resumed_event_seq ON resumed_event_seq.org_id = updated_runs.org_id
+                            AND resumed_event_seq.subject_kind = 'run'
+                            AND resumed_event_seq.subject_id = updated_runs.id
+    RETURNING *
+),
+resumed_telemetry_outboxes AS (
+    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
+    SELECT resumed_events.org_id,
+           resumed_events.worker_group_id,
+           'event',
+           resumed_events.subject_type,
+           resumed_events.subject_id,
+           resumed_events.seq,
+           'event:' || resumed_events.subject_type::text || ':' || resumed_events.subject_id::text || ':' || resumed_events.seq::text
+      FROM resumed_events
+    RETURNING id
+),
+resumed_cleanup AS (
+    SELECT count(*) AS telemetry_outbox_count
+      FROM resumed_telemetry_outboxes
+)
 SELECT updated_waits.*,
        eligible_waits.workspace_id,
        eligible_waits.priority
@@ -573,7 +649,8 @@ SELECT updated_waits.*,
 	  JOIN eligible_waits ON eligible_waits.org_id = updated_waits.org_id
 	                     AND eligible_waits.id = updated_waits.id
 	  JOIN updated_runs ON updated_runs.org_id = updated_waits.org_id
-	                   AND updated_runs.id = updated_waits.run_id;
+	                   AND updated_runs.id = updated_waits.run_id
+	  JOIN resumed_cleanup ON resumed_cleanup.telemetry_outbox_count >= 0;
 
 -- name: FailStaleResolvedRunWaits :many
 WITH stale_waits AS MATERIALIZED (
