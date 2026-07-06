@@ -123,6 +123,7 @@ WITH terminalized AS (
        AND runs.worker_group_id = $3
        AND runs.queue_class = $4
        AND runs.id = $5
+       AND runs.dispatch_generation = $6
        AND runs.status = 'queued'
     RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 )
@@ -136,11 +137,12 @@ SELECT terminalized.id AS run_id,
 `
 
 type DeadLetterRunDispatchParams struct {
-	LastError     string      `json:"last_error"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	QueueClass    string      `json:"queue_class"`
-	RunID         pgtype.UUID `json:"run_id"`
+	LastError          string      `json:"last_error"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	WorkerGroupID      string      `json:"worker_group_id"`
+	QueueClass         string      `json:"queue_class"`
+	RunID              pgtype.UUID `json:"run_id"`
+	DispatchGeneration int64       `json:"dispatch_generation"`
 }
 
 type DeadLetterRunDispatchRow struct {
@@ -159,6 +161,7 @@ func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDi
 		arg.WorkerGroupID,
 		arg.QueueClass,
 		arg.RunID,
+		arg.DispatchGeneration,
 	)
 	var i DeadLetterRunDispatchRow
 	err := row.Scan(
@@ -407,38 +410,6 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 	return i, err
 }
 
-const isRunQueueLeaseConflict = `-- name: IsRunQueueLeaseConflict :one
-SELECT EXISTS (
-    SELECT 1
-      FROM runs
-     WHERE runs.org_id = $1
-       AND runs.worker_group_id = $2
-       AND runs.queue_class = $3
-       AND runs.id = $4
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NOT NULL
-) AS conflict
-`
-
-type IsRunQueueLeaseConflictParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	QueueClass    string      `json:"queue_class"`
-	RunID         pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error) {
-	row := q.db.QueryRow(ctx, isRunQueueLeaseConflict,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.QueueClass,
-		arg.RunID,
-	)
-	var conflict bool
-	err := row.Scan(&conflict)
-	return conflict, err
-}
-
 const listQueueScopes = `-- name: ListQueueScopes :many
 SELECT runs.org_id,
        runs.worker_group_id,
@@ -656,7 +627,7 @@ const listQueuedRunDispatchCandidatesForScope = `-- name: ListQueuedRunDispatchC
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_groups
     ON worker_groups.id = runs.worker_group_id
@@ -1133,114 +1104,6 @@ func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueue
 	return i, err
 }
 
-const renewRunQueueReservation = `-- name: RenewRunQueueReservation :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
-  FROM runs
-  JOIN run_leases
-    ON run_leases.org_id = runs.org_id
-   AND run_leases.run_id = runs.id
-   AND run_leases.worker_group_id = runs.worker_group_id
-   AND run_leases.worker_instance_id = $1
-   AND run_leases.dispatch_message_id = $2
-   AND run_leases.status IN ('leased', 'running')
-   AND run_leases.lease_expires_at > now()
- WHERE runs.org_id = $3
-   AND runs.worker_group_id = $4
-   AND runs.queue_class = $5
-   AND runs.id = $6
-`
-
-type RenewRunQueueReservationParams struct {
-	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
-	DispatchMessageID string      `json:"dispatch_message_id"`
-	OrgID             pgtype.UUID `json:"org_id"`
-	WorkerGroupID     string      `json:"worker_group_id"`
-	QueueClass        string      `json:"queue_class"`
-	RunID             pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (Run, error) {
-	row := q.db.QueryRow(ctx, renewRunQueueReservation,
-		arg.WorkerInstanceID,
-		arg.DispatchMessageID,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.QueueClass,
-		arg.RunID,
-	)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
-		&i.ScheduleID,
-		&i.ScheduleInstanceID,
-		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
-		&i.Payload,
-		&i.Output,
-		&i.Metadata,
-		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.QueueConcurrencyLimit,
-		&i.ConcurrencyKey,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
-		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.Placement,
-		&i.MaxActiveDurationMs,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRuntimeCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
 const requeueRunDispatch = `-- name: RequeueRunDispatch :one
 UPDATE runs
    SET dispatch_generation = dispatch_generation + 1,
@@ -1253,16 +1116,18 @@ UPDATE runs
    AND runs.queue_class = $4
    AND runs.id = $5
    AND runs.status = 'queued'
+   AND runs.dispatch_generation = $6
    AND runs.current_run_lease_id IS NULL
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
 type RequeueRunDispatchParams struct {
-	LastError     string      `json:"last_error"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	QueueClass    string      `json:"queue_class"`
-	RunID         pgtype.UUID `json:"run_id"`
+	LastError                  string      `json:"last_error"`
+	OrgID                      pgtype.UUID `json:"org_id"`
+	WorkerGroupID              string      `json:"worker_group_id"`
+	QueueClass                 string      `json:"queue_class"`
+	RunID                      pgtype.UUID `json:"run_id"`
+	ExpectedDispatchGeneration int64       `json:"expected_dispatch_generation"`
 }
 
 func (q *Queries) RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatchParams) (Run, error) {
@@ -1272,6 +1137,7 @@ func (q *Queries) RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatch
 		arg.WorkerGroupID,
 		arg.QueueClass,
 		arg.RunID,
+		arg.ExpectedDispatchGeneration,
 	)
 	var i Run
 	err := row.Scan(
@@ -1356,7 +1222,7 @@ SELECT runs.org_id,
        runs.queue_timestamp,
        runs.queued_expires_at,
        runs.dispatch_generation,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_instances
     ON worker_instances.id = $1
@@ -1416,7 +1282,7 @@ SELECT runs.org_id,
        runs.queue_timestamp,
        runs.queued_expires_at,
        runs.dispatch_generation,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_instances
     ON worker_instances.id = $1
@@ -1470,125 +1336,14 @@ func (q *Queries) ReserveResidentRunForWorker(ctx context.Context, workerInstanc
 	return i, err
 }
 
-const reserveRunDispatch = `-- name: ReserveRunDispatch :one
-UPDATE runs
-   SET updated_at = now()
- WHERE runs.org_id = $1
-   AND runs.worker_group_id = $2
-   AND runs.queue_class = $3
-   AND runs.id = $4
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.dispatch_generation = $5
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-   AND EXISTS (
-       SELECT 1
-         FROM worker_instances
-        WHERE worker_instances.id = $6
-          AND worker_instances.worker_group_id = runs.worker_group_id
-          AND worker_instances.status = 'active'
-   )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
-`
-
-type ReserveRunDispatchParams struct {
-	OrgID              pgtype.UUID `json:"org_id"`
-	WorkerGroupID      string      `json:"worker_group_id"`
-	QueueClass         string      `json:"queue_class"`
-	RunID              pgtype.UUID `json:"run_id"`
-	DispatchGeneration int64       `json:"dispatch_generation"`
-	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
-}
-
-func (q *Queries) ReserveRunDispatch(ctx context.Context, arg ReserveRunDispatchParams) (Run, error) {
-	row := q.db.QueryRow(ctx, reserveRunDispatch,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.QueueClass,
-		arg.RunID,
-		arg.DispatchGeneration,
-		arg.WorkerInstanceID,
-	)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.WorkspaceMountID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
-		&i.ScheduleID,
-		&i.ScheduleInstanceID,
-		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
-		&i.Payload,
-		&i.Output,
-		&i.Metadata,
-		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.QueueConcurrencyLimit,
-		&i.ConcurrencyKey,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
-		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.Placement,
-		&i.MaxActiveDurationMs,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRuntimeCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.StartedAt,
-		&i.FinishedAt,
-	)
-	return i, err
-}
-
 const runLeaseDispatchAttemptsExhausted = `-- name: RunLeaseDispatchAttemptsExhausted :one
 SELECT runs.dispatch_attempt_count >= $1::int AS exhausted
   FROM runs
- WHERE runs.org_id = $2
+WHERE runs.org_id = $2
    AND runs.worker_group_id = $3
    AND runs.queue_class = $4
    AND runs.id = $5
+   AND runs.dispatch_generation = $6
    AND runs.status = 'queued'
 `
 
@@ -1598,6 +1353,7 @@ type RunLeaseDispatchAttemptsExhaustedParams struct {
 	WorkerGroupID       string      `json:"worker_group_id"`
 	QueueClass          string      `json:"queue_class"`
 	RunID               pgtype.UUID `json:"run_id"`
+	DispatchGeneration  int64       `json:"dispatch_generation"`
 }
 
 func (q *Queries) RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
@@ -1607,6 +1363,7 @@ func (q *Queries) RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg Run
 		arg.WorkerGroupID,
 		arg.QueueClass,
 		arg.RunID,
+		arg.DispatchGeneration,
 	)
 	var exhausted bool
 	err := row.Scan(&exhausted)
@@ -1901,6 +1658,117 @@ func (q *Queries) UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertW
 		&i.FirstSeenAt,
 		&i.LastSeenAt,
 		&i.DrainedAt,
+	)
+	return i, err
+}
+
+const validateRunLeaseDispatchRenewal = `-- name: ValidateRunLeaseDispatchRenewal :one
+SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+  FROM runs
+  JOIN run_leases
+    ON run_leases.org_id = runs.org_id
+   AND run_leases.run_id = runs.id
+   AND run_leases.id = runs.current_run_lease_id
+   AND run_leases.worker_group_id = runs.worker_group_id
+   AND run_leases.worker_instance_id = $1
+   AND run_leases.dispatch_message_id = $2
+   AND run_leases.dispatch_generation = runs.dispatch_generation
+   AND run_leases.status IN ('leased', 'running')
+   AND run_leases.lease_expires_at > now()
+ WHERE runs.org_id = $3
+   AND runs.worker_group_id = $4
+   AND runs.queue_class = $5
+   AND runs.id = $6
+   AND runs.status IN ('leased', 'running')
+`
+
+type ValidateRunLeaseDispatchRenewalParams struct {
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	DispatchMessageID string      `json:"dispatch_message_id"`
+	OrgID             pgtype.UUID `json:"org_id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	QueueClass        string      `json:"queue_class"`
+	RunID             pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ValidateRunLeaseDispatchRenewal(ctx context.Context, arg ValidateRunLeaseDispatchRenewalParams) (Run, error) {
+	row := q.db.QueryRow(ctx, validateRunLeaseDispatchRenewal,
+		arg.WorkerInstanceID,
+		arg.DispatchMessageID,
+		arg.OrgID,
+		arg.WorkerGroupID,
+		arg.QueueClass,
+		arg.RunID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentTaskID,
+		&i.WorkspaceID,
+		&i.WorkspaceMountID,
+		&i.DeploymentVersion,
+		&i.ApiVersion,
+		&i.SdkVersion,
+		&i.CliVersion,
+		&i.TaskID,
+		&i.SessionID,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
+		&i.Status,
+		&i.ExecutionStatus,
+		&i.TerminalOutcome,
+		&i.Payload,
+		&i.Output,
+		&i.Metadata,
+		&i.Tags,
+		&i.LockedRetryPolicy,
+		&i.QueueClass,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.ConcurrencyKey,
+		&i.Priority,
+		&i.QueueTimestamp,
+		&i.Ttl,
+		&i.QueuedExpiresAt,
+		&i.DispatchGeneration,
+		&i.DispatchAttemptCount,
+		&i.LastEnqueueError,
+		&i.LastEnqueuedAt,
+		&i.RequestedMilliCpu,
+		&i.RequestedMemoryMib,
+		&i.RequestedDiskMib,
+		&i.RequestedExecutionSlots,
+		&i.RuntimeID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
+		&i.NetworkPolicy,
+		&i.Placement,
+		&i.MaxActiveDurationMs,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.LatestRuntimeCheckpointID,
+		&i.ExitCode,
+		&i.ErrorMessage,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
 	)
 	return i, err
 }

@@ -267,7 +267,6 @@ type Querier interface {
 	InsertWorkspacePtyOutputStreamChunk(ctx context.Context, arg InsertWorkspacePtyOutputStreamChunkParams) (InsertWorkspacePtyOutputStreamChunkRow, error)
 	InsertWorkspacePtyStreamChunk(ctx context.Context, arg InsertWorkspacePtyStreamChunkParams) (WorkspacePtyStreamChunk, error)
 	InsertWorkspacePtyStreamChunkReceipt(ctx context.Context, arg InsertWorkspacePtyStreamChunkReceiptParams) (WorkspacePtyStreamChunkReceipt, error)
-	IsRunQueueLeaseConflict(ctx context.Context, arg IsRunQueueLeaseConflictParams) (bool, error)
 	IssueAPIKey(ctx context.Context, arg IssueAPIKeyParams) (APIKey, error)
 	LeaseQueuedDeploymentBuild(ctx context.Context, arg LeaseQueuedDeploymentBuildParams) (LeaseQueuedDeploymentBuildRow, error)
 	LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (LeaseRunLeaseRow, error)
@@ -392,7 +391,6 @@ type Querier interface {
 	ReleaseSessionRunRequestForRetry(ctx context.Context, arg ReleaseSessionRunRequestForRetryParams) (SessionRunRequest, error)
 	ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspaceLeaseParams) (WorkspaceLease, error)
 	RenewRunLease(ctx context.Context, arg RenewRunLeaseParams) (RenewRunLeaseRow, error)
-	RenewRunQueueReservation(ctx context.Context, arg RenewRunQueueReservationParams) (Run, error)
 	RenewRuntimeInstance(ctx context.Context, arg RenewRuntimeInstanceParams) (RuntimeInstance, error)
 	RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMountParams) (RenewWorkspaceMountRow, error)
 	ReportWorkerGroupHealth(ctx context.Context, arg ReportWorkerGroupHealthParams) (WorkerGroup, error)
@@ -406,7 +404,6 @@ type Querier interface {
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
 	ReserveCheckpointRestoreRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveCheckpointRestoreRunForWorkerRow, error)
 	ReserveResidentRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveResidentRunForWorkerRow, error)
-	ReserveRunDispatch(ctx context.Context, arg ReserveRunDispatchParams) (Run, error)
 	ReserveWorkspaceMountPreparingRuntime(ctx context.Context, arg ReserveWorkspaceMountPreparingRuntimeParams) (ReserveWorkspaceMountPreparingRuntimeRow, error)
 	ResizeWorkspacePtySession(ctx context.Context, arg ResizeWorkspacePtySessionParams) (WorkspacePtySession, error)
 	ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context, arg ResolveDeploymentSandboxForWorkspaceCreateParams) (DeploymentSandbox, error)
@@ -460,6 +457,7 @@ type Querier interface {
 	UpsertTerminalOutputWatermark(ctx context.Context, arg UpsertTerminalOutputWatermarkParams) (TerminalOutputWatermark, error)
 	UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error)
 	UpsertWorkerInstanceHeartbeat(ctx context.Context, arg UpsertWorkerInstanceHeartbeatParams) (UpsertWorkerInstanceHeartbeatRow, error)
+	ValidateRunLeaseDispatchRenewal(ctx context.Context, arg ValidateRunLeaseDispatchRenewalParams) (Run, error)
 	WorkspaceHasActivePrimitiveWriter(ctx context.Context, arg WorkspaceHasActivePrimitiveWriterParams) (bool, error)
 }
 

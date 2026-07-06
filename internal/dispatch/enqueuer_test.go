@@ -165,37 +165,6 @@ func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageMissing(t *testin
 	}
 }
 
-func TestReconcileQueueScopeReenqueuesQueuedRunWhenRedisMessageInvalidated(t *testing.T) {
-	ctx := context.Background()
-	orgID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	projectID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	scope := QueueScope{OrgID: orgID, ProjectID: projectID, EnvironmentID: environmentID, QueueName: "queue-a"}
-	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	store := &fakeEnqueuerStore{
-		prepare: testPreparedRunDispatchWithScope(orgID, projectID, environmentID, runID),
-		candidates: []db.ListQueuedRunDispatchCandidatesForScopeRow{
-			{OrgID: orgID, RunID: runID, DispatchMessageID: "message-invalidated"},
-		},
-	}
-	queue := &fakeEnqueuerQueue{invalidatedMessages: map[string]bool{"message-invalidated": true}}
-	enqueuer, err := NewEnqueuer(store, queue)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	stats, err := enqueuer.ReconcileQueueScope(ctx, scope, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if stats.Scanned != 1 || stats.Enqueued != 1 || stats.Skipped != 0 || stats.Failed != 0 {
-		t.Fatalf("stats = %+v", stats)
-	}
-	if len(queue.messages) != 1 || store.markEnqueued.RunID != runID || !queue.invalidatedMessages["message-invalidated"] {
-		t.Fatalf("messages = %+v mark enqueued = %+v invalidated = %+v", queue.messages, store.markEnqueued, queue.invalidatedMessages)
-	}
-}
-
 func TestEnqueueRunReturnsNoCandidate(t *testing.T) {
 	ctx := context.Background()
 	enqueuer, err := NewEnqueuer(&fakeEnqueuerStore{prepareErr: pgx.ErrNoRows}, &fakeEnqueuerQueue{})
@@ -246,12 +215,10 @@ func (f *fakeEnqueuerStore) MarkRunDispatchEnqueueError(_ context.Context, arg d
 }
 
 type fakeEnqueuerQueue struct {
-	result              EnqueueResult
-	err                 error
-	errByRun            map[string]error
-	existingMessages    map[string]bool
-	invalidatedMessages map[string]bool
-	messages            []Message
+	result   EnqueueResult
+	err      error
+	errByRun map[string]error
+	messages []Message
 }
 
 func (f *fakeEnqueuerQueue) Enqueue(_ context.Context, message Message) (EnqueueResult, error) {
@@ -274,13 +241,6 @@ func (f *fakeEnqueuerQueue) Enqueue(_ context.Context, message Message) (Enqueue
 
 func (f *fakeEnqueuerQueue) Dequeue(context.Context, DequeueRequest) ([]Lease, error) {
 	return nil, nil
-}
-
-func (f *fakeEnqueuerQueue) ReadyMessageExists(_ context.Context, messageID string) (bool, error) {
-	if f.invalidatedMessages[messageID] {
-		return false, nil
-	}
-	return f.existingMessages[messageID], nil
 }
 
 func (f *fakeEnqueuerQueue) Ack(context.Context, Lease) error {

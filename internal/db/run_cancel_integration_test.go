@@ -2,12 +2,14 @@ package db_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -213,11 +215,12 @@ func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
-		OrgID:         pgvalue.UUID(ids.orgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		RunID:         pgvalue.UUID(ids.runID),
-		QueueClass:    "default",
-		LastError:     "dispatch retries exhausted",
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		RunID:              pgvalue.UUID(ids.runID),
+		QueueClass:         "default",
+		DispatchGeneration: 1,
+		LastError:          "dispatch retries exhausted",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,6 +252,48 @@ func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 	}
 	if runStatus != db.RunStatusFailed || !terminalOutcome.Valid || terminalOutcome.RunTerminalOutcome != db.RunTerminalOutcomeDeadLettered {
 		t.Fatalf("run terminal state = %s/%v, want failed/dead_lettered", runStatus, terminalOutcome)
+	}
+}
+
+func TestDeadLetterRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       dispatch_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
+		OrgID:              pgvalue.UUID(ids.orgID),
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		RunID:              pgvalue.UUID(ids.runID),
+		QueueClass:         "default",
+		DispatchGeneration: 1,
+		LastError:          "stale redis message",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("dead-letter stale generation error = %v, want pgx.ErrNoRows", err)
+	}
+
+	var status db.RunStatus
+	var generation int64
+	if err := pool.QueryRow(ctx, `
+		SELECT status, dispatch_generation
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&status, &generation); err != nil {
+		t.Fatal(err)
+	}
+	if status != db.RunStatusQueued || generation != 2 {
+		t.Fatalf("run status=%s generation=%d, want queued generation 2", status, generation)
 	}
 }
 

@@ -1203,10 +1203,6 @@ func (f *fakeStore) Dequeue(_ context.Context, request dispatch.DequeueRequest) 
 	}}, nil
 }
 
-func (f *fakeStore) ReadyMessageExists(context.Context, string) (bool, error) {
-	return false, nil
-}
-
 func (f *fakeStore) Ack(_ context.Context, lease dispatch.Lease) error {
 	f.ackedLeases = append(f.ackedLeases, lease)
 	return nil
@@ -1241,7 +1237,7 @@ func (f *fakeStore) CompleteRunDispatch(_ context.Context, arg db.CompleteRunDis
 }
 
 func (f *fakeStore) RequeueRunDispatch(_ context.Context, arg db.RequeueRunDispatchParams) (db.Run, error) {
-	if f.run.ID != arg.RunID {
+	if f.run.ID != arg.RunID || arg.ExpectedDispatchGeneration <= 0 {
 		return db.Run{}, pgx.ErrNoRows
 	}
 	return db.Run{
@@ -1254,7 +1250,7 @@ func (f *fakeStore) RequeueRunDispatch(_ context.Context, arg db.RequeueRunDispa
 	}, nil
 }
 
-func (f *fakeStore) RenewRunQueueReservation(_ context.Context, arg db.RenewRunQueueReservationParams) (db.Run, error) {
+func (f *fakeStore) ValidateRunLeaseDispatchRenewal(_ context.Context, arg db.ValidateRunLeaseDispatchRenewalParams) (db.Run, error) {
 	if f.run.ID != arg.RunID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.DispatchMessageID != "message-1" {
 		return db.Run{}, pgx.ErrNoRows
 	}
@@ -1288,21 +1284,6 @@ func (f *fakeStore) GetRunLeaseQueueLease(_ context.Context, arg db.GetRunLeaseQ
 		AttemptNumber:         1,
 		LeaseExpiresAt:        f.executionLeaseExpiresAt,
 		QueueName:             "queue-a",
-	}, nil
-}
-
-func (f *fakeStore) ReserveRunDispatch(_ context.Context, arg db.ReserveRunDispatchParams) (db.Run, error) {
-	if f.run.ID != arg.RunID || f.run.Status != db.RunStatusQueued || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
-		return db.Run{}, pgx.ErrNoRows
-	}
-	return db.Run{
-		ID:                 arg.RunID,
-		OrgID:              arg.OrgID,
-		WorkerGroupID:      arg.WorkerGroupID,
-		Status:             db.RunStatusQueued,
-		QueueName:          "queue-a",
-		DispatchGeneration: arg.DispatchGeneration,
-		UpdatedAt:          testTime(),
 	}, nil
 }
 

@@ -154,7 +154,7 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
-	if _, err := s.db.RenewRunQueueReservation(r.Context(), db.RenewRunQueueReservationParams{
+	if _, err := s.db.ValidateRunLeaseDispatchRenewal(r.Context(), db.ValidateRunLeaseDispatchRenewalParams{
 		OrgID:             pgvalue.UUID(leaseIDs.orgID),
 		WorkerGroupID:     queueLease.Message.WorkerGroupID,
 		RunID:             pgvalue.UUID(leaseIDs.runID),

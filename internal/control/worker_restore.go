@@ -91,7 +91,7 @@ func (s *Server) tryLeaseCheckpointRestoreRun(ctx context.Context, worker worker
 }
 
 func (s *Server) requeueCheckpointRestoreRunDispatch(ctx context.Context, worker workerActor, entry db.ReserveCheckpointRestoreRunForWorkerRow, messageID string, lastError string) error {
-	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, lastError)
+	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, entry.DispatchGeneration, lastError)
 }
 
 func checkpointRestoreRun(row db.ReserveCheckpointRestoreRunForWorkerRow) db.Run {

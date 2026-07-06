@@ -21,8 +21,6 @@ const DefaultMaxDispatchAttempts int32 = 5
 
 type ClaimerStore interface {
 	DeadLetterRunDispatch(context.Context, db.DeadLetterRunDispatchParams) (db.DeadLetterRunDispatchRow, error)
-	IsRunQueueLeaseConflict(context.Context, db.IsRunQueueLeaseConflictParams) (bool, error)
-	ReserveRunDispatch(context.Context, db.ReserveRunDispatchParams) (db.Run, error)
 	RunLeaseDispatchAttemptsExhausted(context.Context, db.RunLeaseDispatchAttemptsExhaustedParams) (bool, error)
 }
 
@@ -116,14 +114,7 @@ func (c *Claimer) Claim(ctx context.Context, request ClaimRequest) (ClaimedRun, 
 		case errors.Is(err, errInvalidLease):
 			reason = NackReasonInvalid
 		case errors.Is(err, pgx.ErrNoRows):
-			conflict, conflictErr := c.isLeaseConflict(ctx, lease)
-			if conflictErr != nil {
-				err = errors.Join(err, conflictErr)
-				reason = NackReasonRetry
-				suppressClaimErr = false
-			} else if conflict {
-				reason = NackReasonLeaseConflict
-			}
+			reason = NackReasonInvalid
 		default:
 			reason = NackReasonRetry
 			suppressClaimErr = false
@@ -153,6 +144,7 @@ func (c *Claimer) deliveryAttemptsExhausted(ctx context.Context, lease Lease) (b
 		WorkerGroupID:       scope.workerGroupID,
 		QueueClass:          scope.queueClass,
 		RunID:               scope.runID,
+		DispatchGeneration:  lease.Message.DispatchGeneration,
 		MaxDispatchAttempts: c.maxDispatchAttempts,
 	})
 }
@@ -176,11 +168,12 @@ func (c *Claimer) deadLetter(ctx context.Context, lease Lease) error {
 	}
 	lastError := fmt.Sprintf("run exceeded max dispatch attempts (%d)", c.maxDispatchAttempts)
 	_, err = c.store.DeadLetterRunDispatch(ctx, db.DeadLetterRunDispatchParams{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		QueueClass:    queueClass,
-		RunID:         runID,
-		LastError:     lastError,
+		OrgID:              orgID,
+		WorkerGroupID:      workerGroupID,
+		QueueClass:         queueClass,
+		RunID:              runID,
+		DispatchGeneration: lease.Message.DispatchGeneration,
+		LastError:          lastError,
 	})
 	return err
 }
@@ -191,10 +184,6 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.Run, error) {
 		return db.Run{}, err
 	}
 	runID, err := parseUUID("run id", lease.Message.RunID)
-	if err != nil {
-		return db.Run{}, err
-	}
-	workerInstanceID, err := parseUUID("worker instance id", lease.WorkerInstanceID)
 	if err != nil {
 		return db.Run{}, err
 	}
@@ -209,27 +198,18 @@ func (c *Claimer) markLeased(ctx context.Context, lease Lease) (db.Run, error) {
 	if lease.Message.DispatchGeneration <= 0 {
 		return db.Run{}, fmt.Errorf("%w: dispatch generation is required", errInvalidLease)
 	}
-	return c.store.ReserveRunDispatch(ctx, db.ReserveRunDispatchParams{
+	return db.Run{
 		OrgID:              orgID,
 		WorkerGroupID:      workerGroupID,
+		ID:                 runID,
 		QueueClass:         queueClass,
-		RunID:              runID,
+		QueueName:          strings.TrimSpace(lease.Message.QueueName),
+		Priority:           lease.Message.Priority,
+		QueueTimestamp:     pgvalue.Timestamptz(lease.Message.QueueTimestamp),
+		QueuedExpiresAt:    pgvalue.TimestamptzUTCZeroInvalid(lease.Message.QueuedExpiresAt),
 		DispatchGeneration: lease.Message.DispatchGeneration,
-		WorkerInstanceID:   workerInstanceID,
-	})
-}
-
-func (c *Claimer) isLeaseConflict(ctx context.Context, lease Lease) (bool, error) {
-	scope, err := runQueueLeaseScope(lease)
-	if err != nil {
-		return false, err
-	}
-	return c.store.IsRunQueueLeaseConflict(ctx, db.IsRunQueueLeaseConflictParams{
-		OrgID:         scope.orgID,
-		WorkerGroupID: scope.workerGroupID,
-		QueueClass:    scope.queueClass,
-		RunID:         scope.runID,
-	})
+		Status:             db.RunStatusQueued,
+	}, nil
 }
 
 type runQueueScope struct {

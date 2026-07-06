@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
@@ -196,13 +197,152 @@ func TestLeaseRunLeaseRejectsConcurrentLeaseForSameQueueKey(t *testing.T) {
 	}
 }
 
+func TestLeaseRunLeaseRejectsStaleDispatchGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, _ := seedExactCapacityRuntimeWorker(t, ctx, pool)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       current_run_lease_id = NULL,
+		       dispatch_generation = 2,
+		       queued_expires_at = NULL
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "stale", 1)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale lease error = %v, want pgx.ErrNoRows", err)
+	}
+
+	var leaseCount int
+	var currentRunLeaseID uuid.NullUUID
+	if err := pool.QueryRow(ctx, `
+		SELECT count(run_leases.id)::int, runs.current_run_lease_id
+		  FROM runs
+		  LEFT JOIN run_leases
+		    ON run_leases.org_id = runs.org_id
+		   AND run_leases.run_id = runs.id
+		 WHERE runs.org_id = $1
+		   AND runs.id = $2
+		 GROUP BY runs.current_run_lease_id
+	`, ids.orgID, ids.runID).Scan(&leaseCount, &currentRunLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if leaseCount != 0 || currentRunLeaseID.Valid {
+		t.Fatalf("leaseCount=%d currentRunLeaseID=%v, want no stale lease", leaseCount, currentRunLeaseID.Valid)
+	}
+}
+
+func TestRequeueRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       current_run_lease_id = NULL,
+		       dispatch_generation = 2,
+		       dispatch_attempt_count = 0
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := queries.RequeueRunDispatch(ctx, db.RequeueRunDispatchParams{
+		OrgID:                      pgvalue.UUID(ids.orgID),
+		WorkerGroupID:              dbtest.DefaultWorkerGroupID,
+		QueueClass:                 "default",
+		RunID:                      pgvalue.UUID(ids.runID),
+		ExpectedDispatchGeneration: 1,
+		LastError:                  "stale redis lease",
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale requeue error = %v, want pgx.ErrNoRows", err)
+	}
+
+	var generation int64
+	var attempts int32
+	if err := pool.QueryRow(ctx, `
+		SELECT dispatch_generation, dispatch_attempt_count
+		  FROM runs
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID).Scan(&generation, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if generation != 2 || attempts != 0 {
+		t.Fatalf("generation=%d attempts=%d, want generation 2 attempts 0", generation, attempts)
+	}
+}
+
+func TestValidateRunLeaseDispatchRenewalRejectsStaleDispatchGeneration(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID, _ := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	params := leaseRunLeaseParams(ids.orgID, ids.runID, workerID, "renewal")
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       current_run_lease_id = NULL,
+		       dispatch_generation = 1,
+		       queued_expires_at = NULL
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.LeaseRunLease(ctx, params); err != nil {
+		t.Fatal(err)
+	}
+	renewParams := db.ValidateRunLeaseDispatchRenewalParams{
+		WorkerInstanceID:  pgvalue.UUID(workerID),
+		DispatchMessageID: params.DispatchMessageID,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
+		QueueClass:        "default",
+		RunID:             pgvalue.UUID(ids.runID),
+	}
+	if _, err := queries.ValidateRunLeaseDispatchRenewal(ctx, renewParams); err != nil {
+		t.Fatalf("current renewal validation failed: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET dispatch_generation = 2
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.ValidateRunLeaseDispatchRenewal(ctx, renewParams); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale renewal validation error = %v, want pgx.ErrNoRows", err)
+	}
+}
+
 func leaseRunLeaseParams(orgID, runID, workerID uuid.UUID, label string) db.LeaseRunLeaseParams {
+	return leaseRunLeaseParamsWithGeneration(orgID, runID, workerID, label, 1)
+}
+
+func leaseRunLeaseParamsWithGeneration(orgID, runID, workerID uuid.UUID, label string, generation int64) db.LeaseRunLeaseParams {
 	runLeaseID := uuid.Must(uuid.NewV7())
 	return db.LeaseRunLeaseParams{
 		WorkerInstanceID:   pgvalue.UUID(workerID),
 		OrgID:              pgvalue.UUID(orgID),
 		RunID:              pgvalue.UUID(runID),
-		DispatchGeneration: 1,
+		DispatchGeneration: generation,
 		LeaseExpiresAt:     pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 		RunLeaseID:         pgvalue.UUID(runLeaseID),
 		DispatchMessageID:  "dispatch-" + label,

@@ -397,7 +397,7 @@ SELECT candidate_scopes.org_id,
 SELECT runs.org_id,
        runs.worker_group_id,
        runs.id AS run_id,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_groups
     ON worker_groups.id = runs.worker_group_id
@@ -450,62 +450,34 @@ UPDATE runs
    AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
 RETURNING *;
 
--- name: ReserveRunDispatch :one
-UPDATE runs
-   SET updated_at = now()
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
-   AND runs.queue_class = sqlc.arg(queue_class)
-   AND runs.id = sqlc.arg(run_id)
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-   AND EXISTS (
-       SELECT 1
-         FROM worker_instances
-        WHERE worker_instances.id = sqlc.arg(worker_instance_id)
-          AND worker_instances.worker_group_id = runs.worker_group_id
-          AND worker_instances.status = 'active'
-   )
-RETURNING *;
-
--- name: IsRunQueueLeaseConflict :one
-SELECT EXISTS (
-    SELECT 1
-      FROM runs
-     WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.worker_group_id = sqlc.arg(worker_group_id)
-       AND runs.queue_class = sqlc.arg(queue_class)
-       AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NOT NULL
-) AS conflict;
-
 -- name: RunLeaseDispatchAttemptsExhausted :one
 SELECT runs.dispatch_attempt_count >= sqlc.arg(max_dispatch_attempts)::int AS exhausted
   FROM runs
- WHERE runs.org_id = sqlc.arg(org_id)
+WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.id = sqlc.arg(run_id)
+   AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
    AND runs.status = 'queued';
 
--- name: RenewRunQueueReservation :one
+-- name: ValidateRunLeaseDispatchRenewal :one
 SELECT runs.*
   FROM runs
   JOIN run_leases
     ON run_leases.org_id = runs.org_id
    AND run_leases.run_id = runs.id
+   AND run_leases.id = runs.current_run_lease_id
    AND run_leases.worker_group_id = runs.worker_group_id
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.dispatch_message_id = sqlc.arg(dispatch_message_id)
+   AND run_leases.dispatch_generation = runs.dispatch_generation
    AND run_leases.status IN ('leased', 'running')
    AND run_leases.lease_expires_at > now()
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.queue_class = sqlc.arg(queue_class)
-   AND runs.id = sqlc.arg(run_id);
+   AND runs.id = sqlc.arg(run_id)
+   AND runs.status IN ('leased', 'running');
 
 -- name: CompleteRunDispatch :one
 SELECT runs.*
@@ -527,6 +499,7 @@ UPDATE runs
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.id = sqlc.arg(run_id)
    AND runs.status = 'queued'
+   AND runs.dispatch_generation = sqlc.arg(expected_dispatch_generation)
    AND runs.current_run_lease_id IS NULL
 RETURNING *;
 
@@ -540,7 +513,7 @@ SELECT runs.org_id,
        runs.queue_timestamp,
        runs.queued_expires_at,
        runs.dispatch_generation,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_instances
     ON worker_instances.id = sqlc.arg(worker_instance_id)
@@ -572,7 +545,7 @@ SELECT runs.org_id,
        runs.queue_timestamp,
        runs.queued_expires_at,
        runs.dispatch_generation,
-       (runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':class:' || runs.queue_class || ':queue:' || runs.queue_name || ':run:' || runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
   FROM runs
   JOIN worker_instances
     ON worker_instances.id = sqlc.arg(worker_instance_id)
@@ -606,6 +579,7 @@ WITH terminalized AS (
        AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.queue_class = sqlc.arg(queue_class)
        AND runs.id = sqlc.arg(run_id)
+       AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
        AND runs.status = 'queued'
     RETURNING *
 )

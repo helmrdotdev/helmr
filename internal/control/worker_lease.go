@@ -353,16 +353,17 @@ func (s *Server) tryLeaseResidentRun(ctx context.Context, worker workerActor) (d
 }
 
 func (s *Server) requeueResidentRunDispatch(ctx context.Context, worker workerActor, entry db.ReserveResidentRunForWorkerRow, messageID string, lastError string) error {
-	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, lastError)
+	return s.requeueRunDispatch(ctx, entry.OrgID, entry.WorkerGroupID, entry.QueueClass, entry.RunID, entry.DispatchGeneration, lastError)
 }
 
-func (s *Server) requeueRunDispatch(ctx context.Context, orgID pgtype.UUID, workerGroupID string, queueClass string, runID pgtype.UUID, lastError string) error {
+func (s *Server) requeueRunDispatch(ctx context.Context, orgID pgtype.UUID, workerGroupID string, queueClass string, runID pgtype.UUID, dispatchGeneration int64, lastError string) error {
 	_, err := s.db.RequeueRunDispatch(ctx, db.RequeueRunDispatchParams{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		QueueClass:    queueClass,
-		RunID:         runID,
-		LastError:     strings.TrimSpace(lastError),
+		OrgID:                      orgID,
+		WorkerGroupID:              workerGroupID,
+		QueueClass:                 queueClass,
+		RunID:                      runID,
+		ExpectedDispatchGeneration: dispatchGeneration,
+		LastError:                  strings.TrimSpace(lastError),
 	})
 	return err
 }
@@ -405,11 +406,12 @@ func (s *Server) requeueWorkerDispatch(ctx context.Context, worker workerActor, 
 		return
 	}
 	if _, err := s.db.RequeueRunDispatch(ctx, db.RequeueRunDispatchParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: lease.Message.WorkerGroupID,
-		QueueClass:    lease.Message.QueueClass,
-		RunID:         runID,
-		LastError:     strings.TrimSpace(lastError),
+		OrgID:                      pgvalue.UUID(orgID),
+		WorkerGroupID:              lease.Message.WorkerGroupID,
+		QueueClass:                 lease.Message.QueueClass,
+		RunID:                      runID,
+		ExpectedDispatchGeneration: lease.Message.DispatchGeneration,
+		LastError:                  strings.TrimSpace(lastError),
 	}); err != nil {
 		s.log.Warn("requeue run dispatch failed", "run_id", pgvalue.MustUUIDValue(runID).String(), "reason", reason, "error", err)
 		nackReason := reason
