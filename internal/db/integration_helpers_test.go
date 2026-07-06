@@ -180,7 +180,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
-		VALUES ($5, $1, $2, $3, 'approval-task')
+		VALUES ($4, $1, $2, $3, 'approval-task')
 		ON CONFLICT DO NOTHING
 	`, ids.orgID, ids.projectID, ids.environmentID, testPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
@@ -639,7 +639,7 @@ func canonicalFingerprint(t *testing.T, data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func markEnvironmentRouteDrainingWithStaleHealth(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
+func markDefaultWorkerGroupDrainingWithStaleHealth(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
@@ -650,7 +650,7 @@ func markEnvironmentRouteDrainingWithStaleHealth(t *testing.T, ctx context.Conte
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
-		   SET health_state = 'unhealthy',
+		   SET health_state = 'unavailable',
 		       routing_fresh_until = now() - interval '1 second'
 		 WHERE id = $1
 	`, dbtest.DefaultWorkerGroupID); err != nil {

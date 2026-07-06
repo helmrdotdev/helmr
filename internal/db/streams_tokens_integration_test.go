@@ -1048,7 +1048,7 @@ func TestAcceptWorkerCommandRequiresCommandOwnerScope(t *testing.T) {
 	}
 }
 
-func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
+func TestWorkerCommandQueriesRejectDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -1067,7 +1067,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 	}
 	for _, row := range claimed {
 		if row.ID == command.ID {
-			t.Fatalf("ClaimWorkerCommands returned disabled-route command %+v", row)
+			t.Fatalf("ClaimWorkerCommands returned disabled worker group command %+v", row)
 		}
 	}
 
@@ -1082,7 +1082,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 	}
 	for _, row := range listed {
 		if row.ID == command.ID {
-			t.Fatalf("ListWorkerCommandsAfter returned disabled-route command %+v", row)
+			t.Fatalf("ListWorkerCommandsAfter returned disabled worker group command %+v", row)
 		}
 	}
 
@@ -1125,7 +1125,7 @@ func TestWorkerCommandQueriesRejectDisabledSourceRoute(t *testing.T) {
 		t.Fatal(err)
 	}
 	if acceptedAt.Valid || acknowledgedAt.Valid {
-		t.Fatalf("stale-route command mutated: accepted=%v acknowledged=%v", acceptedAt.Time, acknowledgedAt.Time)
+		t.Fatalf("disabled worker group command mutated: accepted=%v acknowledged=%v", acceptedAt.Time, acknowledgedAt.Time)
 	}
 }
 
@@ -2116,7 +2116,7 @@ func TestCreateReadyRuntimeCheckpointForRunWaitDetachesCurrentRunLease(t *testin
 	`, ids.orgID, ids.workspaceID, ids.workspaceID, workspaceVersionID); err != nil {
 		t.Fatal(err)
 	}
-	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
 
 	_, err := queries.CreateReadyRuntimeCheckpointForRunWait(ctx, readyRuntimeCheckpointParamsForRun(t, ctx, pool, ids, runWait, runLeaseID, workerID, checkpointID))
 	if err != nil {
@@ -2186,24 +2186,16 @@ func TestCreateReadyRuntimeCheckpointForRunWaitDetachesCurrentRunLease(t *testin
 	}
 }
 
-func TestCreateRuntimeCheckpointArtifactRejectsWrongWorkerGroupArtifact(t *testing.T) {
+func TestCreateRuntimeCheckpointArtifactUsesCheckpointWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
-	runWait, checkpointID := seedCheckpointingRunWait(t, ctx, queries, pool, ids, runLeaseID, workerID, db.RunWaitKindTimer)
+	_, checkpointID := seedCheckpointingRunWait(t, ctx, queries, pool, ids, runLeaseID, workerID, db.RunWaitKindTimer)
 
-	otherWorkerGroupID := "us-east-1-worker-group-2"
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_groups (id, region_id, name, state, health_state, routing_fresh_until)
-		VALUES ($1, $2, $1, 'active', 'healthy', now() + interval '5 minutes')
-		ON CONFLICT (id) DO NOTHING
-	`, otherWorkerGroupID, dbtest.DefaultRegionID); err != nil {
-		t.Fatal(err)
-	}
-	digest := testDigest("wrong-worker-group-runtime-checkpoint-artifact")
+	digest := testDigest("runtime-checkpoint-artifact-worker-group-from-checkpoint")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(ids.orgID),
 		Digest:    digest,
@@ -2226,7 +2218,7 @@ func TestCreateRuntimeCheckpointArtifactRejectsWrongWorkerGroupArtifact(t *testi
 		t.Fatal(err)
 	}
 
-	_, err = queries.CreateRuntimeCheckpointArtifact(ctx, db.CreateRuntimeCheckpointArtifactParams{
+	created, err := queries.CreateRuntimeCheckpointArtifact(ctx, db.CreateRuntimeCheckpointArtifactParams{
 		Role:                db.RuntimeCheckpointArtifactRoleRuntimeConfig,
 		Ordinal:             0,
 		ArtifactID:          artifact.ID,
@@ -2237,8 +2229,11 @@ func TestCreateRuntimeCheckpointArtifactRejectsWrongWorkerGroupArtifact(t *testi
 		RunID:               pgvalue.UUID(ids.runID),
 		RuntimeCheckpointID: pgvalue.UUID(checkpointID),
 	})
-	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("CreateRuntimeCheckpointArtifact wrong-worker-group artifact for wait %s error = %v, want pgx.ErrNoRows", pgvalue.UUIDString(runWait.ID), err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.WorkerGroupID != dbtest.DefaultWorkerGroupID {
+		t.Fatalf("checkpoint artifact worker group = %q, want %q", created.WorkerGroupID, dbtest.DefaultWorkerGroupID)
 	}
 }
 
@@ -2251,7 +2246,7 @@ func TestFailRuntimeCheckpointAttemptRestoresLiveWaitAndInvalidatesCheckpoint(t 
 	seedActiveWorkspaceLeaseForRun(t, ctx, pool, ids)
 	runWait, checkpointID := seedCheckpointingRunWait(t, ctx, queries, pool, ids, runLeaseID, workerID, db.RunWaitKindTimer)
 	workerCommandID := seedAcceptedRuntimeCheckpointWorkerCommand(t, ctx, pool, ids, runWait, runLeaseID, workerID)
-	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
 
 	failed, err := queries.FailRuntimeCheckpointAttempt(ctx, db.FailRuntimeCheckpointAttemptParams{
 		OrgID:               pgvalue.UUID(ids.orgID),

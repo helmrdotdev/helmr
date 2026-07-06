@@ -18,7 +18,7 @@ func disableDefaultWorkerGroupPlacement(t testingT, ctx context.Context, pool *p
 	t.Helper()
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
-		   SET state = 'draining'
+		   SET state = 'disabled'
 		 WHERE id = $1
 	`, dbtest.DefaultWorkerGroupID); err != nil {
 		t.Fatal(err)

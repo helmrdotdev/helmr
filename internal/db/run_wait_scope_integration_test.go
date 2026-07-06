@@ -41,7 +41,7 @@ func TestGetWorkerRunWaitScopeUsesWorkerGroupIdentity(t *testing.T) {
 	}
 }
 
-func TestGetWorkerRunWaitScopeRejectsDisabledSourceRoute(t *testing.T) {
+func TestGetWorkerRunWaitScopeRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -57,6 +57,6 @@ func TestGetWorkerRunWaitScopeRejectsDisabledSourceRoute(t *testing.T) {
 		WorkerInstanceID: pgvalue.UUID(workerID),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetWorkerRunWaitScope disabled route error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("GetWorkerRunWaitScope disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 }

@@ -60,28 +60,9 @@ SELECT runtime_substrate_artifacts.*,
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-  JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-    ON project_worker_group_placement.org_id = runtime_substrate_artifacts.org_id
-   AND project_worker_group_placement.project_id = runtime_substrate_artifacts.project_id
-   AND project_worker_group_placement.environment_id = runtime_substrate_artifacts.environment_id
-   AND project_worker_group_placement.worker_group_id = runtime_substrate_artifacts.worker_group_id
-   AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-  JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-            AND worker_groups.region_id = project_worker_group_placement.region_id
-            AND worker_groups.state = 'active'
+  JOIN worker_groups
+    ON worker_groups.id = runtime_substrate_artifacts.worker_group_id
+   AND worker_groups.state IN ('active', 'draining')
  WHERE runtime_substrate_artifacts.org_id = sqlc.arg(org_id)
    AND runtime_substrate_artifacts.worker_group_id = sqlc.arg(worker_group_id)
    AND runtime_substrate_artifacts.project_id = sqlc.arg(project_id)

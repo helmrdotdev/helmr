@@ -43,7 +43,7 @@ func TestWorkerGroupHealthControlsReadiness(t *testing.T) {
 
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
-		   SET health_state = 'unhealthy',
+		   SET health_state = 'unavailable',
 		       routing_fresh_until = now() + interval '1 minute'
 		 WHERE id = $1
 	`, dbtest.DefaultWorkerGroupID); err != nil {
@@ -55,12 +55,13 @@ func TestWorkerGroupHealthControlsReadiness(t *testing.T) {
 		t.Fatal(err)
 	}
 	if readiness.Routable.Bool {
-		t.Fatalf("routable = true with unhealthy worker group")
+		t.Fatalf("routable = true with unavailable worker group")
 	}
 
 	if err := workergroup.ReportHealth(ctx, queries, workergroup.HealthConfig{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		Component:     "dispatcher",
+		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
+		Component:          "dispatcher",
+		RequiredComponents: workergroup.RoutingRequiredComponents(),
 	}); err != nil {
 		t.Fatal(err)
 	}

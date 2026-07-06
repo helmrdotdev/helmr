@@ -193,7 +193,7 @@ func TestMarkRuntimeInstanceClosedAcceptsLostRuntimeInstance(t *testing.T) {
 	}
 }
 
-func TestRuntimeInstanceWorkerMutationsContinueOnDrainingRoute(t *testing.T) {
+func TestRuntimeInstanceWorkerMutationsContinueOnDrainingWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -247,7 +247,7 @@ func TestRuntimeInstanceWorkerMutationsContinueOnDrainingRoute(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
 
 	if _, err := queries.RenewRuntimeInstance(ctx, db.RenewRuntimeInstanceParams{
 		ID:               instance.ID,
@@ -392,12 +392,12 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	otherWorkerID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, worker_group_id, status, protocol_version,
+				id, org_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		SELECT $1, org_id, worker_group_id, $2, worker_group_id, 'active', protocol_version,
+			SELECT $1, org_id, $2, worker_group_id, 'active', protocol_version,
 		       2000, 2048, 2048, 2, 2000, 2048, 2048, 2,
 		       runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		  FROM worker_instances
@@ -836,7 +836,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	}
 }
 
-func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDrainingRoute(t *testing.T) {
+func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDrainingWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -864,7 +864,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDraining
 	`, mountTokenHash, ids.orgID, pgvalue.MustUUIDValue(requestedMount.ID)); err != nil {
 		t.Fatal(err)
 	}
-	markEnvironmentRouteDrainingWithStaleHealth(t, ctx, pool, ids)
+	markDefaultWorkerGroupDrainingWithStaleHealth(t, ctx, pool, ids)
 
 	instance, err := queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
@@ -1267,38 +1267,24 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 	}
 }
 
-func TestGetDeploymentSandboxForWorkerGroupScopesByDeploymentWorkerGroup(t *testing.T) {
+func TestGetDeploymentSandboxForWorkerGroupRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	var workerGroupID string
-	if err := pool.QueryRow(ctx, `
-		SELECT worker_group_id
-		  FROM deployments
-		 WHERE id = $1
-	`, ids.deploymentID).Scan(&workerGroupID); err != nil {
-		t.Fatal(err)
-	}
-	otherWorkerGroupID := dbtest.DefaultWorkerGroupID + "-sandbox-scope-other"
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_groups (id, region_id, name)
-		VALUES ($1, $2, $3)
-	`, otherWorkerGroupID, dbtest.DefaultRegionID, otherWorkerGroupID); err != nil {
-		t.Fatal(err)
-	}
 
 	if _, err := queries.GetDeploymentSandboxForWorkerGroup(ctx, db.GetDeploymentSandboxForWorkerGroupParams{
 		ID:            pgvalue.UUID(ids.deploymentSandboxID),
-		WorkerGroupID: workerGroupID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}
+	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 	if _, err := queries.GetDeploymentSandboxForWorkerGroup(ctx, db.GetDeploymentSandboxForWorkerGroupParams{
 		ID:            pgvalue.UUID(ids.deploymentSandboxID),
-		WorkerGroupID: otherWorkerGroupID,
+		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("other worker group lookup error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("disabled worker group lookup error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -1356,12 +1342,12 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongWorkerGroupScope(t *te
 	}
 }
 
-func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledSourceRoute(t *testing.T) {
+func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-stale-route")
+	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-disabled-worker-group")
 	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
@@ -1370,12 +1356,12 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledSourceRoute(t *test
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
 		ArtifactID:                artifact.ID,
-		SubstrateDigest:           "sha256:runtime-substrate-stale-route",
+		SubstrateDigest:           "sha256:runtime-substrate-disabled-worker-group",
 		SubstrateFormat:           "ext4",
 		BuilderAbi:                "builder/v1",
 		LayoutAbi:                 "layout/v1",
 		SubstrateSizeBytes:        1024,
-		Source:                    []byte(`{"test":"stale-route"}`),
+		Source:                    []byte(`{"test":"disabled-worker-group"}`),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	})
 	if err != nil {
@@ -1395,7 +1381,7 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledSourceRoute(t *test
 		LayoutAbi:           substrate.LayoutAbi,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("disabled route lookup error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("disabled worker group lookup error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
@@ -1404,7 +1390,7 @@ func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgx
 	workerID := uuid.Must(uuid.NewV7())
 	runtimeReleaseID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
-	var workerGroupID uuid.UUID
+	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -1416,15 +1402,15 @@ func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgx
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, worker_group_id, resource_id, worker_group_id, status, protocol_version,
+				id, org_id, resource_id, worker_group_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, 'active', $5,
+			VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 1024, 1, 1000, 1024, 1024, 1,
 			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, dbtest.DefaultWorkerGroupID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeReleaseID); err != nil {
+		`, workerID, dbtest.DefaultOrgID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeReleaseID); err != nil {
 		t.Fatal(err)
 	}
 	return workerID, runtimeReleaseID
@@ -1773,12 +1759,11 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 	t.Helper()
 	otherSandboxID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-			INSERT INTO deployment_sandboxes (
-					id,
-					public_id,
-					org_id,
-					worker_group_id,
-					project_id,
+		INSERT INTO deployment_sandboxes (
+			id,
+			public_id,
+			org_id,
+			project_id,
 			environment_id,
 			deployment_id,
 			sandbox_id,
@@ -1794,12 +1779,11 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 			filesystem_format,
 			contract_version,
 			fingerprint
-			)
-				SELECT $1,
-				       $6,
-				       org_id,
-				       worker_group_id,
-			       project_id,
+		)
+		SELECT $1,
+		       $6,
+		       org_id,
+		       project_id,
 		       environment_id,
 		       deployment_id,
 		       'other',
@@ -1816,11 +1800,11 @@ func seedSiblingDeploymentSandbox(t *testing.T, ctx context.Context, pool *pgxpo
 		       contract_version,
 		       'other-sandbox-fingerprint'
 		  FROM deployment_sandboxes
-			 WHERE org_id = $2
-			   AND project_id = $3
-			   AND environment_id = $4
-			   AND id = $5
-		`, otherSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testSandboxPublicID(t)); err != nil {
+		 WHERE org_id = $2
+		   AND project_id = $3
+		   AND environment_id = $4
+		   AND id = $5
+	`, otherSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testSandboxPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	return otherSandboxID

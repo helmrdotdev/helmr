@@ -34,27 +34,9 @@ current_run_lease AS (
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                           AND run_leases.org_id = runs.org_id
                           AND run_leases.run_id = runs.id
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-        ON project_worker_group_placement.org_id = runs.org_id
-       AND project_worker_group_placement.project_id = runs.project_id
-       AND project_worker_group_placement.environment_id = runs.environment_id
-       AND project_worker_group_placement.worker_group_id = runs.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state IN ('active', 'draining')
+      JOIN worker_groups
+        ON worker_groups.id = runs.worker_group_id
+       AND worker_groups.state IN ('active', 'draining')
       JOIN run_attempts ON run_attempts.org_id = run_leases.org_id
                        AND run_attempts.run_id = run_leases.run_id
                        AND run_attempts.id = run_leases.attempt_id

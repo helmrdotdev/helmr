@@ -1402,15 +1402,9 @@ SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandb
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-  JOIN projects
-    ON projects.org_id = deployment_sandboxes.org_id
-   AND projects.id = deployment_sandboxes.project_id
   JOIN worker_groups
     ON worker_groups.id = $1
-   AND worker_groups.region_id = projects.default_region_id
    AND worker_groups.state IN ('active', 'draining')
-   AND worker_groups.health_state IN ('healthy', 'degraded')
-   AND worker_groups.routing_fresh_until > now()
  WHERE deployment_sandboxes.id = $2
  LIMIT 1
 `
@@ -1703,7 +1697,7 @@ WITH candidate AS (
       FROM deployments
       JOIN worker_groups
         ON worker_groups.id = deployments.build_worker_group_id
-       AND worker_groups.state IN ('active', 'draining')
+       AND worker_groups.state = 'active'
        AND worker_groups.health_state IN ('healthy', 'degraded')
        AND worker_groups.routing_fresh_until > now()
      WHERE (

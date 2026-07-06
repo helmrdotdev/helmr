@@ -94,7 +94,7 @@ func TestLeaseQueuedDeploymentBuildDoesNotMutateWrongWorkerGroupDeployment(t *te
 	}
 }
 
-func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T) {
+func TestLeaseQueuedDeploymentBuildRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -105,7 +105,7 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 	runtimeID := "runtime-" + shortUUID(workerID)
 	deploymentID := uuid.Must(uuid.NewV7())
 	artifactID := uuid.Must(uuid.NewV7())
-	digest := testDigest("stale-route-deployment-source")
+	digest := testDigest("disabled-worker-group-deployment-source")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
@@ -145,13 +145,13 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 			id, public_id, org_id, build_worker_group_id, project_id, environment_id, version,
 			content_hash, deployment_source_artifact_id, status
 		)
-		VALUES ($1, $8, $2, $3, $4, $5, 'stale-route-build', $6, $7, 'queued')
+		VALUES ($1, $8, $2, $3, $4, $5, 'disabled-worker-group-build', $6, $7, 'queued')
 	`, deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, testDeploymentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	_, err := queries.LeaseQueuedDeploymentBuild(ctx, db.LeaseQueuedDeploymentBuildParams{
 		WorkerGroupID:         dbtest.DefaultWorkerGroupID,
-		BuildLeaseID:          pgtype.Text{String: "disabled-route-build-lease", Valid: true},
+		BuildLeaseID:          pgtype.Text{String: "disabled-worker-group-build-lease", Valid: true},
 		BuildWorkerInstanceID: pgvalue.UUID(workerID),
 		BuildLeaseExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
 	})
@@ -169,6 +169,6 @@ func TestLeaseQueuedDeploymentBuildRejectsDisabledEnvironmentRoute(t *testing.T)
 		t.Fatal(err)
 	}
 	if status != db.DeploymentStatusQueued || leaseID.Valid {
-		t.Fatalf("disabled-route deployment mutated: status=%s lease=%q", status, leaseID.String)
+		t.Fatalf("disabled worker group deployment mutated: status=%s lease=%q", status, leaseID.String)
 	}
 }

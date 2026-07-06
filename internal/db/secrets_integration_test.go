@@ -119,7 +119,7 @@ func TestScopedSecretListAndDeleteContinueOnStaleWorkerGroupHealth(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
-		   SET health_state = 'unhealthy',
+		   SET health_state = 'unavailable',
 		       routing_fresh_until = now() - interval '1 minute'
 		 WHERE id = $1
 	`, dbtest.DefaultWorkerGroupID); err != nil {

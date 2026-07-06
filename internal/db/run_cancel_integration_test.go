@@ -159,7 +159,7 @@ func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {
 	}
 }
 
-func TestCancelRunAllowsDisabledSourceRouteForControlCancellation(t *testing.T) {
+func TestCancelRunAllowsDisabledWorkerGroupForControlCancellation(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -179,7 +179,7 @@ func TestCancelRunAllowsDisabledSourceRouteForControlCancellation(t *testing.T) 
 		OperationID:   operation.ID,
 	})
 	if err != nil {
-		t.Fatalf("CancelRun disabled route error = %v, want nil", err)
+		t.Fatalf("CancelRun disabled worker group error = %v, want nil", err)
 	}
 
 	var status db.RunStatus
@@ -215,7 +215,7 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	var workerGroupID uuid.UUID
+	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -229,11 +229,11 @@ func TestDeadLetterRunQueueItemTerminalizesSession(t *testing.T) {
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		VALUES ($1, $2, $3, 1000, 1024, 4096, 1, $4, 'arm64', 'test', 'sha256:kernel',
-			'sha256:initramfs', 'sha256:rootfs', 'default', $5)
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID, workerGroupID); err != nil {
+				'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

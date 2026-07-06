@@ -24,14 +24,14 @@ func TestDeleteScheduleKeepsParentUntilLastInstance(t *testing.T) {
 	secondEnvironmentID := uuid.Must(uuid.NewV7())
 	secondEnvironmentSlug := "env-" + shortUUID(secondEnvironmentID)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
-		VALUES ($1, $6, $2, $3, $4, $5, 'Env 2', '#3366ff')
-	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, secondEnvironmentSlug, testEnvironmentPublicID(t)); err != nil {
+		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $5, $2, $3, $4, 'Env 2', '#3366ff')
+	`, secondEnvironmentID, ids.orgID, ids.projectID, secondEnvironmentSlug, testEnvironmentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
-		VALUES ($5, $1, $2, $3, 'approval-task')
+		VALUES ($4, $1, $2, $3, 'approval-task')
 	`, ids.orgID, ids.projectID, secondEnvironmentID, testTaskPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
@@ -117,9 +117,9 @@ func TestUpdateScheduleRetimesSiblingInstancesWithoutChangingEnabled(t *testing.
 
 	secondEnvironmentID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO environments (id, public_id, org_id, project_id, default_region_id, slug, name, color_hex)
-		VALUES ($1, $6, $2, $3, $4, $5, 'Env 2', '#3366ff')
-	`, secondEnvironmentID, ids.orgID, ids.projectID, dbtest.DefaultRegionID, "env-"+shortUUID(secondEnvironmentID), testEnvironmentPublicID(t)); err != nil {
+		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $5, $2, $3, $4, 'Env 2', '#3366ff')
+	`, secondEnvironmentID, ids.orgID, ids.projectID, "env-"+shortUUID(secondEnvironmentID), testEnvironmentPublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	scheduleID := uuid.Must(uuid.NewV7())

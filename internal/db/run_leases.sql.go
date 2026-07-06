@@ -584,7 +584,29 @@ retry_snapshot AS (
       JOIN completed_queue_entries ON completed_queue_entries.run_id = updated_runs.run_id
     RETURNING run_snapshots.run_id
 ),
-event_inputs AS (
+event_inputs(
+    event_ordinal,
+    org_id,
+    worker_group_id,
+    project_id,
+    environment_id,
+    run_id,
+    attempt_id,
+    run_lease_id,
+    attempt_number,
+    trace_id,
+    span_id,
+    parent_span_id,
+    traceparent,
+    category,
+    severity,
+    source,
+    kind,
+    message,
+    payload,
+    redaction_class,
+    snapshot_version
+) AS (
     SELECT 1 AS event_ordinal,
            $1 AS org_id,
            updated_runs.worker_group_id,
@@ -685,13 +707,20 @@ event_inputs AS (
       JOIN retry_snapshot ON true
 ),
 event_subject_counts AS (
-    SELECT org_id, worker_group_id, run_id, count(*)::bigint AS event_count
+    SELECT event_inputs.org_id,
+           event_inputs.worker_group_id,
+           event_inputs.run_id,
+           count(*)::bigint AS event_count
       FROM event_inputs
-     GROUP BY org_id, worker_group_id, run_id
+     GROUP BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id
 ),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT org_id, worker_group_id, 'run', run_id, event_count
+    SELECT event_subject_counts.org_id,
+           event_subject_counts.worker_group_id,
+           'run',
+           event_subject_counts.run_id,
+           event_subject_counts.event_count
       FROM event_subject_counts
     ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + EXCLUDED.seq,
@@ -1138,7 +1167,6 @@ dispatch AS (
            worker_instances.initramfs_digest,
            worker_instances.rootfs_digest,
            worker_instances.cni_profile,
-           worker_instances.worker_group_id,
            worker_instances.protocol_version,
            active.used_milli_cpu,
            active.used_memory_mib,
@@ -3088,7 +3116,29 @@ retry_snapshot AS (
        AND completed_queue_entry.run_id = released.id
     RETURNING run_snapshots.run_id
 ),
-event_inputs AS (
+event_inputs(
+    event_ordinal,
+    org_id,
+    worker_group_id,
+    project_id,
+    environment_id,
+    run_id,
+    attempt_id,
+    run_lease_id,
+    attempt_number,
+    trace_id,
+    span_id,
+    parent_span_id,
+    traceparent,
+    category,
+    severity,
+    source,
+    kind,
+    message,
+    payload,
+    redaction_class,
+    snapshot_version
+) AS (
     SELECT 1 AS event_ordinal,
            released.org_id,
            released.worker_group_id,
@@ -3152,13 +3202,20 @@ event_inputs AS (
      WHERE retry_plan.run_id = released.id
 ),
 event_subject_counts AS (
-    SELECT org_id, worker_group_id, run_id, count(*)::bigint AS event_count
+    SELECT event_inputs.org_id,
+           event_inputs.worker_group_id,
+           event_inputs.run_id,
+           count(*)::bigint AS event_count
       FROM event_inputs
-     GROUP BY org_id, worker_group_id, run_id
+     GROUP BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id
 ),
 event_seq AS (
     INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT org_id, worker_group_id, 'run', run_id, event_count
+    SELECT event_subject_counts.org_id,
+           event_subject_counts.worker_group_id,
+           'run',
+           event_subject_counts.run_id,
+           event_subject_counts.event_count
       FROM event_subject_counts
     ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
     DO UPDATE SET seq = event_cursors.seq + EXCLUDED.seq,

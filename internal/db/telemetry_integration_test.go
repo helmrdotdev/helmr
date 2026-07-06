@@ -332,7 +332,7 @@ func TestUsageLedgerEntryIdempotencyRejectsDuplicateScope(t *testing.T) {
 	}
 }
 
-func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
+func TestWorkerTelemetryAppendRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -353,7 +353,7 @@ func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
 		Content:          []byte("wrong-worker-group"),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("AppendRunLogChunk disabled route error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("AppendRunLogChunk disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 	_, err = queries.AppendRunEventForExecution(ctx, db.AppendRunEventForExecutionParams{
 		Kind:             "run.event",
@@ -365,7 +365,7 @@ func TestWorkerTelemetryAppendRejectsDisabledSourceRoute(t *testing.T) {
 		WorkerInstanceID: pgvalue.UUID(workerID),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("AppendRunEventForExecution route mismatch error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("AppendRunEventForExecution disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 
 	var chunkCount, eventCount, outboxCount, usageCount int64

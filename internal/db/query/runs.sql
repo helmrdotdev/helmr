@@ -553,28 +553,6 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
        count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
-JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-  ON project_worker_group_placement.org_id = runs.org_id
- AND project_worker_group_placement.project_id = runs.project_id
- AND project_worker_group_placement.environment_id = runs.environment_id
- AND project_worker_group_placement.worker_group_id = runs.worker_group_id
- AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-          AND worker_groups.region_id = project_worker_group_placement.region_id
-          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = sqlc.arg(org_id)
   AND runs.project_id = sqlc.arg(project_id)
   AND runs.environment_id = sqlc.arg(environment_id);
@@ -582,28 +560,6 @@ WHERE runs.org_id = sqlc.arg(org_id)
 -- name: ListScopedRunSummaries :many
 SELECT runs.*
 FROM runs
-JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-  ON project_worker_group_placement.org_id = runs.org_id
- AND project_worker_group_placement.project_id = runs.project_id
- AND project_worker_group_placement.environment_id = runs.environment_id
- AND project_worker_group_placement.worker_group_id = runs.worker_group_id
- AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-          AND worker_groups.region_id = project_worker_group_placement.region_id
-          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = sqlc.arg(org_id)
   AND runs.project_id = sqlc.arg(project_id)
   AND runs.environment_id = sqlc.arg(environment_id)
@@ -933,7 +889,7 @@ SELECT updated.*
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_sessions) >= 0
 UNION ALL
-SELECT target.*
+SELECT target.*, NULL::uuid AS previous_run_lease_id
   FROM target
   JOIN operation_applied ON true
  WHERE NOT EXISTS (SELECT 1 FROM updated);

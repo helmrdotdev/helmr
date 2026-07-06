@@ -260,7 +260,7 @@ SELECT updated.id, updated.public_id, updated.org_id, updated.worker_group_id, u
 	   AND (SELECT count(*) FROM terminal_session_runs) >= 0
 	   AND (SELECT count(*) FROM terminal_sessions) >= 0
 UNION ALL
-SELECT target.id, target.public_id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.workspace_id, target.workspace_mount_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.session_id, target.schedule_id, target.schedule_instance_id, target.scheduled_at, target.status, target.execution_status, target.terminal_outcome, target.payload, target.output, target.metadata, target.tags, target.locked_retry_policy, target.queue_name, target.queue_concurrency_limit, target.concurrency_key, target.priority, target.queue_timestamp, target.ttl, target.queued_expires_at, target.max_active_duration_ms, target.active_elapsed_ms, target.active_started_at, target.trace_id, target.root_span_id, target.state_version, target.current_attempt_id, target.current_attempt_number, target.current_run_lease_id, target.latest_runtime_checkpoint_id, target.exit_code, target.error_message, target.created_at, target.updated_at, target.started_at, target.finished_at
+SELECT target.id, target.public_id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.workspace_id, target.workspace_mount_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.session_id, target.schedule_id, target.schedule_instance_id, target.scheduled_at, target.status, target.execution_status, target.terminal_outcome, target.payload, target.output, target.metadata, target.tags, target.locked_retry_policy, target.queue_name, target.queue_concurrency_limit, target.concurrency_key, target.priority, target.queue_timestamp, target.ttl, target.queued_expires_at, target.max_active_duration_ms, target.active_elapsed_ms, target.active_started_at, target.trace_id, target.root_span_id, target.state_version, target.current_attempt_id, target.current_attempt_number, target.current_run_lease_id, target.latest_runtime_checkpoint_id, target.exit_code, target.error_message, target.created_at, target.updated_at, target.started_at, target.finished_at, NULL::uuid AS previous_run_lease_id
   FROM target
   JOIN operation_applied ON true
  WHERE NOT EXISTS (SELECT 1 FROM updated)
@@ -404,28 +404,6 @@ SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
        count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
        count(*) FILTER (WHERE status = 'expired') AS expired
 FROM runs
-JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-  ON project_worker_group_placement.org_id = runs.org_id
- AND project_worker_group_placement.project_id = runs.project_id
- AND project_worker_group_placement.environment_id = runs.environment_id
- AND project_worker_group_placement.worker_group_id = runs.worker_group_id
- AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-          AND worker_groups.region_id = project_worker_group_placement.region_id
-          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = $1
   AND runs.project_id = $2
   AND runs.environment_id = $3
@@ -1508,28 +1486,6 @@ func (q *Queries) ListQueuedRunsForWorkspaceMount(ctx context.Context, arg ListQ
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
 SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_id, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_runtime_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
 FROM runs
-JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-  ON project_worker_group_placement.org_id = runs.org_id
- AND project_worker_group_placement.project_id = runs.project_id
- AND project_worker_group_placement.environment_id = runs.environment_id
- AND project_worker_group_placement.worker_group_id = runs.worker_group_id
- AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-          AND worker_groups.region_id = project_worker_group_placement.region_id
-          AND worker_groups.state IN ('active', 'draining')
 WHERE runs.org_id = $1
   AND runs.project_id = $2
   AND runs.environment_id = $3

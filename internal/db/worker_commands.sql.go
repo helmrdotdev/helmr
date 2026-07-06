@@ -21,27 +21,9 @@ UPDATE worker_commands
    AND EXISTS (
        SELECT 1
          FROM worker_instances
-         JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-           ON project_worker_group_placement.org_id = worker_commands.org_id
-          AND project_worker_group_placement.project_id = worker_commands.project_id
-          AND project_worker_group_placement.environment_id = worker_commands.environment_id
-          AND project_worker_group_placement.worker_group_id = worker_commands.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.state IN ('active', 'draining')
+         JOIN worker_groups
+           ON worker_groups.id = worker_commands.worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
         WHERE worker_instances.id = worker_commands.worker_instance_id
           AND worker_instances.worker_group_id = worker_commands.worker_group_id
           AND worker_instances.worker_group_id = $3
@@ -98,27 +80,9 @@ WITH target AS MATERIALIZED (
        AND EXISTS (
            SELECT 1
              FROM worker_instances
-             JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-               ON project_worker_group_placement.org_id = worker_commands.org_id
-              AND project_worker_group_placement.project_id = worker_commands.project_id
-              AND project_worker_group_placement.environment_id = worker_commands.environment_id
-              AND project_worker_group_placement.worker_group_id = worker_commands.worker_group_id
-              AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-             JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                       AND worker_groups.state IN ('active', 'draining')
+             JOIN worker_groups
+               ON worker_groups.id = worker_commands.worker_group_id
+              AND worker_groups.state IN ('active', 'draining')
             WHERE worker_instances.id = worker_commands.worker_instance_id
               AND worker_instances.worker_group_id = worker_commands.worker_group_id
               AND worker_instances.worker_group_id = $3
@@ -320,27 +284,9 @@ UPDATE worker_commands
    AND EXISTS (
        SELECT 1
          FROM worker_instances
-         JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-           ON project_worker_group_placement.org_id = worker_commands.org_id
-          AND project_worker_group_placement.project_id = worker_commands.project_id
-          AND project_worker_group_placement.environment_id = worker_commands.environment_id
-          AND project_worker_group_placement.worker_group_id = worker_commands.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.state IN ('active', 'draining')
+         JOIN worker_groups
+           ON worker_groups.id = worker_commands.worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
         WHERE worker_instances.id = worker_commands.worker_instance_id
           AND worker_instances.worker_group_id = worker_commands.worker_group_id
           AND worker_instances.worker_group_id = $4
@@ -404,27 +350,9 @@ const claimWorkerCommands = `-- name: ClaimWorkerCommands :many
 WITH claimable AS (
     SELECT worker_commands.id
       FROM worker_commands
-      JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-        ON project_worker_group_placement.org_id = worker_commands.org_id
-       AND project_worker_group_placement.project_id = worker_commands.project_id
-       AND project_worker_group_placement.environment_id = worker_commands.environment_id
-       AND project_worker_group_placement.worker_group_id = worker_commands.worker_group_id
-       AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-      JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                AND worker_groups.state IN ('active', 'draining')
+      JOIN worker_groups
+        ON worker_groups.id = worker_commands.worker_group_id
+       AND worker_groups.state IN ('active', 'draining')
       JOIN worker_instances
         ON worker_instances.id = worker_commands.worker_instance_id
        AND worker_instances.worker_group_id = worker_commands.worker_group_id
@@ -1255,27 +1183,9 @@ SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, run_wait
    AND EXISTS (
        SELECT 1
          FROM worker_instances
-         JOIN (
-    SELECT placement_project.org_id,
-           placement_project.id AS project_id,
-           target_environment.id AS environment_id,
-           placement_worker_group.region_id AS region_id,
-           placement_worker_group.id AS worker_group_id,
-           placement_worker_group.state AS worker_group_state
-      FROM projects AS placement_project
-      JOIN environments AS target_environment
-        ON target_environment.org_id = placement_project.org_id
-       AND target_environment.project_id = placement_project.id
-      JOIN worker_groups AS placement_worker_group
-        ON true
-) AS project_worker_group_placement
-           ON project_worker_group_placement.org_id = worker_commands.org_id
-          AND project_worker_group_placement.project_id = worker_commands.project_id
-          AND project_worker_group_placement.environment_id = worker_commands.environment_id
-          AND project_worker_group_placement.worker_group_id = worker_commands.worker_group_id
-          AND project_worker_group_placement.worker_group_state IN ('active', 'draining')
-         JOIN worker_groups ON worker_groups.id = project_worker_group_placement.worker_group_id
-                   AND worker_groups.state IN ('active', 'draining')
+         JOIN worker_groups
+           ON worker_groups.id = worker_commands.worker_group_id
+          AND worker_groups.state IN ('active', 'draining')
         WHERE worker_instances.id = worker_commands.worker_instance_id
           AND worker_instances.worker_group_id = worker_commands.worker_group_id
           AND worker_instances.worker_group_id = $2

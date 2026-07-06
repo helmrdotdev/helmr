@@ -65,7 +65,7 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	workerResourceID := "worker-" + shortUUID(workerID)
 	dispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	winnerDispatchMessageID := "dispatch-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	var workerGroupID uuid.UUID
+	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -80,15 +80,15 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, worker_group_id, status, protocol_version,
+				id, org_id, worker_group_id, resource_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6,
+			VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+				$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, workerID, ids.orgID, workerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -121,11 +121,11 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID, workerGroupID); err != nil {
+				'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -159,11 +159,11 @@ func TestSessionLoserRunIsNotVisibleOrLeaseable(t *testing.T) {
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
-	`, loserRunID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID, workerGroupID); err != nil {
+				'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, loserRunID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -630,7 +630,7 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	dispatchMessageID := "dispatch-" + shortUUID(runLeaseID)
 	workerResourceID := "worker-" + shortUUID(workerID)
-	var workerGroupID uuid.UUID
+	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -642,15 +642,15 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, worker_group_id, status, protocol_version,
+				id, org_id, worker_group_id, resource_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6,
+			VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 4096, 1, 1000, 1024, 4096, 1,
-			$7, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+				$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, workerID, ids.orgID, workerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -769,11 +769,11 @@ func TestLeaseRunLeaseRejectsStaleRuntimeCheckpointWithoutLeakingLeases(t *testi
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		VALUES ($1, $2, $3, 1, 1, 1, 1, $4, 'arm64', 'test',
-			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', $5)
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID, workerGroupID); err != nil {
+				'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -860,11 +860,11 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		SELECT $1, $2, worker_instances.worker_group_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
 		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
-		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		       worker_instances.rootfs_digest, worker_instances.cni_profile
 		  FROM worker_instances
 		 WHERE worker_instances.id = $3
 	`, ids.runID, ids.orgID, workerID); err != nil {
@@ -907,7 +907,7 @@ func TestLeaseRunLeaseCreditsResidentRuntimeOnOneSlotWorker(t *testing.T) {
 	}
 }
 
-func TestLeaseRunLeaseDoesNotReturnWrongWorkerGroupRuntimeSubstrate(t *testing.T) {
+func TestLeaseRunLeaseDoesNotReturnDifferentSandboxRuntimeSubstrate(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -937,11 +937,11 @@ func TestLeaseRunLeaseDoesNotReturnWrongWorkerGroupRuntimeSubstrate(t *testing.T
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		SELECT $1, $2, worker_instances.worker_group_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
 		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
-		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		       worker_instances.rootfs_digest, worker_instances.cni_profile
 		  FROM worker_instances
 		 WHERE worker_instances.id = $3
 	`, ids.runID, ids.orgID, workerID); err != nil {
@@ -959,7 +959,7 @@ func TestLeaseRunLeaseDoesNotReturnWrongWorkerGroupRuntimeSubstrate(t *testing.T
 
 	workspaceMountID := uuid.Must(uuid.NewV7())
 	seedResidentRuntimeWorkspaceMount(t, ctx, pool, ids, ids.workspaceID, workspaceMountID, workerID, 1000, 1024, 4096, 1)
-	seedWrongWorkerGroupRuntimeSubstrateArtifact(t, ctx, pool, queries, ids)
+	seedDifferentSandboxRuntimeSubstrateArtifact(t, ctx, pool, queries, ids)
 
 	leased, err := queries.LeaseRunLease(ctx, db.LeaseRunLeaseParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
@@ -967,7 +967,7 @@ func TestLeaseRunLeaseDoesNotReturnWrongWorkerGroupRuntimeSubstrate(t *testing.T
 		WorkerInstanceID:  pgvalue.UUID(workerID),
 		RunLeaseID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		DispatchMessageID: pgtype.Text{String: dispatchMessageID, Valid: true},
-		DispatchLeaseID:   "lease-with-wrong-worker-group-substrate",
+		DispatchLeaseID:   "lease-with-different-sandbox-substrate",
 		DispatchAttempt:   1,
 		LeaseExpiresAt:    pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		RunLeaseSpanID:    "6666666666666666",
@@ -979,10 +979,10 @@ func TestLeaseRunLeaseDoesNotReturnWrongWorkerGroupRuntimeSubstrate(t *testing.T
 		t.Fatalf("workspace mount id = %v, want resident %s", leased.WorkspaceMountID, workspaceMountID)
 	}
 	if leased.WorkspaceRuntimeSubstrateArtifactID.Valid {
-		t.Fatalf("workspace runtime substrate artifact id = %+v, want absent wrong-worker-group substrate", leased.WorkspaceRuntimeSubstrateArtifactID)
+		t.Fatalf("workspace runtime substrate artifact id = %+v, want absent different-sandbox substrate", leased.WorkspaceRuntimeSubstrateArtifactID)
 	}
 	if leased.WorkspaceRuntimeSubstrateDigest != "" || leased.WorkspaceRuntimeSubstrateArtifactDigest != "" {
-		t.Fatalf("workspace runtime substrate metadata = %q/%q, want empty wrong-worker-group substrate metadata", leased.WorkspaceRuntimeSubstrateDigest, leased.WorkspaceRuntimeSubstrateArtifactDigest)
+		t.Fatalf("workspace runtime substrate metadata = %q/%q, want empty different-sandbox substrate metadata", leased.WorkspaceRuntimeSubstrateDigest, leased.WorkspaceRuntimeSubstrateArtifactDigest)
 	}
 }
 
@@ -1016,11 +1016,11 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 		INSERT INTO run_runtime_requirements (
 			run_id, org_id, worker_group_id, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
 			requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile, worker_group_id
+			initramfs_digest, rootfs_digest, cni_profile
 		)
 		SELECT $1, $2, worker_instances.worker_group_id, 1000, 1024, 4096, 1, worker_instances.runtime_id, worker_instances.runtime_arch,
 		       worker_instances.runtime_abi, worker_instances.kernel_digest, worker_instances.initramfs_digest,
-		       worker_instances.rootfs_digest, worker_instances.cni_profile, worker_instances.worker_group_id
+		       worker_instances.rootfs_digest, worker_instances.cni_profile
 		  FROM worker_instances
 		 WHERE worker_instances.id = $3
 	`, ids.runID, ids.orgID, workerID); err != nil {
@@ -1075,10 +1075,10 @@ func TestLeaseRunLeaseDoesNotReclaimCheckpointingResidentRuntime(t *testing.T) {
 	}
 }
 
-func seedWrongWorkerGroupRuntimeSubstrateArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, ids integrationIDs) {
+func seedDifferentSandboxRuntimeSubstrateArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, queries *db.Queries, ids integrationIDs) {
 	t.Helper()
-	otherWorkerGroupID, otherSandboxID := seedRuntimeSubstrateSourceInOtherWorkerGroup(t, ctx, pool, ids, "run-lease-wrong-worker-group-runtime-substrate")
-	digest := testDigest("run-lease-wrong-worker-group-runtime-substrate")
+	otherSandboxID := seedSiblingDeploymentSandbox(t, ctx, pool, ids)
+	digest := testDigest("run-lease-different-sandbox-runtime-substrate")
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(ids.orgID),
 		Digest:    digest,
@@ -1102,17 +1102,17 @@ func seedWrongWorkerGroupRuntimeSubstrateArtifact(t *testing.T, ctx context.Cont
 	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
-		WorkerGroupID:             otherWorkerGroupID,
+		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(otherSandboxID),
 		ArtifactID:                artifact.ID,
-		SubstrateDigest:           "sha256:run-lease-wrong-worker-group-runtime-substrate",
+		SubstrateDigest:           "sha256:run-lease-different-sandbox-runtime-substrate",
 		SubstrateFormat:           "ext4",
 		BuilderAbi:                "builder-v0",
 		LayoutAbi:                 "layout-v0",
 		SubstrateSizeBytes:        1024,
-		Source:                    []byte(`{"test":"run-lease-wrong-worker-group-runtime-substrate"}`),
+		Source:                    []byte(`{"test":"run-lease-different-sandbox-runtime-substrate"}`),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
@@ -1124,7 +1124,7 @@ func seedRuntimePressureWorker(t *testing.T, ctx context.Context, pool *pgxpool.
 	workerID := uuid.Must(uuid.NewV7())
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
-	var workerGroupID uuid.UUID
+	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
@@ -1144,15 +1144,15 @@ func seedRuntimePressureWorker(t *testing.T, ctx context.Context, pool *pgxpool.
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, worker_group_id, status, protocol_version,
+				id, org_id, worker_group_id, resource_id, status, protocol_version,
 			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
 			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
 			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ($1, $2, $3, $4, $5, 'active', $6,
-			$7, $8, $9, $10, $7, $8, $9, $10,
-			$11, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, cpu, memory, disk, slots, runtimeID); err != nil {
+			VALUES ($1, $2, $3, $4, 'active', $5,
+				$6, $7, $8, $9, $6, $7, $8, $9,
+				$10, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		`, workerID, ids.orgID, workerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, cpu, memory, disk, slots, runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	return workerID
@@ -1301,7 +1301,7 @@ func TestReleaseLeasedRunLeaseDoesNotAccrueActiveTimeBeforeStart(t *testing.T) {
 	}
 }
 
-func TestGetRunLeaseQueueLeaseRejectsDisabledSourceRoute(t *testing.T) {
+func TestGetRunLeaseQueueLeaseRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -1317,7 +1317,7 @@ func TestGetRunLeaseQueueLeaseRejectsDisabledSourceRoute(t *testing.T) {
 		WorkerInstanceID: pgvalue.UUID(workerID),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("GetRunLeaseQueueLease disabled route error = %v, want pgx.ErrNoRows", err)
+		t.Fatalf("GetRunLeaseQueueLease disabled worker group error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
