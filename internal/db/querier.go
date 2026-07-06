@@ -402,8 +402,6 @@ type Querier interface {
 	RequeueResolvedRunWaits(ctx context.Context, arg RequeueResolvedRunWaitsParams) ([]RequeueResolvedRunWaitsRow, error)
 	RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatchParams) (Run, error)
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
-	ReserveCheckpointRestoreRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveCheckpointRestoreRunForWorkerRow, error)
-	ReserveResidentRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveResidentRunForWorkerRow, error)
 	ReserveWorkspaceMountPreparingRuntime(ctx context.Context, arg ReserveWorkspaceMountPreparingRuntimeParams) (ReserveWorkspaceMountPreparingRuntimeRow, error)
 	ResizeWorkspacePtySession(ctx context.Context, arg ResizeWorkspacePtySessionParams) (WorkspacePtySession, error)
 	ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context, arg ResolveDeploymentSandboxForWorkspaceCreateParams) (DeploymentSandbox, error)
@@ -422,7 +420,6 @@ type Querier interface {
 	RevokeOrgAuthSessionsForUser(ctx context.Context, arg RevokeOrgAuthSessionsForUserParams) (int64, error)
 	RevokePublicAccessToken(ctx context.Context, arg RevokePublicAccessTokenParams) (PublicAccessToken, error)
 	RollbackWorkspacePtyControlOperation(ctx context.Context, arg RollbackWorkspacePtyControlOperationParams) (WorkspacePtySession, error)
-	RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg RunLeaseDispatchAttemptsExhaustedParams) (bool, error)
 	ScheduleInstanceTriggerIsCurrent(ctx context.Context, arg ScheduleInstanceTriggerIsCurrentParams) (bool, error)
 	SelectProjectPlacementWorkerGroup(ctx context.Context, arg SelectProjectPlacementWorkerGroupParams) (SelectProjectPlacementWorkerGroupRow, error)
 	SetDefaultProject(ctx context.Context, arg SetDefaultProjectParams) (int64, error)

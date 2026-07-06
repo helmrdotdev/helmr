@@ -115,16 +115,18 @@ WITH terminalized AS (
            terminal_outcome = 'dead_lettered',
            current_run_lease_id = NULL,
            dispatch_generation = dispatch_generation + 1,
-           last_enqueue_error = $1,
+           dispatch_attempt_count = GREATEST(dispatch_attempt_count, $1::int),
+           last_enqueue_error = $2,
            state_version = state_version + 1,
            finished_at = COALESCE(finished_at, now()),
            updated_at = now()
-     WHERE runs.org_id = $2
-       AND runs.worker_group_id = $3
-       AND runs.queue_class = $4
-       AND runs.id = $5
-       AND runs.dispatch_generation = $6
+     WHERE runs.org_id = $3
+       AND runs.worker_group_id = $4
+       AND runs.queue_class = $5
+       AND runs.id = $6
+       AND runs.dispatch_generation = $7
        AND runs.status = 'queued'
+       AND $1::int > $8::int
     RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_runtime_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 ),
 ended_session_run AS (
@@ -150,8 +152,8 @@ terminal_snapshot AS (
            terminalized.current_attempt_number,
            terminalized.state_version - 1,
            'run.dead_lettered',
-           jsonb_build_object('message', $1::text),
-           jsonb_build_object('message', $1::text)
+           jsonb_build_object('message', $2::text),
+           jsonb_build_object('message', $2::text)
       FROM terminalized
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
@@ -182,7 +184,7 @@ terminal_event AS (
            'control',
            'run.dead_lettered',
            'run.dead_lettered',
-           jsonb_build_object('message', $1::text),
+           jsonb_build_object('message', $2::text),
            'internal',
            terminalized.state_version
       FROM terminalized
@@ -218,12 +220,14 @@ SELECT terminalized.id AS run_id,
 `
 
 type DeadLetterRunDispatchParams struct {
-	LastError          string      `json:"last_error"`
-	OrgID              pgtype.UUID `json:"org_id"`
-	WorkerGroupID      string      `json:"worker_group_id"`
-	QueueClass         string      `json:"queue_class"`
-	RunID              pgtype.UUID `json:"run_id"`
-	DispatchGeneration int64       `json:"dispatch_generation"`
+	DispatchAttempt     int32       `json:"dispatch_attempt"`
+	LastError           string      `json:"last_error"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	WorkerGroupID       string      `json:"worker_group_id"`
+	QueueClass          string      `json:"queue_class"`
+	RunID               pgtype.UUID `json:"run_id"`
+	DispatchGeneration  int64       `json:"dispatch_generation"`
+	MaxDispatchAttempts int32       `json:"max_dispatch_attempts"`
 }
 
 type DeadLetterRunDispatchRow struct {
@@ -237,12 +241,14 @@ type DeadLetterRunDispatchRow struct {
 
 func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error) {
 	row := q.db.QueryRow(ctx, deadLetterRunDispatch,
+		arg.DispatchAttempt,
 		arg.LastError,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.QueueClass,
 		arg.RunID,
 		arg.DispatchGeneration,
+		arg.MaxDispatchAttempts,
 	)
 	var i DeadLetterRunDispatchRow
 	err := row.Scan(
@@ -1291,166 +1297,6 @@ func (q *Queries) RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatch
 		&i.FinishedAt,
 	)
 	return i, err
-}
-
-const reserveCheckpointRestoreRunForWorker = `-- name: ReserveCheckpointRestoreRunForWorker :one
-SELECT runs.org_id,
-       runs.worker_group_id,
-       runs.id AS run_id,
-       runs.queue_class,
-       runs.queue_name,
-       runs.priority,
-       runs.queue_timestamp,
-       runs.queued_expires_at,
-       runs.dispatch_generation,
-       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
-  FROM runs
-  JOIN worker_instances
-    ON worker_instances.id = $1
-   AND worker_instances.worker_group_id = runs.worker_group_id
-   AND worker_instances.status = 'active'
-  JOIN runtime_checkpoints
-    ON runtime_checkpoints.org_id = runs.org_id
-   AND runtime_checkpoints.run_id = runs.id
-   AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
-   AND runtime_checkpoints.source_worker_instance_id = worker_instances.id
-   AND runtime_checkpoints.state = 'ready'
-   AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
- ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
- LIMIT 1
-`
-
-type ReserveCheckpointRestoreRunForWorkerRow struct {
-	OrgID              pgtype.UUID        `json:"org_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
-	RunID              pgtype.UUID        `json:"run_id"`
-	QueueClass         string             `json:"queue_class"`
-	QueueName          string             `json:"queue_name"`
-	Priority           int32              `json:"priority"`
-	QueueTimestamp     pgtype.Timestamptz `json:"queue_timestamp"`
-	QueuedExpiresAt    pgtype.Timestamptz `json:"queued_expires_at"`
-	DispatchGeneration int64              `json:"dispatch_generation"`
-	DispatchMessageID  interface{}        `json:"dispatch_message_id"`
-}
-
-func (q *Queries) ReserveCheckpointRestoreRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveCheckpointRestoreRunForWorkerRow, error) {
-	row := q.db.QueryRow(ctx, reserveCheckpointRestoreRunForWorker, workerInstanceID)
-	var i ReserveCheckpointRestoreRunForWorkerRow
-	err := row.Scan(
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.RunID,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchMessageID,
-	)
-	return i, err
-}
-
-const reserveResidentRunForWorker = `-- name: ReserveResidentRunForWorker :one
-SELECT runs.org_id,
-       runs.worker_group_id,
-       runs.id AS run_id,
-       runs.queue_class,
-       runs.queue_name,
-       runs.priority,
-       runs.queue_timestamp,
-       runs.queued_expires_at,
-       runs.dispatch_generation,
-       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
-  FROM runs
-  JOIN worker_instances
-    ON worker_instances.id = $1
-   AND worker_instances.worker_group_id = runs.worker_group_id
-   AND worker_instances.status = 'active'
- WHERE runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND runs.latest_runtime_checkpoint_id IS NULL
-   AND EXISTS (
-       SELECT 1
-         FROM runtime_instances
-        WHERE runtime_instances.org_id = runs.org_id
-          AND runtime_instances.project_id = runs.project_id
-          AND runtime_instances.environment_id = runs.environment_id
-          AND runtime_instances.workspace_id = runs.workspace_id
-          AND runtime_instances.worker_instance_id = worker_instances.id
-          AND runtime_instances.state IN ('ready', 'waiting_hot')
-   )
- ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
- LIMIT 1
-`
-
-type ReserveResidentRunForWorkerRow struct {
-	OrgID              pgtype.UUID        `json:"org_id"`
-	WorkerGroupID      string             `json:"worker_group_id"`
-	RunID              pgtype.UUID        `json:"run_id"`
-	QueueClass         string             `json:"queue_class"`
-	QueueName          string             `json:"queue_name"`
-	Priority           int32              `json:"priority"`
-	QueueTimestamp     pgtype.Timestamptz `json:"queue_timestamp"`
-	QueuedExpiresAt    pgtype.Timestamptz `json:"queued_expires_at"`
-	DispatchGeneration int64              `json:"dispatch_generation"`
-	DispatchMessageID  interface{}        `json:"dispatch_message_id"`
-}
-
-func (q *Queries) ReserveResidentRunForWorker(ctx context.Context, workerInstanceID pgtype.UUID) (ReserveResidentRunForWorkerRow, error) {
-	row := q.db.QueryRow(ctx, reserveResidentRunForWorker, workerInstanceID)
-	var i ReserveResidentRunForWorkerRow
-	err := row.Scan(
-		&i.OrgID,
-		&i.WorkerGroupID,
-		&i.RunID,
-		&i.QueueClass,
-		&i.QueueName,
-		&i.Priority,
-		&i.QueueTimestamp,
-		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchMessageID,
-	)
-	return i, err
-}
-
-const runLeaseDispatchAttemptsExhausted = `-- name: RunLeaseDispatchAttemptsExhausted :one
-SELECT runs.dispatch_attempt_count >= $1::int AS exhausted
-  FROM runs
-WHERE runs.org_id = $2
-   AND runs.worker_group_id = $3
-   AND runs.queue_class = $4
-   AND runs.id = $5
-   AND runs.dispatch_generation = $6
-   AND runs.status = 'queued'
-`
-
-type RunLeaseDispatchAttemptsExhaustedParams struct {
-	MaxDispatchAttempts int32       `json:"max_dispatch_attempts"`
-	OrgID               pgtype.UUID `json:"org_id"`
-	WorkerGroupID       string      `json:"worker_group_id"`
-	QueueClass          string      `json:"queue_class"`
-	RunID               pgtype.UUID `json:"run_id"`
-	DispatchGeneration  int64       `json:"dispatch_generation"`
-}
-
-func (q *Queries) RunLeaseDispatchAttemptsExhausted(ctx context.Context, arg RunLeaseDispatchAttemptsExhaustedParams) (bool, error) {
-	row := q.db.QueryRow(ctx, runLeaseDispatchAttemptsExhausted,
-		arg.MaxDispatchAttempts,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.QueueClass,
-		arg.RunID,
-		arg.DispatchGeneration,
-	)
-	var exhausted bool
-	err := row.Scan(&exhausted)
-	return exhausted, err
 }
 
 const setWorkerInstanceStatus = `-- name: SetWorkerInstanceStatus :one
