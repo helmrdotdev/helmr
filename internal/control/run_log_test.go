@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/redis/go-redis/v9"
@@ -100,7 +101,7 @@ func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	}
 }
 
-func TestGetRunLogsRejectsWrongWorkerGroup(t *testing.T) {
+func TestGetRunLogsDoesNotRequireLocalWorkerGroupRoutability(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		recordPlacementUnavailable: true,
@@ -123,11 +124,11 @@ func TestGetRunLogsRejectsWrongWorkerGroup(t *testing.T) {
 
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusServiceUnavailable {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.runLogSnapshot.RunID.Valid {
-		t.Fatalf("wrong-worker-group request read run logs: %+v", store.runLogSnapshot)
+	if store.runLogSnapshot.RunID != runID {
+		t.Fatalf("run log snapshot query = %+v", store.runLogSnapshot)
 	}
 }
 
@@ -143,17 +144,17 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
-		logChunks: []db.RunLogHotChunk{
+		logChunks: []db.AppendRunLogChunkRow{
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
 				RunLeaseID:    pgvalue.UUID(sessionID),
-				AttemptNumber: 1,
+				AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 				Stream:        db.RunLogStreamStdout,
 				Seq:           8,
-				ObservedSeq:   2,
+				ObservedSeq:   pgtype.Int8{Int64: 2, Valid: true},
 				Content:       []byte("new\n"),
-				SizeBytes:     4,
+				SizeBytes:     pgtype.Int8{Int64: 4, Valid: true},
 				CreatedAt:     testTime(),
 			},
 		},
@@ -204,17 +205,17 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 			UpdatedAt: testTime(),
 		},
 		deferLogChunksUntilSecondList: true,
-		logChunks: []db.RunLogHotChunk{
+		logChunks: []db.AppendRunLogChunkRow{
 			{
 				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 				RunID:         pgvalue.UUID(runID),
 				RunLeaseID:    pgvalue.UUID(sessionID),
-				AttemptNumber: 1,
+				AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 				Stream:        db.RunLogStreamStderr,
 				Seq:           12,
-				ObservedSeq:   4,
+				ObservedSeq:   pgtype.Int8{Int64: 4, Valid: true},
 				Content:       []byte("final error\n"),
-				SizeBytes:     int64(len("final error\n")),
+				SizeBytes:     pgtype.Int8{Int64: int64(len("final error\n")), Valid: true},
 				CreatedAt:     testTime(),
 			},
 		},
@@ -305,7 +306,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
 	}
 
-	store.events = []db.EventHotPayload{{
+	store.events = []db.ClaimEventOutboxRow{{
 		Seq:            1,
 		OrgID:          store.run.OrgID,
 		RunID:          store.run.ID,
@@ -418,10 +419,9 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	case "stderr":
 		f.stderr = append(f.stderr, arg.Content...)
 	}
-	event := db.EventHotPayload{
+	event := db.ClaimEventOutboxRow{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
-		WorkerGroupID:  arg.WorkerGroupID,
 		RunID:          arg.RunID,
 		RunLeaseID:     arg.RunLeaseID,
 		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
@@ -434,48 +434,48 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	return db.AppendRunLogChunkRow{
 		RunID:         arg.RunID,
 		RunLeaseID:    arg.RunLeaseID,
-		AttemptNumber: 1,
+		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
 		Stream:        arg.Stream,
 		Seq:           int64(len(f.events)),
-		ObservedSeq:   arg.ObservedSeq,
+		ObservedSeq:   pgtype.Int8{Int64: arg.ObservedSeq, Valid: true},
 		Content:       arg.Content,
+		SizeBytes:     pgtype.Int8{Int64: int64(len(arg.Content)), Valid: true},
 		CreatedAt:     testTime(),
 	}, nil
 }
 
-func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg db.ListRunLogChunksAfterParams) ([]db.RunLogHotChunk, error) {
+func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg telemetry.RunLogChunkQuery) ([]db.AppendRunLogChunkRow, error) {
 	f.runLogChunksAfter = arg
 	f.runLogChunksAfterCalls++
 	if f.runLogChunksAfterCalls == 1 {
-		f.firstRunLogChunksAfterSeq = arg.Seq
+		f.firstRunLogChunksAfterSeq = arg.AfterSeq
 	}
 	if f.deferLogChunksUntilSecondList && f.runLogChunksAfterCalls == 1 {
 		return nil, nil
 	}
-	rows := make([]db.RunLogHotChunk, 0, len(f.logChunks))
+	rows := make([]db.AppendRunLogChunkRow, 0, len(f.logChunks))
 	for _, chunk := range f.logChunks {
-		if chunk.Seq <= arg.Seq {
+		if chunk.Seq <= arg.AfterSeq {
 			continue
 		}
 		rows = append(rows, chunk)
-		if len(rows) == int(arg.RowLimit) {
+		if len(rows) == int(arg.Limit) {
 			break
 		}
 	}
 	return rows, nil
 }
 
-func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg db.GetRunLogSnapshotParams) (db.GetRunLogSnapshotRow, error) {
+func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
 	f.runLogSnapshot = arg
-	if f.run.ID != arg.RunID || (len(f.stdout) == 0 && len(f.stderr) == 0) {
-		return db.GetRunLogSnapshotRow{}, pgx.ErrNoRows
+	if f.run.ID != pgvalue.UUID(arg.RunID) || (len(f.stdout) == 0 && len(f.stderr) == 0) {
+		return telemetry.RunLogSnapshot{}, pgx.ErrNoRows
 	}
-	return db.GetRunLogSnapshotRow{
-		RunID:     arg.RunID,
+	return telemetry.RunLogSnapshot{
 		Stdout:    f.stdout,
 		Stderr:    f.stderr,
-		Truncated: pgtype.Bool{Bool: f.logTruncated, Valid: true},
+		Truncated: f.logTruncated,
 		Cursor:    f.logCursor,
-		UpdatedAt: testTime(),
+		UpdatedAt: pgvalue.Time(testTime()),
 	}, nil
 }

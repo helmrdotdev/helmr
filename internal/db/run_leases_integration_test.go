@@ -909,7 +909,7 @@ func assertRunDispatchRequeuedLifecycle(t *testing.T, ctx context.Context, pool 
 		       runs.dispatch_attempt_count,
 		       run_leases.status,
 		       (SELECT transition FROM run_state_snapshots WHERE org_id = runs.org_id AND run_id = runs.id ORDER BY version DESC LIMIT 1),
-		       (SELECT kind FROM event_hot_payloads WHERE org_id = runs.org_id AND run_id = runs.id ORDER BY seq DESC LIMIT 1),
+			       (SELECT kind FROM telemetry_outbox WHERE org_id = runs.org_id AND run_id = runs.id AND stream_kind = 'event' ORDER BY id DESC LIMIT 1),
 		       (SELECT count(*)::int FROM telemetry_outbox WHERE org_id = runs.org_id AND source_kind = 'run' AND source_id = runs.id AND stream_kind = 'event')
 		  FROM runs
 		  JOIN run_leases ON run_leases.org_id = runs.org_id
@@ -979,10 +979,11 @@ func assertRunLifecycleTransitions(t *testing.T, ctx context.Context, pool *pgxp
 
 	rows, err = pool.Query(ctx, `
 		SELECT kind
-		  FROM event_hot_payloads
-		 WHERE org_id = $1
-		   AND run_id = $2
-		 ORDER BY seq ASC
+			  FROM telemetry_outbox
+			 WHERE org_id = $1
+			   AND run_id = $2
+			   AND stream_kind = 'event'
+			 ORDER BY id ASC
 	`, ids.orgID, ids.runID)
 	if err != nil {
 		t.Fatal(err)

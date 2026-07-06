@@ -173,13 +173,13 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 	return latestSeq > seq, nil
 }
 
-func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
-	streamKey := eventStreamKey(orgID, s.workerGroupID, subjectType, subjectID)
+func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
+	streamKey := eventStreamKey(orgID, workerGroupID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		nextCursor, hasMore, err := s.readDurableSubjectEvents(ctx, orgID, subjectType, subjectID, cursor, onEvent)
+		nextCursor, hasMore, err := s.readDurableSubjectEvents(ctx, orgID, workerGroupID, subjectType, subjectID, cursor, onEvent)
 		if err != nil {
 			return err
 		}
@@ -228,10 +228,10 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectT
 	}
 }
 
-func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
+func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
 		OrgID:         orgID,
-		WorkerGroupID: s.workerGroupID,
+		WorkerGroupID: workerGroupID,
 		SubjectType:   string(subjectType),
 		SubjectID:     subjectID,
 		AfterSeq:      cursor,
@@ -310,10 +310,6 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 }
 
 func eventResponseFromClaim(event db.ClaimEventOutboxRow) api.RunEvent {
-	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
-}
-
-func eventResponseFromRecord(event db.EventHotPayload) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
 }
 

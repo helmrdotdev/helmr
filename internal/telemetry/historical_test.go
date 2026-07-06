@@ -22,11 +22,11 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 			if !strings.Contains(query, "helmr_telemetry.terminal_outputs FINAL") {
 				t.Fatalf("query = %q, want terminal_outputs FINAL", query)
 			}
-			if !strings.Contains(query, "offset_end > @after") || !strings.Contains(query, "offset_end <= @watermark") {
-				t.Fatalf("query = %q, want bounded historical offsets", query)
+			if !strings.Contains(query, "offset_end > @after") || strings.Contains(query, "@watermark") {
+				t.Fatalf("query = %q, want unbounded ClickHouse offsets", query)
 			}
-			if params["after"] != uint64(5) || params["watermark"] != uint64(10) {
-				t.Fatalf("params after=%v watermark=%v, want 5/10", params["after"], params["watermark"])
+			if params["after"] != uint64(5) {
+				t.Fatalf("params after=%v, want 5", params["after"])
 			}
 			if params["resource_id"] != resourceID {
 				t.Fatalf("resource_id = %v, want %s", params["resource_id"], resourceID)
@@ -47,7 +47,7 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 		},
 	}
 	reader := NewHistoricalReader(client)
-	rows, last, err := reader.ListTerminalOutput(context.Background(), TerminalOutputQuery{
+	page, err := reader.ListTerminalOutput(context.Background(), TerminalOutputQuery{
 		OrgID:         uuid.Must(uuid.NewV7()),
 		WorkerGroupID: "us-east-1-worker-group-1",
 		WorkspaceID:   uuid.Must(uuid.NewV7()),
@@ -56,18 +56,18 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 		StreamName:    "output",
 		AfterOffset:   5,
 		Limit:         25,
-	}, 10)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if last != 10 || len(rows) != 1 {
-		t.Fatalf("last=%d rows=%d", last, len(rows))
+	if page.LastOffset != 10 || len(page.Chunks) != 1 {
+		t.Fatalf("last=%d rows=%d", page.LastOffset, len(page.Chunks))
 	}
-	if rows[0].ID == "" || rows[0].Stream != "output" || rows[0].OffsetStart != 5 || rows[0].OffsetEnd != 10 || string(rows[0].Data) != "hello" {
-		t.Fatalf("row = %+v", rows[0])
+	if page.Chunks[0].ID == "" || page.Chunks[0].Stream != "output" || page.Chunks[0].OffsetStart != 5 || page.Chunks[0].OffsetEnd != 10 || string(page.Chunks[0].Data) != "hello" {
+		t.Fatalf("row = %+v", page.Chunks[0])
 	}
-	if rows[0].ObservedAt.IsZero() || rows[0].CreatedAt.IsZero() {
-		t.Fatalf("timestamps were not parsed: %+v", rows[0])
+	if page.Chunks[0].ObservedAt.IsZero() || page.Chunks[0].CreatedAt.IsZero() {
+		t.Fatalf("timestamps were not parsed: %+v", page.Chunks[0])
 	}
 }
 

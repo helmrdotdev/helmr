@@ -24,6 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -2694,21 +2695,21 @@ type fakeStore struct {
 	deploymentPromotions                    []db.PromoteDeploymentParams
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
-	deploymentEvents                        []db.EventHotPayload
+	deploymentEvents                        []db.ClaimEventOutboxRow
 	deploymentTasks                         []db.DeploymentTask
 	deploymentStreams                       []db.DeploymentStream
 	ensuredSessionStreams                   []db.EnsureSessionStreamParams
 	artifacts                               []db.Artifact
 	runEvent                                db.AppendRunEventParams
-	events                                  []db.EventHotPayload
+	events                                  []db.ClaimEventOutboxRow
 	stdout                                  []byte
 	stderr                                  []byte
-	runLogSnapshot                          db.GetRunLogSnapshotParams
-	runLogChunksAfter                       db.ListRunLogChunksAfterParams
+	runLogSnapshot                          telemetry.RunLogSnapshotQuery
+	runLogChunksAfter                       telemetry.RunLogChunkQuery
 	runLogChunksAfterCalls                  int
 	firstRunLogChunksAfterSeq               int64
 	deferLogChunksUntilSecondList           bool
-	logChunks                               []db.RunLogHotChunk
+	logChunks                               []db.AppendRunLogChunkRow
 	logTruncated                            bool
 	updateRunMetadata                       db.UpdateRunMetadataForExecutionParams
 	secret                                  db.GetScopedSecretMetadataByNameRow
@@ -2923,7 +2924,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		Kind:    "run.created",
 		Payload: arg.EventPayload,
 	}
-	f.events = append(f.events, db.EventHotPayload{
+	f.events = append(f.events, db.ClaimEventOutboxRow{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.ID,

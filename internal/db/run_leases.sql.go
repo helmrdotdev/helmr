@@ -64,53 +64,39 @@ abandoned_snapshots AS (
       FROM abandoned
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-abandoned_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT abandoned.org_id, abandoned.worker_group_id, 'run', abandoned.id, 1
-      FROM abandoned
-      JOIN abandoned_snapshots ON abandoned_snapshots.run_id = abandoned.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 abandoned_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT abandoned.org_id,
            abandoned.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, abandoned.id),
            abandoned.project_id,
            abandoned.environment_id,
            abandoned.id,
-           abandoned_event_seq.seq,
-           $1,
+           NULL::uuid,
+           $1::uuid,
            abandoned.current_attempt_number,
            abandoned.trace_id,
            abandoned.root_span_id,
+           NULL::text,
            '00-' || abandoned.trace_id || '-' || abandoned.root_span_id || '-01',
-           'lifecycle',
-           'warn',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('warn', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.dispatch_requeued',
-           'run.dispatch_requeued',
-           jsonb_build_object('message', 'worker payload build abandoned'),
-           'internal',
-           abandoned.state_version
+           COALESCE('run.dispatch_requeued', ''),
+           COALESCE(jsonb_build_object('message', 'worker payload build abandoned'), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           abandoned.state_version,
+           now()
       FROM abandoned
-      JOIN abandoned_event_seq ON abandoned_event_seq.org_id = abandoned.org_id
-                              AND abandoned_event_seq.subject_kind = 'run'
-                              AND abandoned_event_seq.subject_id = abandoned.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-abandoned_telemetry_outboxes AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT abandoned_events.org_id,
-           abandoned_events.worker_group_id,
-           'event',
-           abandoned_events.subject_type,
-           abandoned_events.subject_id,
-           abandoned_events.seq,
-           'event:' || abandoned_events.subject_type::text || ':' || abandoned_events.subject_id::text || ':' || abandoned_events.seq::text
-      FROM abandoned_events
+      JOIN abandoned_snapshots ON abandoned_snapshots.run_id = abandoned.id
     RETURNING id
 ),
 released_workspace_leases AS (
@@ -129,7 +115,7 @@ released_workspace_leases AS (
 ),
 cleanup AS (
     SELECT (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
-           (SELECT count(*) FROM abandoned_telemetry_outboxes) AS abandoned_telemetry_outbox_count
+           (SELECT count(*) FROM abandoned_events) AS abandoned_telemetry_outbox_count
 )
 UPDATE run_leases
    SET lost_at = COALESCE(lost_at, now()),
@@ -496,69 +482,38 @@ event_inputs(
       JOIN retry_plan ON retry_plan.run_id = failed_runs.id
       JOIN retry_snapshot ON retry_snapshot.run_id = failed_runs.id
 ),
-event_subject_counts AS (
-    SELECT event_inputs.org_id,
-           event_inputs.worker_group_id,
-           event_inputs.run_id,
-           count(*)::bigint AS event_count
-      FROM event_inputs
-     GROUP BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id
-),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT event_subject_counts.org_id,
-           event_subject_counts.worker_group_id,
-           'run',
-           event_subject_counts.run_id,
-           event_subject_counts.event_count
-      FROM event_subject_counts
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + EXCLUDED.seq,
-                  observed_at = now()
-    RETURNING org_id, worker_group_id, subject_kind, subject_id, seq
-),
 failed_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT event_inputs.org_id,
            event_inputs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, event_inputs.run_id),
            event_inputs.project_id,
            event_inputs.environment_id,
            event_inputs.run_id,
-           event_seq.seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           NULL::uuid,
            event_inputs.run_lease_id,
            event_inputs.attempt_number,
            event_inputs.trace_id,
            event_inputs.span_id,
            event_inputs.parent_span_id,
            event_inputs.traceparent,
-           event_inputs.category,
-           event_inputs.severity,
-           event_inputs.source,
+           COALESCE(NULLIF(event_inputs.category, ''), 'system'),
+           COALESCE(NULLIF(event_inputs.severity, ''), 'info'),
+           COALESCE(NULLIF(event_inputs.source, ''), 'control'),
            event_inputs.kind,
-           event_inputs.message,
-           event_inputs.payload,
-           event_inputs.redaction_class,
-           event_inputs.snapshot_version
+           COALESCE(event_inputs.message, ''),
+           COALESCE(event_inputs.payload, '{}'::jsonb),
+           COALESCE(NULLIF(event_inputs.redaction_class, ''), 'internal'),
+           event_inputs.snapshot_version,
+           now()
       FROM event_inputs
-      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
-                               AND event_subject_counts.worker_group_id = event_inputs.worker_group_id
-                               AND event_subject_counts.run_id = event_inputs.run_id
-      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
-                    AND event_seq.worker_group_id = event_inputs.worker_group_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = event_inputs.run_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-telemetry_outboxes AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT failed_events.org_id,
-           failed_events.worker_group_id,
-           'event',
-           failed_events.subject_type,
-           failed_events.subject_id,
-           failed_events.seq,
-           'event:' || failed_events.subject_type::text || ':' || failed_events.subject_id::text || ':' || failed_events.seq::text
-      FROM failed_events
     RETURNING id
 ),
 active_time_delta AS (
@@ -609,7 +564,7 @@ cleanup AS (
         (SELECT count(*) FROM failed_snapshot) AS failed_snapshots,
         (SELECT count(*) FROM retry_snapshot) AS retry_snapshots,
         (SELECT count(*) FROM failed_events) AS failed_events,
-        (SELECT count(*) FROM telemetry_outboxes) AS telemetry_outboxes,
+        (SELECT count(*) FROM failed_events) AS telemetry_outboxes,
         (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events
 )
 UPDATE run_leases
@@ -2250,69 +2205,38 @@ event_inputs(
       JOIN retry_plan ON retry_plan.run_id = released.id
       JOIN retry_snapshot ON retry_snapshot.run_id = released.id
 ),
-event_subject_counts AS (
-    SELECT event_inputs.org_id,
-           event_inputs.worker_group_id,
-           event_inputs.run_id,
-           count(*)::bigint AS event_count
-      FROM event_inputs
-     GROUP BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id
-),
-event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT event_subject_counts.org_id,
-           event_subject_counts.worker_group_id,
-           'run',
-           event_subject_counts.run_id,
-           event_subject_counts.event_count
-      FROM event_subject_counts
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + EXCLUDED.seq,
-                  observed_at = now()
-    RETURNING org_id, worker_group_id, subject_kind, subject_id, seq
-),
 events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT event_inputs.org_id,
            event_inputs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, event_inputs.run_id),
            event_inputs.project_id,
            event_inputs.environment_id,
            event_inputs.run_id,
-           event_seq.seq - event_subject_counts.event_count + row_number() OVER (PARTITION BY event_inputs.org_id, event_inputs.worker_group_id, event_inputs.run_id ORDER BY event_inputs.event_ordinal),
+           NULL::uuid,
            event_inputs.run_lease_id,
            event_inputs.attempt_number,
            event_inputs.trace_id,
            event_inputs.span_id,
            event_inputs.parent_span_id,
            event_inputs.traceparent,
-           event_inputs.category,
-           event_inputs.severity,
-           event_inputs.source,
+           COALESCE(NULLIF(event_inputs.category, ''), 'system'),
+           COALESCE(NULLIF(event_inputs.severity, ''), 'info'),
+           COALESCE(NULLIF(event_inputs.source, ''), 'control'),
            event_inputs.kind,
-           event_inputs.message,
-           event_inputs.payload,
-           event_inputs.redaction_class,
-           event_inputs.snapshot_version
+           COALESCE(event_inputs.message, ''),
+           COALESCE(event_inputs.payload, '{}'::jsonb),
+           COALESCE(NULLIF(event_inputs.redaction_class, ''), 'internal'),
+           event_inputs.snapshot_version,
+           now()
       FROM event_inputs
-      JOIN event_subject_counts ON event_subject_counts.org_id = event_inputs.org_id
-                               AND event_subject_counts.worker_group_id = event_inputs.worker_group_id
-                               AND event_subject_counts.run_id = event_inputs.run_id
-      JOIN event_seq ON event_seq.org_id = event_inputs.org_id
-                    AND event_seq.worker_group_id = event_inputs.worker_group_id
-                    AND event_seq.subject_kind = 'run'
-                    AND event_seq.subject_id = event_inputs.run_id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT events.org_id,
-           events.worker_group_id,
-           'event',
-           events.subject_type,
-           events.subject_id,
-           events.seq,
-           'event:' || events.subject_type::text || ':' || events.subject_id::text || ':' || events.seq::text
-      FROM events
     RETURNING id
 ),
 cleanup AS (
@@ -2779,53 +2703,39 @@ requeued_snapshots AS (
       FROM updated_runs
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-requeued_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT updated_runs.org_id, updated_runs.worker_group_id, 'run', updated_runs.id, 1
-      FROM updated_runs
-      JOIN requeued_snapshots ON requeued_snapshots.run_id = updated_runs.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 requeued_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT updated_runs.org_id,
            updated_runs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, updated_runs.id),
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.id,
-           requeued_event_seq.seq,
+           NULL::uuid,
            updated_runs.run_lease_id,
            updated_runs.current_attempt_number,
            updated_runs.trace_id,
            updated_runs.root_span_id,
+           NULL::text,
            '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01',
-           'lifecycle',
-           'warn',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('warn', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.dispatch_requeued',
-           'run.dispatch_requeued',
-           jsonb_build_object('message', 'worker lease expired before execution started'),
-           'internal',
-           updated_runs.state_version
+           COALESCE('run.dispatch_requeued', ''),
+           COALESCE(jsonb_build_object('message', 'worker lease expired before execution started'), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           updated_runs.state_version,
+           now()
       FROM updated_runs
-      JOIN requeued_event_seq ON requeued_event_seq.org_id = updated_runs.org_id
-                            AND requeued_event_seq.subject_kind = 'run'
-                            AND requeued_event_seq.subject_id = updated_runs.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-requeued_telemetry_outboxes AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT requeued_events.org_id,
-           requeued_events.worker_group_id,
-           'event',
-           requeued_events.subject_type,
-           requeued_events.subject_id,
-           requeued_events.seq,
-           'event:' || requeued_events.subject_type::text || ':' || requeued_events.subject_id::text || ':' || requeued_events.seq::text
-      FROM requeued_events
+      JOIN requeued_snapshots ON requeued_snapshots.run_id = updated_runs.id
     RETURNING id
 ),
 released_workspace_leases AS (
@@ -2844,7 +2754,7 @@ released_workspace_leases AS (
 ),
 cleanup AS (
     SELECT (SELECT count(*) FROM released_workspace_leases) AS released_workspace_lease_count,
-           (SELECT count(*) FROM requeued_telemetry_outboxes) AS requeued_telemetry_outbox_count
+           (SELECT count(*) FROM requeued_events) AS requeued_telemetry_outbox_count
 )
 UPDATE run_leases
    SET lost_at = COALESCE(lost_at, now()),

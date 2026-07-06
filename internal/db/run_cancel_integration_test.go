@@ -392,7 +392,7 @@ func TestDeadLetterRunDispatchTerminalizesSession(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT
 			(SELECT transition FROM run_state_snapshots WHERE org_id = $1 AND run_id = $2 ORDER BY version DESC LIMIT 1),
-			(SELECT kind FROM event_hot_payloads WHERE org_id = $1 AND run_id = $2 ORDER BY seq DESC LIMIT 1),
+				(SELECT kind FROM telemetry_outbox WHERE org_id = $1 AND run_id = $2 AND stream_kind = 'event' ORDER BY id DESC LIMIT 1),
 			(SELECT count(*)::int FROM telemetry_outbox WHERE org_id = $1 AND source_kind = 'run' AND source_id = $2 AND stream_kind = 'event')
 	`, ids.orgID, ids.runID).Scan(&snapshotTransition, &eventKind, &outboxCount); err != nil {
 		t.Fatal(err)

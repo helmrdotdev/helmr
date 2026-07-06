@@ -588,60 +588,47 @@ resumed_snapshots AS (
       FROM updated_runs
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-resumed_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT updated_runs.org_id, updated_runs.worker_group_id, 'run', updated_runs.id, 1
-      FROM updated_runs
-      JOIN resumed_snapshots ON resumed_snapshots.run_id = updated_runs.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 resumed_events AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT updated_runs.org_id,
            updated_runs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, updated_runs.id),
            updated_runs.project_id,
            updated_runs.environment_id,
            updated_runs.id,
-           resumed_event_seq.seq,
+           NULL::uuid,
+           NULL::uuid,
            updated_runs.current_attempt_number,
            updated_runs.trace_id,
            updated_runs.root_span_id,
+           NULL::text,
            '00-' || updated_runs.trace_id || '-' || updated_runs.root_span_id || '-01',
-           'lifecycle',
-           'info',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('info', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.resumed',
-           'run.resumed',
-           jsonb_build_object(
-               'run_wait_id', updated_runs.source_run_wait_id,
-               'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
-           ),
-           'internal',
-           updated_runs.state_version
+           COALESCE('run.resumed', ''),
+           COALESCE(jsonb_build_object(
+              'run_wait_id', updated_runs.source_run_wait_id,
+              'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
+          ), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           updated_runs.state_version,
+           now()
       FROM updated_runs
-      JOIN resumed_event_seq ON resumed_event_seq.org_id = updated_runs.org_id
-                            AND resumed_event_seq.subject_kind = 'run'
-                            AND resumed_event_seq.subject_id = updated_runs.id
-    RETURNING *
-),
-resumed_telemetry_outboxes AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT resumed_events.org_id,
-           resumed_events.worker_group_id,
-           'event',
-           resumed_events.subject_type,
-           resumed_events.subject_id,
-           resumed_events.seq,
-           'event:' || resumed_events.subject_type::text || ':' || resumed_events.subject_id::text || ':' || resumed_events.seq::text
-      FROM resumed_events
+      JOIN resumed_snapshots ON resumed_snapshots.run_id = updated_runs.id
     RETURNING id
 ),
 resumed_cleanup AS (
     SELECT count(*) AS telemetry_outbox_count
-      FROM resumed_telemetry_outboxes
+      FROM resumed_events
 )
 SELECT updated_waits.*,
        eligible_waits.workspace_id,
@@ -825,67 +812,53 @@ failed_snapshots AS (
       FROM failed_runs
     RETURNING run_state_snapshots.run_id
 ),
-failed_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT failed_runs.org_id, failed_runs.worker_group_id, 'run', failed_runs.id, 1
-      FROM failed_runs
-      JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
-	failed_events AS (
-	    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+failed_events AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, failed_runs.id),
            failed_runs.project_id,
            failed_runs.environment_id,
            failed_runs.id,
-           failed_event_seq.seq,
-	           failed_runs.current_attempt_number,
+           NULL::uuid,
+           NULL::uuid,
+           failed_runs.current_attempt_number,
            failed_runs.trace_id,
            failed_runs.root_span_id,
+           NULL::text,
            '00-' || failed_runs.trace_id || '-' || failed_runs.root_span_id || '-01',
-           'lifecycle',
-           'error',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('error', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.failed',
-           'run.failed',
-           jsonb_build_object(
-               'origin', 'runtime_resume_wait',
-               'reason', failed_runs.failure_reason,
-               'message', failed_runs.error_message,
-               'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
-               'base_workspace_version_id', failed_runs.base_workspace_version_id,
-               'current_workspace_version_id', failed_runs.current_version_id,
-               'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
-           ),
-           'internal',
-           failed_runs.state_version
+           COALESCE('run.failed', ''),
+           COALESCE(jsonb_build_object(
+              'origin', 'runtime_resume_wait',
+              'reason', failed_runs.failure_reason,
+              'message', failed_runs.error_message,
+              'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
+              'base_workspace_version_id', failed_runs.base_workspace_version_id,
+              'current_workspace_version_id', failed_runs.current_version_id,
+              'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
+          ), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           failed_runs.state_version,
+           now()
       FROM failed_runs
       JOIN failed_snapshots ON failed_snapshots.run_id = failed_runs.id
-      JOIN failed_event_seq ON failed_event_seq.org_id = failed_runs.org_id
-                           AND failed_event_seq.subject_kind = 'run'
-                           AND failed_event_seq.subject_id = failed_runs.id
-    RETURNING *
-),
-failed_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT failed_events.org_id,
-                  failed_events.worker_group_id,
-                  'event',
-                  failed_events.subject_type,
-                  failed_events.subject_id,
-                  failed_events.seq,
-                  'event:' || failed_events.subject_type::text || ':' || failed_events.subject_id::text || ':' || failed_events.seq::text
-      FROM failed_events
     RETURNING id
 ),
 cleanup AS (
     SELECT
         (SELECT count(*) FROM invalidated_checkpoints) AS invalidated_checkpoints,
-        (SELECT count(*) FROM failed_telemetry_outbox) AS failed_telemetry_outboxes
+        (SELECT count(*) FROM failed_events) AS failed_telemetry_outboxes
 )
 SELECT failed_waits.*
   FROM failed_waits

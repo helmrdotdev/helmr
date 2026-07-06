@@ -1,7 +1,6 @@
 package control
 
 import (
-	"context"
 	"errors"
 	"net/http"
 
@@ -13,14 +12,6 @@ var (
 	errTelemetryLagging       = codedError{code: "telemetry_lagging", message: "telemetry replay is lagging"}
 	errTelemetryUnavailable   = codedError{code: "telemetry_unavailable", message: "telemetry historical store is unavailable"}
 )
-
-func (s *Server) rejectRunFromWrongWorkerGroup(ctx context.Context, w http.ResponseWriter, summary runSummary) bool {
-	if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, summary.WorkerGroupID); err != nil {
-		writeError(w, err)
-		return true
-	}
-	return false
-}
 
 func writeRunTelemetryError(w http.ResponseWriter, err error) {
 	var apiErr apiError

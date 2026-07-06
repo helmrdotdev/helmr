@@ -945,10 +945,11 @@ func assertLatestRunTransition(t *testing.T, ctx context.Context, pool interface
 		       ),
 		       (
 		           SELECT kind
-		             FROM event_hot_payloads
-		            WHERE org_id = $1
-		              AND run_id = $2
-		            ORDER BY seq DESC
+			             FROM telemetry_outbox
+			            WHERE org_id = $1
+			              AND run_id = $2
+			              AND stream_kind = 'event'
+			            ORDER BY id DESC
 		            LIMIT 1
 		       ),
 		       (

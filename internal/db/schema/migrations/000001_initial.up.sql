@@ -1318,7 +1318,7 @@ CREATE TABLE run_operations (
     reason TEXT NOT NULL DEFAULT '',
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     result JSONB NOT NULL DEFAULT '{}'::jsonb,
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
+    idempotency_key TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     applied_at TIMESTAMPTZ,
     rejected_at TIMESTAMPTZ,
@@ -2141,22 +2141,22 @@ CREATE TYPE event_subject_type AS ENUM (
     'deployment'
 );
 
-CREATE TABLE event_hot_payloads (
-    id BIGINT GENERATED ALWAYS AS IDENTITY UNIQUE,
-    subject_type event_subject_type GENERATED ALWAYS AS (
-        CASE
-            WHEN run_id IS NOT NULL THEN 'run'::event_subject_type
-            WHEN deployment_id IS NOT NULL THEN 'deployment'::event_subject_type
-        END
-    ) STORED,
-    subject_id UUID GENERATED ALWAYS AS (COALESCE(run_id, deployment_id)) STORED,
-    seq BIGINT NOT NULL CHECK (seq > 0),
+CREATE TABLE telemetry_outbox (
+    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
+    stream_kind telemetry_stream_kind NOT NULL,
+    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
+    source_id UUID NOT NULL,
+    stream_name TEXT NOT NULL DEFAULT '',
+    idempotency_key TEXT CHECK (idempotency_key IS NULL OR btrim(idempotency_key) <> ''),
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     run_id UUID,
     deployment_id UUID,
+    workspace_id UUID,
+    resource_kind TEXT NOT NULL DEFAULT '',
+    resource_id UUID,
     run_lease_id UUID,
     attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
@@ -2172,80 +2172,17 @@ CREATE TABLE event_hot_payloads (
     category TEXT NOT NULL DEFAULT 'system',
     severity TEXT NOT NULL DEFAULT 'info',
     source TEXT NOT NULL DEFAULT 'control',
-    kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
+    kind TEXT NOT NULL DEFAULT '',
     message TEXT NOT NULL DEFAULT '',
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+    content BYTEA,
+    size_bytes BIGINT CHECK (size_bytes IS NULL OR size_bytes >= 0),
+    observed_seq BIGINT CHECK (observed_seq IS NULL OR observed_seq >= 0),
+    offset_start BIGINT CHECK (offset_start IS NULL OR offset_start >= 0),
+    offset_end BIGINT CHECK (offset_end IS NULL OR offset_end >= 0),
     redaction_class TEXT NOT NULL DEFAULT 'internal',
+    retention_class TEXT NOT NULL DEFAULT 'standard',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
-    occurred_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (subject_type, subject_id, seq),
-    CHECK (
-        (run_id IS NOT NULL AND deployment_id IS NULL)
-        OR (deployment_id IS NOT NULL AND run_id IS NULL)
-    ),
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id)
-        REFERENCES deployments(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    CHECK (run_id IS NULL OR attempt_number IS NULL OR attempt_number > 0)
-);
-
-CREATE INDEX event_hot_payloads_scope_created_idx
-    ON event_hot_payloads (org_id, project_id, environment_id, created_at DESC);
-
-CREATE INDEX event_hot_payloads_trace_idx
-    ON event_hot_payloads (trace_id, created_at)
-    WHERE trace_id IS NOT NULL;
-
-CREATE TABLE event_cursors (
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    subject_kind event_subject_type NOT NULL,
-    subject_id UUID NOT NULL,
-    seq BIGINT NOT NULL CHECK (seq >= 0),
-    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, worker_group_id, subject_kind, subject_id)
-);
-
-CREATE TABLE event_watermarks (
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    subject_kind event_subject_type NOT NULL,
-    subject_id UUID NOT NULL,
-    watermark_seq BIGINT NOT NULL DEFAULT 0 CHECK (watermark_seq >= 0),
-    watermark_observed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, worker_group_id, subject_kind, subject_id)
-);
-
-CREATE TABLE terminal_output_watermarks (
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    workspace_id UUID NOT NULL,
-    resource_kind TEXT NOT NULL CHECK (btrim(resource_kind) <> ''),
-    resource_id UUID NOT NULL,
-    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
-    watermark_offset BIGINT NOT NULL DEFAULT 0 CHECK (watermark_offset >= 0),
-    watermark_observed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, worker_group_id, workspace_id, resource_kind, resource_id, stream_name)
-);
-
-CREATE TABLE telemetry_outbox (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    stream_kind telemetry_stream_kind NOT NULL,
-    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
-    source_id UUID NOT NULL,
-    stream_name TEXT NOT NULL DEFAULT '',
-    seq BIGINT NOT NULL CHECK (seq >= 0),
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     object_key TEXT,
     cas_digest TEXT,
     state telemetry_outbox_state NOT NULL DEFAULT 'pending',
@@ -2256,8 +2193,48 @@ CREATE TABLE telemetry_outbox (
     publish_attempts INTEGER NOT NULL DEFAULT 0 CHECK (publish_attempts >= 0),
     publish_locked_until TIMESTAMPTZ,
     last_error TEXT NOT NULL DEFAULT '',
+    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        stream_kind <> 'event'
+        OR (
+            source_kind IN ('run', 'deployment')
+            AND source_id = COALESCE(run_id, deployment_id)
+            AND btrim(kind) <> ''
+            AND (
+                (run_id IS NOT NULL AND deployment_id IS NULL)
+                OR (deployment_id IS NOT NULL AND run_id IS NULL)
+            )
+        )
+    ),
+    CHECK (
+        stream_kind <> 'run_log'
+        OR (
+            source_kind = 'run'
+            AND run_id = source_id
+            AND stream_name IN ('stdout', 'stderr')
+            AND content IS NOT NULL
+            AND size_bytes IS NOT NULL
+            AND observed_seq IS NOT NULL
+            AND offset_start IS NULL
+            AND offset_end IS NULL
+        )
+    ),
+    CHECK (
+        stream_kind <> 'terminal_output'
+        OR (
+            source_kind IN ('workspace_exec', 'workspace_pty')
+            AND resource_kind = source_kind
+            AND resource_id = source_id
+            AND workspace_id IS NOT NULL
+            AND stream_name <> ''
+            AND content IS NOT NULL
+            AND size_bytes IS NOT NULL
+            AND offset_start IS NOT NULL
+            AND offset_end IS NOT NULL
+        )
+    )
 );
 
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
@@ -2266,7 +2243,7 @@ CREATE INDEX telemetry_outbox_publish_ready_idx
     ON telemetry_outbox (created_at, id)
     WHERE stream_kind = 'event' AND published_at IS NULL;
 CREATE INDEX telemetry_outbox_ingest_ready_idx
-    ON telemetry_outbox (stream_kind, source_kind, source_id, stream_name, seq)
+    ON telemetry_outbox (stream_kind, source_kind, source_id, stream_name, id)
     WHERE written_at IS NULL;
 CREATE INDEX telemetry_outbox_ingest_claim_idx
     ON telemetry_outbox (stream_kind, id)
@@ -2320,51 +2297,6 @@ CREATE INDEX workspace_stream_wakeups_ready_idx
 CREATE TYPE run_log_stream AS ENUM (
     'stdout',
     'stderr'
-);
-
-CREATE TABLE run_log_hot_chunks (
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    run_id UUID NOT NULL,
-    run_lease_id UUID NOT NULL,
-    attempt_number INTEGER NOT NULL DEFAULT 1 CHECK (attempt_number > 0),
-    stream run_log_stream NOT NULL,
-    seq BIGINT NOT NULL CHECK (seq > 0),
-    observed_seq BIGINT NOT NULL CHECK (observed_seq >= 0),
-    content BYTEA NOT NULL,
-    size_bytes BIGINT NOT NULL CHECK (size_bytes >= 0),
-    expires_at TIMESTAMPTZ NOT NULL DEFAULT now() + interval '7 days',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, run_id, seq),
-    FOREIGN KEY (org_id, run_id)
-        REFERENCES runs(org_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE run_log_cursors (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    run_lease_id UUID,
-    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
-    seq BIGINT NOT NULL CHECK (seq >= 0),
-    cursor TEXT NOT NULL CHECK (btrim(cursor) <> ''),
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
-    observed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, run_id, stream_name, seq),
-    UNIQUE (org_id, run_id, stream_name, idempotency_key)
-);
-
-CREATE TABLE run_log_watermarks (
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    run_id UUID NOT NULL,
-    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
-    watermark_seq BIGINT NOT NULL DEFAULT 0 CHECK (watermark_seq >= 0),
-    watermark_observed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, worker_group_id, run_id, stream_name)
 );
 
 CREATE TABLE run_leases (
@@ -2483,14 +2415,8 @@ ALTER TABLE run_state_snapshots
     REFERENCES run_operations(org_id, run_id, id)
     ON DELETE SET NULL (operation_id);
 
-ALTER TABLE run_log_hot_chunks
-    ADD CONSTRAINT run_log_hot_chunks_run_lease_id_fkey
-    FOREIGN KEY (org_id, worker_group_id, run_id, run_lease_id)
-    REFERENCES run_leases(org_id, worker_group_id, run_id, id)
-    ON DELETE CASCADE;
-
-ALTER TABLE event_hot_payloads
-    ADD CONSTRAINT event_hot_payloads_run_lease_id_fkey
+ALTER TABLE telemetry_outbox
+    ADD CONSTRAINT telemetry_outbox_run_lease_id_fkey
     FOREIGN KEY (org_id, worker_group_id, run_id, run_lease_id)
     REFERENCES run_leases(org_id, worker_group_id, run_id, id)
     ON DELETE SET NULL (run_lease_id);
@@ -3146,14 +3072,16 @@ CREATE INDEX deployment_tasks_lookup_idx
     ON deployment_tasks(org_id, project_id, environment_id, task_id);
 CREATE INDEX deployment_sandboxes_lookup_idx
     ON deployment_sandboxes(org_id, project_id, environment_id, deployment_id, sandbox_id);
-CREATE UNIQUE INDEX run_log_hot_chunks_observed_idx ON run_log_hot_chunks(org_id, run_id, run_lease_id, stream, observed_seq);
-CREATE INDEX event_hot_payloads_run_id_idx ON event_hot_payloads(run_id)
+CREATE UNIQUE INDEX telemetry_outbox_run_log_observed_idx
+    ON telemetry_outbox(org_id, run_id, run_lease_id, stream_name, observed_seq)
+    WHERE stream_kind = 'run_log';
+CREATE INDEX telemetry_outbox_run_id_idx ON telemetry_outbox(run_id)
     WHERE run_id IS NOT NULL;
-CREATE INDEX event_hot_payloads_deployment_id_idx ON event_hot_payloads(deployment_id)
+CREATE INDEX telemetry_outbox_deployment_id_idx ON telemetry_outbox(deployment_id)
     WHERE deployment_id IS NOT NULL;
-CREATE INDEX event_hot_payloads_run_lease_idx ON event_hot_payloads(org_id, run_id, run_lease_id, seq)
+CREATE INDEX telemetry_outbox_run_lease_idx ON telemetry_outbox(org_id, run_id, run_lease_id, id)
     WHERE run_lease_id IS NOT NULL;
-CREATE INDEX event_hot_payloads_run_attempt_number_idx ON event_hot_payloads(org_id, run_id, attempt_number, seq)
+CREATE INDEX telemetry_outbox_run_attempt_number_idx ON telemetry_outbox(org_id, run_id, attempt_number, id)
     WHERE attempt_number IS NOT NULL;
 CREATE UNIQUE INDEX run_leases_one_active_per_run_idx ON run_leases(run_id)
     WHERE status IN ('leased', 'running');

@@ -56,23 +56,20 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, summary) {
-		return
-	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
 		cursor, err := eventCursor(r)
 		if err != nil {
 			writeError(w, badRequest(err))
 			return
 		}
-		s.followRunLogs(w, r, actor.OrgID, runID, cursor)
+		s.followRunLogs(w, r, actor.OrgID, summary.WorkerGroupID, runID, cursor)
 		return
 	}
 	logs, err := s.telemetryReader.GetRunLogSnapshot(r.Context(), telemetry.RunLogSnapshotQuery{
 		StdoutLimit:   maxRunLogSnapshotBytes,
 		StderrLimit:   maxRunLogSnapshotBytes,
 		OrgID:         actor.OrgID,
-		WorkerGroupID: s.workerGroupID,
+		WorkerGroupID: summary.WorkerGroupID,
 		RunID:         runID,
 	})
 	if err != nil {
@@ -90,7 +87,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
+func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) {
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("content-type", "text/event-stream")
 	w.Header().Set("cache-control", "no-cache")
@@ -101,7 +98,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	ticker := time.NewTicker(runLogStreamPollInterval)
 	defer ticker.Stop()
 	for {
-		nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, runID, cursor)
+		nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, workerGroupID, runID, cursor)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 				s.log.Warn("follow run logs failed", "run_id", runID.String(), "error", err)
@@ -115,7 +112,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(runID)})
 		if isNoRows(err) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
 			for {
-				nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, runID, cursor)
+				nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, workerGroupID, runID, cursor)
 				if err != nil {
 					if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 						s.log.Warn("drain terminal run logs failed", "run_id", runID.String(), "error", err)
@@ -143,10 +140,10 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	}
 }
 
-func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, runID uuid.UUID, cursor int64) (int64, int, error) {
+func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) (int64, int, error) {
 	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
 		OrgID:         orgID,
-		WorkerGroupID: s.workerGroupID,
+		WorkerGroupID: workerGroupID,
 		RunID:         runID,
 		AfterSeq:      cursor,
 		Limit:         runLogStreamBatchSize,
@@ -174,15 +171,19 @@ func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWrit
 	return cursor, len(page.Chunks), nil
 }
 
-func runLogChunkResponse(chunk db.RunLogHotChunk) api.RunLogChunk {
+func runLogChunkResponse(chunk db.AppendRunLogChunkRow) api.RunLogChunk {
+	attemptNumber := int32(0)
+	if value := pgvalue.Int4Response(chunk.AttemptNumber); value != nil {
+		attemptNumber = *value
+	}
 	return api.RunLogChunk{
 		ID:            telemetryCursor(chunk.Seq),
 		RunID:         pgvalue.MustUUIDValue(chunk.RunID).String(),
-		AttemptNumber: chunk.AttemptNumber,
+		AttemptNumber: attemptNumber,
 		Stream:        string(chunk.Stream),
 		ContentBase64: base64.StdEncoding.EncodeToString(chunk.Content),
-		Bytes:         chunk.SizeBytes,
-		ObservedSeq:   chunk.ObservedSeq,
+		Bytes:         pgvalue.Int8Value(chunk.SizeBytes),
+		ObservedSeq:   pgvalue.Int8Value(chunk.ObservedSeq),
 		At:            pgvalue.Time(chunk.CreatedAt),
 	}
 }

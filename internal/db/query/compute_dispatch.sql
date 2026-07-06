@@ -524,57 +524,44 @@ terminal_snapshot AS (
       FROM terminalized
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-terminal_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT terminalized.org_id, terminalized.worker_group_id, 'run', terminalized.id, 1
-      FROM terminalized
-      JOIN terminal_snapshot ON terminal_snapshot.run_id = terminalized.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 terminal_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT terminalized.org_id,
            terminalized.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, terminalized.id),
            terminalized.project_id,
            terminalized.environment_id,
            terminalized.id,
-           terminal_event_seq.seq,
+           NULL::uuid,
+           NULL::uuid,
            terminalized.current_attempt_number,
            terminalized.trace_id,
            terminalized.root_span_id,
+           NULL::text,
            '00-' || terminalized.trace_id || '-' || terminalized.root_span_id || '-01',
-           'lifecycle',
-           'error',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('error', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.dead_lettered',
-           'run.dead_lettered',
-           jsonb_build_object('message', sqlc.arg(last_error)::text),
-           'internal',
-           terminalized.state_version
+           COALESCE('run.dead_lettered', ''),
+           COALESCE(jsonb_build_object('message', sqlc.arg(last_error)::text), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           terminalized.state_version,
+           now()
       FROM terminalized
-      JOIN terminal_event_seq ON terminal_event_seq.org_id = terminalized.org_id
-                             AND terminal_event_seq.subject_kind = 'run'
-                             AND terminal_event_seq.subject_id = terminalized.id
-    RETURNING *
-),
-terminal_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT terminal_event.org_id,
-           terminal_event.worker_group_id,
-           'event',
-           terminal_event.subject_type,
-           terminal_event.subject_id,
-           terminal_event.seq,
-           'event:' || terminal_event.subject_type::text || ':' || terminal_event.subject_id::text || ':' || terminal_event.seq::text
-      FROM terminal_event
+      JOIN terminal_snapshot ON terminal_snapshot.run_id = terminalized.id
     RETURNING id
 ),
 cleanup AS (
     SELECT (SELECT count(*) FROM ended_session_run) AS ended_session_run_count,
-           (SELECT count(*) FROM terminal_telemetry_outbox) AS terminal_telemetry_outbox_count
+           (SELECT count(*) FROM terminal_event) AS terminal_telemetry_outbox_count
 )
 SELECT terminalized.id AS run_id,
        terminalized.org_id,

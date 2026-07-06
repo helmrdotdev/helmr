@@ -82,7 +82,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
-		s.followDeploymentEvents(w, r, actor.OrgID, deploymentID, cursor)
+		s.followDeploymentEvents(w, r, actor.OrgID, deployment.BuildWorkerGroupID, deploymentID, cursor)
 		return
 	}
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
@@ -110,7 +110,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
-func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, deploymentID uuid.UUID, cursor int64) {
+func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, deploymentID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
 		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
@@ -122,7 +122,7 @@ func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, 
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, db.EventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, db.EventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: deployment_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

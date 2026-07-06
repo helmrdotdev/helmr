@@ -98,7 +98,7 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		cfg.TelemetryReader = testCfg.TelemetryReader
 	}
 	if cfg.TelemetryReader == nil {
-		cfg.TelemetryReader = telemetry.NewCompositeReader(telemetry.NewHotReader(cfg.DB), nil)
+		cfg.TelemetryReader = fakeTelemetryReader{store: &fakeStore{}}
 	}
 	if testCfg.TX != nil {
 		cfg.TX = testCfg.TX
@@ -192,32 +192,33 @@ type fakeTelemetryReader struct {
 }
 
 func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.EventQuery) (telemetry.EventPage, error) {
-	rows, err := r.store.ListSubjectEvents(ctx, db.ListSubjectEventsParams{
-		OrgID:       pgvalue.UUID(query.OrgID),
-		SubjectType: db.EventSubjectType(query.SubjectType),
-		SubjectID:   pgvalue.UUID(query.SubjectID),
-		Seq:         query.AfterSeq,
-		RowLimit:    query.Limit,
-	})
-	if err != nil {
-		return telemetry.EventPage{}, err
-	}
-	events := make([]api.RunEvent, 0, len(rows))
+	events := make([]api.RunEvent, 0, len(r.store.events)+len(r.store.deploymentEvents))
 	last := query.AfterSeq
-	for _, row := range rows {
-		events = append(events, eventResponseFromRecord(row))
+	for _, row := range r.store.events {
+		if query.SubjectType != string(db.EventSubjectTypeRun) || row.RunID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
+			continue
+		}
+		events = append(events, eventResponseFromClaim(row))
 		last = row.Seq
+		if int32(len(events)) == query.Limit {
+			return telemetry.EventPage{Events: events, LastSeq: last}, nil
+		}
+	}
+	for _, row := range r.store.deploymentEvents {
+		if query.SubjectType != string(db.EventSubjectTypeDeployment) || row.DeploymentID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
+			continue
+		}
+		events = append(events, eventResponseFromClaim(row))
+		last = row.Seq
+		if int32(len(events)) == query.Limit {
+			break
+		}
 	}
 	return telemetry.EventPage{Events: events, LastSeq: last}, nil
 }
 
 func (r fakeTelemetryReader) ListRunLogChunks(ctx context.Context, query telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
-	rows, err := r.store.ListRunLogChunksAfter(ctx, db.ListRunLogChunksAfterParams{
-		OrgID:    pgvalue.UUID(query.OrgID),
-		RunID:    pgvalue.UUID(query.RunID),
-		Seq:      query.AfterSeq,
-		RowLimit: query.Limit,
-	})
+	rows, err := r.store.ListRunLogChunksAfter(ctx, query)
 	if err != nil {
 		return telemetry.RunLogChunkPage{}, err
 	}
@@ -292,27 +293,11 @@ func (r fakeTelemetryReader) ListTerminalOutput(ctx context.Context, query telem
 }
 
 func (r fakeTelemetryReader) GetRunLogSnapshot(ctx context.Context, query telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
-	row, err := r.store.GetRunLogSnapshot(ctx, db.GetRunLogSnapshotParams{
-		OrgID:       pgvalue.UUID(query.OrgID),
-		RunID:       pgvalue.UUID(query.RunID),
-		StdoutLimit: query.StdoutLimit,
-		StderrLimit: query.StderrLimit,
-	})
+	row, err := r.store.GetRunLogSnapshot(ctx, query)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return telemetry.RunLogSnapshot{}, nil
 	}
-	if err != nil {
-		return telemetry.RunLogSnapshot{}, err
-	}
-	return telemetry.RunLogSnapshot{
-		Stdout:      row.Stdout,
-		Stderr:      row.Stderr,
-		Cursor:      row.Cursor,
-		StdoutBytes: row.StdoutBytes,
-		StderrBytes: row.StderrBytes,
-		Truncated:   row.Truncated.Bool,
-		UpdatedAt:   pgvalue.Time(row.UpdatedAt),
-	}, nil
+	return row, err
 }
 
 type noopControlTransaction struct{}

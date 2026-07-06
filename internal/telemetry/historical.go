@@ -91,10 +91,7 @@ type TerminalOutputRecord struct {
 	ObservedAt     time.Time `json:"observed_at"`
 }
 
-func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery, watermark int64) ([]api.RunEvent, int64, error) {
-	if watermark <= q.AfterSeq {
-		return nil, q.AfterSeq, nil
-	}
+func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery) (EventPage, error) {
 	sql := `SELECT seq, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
 FROM helmr_telemetry.events FINAL
 WHERE org_id = @org_id
@@ -102,7 +99,6 @@ WHERE org_id = @org_id
   AND subject_kind = @subject_kind
   AND subject_id = @subject_id
   AND seq > @after
-  AND seq <= @watermark
 ORDER BY seq ASC
 LIMIT @row_limit`
 	var rows []eventRow
@@ -112,10 +108,9 @@ LIMIT @row_limit`
 		clickhouse.Named("subject_kind", q.SubjectType),
 		clickhouse.Named("subject_id", q.SubjectID),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
-		clickhouse.Named("watermark", uint64(watermark)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
 	); err != nil {
-		return nil, q.AfterSeq, err
+		return EventPage{}, fmt.Errorf("%w: %v", ErrHistoricalUnavailable, err)
 	}
 	events := make([]api.RunEvent, 0, len(rows))
 	last := q.AfterSeq
@@ -123,20 +118,16 @@ LIMIT @row_limit`
 		events = append(events, row.event())
 		last = int64(row.Seq)
 	}
-	return events, last, nil
+	return EventPage{Events: events, LastSeq: last, Historical: len(events)}, nil
 }
 
-func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQuery, watermark int64) ([]api.RunLogChunk, int64, error) {
-	if watermark <= q.AfterSeq {
-		return nil, q.AfterSeq, nil
-	}
+func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQuery) (RunLogChunkPage, error) {
 	sql := `SELECT run_id, run_lease_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
 FROM helmr_telemetry.run_logs FINAL
 WHERE org_id = @org_id
   AND worker_group_id = @worker_group_id
   AND run_id = @run_id
   AND seq > @after
-  AND seq <= @watermark
 ORDER BY seq ASC
 LIMIT @row_limit`
 	var rows []runLogRow
@@ -145,10 +136,9 @@ LIMIT @row_limit`
 		clickhouse.Named("worker_group_id", q.WorkerGroupID),
 		clickhouse.Named("run_id", q.RunID),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
-		clickhouse.Named("watermark", uint64(watermark)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
 	); err != nil {
-		return nil, q.AfterSeq, err
+		return RunLogChunkPage{}, fmt.Errorf("%w: %v", ErrHistoricalUnavailable, err)
 	}
 	chunks := make([]api.RunLogChunk, 0, len(rows))
 	last := q.AfterSeq
@@ -156,13 +146,10 @@ LIMIT @row_limit`
 		chunks = append(chunks, row.chunk())
 		last = int64(row.Seq)
 	}
-	return chunks, last, nil
+	return RunLogChunkPage{Chunks: chunks, LastSeq: last, Historical: len(chunks)}, nil
 }
 
-func (r *HistoricalReader) ListTerminalOutput(ctx context.Context, q TerminalOutputQuery, watermark int64) ([]TerminalOutputChunk, int64, error) {
-	if watermark <= q.AfterOffset {
-		return nil, q.AfterOffset, nil
-	}
+func (r *HistoricalReader) ListTerminalOutput(ctx context.Context, q TerminalOutputQuery) (TerminalOutputPage, error) {
 	sql := `SELECT stream_name, offset_start, offset_end, content, observed_at, ingested_at
 FROM helmr_telemetry.terminal_outputs FINAL
 WHERE org_id = @org_id
@@ -174,7 +161,6 @@ WHERE org_id = @org_id
   AND resource_id = @resource_id
   AND stream_name = @stream_name
   AND offset_end > @after
-  AND offset_end <= @watermark
 ORDER BY offset_start ASC
 LIMIT @row_limit`
 	var rows []terminalOutputHistoryRow
@@ -188,10 +174,9 @@ LIMIT @row_limit`
 		clickhouse.Named("resource_id", q.ResourceID),
 		clickhouse.Named("stream_name", q.StreamName),
 		clickhouse.Named("after", uint64(q.AfterOffset)),
-		clickhouse.Named("watermark", uint64(watermark)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
 	); err != nil {
-		return nil, q.AfterOffset, err
+		return TerminalOutputPage{}, fmt.Errorf("%w: %v", ErrHistoricalUnavailable, err)
 	}
 	chunks := make([]TerminalOutputChunk, 0, len(rows))
 	last := q.AfterOffset
@@ -199,7 +184,48 @@ LIMIT @row_limit`
 		chunks = append(chunks, row.chunk(q.ResourceKind, q.ResourceID))
 		last = int64(row.OffsetEnd)
 	}
-	return chunks, last, nil
+	return TerminalOutputPage{Chunks: chunks, LastOffset: last, Historical: len(chunks)}, nil
+}
+
+func (r *HistoricalReader) GetRunLogSnapshot(ctx context.Context, q RunLogSnapshotQuery) (RunLogSnapshot, error) {
+	var snapshot RunLogSnapshot
+	cursor := int64(0)
+	const pageLimit = int32(1000)
+	for {
+		page, err := r.ListRunLogChunks(ctx, RunLogChunkQuery{
+			OrgID:         q.OrgID,
+			WorkerGroupID: q.WorkerGroupID,
+			RunID:         q.RunID,
+			AfterSeq:      cursor,
+			Limit:         pageLimit,
+		})
+		if err != nil {
+			return RunLogSnapshot{}, err
+		}
+		for _, chunk := range page.Chunks {
+			data, _ := base64.StdEncoding.DecodeString(chunk.ContentBase64)
+			switch chunk.Stream {
+			case "stdout":
+				snapshot.StdoutBytes += int64(len(data))
+				snapshot.Stdout = appendTail(snapshot.Stdout, data, q.StdoutLimit)
+			case "stderr":
+				snapshot.StderrBytes += int64(len(data))
+				snapshot.Stderr = appendTail(snapshot.Stderr, data, q.StderrLimit)
+			}
+			if seq, err := ParseCursor(chunk.ID); err == nil && seq > snapshot.Cursor {
+				snapshot.Cursor = seq
+			}
+			if chunk.At.After(snapshot.UpdatedAt) {
+				snapshot.UpdatedAt = chunk.At
+			}
+		}
+		if len(page.Chunks) < int(pageLimit) || page.LastSeq <= cursor {
+			break
+		}
+		cursor = page.LastSeq
+	}
+	snapshot.Truncated = isTailTruncated(snapshot.StdoutBytes, q.StdoutLimit) || isTailTruncated(snapshot.StderrBytes, q.StderrLimit)
+	return snapshot, nil
 }
 
 type eventRow struct {
@@ -314,4 +340,28 @@ func (r runLogRow) chunk() api.RunLogChunk {
 		ObservedSeq:   int64(r.ObservedSeq),
 		At:            r.ObservedAt.UTC(),
 	}
+}
+
+func appendTail(existing []byte, next []byte, limit int64) []byte {
+	existing = append(existing, next...)
+	if limit <= 0 || int64(len(existing)) <= limit {
+		return existing
+	}
+	return existing[int64(len(existing))-limit:]
+}
+
+func isTailTruncated(total int64, limit int64) bool {
+	if limit <= 0 {
+		return false
+	}
+	return total > limit
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }

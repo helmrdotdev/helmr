@@ -65,14 +65,11 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if s.rejectRunFromWrongWorkerGroup(r.Context(), w, summary) {
-		return
-	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
-		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
+		s.followRunEvents(w, r, actor.OrgID, summary.WorkerGroupID, runID, cursor)
 		return
 	}
-	page, err := s.listRunEvents(r, actor.OrgID, runID, cursor, limit)
+	page, err := s.listRunEvents(r, actor.OrgID, summary.WorkerGroupID, runID, cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
 		writeRunTelemetryError(w, err)
@@ -91,10 +88,10 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.RunEventPage{Events: rows, Cursor: telemetryCursor(cursor), NextCursor: nextCursor})
 }
 
-func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64, limit int32) (telemetry.EventPage, error) {
+func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, limit int32) (telemetry.EventPage, error) {
 	return s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:         orgID,
-		WorkerGroupID: s.workerGroupID,
+		WorkerGroupID: workerGroupID,
 		SubjectType:   string(db.EventSubjectTypeRun),
 		SubjectID:     runID,
 		AfterSeq:      cursor,
@@ -125,7 +122,7 @@ func eventLimit(r *http.Request) (int32, error) {
 	return int32(parsed), nil
 }
 
-func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
+func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
 		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
@@ -137,7 +134,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, db.EventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, db.EventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: run_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

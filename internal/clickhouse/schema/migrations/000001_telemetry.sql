@@ -23,8 +23,9 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), worker_group_id)
-ORDER BY (org_id, project_id, environment_id, run_id, stream_name, seq);
+PARTITION BY toYYYYMM(ingested_at)
+ORDER BY (org_id, project_id, environment_id, run_id, stream_name, seq)
+TTL ingested_at + INTERVAL 90 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
     worker_group_id String,
@@ -55,8 +56,9 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), worker_group_id)
-ORDER BY (org_id, project_id, environment_id, subject_kind, subject_id, seq);
+PARTITION BY toYYYYMM(ingested_at)
+ORDER BY (org_id, project_id, environment_id, subject_kind, subject_id, seq)
+TTL ingested_at + INTERVAL 90 DAY DELETE;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     worker_group_id String,
@@ -78,5 +80,6 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY (toYYYYMM(observed_at), worker_group_id)
-ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start);
+PARTITION BY toYYYYMM(ingested_at)
+ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start)
+TTL ingested_at + INTERVAL 90 DAY DELETE;

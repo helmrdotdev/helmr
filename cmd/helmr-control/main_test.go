@@ -43,7 +43,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		WorkerGroupID:      "us-east-1-worker-group-1",
 		RegionID:           "us-east-1",
 		DefaultRegionID:    "us-east-1",
-		TelemetryReader:    telemetry.NewCompositeReader(telemetry.NewHotReader(store), nil),
+		TelemetryReader:    controltestTelemetryReader{store: store},
 		MagicLinkDebugURLs: true,
 		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
@@ -121,6 +121,26 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 
 type emptyStore struct {
 	db.Querier
+}
+
+type controltestTelemetryReader struct {
+	store *emptyStore
+}
+
+func (r controltestTelemetryReader) ListEvents(context.Context, telemetry.EventQuery) (telemetry.EventPage, error) {
+	return telemetry.EventPage{}, nil
+}
+
+func (r controltestTelemetryReader) ListRunLogChunks(context.Context, telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
+	return telemetry.RunLogChunkPage{}, nil
+}
+
+func (r controltestTelemetryReader) ListTerminalOutput(context.Context, telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
+	return telemetry.TerminalOutputPage{}, nil
+}
+
+func (r controltestTelemetryReader) GetRunLogSnapshot(context.Context, telemetry.RunLogSnapshotQuery) (telemetry.RunLogSnapshot, error) {
+	return telemetry.RunLogSnapshot{}, nil
 }
 
 type panicTxBeginner struct{}

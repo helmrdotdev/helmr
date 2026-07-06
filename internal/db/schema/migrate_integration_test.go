@@ -126,8 +126,8 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 	`).Scan(&boundedHotTables); err != nil {
 		t.Fatal(err)
 	}
-	if boundedHotTables != 4 {
-		t.Fatalf("bounded telemetry hot payload tables = %d, want 4", boundedHotTables)
+	if boundedHotTables != 2 {
+		t.Fatalf("bounded telemetry hot payload tables = %d, want 2", boundedHotTables)
 	}
 	var oldUsageEnums int
 	if err := pool.QueryRow(ctx, `

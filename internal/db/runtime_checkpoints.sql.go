@@ -317,53 +317,39 @@ parked_snapshot AS (
       FROM parked_run
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
-parked_event_seq AS (
-    INSERT INTO event_cursors (org_id, worker_group_id, subject_kind, subject_id, seq)
-    SELECT parked_run.org_id, parked_run.worker_group_id, 'run', parked_run.id, 1
-      FROM parked_run
-      JOIN parked_snapshot ON parked_snapshot.run_id = parked_run.id
-    ON CONFLICT (org_id, worker_group_id, subject_kind, subject_id)
-    DO UPDATE SET seq = event_cursors.seq + 1,
-                  observed_at = now()
-    RETURNING org_id, subject_kind, subject_id, seq
-),
 parked_event AS (
-    INSERT INTO event_hot_payloads (org_id, worker_group_id, project_id, environment_id, run_id, seq, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version)
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
+        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
+        kind, message, payload, redaction_class, snapshot_version, observed_at
+    )
     SELECT parked_run.org_id,
            parked_run.worker_group_id,
+           'event',
+           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
+           COALESCE(NULL::uuid, parked_run.id),
            parked_run.project_id,
            parked_run.environment_id,
            parked_run.id,
-           parked_event_seq.seq,
+           NULL::uuid,
            parked_run.source_run_lease_id,
            parked_run.current_attempt_number,
            parked_run.trace_id,
            parked_run.root_span_id,
+           NULL::text,
            '00-' || parked_run.trace_id || '-' || parked_run.root_span_id || '-01',
-           'lifecycle',
-           'info',
-           'control',
+           COALESCE(NULLIF('lifecycle', ''), 'system'),
+           COALESCE(NULLIF('info', ''), 'info'),
+           COALESCE(NULLIF('control', ''), 'control'),
            'run.waiting',
-           'run.waiting',
-           jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id),
-           'internal',
-           parked_run.state_version
+           COALESCE('run.waiting', ''),
+           COALESCE(jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id), '{}'::jsonb),
+           COALESCE(NULLIF('internal', ''), 'internal'),
+           parked_run.state_version,
+           now()
       FROM parked_run
-      JOIN parked_event_seq ON parked_event_seq.org_id = parked_run.org_id
-                           AND parked_event_seq.subject_kind = 'run'
-                           AND parked_event_seq.subject_id = parked_run.id
-    RETURNING id, subject_type, subject_id, seq, org_id, worker_group_id, project_id, environment_id, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, parent_span_id, traceparent, category, severity, source, kind, message, payload, redaction_class, snapshot_version, expires_at, occurred_at, created_at
-),
-parked_telemetry_outbox AS (
-    INSERT INTO telemetry_outbox (org_id, worker_group_id, stream_kind, source_kind, source_id, seq, idempotency_key)
-    SELECT parked_event.org_id,
-           parked_event.worker_group_id,
-           'event',
-           parked_event.subject_type,
-           parked_event.subject_id,
-           parked_event.seq,
-           'event:' || parked_event.subject_type::text || ':' || parked_event.subject_id::text || ':' || parked_event.seq::text
-      FROM parked_event
+      JOIN parked_snapshot ON parked_snapshot.run_id = parked_run.id
     RETURNING id
 ),
 	parked_marker AS (
@@ -378,7 +364,7 @@ SELECT created_checkpoint.id, created_checkpoint.org_id, created_checkpoint.work
 	  JOIN closed_runtime_instance ON true
 	  JOIN detached_run_lease ON true
 	  JOIN parked_run ON true
-	  JOIN parked_telemetry_outbox ON true
+	  JOIN parked_event ON true
 	  JOIN parked_marker ON true
 `
 
