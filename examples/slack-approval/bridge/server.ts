@@ -16,7 +16,6 @@ export type Config = {
   readonly risk?: string
   readonly stagingUrl?: string
   readonly productionUrl?: string
-  readonly startIdempotencyKey?: string
   readonly sessionExternalId?: string
 }
 
@@ -85,7 +84,6 @@ export async function startBridge(config: Config, client: HelmrClient): Promise<
       ...(config.productionUrl === undefined ? {} : { productionUrl: config.productionUrl }),
     }, {
       externalId: sessionExternalId,
-      idempotencyKey: startIdempotencyKey(config),
       metadata: approvalMetadata(config),
       tags: ["approval", "bridge:slack-approval", "medium:slack"],
     })
@@ -277,7 +275,6 @@ function readConfig(): Config {
     risk: optionalEnvOrUndefined("APPROVAL_RISK"),
     stagingUrl: optionalEnvOrUndefined("APPROVAL_STAGING_URL"),
     productionUrl: optionalEnvOrUndefined("APPROVAL_PRODUCTION_URL"),
-    startIdempotencyKey: optionalEnvOrUndefined("HELMR_START_IDEMPOTENCY_KEY"),
     sessionExternalId: optionalEnvOrUndefined("HELMR_SESSION_EXTERNAL_ID"),
   }
 }
@@ -295,10 +292,6 @@ function approvalMetadata(config: Config): Record<string, unknown> {
 
 function approvalSessionExternalId(config: Config): string {
   return config.sessionExternalId ?? `slack:${config.slackChannelId}:${config.release}`
-}
-
-function startIdempotencyKey(config: Config): string {
-  return config.startIdempotencyKey ?? `slack-approval:${config.taskId}:${config.slackChannelId}:${config.release}:start`
 }
 
 function approvalDecisionIdempotencyKey(sessionExternalId: string): string {
