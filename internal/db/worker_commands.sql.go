@@ -257,7 +257,7 @@ type AcknowledgeWorkerCommandRow struct {
 	RuntimeInstanceID   pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeEpoch        pgtype.Int8        `json:"runtime_epoch"`
 	RunStateVersion     pgtype.Int8        `json:"run_state_version"`
-	Kind                WorkerCommandKind  `json:"kind"`
+	Kind                string             `json:"kind"`
 	Payload             []byte             `json:"payload"`
 	DeliveredAt         pgtype.Timestamptz `json:"delivered_at"`
 	AcceptedAt          pgtype.Timestamptz `json:"accepted_at"`
@@ -316,7 +316,7 @@ UPDATE worker_commands
    AND worker_commands.run_id = $5
    AND worker_commands.run_wait_id = $6
    AND worker_commands.run_lease_id = $7
-   AND worker_commands.kind = $8::worker_command_kind
+   AND worker_commands.kind = $8
    AND (
        worker_commands.acknowledged_at IS NOT NULL
        OR worker_commands.kind <> 'runtime_checkpoint_wait'
@@ -352,15 +352,15 @@ RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, run_w
 `
 
 type AcknowledgeWorkerCommandForRunWaitParams struct {
-	WorkerInstanceID    pgtype.UUID       `json:"worker_instance_id"`
-	ID                  int64             `json:"id"`
-	OrgID               pgtype.UUID       `json:"org_id"`
-	WorkerGroupID       string            `json:"worker_group_id"`
-	RunID               pgtype.UUID       `json:"run_id"`
-	RunWaitID           pgtype.UUID       `json:"run_wait_id"`
-	RunLeaseID          pgtype.UUID       `json:"run_lease_id"`
-	Kind                WorkerCommandKind `json:"kind"`
-	RuntimeCheckpointID pgtype.UUID       `json:"runtime_checkpoint_id"`
+	WorkerInstanceID    pgtype.UUID `json:"worker_instance_id"`
+	ID                  int64       `json:"id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	WorkerGroupID       string      `json:"worker_group_id"`
+	RunID               pgtype.UUID `json:"run_id"`
+	RunWaitID           pgtype.UUID `json:"run_wait_id"`
+	RunLeaseID          pgtype.UUID `json:"run_lease_id"`
+	Kind                string      `json:"kind"`
+	RuntimeCheckpointID pgtype.UUID `json:"runtime_checkpoint_id"`
 }
 
 func (q *Queries) AcknowledgeWorkerCommandForRunWait(ctx context.Context, arg AcknowledgeWorkerCommandForRunWaitParams) (WorkerCommand, error) {
@@ -457,7 +457,7 @@ type ClaimWorkerCommandsRow struct {
 	RuntimeInstanceID   pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeEpoch        pgtype.Int8        `json:"runtime_epoch"`
 	RunStateVersion     pgtype.Int8        `json:"run_state_version"`
-	Kind                WorkerCommandKind  `json:"kind"`
+	Kind                string             `json:"kind"`
 	Payload             []byte             `json:"payload"`
 	DeliveredAt         pgtype.Timestamptz `json:"delivered_at"`
 	AcceptedAt          pgtype.Timestamptz `json:"accepted_at"`
@@ -1158,27 +1158,27 @@ INSERT INTO worker_commands (
     $10::uuid,
     $11::bigint,
     $12,
-    $13::worker_command_kind,
+    $13,
     COALESCE($14::jsonb, '{}'::jsonb)
 )
 RETURNING id, org_id, worker_group_id, project_id, environment_id, run_id, run_wait_id, run_lease_id, worker_instance_id, deployment_sandbox_id, runtime_instance_id, runtime_epoch, run_state_version, kind, payload, delivered_at, accepted_at, completed_at, acknowledged_at, delivery_attempts, delivery_locked_until, last_delivery_error, created_at, updated_at
 `
 
 type CreateWorkerCommandParams struct {
-	OrgID               pgtype.UUID       `json:"org_id"`
-	WorkerGroupID       string            `json:"worker_group_id"`
-	ProjectID           pgtype.UUID       `json:"project_id"`
-	EnvironmentID       pgtype.UUID       `json:"environment_id"`
-	RunID               pgtype.UUID       `json:"run_id"`
-	RunWaitID           pgtype.UUID       `json:"run_wait_id"`
-	RunLeaseID          pgtype.UUID       `json:"run_lease_id"`
-	WorkerInstanceID    pgtype.UUID       `json:"worker_instance_id"`
-	DeploymentSandboxID pgtype.UUID       `json:"deployment_sandbox_id"`
-	RuntimeInstanceID   pgtype.UUID       `json:"runtime_instance_id"`
-	RuntimeEpoch        pgtype.Int8       `json:"runtime_epoch"`
-	RunStateVersion     pgtype.Int8       `json:"run_state_version"`
-	Kind                WorkerCommandKind `json:"kind"`
-	Payload             []byte            `json:"payload"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	WorkerGroupID       string      `json:"worker_group_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	RunID               pgtype.UUID `json:"run_id"`
+	RunWaitID           pgtype.UUID `json:"run_wait_id"`
+	RunLeaseID          pgtype.UUID `json:"run_lease_id"`
+	WorkerInstanceID    pgtype.UUID `json:"worker_instance_id"`
+	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
+	RuntimeInstanceID   pgtype.UUID `json:"runtime_instance_id"`
+	RuntimeEpoch        pgtype.Int8 `json:"runtime_epoch"`
+	RunStateVersion     pgtype.Int8 `json:"run_state_version"`
+	Kind                string      `json:"kind"`
+	Payload             []byte      `json:"payload"`
 }
 
 func (q *Queries) CreateWorkerCommand(ctx context.Context, arg CreateWorkerCommandParams) (WorkerCommand, error) {

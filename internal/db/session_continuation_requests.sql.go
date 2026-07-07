@@ -474,8 +474,8 @@ const markSessionContinuationRequestFailed = `-- name: MarkSessionContinuationRe
 UPDATE session_continuation_requests
    SET status = 'failed',
        status_reason = $1,
-       last_error_code = $1,
-       last_error_message = $1,
+       last_error_code = '',
+       last_error_message = '',
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',

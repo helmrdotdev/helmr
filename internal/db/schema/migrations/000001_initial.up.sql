@@ -362,11 +362,9 @@ CREATE TYPE worker_instance_status AS ENUM (
 
 CREATE TABLE worker_groups (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
-    owner_org_id UUID REFERENCES organizations(id) ON DELETE RESTRICT,
     region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     name TEXT NOT NULL CHECK (btrim(name) <> ''),
     description TEXT NOT NULL DEFAULT '',
-    provider TEXT NOT NULL DEFAULT 'aws' CHECK (btrim(provider) <> ''),
     state worker_group_state NOT NULL DEFAULT 'active',
     health_state worker_group_health_state NOT NULL DEFAULT 'healthy',
     health_checked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -374,13 +372,10 @@ CREATE TABLE worker_groups (
     health_details JSONB NOT NULL DEFAULT '{}'::jsonb,
     trust_tier worker_trust_tier NOT NULL DEFAULT 'helmr_managed',
     claim_version BIGINT NOT NULL DEFAULT 1 CHECK (claim_version > 0),
-    created_by UUID REFERENCES users(id) ON DELETE SET NULL,
-    deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (region_id, id),
-    UNIQUE (region_id, name),
-    UNIQUE (owner_org_id, region_id, name)
+    UNIQUE (region_id, name)
 );
 
 CREATE TRIGGER worker_groups_set_updated_at
@@ -540,14 +535,6 @@ CREATE TYPE wait_state AS ENUM (
     'failed',
     'expired',
     'cancelled'
-);
-
-CREATE TYPE worker_command_kind AS ENUM (
-	'runtime_prepare',
-	'runtime_resume_wait',
-	'runtime_checkpoint_wait',
-	'runtime_stop',
-	'runtime_substrate_prepare'
 );
 
 CREATE TYPE run_wait_state AS ENUM (
@@ -1561,7 +1548,6 @@ CREATE TABLE workspace_versions (
     source_workspace_mount_id UUID,
     source_write_lease_id UUID,
     produced_by_run_id UUID,
-    produced_by_process_id UUID,
     kind workspace_version_kind NOT NULL DEFAULT 'user',
     state workspace_version_state NOT NULL DEFAULT 'capturing',
     artifact_id UUID,
@@ -1572,8 +1558,6 @@ CREATE TABLE workspace_versions (
     message TEXT NOT NULL DEFAULT '',
     error JSONB NOT NULL DEFAULT '{}'::jsonb,
     promoted_at TIMESTAMPTZ,
-    created_by_subject_type TEXT NOT NULL DEFAULT '',
-    created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, workspace_id, id),
@@ -1598,9 +1582,6 @@ CREATE TABLE workspace_versions (
     FOREIGN KEY (org_id, project_id, environment_id, produced_by_run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE SET NULL (produced_by_run_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, produced_by_process_id)
-        REFERENCES workspace_processes(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE SET NULL (produced_by_process_id),
     CHECK (
         state NOT IN ('artifact_verified', 'ready')
         OR (
@@ -1693,8 +1674,7 @@ CREATE TABLE workspace_operation_idempotencies (
     operation_kind workspace_operation_idempotency_kind NOT NULL,
     idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
     request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
-    response_resource_type TEXT NOT NULL DEFAULT '',
-    response_resource_id UUID,
+    result_resource_id UUID,
     response_body JSONB NOT NULL DEFAULT '{}'::jsonb,
     expires_at TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2521,7 +2501,7 @@ CREATE TABLE worker_commands (
     runtime_instance_id UUID,
     runtime_epoch BIGINT CHECK (runtime_epoch IS NULL OR runtime_epoch > 0),
     run_state_version BIGINT CHECK (run_state_version IS NULL OR run_state_version >= 0),
-    kind worker_command_kind NOT NULL,
+    kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
     payload JSONB NOT NULL DEFAULT '{}'::jsonb,
     delivered_at TIMESTAMPTZ,
     accepted_at TIMESTAMPTZ,

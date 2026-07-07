@@ -16,7 +16,7 @@ INSERT INTO worker_groups (id, region_id, name, description)
 VALUES ($1, $2, 'default', 'Default worker group')
 ON CONFLICT (region_id, name) DO UPDATE
    SET description = worker_groups.description
-RETURNING id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+RETURNING id, region_id, name, description, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_at, updated_at
 `
 
 type EnsureDefaultWorkerGroupParams struct {
@@ -29,11 +29,9 @@ func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, arg EnsureDefaul
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.Provider,
 		&i.State,
 		&i.HealthState,
 		&i.HealthCheckedAt,
@@ -41,8 +39,6 @@ func (q *Queries) EnsureDefaultWorkerGroup(ctx context.Context, arg EnsureDefaul
 		&i.HealthDetails,
 		&i.TrustTier,
 		&i.ClaimVersion,
-		&i.CreatedBy,
-		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -85,7 +81,7 @@ func (q *Queries) GetControlWorkerGroupReadiness(ctx context.Context, workerGrou
 }
 
 const listWorkerGroups = `-- name: ListWorkerGroups :many
-SELECT id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+SELECT id, region_id, name, description, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_at, updated_at
   FROM worker_groups
  WHERE region_id = $1
  ORDER BY name ASC
@@ -108,11 +104,9 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 		var i WorkerGroup
 		if err := rows.Scan(
 			&i.ID,
-			&i.OwnerOrgID,
 			&i.RegionID,
 			&i.Name,
 			&i.Description,
-			&i.Provider,
 			&i.State,
 			&i.HealthState,
 			&i.HealthCheckedAt,
@@ -120,8 +114,6 @@ func (q *Queries) ListWorkerGroups(ctx context.Context, arg ListWorkerGroupsPara
 			&i.HealthDetails,
 			&i.TrustTier,
 			&i.ClaimVersion,
-			&i.CreatedBy,
-			&i.DeletedAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -142,7 +134,7 @@ UPDATE worker_groups
        routing_fresh_until = now() + $2::interval,
        health_details = $3::jsonb
  WHERE id = $4::text
-RETURNING id, owner_org_id, region_id, name, description, provider, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_by, deleted_at, created_at, updated_at
+RETURNING id, region_id, name, description, state, health_state, health_checked_at, routing_fresh_until, health_details, trust_tier, claim_version, created_at, updated_at
 `
 
 type ReportWorkerGroupHealthParams struct {
@@ -162,11 +154,9 @@ func (q *Queries) ReportWorkerGroupHealth(ctx context.Context, arg ReportWorkerG
 	var i WorkerGroup
 	err := row.Scan(
 		&i.ID,
-		&i.OwnerOrgID,
 		&i.RegionID,
 		&i.Name,
 		&i.Description,
-		&i.Provider,
 		&i.State,
 		&i.HealthState,
 		&i.HealthCheckedAt,
@@ -174,8 +164,6 @@ func (q *Queries) ReportWorkerGroupHealth(ctx context.Context, arg ReportWorkerG
 		&i.HealthDetails,
 		&i.TrustTier,
 		&i.ClaimVersion,
-		&i.CreatedBy,
-		&i.DeletedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

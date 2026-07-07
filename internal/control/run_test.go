@@ -671,11 +671,11 @@ func TestWorkspaceCreateResolvesSandboxSelectorAndReplaysIdempotency(t *testing.
 	if idempotency.WorkspaceID.Valid {
 		t.Fatalf("workspace.create idempotency workspace_id = %s, want null", pgvalue.MustUUIDValue(idempotency.WorkspaceID))
 	}
-	if idempotency.ResponseResourceID.Valid {
-		t.Fatalf("pending idempotency response_resource_id = %s, want null", pgvalue.MustUUIDValue(idempotency.ResponseResourceID))
+	if idempotency.ResultResourceID.Valid {
+		t.Fatalf("pending idempotency result_resource_id = %s, want null", pgvalue.MustUUIDValue(idempotency.ResultResourceID))
 	}
-	if store.workspaceOperationIdempotency.ResponseResourceID != store.workspace.ID {
-		t.Fatalf("completed idempotency response_resource_id = %s, want workspace %s", pgvalue.MustUUIDValue(store.workspaceOperationIdempotency.ResponseResourceID), pgvalue.MustUUIDValue(store.workspace.ID))
+	if store.workspaceOperationIdempotency.ResultResourceID != store.workspace.ID {
+		t.Fatalf("completed idempotency result_resource_id = %s, want workspace %s", pgvalue.MustUUIDValue(store.workspaceOperationIdempotency.ResultResourceID), pgvalue.MustUUIDValue(store.workspace.ID))
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(body))
@@ -779,7 +779,7 @@ func TestWorkspaceStopIdempotencyResponseReplaysCompletedResponse(t *testing.T) 
 	}
 	replayed, ok, err := workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
 		RequestFingerprint: fingerprint,
-		ResponseResourceID: workspaceID,
+		ResultResourceID:   workspaceID,
 		ResponseBody:       body,
 		Inserted:           false,
 	}, fingerprint)
@@ -808,7 +808,7 @@ func TestWorkspaceStopIdempotencyResponseRejectsPendingAndMismatch(t *testing.T)
 	}
 	_, replayed, err = workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
 		RequestFingerprint: "different",
-		ResponseResourceID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ResultResourceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		ResponseBody:       []byte(`{"workspace_id":"w","state":"no_active_mount"}`),
 		Inserted:           false,
 	}, fingerprint)
@@ -3229,56 +3229,53 @@ func (f *fakeStore) EnsureWorkspaceOperationIdempotency(_ context.Context, arg d
 		f.workspaceOperationIdempotency.IdempotencyKey == arg.IdempotencyKey {
 		row := f.workspaceOperationIdempotency
 		return db.EnsureWorkspaceOperationIdempotencyRow{
-			ID:                   row.ID,
-			OrgID:                row.OrgID,
-			ProjectID:            row.ProjectID,
-			EnvironmentID:        row.EnvironmentID,
-			WorkspaceID:          row.WorkspaceID,
-			OperationKind:        row.OperationKind,
-			IdempotencyKey:       row.IdempotencyKey,
-			RequestFingerprint:   row.RequestFingerprint,
-			ResponseResourceType: row.ResponseResourceType,
-			ResponseResourceID:   row.ResponseResourceID,
-			ResponseBody:         row.ResponseBody,
-			ExpiresAt:            row.ExpiresAt,
-			CreatedAt:            row.CreatedAt,
-			LastUsedAt:           row.LastUsedAt,
-			Inserted:             false,
+			ID:                 row.ID,
+			OrgID:              row.OrgID,
+			ProjectID:          row.ProjectID,
+			EnvironmentID:      row.EnvironmentID,
+			WorkspaceID:        row.WorkspaceID,
+			OperationKind:      row.OperationKind,
+			IdempotencyKey:     row.IdempotencyKey,
+			RequestFingerprint: row.RequestFingerprint,
+			ResultResourceID:   row.ResultResourceID,
+			ResponseBody:       row.ResponseBody,
+			ExpiresAt:          row.ExpiresAt,
+			CreatedAt:          row.CreatedAt,
+			LastUsedAt:         row.LastUsedAt,
+			Inserted:           false,
 		}, nil
 	}
 	f.createdWorkspaceOperationIdempotencies = append(f.createdWorkspaceOperationIdempotencies, arg)
 	row := db.EnsureWorkspaceOperationIdempotencyRow{
-		ID:                   arg.ID,
-		OrgID:                arg.OrgID,
-		ProjectID:            arg.ProjectID,
-		EnvironmentID:        arg.EnvironmentID,
-		WorkspaceID:          arg.WorkspaceID,
-		OperationKind:        arg.OperationKind,
-		IdempotencyKey:       arg.IdempotencyKey,
-		RequestFingerprint:   arg.RequestFingerprint,
-		ResponseResourceType: arg.ResponseResourceType,
-		ResponseResourceID:   arg.ResponseResourceID,
-		ResponseBody:         arg.ResponseBody,
-		ExpiresAt:            arg.ExpiresAt,
-		CreatedAt:            testTime(),
-		LastUsedAt:           testTime(),
-		Inserted:             true,
+		ID:                 arg.ID,
+		OrgID:              arg.OrgID,
+		ProjectID:          arg.ProjectID,
+		EnvironmentID:      arg.EnvironmentID,
+		WorkspaceID:        arg.WorkspaceID,
+		OperationKind:      arg.OperationKind,
+		IdempotencyKey:     arg.IdempotencyKey,
+		RequestFingerprint: arg.RequestFingerprint,
+		ResultResourceID:   arg.ResultResourceID,
+		ResponseBody:       arg.ResponseBody,
+		ExpiresAt:          arg.ExpiresAt,
+		CreatedAt:          testTime(),
+		LastUsedAt:         testTime(),
+		Inserted:           true,
 	}
 	f.workspaceOperationIdempotency = db.WorkspaceOperationIdempotency{
-		ID:                   row.ID,
-		OrgID:                row.OrgID,
-		ProjectID:            row.ProjectID,
-		EnvironmentID:        row.EnvironmentID,
-		WorkspaceID:          row.WorkspaceID,
-		OperationKind:        row.OperationKind,
-		IdempotencyKey:       row.IdempotencyKey,
-		RequestFingerprint:   row.RequestFingerprint,
-		ResponseResourceType: row.ResponseResourceType,
-		ResponseResourceID:   row.ResponseResourceID,
-		ResponseBody:         row.ResponseBody,
-		ExpiresAt:            row.ExpiresAt,
-		CreatedAt:            row.CreatedAt,
-		LastUsedAt:           row.LastUsedAt,
+		ID:                 row.ID,
+		OrgID:              row.OrgID,
+		ProjectID:          row.ProjectID,
+		EnvironmentID:      row.EnvironmentID,
+		WorkspaceID:        row.WorkspaceID,
+		OperationKind:      row.OperationKind,
+		IdempotencyKey:     row.IdempotencyKey,
+		RequestFingerprint: row.RequestFingerprint,
+		ResultResourceID:   row.ResultResourceID,
+		ResponseBody:       row.ResponseBody,
+		ExpiresAt:          row.ExpiresAt,
+		CreatedAt:          row.CreatedAt,
+		LastUsedAt:         row.LastUsedAt,
 	}
 	return row, nil
 }
@@ -3293,9 +3290,8 @@ func (f *fakeStore) CompleteWorkspaceOperationIdempotency(_ context.Context, arg
 		row.OperationKind == arg.OperationKind &&
 		row.IdempotencyKey == arg.IdempotencyKey &&
 		row.RequestFingerprint == arg.RequestFingerprint &&
-		!row.ResponseResourceID.Valid {
-		row.ResponseResourceType = arg.ResponseResourceType
-		row.ResponseResourceID = arg.ResponseResourceID
+		!row.ResultResourceID.Valid {
+		row.ResultResourceID = arg.ResultResourceID
 		row.ResponseBody = arg.ResponseBody
 		row.LastUsedAt = testTime()
 		f.workspaceOperationIdempotency = row
@@ -3504,8 +3500,8 @@ func (f *fakeStore) MarkSessionContinuationRequestFailed(_ context.Context, arg 
 	}
 	f.sessionContinuationRequest.Status = "failed"
 	f.sessionContinuationRequest.StatusReason = arg.Reason
-	f.sessionContinuationRequest.LastErrorCode = arg.Reason
-	f.sessionContinuationRequest.LastErrorMessage = arg.Reason
+	f.sessionContinuationRequest.LastErrorCode = ""
+	f.sessionContinuationRequest.LastErrorMessage = ""
 	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
 	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
 	f.sessionContinuationRequest.ClaimOwner = ""

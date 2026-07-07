@@ -237,7 +237,6 @@ DROP TYPE IF EXISTS run_execution_status;
 DROP TYPE IF EXISTS public_access_token_scope_type;
 DROP TYPE IF EXISTS public_access_token_state;
 DROP TYPE IF EXISTS run_wait_state;
-DROP TYPE IF EXISTS worker_command_kind;
 DROP TYPE IF EXISTS wait_state;
 DROP TYPE IF EXISTS wait_kind;
 DROP TYPE IF EXISTS token_state;

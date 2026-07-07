@@ -27,7 +27,7 @@ INSERT INTO worker_commands (
     sqlc.narg(runtime_instance_id)::uuid,
     sqlc.narg(runtime_epoch)::bigint,
     sqlc.arg(run_state_version),
-    sqlc.arg(kind)::worker_command_kind,
+    sqlc.arg(kind),
     COALESCE(sqlc.arg(payload)::jsonb, '{}'::jsonb)
 )
 RETURNING *;
@@ -305,7 +305,7 @@ UPDATE worker_commands
    AND worker_commands.run_id = sqlc.arg(run_id)
    AND worker_commands.run_wait_id = sqlc.arg(run_wait_id)
    AND worker_commands.run_lease_id = sqlc.arg(run_lease_id)
-   AND worker_commands.kind = sqlc.arg(kind)::worker_command_kind
+   AND worker_commands.kind = sqlc.arg(kind)
    AND (
        worker_commands.acknowledged_at IS NOT NULL
        OR worker_commands.kind <> 'runtime_checkpoint_wait'
