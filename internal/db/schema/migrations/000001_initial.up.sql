@@ -897,7 +897,7 @@ CREATE TABLE deployment_queues (
         ON DELETE CASCADE
 );
 
-CREATE TABLE runtime_substrate_artifacts (
+CREATE TABLE runtime_substrates (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
@@ -931,8 +931,8 @@ CREATE TABLE runtime_substrate_artifacts (
         ON DELETE RESTRICT
 );
 
-CREATE TRIGGER runtime_substrate_artifacts_set_updated_at
-    BEFORE UPDATE ON runtime_substrate_artifacts
+CREATE TRIGGER runtime_substrates_set_updated_at
+    BEFORE UPDATE ON runtime_substrates
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE deployment_tasks (
@@ -2154,7 +2154,7 @@ ALTER TABLE runs
     REFERENCES run_leases(org_id, worker_group_id, run_id, id)
     ON DELETE SET NULL (current_run_lease_id);
 
-CREATE TABLE runtime_checkpoints (
+CREATE TABLE run_checkpoints (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
@@ -2225,7 +2225,7 @@ CREATE TABLE runtime_checkpoints (
         REFERENCES worker_instances(id)
         ON DELETE SET NULL (owner_worker_instance_id),
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, runtime_substrate_artifact_id)
-        REFERENCES runtime_substrate_artifacts(org_id, worker_group_id, project_id, environment_id, id)
+        REFERENCES runtime_substrates(org_id, worker_group_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
 
@@ -2236,7 +2236,7 @@ CREATE TYPE runtime_checkpoint_artifact_role AS ENUM (
     'scratch_disk'
 );
 
-CREATE TABLE runtime_checkpoint_artifacts (
+CREATE TABLE run_checkpoint_artifacts (
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
@@ -2254,7 +2254,7 @@ CREATE TABLE runtime_checkpoint_artifacts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (org_id, worker_group_id, run_id, runtime_checkpoint_id, role, ordinal),
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
+        REFERENCES run_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
@@ -2267,13 +2267,13 @@ CREATE TABLE runtime_checkpoint_artifacts (
 ALTER TABLE runs
     ADD CONSTRAINT runs_latest_runtime_checkpoint_id_fkey
     FOREIGN KEY (org_id, worker_group_id, id, latest_runtime_checkpoint_id)
-    REFERENCES runtime_checkpoints(org_id, worker_group_id, run_id, id)
+    REFERENCES run_checkpoints(org_id, worker_group_id, run_id, id)
     ON DELETE SET NULL (latest_runtime_checkpoint_id);
 
 ALTER TABLE run_leases
     ADD CONSTRAINT run_leases_restore_runtime_checkpoint_id_fkey
     FOREIGN KEY (org_id, worker_group_id, run_id, restore_runtime_checkpoint_id)
-    REFERENCES runtime_checkpoints(org_id, worker_group_id, run_id, id)
+    REFERENCES run_checkpoints(org_id, worker_group_id, run_id, id)
     ON DELETE SET NULL (restore_runtime_checkpoint_id);
 
 CREATE TABLE meter_events (
@@ -2411,7 +2411,7 @@ CREATE TABLE run_waits (
         REFERENCES waits(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
+        REFERENCES run_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
         ON DELETE SET NULL (runtime_checkpoint_id),
     FOREIGN KEY (org_id, worker_group_id, owner_run_id, owner_run_lease_id)
         REFERENCES run_leases(org_id, worker_group_id, run_id, id)
@@ -2510,7 +2510,7 @@ CREATE TABLE worker_commands (
         ON DELETE CASCADE
 );
 
-CREATE TABLE runtime_checkpoint_restores (
+CREATE TABLE run_checkpoint_restores (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
@@ -2532,7 +2532,7 @@ CREATE TABLE runtime_checkpoint_restores (
     UNIQUE (org_id, run_id, run_lease_id, runtime_checkpoint_id),
     UNIQUE (org_id, worker_group_id, run_id, run_lease_id, runtime_checkpoint_id),
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, run_id, runtime_checkpoint_id)
-        REFERENCES runtime_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
+        REFERENCES run_checkpoints(org_id, worker_group_id, project_id, environment_id, run_id, id)
         ON DELETE CASCADE,
     FOREIGN KEY (org_id, worker_group_id, run_id, run_wait_id)
         REFERENCES run_waits(org_id, worker_group_id, run_id, id)
@@ -2552,8 +2552,8 @@ CREATE TABLE runtime_checkpoint_restores (
     CHECK (jsonb_typeof(phases) = 'array')
 );
 
-CREATE INDEX runtime_checkpoint_restores_run_idx
-    ON runtime_checkpoint_restores (org_id, run_id, started_at, id);
+CREATE INDEX run_checkpoint_restores_run_idx
+    ON run_checkpoint_restores (org_id, run_id, started_at, id);
 
 CREATE TABLE runtime_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -2626,7 +2626,7 @@ CREATE TABLE runtime_instances (
         REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, runtime_substrate_artifact_id)
-        REFERENCES runtime_substrate_artifacts(org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, id)
+        REFERENCES runtime_substrates(org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, id)
         ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_workspace_mount_id_fkey FOREIGN KEY (org_id, workspace_mount_id)
         REFERENCES workspace_mounts(org_id, id)
@@ -2669,8 +2669,8 @@ ALTER TABLE worker_commands
     REFERENCES runtime_instances(org_id, worker_group_id, id)
     ON DELETE CASCADE;
 
-ALTER TABLE runtime_checkpoints
-    ADD CONSTRAINT runtime_checkpoints_owner_runtime_instance_id_fkey
+ALTER TABLE run_checkpoints
+    ADD CONSTRAINT run_checkpoints_owner_runtime_instance_id_fkey
     FOREIGN KEY (org_id, worker_group_id, owner_runtime_instance_id)
     REFERENCES runtime_instances(org_id, worker_group_id, id)
     ON DELETE SET NULL (owner_runtime_instance_id);
@@ -2822,8 +2822,8 @@ CREATE INDEX run_leases_active_concurrency_idx
 CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, worker_group_id, worker_instance_id, status);
 CREATE INDEX run_leases_worker_group_idx ON run_leases(worker_group_id);
 CREATE INDEX run_state_snapshots_run_created_idx ON run_state_snapshots(org_id, run_id, created_at DESC);
-CREATE INDEX runtime_checkpoints_run_state_idx ON runtime_checkpoints(run_id, state, created_at DESC);
-CREATE INDEX runtime_checkpoint_artifacts_role_idx ON runtime_checkpoint_artifacts(org_id, run_id, runtime_checkpoint_id, role, ordinal);
+CREATE INDEX run_checkpoints_run_state_idx ON run_checkpoints(run_id, state, created_at DESC);
+CREATE INDEX run_checkpoint_artifacts_role_idx ON run_checkpoint_artifacts(org_id, run_id, runtime_checkpoint_id, role, ordinal);
 CREATE INDEX tokens_scope_state_idx ON tokens(org_id, project_id, environment_id, state, created_at DESC);
 CREATE UNIQUE INDEX tokens_idempotency_idx ON tokens(org_id, project_id, environment_id, idempotency_key)
     WHERE idempotency_key <> '';

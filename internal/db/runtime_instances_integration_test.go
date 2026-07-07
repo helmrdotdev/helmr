@@ -1140,7 +1140,7 @@ func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *
 	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-concurrent")
 	const workers = 8
 	var wg sync.WaitGroup
-	results := make(chan db.RuntimeSubstrateArtifact, workers)
+	results := make(chan db.RuntimeSubstrate, workers)
 	errs := make(chan error, workers)
 	for i := range workers {
 		wg.Add(1)

@@ -322,20 +322,20 @@ UPDATE worker_commands
        OR worker_commands.kind <> 'runtime_checkpoint_wait'
        OR EXISTS (
            SELECT 1
-             FROM runtime_checkpoints
-            WHERE runtime_checkpoints.org_id = worker_commands.org_id
-              AND runtime_checkpoints.worker_group_id = worker_commands.worker_group_id
-              AND runtime_checkpoints.project_id = worker_commands.project_id
-              AND runtime_checkpoints.environment_id = worker_commands.environment_id
-              AND runtime_checkpoints.run_id = worker_commands.run_id
-              AND runtime_checkpoints.id = $9
-              AND runtime_checkpoints.owner_run_wait_id = worker_commands.run_wait_id
-              AND runtime_checkpoints.owner_run_lease_id = worker_commands.run_lease_id
-              AND runtime_checkpoints.owner_worker_instance_id = worker_commands.worker_instance_id
-              AND runtime_checkpoints.owner_runtime_instance_id = worker_commands.runtime_instance_id
-              AND runtime_checkpoints.owner_runtime_epoch = worker_commands.runtime_epoch
-              AND runtime_checkpoints.created_at >= worker_commands.accepted_at
-              AND runtime_checkpoints.state IN ('ready', 'invalid')
+             FROM run_checkpoints
+            WHERE run_checkpoints.org_id = worker_commands.org_id
+              AND run_checkpoints.worker_group_id = worker_commands.worker_group_id
+              AND run_checkpoints.project_id = worker_commands.project_id
+              AND run_checkpoints.environment_id = worker_commands.environment_id
+              AND run_checkpoints.run_id = worker_commands.run_id
+              AND run_checkpoints.id = $9
+              AND run_checkpoints.owner_run_wait_id = worker_commands.run_wait_id
+              AND run_checkpoints.owner_run_lease_id = worker_commands.run_lease_id
+              AND run_checkpoints.owner_worker_instance_id = worker_commands.worker_instance_id
+              AND run_checkpoints.owner_runtime_instance_id = worker_commands.runtime_instance_id
+              AND run_checkpoints.owner_runtime_epoch = worker_commands.runtime_epoch
+              AND run_checkpoints.created_at >= worker_commands.accepted_at
+              AND run_checkpoints.state IN ('ready', 'invalid')
        )
    )
    AND EXISTS (

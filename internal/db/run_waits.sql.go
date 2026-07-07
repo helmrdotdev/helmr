@@ -201,7 +201,7 @@ WITH scope AS (
      FOR UPDATE OF run_waits, runs, workspace_leases, workspace_mounts, runtime_instances
 ),
 claimed_checkpoint AS (
-    INSERT INTO runtime_checkpoints (
+    INSERT INTO run_checkpoints (
         id,
         org_id,
         worker_group_id,
@@ -296,24 +296,24 @@ selected_checkpoint AS (
     SELECT claimed_checkpoint.id
       FROM claimed_checkpoint
     UNION ALL
-    SELECT runtime_checkpoints.id
-      FROM runtime_checkpoints
-      JOIN scope ON scope.org_id = runtime_checkpoints.org_id
-                AND scope.project_id = runtime_checkpoints.project_id
-                AND scope.environment_id = runtime_checkpoints.environment_id
-                AND scope.run_id = runtime_checkpoints.run_id
+    SELECT run_checkpoints.id
+      FROM run_checkpoints
+      JOIN scope ON scope.org_id = run_checkpoints.org_id
+                AND scope.project_id = run_checkpoints.project_id
+                AND scope.environment_id = run_checkpoints.environment_id
+                AND scope.run_id = run_checkpoints.run_id
       JOIN selected_wait ON selected_wait.org_id = scope.org_id
                         AND selected_wait.id = scope.id
-                        AND selected_wait.runtime_checkpoint_id = runtime_checkpoints.id
+                        AND selected_wait.runtime_checkpoint_id = run_checkpoints.id
      WHERE scope.state = 'checkpointing'
-       AND runtime_checkpoints.state = 'creating'
-       AND runtime_checkpoints.owner_runtime_instance_id = scope.owner_runtime_instance_id
-       AND runtime_checkpoints.owner_runtime_epoch = scope.owner_runtime_epoch
-       AND runtime_checkpoints.owner_run_id = scope.run_id
-       AND runtime_checkpoints.owner_run_wait_id = scope.id
-       AND runtime_checkpoints.owner_run_lease_id = scope.owner_run_lease_id
-       AND runtime_checkpoints.owner_worker_instance_id = scope.owner_worker_instance_id
-       AND runtime_checkpoints.source_worker_instance_id = scope.owner_worker_instance_id
+       AND run_checkpoints.state = 'creating'
+       AND run_checkpoints.owner_runtime_instance_id = scope.owner_runtime_instance_id
+       AND run_checkpoints.owner_runtime_epoch = scope.owner_runtime_epoch
+       AND run_checkpoints.owner_run_id = scope.run_id
+       AND run_checkpoints.owner_run_wait_id = scope.id
+       AND run_checkpoints.owner_run_lease_id = scope.owner_run_lease_id
+       AND run_checkpoints.owner_worker_instance_id = scope.owner_worker_instance_id
+       AND run_checkpoints.source_worker_instance_id = scope.owner_worker_instance_id
        AND NOT EXISTS (SELECT 1 FROM claimed_checkpoint)
 ),
 checkpointing_runtime_instance AS (
@@ -781,23 +781,23 @@ WITH stale_waits AS MATERIALIZED (
            runs.trace_id,
            runs.root_span_id,
            runs.state_version + 1 AS next_state_version,
-           runtime_checkpoints.id AS runtime_checkpoint_id,
-           runtime_checkpoints.base_workspace_version_id,
-           runtime_checkpoints.expires_at AS runtime_checkpoint_expires_at,
+           run_checkpoints.id AS runtime_checkpoint_id,
+           run_checkpoints.base_workspace_version_id,
+           run_checkpoints.expires_at AS runtime_checkpoint_expires_at,
            workspaces.current_version_id,
            run_waits.state AS run_wait_state,
            runs.status AS run_status,
            CASE
-             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
+             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
              THEN 'non_latest_runtime_checkpoint'
-             WHEN runtime_checkpoints.expires_at <= now()
+             WHEN run_checkpoints.expires_at <= now()
              THEN 'runtime_checkpoint_expired'
              ELSE 'workspace_version_mismatch'
            END AS failure_reason,
            CASE
-             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
+             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
              THEN 'resolved wait is not attached to the latest runtime checkpoint'
-             WHEN runtime_checkpoints.expires_at <= now()
+             WHEN run_checkpoints.expires_at <= now()
              THEN 'runtime checkpoint expired while run was parked'
              ELSE 'workspace advanced while run was parked'
            END AS failure_message
@@ -810,11 +810,11 @@ WITH stale_waits AS MATERIALIZED (
                         AND sessions.project_id = runs.project_id
                         AND sessions.environment_id = runs.environment_id
                         AND sessions.id = runs.session_id
-      JOIN runtime_checkpoints ON runtime_checkpoints.org_id = run_waits.org_id
-                              AND runtime_checkpoints.project_id = run_waits.project_id
-                              AND runtime_checkpoints.environment_id = run_waits.environment_id
-                              AND runtime_checkpoints.run_id = run_waits.run_id
-                              AND runtime_checkpoints.id = run_waits.runtime_checkpoint_id
+      JOIN run_checkpoints ON run_checkpoints.org_id = run_waits.org_id
+                              AND run_checkpoints.project_id = run_waits.project_id
+                              AND run_checkpoints.environment_id = run_waits.environment_id
+                              AND run_checkpoints.run_id = run_waits.run_id
+                              AND run_checkpoints.id = run_waits.runtime_checkpoint_id
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
@@ -827,11 +827,11 @@ WITH stale_waits AS MATERIALIZED (
        )
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.current_run_lease_id IS NULL
-       AND runtime_checkpoints.state = 'ready'
+       AND run_checkpoints.state = 'ready'
        AND (
-           runs.latest_runtime_checkpoint_id IS DISTINCT FROM runtime_checkpoints.id
-           OR workspaces.current_version_id IS DISTINCT FROM runtime_checkpoints.base_workspace_version_id
-           OR runtime_checkpoints.expires_at <= now()
+           runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
+           OR workspaces.current_version_id IS DISTINCT FROM run_checkpoints.base_workspace_version_id
+           OR run_checkpoints.expires_at <= now()
        )
      ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT $3
@@ -871,18 +871,18 @@ failed_runs AS (
               stale_waits.runtime_checkpoint_expires_at, stale_waits.failure_reason
 ),
 invalidated_checkpoints AS (
-    UPDATE runtime_checkpoints
+    UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = failed_runs.error_message,
            invalidated_at = now()
       FROM failed_runs
-     WHERE runtime_checkpoints.org_id = failed_runs.org_id
-       AND runtime_checkpoints.project_id = failed_runs.project_id
-       AND runtime_checkpoints.environment_id = failed_runs.environment_id
-       AND runtime_checkpoints.run_id = failed_runs.id
-       AND runtime_checkpoints.id = failed_runs.runtime_checkpoint_id
-       AND runtime_checkpoints.state = 'ready'
-    RETURNING runtime_checkpoints.id
+     WHERE run_checkpoints.org_id = failed_runs.org_id
+       AND run_checkpoints.project_id = failed_runs.project_id
+       AND run_checkpoints.environment_id = failed_runs.environment_id
+       AND run_checkpoints.run_id = failed_runs.id
+       AND run_checkpoints.id = failed_runs.runtime_checkpoint_id
+       AND run_checkpoints.state = 'ready'
+    RETURNING run_checkpoints.id
 ),
 ended_session_runs AS (
     UPDATE session_runs
@@ -1406,28 +1406,28 @@ restore_phase_payload AS (
            END AS phases
 ),
 updated_restore AS (
-    UPDATE runtime_checkpoint_restores
+    UPDATE run_checkpoint_restores
        SET status = 'restored',
            phases = restore_phase_payload.phases,
            error_message = NULL,
-           acknowledged_at = COALESCE(runtime_checkpoint_restores.acknowledged_at, now()),
-           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           acknowledged_at = COALESCE(run_checkpoint_restores.acknowledged_at, now()),
+           finished_at = COALESCE(run_checkpoint_restores.finished_at, now()),
            updated_at = now()
       FROM current_wait
       JOIN restore_phase_payload ON true
-     WHERE runtime_checkpoint_restores.org_id = $1
-       AND runtime_checkpoint_restores.project_id = current_wait.project_id
-       AND runtime_checkpoint_restores.environment_id = current_wait.environment_id
-       AND runtime_checkpoint_restores.run_id = $3
-       AND runtime_checkpoint_restores.runtime_checkpoint_id = $4
-       AND runtime_checkpoint_restores.run_wait_id = current_wait.id
-       AND runtime_checkpoint_restores.run_lease_id = $5
-       AND runtime_checkpoint_restores.status = 'restoring'
-    RETURNING runtime_checkpoint_restores.id,
-              runtime_checkpoint_restores.org_id,
-              runtime_checkpoint_restores.project_id,
-              runtime_checkpoint_restores.environment_id,
-              runtime_checkpoint_restores.run_id
+     WHERE run_checkpoint_restores.org_id = $1
+       AND run_checkpoint_restores.project_id = current_wait.project_id
+       AND run_checkpoint_restores.environment_id = current_wait.environment_id
+       AND run_checkpoint_restores.run_id = $3
+       AND run_checkpoint_restores.runtime_checkpoint_id = $4
+       AND run_checkpoint_restores.run_wait_id = current_wait.id
+       AND run_checkpoint_restores.run_lease_id = $5
+       AND run_checkpoint_restores.status = 'restoring'
+    RETURNING run_checkpoint_restores.id,
+              run_checkpoint_restores.org_id,
+              run_checkpoint_restores.project_id,
+              run_checkpoint_restores.environment_id,
+              run_checkpoint_restores.run_id
 ),
 updated_wait AS (
     UPDATE run_waits
@@ -1532,25 +1532,25 @@ WITH eligible_waits AS (
                AND runs.project_id = run_waits.project_id
                AND runs.environment_id = run_waits.environment_id
                AND runs.id = run_waits.run_id
-      JOIN runtime_checkpoints ON runtime_checkpoints.org_id = run_waits.org_id
-                              AND runtime_checkpoints.project_id = run_waits.project_id
-                              AND runtime_checkpoints.environment_id = run_waits.environment_id
-                              AND runtime_checkpoints.run_id = run_waits.run_id
-                              AND runtime_checkpoints.id = run_waits.runtime_checkpoint_id
-                              AND runtime_checkpoints.id = runs.latest_runtime_checkpoint_id
+      JOIN run_checkpoints ON run_checkpoints.org_id = run_waits.org_id
+                              AND run_checkpoints.project_id = run_waits.project_id
+                              AND run_checkpoints.environment_id = run_waits.environment_id
+                              AND run_checkpoints.run_id = run_waits.run_id
+                              AND run_checkpoints.id = run_waits.runtime_checkpoint_id
+                              AND run_checkpoints.id = runs.latest_runtime_checkpoint_id
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
-                     AND workspaces.current_version_id = runtime_checkpoints.base_workspace_version_id
+                     AND workspaces.current_version_id = run_checkpoints.base_workspace_version_id
      WHERE run_waits.org_id = $1
        AND run_waits.worker_group_id = $2
        AND run_waits.state = 'resuming'
        AND run_waits.runtime_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
-       AND runtime_checkpoints.state = 'ready'
-       AND (runtime_checkpoints.expires_at IS NULL OR runtime_checkpoints.expires_at > now())
+       AND run_checkpoints.state = 'ready'
+       AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
      ORDER BY COALESCE(run_waits.resuming_at, run_waits.updated_at), run_waits.id
      LIMIT $3
      FOR UPDATE OF run_waits, runs

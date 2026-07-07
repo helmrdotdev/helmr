@@ -381,7 +381,7 @@ func TestRequeueResolvedRunWaitsRequiresLatestRuntimeCheckpoint(t *testing.T) {
 	otherRuntimeCheckpointID := uuid.Must(uuid.NewV7())
 	checkpointed := createCheckpointedRunWait(t, ctx, queries, ids, runLeaseID, workerID)
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_checkpoints (
+		INSERT INTO run_checkpoints (
 			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
@@ -395,7 +395,7 @@ func TestRequeueResolvedRunWaitsRequiresLatestRuntimeCheckpoint(t *testing.T) {
 		       initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id,
 		       owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id,
 		       owner_worker_instance_id, source_worker_instance_id, cni_profile, '{"checkpoint":"other"}'::jsonb, now()
-		  FROM runtime_checkpoints
+		  FROM run_checkpoints
 		 WHERE org_id = $2
 		   AND run_id = $3
 		   AND id = $4
@@ -1008,7 +1008,7 @@ func assertRuntimeCheckpointRestore(t *testing.T, ctx context.Context, pool inte
 		       acknowledged_at,
 		       finished_at,
 		       phases
-		  FROM runtime_checkpoint_restores
+		  FROM run_checkpoint_restores
 		 WHERE org_id = $1
 		   AND run_id = $2
 		   AND run_wait_id = $3
@@ -1105,11 +1105,11 @@ func assertRunFailedAfterStaleWaitResume(t *testing.T, ctx context.Context, pool
 		                AND run_waits.id = $3
 		  JOIN runtime_instances ON runtime_instances.org_id = runs.org_id
 		                        AND runtime_instances.id = $6
-		  JOIN runtime_checkpoints stale_checkpoint
+		  JOIN run_checkpoints stale_checkpoint
 		    ON stale_checkpoint.org_id = runs.org_id
 		   AND stale_checkpoint.run_id = runs.id
 		   AND stale_checkpoint.id = $4
-		  JOIN runtime_checkpoints latest_checkpoint
+		  JOIN run_checkpoints latest_checkpoint
 		    ON latest_checkpoint.org_id = runs.org_id
 		   AND latest_checkpoint.run_id = runs.id
 		   AND latest_checkpoint.id = $5

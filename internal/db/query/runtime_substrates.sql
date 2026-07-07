@@ -1,5 +1,5 @@
 -- name: UpsertRuntimeSubstrateArtifact :one
-INSERT INTO runtime_substrate_artifacts (
+INSERT INTO runtime_substrates (
     id,
     org_id,
     worker_group_id,
@@ -40,37 +40,37 @@ DO UPDATE
 RETURNING *;
 
 -- name: GetRuntimeSubstrateArtifactForSandbox :one
-SELECT runtime_substrate_artifacts.*,
+SELECT runtime_substrates.*,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
-  FROM runtime_substrate_artifacts
+  FROM runtime_substrates
   JOIN artifacts
-    ON artifacts.org_id = runtime_substrate_artifacts.org_id
-   AND artifacts.project_id = runtime_substrate_artifacts.project_id
-   AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
-   AND artifacts.id = runtime_substrate_artifacts.artifact_id
+    ON artifacts.org_id = runtime_substrates.org_id
+   AND artifacts.project_id = runtime_substrates.project_id
+   AND artifacts.environment_id = runtime_substrates.environment_id
+   AND artifacts.id = runtime_substrates.artifact_id
   JOIN deployment_sandboxes
-    ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-   AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
-   AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
-   AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
+    ON deployment_sandboxes.org_id = runtime_substrates.org_id
+   AND deployment_sandboxes.project_id = runtime_substrates.project_id
+   AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
+   AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
   JOIN deployments
     ON deployments.org_id = deployment_sandboxes.org_id
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
   JOIN worker_groups
-    ON worker_groups.id = runtime_substrate_artifacts.worker_group_id
+    ON worker_groups.id = runtime_substrates.worker_group_id
    AND worker_groups.state IN ('active', 'draining')
- WHERE runtime_substrate_artifacts.org_id = sqlc.arg(org_id)
-   AND runtime_substrate_artifacts.worker_group_id = sqlc.arg(worker_group_id)
-   AND runtime_substrate_artifacts.project_id = sqlc.arg(project_id)
-   AND runtime_substrate_artifacts.environment_id = sqlc.arg(environment_id)
-   AND runtime_substrate_artifacts.deployment_sandbox_id = sqlc.arg(deployment_sandbox_id)
-   AND runtime_substrate_artifacts.substrate_digest = sqlc.arg(substrate_digest)
-   AND runtime_substrate_artifacts.substrate_format = sqlc.arg(substrate_format)
-   AND runtime_substrate_artifacts.builder_abi = sqlc.arg(builder_abi)
-   AND runtime_substrate_artifacts.layout_abi = sqlc.arg(layout_abi)
-   AND runtime_substrate_artifacts.retired_at IS NULL
+ WHERE runtime_substrates.org_id = sqlc.arg(org_id)
+   AND runtime_substrates.worker_group_id = sqlc.arg(worker_group_id)
+   AND runtime_substrates.project_id = sqlc.arg(project_id)
+   AND runtime_substrates.environment_id = sqlc.arg(environment_id)
+   AND runtime_substrates.deployment_sandbox_id = sqlc.arg(deployment_sandbox_id)
+   AND runtime_substrates.substrate_digest = sqlc.arg(substrate_digest)
+   AND runtime_substrates.substrate_format = sqlc.arg(substrate_format)
+   AND runtime_substrates.builder_abi = sqlc.arg(builder_abi)
+   AND runtime_substrates.layout_abi = sqlc.arg(layout_abi)
+   AND runtime_substrates.retired_at IS NULL
  LIMIT 1;

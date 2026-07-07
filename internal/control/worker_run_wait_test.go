@@ -868,9 +868,9 @@ func (s *runWaitControlStore) CreateReadyRuntimeCheckpointForRunWait(_ context.C
 	}, nil
 }
 
-func (s *runWaitControlStore) CreateRuntimeCheckpointArtifact(_ context.Context, arg db.CreateRuntimeCheckpointArtifactParams) (db.RuntimeCheckpointArtifact, error) {
+func (s *runWaitControlStore) CreateRuntimeCheckpointArtifact(_ context.Context, arg db.CreateRuntimeCheckpointArtifactParams) (db.RunCheckpointArtifact, error) {
 	s.createRuntimeCheckpointArtifactParams = append(s.createRuntimeCheckpointArtifactParams, arg)
-	return db.RuntimeCheckpointArtifact{}, nil
+	return db.RunCheckpointArtifact{}, nil
 }
 
 func (s *runWaitControlStore) GetRunWait(_ context.Context, arg db.GetRunWaitParams) (db.RunWait, error) {

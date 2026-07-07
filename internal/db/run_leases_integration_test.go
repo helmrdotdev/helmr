@@ -822,7 +822,7 @@ func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_checkpoints (
+		INSERT INTO run_checkpoints (
 			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
 			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
@@ -886,7 +886,7 @@ func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
 		       runs.current_run_lease_id,
 		       (SELECT count(*)::int FROM run_leases WHERE org_id = runs.org_id AND run_id = runs.id AND dispatch_message_id = $3),
 		       (SELECT count(*)::int FROM workspace_leases WHERE org_id = runs.org_id AND owner_run_id = runs.id AND fencing_token <> 'checkpoint-source-lease'),
-		       (SELECT count(*)::int FROM runtime_checkpoint_restores WHERE org_id = runs.org_id AND run_id = runs.id)
+		       (SELECT count(*)::int FROM run_checkpoint_restores WHERE org_id = runs.org_id AND run_id = runs.id)
 		  FROM runs
 		 WHERE runs.org_id = $1
 		   AND runs.id = $2

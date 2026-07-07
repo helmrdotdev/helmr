@@ -2634,7 +2634,7 @@ type fakeStore struct {
 	executionWorkerInstanceID               pgtype.UUID
 	executionLeaseExpiresAt                 pgtype.Timestamptz
 	releaseRunLeaseErr                      error
-	checkpoint                              db.RuntimeCheckpoint
+	checkpoint                              db.RunCheckpoint
 	abandonedClaim                          bool
 	workerBootstrapTokenHash                []byte
 	upsertWorkerBootstrapToken              db.UpsertWorkerBootstrapTokenParams

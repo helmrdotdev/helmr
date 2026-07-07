@@ -2547,6 +2547,89 @@ type Run struct {
 	FinishedAt                pgtype.Timestamptz     `json:"finished_at"`
 }
 
+type RunCheckpoint struct {
+	ID                         pgtype.UUID            `json:"id"`
+	OrgID                      pgtype.UUID            `json:"org_id"`
+	WorkerGroupID              string                 `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID            `json:"project_id"`
+	EnvironmentID              pgtype.UUID            `json:"environment_id"`
+	WorkspaceID                pgtype.UUID            `json:"workspace_id"`
+	RunID                      pgtype.UUID            `json:"run_id"`
+	SourceWorkspaceLeaseID     pgtype.UUID            `json:"source_workspace_lease_id"`
+	WorkspaceMountID           pgtype.UUID            `json:"workspace_mount_id"`
+	BaseWorkspaceVersionID     pgtype.UUID            `json:"base_workspace_version_id"`
+	State                      RuntimeCheckpointState `json:"state"`
+	RuntimeBackend             string                 `json:"runtime_backend"`
+	RuntimeID                  string                 `json:"runtime_id"`
+	RuntimeArch                string                 `json:"runtime_arch"`
+	RuntimeABI                 string                 `json:"runtime_abi"`
+	KernelDigest               string                 `json:"kernel_digest"`
+	InitramfsDigest            string                 `json:"initramfs_digest"`
+	RootfsDigest               string                 `json:"rootfs_digest"`
+	RuntimeConfigDigest        string                 `json:"runtime_config_digest"`
+	OwnerRuntimeInstanceID     pgtype.UUID            `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch          pgtype.Int8            `json:"owner_runtime_epoch"`
+	OwnerRunID                 pgtype.UUID            `json:"owner_run_id"`
+	OwnerRunWaitID             pgtype.UUID            `json:"owner_run_wait_id"`
+	OwnerRunLeaseID            pgtype.UUID            `json:"owner_run_lease_id"`
+	OwnerWorkerInstanceID      pgtype.UUID            `json:"owner_worker_instance_id"`
+	SourceWorkerInstanceID     pgtype.UUID            `json:"source_worker_instance_id"`
+	SubstrateDigest            pgtype.Text            `json:"substrate_digest"`
+	RuntimeSubstrateArtifactID pgtype.UUID            `json:"runtime_substrate_artifact_id"`
+	RuntimeVcpus               pgtype.Int4            `json:"runtime_vcpus"`
+	RuntimeMemoryMib           pgtype.Int4            `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib      pgtype.Int4            `json:"runtime_scratch_disk_mib"`
+	CniProfile                 string                 `json:"cni_profile"`
+	ImageKey                   pgtype.Text            `json:"image_key"`
+	Manifest                   []byte                 `json:"manifest"`
+	ErrorMessage               pgtype.Text            `json:"error_message"`
+	ExpiresAt                  pgtype.Timestamptz     `json:"expires_at"`
+	CreationStartedAt          pgtype.Timestamptz     `json:"creation_started_at"`
+	CreationExpiresAt          pgtype.Timestamptz     `json:"creation_expires_at"`
+	CreatedAt                  pgtype.Timestamptz     `json:"created_at"`
+	ReadyAt                    pgtype.Timestamptz     `json:"ready_at"`
+	InvalidatedAt              pgtype.Timestamptz     `json:"invalidated_at"`
+}
+
+type RunCheckpointArtifact struct {
+	OrgID               pgtype.UUID                   `json:"org_id"`
+	WorkerGroupID       string                        `json:"worker_group_id"`
+	ProjectID           pgtype.UUID                   `json:"project_id"`
+	EnvironmentID       pgtype.UUID                   `json:"environment_id"`
+	RunID               pgtype.UUID                   `json:"run_id"`
+	RuntimeCheckpointID pgtype.UUID                   `json:"runtime_checkpoint_id"`
+	Role                RuntimeCheckpointArtifactRole `json:"role"`
+	Ordinal             int32                         `json:"ordinal"`
+	ArtifactID          pgtype.UUID                   `json:"artifact_id"`
+	SizeBytes           int64                         `json:"size_bytes"`
+	MediaType           string                        `json:"media_type"`
+	Digest              string                        `json:"digest"`
+	EncryptDurationMs   int64                         `json:"encrypt_duration_ms"`
+	StoreDurationMs     int64                         `json:"store_duration_ms"`
+	CreatedAt           pgtype.Timestamptz            `json:"created_at"`
+}
+
+type RunCheckpointRestore struct {
+	ID                  pgtype.UUID                    `json:"id"`
+	OrgID               pgtype.UUID                    `json:"org_id"`
+	WorkerGroupID       string                         `json:"worker_group_id"`
+	ProjectID           pgtype.UUID                    `json:"project_id"`
+	EnvironmentID       pgtype.UUID                    `json:"environment_id"`
+	RunID               pgtype.UUID                    `json:"run_id"`
+	RuntimeCheckpointID pgtype.UUID                    `json:"runtime_checkpoint_id"`
+	RunWaitID           pgtype.UUID                    `json:"run_wait_id"`
+	RunLeaseID          pgtype.UUID                    `json:"run_lease_id"`
+	WorkerInstanceID    pgtype.UUID                    `json:"worker_instance_id"`
+	Status              RuntimeCheckpointRestoreStatus `json:"status"`
+	Phases              []byte                         `json:"phases"`
+	ErrorMessage        pgtype.Text                    `json:"error_message"`
+	StartedAt           pgtype.Timestamptz             `json:"started_at"`
+	AcknowledgedAt      pgtype.Timestamptz             `json:"acknowledged_at"`
+	FinishedAt          pgtype.Timestamptz             `json:"finished_at"`
+	CreatedAt           pgtype.Timestamptz             `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz             `json:"updated_at"`
+}
+
 type RunLease struct {
 	ID                         pgtype.UUID        `json:"id"`
 	OrgID                      pgtype.UUID        `json:"org_id"`
@@ -2651,89 +2734,6 @@ type RunWait struct {
 	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RuntimeCheckpoint struct {
-	ID                         pgtype.UUID            `json:"id"`
-	OrgID                      pgtype.UUID            `json:"org_id"`
-	WorkerGroupID              string                 `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID            `json:"project_id"`
-	EnvironmentID              pgtype.UUID            `json:"environment_id"`
-	WorkspaceID                pgtype.UUID            `json:"workspace_id"`
-	RunID                      pgtype.UUID            `json:"run_id"`
-	SourceWorkspaceLeaseID     pgtype.UUID            `json:"source_workspace_lease_id"`
-	WorkspaceMountID           pgtype.UUID            `json:"workspace_mount_id"`
-	BaseWorkspaceVersionID     pgtype.UUID            `json:"base_workspace_version_id"`
-	State                      RuntimeCheckpointState `json:"state"`
-	RuntimeBackend             string                 `json:"runtime_backend"`
-	RuntimeID                  string                 `json:"runtime_id"`
-	RuntimeArch                string                 `json:"runtime_arch"`
-	RuntimeABI                 string                 `json:"runtime_abi"`
-	KernelDigest               string                 `json:"kernel_digest"`
-	InitramfsDigest            string                 `json:"initramfs_digest"`
-	RootfsDigest               string                 `json:"rootfs_digest"`
-	RuntimeConfigDigest        string                 `json:"runtime_config_digest"`
-	OwnerRuntimeInstanceID     pgtype.UUID            `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8            `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID            `json:"owner_run_id"`
-	OwnerRunWaitID             pgtype.UUID            `json:"owner_run_wait_id"`
-	OwnerRunLeaseID            pgtype.UUID            `json:"owner_run_lease_id"`
-	OwnerWorkerInstanceID      pgtype.UUID            `json:"owner_worker_instance_id"`
-	SourceWorkerInstanceID     pgtype.UUID            `json:"source_worker_instance_id"`
-	SubstrateDigest            pgtype.Text            `json:"substrate_digest"`
-	RuntimeSubstrateArtifactID pgtype.UUID            `json:"runtime_substrate_artifact_id"`
-	RuntimeVcpus               pgtype.Int4            `json:"runtime_vcpus"`
-	RuntimeMemoryMib           pgtype.Int4            `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib      pgtype.Int4            `json:"runtime_scratch_disk_mib"`
-	CniProfile                 string                 `json:"cni_profile"`
-	ImageKey                   pgtype.Text            `json:"image_key"`
-	Manifest                   []byte                 `json:"manifest"`
-	ErrorMessage               pgtype.Text            `json:"error_message"`
-	ExpiresAt                  pgtype.Timestamptz     `json:"expires_at"`
-	CreationStartedAt          pgtype.Timestamptz     `json:"creation_started_at"`
-	CreationExpiresAt          pgtype.Timestamptz     `json:"creation_expires_at"`
-	CreatedAt                  pgtype.Timestamptz     `json:"created_at"`
-	ReadyAt                    pgtype.Timestamptz     `json:"ready_at"`
-	InvalidatedAt              pgtype.Timestamptz     `json:"invalidated_at"`
-}
-
-type RuntimeCheckpointArtifact struct {
-	OrgID               pgtype.UUID                   `json:"org_id"`
-	WorkerGroupID       string                        `json:"worker_group_id"`
-	ProjectID           pgtype.UUID                   `json:"project_id"`
-	EnvironmentID       pgtype.UUID                   `json:"environment_id"`
-	RunID               pgtype.UUID                   `json:"run_id"`
-	RuntimeCheckpointID pgtype.UUID                   `json:"runtime_checkpoint_id"`
-	Role                RuntimeCheckpointArtifactRole `json:"role"`
-	Ordinal             int32                         `json:"ordinal"`
-	ArtifactID          pgtype.UUID                   `json:"artifact_id"`
-	SizeBytes           int64                         `json:"size_bytes"`
-	MediaType           string                        `json:"media_type"`
-	Digest              string                        `json:"digest"`
-	EncryptDurationMs   int64                         `json:"encrypt_duration_ms"`
-	StoreDurationMs     int64                         `json:"store_duration_ms"`
-	CreatedAt           pgtype.Timestamptz            `json:"created_at"`
-}
-
-type RuntimeCheckpointRestore struct {
-	ID                  pgtype.UUID                    `json:"id"`
-	OrgID               pgtype.UUID                    `json:"org_id"`
-	WorkerGroupID       string                         `json:"worker_group_id"`
-	ProjectID           pgtype.UUID                    `json:"project_id"`
-	EnvironmentID       pgtype.UUID                    `json:"environment_id"`
-	RunID               pgtype.UUID                    `json:"run_id"`
-	RuntimeCheckpointID pgtype.UUID                    `json:"runtime_checkpoint_id"`
-	RunWaitID           pgtype.UUID                    `json:"run_wait_id"`
-	RunLeaseID          pgtype.UUID                    `json:"run_lease_id"`
-	WorkerInstanceID    pgtype.UUID                    `json:"worker_instance_id"`
-	Status              RuntimeCheckpointRestoreStatus `json:"status"`
-	Phases              []byte                         `json:"phases"`
-	ErrorMessage        pgtype.Text                    `json:"error_message"`
-	StartedAt           pgtype.Timestamptz             `json:"started_at"`
-	AcknowledgedAt      pgtype.Timestamptz             `json:"acknowledged_at"`
-	FinishedAt          pgtype.Timestamptz             `json:"finished_at"`
-	CreatedAt           pgtype.Timestamptz             `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz             `json:"updated_at"`
-}
-
 type RuntimeInstance struct {
 	ID                         pgtype.UUID          `json:"id"`
 	OrgID                      pgtype.UUID          `json:"org_id"`
@@ -2811,7 +2811,7 @@ type RuntimeReleaseSelection struct {
 	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
-type RuntimeSubstrateArtifact struct {
+type RuntimeSubstrate struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	WorkerGroupID             string             `json:"worker_group_id"`
