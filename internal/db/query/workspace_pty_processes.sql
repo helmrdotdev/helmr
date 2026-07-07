@@ -488,7 +488,7 @@ terminal_telemetry_outbox AS (
            'standard',
            inserted.observed_at
       FROM inserted
-    ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key) DO NOTHING
     RETURNING id
 )
 SELECT *

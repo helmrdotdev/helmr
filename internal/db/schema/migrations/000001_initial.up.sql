@@ -2046,8 +2046,11 @@ CREATE TABLE telemetry_outbox (
     traceparent TEXT CHECK (
         traceparent IS NULL
         OR (
-            span_id IS NOT NULL
-            AND traceparent = '00-' || trace_id || '-' || span_id || '-01'
+            trace_id IS NOT NULL
+            AND span_id IS NOT NULL
+            AND traceparent ~ '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
+            AND substring(traceparent from 4 for 32) = trace_id
+            AND substring(traceparent from 37 for 16) = span_id
         )
     ),
     category TEXT NOT NULL DEFAULT 'system',
@@ -2114,6 +2117,7 @@ CREATE TABLE telemetry_outbox (
             AND size_bytes IS NOT NULL
             AND offset_start IS NOT NULL
             AND offset_end IS NOT NULL
+            AND offset_end >= offset_start
         )
     ),
     CHECK (
@@ -2133,7 +2137,7 @@ CREATE TABLE telemetry_outbox (
 );
 
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
-    ON telemetry_outbox (worker_group_id, stream_kind, idempotency_key);
+    ON telemetry_outbox (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key);
 CREATE INDEX telemetry_outbox_publish_ready_idx
     ON telemetry_outbox (created_at, id)
     WHERE stream_kind = 'event' AND published_at IS NULL;
@@ -2217,7 +2221,11 @@ CREATE TABLE run_leases (
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     span_id TEXT NOT NULL CHECK (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000'),
     parent_span_id TEXT NOT NULL CHECK (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000'),
-    traceparent TEXT NOT NULL CHECK (traceparent = '00-' || trace_id || '-' || span_id || '-01'),
+    traceparent TEXT NOT NULL CHECK (
+        traceparent ~ '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
+        AND substring(traceparent from 4 for 32) = trace_id
+        AND substring(traceparent from 37 for 16) = span_id
+    ),
     restore_runtime_checkpoint_id UUID,
     leased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
@@ -2240,38 +2248,6 @@ CREATE TABLE run_leases (
         REFERENCES runs(org_id, id)
         ON DELETE CASCADE
 );
-
-CREATE FUNCTION active_run_lease_count_for_concurrency_scope(
-    p_org_id UUID,
-    p_worker_group_id TEXT,
-    p_project_id UUID,
-    p_environment_id UUID,
-    p_queue_class TEXT,
-    p_queue_name TEXT,
-    p_concurrency_key TEXT
-) RETURNS INTEGER
-LANGUAGE plpgsql
-VOLATILE
-AS $$
-DECLARE
-    active_count INTEGER;
-BEGIN
-    SELECT count(run_leases.id)::int
-      INTO active_count
-      FROM run_leases
-     WHERE run_leases.org_id = p_org_id
-       AND run_leases.worker_group_id = p_worker_group_id
-       AND run_leases.project_id = p_project_id
-       AND run_leases.environment_id = p_environment_id
-       AND run_leases.queue_class = p_queue_class
-       AND run_leases.queue_name = p_queue_name
-       AND run_leases.concurrency_key IS NOT DISTINCT FROM p_concurrency_key
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now();
-
-    RETURN COALESCE(active_count, 0);
-END;
-$$;
 
 CREATE TABLE run_state_snapshots (
     org_id UUID NOT NULL,
@@ -2469,8 +2445,8 @@ CREATE TABLE meter_events (
 CREATE UNIQUE INDEX meter_events_idempotency_idx
     ON meter_events (org_id, source_type, source_id, meter, idempotency_key);
 
-CREATE INDEX meter_events_scope_created_idx
-    ON meter_events (org_id, worker_group_id, project_id, environment_id, created_at DESC);
+CREATE INDEX meter_events_scope_meter_time_idx
+    ON meter_events (org_id, project_id, environment_id, meter, occurred_at DESC, id DESC);
 
 CREATE INDEX meter_events_trace_idx
     ON meter_events (trace_id, created_at)
@@ -2982,6 +2958,9 @@ CREATE UNIQUE INDEX run_leases_one_active_per_run_idx ON run_leases(run_id)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_leases_attempt_number_idx ON run_leases(org_id, worker_group_id, run_id, attempt_number, leased_at DESC);
 CREATE INDEX run_leases_active_lease_idx ON run_leases(org_id, worker_group_id, status, lease_expires_at)
+    WHERE status IN ('leased', 'running');
+CREATE INDEX run_leases_active_concurrency_idx
+    ON run_leases(org_id, worker_group_id, project_id, environment_id, queue_class, queue_name, concurrency_key, lease_expires_at)
     WHERE status IN ('leased', 'running');
 CREATE INDEX run_leases_worker_instance_status_idx ON run_leases(org_id, worker_group_id, worker_instance_id, status);
 CREATE INDEX run_leases_worker_group_idx ON run_leases(worker_group_id);

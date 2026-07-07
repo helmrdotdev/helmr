@@ -926,7 +926,7 @@ terminal_telemetry_outbox AS (
            'standard',
            inserted.observed_at
       FROM inserted
-    ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key) DO NOTHING
     RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at

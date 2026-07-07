@@ -321,6 +321,7 @@ type Querier interface {
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
+	LockRunLeaseConcurrencyScope(ctx context.Context, arg LockRunLeaseConcurrencyScopeParams) error
 	LockSession(ctx context.Context, arg LockSessionParams) (Session, error)
 	LockWorkspaceExecForStreamAppend(ctx context.Context, arg LockWorkspaceExecForStreamAppendParams) (LockWorkspaceExecForStreamAppendRow, error)
 	LockWorkspacePrimitiveWriterScope(ctx context.Context, arg LockWorkspacePrimitiveWriterScopeParams) (pgtype.UUID, error)
