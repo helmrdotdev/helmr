@@ -165,20 +165,6 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_instances (
-			org_id, worker_group_id, resource_id, status, protocol_version,
-			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
-			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
-			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-		)
-		VALUES ($1, $2, 'default-test-worker', 'active', $3,
-			4000, 8192, 65536, 4, 4000, 8192, 65536, 4,
-			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-		ON CONFLICT (worker_group_id, resource_id) DO NOTHING
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, api.CurrentWorkerProtocolVersion); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
 		INSERT INTO deployment_sandboxes (
 			id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
@@ -273,6 +259,25 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	return ids
+}
+
+func seedDefaultPlacementWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
+	t.Helper()
+	workerID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_instances (
+			id, org_id, worker_group_id, resource_id, status, protocol_version,
+			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
+			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, $3, $4, 'active', $5,
+			4000, 8192, 65536, 4, 4000, 8192, 65536, 4,
+			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, "worker-"+shortUUID(workerID), api.CurrentWorkerProtocolVersion); err != nil {
+		t.Fatal(err)
+	}
+	return workerID
 }
 
 func seedSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {

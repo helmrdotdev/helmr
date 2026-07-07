@@ -18,6 +18,7 @@ func TestCreateScopedRunUsesExistingSessionWorkspacePlacement(t *testing.T) {
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 	sessionID := seedSessionForRun(t, ctx, pool, ids)
+	seedDefaultPlacementWorker(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO regions (id, provider, provider_region, display_name)
 		VALUES ('us-west-2', 'aws', 'us-west-2', 'US West (Oregon)')
