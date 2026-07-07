@@ -91,6 +91,38 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
 
+	if err := writer.WriteMeterEvents(context.Background(), []MeterEventRecord{{
+		WorkerGroupID:  "us-east-1-worker-group-1",
+		OrgID:          uuid.Must(uuid.NewV7()),
+		ProjectID:      uuid.Must(uuid.NewV7()),
+		EnvironmentID:  uuid.Must(uuid.NewV7()),
+		SourceType:     "run_lease",
+		SourceID:       runLeaseID,
+		RunID:          runID,
+		AttemptNumber:  &attemptNumber,
+		TraceID:        "trace",
+		SpanID:         "span",
+		Meter:          "active_time",
+		Quantity:       "123",
+		Unit:           "ms",
+		MeasuredTo:     &observedAt,
+		Details:        `{"phase":"final"}`,
+		IdempotencyKey: "meter-key",
+		OccurredAt:     observedAt,
+		CreatedAt:      observedAt,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	meterBatch := client.takeLast(t)
+	assertQueryContains(t, meterBatch.query, "INSERT INTO helmr_telemetry.meter_events", "quantity", "occurred_at")
+	assertRowShape(t, meterBatch.rows, 1, 18)
+	if got := meterBatch.rows[0][10]; got != "active_time" {
+		t.Fatalf("meter event meter = %v, want active_time", got)
+	}
+	if got := meterBatch.rows[0][11]; got != "123" {
+		t.Fatalf("meter event quantity = %v, want 123", got)
+	}
+
 	if err := writer.WriteTerminalOutput(context.Background(), []TerminalOutputRecord{{
 		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),

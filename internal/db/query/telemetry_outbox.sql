@@ -94,6 +94,57 @@ SELECT updated.id AS outbox_id,
   FROM updated
  ORDER BY updated.id ASC;
 
+-- name: ClaimMeterEventIngestBatch :many
+WITH claimed AS (
+    SELECT telemetry_outbox.id
+      FROM telemetry_outbox
+     WHERE telemetry_outbox.stream_kind = 'meter_event'
+       AND telemetry_outbox.written_at IS NULL
+       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
+     ORDER BY telemetry_outbox.id ASC
+     LIMIT sqlc.arg(row_limit)
+     FOR UPDATE SKIP LOCKED
+),
+updated AS (
+    UPDATE telemetry_outbox
+       SET state = 'claimed',
+           retry_count = telemetry_outbox.retry_count + 1,
+           next_retry_at = now() + sqlc.arg(lease_duration)::interval,
+           updated_at = now(),
+           last_error = ''
+      FROM claimed
+     WHERE telemetry_outbox.id = claimed.id
+    RETURNING telemetry_outbox.*
+)
+SELECT updated.id AS outbox_id,
+       updated.retry_count,
+       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
+       meter_events.org_id,
+       meter_events.worker_group_id,
+       meter_events.project_id,
+       meter_events.environment_id,
+       meter_events.source_type,
+       meter_events.source_id,
+       meter_events.run_id,
+       meter_events.attempt_number,
+       meter_events.trace_id,
+       meter_events.span_id,
+       meter_events.meter,
+       meter_events.quantity,
+       meter_events.unit,
+       meter_events.measured_to,
+       meter_events.details,
+       meter_events.occurred_at,
+       meter_events.created_at
+  FROM updated
+  JOIN meter_events ON meter_events.org_id = updated.org_id
+                   AND meter_events.source_type = updated.source_kind
+                   AND meter_events.source_id = updated.source_id
+                   AND meter_events.meter = updated.kind
+                   AND meter_events.idempotency_key = updated.idempotency_key
+ ORDER BY updated.id ASC;
+
 -- name: ClaimWorkspaceExecTerminalOutputIngestBatch :many
 WITH claimed AS (
     SELECT telemetry_outbox.id

@@ -106,6 +106,46 @@ func (w *ClickHouseWriter) WriteRunLogs(ctx context.Context, rows []RunLogRecord
 	return batch.Send()
 }
 
+func (w *ClickHouseWriter) WriteMeterEvents(ctx context.Context, rows []MeterEventRecord) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	batch, err := w.client.PrepareBatch(ctx, `INSERT INTO helmr_telemetry.meter_events (
+    worker_group_id, org_id, project_id, environment_id, source_type, source_id,
+    run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to,
+    details, idempotency_key, occurred_at, created_at
+)`)
+	if err != nil {
+		return err
+	}
+	defer batch.Close()
+	for idx, row := range rows {
+		if err := batch.Append(
+			row.WorkerGroupID,
+			row.OrgID,
+			row.ProjectID,
+			row.EnvironmentID,
+			row.SourceType,
+			row.SourceID,
+			row.RunID,
+			row.AttemptNumber,
+			row.TraceID,
+			row.SpanID,
+			row.Meter,
+			row.Quantity,
+			row.Unit,
+			row.MeasuredTo,
+			row.Details,
+			row.IdempotencyKey,
+			row.OccurredAt,
+			row.CreatedAt,
+		); err != nil {
+			return fmt.Errorf("append meter event row %d: %w", idx, err)
+		}
+	}
+	return batch.Send()
+}
+
 func (w *ClickHouseWriter) WriteTerminalOutput(ctx context.Context, rows []TerminalOutputRecord) error {
 	if len(rows) == 0 {
 		return nil
