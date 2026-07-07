@@ -76,7 +76,7 @@ inserted_chunk AS (
            'standard',
            now()
       FROM candidate
-    ON CONFLICT (worker_group_id, stream_kind, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key) DO NOTHING
     RETURNING telemetry_outbox.org_id,
               telemetry_outbox.worker_group_id,
               telemetry_outbox.run_id,
@@ -104,7 +104,10 @@ existing_chunk AS (
            telemetry_outbox.created_at,
            false AS is_new
       FROM telemetry_outbox
-      JOIN candidate ON candidate.worker_group_id = telemetry_outbox.worker_group_id
+      JOIN candidate ON candidate.org_id = telemetry_outbox.org_id
+                    AND telemetry_outbox.source_kind = 'run'
+                    AND telemetry_outbox.source_id = candidate.id
+                    AND telemetry_outbox.stream_name = candidate.stream::text
                     AND telemetry_outbox.stream_kind = 'run_log'
                     AND telemetry_outbox.idempotency_key = candidate.idempotency_key
      WHERE NOT EXISTS (SELECT 1 FROM inserted_chunk)

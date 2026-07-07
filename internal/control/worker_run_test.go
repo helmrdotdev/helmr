@@ -1480,6 +1480,10 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	}, nil
 }
 
+func (f *fakeStore) LockRunLeaseConcurrencyScope(context.Context, db.LockRunLeaseConcurrencyScopeParams) error {
+	return nil
+}
+
 func (f *fakeStore) RequeueExpiredLeasedRunLeases(context.Context, db.RequeueExpiredLeasedRunLeasesParams) error {
 	return nil
 }

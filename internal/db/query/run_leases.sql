@@ -121,6 +121,23 @@ UPDATE run_leases
    AND run_leases.id = expired.run_lease_id
    AND (SELECT released_workspace_lease_count + requeued_telemetry_outbox_count FROM cleanup) >= 0;
 
+-- name: LockRunLeaseConcurrencyScope :exec
+SELECT pg_advisory_xact_lock(hashtextextended(
+           'run-queue-concurrency:' ||
+           runs.org_id::text || ':' ||
+           runs.worker_group_id || ':' ||
+           runs.project_id::text || ':' ||
+           runs.environment_id::text || ':' ||
+           runs.queue_class || ':' ||
+           runs.queue_name || ':' ||
+           COALESCE(runs.concurrency_key, ''),
+           0
+       ))
+  FROM runs
+ WHERE runs.org_id = sqlc.arg(org_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND COALESCE(runs.queue_concurrency_limit, 0) > 0;
+
 -- name: AbandonLeasedRunLease :exec
 WITH abandoned AS (
     UPDATE runs
@@ -741,33 +758,19 @@ candidate AS MATERIALIZED (
        )
      FOR UPDATE OF runs
 ),
-concurrency_lock AS (
-    SELECT pg_advisory_xact_lock(hashtextextended(
-               'run-queue-concurrency:' ||
-               candidate.org_id::text || ':' ||
-               candidate.worker_group_id || ':' ||
-               candidate.project_id::text || ':' ||
-               candidate.environment_id::text || ':' ||
-               candidate.queue_class || ':' ||
-               candidate.queue_name || ':' ||
-               COALESCE(candidate.concurrency_key, ''),
-               0
-           )) AS locked
-      FROM candidate
-     WHERE COALESCE(candidate.queue_concurrency_limit, 0) > 0
-),
 active_concurrency AS (
-    SELECT active_run_lease_count_for_concurrency_scope(
-               candidate.org_id,
-               candidate.worker_group_id,
-               candidate.project_id,
-               candidate.environment_id,
-               candidate.queue_class,
-               candidate.queue_name,
-               candidate.concurrency_key
-           ) AS active_count
+    SELECT count(run_leases.id)::int AS active_count
       FROM candidate
-      JOIN concurrency_lock ON true
+      JOIN run_leases
+        ON run_leases.org_id = candidate.org_id
+       AND run_leases.worker_group_id = candidate.worker_group_id
+       AND run_leases.project_id = candidate.project_id
+       AND run_leases.environment_id = candidate.environment_id
+       AND run_leases.queue_class = candidate.queue_class
+       AND run_leases.queue_name = candidate.queue_name
+       AND run_leases.concurrency_key IS NOT DISTINCT FROM candidate.concurrency_key
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
 ),
 concurrency_guard AS (
     SELECT candidate.*
@@ -829,11 +832,6 @@ workspace_lease_guard AS (
         OR concurrency_guard.workspace_mount_id IS NULL
         OR EXISTS (SELECT 1 FROM workspace_write_lease)
 ),
-confirmed_candidate AS (
-    SELECT concurrency_guard.*
-      FROM concurrency_guard
-      JOIN workspace_lease_guard ON true
-),
 leased_run_lease AS (
     INSERT INTO run_leases (
         id,
@@ -862,30 +860,31 @@ leased_run_lease AS (
         restore_runtime_checkpoint_id
     )
     SELECT sqlc.arg(run_lease_id),
-           confirmed_candidate.org_id,
-           confirmed_candidate.worker_group_id,
-           confirmed_candidate.project_id,
-           confirmed_candidate.environment_id,
-           confirmed_candidate.queue_class,
-           confirmed_candidate.queue_name,
-           confirmed_candidate.concurrency_key,
-           confirmed_candidate.id,
+           concurrency_guard.org_id,
+           concurrency_guard.worker_group_id,
+           concurrency_guard.project_id,
+           concurrency_guard.environment_id,
+           concurrency_guard.queue_class,
+           concurrency_guard.queue_name,
+           concurrency_guard.concurrency_key,
+           concurrency_guard.id,
            sqlc.arg(worker_instance_id),
            sqlc.arg(dispatch_message_id)::text,
-           confirmed_candidate.dispatch_generation,
+           concurrency_guard.dispatch_generation,
            sqlc.arg(dispatch_lease_id),
            sqlc.arg(dispatch_attempt),
-           confirmed_candidate.current_attempt_number,
+           concurrency_guard.current_attempt_number,
            'leased',
            sqlc.arg(lease_expires_at),
-           confirmed_candidate.runtime_id,
-           confirmed_candidate.worker_protocol_version,
-           confirmed_candidate.trace_id,
+           concurrency_guard.runtime_id,
+           concurrency_guard.worker_protocol_version,
+           concurrency_guard.trace_id,
            sqlc.arg(run_lease_span_id),
-           confirmed_candidate.root_span_id,
-           '00-' || confirmed_candidate.trace_id || '-' || sqlc.arg(run_lease_span_id)::text || '-01',
-           confirmed_candidate.latest_runtime_checkpoint_id
-      FROM confirmed_candidate
+           concurrency_guard.root_span_id,
+           '00-' || concurrency_guard.trace_id || '-' || sqlc.arg(run_lease_span_id)::text || '-01',
+           concurrency_guard.latest_runtime_checkpoint_id
+      FROM concurrency_guard
+      JOIN workspace_lease_guard ON true
     RETURNING *
 ),
 updated AS (

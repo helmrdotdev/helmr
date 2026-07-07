@@ -904,33 +904,19 @@ candidate AS MATERIALIZED (
        )
      FOR UPDATE OF runs
 ),
-concurrency_lock AS (
-    SELECT pg_advisory_xact_lock(hashtextextended(
-               'run-queue-concurrency:' ||
-               candidate.org_id::text || ':' ||
-               candidate.worker_group_id || ':' ||
-               candidate.project_id::text || ':' ||
-               candidate.environment_id::text || ':' ||
-               candidate.queue_class || ':' ||
-               candidate.queue_name || ':' ||
-               COALESCE(candidate.concurrency_key, ''),
-               0
-           )) AS locked
-      FROM candidate
-     WHERE COALESCE(candidate.queue_concurrency_limit, 0) > 0
-),
 active_concurrency AS (
-    SELECT active_run_lease_count_for_concurrency_scope(
-               candidate.org_id,
-               candidate.worker_group_id,
-               candidate.project_id,
-               candidate.environment_id,
-               candidate.queue_class,
-               candidate.queue_name,
-               candidate.concurrency_key
-           ) AS active_count
+    SELECT count(run_leases.id)::int AS active_count
       FROM candidate
-      JOIN concurrency_lock ON true
+      JOIN run_leases
+        ON run_leases.org_id = candidate.org_id
+       AND run_leases.worker_group_id = candidate.worker_group_id
+       AND run_leases.project_id = candidate.project_id
+       AND run_leases.environment_id = candidate.environment_id
+       AND run_leases.queue_class = candidate.queue_class
+       AND run_leases.queue_name = candidate.queue_name
+       AND run_leases.concurrency_key IS NOT DISTINCT FROM candidate.concurrency_key
+       AND run_leases.status IN ('leased', 'running')
+       AND run_leases.lease_expires_at > now()
 ),
 concurrency_guard AS (
     SELECT candidate.id, candidate.public_id, candidate.org_id, candidate.worker_group_id, candidate.project_id, candidate.environment_id, candidate.deployment_id, candidate.deployment_task_id, candidate.workspace_id, candidate.workspace_mount_id, candidate.deployment_version, candidate.api_version, candidate.sdk_version, candidate.cli_version, candidate.task_id, candidate.session_id, candidate.schedule_id, candidate.schedule_instance_id, candidate.scheduled_at, candidate.status, candidate.execution_status, candidate.terminal_outcome, candidate.payload, candidate.output, candidate.metadata, candidate.tags, candidate.locked_retry_policy, candidate.queue_class, candidate.queue_name, candidate.queue_concurrency_limit, candidate.concurrency_key, candidate.priority, candidate.queue_timestamp, candidate.ttl, candidate.queued_expires_at, candidate.dispatch_generation, candidate.dispatch_attempt_count, candidate.last_enqueue_error, candidate.last_enqueued_at, candidate.requested_milli_cpu, candidate.requested_memory_mib, candidate.requested_disk_mib, candidate.requested_execution_slots, candidate.runtime_id, candidate.runtime_arch, candidate.runtime_abi, candidate.kernel_digest, candidate.initramfs_digest, candidate.rootfs_digest, candidate.cni_profile, candidate.network_policy, candidate.placement, candidate.max_active_duration_ms, candidate.active_elapsed_ms, candidate.active_started_at, candidate.trace_id, candidate.root_span_id, candidate.state_version, candidate.current_attempt_number, candidate.current_run_lease_id, candidate.latest_runtime_checkpoint_id, candidate.exit_code, candidate.error_message, candidate.created_at, candidate.updated_at, candidate.started_at, candidate.finished_at, candidate.worker_protocol_version
@@ -992,11 +978,6 @@ workspace_lease_guard AS (
         OR concurrency_guard.workspace_mount_id IS NULL
         OR EXISTS (SELECT 1 FROM workspace_write_lease)
 ),
-confirmed_candidate AS (
-    SELECT concurrency_guard.id, concurrency_guard.public_id, concurrency_guard.org_id, concurrency_guard.worker_group_id, concurrency_guard.project_id, concurrency_guard.environment_id, concurrency_guard.deployment_id, concurrency_guard.deployment_task_id, concurrency_guard.workspace_id, concurrency_guard.workspace_mount_id, concurrency_guard.deployment_version, concurrency_guard.api_version, concurrency_guard.sdk_version, concurrency_guard.cli_version, concurrency_guard.task_id, concurrency_guard.session_id, concurrency_guard.schedule_id, concurrency_guard.schedule_instance_id, concurrency_guard.scheduled_at, concurrency_guard.status, concurrency_guard.execution_status, concurrency_guard.terminal_outcome, concurrency_guard.payload, concurrency_guard.output, concurrency_guard.metadata, concurrency_guard.tags, concurrency_guard.locked_retry_policy, concurrency_guard.queue_class, concurrency_guard.queue_name, concurrency_guard.queue_concurrency_limit, concurrency_guard.concurrency_key, concurrency_guard.priority, concurrency_guard.queue_timestamp, concurrency_guard.ttl, concurrency_guard.queued_expires_at, concurrency_guard.dispatch_generation, concurrency_guard.dispatch_attempt_count, concurrency_guard.last_enqueue_error, concurrency_guard.last_enqueued_at, concurrency_guard.requested_milli_cpu, concurrency_guard.requested_memory_mib, concurrency_guard.requested_disk_mib, concurrency_guard.requested_execution_slots, concurrency_guard.runtime_id, concurrency_guard.runtime_arch, concurrency_guard.runtime_abi, concurrency_guard.kernel_digest, concurrency_guard.initramfs_digest, concurrency_guard.rootfs_digest, concurrency_guard.cni_profile, concurrency_guard.network_policy, concurrency_guard.placement, concurrency_guard.max_active_duration_ms, concurrency_guard.active_elapsed_ms, concurrency_guard.active_started_at, concurrency_guard.trace_id, concurrency_guard.root_span_id, concurrency_guard.state_version, concurrency_guard.current_attempt_number, concurrency_guard.current_run_lease_id, concurrency_guard.latest_runtime_checkpoint_id, concurrency_guard.exit_code, concurrency_guard.error_message, concurrency_guard.created_at, concurrency_guard.updated_at, concurrency_guard.started_at, concurrency_guard.finished_at, concurrency_guard.worker_protocol_version
-      FROM concurrency_guard
-      JOIN workspace_lease_guard ON true
-),
 leased_run_lease AS (
     INSERT INTO run_leases (
         id,
@@ -1025,30 +1006,31 @@ leased_run_lease AS (
         restore_runtime_checkpoint_id
     )
     SELECT $6,
-           confirmed_candidate.org_id,
-           confirmed_candidate.worker_group_id,
-           confirmed_candidate.project_id,
-           confirmed_candidate.environment_id,
-           confirmed_candidate.queue_class,
-           confirmed_candidate.queue_name,
-           confirmed_candidate.concurrency_key,
-           confirmed_candidate.id,
+           concurrency_guard.org_id,
+           concurrency_guard.worker_group_id,
+           concurrency_guard.project_id,
+           concurrency_guard.environment_id,
+           concurrency_guard.queue_class,
+           concurrency_guard.queue_name,
+           concurrency_guard.concurrency_key,
+           concurrency_guard.id,
            $1,
            $7::text,
-           confirmed_candidate.dispatch_generation,
+           concurrency_guard.dispatch_generation,
            $8,
            $9,
-           confirmed_candidate.current_attempt_number,
+           concurrency_guard.current_attempt_number,
            'leased',
            $5,
-           confirmed_candidate.runtime_id,
-           confirmed_candidate.worker_protocol_version,
-           confirmed_candidate.trace_id,
+           concurrency_guard.runtime_id,
+           concurrency_guard.worker_protocol_version,
+           concurrency_guard.trace_id,
            $10,
-           confirmed_candidate.root_span_id,
-           '00-' || confirmed_candidate.trace_id || '-' || $10::text || '-01',
-           confirmed_candidate.latest_runtime_checkpoint_id
-      FROM confirmed_candidate
+           concurrency_guard.root_span_id,
+           '00-' || concurrency_guard.trace_id || '-' || $10::text || '-01',
+           concurrency_guard.latest_runtime_checkpoint_id
+      FROM concurrency_guard
+      JOIN workspace_lease_guard ON true
     RETURNING id, org_id, queue_class, run_id, worker_instance_id, worker_group_id, project_id, environment_id, dispatch_message_id, dispatch_generation, dispatch_lease_id, dispatch_attempt, attempt_number, queue_name, concurrency_key, status, lease_expires_at, runtime_id, worker_protocol_version, active_duration_ms, trace_id, span_id, parent_span_id, traceparent, restore_runtime_checkpoint_id, leased_at, started_at, renewed_at, released_at, lost_at
 ),
 updated AS (
@@ -1484,6 +1466,34 @@ func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (L
 		&i.WorkspaceRuntimeSubstrateArtifactMediaType,
 	)
 	return i, err
+}
+
+const lockRunLeaseConcurrencyScope = `-- name: LockRunLeaseConcurrencyScope :exec
+SELECT pg_advisory_xact_lock(hashtextextended(
+           'run-queue-concurrency:' ||
+           runs.org_id::text || ':' ||
+           runs.worker_group_id || ':' ||
+           runs.project_id::text || ':' ||
+           runs.environment_id::text || ':' ||
+           runs.queue_class || ':' ||
+           runs.queue_name || ':' ||
+           COALESCE(runs.concurrency_key, ''),
+           0
+       ))
+  FROM runs
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+   AND COALESCE(runs.queue_concurrency_limit, 0) > 0
+`
+
+type LockRunLeaseConcurrencyScopeParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	RunID pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) LockRunLeaseConcurrencyScope(ctx context.Context, arg LockRunLeaseConcurrencyScopeParams) error {
+	_, err := q.db.Exec(ctx, lockRunLeaseConcurrencyScope, arg.OrgID, arg.RunID)
+	return err
 }
 
 const releaseRunLease = `-- name: ReleaseRunLease :one

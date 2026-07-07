@@ -197,7 +197,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 						writeError(w, errors.New("lease run"))
 						return
 					}
-					candidateRun, err := s.db.LeaseRunLease(r.Context(), db.LeaseRunLeaseParams{
+					leaseParams := db.LeaseRunLeaseParams{
 						OrgID:              candidateLease.Entry.OrgID,
 						RunID:              candidateLease.Entry.ID,
 						DispatchGeneration: candidateLease.Entry.DispatchGeneration,
@@ -208,6 +208,18 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 						DispatchAttempt:    candidateLease.Lease.AttemptNumber,
 						LeaseExpiresAt:     pgtype.Timestamptz{Time: time.Now().Add(workerLeaseDuration), Valid: true},
 						RunLeaseSpanID:     sessionSpanID,
+					}
+					var candidateRun db.LeaseRunLeaseRow
+					err = s.inTx(r.Context(), func(work *txWork) error {
+						if err := work.q.LockRunLeaseConcurrencyScope(r.Context(), db.LockRunLeaseConcurrencyScopeParams{
+							OrgID: candidateLease.Entry.OrgID,
+							RunID: candidateLease.Entry.ID,
+						}); err != nil {
+							return err
+						}
+						var leaseErr error
+						candidateRun, leaseErr = work.q.LeaseRunLease(r.Context(), leaseParams)
+						return leaseErr
 					})
 					if err == nil {
 						s.log.Info("worker run lease acquired",

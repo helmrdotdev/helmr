@@ -154,13 +154,13 @@ func TestLeaseRunLeaseRejectsConcurrentLeaseForSameQueueKey(t *testing.T) {
 	defer func() {
 		_ = tx2.Rollback(context.Background())
 	}()
-	if _, err := db.New(tx1).LeaseRunLease(ctx, leaseRunLeaseParams(ids.orgID, firstRunID, firstWorkerID, "first")); err != nil {
+	if _, err := lockAndLeaseRunLease(ctx, db.New(tx1), leaseRunLeaseParams(ids.orgID, firstRunID, firstWorkerID, "first")); err != nil {
 		t.Fatal(err)
 	}
 
 	secondResult := make(chan error, 1)
 	go func() {
-		_, err := db.New(tx2).LeaseRunLease(ctx, leaseRunLeaseParams(ids.orgID, secondRunID, secondWorkerID, "second"))
+		_, err := lockAndLeaseRunLease(ctx, db.New(tx2), leaseRunLeaseParams(ids.orgID, secondRunID, secondWorkerID, "second"))
 		secondResult <- err
 	}()
 
@@ -197,6 +197,16 @@ func TestLeaseRunLeaseRejectsConcurrentLeaseForSameQueueKey(t *testing.T) {
 	if activeLeases != 1 {
 		t.Fatalf("active leases = %d, want 1", activeLeases)
 	}
+}
+
+func lockAndLeaseRunLease(ctx context.Context, queries *db.Queries, params db.LeaseRunLeaseParams) (db.LeaseRunLeaseRow, error) {
+	if err := queries.LockRunLeaseConcurrencyScope(ctx, db.LockRunLeaseConcurrencyScopeParams{
+		OrgID: params.OrgID,
+		RunID: params.RunID,
+	}); err != nil {
+		return db.LeaseRunLeaseRow{}, err
+	}
+	return queries.LeaseRunLease(ctx, params)
 }
 
 func TestLeaseRunLeaseRejectsStaleDispatchGeneration(t *testing.T) {
