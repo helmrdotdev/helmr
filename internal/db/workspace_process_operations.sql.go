@@ -128,34 +128,6 @@ released_terminal_operation_write_leases AS (
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
-terminal_operation_stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT failed_start_processes.org_id,
-           failed_start_processes.worker_group_id,
-           failed_start_processes.project_id,
-           failed_start_processes.environment_id,
-           failed_start_processes.workspace_id,
-           failed_start_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_start_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', failed_start_processes.stdout_cursor), ('stderr', failed_start_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-     WHERE failed_start_processes.kind = 'command'
-    UNION ALL
-    SELECT failed_start_processes.org_id,
-           failed_start_processes.worker_group_id,
-           failed_start_processes.project_id,
-           failed_start_processes.environment_id,
-           failed_start_processes.workspace_id,
-           failed_start_processes.id,
-           'output',
-           failed_start_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_start_processes
-     WHERE failed_start_processes.kind = 'pty'
-    RETURNING id
-),
 candidate AS (
     SELECT workspace_process_operations.id
       FROM workspace_process_operations
@@ -180,7 +152,6 @@ candidate AS (
        AND workspace_process_operations.claim_attempt < $6
        AND workspace_process_operations.operation_expires_at > now()
        AND (SELECT count(*) FROM released_terminal_operation_write_leases) >= 0
-       AND (SELECT count(*) FROM terminal_operation_stream_wakeups) >= 0
        AND runtime_instances.worker_instance_id = $1
        AND runtime_instances.instance_token = $7
        AND runtime_instances.state IN ('running', 'waiting_hot')

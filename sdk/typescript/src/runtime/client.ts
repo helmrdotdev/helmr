@@ -302,12 +302,8 @@ export interface Workspace {
   readonly state: WorkspaceState
   readonly desiredState: WorkspaceDesiredState
   readonly dirtyState: WorkspaceDirtyState
-  readonly lastMaterializationId: string | null
   readonly metadata: Record<string, unknown>
   readonly tags: readonly string[]
-  readonly autoStopAt: string | null
-  readonly autoArchiveAt: string | null
-  readonly autoDeleteAt: string | null
   readonly lastActivityAt: string
   readonly createdAt: string
   readonly updatedAt: string
@@ -2242,12 +2238,8 @@ interface WorkspaceResponse {
   readonly state: WorkspaceState
   readonly desired_state: WorkspaceDesiredState
   readonly dirty_state: WorkspaceDirtyState
-  readonly last_workspace_mount_id?: string | null
   readonly metadata?: Record<string, unknown>
   readonly tags?: readonly string[]
-  readonly auto_stop_at?: string | null
-  readonly auto_archive_at?: string | null
-  readonly auto_delete_at?: string | null
   readonly last_activity_at: string
   readonly created_at: string
   readonly updated_at: string
@@ -3018,12 +3010,8 @@ function workspaceFromResponse(response: WorkspaceResponse): Workspace {
     state: response.state,
     desiredState: response.desired_state,
     dirtyState: response.dirty_state,
-    lastMaterializationId: response.last_workspace_mount_id ?? null,
     metadata: response.metadata ?? {},
     tags: response.tags ?? [],
-    autoStopAt: response.auto_stop_at ?? null,
-    autoArchiveAt: response.auto_archive_at ?? null,
-    autoDeleteAt: response.auto_delete_at ?? null,
     lastActivityAt: response.last_activity_at,
     createdAt: response.created_at,
     updatedAt: response.updated_at,

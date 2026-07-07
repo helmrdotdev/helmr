@@ -14,36 +14,6 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestWorkspaceMountRequiresReadyCurrentVersion(t *testing.T) {
-	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
-	artifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
-	versionID := uuid.Must(uuid.NewV7())
-	digest := "sha256:" + strings.ReplaceAll(uuid.NewString(), "-", "")
-
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_versions (
-			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
-			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes
-		)
-		VALUES ($1, $8, $2, $3, $4, $5, 'system', 'capturing', $6, 'tar', 1, $7, 1)
-	`, versionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, artifactID, digest, testWorkspaceVersionPublicID(t)); err != nil {
-		t.Fatal(err)
-	}
-	_, err := pool.Exec(ctx, `
-		UPDATE workspaces
-		   SET current_version_id = $1
-		 WHERE org_id = $2
-		   AND project_id = $3
-		   AND environment_id = $4
-		   AND id = $5
-	`, versionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID)
-	if err == nil {
-		t.Fatal("direct current_version_id update to non-ready version succeeded, want constraint error")
-	}
-}
-
 func TestWorkspaceCurrentVersionAllowsReadyVersionCreatedInSameTransaction(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)

@@ -258,25 +258,9 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT updated_exec.org_id,
-           updated_exec.project_id,
-           updated_exec.environment_id,
-           updated_exec.workspace_id,
-           updated_exec.worker_group_id,
-           updated_exec.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM updated_exec
-      CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    RETURNING id
 )
 SELECT *
-  FROM updated_exec
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0;
+  FROM updated_exec;
 
 -- name: LockWorkspaceExecForStreamAppend :one
 SELECT id,

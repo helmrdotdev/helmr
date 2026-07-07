@@ -1497,24 +1497,9 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT updated_pty.org_id,
-           updated_pty.project_id,
-           updated_pty.environment_id,
-           updated_pty.workspace_id,
-           updated_pty.worker_group_id,
-           updated_pty.id,
-           'output',
-           updated_pty.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM updated_pty
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
   FROM updated_pty
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type MarkWorkspacePtyClosedParams struct {
@@ -1658,24 +1643,9 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT updated_pty.org_id,
-           updated_pty.project_id,
-           updated_pty.environment_id,
-           updated_pty.workspace_id,
-           updated_pty.worker_group_id,
-           updated_pty.id,
-           'output',
-           updated_pty.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM updated_pty
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
   FROM updated_pty
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type MarkWorkspacePtyFailedParams struct {

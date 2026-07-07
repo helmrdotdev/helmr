@@ -58,7 +58,7 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		Stream:           db.RunLogStream(request.Stream),
+		Stream:           string(request.Stream),
 		ObservedSeq:      int64(request.ObservedSeq),
 		Content:          content,
 		Kind:             kind,

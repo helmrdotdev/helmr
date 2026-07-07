@@ -2946,7 +2946,6 @@ function workspaceFixture(overrides: Partial<{
   readonly state: string
   readonly desired_state: string
   readonly dirty_state: string
-  readonly last_workspace_mount_id: string | null
   readonly metadata: Record<string, unknown>
   readonly tags: readonly string[]
   readonly last_activity_at: string
@@ -2964,7 +2963,6 @@ function workspaceFixture(overrides: Partial<{
     state: "active",
     desired_state: "active",
     dirty_state: "clean",
-    last_workspace_mount_id: null,
     metadata: {},
     tags: [],
     last_activity_at: "2026-04-20T00:00:00Z",

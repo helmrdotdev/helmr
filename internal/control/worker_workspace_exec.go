@@ -490,19 +490,6 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 				return err
 			}
 		}
-		if _, err := work.q.CreateWorkspaceStreamWakeup(ctx, db.CreateWorkspaceStreamWakeupParams{
-			OrgID:            exec.OrgID,
-			ProjectID:        exec.ProjectID,
-			EnvironmentID:    exec.EnvironmentID,
-			WorkspaceID:      exec.WorkspaceID,
-			WorkerGroupID:    exec.WorkerGroupID,
-			ProcessID:        exec.ID,
-			StreamName:       string(stream),
-			CursorOffset:     chunk.OffsetEnd,
-			NotificationKind: db.WorkspaceStreamNotificationKindChunk,
-		}); err != nil {
-			return err
-		}
 		return nil
 	})
 	if err != nil {

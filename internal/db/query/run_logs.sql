@@ -35,11 +35,11 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.*,
-           sqlc.arg(stream)::run_log_stream AS stream,
+           sqlc.arg(stream)::text AS stream,
            sqlc.arg(observed_seq)::bigint AS observed_seq,
            sqlc.arg(content)::bytea AS content,
            octet_length(sqlc.arg(content)::bytea)::bigint AS size_bytes,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || (sqlc.arg(stream)::run_log_stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.run_lease_id::text || ':' || sqlc.arg(stream)::text || ':' || (sqlc.arg(observed_seq)::bigint)::text AS idempotency_key
       FROM current_run_lease
 ),
 inserted_chunk AS (
@@ -82,7 +82,7 @@ inserted_chunk AS (
               telemetry_outbox.run_id,
               telemetry_outbox.run_lease_id,
               telemetry_outbox.attempt_number,
-              telemetry_outbox.stream_name::run_log_stream AS stream,
+              telemetry_outbox.stream_name AS stream,
               telemetry_outbox.id AS seq,
               telemetry_outbox.observed_seq,
               telemetry_outbox.content,
@@ -96,7 +96,7 @@ existing_chunk AS (
            telemetry_outbox.run_id,
            telemetry_outbox.run_lease_id,
            telemetry_outbox.attempt_number,
-           telemetry_outbox.stream_name::run_log_stream AS stream,
+           telemetry_outbox.stream_name AS stream,
            telemetry_outbox.id AS seq,
            telemetry_outbox.observed_seq,
            telemetry_outbox.content,

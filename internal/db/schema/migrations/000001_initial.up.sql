@@ -703,11 +703,6 @@ CREATE TYPE workspace_operation_kind AS ENUM (
     'close_process'
 );
 
-CREATE TYPE workspace_stream_notification_kind AS ENUM (
-    'chunk',
-    'terminal'
-);
-
 CREATE TYPE workspace_operation_idempotency_kind AS ENUM (
     'workspace_create',
     'workspace_stop',
@@ -1081,17 +1076,12 @@ CREATE TABLE workspaces (
     sandbox_fingerprint TEXT NOT NULL CHECK (btrim(sandbox_fingerprint) <> ''),
     external_id TEXT NOT NULL DEFAULT '' CHECK (external_id = btrim(external_id) AND octet_length(external_id) <= 512),
     current_version_id UUID,
-    current_version_required_state workspace_version_state GENERATED ALWAYS AS ('ready'::workspace_version_state) STORED,
     state workspace_state NOT NULL DEFAULT 'active',
     desired_state workspace_desired_state NOT NULL DEFAULT 'active',
     dirty_state workspace_dirty_state NOT NULL DEFAULT 'clean',
-    last_workspace_mount_id UUID,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     retention_policy JSONB NOT NULL DEFAULT '{}'::jsonb,
-    auto_stop_at TIMESTAMPTZ,
-    auto_archive_at TIMESTAMPTZ,
-    auto_delete_at TIMESTAMPTZ,
     last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1443,13 +1433,6 @@ ALTER TABLE runs
     ON DELETE SET NULL (workspace_mount_id)
     DEFERRABLE INITIALLY DEFERRED;
 
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_last_workspace_mount_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, id, last_workspace_mount_id)
-    REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
-    ON DELETE SET NULL (last_workspace_mount_id)
-    DEFERRABLE INITIALLY DEFERRED;
-
 CREATE TABLE workspace_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -1655,12 +1638,6 @@ ALTER TABLE workspaces
     FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id)
     REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE SET NULL (current_version_id)
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE workspaces
-    ADD CONSTRAINT workspaces_current_version_ready_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, id, current_version_id, current_version_required_state)
-    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id, state)
     DEFERRABLE INITIALLY DEFERRED;
 
 CREATE TABLE workspace_process_stream_chunks (
@@ -2011,11 +1988,6 @@ ALTER TABLE runs
         )
     );
 
-CREATE TYPE event_subject_type AS ENUM (
-    'run',
-    'deployment'
-);
-
 CREATE TABLE telemetry_outbox (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     org_id UUID NOT NULL,
@@ -2144,35 +2116,6 @@ CREATE INDEX telemetry_outbox_ingest_claim_idx
 CREATE INDEX telemetry_outbox_written_gc_idx
     ON telemetry_outbox (id)
     WHERE written_at IS NOT NULL;
-
-CREATE TABLE workspace_process_stream_wakeups (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    org_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    worker_group_id TEXT NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    workspace_id UUID NOT NULL,
-    process_id UUID NOT NULL,
-    stream_name TEXT NOT NULL CHECK (btrim(stream_name) <> ''),
-    cursor_offset BIGINT NOT NULL CHECK (cursor_offset >= 0),
-    notification_kind workspace_stream_notification_kind NOT NULL,
-    attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-    locked_until TIMESTAMPTZ,
-    last_error TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, process_id)
-        REFERENCES workspace_processes(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE INDEX workspace_process_stream_wakeups_ready_idx
-    ON workspace_process_stream_wakeups (locked_until, id)
-    WHERE attempts < 25;
-
-CREATE TYPE run_log_stream AS ENUM (
-    'stdout',
-    'stderr'
-);
 
 CREATE TABLE run_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

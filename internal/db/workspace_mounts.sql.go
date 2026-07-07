@@ -704,7 +704,7 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 
 const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
      FROM workspaces
      WHERE workspaces.org_id = $1
        AND workspaces.project_id = $2
@@ -1099,37 +1099,10 @@ released_leases AS (
        AND workspace_leases.workspace_mount_id = failed.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT lost_command_processes.org_id,
-           lost_command_processes.project_id,
-           lost_command_processes.environment_id,
-           lost_command_processes.workspace_id,
-           lost_command_processes.worker_group_id,
-           lost_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT lost_pty_processes.org_id,
-           lost_pty_processes.project_id,
-           lost_pty_processes.environment_id,
-           lost_pty_processes.workspace_id,
-           lost_pty_processes.worker_group_id,
-           lost_pty_processes.id,
-           'output',
-           lost_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_pty_processes
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
  FROM failed
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM failed_runtime_instances)
+ WHERE (SELECT count(*) FROM failed_runtime_instances)
      + (SELECT count(*) FROM updated_workspace)
      + (SELECT count(*) FROM lost_operations)
      + (SELECT count(*) FROM released_leases) >= 0
@@ -1725,37 +1698,10 @@ released_leases AS (
        AND workspace_leases.workspace_mount_id = lost.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT lost_command_processes.org_id,
-           lost_command_processes.project_id,
-           lost_command_processes.environment_id,
-           lost_command_processes.workspace_id,
-           lost_command_processes.worker_group_id,
-           lost_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT lost_pty_processes.org_id,
-           lost_pty_processes.project_id,
-           lost_pty_processes.environment_id,
-           lost_pty_processes.workspace_id,
-           lost_pty_processes.worker_group_id,
-           lost_pty_processes.id,
-           'output',
-           lost_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_pty_processes
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM lost
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM lost_runtime_instances)
+ WHERE (SELECT count(*) FROM lost_runtime_instances)
      + (SELECT count(*) FROM lost_operations)
      + (SELECT count(*) FROM updated_lost_dirty_workspaces)
      + (SELECT count(*) FROM released_leases) >= 0
@@ -2818,7 +2764,7 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 
 const requestWorkspaceMountStop = `-- name: RequestWorkspaceMountStop :one
 WITH locked_workspace AS MATERIALIZED (
-    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.current_version_required_state, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.last_workspace_mount_id, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.auto_stop_at, workspaces.auto_archive_at, workspaces.auto_delete_at, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+    SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.current_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
       FROM workspaces
      WHERE workspaces.org_id = $1
        AND workspaces.project_id = $2
@@ -2955,37 +2901,10 @@ released_requested_leases AS (
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
-requested_stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT failed_requested_command_processes.org_id,
-           failed_requested_command_processes.project_id,
-           failed_requested_command_processes.environment_id,
-           failed_requested_command_processes.workspace_id,
-           failed_requested_command_processes.worker_group_id,
-           failed_requested_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_requested_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', failed_requested_command_processes.stdout_cursor), ('stderr', failed_requested_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT closed_requested_pty_processes.org_id,
-           closed_requested_pty_processes.project_id,
-           closed_requested_pty_processes.environment_id,
-           closed_requested_pty_processes.workspace_id,
-           closed_requested_pty_processes.worker_group_id,
-           closed_requested_pty_processes.id,
-           'output',
-           closed_requested_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM closed_requested_pty_processes
-    RETURNING id
-),
 requested_cleanup_counts AS (
     SELECT (SELECT count(*) FROM released_prepared_runtime_reservation)
          + (SELECT count(*) FROM cancelled_requested_operations)
-         + (SELECT count(*) FROM released_requested_leases)
-         + (SELECT count(*) FROM requested_stream_wakeups) AS count
+         + (SELECT count(*) FROM released_requested_leases) AS count
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM requested_without_runtime
@@ -3477,37 +3396,10 @@ closed_runtime_instances AS (
        AND runtime_instances.instance_token = $2
        AND runtime_instances.state IN ('binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
     RETURNING runtime_instances.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT failed_command_processes.org_id,
-           failed_command_processes.project_id,
-           failed_command_processes.environment_id,
-           failed_command_processes.workspace_id,
-           failed_command_processes.worker_group_id,
-           failed_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', failed_command_processes.stdout_cursor), ('stderr', failed_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT closed_pty_processes.org_id,
-           closed_pty_processes.project_id,
-           closed_pty_processes.environment_id,
-           closed_pty_processes.workspace_id,
-           closed_pty_processes.worker_group_id,
-           closed_pty_processes.id,
-           'output',
-           closed_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM closed_pty_processes
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
   FROM stopped
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM closed_runtime_instances)
+ WHERE (SELECT count(*) FROM closed_runtime_instances)
      + (SELECT count(*) FROM cancelled_operations)
      + (SELECT count(*) FROM released_leases)
      + (SELECT count(*) FROM updated_workspace) >= 0

@@ -92,7 +92,7 @@ func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, workerGroupID s
 	return s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:         orgID,
 		WorkerGroupID: workerGroupID,
-		SubjectType:   string(db.EventSubjectTypeRun),
+		SubjectType:   eventSubjectTypeRun,
 		SubjectID:     runID,
 		AfterSeq:      cursor,
 		Limit:         limit + 1,
@@ -134,7 +134,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, db.EventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, eventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: run_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

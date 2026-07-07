@@ -1126,37 +1126,10 @@ released_requested_leases AS (
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
-requested_stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT failed_requested_command_processes.org_id,
-           failed_requested_command_processes.project_id,
-           failed_requested_command_processes.environment_id,
-           failed_requested_command_processes.workspace_id,
-           failed_requested_command_processes.worker_group_id,
-           failed_requested_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_requested_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', failed_requested_command_processes.stdout_cursor), ('stderr', failed_requested_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT closed_requested_pty_processes.org_id,
-           closed_requested_pty_processes.project_id,
-           closed_requested_pty_processes.environment_id,
-           closed_requested_pty_processes.workspace_id,
-           closed_requested_pty_processes.worker_group_id,
-           closed_requested_pty_processes.id,
-           'output',
-           closed_requested_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM closed_requested_pty_processes
-    RETURNING id
-),
 requested_cleanup_counts AS (
     SELECT (SELECT count(*) FROM released_prepared_runtime_reservation)
          + (SELECT count(*) FROM cancelled_requested_operations)
-         + (SELECT count(*) FROM released_requested_leases)
-         + (SELECT count(*) FROM requested_stream_wakeups) AS count
+         + (SELECT count(*) FROM released_requested_leases) AS count
 )
 SELECT *
   FROM requested_without_runtime
@@ -1422,37 +1395,10 @@ closed_runtime_instances AS (
        AND runtime_instances.instance_token = sqlc.arg(runtime_instance_token)
        AND runtime_instances.state IN ('binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
     RETURNING runtime_instances.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT failed_command_processes.org_id,
-           failed_command_processes.project_id,
-           failed_command_processes.environment_id,
-           failed_command_processes.workspace_id,
-           failed_command_processes.worker_group_id,
-           failed_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM failed_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', failed_command_processes.stdout_cursor), ('stderr', failed_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT closed_pty_processes.org_id,
-           closed_pty_processes.project_id,
-           closed_pty_processes.environment_id,
-           closed_pty_processes.workspace_id,
-           closed_pty_processes.worker_group_id,
-           closed_pty_processes.id,
-           'output',
-           closed_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM closed_pty_processes
-    RETURNING id
 )
 SELECT *
   FROM stopped
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM closed_runtime_instances)
+ WHERE (SELECT count(*) FROM closed_runtime_instances)
      + (SELECT count(*) FROM cancelled_operations)
      + (SELECT count(*) FROM released_leases)
      + (SELECT count(*) FROM updated_workspace) >= 0
@@ -1710,37 +1656,10 @@ released_leases AS (
        AND workspace_leases.workspace_mount_id = failed.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT lost_command_processes.org_id,
-           lost_command_processes.project_id,
-           lost_command_processes.environment_id,
-           lost_command_processes.workspace_id,
-           lost_command_processes.worker_group_id,
-           lost_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT lost_pty_processes.org_id,
-           lost_pty_processes.project_id,
-           lost_pty_processes.environment_id,
-           lost_pty_processes.workspace_id,
-           lost_pty_processes.worker_group_id,
-           lost_pty_processes.id,
-           'output',
-           lost_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_pty_processes
-    RETURNING id
 )
 SELECT *
  FROM failed
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM failed_runtime_instances)
+ WHERE (SELECT count(*) FROM failed_runtime_instances)
      + (SELECT count(*) FROM updated_workspace)
      + (SELECT count(*) FROM lost_operations)
      + (SELECT count(*) FROM released_leases) >= 0;
@@ -1866,37 +1785,10 @@ released_leases AS (
        AND workspace_leases.workspace_mount_id = lost.id
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT lost_command_processes.org_id,
-           lost_command_processes.project_id,
-           lost_command_processes.environment_id,
-           lost_command_processes.workspace_id,
-           lost_command_processes.worker_group_id,
-           lost_command_processes.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_command_processes
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    UNION ALL
-    SELECT lost_pty_processes.org_id,
-           lost_pty_processes.project_id,
-           lost_pty_processes.environment_id,
-           lost_pty_processes.workspace_id,
-           lost_pty_processes.worker_group_id,
-           lost_pty_processes.id,
-           'output',
-           lost_pty_processes.output_cursor,
-           'terminal'::workspace_stream_notification_kind
-      FROM lost_pty_processes
-    RETURNING id
 )
 SELECT *
   FROM lost
- WHERE (SELECT count(*) FROM stream_wakeups)
-     + (SELECT count(*) FROM lost_runtime_instances)
+ WHERE (SELECT count(*) FROM lost_runtime_instances)
      + (SELECT count(*) FROM lost_operations)
      + (SELECT count(*) FROM updated_lost_dirty_workspaces)
      + (SELECT count(*) FROM released_leases) >= 0;

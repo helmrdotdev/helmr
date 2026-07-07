@@ -526,12 +526,6 @@ func workspaceResponse(row db.Workspace) api.WorkspaceResponse {
 	if row.CurrentVersionID.Valid {
 		response.CurrentVersionID = pgvalue.MustUUIDValue(row.CurrentVersionID).String()
 	}
-	if row.LastWorkspaceMountID.Valid {
-		response.LastWorkspaceMountID = pgvalue.MustUUIDValue(row.LastWorkspaceMountID).String()
-	}
-	response.AutoStopAt = optionalWorkspaceTime(row.AutoStopAt)
-	response.AutoArchiveAt = optionalWorkspaceTime(row.AutoArchiveAt)
-	response.AutoDeleteAt = optionalWorkspaceTime(row.AutoDeleteAt)
 	response.ArchivedAt = optionalWorkspaceTime(row.ArchivedAt)
 	response.DeletedAt = optionalWorkspaceTime(row.DeletedAt)
 	return response
