@@ -30,7 +30,6 @@ const (
 	maxIdempotencyKeyLength       = 512
 	maxRunLogSnapshotBytes        = int64(1 << 20)
 	runLogStreamBatchSize         = int32(100)
-	runLogStreamPollInterval      = time.Second
 	runLogStreamFollowMaxDuration = 30 * time.Minute
 	runEventsPageSize             = int32(200)
 	runEventsFollowMaxDuration    = 30 * time.Minute

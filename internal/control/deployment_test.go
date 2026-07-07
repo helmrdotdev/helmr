@@ -1241,7 +1241,7 @@ func (f *fakeStore) CreateDeploymentTask(_ context.Context, arg db.CreateDeploym
 }
 
 func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error) {
-	event := db.ClaimEventOutboxRow{
+	event := db.ClaimLiveTelemetryOutboxRow{
 		Seq:             int64(len(f.deploymentEvents) + 1),
 		OrgID:           arg.OrgID,
 		ProjectID:       arg.ProjectID,

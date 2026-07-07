@@ -2,6 +2,7 @@ package control
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,14 +21,16 @@ import (
 )
 
 const (
-	eventOutboxBatchSize     = int32(100)
-	eventOutboxLeaseDuration = 30 * time.Second
-	eventPublisherIdleEvery  = 100 * time.Millisecond
-	eventPublisherRetryMin   = 250 * time.Millisecond
-	eventPublisherRetryMax   = 30 * time.Second
-	eventStreamBlockEvery    = 25 * time.Second
-	eventStreamMaxLen        = int64(10000)
+	liveTelemetryOutboxBatchSize     = int32(100)
+	liveTelemetryOutboxLeaseDuration = 30 * time.Second
+	liveTelemetryPublisherIdleEvery  = 100 * time.Millisecond
+	liveTelemetryPublisherRetryMin   = 250 * time.Millisecond
+	liveTelemetryPublisherRetryMax   = 30 * time.Second
+	liveTelemetryStreamBlockEvery    = time.Second
+	liveTelemetryStreamMaxLen        = int64(10000)
 )
+
+var errLiveTelemetryFollowComplete = errors.New("live telemetry follow complete")
 
 type EventStream struct {
 	log             *slog.Logger
@@ -72,43 +75,43 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		claimed, err := s.db.ClaimEventOutbox(ctx, db.ClaimEventOutboxParams{
-			RowLimit:      eventOutboxBatchSize,
-			LeaseDuration: pgvalue.Interval(eventOutboxLeaseDuration),
+		claimed, err := s.db.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
+			RowLimit:      liveTelemetryOutboxBatchSize,
+			LeaseDuration: pgvalue.Interval(liveTelemetryOutboxLeaseDuration),
 		})
 		if err != nil {
 			consecutiveFailures++
-			s.log.Warn("claim event outbox failed", "error", err)
-			if sleepErr := sleepWithContext(ctx, eventPublisherBackoff(consecutiveFailures)); sleepErr != nil {
+			s.log.Warn("claim live telemetry outbox failed", "error", err)
+			if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(consecutiveFailures)); sleepErr != nil {
 				return sleepErr
 			}
 			continue
 		}
 		consecutiveFailures = 0
 		if len(claimed) == 0 {
-			if err := sleepWithContext(ctx, eventPublisherIdleEvery); err != nil {
+			if err := sleepWithContext(ctx, liveTelemetryPublisherIdleEvery); err != nil {
 				return err
 			}
 			continue
 		}
 		for _, row := range claimed {
 			if err := s.publishOutboxRow(ctx, row); err != nil {
-				s.log.Warn("publish event outbox row failed", "outbox_id", row.OutboxID, "error", err)
-				if markErr := s.db.MarkEventOutboxFailed(ctx, db.MarkEventOutboxFailedParams{
+				s.log.Warn("publish live telemetry outbox row failed", "outbox_id", row.OutboxID, "stream_kind", row.StreamKind, "error", err)
+				if markErr := s.db.MarkLiveTelemetryOutboxFailed(ctx, db.MarkLiveTelemetryOutboxFailedParams{
 					ID:         row.OutboxID,
 					LastError:  err.Error(),
-					RetryAfter: pgvalue.Interval(eventPublisherBackoff(int(row.Attempts))),
+					RetryAfter: pgvalue.Interval(liveTelemetryPublisherBackoff(int(row.Attempts))),
 				}); markErr != nil {
-					s.log.Warn("mark event outbox failed", "outbox_id", row.OutboxID, "error", markErr)
-					if sleepErr := sleepWithContext(ctx, eventPublisherBackoff(int(row.Attempts))); sleepErr != nil {
+					s.log.Warn("mark live telemetry outbox failed", "outbox_id", row.OutboxID, "error", markErr)
+					if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(int(row.Attempts))); sleepErr != nil {
 						return sleepErr
 					}
 				}
 				continue
 			}
-			if err := s.db.MarkEventOutboxPublished(ctx, row.OutboxID); err != nil {
-				s.log.Warn("mark event outbox published failed", "outbox_id", row.OutboxID, "error", err)
-				if sleepErr := sleepWithContext(ctx, eventPublisherBackoff(int(row.Attempts))); sleepErr != nil {
+			if err := s.db.MarkLiveTelemetryOutboxPublished(ctx, row.OutboxID); err != nil {
+				s.log.Warn("mark live telemetry outbox published failed", "outbox_id", row.OutboxID, "error", err)
+				if sleepErr := sleepWithContext(ctx, liveTelemetryPublisherBackoff(int(row.Attempts))); sleepErr != nil {
 					return sleepErr
 				}
 			}
@@ -116,44 +119,78 @@ func (s *EventStream) RunPublisher(ctx context.Context) error {
 	}
 }
 
-func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimEventOutboxRow) error {
+func (s *EventStream) publishOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+	switch row.StreamKind {
+	case db.TelemetryStreamKindEvent:
+		return s.publishEventOutboxRow(ctx, row)
+	case db.TelemetryStreamKindRunLog:
+		return s.publishRunLogOutboxRow(ctx, row)
+	case db.TelemetryStreamKindTerminalOutput:
+		return s.publishTerminalOutputOutboxRow(ctx, row)
+	default:
+		return fmt.Errorf("unsupported live telemetry stream kind %q", row.StreamKind)
+	}
+}
+
+func (s *EventStream) publishEventOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
 	event := eventResponseFromClaim(row)
 	payload, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("encode event: %w", err)
 	}
-	id := redisEventID(row.Seq)
+	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "event", payload, row.Seq)
+}
+
+func (s *EventStream) publishRunLogOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+	chunk := runLogChunkResponseFromClaim(row)
+	payload, err := json.Marshal(chunk)
+	if err != nil {
+		return fmt.Errorf("encode run log: %w", err)
+	}
+	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.Seq), "run_log", payload, row.Seq)
+}
+
+func (s *EventStream) publishTerminalOutputOutboxRow(ctx context.Context, row db.ClaimLiveTelemetryOutboxRow) error {
+	chunk := terminalOutputChunkFromClaim(row)
+	payload, err := json.Marshal(chunk)
+	if err != nil {
+		return fmt.Errorf("encode terminal output: %w", err)
+	}
+	return s.publishJSON(ctx, row.StreamKey, redisEventID(row.OffsetEnd), "terminal_output", payload, row.OffsetEnd)
+}
+
+func (s *EventStream) publishJSON(ctx context.Context, streamKey string, id string, field string, payload []byte, seq int64) error {
 	add := func() error {
 		return s.redis.XAdd(ctx, &redis.XAddArgs{
-			Stream: row.StreamKey,
-			MaxLen: eventStreamMaxLen,
+			Stream: streamKey,
+			MaxLen: liveTelemetryStreamMaxLen,
 			Approx: true,
 			ID:     id,
-			Values: map[string]any{"event": string(payload)},
+			Values: map[string]any{field: string(payload)},
 		}).Err()
 	}
-	err = add()
+	err := add()
 	if err == nil {
 		return nil
 	}
 	if !redisIDAlreadyExists(err) {
 		return err
 	}
-	records, rangeErr := s.redis.XRangeN(ctx, row.StreamKey, id, id, 1).Result()
+	records, rangeErr := s.redis.XRangeN(ctx, streamKey, id, id, 1).Result()
 	if rangeErr != nil {
 		return rangeErr
 	}
 	if len(records) == 0 {
-		if advanced, advancedErr := s.streamAdvancedPastID(ctx, row.StreamKey, row.Seq); advancedErr != nil {
+		if advanced, advancedErr := s.streamAdvancedPastID(ctx, streamKey, seq); advancedErr != nil {
 			return advancedErr
 		} else if advanced {
 			return nil
 		}
 		return err
 	}
-	existing, ok := records[0].Values["event"].(string)
+	existing, ok := records[0].Values[field].(string)
 	if !ok || existing != string(payload) {
-		return fmt.Errorf("event stream record %s conflicts with outbox event", id)
+		return fmt.Errorf("live telemetry stream record %s conflicts with outbox %s", id, field)
 	}
 	return nil
 }
@@ -180,8 +217,10 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGr
 			return err
 		}
 		nextCursor, hasMore, err := s.readDurableSubjectEvents(ctx, orgID, workerGroupID, subjectType, subjectID, cursor, onEvent)
+		durableErr := err
 		if err != nil {
-			return err
+			s.log.Debug("read durable subject events failed; continuing with redis live stream", "subject_type", subjectType, "subject_id", subjectID.String(), "error", err)
+			hasMore = false
 		}
 		if nextCursor > cursor {
 			cursor = nextCursor
@@ -189,10 +228,19 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGr
 		if hasMore {
 			continue
 		}
+		if durableErr != nil {
+			covers, coverErr := s.redisEventStreamCoversCursor(ctx, streamKey, cursor)
+			if coverErr != nil {
+				return coverErr
+			}
+			if !covers {
+				return durableErr
+			}
+		}
 		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{streamKey, redisEventID(cursor)},
 			Count:   int64(runEventsPageSize),
-			Block:   eventStreamBlockEvery,
+			Block:   liveTelemetryStreamBlockEvery,
 		}).Result()
 		if errors.Is(err, redis.Nil) {
 			if onIdle != nil {
@@ -228,6 +276,218 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGr
 	}
 }
 
+func (s *EventStream) ReadRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error, onIdle func() error) error {
+	streamKey := runLogStreamKey(orgID, workerGroupID, runID)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		nextCursor, hasMore, err := s.readDurableRunLogs(ctx, orgID, workerGroupID, runID, cursor, onChunk)
+		durableErr := err
+		if err != nil {
+			s.log.Debug("read durable run logs failed; continuing with redis live stream", "run_id", runID.String(), "error", err)
+			hasMore = false
+		}
+		if nextCursor > cursor {
+			cursor = nextCursor
+		}
+		if hasMore {
+			continue
+		}
+		if durableErr != nil {
+			covers, coverErr := s.redisEventStreamCoversCursor(ctx, streamKey, cursor)
+			if coverErr != nil {
+				return coverErr
+			}
+			if !covers {
+				return durableErr
+			}
+		}
+		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamKey, redisEventID(cursor)},
+			Count:   int64(runLogStreamBatchSize),
+			Block:   liveTelemetryStreamBlockEvery,
+		}).Result()
+		if errors.Is(err, redis.Nil) {
+			if onIdle != nil {
+				if idleErr := onIdle(); idleErr != nil {
+					return idleErr
+				}
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, stream := range streams {
+			for _, message := range stream.Messages {
+				seq, err := redisSeq(message.ID)
+				if err != nil {
+					return err
+				}
+				raw, ok := message.Values["run_log"].(string)
+				if !ok {
+					return fmt.Errorf("run log stream record %s missing run_log field", message.ID)
+				}
+				var chunk api.RunLogChunk
+				if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+					return fmt.Errorf("decode run log stream record %s: %w", message.ID, err)
+				}
+				cursor = seq
+				if err := onChunk(chunk); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+func (s *EventStream) readDurableRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error) (int64, bool, error) {
+	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
+		OrgID:         orgID,
+		WorkerGroupID: workerGroupID,
+		RunID:         runID,
+		AfterSeq:      cursor,
+		Limit:         runLogStreamBatchSize,
+	})
+	if err != nil {
+		return cursor, false, fmt.Errorf("list durable run logs: %w", err)
+	}
+	for _, chunk := range page.Chunks {
+		nextCursor, err := telemetry.ParseCursor(chunk.ID)
+		if err != nil {
+			return cursor, false, err
+		}
+		cursor = nextCursor
+		if err := onChunk(chunk); err != nil {
+			return cursor, false, err
+		}
+	}
+	return cursor, len(page.Chunks) == int(runLogStreamBatchSize), nil
+}
+
+func (s *EventStream) ReadTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, limit int32, onChunk func(telemetry.TerminalOutputChunk) error, onIdle func() error) error {
+	query.AfterOffset = cursor
+	query.Limit = limit
+	streamKey := terminalOutputStreamKey(query.OrgID, query.WorkerGroupID, query.WorkspaceID, query.ResourceKind, query.ResourceID, query.StreamName)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		nextCursor, hasMore, err := s.readDurableTerminalOutput(ctx, query, cursor, onChunk)
+		durableErr := err
+		if err != nil {
+			s.log.Debug("read durable terminal output failed; continuing with redis live stream", "workspace_id", query.WorkspaceID.String(), "resource_kind", query.ResourceKind, "resource_id", query.ResourceID.String(), "stream", query.StreamName, "error", err)
+			hasMore = false
+		}
+		if nextCursor > cursor {
+			cursor = nextCursor
+			query.AfterOffset = cursor
+		}
+		if hasMore {
+			continue
+		}
+		if durableErr != nil {
+			covers, coverErr := s.redisTerminalStreamCoversCursor(ctx, streamKey, cursor)
+			if coverErr != nil {
+				return coverErr
+			}
+			if !covers {
+				return durableErr
+			}
+		}
+		streams, err := s.redis.XRead(ctx, &redis.XReadArgs{
+			Streams: []string{streamKey, redisEventID(cursor)},
+			Count:   int64(limit),
+			Block:   liveTelemetryStreamBlockEvery,
+		}).Result()
+		if errors.Is(err, redis.Nil) {
+			if onIdle != nil {
+				if idleErr := onIdle(); idleErr != nil {
+					return idleErr
+				}
+			}
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		for _, stream := range streams {
+			for _, message := range stream.Messages {
+				offset, err := redisSeq(message.ID)
+				if err != nil {
+					return err
+				}
+				raw, ok := message.Values["terminal_output"].(string)
+				if !ok {
+					return fmt.Errorf("terminal output stream record %s missing terminal_output field", message.ID)
+				}
+				var chunk telemetry.TerminalOutputChunk
+				if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+					return fmt.Errorf("decode terminal output stream record %s: %w", message.ID, err)
+				}
+				cursor = offset
+				query.AfterOffset = cursor
+				if err := onChunk(chunk); err != nil {
+					return err
+				}
+			}
+		}
+	}
+}
+
+func (s *EventStream) readDurableTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, onChunk func(telemetry.TerminalOutputChunk) error) (int64, bool, error) {
+	query.AfterOffset = cursor
+	page, err := s.telemetryReader.ListTerminalOutput(ctx, query)
+	if err != nil {
+		return cursor, false, fmt.Errorf("list durable terminal output: %w", err)
+	}
+	for _, chunk := range page.Chunks {
+		cursor = chunk.OffsetEnd
+		if err := onChunk(chunk); err != nil {
+			return cursor, false, err
+		}
+	}
+	return cursor, len(page.Chunks) == int(query.Limit), nil
+}
+
+func (s *EventStream) redisEventStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
+	if cursor <= 0 {
+		return true, nil
+	}
+	records, err := s.redis.XRangeN(ctx, streamKey, "-", "+", 1).Result()
+	if err != nil {
+		return false, err
+	}
+	if len(records) == 0 {
+		return true, nil
+	}
+	first, err := redisSeq(records[0].ID)
+	if err != nil {
+		return false, err
+	}
+	return first <= cursor, nil
+}
+
+func (s *EventStream) redisTerminalStreamCoversCursor(ctx context.Context, streamKey string, cursor int64) (bool, error) {
+	records, err := s.redis.XRangeN(ctx, streamKey, "-", "+", 1).Result()
+	if err != nil {
+		return false, err
+	}
+	if len(records) == 0 {
+		return true, nil
+	}
+	raw, ok := records[0].Values["terminal_output"].(string)
+	if !ok {
+		return false, fmt.Errorf("terminal output stream record %s missing terminal_output field", records[0].ID)
+	}
+	var chunk telemetry.TerminalOutputChunk
+	if err := json.Unmarshal([]byte(raw), &chunk); err != nil {
+		return false, fmt.Errorf("decode terminal output stream record %s: %w", records[0].ID, err)
+	}
+	return chunk.OffsetStart <= cursor, nil
+}
+
 func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
 		OrgID:         orgID,
@@ -257,6 +517,14 @@ func eventStreamKey(orgID uuid.UUID, workerGroupID string, subjectType db.EventS
 	return "helmr:events:" + orgID.String() + ":" + workerGroupID + ":" + string(subjectType) + ":" + subjectID.String()
 }
 
+func runLogStreamKey(orgID uuid.UUID, workerGroupID string, runID uuid.UUID) string {
+	return "helmr:run_logs:" + orgID.String() + ":" + workerGroupID + ":" + runID.String()
+}
+
+func terminalOutputStreamKey(orgID uuid.UUID, workerGroupID string, workspaceID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) string {
+	return "helmr:terminal_outputs:" + orgID.String() + ":" + workerGroupID + ":" + workspaceID.String() + ":" + resourceKind + ":" + resourceID.String() + ":" + streamName
+}
+
 func redisEventID(seq int64) string {
 	if seq <= 0 {
 		return "0-0"
@@ -284,18 +552,22 @@ func redisIDAlreadyExists(err error) bool {
 	return strings.Contains(message, "equal or smaller") || strings.Contains(message, "ID specified in XADD")
 }
 
-func eventPublisherBackoff(attempts int) time.Duration {
+func liveTelemetryPublisherBackoff(attempts int) time.Duration {
 	if attempts < 1 {
-		return eventPublisherRetryMin
+		return liveTelemetryPublisherRetryMin
 	}
-	backoff := eventPublisherRetryMin
+	backoff := liveTelemetryPublisherRetryMin
 	for i := 1; i < attempts; i++ {
 		backoff *= 2
-		if backoff >= eventPublisherRetryMax {
-			return eventPublisherRetryMax
+		if backoff >= liveTelemetryPublisherRetryMax {
+			return liveTelemetryPublisherRetryMax
 		}
 	}
 	return backoff
+}
+
+func eventPublisherBackoff(attempts int) time.Duration {
+	return liveTelemetryPublisherBackoff(attempts)
 }
 
 func sleepWithContext(ctx context.Context, duration time.Duration) error {
@@ -309,8 +581,37 @@ func sleepWithContext(ctx context.Context, duration time.Duration) error {
 	}
 }
 
-func eventResponseFromClaim(event db.ClaimEventOutboxRow) api.RunEvent {
+func eventResponseFromClaim(event db.ClaimLiveTelemetryOutboxRow) api.RunEvent {
 	return apiEventResponse(event.Seq, event.RunID, event.DeploymentID, event.RunLeaseID, event.AttemptNumber, event.TraceID, event.SpanID, event.Traceparent, event.Category, event.Severity, event.Source, event.Kind, event.Message, event.Payload, event.RedactionClass, event.CreatedAt, event.OccurredAt)
+}
+
+func runLogChunkResponseFromClaim(row db.ClaimLiveTelemetryOutboxRow) api.RunLogChunk {
+	attemptNumber := int32(0)
+	if row.AttemptNumber.Valid {
+		attemptNumber = row.AttemptNumber.Int32
+	}
+	return api.RunLogChunk{
+		ID:            telemetryCursor(row.Seq),
+		RunID:         pgvalue.MustUUIDValue(row.RunID).String(),
+		AttemptNumber: attemptNumber,
+		Stream:        row.StreamName,
+		ContentBase64: base64.StdEncoding.EncodeToString(row.Content),
+		Bytes:         row.SizeBytes,
+		ObservedSeq:   row.ObservedSeq,
+		At:            pgvalue.Time(row.CreatedAt),
+	}
+}
+
+func terminalOutputChunkFromClaim(row db.ClaimLiveTelemetryOutboxRow) telemetry.TerminalOutputChunk {
+	return telemetry.TerminalOutputChunk{
+		ID:          strconv.FormatInt(row.OffsetEnd, 10),
+		Stream:      row.StreamName,
+		OffsetStart: row.OffsetStart,
+		OffsetEnd:   row.OffsetEnd,
+		Data:        row.Content,
+		ObservedAt:  pgvalue.Time(row.OccurredAt),
+		CreatedAt:   pgvalue.Time(row.CreatedAt),
+	}
 }
 
 func apiEventResponse(seq int64, runID pgtype.UUID, deploymentID pgtype.UUID, _ pgtype.UUID, attemptNumberValue pgtype.Int4, traceIDValue pgtype.Text, spanIDValue pgtype.Text, traceparentValue pgtype.Text, category string, severity string, source string, rawKind string, message string, payload []byte, redactionClass string, createdAt pgtype.Timestamptz, occurredAt pgtype.Timestamptz) api.RunEvent {

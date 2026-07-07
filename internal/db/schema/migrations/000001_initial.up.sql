@@ -2131,8 +2131,10 @@ CREATE TABLE telemetry_outbox (
 CREATE UNIQUE INDEX telemetry_outbox_idempotency_idx
     ON telemetry_outbox (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key);
 CREATE INDEX telemetry_outbox_publish_ready_idx
-    ON telemetry_outbox (created_at, id)
-    WHERE stream_kind = 'event' AND published_at IS NULL;
+    ON telemetry_outbox (stream_kind, org_id, worker_group_id, source_kind, source_id, stream_name, id)
+    WHERE stream_kind IN ('event', 'run_log', 'terminal_output')
+      AND published_at IS NULL
+      AND state <> 'dead_lettered';
 CREATE INDEX telemetry_outbox_ingest_ready_idx
     ON telemetry_outbox (stream_kind, source_kind, source_id, stream_name, id)
     WHERE written_at IS NULL;

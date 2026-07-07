@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -88,6 +87,10 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) {
+	if s.eventStream == nil {
+		writeError(w, unavailable(errors.New("event stream is not configured")))
+		return
+	}
 	flusher, _ := w.(http.Flusher)
 	w.Header().Set("content-type", "text/event-stream")
 	w.Header().Set("cache-control", "no-cache")
@@ -95,34 +98,32 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runLogStreamFollowMaxDuration)
 	defer cancel()
-	ticker := time.NewTicker(runLogStreamPollInterval)
-	defer ticker.Stop()
-	for {
-		nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, workerGroupID, runID, cursor)
+	err := s.eventStream.ReadRunLogs(ctx, orgID, workerGroupID, runID, cursor, func(chunk api.RunLogChunk) error {
+		_, _ = fmt.Fprintf(w, "id: %s\n", chunk.ID)
+		_, _ = fmt.Fprint(w, "event: run_log\n")
+		_, _ = fmt.Fprint(w, "data: ")
+		if err := encoder.Encode(chunk); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(w, "\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		next, err := telemetry.ParseCursor(chunk.ID)
 		if err != nil {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				s.log.Warn("follow run logs failed", "run_id", runID.String(), "error", err)
-			}
-			return
+			return err
 		}
-		cursor = nextCursor
-		if rowCount == int(runLogStreamBatchSize) {
-			continue
-		}
+		cursor = next
+		return nil
+	}, func() error {
 		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(runID)})
 		if isNoRows(err) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
-			for {
-				nextCursor, rowCount, err := s.writeRunLogChunksAfter(ctx, w, flusher, encoder, orgID, workerGroupID, runID, cursor)
-				if err != nil {
-					if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-						s.log.Warn("drain terminal run logs failed", "run_id", runID.String(), "error", err)
-					}
-					return
-				}
-				cursor = nextCursor
-				if rowCount < int(runLogStreamBatchSize) {
-					return
-				}
+			pending, pendingErr := s.hasUnpublishedRunLogs(ctx, orgID, workerGroupID, runID)
+			if pendingErr != nil {
+				return pendingErr
+			}
+			if !pending {
+				return errLiveTelemetryFollowComplete
 			}
 		}
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
@@ -132,43 +133,42 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 		if flusher != nil {
 			flusher.Flush()
 		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errLiveTelemetryFollowComplete) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		s.log.Warn("follow run logs failed", "run_id", runID.String(), "error", err)
 	}
 }
 
-func (s *Server) writeRunLogChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) (int64, int, error) {
-	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		RunID:         runID,
-		AfterSeq:      cursor,
-		Limit:         runLogStreamBatchSize,
-	})
-	if err != nil {
-		return cursor, 0, err
-	}
-	for _, chunk := range page.Chunks {
-		_, _ = fmt.Fprintf(w, "id: %s\n", chunk.ID)
-		_, _ = fmt.Fprint(w, "event: run_log\n")
-		_, _ = fmt.Fprint(w, "data: ")
-		if err := encoder.Encode(chunk); err != nil {
-			return cursor, 0, err
-		}
-		_, _ = fmt.Fprint(w, "\n")
-		if flusher != nil {
-			flusher.Flush()
-		}
-		next, err := telemetry.ParseCursor(chunk.ID)
+func (s *Server) hasUnpublishedRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID) (bool, error) {
+	for _, stream := range []api.WorkerLogStream{api.WorkerLogStreamStdout, api.WorkerLogStreamStderr} {
+		pending, err := s.db.HasUnpublishedLiveTelemetryOutbox(ctx, db.HasUnpublishedLiveTelemetryOutboxParams{
+			OrgID:         pgvalue.UUID(orgID),
+			WorkerGroupID: workerGroupID,
+			StreamKind:    db.TelemetryStreamKindRunLog,
+			SourceKind:    "run",
+			SourceID:      pgvalue.UUID(runID),
+			StreamName:    string(stream),
+		})
 		if err != nil {
-			return cursor, 0, err
+			return false, err
 		}
-		cursor = next
+		if pending {
+			return true, nil
+		}
 	}
-	return cursor, len(page.Chunks), nil
+	return false, nil
+}
+
+func (s *Server) hasUnpublishedTerminalOutput(ctx context.Context, orgID uuid.UUID, workerGroupID string, resourceKind string, resourceID uuid.UUID, streamName string) (bool, error) {
+	return s.db.HasUnpublishedLiveTelemetryOutbox(ctx, db.HasUnpublishedLiveTelemetryOutboxParams{
+		OrgID:         pgvalue.UUID(orgID),
+		WorkerGroupID: workerGroupID,
+		StreamKind:    db.TelemetryStreamKindTerminalOutput,
+		SourceKind:    resourceKind,
+		SourceID:      pgvalue.UUID(resourceID),
+		StreamName:    streamName,
+	})
 }
 
 func runLogChunkResponse(chunk db.AppendRunLogChunkRow) api.RunLogChunk {

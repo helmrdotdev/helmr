@@ -156,7 +156,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	go func() {
 		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("event stream publisher stopped", "error", err)
+			log.Error("live telemetry publisher stopped", "error", err)
 			cancelServer()
 		}
 	}()

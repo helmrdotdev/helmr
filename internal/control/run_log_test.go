@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -132,9 +133,8 @@ func TestGetRunLogsDoesNotRequireLocalWorkerGroupRoutability(t *testing.T) {
 	}
 }
 
-func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
+func TestFollowRunLogsStreamsLiveRedisWhenHistoricalUnavailable(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
-	sessionID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
 			ID:        pgvalue.UUID(runID),
@@ -144,36 +144,43 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
-		logChunks: []db.AppendRunLogChunkRow{
-			{
-				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-				RunID:         pgvalue.UUID(runID),
-				RunLeaseID:    pgvalue.UUID(sessionID),
-				AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-				Stream:        db.RunLogStreamStdout,
-				Seq:           8,
-				ObservedSeq:   pgtype.Int8{Int64: 2, Valid: true},
-				Content:       []byte("new\n"),
-				SizeBytes:     pgtype.Int8{Int64: 4, Valid: true},
-				CreatedAt:     testTime(),
-			},
-		},
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	publishedChunk := api.RunLogChunk{
+		ID:            telemetryCursor(8),
+		RunID:         runID.String(),
+		AttemptNumber: 1,
+		Stream:        "stdout",
+		ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
+		Bytes:         4,
+		ObservedSeq:   2,
+		At:            pgvalue.Time(testTime()),
+	}
+	payload, err := json.Marshal(publishedChunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
+		ID:     redisEventID(8),
+		Values: map[string]any{"run_log": string(payload)},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable}}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, EventStream: eventStream})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor="+telemetryCursor(1), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	req.Header.Set("accept", "text/event-stream")
-	req.Header.Set("Last-Event-ID", telemetryCursor(7))
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.firstRunLogChunksAfterSeq != 7 {
-		t.Fatalf("log cursor = %d", store.firstRunLogChunksAfterSeq)
 	}
 	if !strings.Contains(rec.Body.String(), "event: run_log") || !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(8)) {
 		t.Fatalf("sse body = %q", rec.Body.String())
@@ -194,7 +201,6 @@ func TestFollowRunLogsStreamsChunksAfterCursor(t *testing.T) {
 
 func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
-	sessionID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
 		run: db.Run{
 			ID:        pgvalue.UUID(runID),
@@ -204,25 +210,35 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 			CreatedAt: testTime(),
 			UpdatedAt: testTime(),
 		},
-		deferLogChunksUntilSecondList: true,
-		logChunks: []db.AppendRunLogChunkRow{
-			{
-				OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-				RunID:         pgvalue.UUID(runID),
-				RunLeaseID:    pgvalue.UUID(sessionID),
-				AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-				Stream:        db.RunLogStreamStderr,
-				Seq:           12,
-				ObservedSeq:   pgtype.Int8{Int64: 4, Valid: true},
-				Content:       []byte("final error\n"),
-				SizeBytes:     pgtype.Int8{Int64: int64(len("final error\n")), Valid: true},
-				CreatedAt:     testTime(),
-			},
-		},
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	chunk := api.RunLogChunk{
+		ID:            telemetryCursor(12),
+		RunID:         runID.String(),
+		AttemptNumber: 1,
+		Stream:        "stderr",
+		ContentBase64: base64.StdEncoding.EncodeToString([]byte("final error\n")),
+		Bytes:         int64(len("final error\n")),
+		ObservedSeq:   4,
+		At:            pgvalue.Time(testTime()),
+	}
+	payload, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
+		ID:     redisEventID(12),
+		Values: map[string]any{"run_log": string(payload)},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable}}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, EventStream: eventStream})
 
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1&cursor="+telemetryCursor(11), nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -231,11 +247,51 @@ func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.runLogChunksAfterCalls != 2 {
-		t.Fatalf("list calls = %d, want terminal drain", store.runLogChunksAfterCalls)
-	}
 	if !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(12)) || !strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("final error\n"))) {
 		t.Fatalf("sse body = %q", rec.Body.String())
+	}
+}
+
+func TestReadRunLogsRejectsStaleRedisCursorWhenHistoricalUnavailable(t *testing.T) {
+	runID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{}
+	redisServer := miniredis.RunT(t)
+	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
+	t.Cleanup(func() { _ = redisClient.Close() })
+	chunk := api.RunLogChunk{
+		ID:            telemetryCursor(8),
+		RunID:         runID.String(),
+		AttemptNumber: 1,
+		Stream:        "stdout",
+		ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
+		Bytes:         4,
+		ObservedSeq:   2,
+		At:            pgvalue.Time(testTime()),
+	}
+	payload, err := json.Marshal(chunk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
+		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
+		ID:     redisEventID(8),
+		Values: map[string]any{"run_log": string(payload)},
+	}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	stream := &EventStream{
+		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db:              store,
+		redis:           redisClient,
+		workerGroupID:   dbtest.DefaultWorkerGroupID,
+		telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable},
+	}
+	err = stream.ReadRunLogs(context.Background(), dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID, 7, func(api.RunLogChunk) error {
+		t.Fatal("unexpected run log chunk")
+		return nil
+	}, nil)
+	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) {
+		t.Fatalf("err = %v, want historical unavailable", err)
 	}
 }
 
@@ -306,7 +362,7 @@ func TestWorkerLogsAndEvents(t *testing.T) {
 		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
 	}
 
-	store.events = []db.ClaimEventOutboxRow{{
+	store.events = []db.ClaimLiveTelemetryOutboxRow{{
 		Seq:            1,
 		OrgID:          store.run.OrgID,
 		RunID:          store.run.ID,
@@ -419,7 +475,7 @@ func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChun
 	case "stderr":
 		f.stderr = append(f.stderr, arg.Content...)
 	}
-	event := db.ClaimEventOutboxRow{
+	event := db.ClaimLiveTelemetryOutboxRow{
 		Seq:            int64(len(f.events) + 1),
 		OrgID:          arg.OrgID,
 		RunID:          arg.RunID,

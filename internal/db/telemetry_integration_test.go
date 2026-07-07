@@ -428,7 +428,7 @@ func TestDeadLetteredUnpublishedEventDoesNotBlockLaterPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	claimed, err := queries.ClaimEventOutbox(ctx, db.ClaimEventOutboxParams{
+	claimed, err := queries.ClaimLiveTelemetryOutbox(ctx, db.ClaimLiveTelemetryOutboxParams{
 		RowLimit:      10,
 		LeaseDuration: pgvalue.Interval(time.Minute),
 	})
