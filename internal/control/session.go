@@ -243,7 +243,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		placementWorkerGroupID = placement.WorkerGroupID
 	}
 	if externalID != "" {
-		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, source); err == nil {
+		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, externalID, startFingerprint.String, source); err == nil {
 			return existing, nil
 		} else if !isNoRows(err) {
 			return sessionStartResult{}, err
@@ -501,7 +501,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		return nil
 	})
 	if errors.Is(err, errSessionStartExternalIDRace) {
-		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, source)
+		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, externalID, startFingerprint.String, source)
 		if err != nil {
 			return sessionStartResult{}, err
 		}
@@ -720,7 +720,7 @@ func decodeWorkspaceResourceFloor(raw []byte) (workspaceResourceFloor, error) {
 	return workspaceResourceFloor{milliCPU: decoded.MilliCPU, memoryMiB: decoded.MemoryMiB}, nil
 }
 
-func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, source sessionStartSource) (sessionStartResult, error) {
+func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, externalID string, startFingerprint string, source sessionStartSource) (sessionStartResult, error) {
 	existing, err := store.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
@@ -845,13 +845,6 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 	}
 	digest := sha256.Sum256(body)
 	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
-}
-
-func keyString(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return value.String
 }
 
 func timePtrToTimestamptz(value *time.Time) pgtype.Timestamptz {
