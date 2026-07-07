@@ -162,17 +162,17 @@ func (s *Server) createRunCheckpointArtifactRows(ctx context.Context, store db.Q
 	}
 	for _, row := range rows {
 		if _, err := store.CreateRunCheckpointArtifact(ctx, db.CreateRunCheckpointArtifactParams{
-			Role:                row.role,
-			Ordinal:             row.ordinal,
-			EncryptDurationMs:   row.artifact.EncryptDurationMs,
-			StoreDurationMs:     row.artifact.StoreDurationMs,
-			ArtifactID:          row.id,
-			Digest:              row.artifact.Digest,
-			OrgID:               scope.OrgID,
-			ProjectID:           scope.ProjectID,
-			EnvironmentID:       scope.EnvironmentID,
-			RunID:               scope.RunID,
-			RunCheckpointID: runCheckpointID,
+			Role:              row.role,
+			Ordinal:           row.ordinal,
+			EncryptDurationMs: row.artifact.EncryptDurationMs,
+			StoreDurationMs:   row.artifact.StoreDurationMs,
+			ArtifactID:        row.id,
+			Digest:            row.artifact.Digest,
+			OrgID:             scope.OrgID,
+			ProjectID:         scope.ProjectID,
+			EnvironmentID:     scope.EnvironmentID,
+			RunID:             scope.RunID,
+			RunCheckpointID:   runCheckpointID,
 		}); err != nil {
 			return err
 		}
