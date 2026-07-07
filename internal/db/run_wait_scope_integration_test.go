@@ -70,11 +70,11 @@ func ensureRunningWorkspaceMount(t *testing.T, ctx context.Context, pool interfa
 	t.Helper()
 	workspaceMountID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (
-			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		INSERT INTO runtime_identities (
+			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
 		VALUES ('test-runtime', 'arm64', 'test-abi', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'test-cni')
-		ON CONFLICT (runtime_id) DO NOTHING
+		ON CONFLICT (id) DO NOTHING
 	`); err != nil {
 		t.Fatal(err)
 	}

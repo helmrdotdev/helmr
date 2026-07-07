@@ -2521,7 +2521,7 @@ type Run struct {
 	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
 	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
 	RequestedExecutionSlots int32                  `json:"requested_execution_slots"`
-	RuntimeID               string                 `json:"runtime_id"`
+	RuntimeIdentityID       string                 `json:"runtime_identity_id"`
 	RuntimeArch             string                 `json:"runtime_arch"`
 	RuntimeABI              string                 `json:"runtime_abi"`
 	KernelDigest            string                 `json:"kernel_digest"`
@@ -2560,7 +2560,7 @@ type RunCheckpoint struct {
 	BaseWorkspaceVersionID     pgtype.UUID        `json:"base_workspace_version_id"`
 	State                      RunCheckpointState `json:"state"`
 	RuntimeBackend             string             `json:"runtime_backend"`
-	RuntimeID                  string             `json:"runtime_id"`
+	RuntimeIdentityID          string             `json:"runtime_identity_id"`
 	RuntimeArch                string             `json:"runtime_arch"`
 	RuntimeABI                 string             `json:"runtime_abi"`
 	KernelDigest               string             `json:"kernel_digest"`
@@ -2648,7 +2648,7 @@ type RunLease struct {
 	ConcurrencyKey         pgtype.Text        `json:"concurrency_key"`
 	Status                 RunLeaseStatus     `json:"status"`
 	LeaseExpiresAt         pgtype.Timestamptz `json:"lease_expires_at"`
-	RuntimeID              string             `json:"runtime_id"`
+	RuntimeIdentityID      string             `json:"runtime_identity_id"`
 	WorkerProtocolVersion  string             `json:"worker_protocol_version"`
 	ActiveDurationMs       int64              `json:"active_duration_ms"`
 	TraceID                string             `json:"trace_id"`
@@ -2734,6 +2734,18 @@ type RunWait struct {
 	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
+type RuntimeIdentity struct {
+	ID              string             `json:"id"`
+	RuntimeArch     string             `json:"runtime_arch"`
+	RuntimeABI      string             `json:"runtime_abi"`
+	KernelDigest    string             `json:"kernel_digest"`
+	InitramfsDigest string             `json:"initramfs_digest"`
+	RootfsDigest    string             `json:"rootfs_digest"`
+	CniProfile      string             `json:"cni_profile"`
+	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
+	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
+}
+
 type RuntimeInstance struct {
 	ID                         pgtype.UUID          `json:"id"`
 	OrgID                      pgtype.UUID          `json:"org_id"`
@@ -2741,7 +2753,7 @@ type RuntimeInstance struct {
 	ProjectID                  pgtype.UUID          `json:"project_id"`
 	EnvironmentID              pgtype.UUID          `json:"environment_id"`
 	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
-	RuntimeReleaseID           string               `json:"runtime_release_id"`
+	RuntimeIdentityID          string               `json:"runtime_identity_id"`
 	DeploymentSandboxID        pgtype.UUID          `json:"deployment_sandbox_id"`
 	RuntimeSubstrateArtifactID pgtype.UUID          `json:"runtime_substrate_artifact_id"`
 	RuntimeEpoch               int64                `json:"runtime_epoch"`
@@ -2790,25 +2802,6 @@ type RuntimeInstance struct {
 	Error                      []byte               `json:"error"`
 	CreatedAt                  pgtype.Timestamptz   `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz   `json:"updated_at"`
-}
-
-type RuntimeRelease struct {
-	RuntimeID       string             `json:"runtime_id"`
-	RuntimeArch     string             `json:"runtime_arch"`
-	RuntimeABI      string             `json:"runtime_abi"`
-	KernelDigest    string             `json:"kernel_digest"`
-	InitramfsDigest string             `json:"initramfs_digest"`
-	RootfsDigest    string             `json:"rootfs_digest"`
-	CniProfile      string             `json:"cni_profile"`
-	FirstSeenAt     pgtype.Timestamptz `json:"first_seen_at"`
-	LastSeenAt      pgtype.Timestamptz `json:"last_seen_at"`
-}
-
-type RuntimeReleaseSelection struct {
-	RuntimeID  string             `json:"runtime_id"`
-	SelectedAt pgtype.Timestamptz `json:"selected_at"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type RuntimeSubstrate struct {

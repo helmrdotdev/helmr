@@ -26,7 +26,7 @@ func TestCreateRuntimeInstanceForDeploymentSandboxFitsExactWorkerCapacity(t *tes
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -35,7 +35,7 @@ func TestCreateRuntimeInstanceForDeploymentSandboxFitsExactWorkerCapacity(t *tes
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       "runtime-instance-token",
@@ -54,7 +54,7 @@ func TestCreateRuntimeInstanceForDeploymentSandboxRejectsWhenWorkerCapacityIsRes
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 
 	base := db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -62,7 +62,7 @@ func TestCreateRuntimeInstanceForDeploymentSandboxRejectsWhenWorkerCapacityIsRes
 		RootfsDigest:        "sha256:rootfs",
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       "runtime-instance-token",
@@ -86,7 +86,7 @@ func TestCreateExpiredRuntimeStopCommandsCarriesWorkerGroupID(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -95,7 +95,7 @@ func TestCreateExpiredRuntimeStopCommandsCarriesWorkerGroupID(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash-route-generation",
 		RuntimeKey:          []byte(`{"test":"expired-runtime-route-generation"}`),
 		InstanceToken:       "runtime-instance-token-route-generation",
@@ -140,7 +140,7 @@ func TestMarkRuntimeInstanceClosedAcceptsLostRuntimeInstance(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 
 	instanceToken := "runtime-instance-token"
@@ -150,7 +150,7 @@ func TestMarkRuntimeInstanceClosedAcceptsLostRuntimeInstance(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       instanceToken,
@@ -198,7 +198,7 @@ func TestRuntimeInstanceWorkerMutationsContinueOnDrainingWorkerGroup(t *testing.
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_instances
@@ -222,7 +222,7 @@ func TestRuntimeInstanceWorkerMutationsContinueOnDrainingWorkerGroup(t *testing.
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"draining-route-runtime"}`),
 		InstanceToken:       instanceToken,
@@ -238,7 +238,7 @@ func TestRuntimeInstanceWorkerMutationsContinueOnDrainingWorkerGroup(t *testing.
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"failed-draining-route-runtime"}`),
 		InstanceToken:       failedToken,
@@ -288,7 +288,7 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 
 	instanceToken := "prepared-runtime-instance-token"
@@ -298,7 +298,7 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       instanceToken,
@@ -339,7 +339,7 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -372,7 +372,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_instances
@@ -451,7 +451,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"preparing-runtime-adoption"}`),
 		InstanceToken:       instanceToken,
@@ -483,7 +483,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "other-worker-workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("cross-worker claim with preparing runtime err = %v, want pgx.ErrNoRows", err)
@@ -500,7 +500,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("claim with preparing runtime err = %v, want pgx.ErrNoRows", err)
@@ -512,7 +512,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	})
 	if err != nil {
@@ -547,7 +547,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "reserved-other-worker-workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("claim with reserved preparing runtime err = %v, want pgx.ErrNoRows", err)
@@ -564,7 +564,7 @@ func TestClaimWorkspaceMountDefersColdClaimWhenPreparingRuntimeExists(t *testing
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "second-workspace-workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("second workspace claim with reserved preparing runtime err = %v, want pgx.ErrNoRows", err)
@@ -589,7 +589,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_instances
@@ -611,7 +611,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"expired-preparing-runtime-adoption"}`),
 		InstanceToken:       "expired-preparing-runtime-instance-token",
@@ -638,7 +638,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -663,7 +663,7 @@ func TestExpiredPreparingRuntimeAdoptionDoesNotBlockColdClaim(t *testing.T) {
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -691,7 +691,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	instanceToken := "expired-ready-adoption-runtime-token"
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -700,7 +700,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"expired-ready-runtime-adoption"}`),
 		InstanceToken:       instanceToken,
@@ -727,7 +727,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true},
 	})
 	if err != nil {
@@ -761,7 +761,7 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 		GuestdChannelTokenHash:      "workspace-mount-channel-token-hash",
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -788,7 +788,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
@@ -814,7 +814,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceFitsExactWorkerCapa
 	instance, err := queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:       pgvalue.UUID(workerID),
-		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeIdentityID:      runtimeIdentityID,
 		RuntimeKeyHash:         "runtime-key-hash",
 		RuntimeKey:             []byte(`{"test":"workspace-mount-source"}`),
 		NetworkPolicy:          []byte(`{}`),
@@ -838,7 +838,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDraining
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	mountTokenHash := "draining-workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
@@ -865,7 +865,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceContinuesOnDraining
 	instance, err := queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:       pgvalue.UUID(workerID),
-		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeIdentityID:      runtimeIdentityID,
 		RuntimeKeyHash:         "runtime-key-hash",
 		RuntimeKey:             []byte(`{"test":"workspace-mount-source-draining"}`),
 		NetworkPolicy:          []byte(`{}`),
@@ -887,7 +887,7 @@ func TestPreparedRuntimeMountAdoptionRejectsDrainingWorkerGroup(t *testing.T) {
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
 		WorkerInstanceID:    pgvalue.UUID(workerID),
@@ -895,7 +895,7 @@ func TestPreparedRuntimeMountAdoptionRejectsDrainingWorkerGroup(t *testing.T) {
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"draining-prepared-adoption"}`),
 		InstanceToken:       "draining-prepared-runtime-token",
@@ -924,7 +924,7 @@ func TestPreparedRuntimeMountAdoptionRejectsDrainingWorkerGroup(t *testing.T) {
 		AdapterAbi:                  "adapter-test",
 		WorkerInstanceID:            pgvalue.UUID(workerID),
 		WorkerGroupID:               dbtest.DefaultWorkerGroupID,
-		RuntimeID:                   runtimeReleaseID,
+		RuntimeID:                   runtimeIdentityID,
 		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -943,7 +943,7 @@ func TestPreparedRuntimeMountAdoptionRejectsDrainingWorkerGroup(t *testing.T) {
 	_, err = queries.GetAwaitingPreparedRuntimeMountForWorker(ctx, db.GetAwaitingPreparedRuntimeMountForWorkerParams{
 		WorkerInstanceID: pgvalue.UUID(workerID),
 		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
-		RuntimeID:        runtimeReleaseID,
+		RuntimeID:        runtimeIdentityID,
 		RootfsDigest:     "sha256:rootfs",
 		RuntimeABI:       "test",
 		GuestdAbi:        "guestd-test",
@@ -959,7 +959,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	mountTokenHash := "workspace-mount-channel-token-hash"
 	requestedMount, err := requestWorkspaceMountForTest(ctx, queries, db.EnsureWorkspaceMountRequestedParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
@@ -984,7 +984,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t
 	first, err := queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:       pgvalue.UUID(workerID),
-		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeIdentityID:      runtimeIdentityID,
 		RuntimeKeyHash:         "runtime-key-hash",
 		RuntimeKey:             []byte(`{"test":"workspace-mount-source"}`),
 		NetworkPolicy:          []byte(`{}`),
@@ -1019,7 +1019,7 @@ func TestCreatePreparedRuntimeInstanceForWorkspaceMountSourceRejectsOwnedMount(t
 	_, err = queries.CreatePreparedRuntimeInstanceForWorkspaceMountSource(ctx, db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
 		ID:                     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		WorkerInstanceID:       pgvalue.UUID(workerID),
-		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeIdentityID:      runtimeIdentityID,
 		RuntimeKeyHash:         "runtime-key-hash-2",
 		RuntimeKey:             []byte(`{"test":"workspace-mount-source-2"}`),
 		NetworkPolicy:          []byte(`{}`),
@@ -1197,7 +1197,7 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	instanceToken := "runtime-instance-token"
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -1206,7 +1206,7 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       instanceToken,
@@ -1253,7 +1253,7 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	workerID, runtimeReleaseID := seedExactCapacityRuntimeWorker(t, ctx, pool)
+	workerID, runtimeIdentityID := seedExactCapacityRuntimeWorker(t, ctx, pool)
 	setCurrentDeploymentForRuntimeInstanceTest(t, ctx, pool, ids)
 	instanceToken := "runtime-instance-token"
 	instance, err := queries.CreateRuntimeInstanceForDeploymentSandbox(ctx, db.CreateRuntimeInstanceForDeploymentSandboxParams{
@@ -1262,7 +1262,7 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 		RuntimeABI:          "test",
 		DeploymentSandboxID: pgvalue.UUID(ids.deploymentSandboxID),
 		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RuntimeKeyHash:      "runtime-key-hash",
 		RuntimeKey:          []byte(`{"test":"deployment-sandbox"}`),
 		InstanceToken:       instanceToken,
@@ -1455,16 +1455,16 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledWorkerGroup(t *test
 func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (uuid.UUID, string) {
 	t.Helper()
 	workerID := uuid.Must(uuid.NewV7())
-	runtimeReleaseID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	runtimeIdentityID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	workerResourceID := "worker-" + shortUUID(workerID)
 	var workerGroupID string
 	if err := pool.QueryRow(ctx, `SELECT id FROM worker_groups WHERE id = $1 AND name = 'default'`, dbtest.DefaultWorkerGroupID).Scan(&workerGroupID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, runtimeReleaseID); err != nil {
+	`, runtimeIdentityID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1477,10 +1477,10 @@ func seedExactCapacityRuntimeWorker(t *testing.T, ctx context.Context, pool *pgx
 			VALUES ($1, $2, $3, $4, 'active', $5,
 			1000, 1024, 1024, 1, 1000, 1024, 1024, 1,
 			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-		`, workerID, dbtest.DefaultOrgID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeReleaseID); err != nil {
+		`, workerID, dbtest.DefaultOrgID, workerResourceID, workerGroupID, api.CurrentWorkerProtocolVersion, runtimeIdentityID); err != nil {
 		t.Fatal(err)
 	}
-	return workerID, runtimeReleaseID
+	return workerID, runtimeIdentityID
 }
 
 func setCurrentDeploymentForRuntimeInstanceTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
@@ -1549,7 +1549,7 @@ func runtimeSubstratePreparePayloadForTarget(t *testing.T, target db.ListRuntime
 	t.Helper()
 	source := api.WorkerPreparedRuntimeSource{
 		DeploymentSandboxID:        pgvalue.UUIDString(target.DeploymentSandboxID),
-		RuntimeID:                  target.RuntimeReleaseID,
+		RuntimeID:                  target.RuntimeIdentityID,
 		SandboxImageArtifact:       api.CASObject{Digest: target.SandboxImageArtifactDigest, MediaType: target.SandboxImageArtifactMediaType, SizeBytes: target.SandboxImageArtifactSizeBytes},
 		SandboxImageArtifactFormat: target.SandboxImageArtifactFormat,
 		RootfsDigest:               target.RootfsDigest,

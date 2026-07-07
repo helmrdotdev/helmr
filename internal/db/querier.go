@@ -128,7 +128,6 @@ type Querier interface {
 	EnsureDefaultWorkerGroup(ctx context.Context, arg EnsureDefaultWorkerGroupParams) (WorkerGroup, error)
 	EnsureOrgMember(ctx context.Context, arg EnsureOrgMemberParams) (OrgMember, error)
 	EnsureRegion(ctx context.Context, arg EnsureRegionParams) (Region, error)
-	EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error
 	EnsureSessionContinuationRequestForStreamRecord(ctx context.Context, arg EnsureSessionContinuationRequestForStreamRecordParams) (SessionContinuationRequest, error)
 	EnsureSessionStream(ctx context.Context, arg EnsureSessionStreamParams) (Stream, error)
 	EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureWorkspaceMountRequestedParams) (EnsureWorkspaceMountRequestedRow, error)
@@ -191,7 +190,7 @@ type Querier interface {
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunLeaseQueueLease(ctx context.Context, arg GetRunLeaseQueueLeaseParams) (GetRunLeaseQueueLeaseRow, error)
-	GetRunLeaseRuntimeRelease(ctx context.Context, arg GetRunLeaseRuntimeReleaseParams) (RuntimeRelease, error)
+	GetRunLeaseRuntimeIdentity(ctx context.Context, arg GetRunLeaseRuntimeIdentityParams) (RuntimeIdentity, error)
 	GetRunOperation(ctx context.Context, arg GetRunOperationParams) (RunOperation, error)
 	GetRunRestorePayload(ctx context.Context, arg GetRunRestorePayloadParams) (GetRunRestorePayloadRow, error)
 	GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (Run, error)

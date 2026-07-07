@@ -82,15 +82,11 @@ func TestPrepareQueuedRunDispatchRequiresFreshWorkerGroupHealth(t *testing.T) {
 	seedSessionForRun(t, ctx, pool, ids)
 	runtimeID := "runtime-routing-health"
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeID); err != nil {
 		t.Fatal(err)
 	}
-	if err := queries.EnsureRuntimeReleaseSelection(ctx, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
 		   SET routing_fresh_until = now() - interval '1 minute'

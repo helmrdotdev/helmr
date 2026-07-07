@@ -122,7 +122,7 @@ it unset for smoke cases such as `missing-secrets` that are expected to pass
 before run creation. Strict latency measurements also capture sanitized
 pre/post surface attestation files in the same report directory, including the
 control/dispatcher ECS task definition revision, digest-pinned control image,
-current deployment, sandbox ABI/digests, selected runtime release, and worker
+current deployment, sandbox ABI/digests, observed runtime identities, and worker
 heartbeat/capacity evidence. This keeps wall-clock results tied to the actual
 runtime surface that produced them. Interaction smokes also emit `ux_timing`
 records for user-visible boundaries such as start returned, stream phase

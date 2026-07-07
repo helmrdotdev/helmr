@@ -7,7 +7,7 @@ usage: dev/aws/run-surface-attestation.sh [LABEL]
 
 Print sanitized AWS dev and DB evidence describing the surface being measured:
 control/dispatcher ECS revisions, current deployments, deployment sandbox
-runtime ABI/digests, selected runtime release, and active worker heartbeat.
+runtime ABI/digests, observed runtime identities, and active worker heartbeat.
 
 This script is read-only for Helmr product data. For AWS dev it uses
 dev/aws/db-query.sh, which creates one-off ECS task/log records. Set
@@ -330,20 +330,25 @@ SELECT 'deployment_task' AS section,
    AND bundle_artifacts.id = deployment_tasks.bundle_artifact_id
  ORDER BY target_environments.slug, deployment_tasks.task_id;
 
-SELECT 'selected_runtime_release' AS section,
-       runtime_releases.runtime_id,
-       runtime_releases.runtime_arch,
-       runtime_releases.runtime_abi,
-       runtime_releases.kernel_digest,
-       runtime_releases.initramfs_digest,
-       runtime_releases.rootfs_digest,
-       runtime_releases.cni_profile,
-       runtime_release_selections.selected_at,
-       runtime_releases.last_seen_at
-  FROM runtime_release_selections
-  JOIN runtime_releases
-    ON runtime_releases.runtime_id = runtime_release_selections.runtime_id
- ORDER BY runtime_release_selections.selected_at DESC;
+SELECT 'worker_runtime_identity' AS section,
+       runtime_identities.id AS runtime_id,
+       runtime_identities.runtime_arch,
+       runtime_identities.runtime_abi,
+       runtime_identities.kernel_digest,
+       runtime_identities.initramfs_digest,
+       runtime_identities.rootfs_digest,
+       runtime_identities.cni_profile,
+       worker_instances.id AS worker_instance_id,
+       worker_groups.name AS worker_group,
+       worker_instances.status AS worker_status,
+       runtime_identities.last_seen_at
+  FROM worker_instances
+  JOIN worker_groups
+    ON worker_groups.id = worker_instances.worker_group_id
+  JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_id
+ ORDER BY runtime_identities.last_seen_at DESC,
+          worker_instances.id;
 
 SELECT 'worker_instance' AS section,
        worker_instances.id AS worker_instance_id,

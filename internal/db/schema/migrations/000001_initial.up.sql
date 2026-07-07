@@ -382,8 +382,8 @@ CREATE TRIGGER worker_groups_set_updated_at
     BEFORE UPDATE ON worker_groups
     FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-CREATE TABLE runtime_releases (
-    runtime_id TEXT PRIMARY KEY CHECK (btrim(runtime_id) <> ''),
+CREATE TABLE runtime_identities (
+    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
     runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
     runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
@@ -393,17 +393,6 @@ CREATE TABLE runtime_releases (
     first_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-
-CREATE TABLE runtime_release_selections (
-    runtime_id TEXT NOT NULL REFERENCES runtime_releases(runtime_id) ON DELETE RESTRICT,
-    selected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TRIGGER runtime_release_selections_set_updated_at
-    BEFORE UPDATE ON runtime_release_selections
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TABLE worker_instances (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -1177,7 +1166,7 @@ CREATE TABLE runs (
     requested_memory_mib BIGINT NOT NULL CHECK (requested_memory_mib > 0),
     requested_disk_mib BIGINT NOT NULL DEFAULT 0 CHECK (requested_disk_mib >= 0),
     requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
-    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
     runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
     runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
@@ -1219,8 +1208,8 @@ CREATE TABLE runs (
     FOREIGN KEY (org_id, deployment_id, deployment_task_id, task_id)
         REFERENCES deployment_tasks(org_id, deployment_id, id, task_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (runtime_id)
-        REFERENCES runtime_releases(runtime_id)
+    FOREIGN KEY (runtime_identity_id)
+        REFERENCES runtime_identities(id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
@@ -2070,7 +2059,7 @@ CREATE TABLE run_leases (
     concurrency_key TEXT,
     status run_lease_status NOT NULL,
     lease_expires_at TIMESTAMPTZ NOT NULL,
-    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v1' CHECK (btrim(worker_protocol_version) <> ''),
     active_duration_ms BIGINT NOT NULL DEFAULT 0 CHECK (active_duration_ms >= 0),
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
@@ -2090,8 +2079,8 @@ CREATE TABLE run_leases (
     UNIQUE (org_id, run_id, id),
     UNIQUE (org_id, worker_group_id, run_id, id),
     UNIQUE (run_id, id),
-    FOREIGN KEY (runtime_id)
-        REFERENCES runtime_releases(runtime_id)
+    FOREIGN KEY (runtime_identity_id)
+        REFERENCES runtime_identities(id)
         ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id)
         REFERENCES worker_instances(id)
@@ -2165,7 +2154,7 @@ CREATE TABLE run_checkpoints (
     base_workspace_version_id UUID NOT NULL,
     state run_checkpoint_state NOT NULL DEFAULT 'creating',
     runtime_backend TEXT NOT NULL CHECK (btrim(runtime_backend) <> ''),
-    runtime_id TEXT NOT NULL CHECK (btrim(runtime_id) <> ''),
+    runtime_identity_id TEXT NOT NULL CHECK (btrim(runtime_identity_id) <> ''),
     runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
     runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
@@ -2198,8 +2187,8 @@ CREATE TABLE run_checkpoints (
     UNIQUE (org_id, worker_group_id, run_id, id),
     UNIQUE (org_id, project_id, environment_id, run_id, id),
     UNIQUE (org_id, worker_group_id, project_id, environment_id, run_id, id),
-    FOREIGN KEY (runtime_id)
-        REFERENCES runtime_releases(runtime_id)
+    FOREIGN KEY (runtime_identity_id)
+        REFERENCES runtime_identities(id)
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
@@ -2560,7 +2549,7 @@ CREATE TABLE runtime_instances (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
-    runtime_release_id TEXT NOT NULL REFERENCES runtime_releases(runtime_id) ON DELETE RESTRICT,
+    runtime_identity_id TEXT NOT NULL REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     deployment_sandbox_id UUID NOT NULL,
     runtime_substrate_artifact_id UUID,
     runtime_epoch BIGINT NOT NULL DEFAULT 1 CHECK (runtime_epoch > 0),
@@ -2674,11 +2663,11 @@ ALTER TABLE run_checkpoints
     ON DELETE SET NULL (owner_runtime_instance_id);
 
 CREATE INDEX runtime_instances_ready_claim_idx
-    ON runtime_instances (worker_instance_id, runtime_release_id, deployment_sandbox_id, prepared_at, id)
+    ON runtime_instances (worker_instance_id, runtime_identity_id, deployment_sandbox_id, prepared_at, id)
     WHERE state = 'ready';
 
 CREATE INDEX runtime_instances_coverage_idx
-    ON runtime_instances (deployment_sandbox_id, runtime_release_id, state)
+    ON runtime_instances (deployment_sandbox_id, runtime_identity_id, state)
     WHERE state IN ('preparing', 'ready');
 
 CREATE INDEX runtime_instances_worker_active_idx
@@ -2770,7 +2759,6 @@ CREATE UNIQUE INDEX worker_commands_run_resume_wait_once_idx
 CREATE UNIQUE INDEX worker_commands_run_checkpoint_wait_once_idx
     ON worker_commands (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version)
     WHERE kind = 'run_checkpoint_wait' AND acknowledged_at IS NULL;
-CREATE UNIQUE INDEX runtime_release_selections_singleton_idx ON runtime_release_selections((true));
 CREATE UNIQUE INDEX worker_instance_credentials_worker_instance_one_active_idx ON worker_instance_credentials(worker_instance_id)
     WHERE revoked_at IS NULL;
 CREATE INDEX secrets_key_id_updated_idx ON secrets(key_id, updated_at ASC, id ASC);
