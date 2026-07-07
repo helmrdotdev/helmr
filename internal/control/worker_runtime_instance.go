@@ -48,7 +48,7 @@ func (s *Server) workerCreatePreparedRuntimeInstance(w http.ResponseWriter, r *h
 		return
 	}
 	worker := workerFromContext(r.Context())
-	runtimeReleaseID, ok := s.workerRuntimeReleaseID(w, r, worker)
+	runtimeIdentityID, ok := s.workerRuntimeIdentityID(w, r, worker)
 	if !ok {
 		return
 	}
@@ -56,7 +56,7 @@ func (s *Server) workerCreatePreparedRuntimeInstance(w http.ResponseWriter, r *h
 		ID:                     id,
 		WorkspaceMountID:       workspaceMountID,
 		WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeReleaseID:       runtimeReleaseID,
+		RuntimeIdentityID:      runtimeIdentityID,
 		GuestdChannelTokenHash: guestdChannelTokenHash(request.GuestdChannelToken),
 		RuntimeKeyHash:         strings.TrimSpace(request.RuntimeKeyHash),
 		RuntimeKey:             normalizedJSONRawMessage(request.RuntimeKey),
@@ -117,12 +117,12 @@ func (s *Server) workerCreateRuntimePrepareInstance(w http.ResponseWriter, r *ht
 		return
 	}
 	worker := workerFromContext(r.Context())
-	runtimeReleaseID := strings.TrimSpace(request.RuntimeID)
+	runtimeIdentityID := strings.TrimSpace(request.RuntimeID)
 	row, err := s.db.CreateRuntimeInstanceForDeploymentSandbox(r.Context(), db.CreateRuntimeInstanceForDeploymentSandboxParams{
 		ID:                  id,
 		DeploymentSandboxID: deploymentSandboxID,
 		WorkerInstanceID:    pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeReleaseID:    runtimeReleaseID,
+		RuntimeIdentityID:   runtimeIdentityID,
 		RootfsDigest:        strings.TrimSpace(request.RootfsDigest),
 		RuntimeABI:          strings.TrimSpace(request.RuntimeABI),
 		RuntimeKeyHash:      strings.TrimSpace(request.RuntimeKeyHash),
@@ -269,7 +269,7 @@ func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 	return []byte(raw)
 }
 
-func (s *Server) workerRuntimeReleaseID(w http.ResponseWriter, r *http.Request, worker workerActor) (string, bool) {
+func (s *Server) workerRuntimeIdentityID(w http.ResponseWriter, r *http.Request, worker workerActor) (string, bool) {
 	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
 		ID:            pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerGroupID: worker.WorkerGroupID,
@@ -279,7 +279,7 @@ func (s *Server) workerRuntimeReleaseID(w http.ResponseWriter, r *http.Request, 
 		return "", false
 	}
 	if err != nil {
-		writeError(w, errors.New("load worker runtime release"))
+		writeError(w, errors.New("load worker runtime identity"))
 		return "", false
 	}
 	return state.RuntimeID, true
@@ -295,7 +295,7 @@ func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 		RuntimeEpoch:           row.RuntimeEpoch,
 		RuntimeKeyHash:         row.RuntimeKeyHash,
 		RuntimeKey:             json.RawMessage(row.RuntimeKey),
-		RuntimeID:              row.RuntimeReleaseID,
+		RuntimeID:              row.RuntimeIdentityID,
 		DeploymentSandboxID:    pgvalue.UUIDString(row.DeploymentSandboxID),
 		State:                  string(row.State),
 		InstanceToken:          row.InstanceToken,
@@ -315,7 +315,7 @@ func runtimeInstanceFromDeploymentSandboxRow(row db.CreateRuntimeInstanceForDepl
 		ProjectID:                  row.ProjectID,
 		EnvironmentID:              row.EnvironmentID,
 		WorkerInstanceID:           row.WorkerInstanceID,
-		RuntimeReleaseID:           row.RuntimeReleaseID,
+		RuntimeIdentityID:          row.RuntimeIdentityID,
 		DeploymentSandboxID:        row.DeploymentSandboxID,
 		RuntimeSubstrateArtifactID: row.RuntimeSubstrateArtifactID,
 		RuntimeEpoch:               row.RuntimeEpoch,
@@ -357,7 +357,7 @@ func runtimeInstanceFromDeploymentSandboxRow(row db.CreateRuntimeInstanceForDepl
 func preparedRuntimeSourceResponse(row db.CreateRuntimeInstanceForDeploymentSandboxRow) api.WorkerPreparedRuntimeSource {
 	return api.WorkerPreparedRuntimeSource{
 		DeploymentSandboxID:        pgvalue.UUIDString(row.DeploymentSandboxID),
-		RuntimeID:                  row.RuntimeReleaseID,
+		RuntimeID:                  row.RuntimeIdentityID,
 		SandboxImageArtifact:       api.CASObject{Digest: row.SandboxImageArtifactDigest, SizeBytes: row.SandboxImageArtifactSizeBytes, MediaType: row.SandboxImageArtifactMediaType},
 		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat,
 		RootfsDigest:               row.RootfsDigest,

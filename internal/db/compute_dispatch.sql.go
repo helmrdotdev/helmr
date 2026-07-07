@@ -12,7 +12,7 @@ import (
 )
 
 const completeRunDispatch = `-- name: CompleteRunDispatch :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
   FROM runs
  WHERE runs.org_id = $1
    AND runs.worker_group_id = $2
@@ -79,7 +79,7 @@ func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispat
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
+		&i.RuntimeIdentityID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
@@ -127,7 +127,7 @@ WITH terminalized AS (
        AND runs.dispatch_generation = $7
        AND runs.status = 'queued'
        AND $1::int > $8::int
-    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 ),
 ended_session_run AS (
     UPDATE session_runs
@@ -247,30 +247,6 @@ func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDi
 		&i.StateVersion,
 	)
 	return i, err
-}
-
-const ensureRuntimeReleaseSelection = `-- name: EnsureRuntimeReleaseSelection :exec
-WITH selected_runtime AS (
-    SELECT runtime_releases.runtime_id
-      FROM runtime_releases
-     WHERE runtime_releases.runtime_id = $1
-),
-updated_selection AS (
-    UPDATE runtime_release_selections
-       SET runtime_id = selected_runtime.runtime_id,
-           selected_at = now()
-      FROM selected_runtime
-    RETURNING runtime_release_selections.runtime_id
-)
-INSERT INTO runtime_release_selections (runtime_id)
-SELECT selected_runtime.runtime_id
-  FROM selected_runtime
- WHERE NOT EXISTS (SELECT 1 FROM updated_selection)
-`
-
-func (q *Queries) EnsureRuntimeReleaseSelection(ctx context.Context, runtimeID string) error {
-	_, err := q.db.Exec(ctx, ensureRuntimeReleaseSelection, runtimeID)
-	return err
 }
 
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
@@ -856,7 +832,7 @@ UPDATE runs
    AND id = $5
    AND status = 'queued'
    AND dispatch_generation = $6
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
 type MarkRunDispatchEnqueueErrorParams struct {
@@ -922,7 +898,7 @@ func (q *Queries) MarkRunDispatchEnqueueError(ctx context.Context, arg MarkRunDi
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
+		&i.RuntimeIdentityID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
@@ -961,7 +937,7 @@ UPDATE runs
    AND id = $4
    AND status = 'queued'
    AND dispatch_generation = $5
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
 type MarkRunDispatchEnqueuedParams struct {
@@ -1025,7 +1001,7 @@ func (q *Queries) MarkRunDispatchEnqueued(ctx context.Context, arg MarkRunDispat
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
+		&i.RuntimeIdentityID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
@@ -1072,7 +1048,7 @@ SELECT runs.id AS run_id,
        runs.requested_memory_mib,
        runs.requested_disk_mib,
        runs.requested_execution_slots,
-       runs.runtime_id,
+       runs.runtime_identity_id AS runtime_id,
        runs.runtime_arch,
        runs.runtime_abi,
        runs.kernel_digest,
@@ -1192,7 +1168,7 @@ UPDATE runs
    AND runs.status = 'queued'
    AND runs.dispatch_generation = $6
    AND runs.current_run_lease_id IS NULL
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 `
 
 type RequeueRunDispatchParams struct {
@@ -1258,7 +1234,7 @@ func (q *Queries) RequeueRunDispatch(ctx context.Context, arg RequeueRunDispatch
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
 		&i.RequestedExecutionSlots,
-		&i.RuntimeID,
+		&i.RuntimeIdentityID,
 		&i.RuntimeArch,
 		&i.RuntimeABI,
 		&i.KernelDigest,
@@ -1343,8 +1319,8 @@ func (q *Queries) SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInst
 
 const upsertWorkerInstanceHeartbeat = `-- name: UpsertWorkerInstanceHeartbeat :one
 WITH observed_runtime AS (
-    INSERT INTO runtime_releases (
-        runtime_id,
+    INSERT INTO runtime_identities (
+        id,
         runtime_arch,
         runtime_abi,
         kernel_digest,
@@ -1362,15 +1338,15 @@ WITH observed_runtime AS (
         $7,
         now()
     )
-    ON CONFLICT (runtime_id) DO UPDATE
+    ON CONFLICT (id) DO UPDATE
        SET last_seen_at = now()
-     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
-       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
-       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
-       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
-       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
-    RETURNING runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at
+     WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
+    RETURNING id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, first_seen_at, last_seen_at
 ),
 upserted_worker AS (
     INSERT INTO worker_instances (
@@ -1417,7 +1393,7 @@ upserted_worker AS (
            $21,
            $22,
            $23,
-           observed_runtime.runtime_id,
+           observed_runtime.id,
            observed_runtime.runtime_arch,
            observed_runtime.runtime_abi,
            observed_runtime.kernel_digest,

@@ -3576,16 +3576,16 @@ func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, erro
 	return run, nil
 }
 
-func (f *fakeStore) GetRunLeaseRuntimeRelease(_ context.Context, arg db.GetRunLeaseRuntimeReleaseParams) (db.RuntimeRelease, error) {
+func (f *fakeStore) GetRunLeaseRuntimeIdentity(_ context.Context, arg db.GetRunLeaseRuntimeIdentityParams) (db.RuntimeIdentity, error) {
 	if f.activeQueueLeaseMissing {
-		return db.RuntimeRelease{}, pgx.ErrNoRows
+		return db.RuntimeIdentity{}, pgx.ErrNoRows
 	}
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
-		return db.RuntimeRelease{}, pgx.ErrNoRows
+		return db.RuntimeIdentity{}, pgx.ErrNoRows
 	}
 	capabilities := testWorkerCapabilities()
-	return db.RuntimeRelease{
-		RuntimeID:       capabilities.RuntimeID,
+	return db.RuntimeIdentity{
+		ID:              capabilities.RuntimeID,
 		RuntimeArch:     capabilities.RuntimeArch,
 		RuntimeABI:      capabilities.RuntimeABI,
 		KernelDigest:    capabilities.KernelDigest,

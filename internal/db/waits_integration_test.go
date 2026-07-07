@@ -384,14 +384,14 @@ func TestRequeueResolvedRunWaitsRequiresLatestRunCheckpoint(t *testing.T) {
 		INSERT INTO run_checkpoints (
 			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
-			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			state, runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id,
 			owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id,
 			owner_worker_instance_id, source_worker_instance_id, cni_profile, manifest, ready_at
 		)
 		SELECT $1, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 		       source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
-		       'ready', runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+		       'ready', runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest,
 		       initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id,
 		       owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id,
 		       owner_worker_instance_id, source_worker_instance_id, cni_profile, '{"checkpoint":"other"}'::jsonb, now()

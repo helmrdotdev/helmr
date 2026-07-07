@@ -215,13 +215,13 @@ WITH scope AS (
            workspace_mounts.runtime_instance_id,
            workspace_mounts.dirty_generation,
            workspaces.current_version_id AS current_workspace_version_id,
-           worker_instances.runtime_id,
-           worker_instances.runtime_arch,
-           worker_instances.runtime_abi,
-           worker_instances.kernel_digest,
-           worker_instances.initramfs_digest,
-           worker_instances.rootfs_digest,
-           worker_instances.cni_profile,
+           runtime_identities.id AS runtime_identity_id,
+           runtime_identities.runtime_arch,
+           runtime_identities.runtime_abi,
+           runtime_identities.kernel_digest,
+           runtime_identities.initramfs_digest,
+           runtime_identities.rootfs_digest,
+           runtime_identities.cni_profile,
            runtime_instances.runtime_key_hash
       FROM run_waits
       JOIN runs ON runs.org_id = run_waits.org_id
@@ -243,6 +243,7 @@ WITH scope AS (
                            AND worker_instances.initramfs_digest <> ''
                            AND worker_instances.rootfs_digest <> ''
                            AND worker_instances.cni_profile <> ''
+      JOIN runtime_identities ON runtime_identities.id = run_leases.runtime_identity_id
       JOIN workspace_leases ON workspace_leases.org_id = runs.org_id
                            AND workspace_leases.project_id = runs.project_id
                            AND workspace_leases.environment_id = runs.environment_id
@@ -298,7 +299,7 @@ claimed_checkpoint AS (
         base_workspace_version_id,
         state,
         runtime_backend,
-        runtime_id,
+        runtime_identity_id,
         runtime_arch,
         runtime_abi,
         kernel_digest,
@@ -328,7 +329,7 @@ claimed_checkpoint AS (
            COALESCE(scope.workspace_version_id, scope.current_workspace_version_id),
            'creating',
            'firecracker',
-           scope.runtime_id,
+           scope.runtime_identity_id,
            scope.runtime_arch,
            scope.runtime_abi,
            scope.kernel_digest,

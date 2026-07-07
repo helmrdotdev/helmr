@@ -158,17 +158,24 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 		ON CONFLICT DO NOTHING
 	`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_release_selections (runtime_id)
-		VALUES ('test-runtime')
-		ON CONFLICT DO NOTHING
-	`); err != nil {
+		INSERT INTO worker_instances (
+			org_id, worker_group_id, resource_id, status, protocol_version,
+			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
+			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
+			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		)
+		VALUES ($1, $2, 'default-test-worker', 'active', $3,
+			4000, 8192, 65536, 4, 4000, 8192, 65536, 4,
+			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		ON CONFLICT (worker_group_id, resource_id) DO NOTHING
+	`, ids.orgID, dbtest.DefaultWorkerGroupID, api.CurrentWorkerProtocolVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -247,7 +254,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name,
 			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
-			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
+			runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
 			max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default',
@@ -294,7 +301,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	workspaceMountID := uuid.Must(uuid.NewV7())
 	runtimeInstanceID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_releases (runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeID); err != nil {
 		t.Fatal(err)
@@ -315,7 +322,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		INSERT INTO run_leases (
 			id, org_id, worker_group_id, project_id, environment_id, queue_class, queue_name,
 			run_id, worker_instance_id, dispatch_message_id, dispatch_generation,
-			dispatch_lease_id, dispatch_attempt, attempt_number, status, lease_expires_at, runtime_id,
+			dispatch_lease_id, dispatch_attempt, attempt_number, status, lease_expires_at, runtime_identity_id,
 			worker_protocol_version, trace_id,
 			span_id, parent_span_id, traceparent
 		)
@@ -372,7 +379,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_instances (
 			id, org_id, worker_group_id, project_id, environment_id, worker_instance_id,
-			runtime_release_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
+			runtime_identity_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
 			sandbox_fingerprint, rootfs_digest, image_digest, image_format,
 			sandbox_image_artifact_id, sandbox_image_artifact_digest,
 			sandbox_image_artifact_format, workspace_mount_path, runtime_abi,
@@ -428,7 +435,7 @@ func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Po
 		       requested_memory_mib = 1024,
 		       requested_disk_mib = 4096,
 		       requested_execution_slots = 1,
-		       runtime_id = $3,
+		       runtime_identity_id = $3,
 		       runtime_arch = 'arm64',
 		       runtime_abi = 'test',
 		       kernel_digest = 'sha256:kernel',

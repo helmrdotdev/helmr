@@ -74,7 +74,7 @@ func TestLeaseRunLeaseRejectsConcurrentLeaseForSameQueueKey(t *testing.T) {
 			requested_memory_mib,
 			requested_disk_mib,
 			requested_execution_slots,
-			runtime_id,
+			runtime_identity_id,
 			runtime_arch,
 			runtime_abi,
 			kernel_digest,
@@ -120,7 +120,7 @@ func TestLeaseRunLeaseRejectsConcurrentLeaseForSameQueueKey(t *testing.T) {
 		       requested_memory_mib,
 		       requested_disk_mib,
 		       requested_execution_slots,
-		       runtime_id,
+		       runtime_identity_id,
 		       runtime_arch,
 		       runtime_abi,
 		       kernel_digest,
@@ -825,7 +825,7 @@ func TestLeaseRunLeaseRejectsExpiredRunCheckpointRestore(t *testing.T) {
 		INSERT INTO run_checkpoints (
 			id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id,
 			source_workspace_lease_id, workspace_mount_id, base_workspace_version_id,
-			state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest,
+			state, runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest,
 			initramfs_digest, rootfs_digest, runtime_config_digest, owner_run_wait_id,
 			owner_run_id, source_worker_instance_id, cni_profile, expires_at
 		)

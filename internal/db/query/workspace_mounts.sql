@@ -151,7 +151,7 @@ WITH run_scope AS MATERIALIZED (
 	           runs.requested_memory_mib,
 	           runs.requested_disk_mib,
 	           runs.requested_execution_slots,
-	           runs.runtime_id,
+	           runs.runtime_identity_id AS runtime_id,
 	           runs.runtime_arch,
 	           runs.runtime_abi,
 	           runs.kernel_digest,
@@ -171,7 +171,7 @@ worker_scope AS MATERIALIZED (
 active_mounts AS MATERIALIZED (
     SELECT workspace_mounts.*,
            runtime_instances.worker_instance_id AS mounted_worker_instance_id,
-           runtime_instances.runtime_release_id AS mounted_runtime_id
+           runtime_instances.runtime_identity_id AS mounted_runtime_id
       FROM run_scope
       JOIN workspace_mounts
         ON workspace_mounts.org_id = run_scope.org_id
@@ -471,7 +471,7 @@ candidate AS (
                  runtime_instances.expires_at IS NULL
                  OR runtime_instances.expires_at > now()
              )
-             AND runtime_instances.runtime_release_id = sqlc.arg(runtime_id)
+             AND runtime_instances.runtime_identity_id = sqlc.arg(runtime_id)
              AND runtime_instances.deployment_sandbox_id = workspace_mounts.deployment_sandbox_id
              AND runtime_instances.sandbox_fingerprint = workspace_mounts.sandbox_fingerprint
              AND runtime_instances.rootfs_digest = workspace_mounts.rootfs_digest
@@ -508,7 +508,7 @@ candidate AS (
                  runtime_instances.expires_at IS NULL
                  OR runtime_instances.expires_at > now()
              )
-             AND runtime_instances.runtime_release_id = sqlc.arg(runtime_id)
+             AND runtime_instances.runtime_identity_id = sqlc.arg(runtime_id)
              AND runtime_instances.deployment_sandbox_id = workspace_mounts.deployment_sandbox_id
              AND runtime_instances.sandbox_fingerprint = workspace_mounts.sandbox_fingerprint
              AND runtime_instances.rootfs_digest = workspace_mounts.rootfs_digest
@@ -606,7 +606,7 @@ cold_runtime_instance AS (
         project_id,
         environment_id,
         worker_instance_id,
-        runtime_release_id,
+        runtime_identity_id,
         deployment_sandbox_id,
         runtime_key_hash,
         runtime_key,
@@ -764,7 +764,7 @@ candidate AS (
                  runtime_instances.expires_at IS NULL
                  OR runtime_instances.expires_at > now()
              )
-             AND runtime_instances.runtime_release_id = sqlc.arg(runtime_id)
+             AND runtime_instances.runtime_identity_id = sqlc.arg(runtime_id)
              AND runtime_instances.deployment_sandbox_id = workspace_mounts.deployment_sandbox_id
              AND runtime_instances.sandbox_fingerprint = workspace_mounts.sandbox_fingerprint
              AND runtime_instances.rootfs_digest = workspace_mounts.rootfs_digest
@@ -849,7 +849,7 @@ SELECT workspace_mounts.id,
    AND workspace_mounts.runtime_abi = sqlc.arg(runtime_abi)
    AND workspace_mounts.guestd_abi = sqlc.arg(guestd_abi)
    AND workspace_mounts.adapter_abi = sqlc.arg(adapter_abi)
-   AND runtime_instances.runtime_release_id = sqlc.arg(runtime_id)
+   AND runtime_instances.runtime_identity_id = sqlc.arg(runtime_id)
  ORDER BY workspace_mounts.priority DESC,
           workspace_mounts.created_at ASC,
           workspace_mounts.id ASC

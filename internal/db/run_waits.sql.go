@@ -131,13 +131,13 @@ WITH scope AS (
            workspace_mounts.runtime_instance_id,
            workspace_mounts.dirty_generation,
            workspaces.current_version_id AS current_workspace_version_id,
-           worker_instances.runtime_id,
-           worker_instances.runtime_arch,
-           worker_instances.runtime_abi,
-           worker_instances.kernel_digest,
-           worker_instances.initramfs_digest,
-           worker_instances.rootfs_digest,
-           worker_instances.cni_profile,
+           runtime_identities.id AS runtime_identity_id,
+           runtime_identities.runtime_arch,
+           runtime_identities.runtime_abi,
+           runtime_identities.kernel_digest,
+           runtime_identities.initramfs_digest,
+           runtime_identities.rootfs_digest,
+           runtime_identities.cni_profile,
            runtime_instances.runtime_key_hash
       FROM run_waits
       JOIN runs ON runs.org_id = run_waits.org_id
@@ -159,6 +159,7 @@ WITH scope AS (
                            AND worker_instances.initramfs_digest <> ''
                            AND worker_instances.rootfs_digest <> ''
                            AND worker_instances.cni_profile <> ''
+      JOIN runtime_identities ON runtime_identities.id = run_leases.runtime_identity_id
       JOIN workspace_leases ON workspace_leases.org_id = runs.org_id
                            AND workspace_leases.project_id = runs.project_id
                            AND workspace_leases.environment_id = runs.environment_id
@@ -214,7 +215,7 @@ claimed_checkpoint AS (
         base_workspace_version_id,
         state,
         runtime_backend,
-        runtime_id,
+        runtime_identity_id,
         runtime_arch,
         runtime_abi,
         kernel_digest,
@@ -244,7 +245,7 @@ claimed_checkpoint AS (
            COALESCE(scope.workspace_version_id, scope.current_workspace_version_id),
            'creating',
            'firecracker',
-           scope.runtime_id,
+           scope.runtime_identity_id,
            scope.runtime_arch,
            scope.runtime_abi,
            scope.kernel_digest,
@@ -265,7 +266,7 @@ claimed_checkpoint AS (
      WHERE scope.state = 'hot_waiting'
        AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
     ON CONFLICT (id) DO NOTHING
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id, source_workspace_lease_id, workspace_mount_id, base_workspace_version_id, state, runtime_backend, runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id, owner_worker_instance_id, source_worker_instance_id, substrate_digest, runtime_substrate_artifact_id, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, manifest, error_message, expires_at, creation_started_at, creation_expires_at, created_at, ready_at, invalidated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id, source_workspace_lease_id, workspace_mount_id, base_workspace_version_id, state, runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id, owner_worker_instance_id, source_worker_instance_id, substrate_digest, runtime_substrate_artifact_id, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, manifest, error_message, expires_at, creation_started_at, creation_expires_at, created_at, ready_at, invalidated_at
 ),
 claimed_wait AS (
     UPDATE run_waits
@@ -1582,7 +1583,7 @@ updated_runs AS (
        AND runs.id = eligible_waits.run_id
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at,
+	    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at,
 	              eligible_waits.id AS source_run_wait_id,
 	              eligible_waits.run_checkpoint_id AS source_run_checkpoint_id
 ),

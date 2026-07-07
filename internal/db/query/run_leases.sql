@@ -851,7 +851,7 @@ leased_run_lease AS (
         attempt_number,
         status,
         lease_expires_at,
-        runtime_id,
+        runtime_identity_id,
         worker_protocol_version,
         trace_id,
         span_id,
@@ -876,7 +876,7 @@ leased_run_lease AS (
            concurrency_guard.current_attempt_number,
            'leased',
            sqlc.arg(lease_expires_at),
-           concurrency_guard.runtime_id,
+           concurrency_guard.runtime_identity_id,
            concurrency_guard.worker_protocol_version,
            concurrency_guard.trace_id,
            sqlc.arg(run_lease_span_id),
@@ -997,7 +997,7 @@ SELECT
     updated.requested_memory_mib,
     updated.requested_disk_mib,
     updated.requested_execution_slots,
-    updated.runtime_id AS requirements_runtime_id,
+    updated.runtime_identity_id AS requirements_runtime_id,
     updated.runtime_arch AS requirements_runtime_arch,
     updated.runtime_abi AS requirements_runtime_abi,
     updated.kernel_digest AS requirements_kernel_digest,
@@ -1269,10 +1269,10 @@ SELECT run_leases.id,
    AND run_leases.status = 'running'
    AND run_leases.lease_expires_at > now();
 
--- name: GetRunLeaseRuntimeRelease :one
-SELECT runtime_releases.*
+-- name: GetRunLeaseRuntimeIdentity :one
+SELECT runtime_identities.*
   FROM run_leases
-  JOIN runtime_releases ON runtime_releases.runtime_id = run_leases.runtime_id
+  JOIN runtime_identities ON runtime_identities.id = run_leases.runtime_identity_id
  WHERE run_leases.org_id = sqlc.arg(org_id)
    AND run_leases.run_id = sqlc.arg(run_id)
    AND run_leases.id = sqlc.arg(run_lease_id)

@@ -77,7 +77,7 @@ INSERT INTO runtime_instances (
     project_id,
     environment_id,
     worker_instance_id,
-    runtime_release_id,
+    runtime_identity_id,
     deployment_sandbox_id,
     runtime_key_hash,
     runtime_key,
@@ -107,7 +107,7 @@ SELECT sqlc.arg(id),
        candidate.project_id,
        candidate.environment_id,
        sqlc.arg(worker_instance_id),
-       sqlc.arg(runtime_release_id),
+       sqlc.arg(runtime_identity_id),
        candidate.deployment_sandbox_id,
        sqlc.arg(runtime_key_hash),
        COALESCE(sqlc.arg(runtime_key)::jsonb, '{}'::jsonb),
@@ -139,7 +139,7 @@ WITH worker_scope AS MATERIALIZED (
       FROM worker_instances
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.status = 'active'
-       AND worker_instances.runtime_id = sqlc.arg(runtime_release_id)
+       AND worker_instances.runtime_id = sqlc.arg(runtime_identity_id)
        AND worker_instances.rootfs_digest = sqlc.arg(rootfs_digest)
        AND worker_instances.runtime_abi = sqlc.arg(runtime_abi)
      FOR UPDATE OF worker_instances
@@ -229,7 +229,7 @@ inserted AS (
         project_id,
         environment_id,
         worker_instance_id,
-        runtime_release_id,
+        runtime_identity_id,
         deployment_sandbox_id,
         runtime_key_hash,
         runtime_key,
@@ -259,7 +259,7 @@ inserted AS (
            candidate.project_id,
            candidate.environment_id,
            sqlc.arg(worker_instance_id),
-           sqlc.arg(runtime_release_id),
+           sqlc.arg(runtime_identity_id),
            candidate.id,
            sqlc.arg(runtime_key_hash),
            COALESCE(sqlc.arg(runtime_key)::jsonb, '{}'::jsonb),
@@ -660,7 +660,7 @@ worker_sandbox_scope AS MATERIALIZED (
            worker_instances.available_memory_mib,
            worker_instances.available_disk_mib,
            worker_instances.available_execution_slots,
-           worker_instances.runtime_id AS runtime_release_id,
+           worker_instances.runtime_id AS runtime_identity_id,
            worker_instances.rootfs_digest,
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
@@ -736,7 +736,7 @@ prepared_supply AS MATERIALIZED (
       LEFT JOIN runtime_instances
         ON runtime_instances.worker_instance_id = worker_sandbox_scope.worker_instance_id
        AND runtime_instances.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
-       AND runtime_instances.runtime_release_id = worker_sandbox_scope.runtime_release_id
+       AND runtime_instances.runtime_identity_id = worker_sandbox_scope.runtime_identity_id
        AND runtime_instances.rootfs_digest = worker_sandbox_scope.rootfs_digest
        AND runtime_instances.runtime_abi = worker_sandbox_scope.runtime_abi
        AND runtime_instances.state IN ('preparing', 'ready')
@@ -820,7 +820,7 @@ eligible_warm_targets AS MATERIALIZED (
            worker_sandbox_scope.environment_id,
            worker_sandbox_scope.worker_instance_id,
            worker_sandbox_scope.deployment_sandbox_id,
-           worker_sandbox_scope.runtime_release_id,
+           worker_sandbox_scope.runtime_identity_id,
            worker_sandbox_scope.rootfs_digest,
            worker_sandbox_scope.runtime_abi,
            worker_sandbox_scope.image_artifact_digest AS sandbox_image_artifact_digest,
@@ -877,7 +877,7 @@ SELECT org_id,
        environment_id,
        worker_instance_id,
        deployment_sandbox_id,
-       runtime_release_id,
+       runtime_identity_id,
        rootfs_digest,
        runtime_abi,
        sandbox_image_artifact_digest,
@@ -942,7 +942,7 @@ WITH current_sandboxes AS MATERIALIZED (
 worker_sandbox_scope AS MATERIALIZED (
     SELECT worker_instances.id AS worker_instance_id,
            worker_instances.worker_group_id,
-           worker_instances.runtime_id AS runtime_release_id,
+           worker_instances.runtime_id AS runtime_identity_id,
            worker_instances.rootfs_digest,
            worker_instances.runtime_abi,
            current_sandboxes.id AS deployment_sandbox_id,
@@ -984,7 +984,7 @@ SELECT worker_sandbox_scope.org_id,
        worker_sandbox_scope.environment_id,
        worker_sandbox_scope.worker_instance_id,
        worker_sandbox_scope.deployment_sandbox_id,
-       worker_sandbox_scope.runtime_release_id,
+       worker_sandbox_scope.runtime_identity_id,
        worker_sandbox_scope.rootfs_digest,
        worker_sandbox_scope.runtime_abi,
        worker_sandbox_scope.image_artifact_digest AS sandbox_image_artifact_digest,

@@ -232,7 +232,7 @@ func (w *RuntimePreparer) reconcile(ctx context.Context, deploymentSandboxID pgt
 			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			DeploymentSandboxID: row.DeploymentSandboxID,
 			WorkerInstanceID:    row.WorkerInstanceID,
-			RuntimeReleaseID:    row.RuntimeReleaseID,
+			RuntimeIdentityID:   row.RuntimeIdentityID,
 			RootfsDigest:        row.RootfsDigest,
 			RuntimeABI:          row.RuntimeABI,
 			RuntimeKeyHash:      runtime.Hash(key),
@@ -354,7 +354,7 @@ func (w *RuntimePreparer) prepareSubstrates(ctx context.Context, store RuntimePr
 			DeploymentSandboxID: pgvalue.MustUUIDValue(row.DeploymentSandboxID).String(),
 			Source: api.WorkerPreparedRuntimeSource{
 				DeploymentSandboxID: pgvalue.MustUUIDValue(row.DeploymentSandboxID).String(),
-				RuntimeID:           row.RuntimeReleaseID,
+				RuntimeID:           row.RuntimeIdentityID,
 				SandboxImageArtifact: api.CASObject{
 					Digest:    row.SandboxImageArtifactDigest,
 					MediaType: row.SandboxImageArtifactMediaType,
@@ -404,7 +404,7 @@ func (w *RuntimePreparer) prepareSubstrates(ctx context.Context, store RuntimePr
 func preparedRuntimeSourceFromWarmTarget(row db.ListRuntimeInstanceWarmTargetsRow) api.WorkerPreparedRuntimeSource {
 	return api.WorkerPreparedRuntimeSource{
 		DeploymentSandboxID: pgvalue.MustUUIDValue(row.DeploymentSandboxID).String(),
-		RuntimeID:           row.RuntimeReleaseID,
+		RuntimeID:           row.RuntimeIdentityID,
 		SandboxImageArtifact: api.CASObject{
 			Digest:    row.SandboxImageArtifactDigest,
 			MediaType: row.SandboxImageArtifactMediaType,
@@ -430,7 +430,7 @@ func preparedRuntimeWarmInstanceFromRow(row db.CreateRuntimeInstanceForDeploymen
 		WorkerInstanceID:       pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
 		RuntimeKeyHash:         row.RuntimeKeyHash,
 		RuntimeKey:             json.RawMessage(row.RuntimeKey),
-		RuntimeID:              row.RuntimeReleaseID,
+		RuntimeID:              row.RuntimeIdentityID,
 		DeploymentSandboxID:    pgvalue.MustUUIDValue(row.DeploymentSandboxID).String(),
 		State:                  string(row.State),
 		InstanceToken:          row.InstanceToken,

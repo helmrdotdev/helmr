@@ -236,7 +236,7 @@ created_checkpoint AS (
        SET state = 'ready',
            base_workspace_version_id = wait_scope.workspace_version_id,
            runtime_backend = sqlc.arg(runtime_backend),
-           runtime_id = sqlc.arg(runtime_id),
+           runtime_identity_id = sqlc.arg(runtime_id),
            runtime_arch = sqlc.arg(runtime_arch),
            runtime_abi = sqlc.arg(runtime_abi),
            kernel_digest = sqlc.arg(kernel_digest),

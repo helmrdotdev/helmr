@@ -1119,10 +1119,6 @@ func (f *fakeStore) UpsertWorkerInstanceHeartbeat(_ context.Context, arg db.Upse
 	}, nil
 }
 
-func (f *fakeStore) EnsureRuntimeReleaseSelection(context.Context, string) error {
-	return nil
-}
-
 func (f *fakeStore) MarkStaleWorkspaceMountsLost(context.Context, pgtype.Timestamptz) ([]db.MarkStaleWorkspaceMountsLostRow, error) {
 	f.markStaleWorkspaceMountsLostCalls++
 	return nil, nil

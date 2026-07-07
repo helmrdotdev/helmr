@@ -37,8 +37,8 @@ OFFSET sqlc.arg(row_offset);
 
 -- name: UpsertWorkerInstanceHeartbeat :one
 WITH observed_runtime AS (
-    INSERT INTO runtime_releases (
-        runtime_id,
+    INSERT INTO runtime_identities (
+        id,
         runtime_arch,
         runtime_abi,
         kernel_digest,
@@ -56,14 +56,14 @@ WITH observed_runtime AS (
         sqlc.arg(cni_profile),
         now()
     )
-    ON CONFLICT (runtime_id) DO UPDATE
+    ON CONFLICT (id) DO UPDATE
        SET last_seen_at = now()
-     WHERE runtime_releases.runtime_arch = EXCLUDED.runtime_arch
-       AND runtime_releases.runtime_abi = EXCLUDED.runtime_abi
-       AND runtime_releases.kernel_digest = EXCLUDED.kernel_digest
-       AND runtime_releases.initramfs_digest = EXCLUDED.initramfs_digest
-       AND runtime_releases.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_releases.cni_profile = EXCLUDED.cni_profile
+     WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
+       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
+       AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
+       AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
+       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
+       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
     RETURNING *
 ),
 upserted_worker AS (
@@ -111,7 +111,7 @@ upserted_worker AS (
            sqlc.arg(heartbeat),
            sqlc.arg(worker_version),
            sqlc.arg(protocol_version),
-           observed_runtime.runtime_id,
+           observed_runtime.id,
            observed_runtime.runtime_arch,
            observed_runtime.runtime_abi,
            observed_runtime.kernel_digest,
@@ -151,24 +151,6 @@ upserted_worker AS (
 )
 SELECT upserted_worker.*
   FROM upserted_worker;
-
--- name: EnsureRuntimeReleaseSelection :exec
-WITH selected_runtime AS (
-    SELECT runtime_releases.runtime_id
-      FROM runtime_releases
-     WHERE runtime_releases.runtime_id = sqlc.arg(runtime_id)
-),
-updated_selection AS (
-    UPDATE runtime_release_selections
-       SET runtime_id = selected_runtime.runtime_id,
-           selected_at = now()
-      FROM selected_runtime
-    RETURNING runtime_release_selections.runtime_id
-)
-INSERT INTO runtime_release_selections (runtime_id)
-SELECT selected_runtime.runtime_id
-  FROM selected_runtime
- WHERE NOT EXISTS (SELECT 1 FROM updated_selection);
 
 -- name: SetWorkerInstanceStatus :one
 UPDATE worker_instances
@@ -294,7 +276,7 @@ SELECT runs.id AS run_id,
        runs.requested_memory_mib,
        runs.requested_disk_mib,
        runs.requested_execution_slots,
-       runs.runtime_id,
+       runs.runtime_identity_id AS runtime_id,
        runs.runtime_arch,
        runs.runtime_abi,
        runs.kernel_digest,

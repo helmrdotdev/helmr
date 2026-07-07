@@ -40,11 +40,6 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, err)
 		return
 	}
-	if err := s.db.EnsureRuntimeReleaseSelection(r.Context(), capabilities.RuntimeID); err != nil {
-		s.log.Error("ensure runtime release selection failed", "worker_instance_id", worker.WorkerInstanceID.String(), "runtime_id", capabilities.RuntimeID, "error", err)
-		writeError(w, errors.New("select runtime release"))
-		return
-	}
 	if err := s.markStaleWorkspaceMountsLost(r.Context()); err != nil {
 		s.log.Error("mark stale workspace mounts lost failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, errors.New("reap stale workspace mounts"))

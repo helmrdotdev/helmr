@@ -44,19 +44,32 @@ deployment_task AS MATERIALIZED (
        AND deployment_tasks.id = sqlc.arg(deployment_task_id)
        AND deployment_tasks.task_id = sqlc.arg(task_id)
 ),
-selected_runtime AS MATERIALIZED (
-    SELECT runtime_releases.runtime_id,
-           runtime_releases.runtime_arch,
-           runtime_releases.runtime_abi,
-           runtime_releases.kernel_digest,
-           runtime_releases.initramfs_digest,
-           runtime_releases.rootfs_digest,
-           runtime_releases.cni_profile
-      FROM runtime_releases
-      JOIN runtime_release_selections ON runtime_release_selections.runtime_id = runtime_releases.runtime_id
+runtime_identity AS MATERIALIZED (
+    SELECT runtime_identities.id AS runtime_identity_id,
+           runtime_identities.runtime_arch,
+           runtime_identities.runtime_abi,
+           runtime_identities.kernel_digest,
+           runtime_identities.initramfs_digest,
+           runtime_identities.rootfs_digest,
+           runtime_identities.cni_profile
+      FROM run_scope
+      JOIN worker_instances
+        ON worker_instances.worker_group_id = run_scope.worker_group_id
+       AND worker_instances.status = 'active'
+       AND worker_instances.runtime_id <> ''
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_id
+       AND runtime_identities.runtime_arch = worker_instances.runtime_arch
+       AND runtime_identities.runtime_abi = worker_instances.runtime_abi
+       AND runtime_identities.kernel_digest = worker_instances.kernel_digest
+       AND runtime_identities.initramfs_digest = worker_instances.initramfs_digest
+       AND runtime_identities.rootfs_digest = worker_instances.rootfs_digest
+       AND runtime_identities.cni_profile = worker_instances.cni_profile
+     ORDER BY worker_instances.last_seen_at DESC,
+              worker_instances.id ASC
      LIMIT 1
 ),
-	created AS (
+created AS (
     INSERT INTO runs (
         id,
         public_id,
@@ -82,26 +95,26 @@ selected_runtime AS MATERIALIZED (
         concurrency_key,
         priority,
         queue_timestamp,
-	        ttl,
-	        queued_expires_at,
-	        requested_milli_cpu,
-	        requested_memory_mib,
-	        requested_disk_mib,
-	        requested_execution_slots,
-	        runtime_id,
-	        runtime_arch,
-	        runtime_abi,
-	        kernel_digest,
-	        initramfs_digest,
-	        rootfs_digest,
-	        cni_profile,
-	        network_policy,
-	        placement,
-	        max_active_duration_ms,
-	        trace_id,
-	        root_span_id,
-	        current_attempt_number,
-	        schedule_id,
+        ttl,
+        queued_expires_at,
+        requested_milli_cpu,
+        requested_memory_mib,
+        requested_disk_mib,
+        requested_execution_slots,
+        runtime_identity_id,
+        runtime_arch,
+        runtime_abi,
+        kernel_digest,
+        initramfs_digest,
+        rootfs_digest,
+        cni_profile,
+        network_policy,
+        placement,
+        max_active_duration_ms,
+        trace_id,
+        root_span_id,
+        current_attempt_number,
+        schedule_id,
         schedule_instance_id,
         scheduled_at
     )
@@ -129,32 +142,32 @@ selected_runtime AS MATERIALIZED (
            sqlc.narg(concurrency_key),
            sqlc.arg(priority),
            sqlc.arg(queue_timestamp),
-	           sqlc.arg(ttl),
-	           sqlc.narg(queued_expires_at),
-	           deployment_task.requested_milli_cpu,
-	           deployment_task.requested_memory_mib,
-	           deployment_task.requested_disk_mib,
-	           deployment_task.requested_execution_slots,
-	           selected_runtime.runtime_id,
-	           selected_runtime.runtime_arch,
-	           selected_runtime.runtime_abi,
-	           selected_runtime.kernel_digest,
-	           selected_runtime.initramfs_digest,
-	           selected_runtime.rootfs_digest,
-	           selected_runtime.cni_profile,
-	           deployment_task.network_policy,
-	           deployment_task.placement,
-	           sqlc.arg(max_active_duration_ms),
-	           sqlc.arg(trace_id),
-	           sqlc.arg(root_span_id),
-	           1,
-	           sqlc.narg(schedule_id),
-	           sqlc.narg(schedule_instance_id),
-	           sqlc.narg(scheduled_at)
-	      FROM run_scope
-	      JOIN deployment_task ON true
-	      JOIN selected_runtime ON true
-	     WHERE (
+           sqlc.arg(ttl),
+           sqlc.narg(queued_expires_at),
+           deployment_task.requested_milli_cpu,
+           deployment_task.requested_memory_mib,
+           deployment_task.requested_disk_mib,
+           deployment_task.requested_execution_slots,
+           runtime_identity.runtime_identity_id,
+           runtime_identity.runtime_arch,
+           runtime_identity.runtime_abi,
+           runtime_identity.kernel_digest,
+           runtime_identity.initramfs_digest,
+           runtime_identity.rootfs_digest,
+           runtime_identity.cni_profile,
+           deployment_task.network_policy,
+           deployment_task.placement,
+           sqlc.arg(max_active_duration_ms),
+           sqlc.arg(trace_id),
+           sqlc.arg(root_span_id),
+           1,
+           sqlc.narg(schedule_id),
+           sqlc.narg(schedule_instance_id),
+           sqlc.narg(scheduled_at)
+      FROM run_scope
+      JOIN deployment_task ON true
+      JOIN runtime_identity ON true
+     WHERE (
             sqlc.narg(schedule_instance_id)::uuid IS NULL
             OR EXISTS (
             SELECT 1
