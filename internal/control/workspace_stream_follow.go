@@ -38,18 +38,12 @@ func parseNonNegativeWorkspaceStreamCursor(raw string) (int64, error) {
 }
 
 func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Request, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) {
-	if s.workspaceStreams == nil {
-		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
+	if s.eventStream == nil {
+		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
 	}
 	if stream != workspaceStreamStdout && stream != workspaceStreamStderr {
 		writeError(w, badRequest(errors.New("workspace exec follow is only available for output streams")))
-		return
-	}
-	streamKey := workspaceStreamKey(exec.OrgID, "workspace_process", exec.ID, stream)
-	wakeCursor, err := s.workspaceStreams.LatestID(r.Context(), streamKey)
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "read workspace stream wake cursor", err)
 		return
 	}
 	flusher, _ := w.(http.Flusher)
@@ -59,19 +53,24 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), workspaceStreamFollowMaxDuration)
 	defer cancel()
-	for {
-		next, count, err := s.writeWorkspaceExecStreamChunksAfter(ctx, w, flusher, encoder, exec, stream, cursor, limit)
-		if err != nil {
-			if s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err) {
-				return
-			}
-			s.log.Warn("follow workspace exec stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
-			return
+	query := telemetry.TerminalOutputQuery{
+		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
+		WorkerGroupID: exec.WorkerGroupID,
+		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
+		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
+		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
+		ResourceKind:  "workspace_process",
+		ResourceID:    pgvalue.MustUUIDValue(exec.ID),
+		StreamName:    stream,
+	}
+	err := s.eventStream.ReadTerminalOutput(ctx, query, cursor, limit, func(chunk telemetry.TerminalOutputChunk) error {
+		response := workspaceExecTerminalOutputResponse(chunk)
+		if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(response.OffsetEnd, 10), "workspace_stream_chunk", response); err != nil {
+			return err
 		}
-		cursor = next
-		if count == int(limit) {
-			continue
-		}
+		cursor = response.OffsetEnd
+		return nil
+	}, func() error {
 		current, err := s.db.GetWorkspaceExec(ctx, db.GetWorkspaceExecParams{
 			OrgID:         exec.OrgID,
 			ProjectID:     exec.ProjectID,
@@ -80,108 +79,49 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 			ID:            exec.ID,
 		})
 		if err == nil && execStateTerminal(current.State) {
-			if err := s.drainWorkspaceExecTerminal(ctx, w, flusher, encoder, current, stream, cursor, limit); err != nil {
-				s.log.Debug("write workspace exec terminal stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
+			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(exec.OrgID), exec.WorkerGroupID, "workspace_process", pgvalue.MustUUIDValue(exec.ID), stream)
+			if pendingErr != nil {
+				return pendingErr
 			}
-			return
+			if !pending {
+				eventName := "workspace_stream_terminal"
+				if current.State == db.WorkspaceProcessStateLost {
+					eventName = "workspace_stream_lost"
+				}
+				if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
+					ResourceKind: "workspace_exec",
+					ResourceID:   pgvalue.MustUUIDValue(exec.ID).String(),
+					Stream:       stream,
+					State:        string(current.State),
+					Cursor:       cursor,
+					Error:        json.RawMessage(current.Error),
+				}); err != nil {
+					return err
+				}
+				return errLiveTelemetryFollowComplete
+			}
 		}
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.log.Warn("read workspace exec while following stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "error", err)
-			_ = s.writeWorkspaceStreamServerError(w, flusher, encoder, cursor, "workspace_stream_follow_failed", "failed to read workspace exec state")
+			return s.writeWorkspaceStreamServerError(w, flusher, encoder, cursor, "workspace_stream_follow_failed", "failed to read workspace exec state")
+		}
+		_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, errLiveTelemetryFollowComplete) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err) {
 			return
 		}
-		nextWakeCursor, err := s.workspaceStreams.Wait(ctx, streamKey, wakeCursor)
-		if err != nil {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				s.log.Warn("wait workspace exec stream wakeup failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
-			}
-			return
-		}
-		if nextWakeCursor == wakeCursor {
-			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		wakeCursor = nextWakeCursor
+		s.log.Warn("follow workspace exec stream failed", "exec_id", pgvalue.MustUUIDValue(exec.ID).String(), "stream", string(stream), "error", err)
 	}
-}
-
-func (s *Server) drainWorkspaceExecTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) error {
-	for {
-		next, count, err := s.writeWorkspaceExecStreamChunksAfter(ctx, w, flusher, encoder, exec, stream, cursor, limit)
-		if err != nil {
-			_ = s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err)
-			return err
-		}
-		cursor = next
-		if count < int(limit) {
-			break
-		}
-	}
-	eventName := "workspace_stream_terminal"
-	if exec.State == db.WorkspaceProcessStateLost {
-		eventName = "workspace_stream_lost"
-	}
-	return writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
-		ResourceKind: "workspace_exec",
-		ResourceID:   pgvalue.MustUUIDValue(exec.ID).String(),
-		Stream:       stream,
-		State:        string(exec.State),
-		Cursor:       cursor,
-		Error:        json.RawMessage(exec.Error),
-	})
-}
-
-func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) (int64, int, error) {
-	if stream == workspaceStreamStdout || stream == workspaceStreamStderr {
-		chunks, next, err := s.listWorkspaceExecTerminalOutput(ctx, exec, stream, cursor, limit)
-		if err != nil {
-			return cursor, 0, err
-		}
-		for _, chunk := range chunks {
-			if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(chunk.OffsetEnd, 10), "workspace_stream_chunk", chunk); err != nil {
-				return cursor, 0, err
-			}
-			cursor = chunk.OffsetEnd
-		}
-		return next, len(chunks), nil
-	}
-	if err := s.ensureWorkspaceExecCursorAvailable(ctx, exec, stream, cursor); err != nil {
-		return cursor, 0, err
-	}
-	rows, err := s.db.ListWorkspaceExecStreamChunksAfter(ctx, db.ListWorkspaceExecStreamChunksAfterParams{
-		OrgID:         exec.OrgID,
-		ProjectID:     exec.ProjectID,
-		EnvironmentID: exec.EnvironmentID,
-		WorkspaceID:   exec.WorkspaceID,
-		ProcessID:     exec.ID,
-		StreamName:    stream,
-		CursorOffset:  cursor,
-		LimitCount:    limit,
-	})
-	if err != nil {
-		return cursor, 0, err
-	}
-	for _, row := range rows {
-		chunk := workspaceExecStreamChunkResponse(row)
-		if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(chunk.OffsetEnd, 10), "workspace_stream_chunk", chunk); err != nil {
-			return cursor, 0, err
-		}
-		cursor = row.OffsetEnd
-	}
-	return cursor, len(rows), nil
 }
 
 func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request, pty db.WorkspaceProcess, cursor int64, limit int32) {
-	if s.workspaceStreams == nil {
-		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
-		return
-	}
-	streamKey := workspaceStreamKey(pty.OrgID, "workspace_process", pty.ID, workspaceStreamOutput)
-	wakeCursor, err := s.workspaceStreams.LatestID(r.Context(), streamKey)
-	if err != nil {
-		s.writeWorkspacePrimitiveError(w, "read workspace stream wake cursor", err)
+	if s.eventStream == nil {
+		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
 	}
 	flusher, _ := w.(http.Flusher)
@@ -191,19 +131,24 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), workspaceStreamFollowMaxDuration)
 	defer cancel()
-	for {
-		next, count, err := s.writeWorkspacePtyOutputChunksAfter(ctx, w, flusher, encoder, pty, cursor, limit)
-		if err != nil {
-			if s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err) {
-				return
-			}
-			s.log.Warn("follow workspace pty output failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
-			return
+	query := telemetry.TerminalOutputQuery{
+		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
+		WorkerGroupID: pty.WorkerGroupID,
+		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
+		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
+		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),
+		ResourceKind:  "workspace_process",
+		ResourceID:    pgvalue.MustUUIDValue(pty.ID),
+		StreamName:    workspaceStreamOutput,
+	}
+	err := s.eventStream.ReadTerminalOutput(ctx, query, cursor, limit, func(chunk telemetry.TerminalOutputChunk) error {
+		response := workspacePtyTerminalOutputResponse(chunk)
+		if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(response.OffsetEnd, 10), "workspace_stream_chunk", response); err != nil {
+			return err
 		}
-		cursor = next
-		if count == int(limit) {
-			continue
-		}
+		cursor = response.OffsetEnd
+		return nil
+	}, func() error {
 		current, err := s.db.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
@@ -212,71 +157,44 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 			ID:            pty.ID,
 		})
 		if err == nil && ptyStateTerminal(current.State) {
-			if err := s.drainWorkspacePtyTerminal(ctx, w, flusher, encoder, current, cursor, limit); err != nil {
-				s.log.Debug("write workspace pty terminal stream failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
+			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(pty.OrgID), pty.WorkerGroupID, "workspace_process", pgvalue.MustUUIDValue(pty.ID), workspaceStreamOutput)
+			if pendingErr != nil {
+				return pendingErr
 			}
-			return
+			if !pending {
+				eventName := "workspace_stream_terminal"
+				if current.State == db.WorkspaceProcessStateLost {
+					eventName = "workspace_stream_lost"
+				}
+				if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
+					ResourceKind: "workspace_pty",
+					ResourceID:   pgvalue.MustUUIDValue(pty.ID).String(),
+					Stream:       workspaceStreamOutput,
+					State:        string(current.State),
+					Cursor:       cursor,
+					Error:        json.RawMessage(current.Error),
+				}); err != nil {
+					return err
+				}
+				return errLiveTelemetryFollowComplete
+			}
 		}
 		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			s.log.Warn("read workspace pty while following output failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
-			_ = s.writeWorkspaceStreamServerError(w, flusher, encoder, cursor, "workspace_stream_follow_failed", "failed to read workspace pty state")
-			return
+			return s.writeWorkspaceStreamServerError(w, flusher, encoder, cursor, "workspace_stream_follow_failed", "failed to read workspace pty state")
 		}
-		nextWakeCursor, err := s.workspaceStreams.Wait(ctx, streamKey, wakeCursor)
-		if err != nil {
-			if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				s.log.Warn("wait workspace pty output wakeup failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
-			}
-			return
+		_, _ = fmt.Fprint(w, ": keep-alive\n\n")
+		if flusher != nil {
+			flusher.Flush()
 		}
-		if nextWakeCursor == wakeCursor {
-			_, _ = fmt.Fprint(w, ": keep-alive\n\n")
-			if flusher != nil {
-				flusher.Flush()
-			}
-		}
-		wakeCursor = nextWakeCursor
-	}
-}
-
-func (s *Server) drainWorkspacePtyTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspaceProcess, cursor int64, limit int32) error {
-	for {
-		next, count, err := s.writeWorkspacePtyOutputChunksAfter(ctx, w, flusher, encoder, pty, cursor, limit)
-		if err != nil {
-			_ = s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err)
-			return err
-		}
-		cursor = next
-		if count < int(limit) {
-			break
-		}
-	}
-	eventName := "workspace_stream_terminal"
-	if pty.State == db.WorkspaceProcessStateLost {
-		eventName = "workspace_stream_lost"
-	}
-	return writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
-		ResourceKind: "workspace_pty",
-		ResourceID:   pgvalue.MustUUIDValue(pty.ID).String(),
-		Stream:       workspaceStreamOutput,
-		State:        string(pty.State),
-		Cursor:       cursor,
-		Error:        json.RawMessage(pty.Error),
+		return nil
 	})
-}
-
-func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspaceProcess, cursor int64, limit int32) (int64, int, error) {
-	chunks, next, err := s.listWorkspacePtyTerminalOutput(ctx, pty, cursor, limit)
-	if err != nil {
-		return cursor, 0, err
-	}
-	for _, chunk := range chunks {
-		if err := writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(chunk.OffsetEnd, 10), "workspace_stream_chunk", chunk); err != nil {
-			return cursor, 0, err
+	if err != nil && !errors.Is(err, errLiveTelemetryFollowComplete) && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+		if s.writeWorkspaceStreamFollowError(w, flusher, encoder, cursor, err) {
+			return
 		}
-		cursor = chunk.OffsetEnd
+		s.log.Warn("follow workspace pty output failed", "pty_id", pgvalue.MustUUIDValue(pty.ID).String(), "error", err)
 	}
-	return next, len(chunks), nil
 }
 
 func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {

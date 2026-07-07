@@ -188,10 +188,16 @@ func (store testTransactionalStore) BeginQuerier(context.Context) (db.Querier, c
 }
 
 type fakeTelemetryReader struct {
-	store *fakeStore
+	store                 *fakeStore
+	listEventsErr         error
+	listRunLogChunksErr   error
+	listTerminalOutputErr error
 }
 
 func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.EventQuery) (telemetry.EventPage, error) {
+	if r.listEventsErr != nil {
+		return telemetry.EventPage{}, r.listEventsErr
+	}
 	events := make([]api.RunEvent, 0, len(r.store.events)+len(r.store.deploymentEvents))
 	last := query.AfterSeq
 	for _, row := range r.store.events {
@@ -218,6 +224,9 @@ func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.Eve
 }
 
 func (r fakeTelemetryReader) ListRunLogChunks(ctx context.Context, query telemetry.RunLogChunkQuery) (telemetry.RunLogChunkPage, error) {
+	if r.listRunLogChunksErr != nil {
+		return telemetry.RunLogChunkPage{}, r.listRunLogChunksErr
+	}
 	rows, err := r.store.ListRunLogChunksAfter(ctx, query)
 	if err != nil {
 		return telemetry.RunLogChunkPage{}, err
@@ -232,6 +241,9 @@ func (r fakeTelemetryReader) ListRunLogChunks(ctx context.Context, query telemet
 }
 
 func (r fakeTelemetryReader) ListTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
+	if r.listTerminalOutputErr != nil {
+		return telemetry.TerminalOutputPage{}, r.listTerminalOutputErr
+	}
 	page := telemetry.TerminalOutputPage{LastOffset: query.AfterOffset}
 	switch {
 	case query.ResourceKind == "workspace_process" && (query.StreamName == workspaceStreamStdout || query.StreamName == workspaceStreamStderr):

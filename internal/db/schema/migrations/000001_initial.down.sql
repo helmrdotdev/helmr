@@ -161,6 +161,7 @@ ALTER TABLE workspace_mounts DROP CONSTRAINT IF EXISTS workspace_mounts_base_ver
 ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_owner_workspace_version_id_fkey;
 DROP TABLE IF EXISTS workspace_versions;
 ALTER TABLE workspace_leases DROP CONSTRAINT IF EXISTS workspace_leases_owner_process_id_fkey;
+DROP TABLE IF EXISTS workspace_process_stream_wakeups;
 DROP TABLE IF EXISTS workspace_processes;
 DROP TABLE IF EXISTS workspace_leases;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_workspace_mount_id_fkey;
@@ -177,7 +178,6 @@ ALTER TABLE sessions DROP CONSTRAINT IF EXISTS sessions_org_id_worker_group_id_p
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_worker_group_id_project_id_environment_id_work_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_project_id_environment_id_workspace_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_worker_group_id_project_id_environment_id_workspace_id_fkey;
-DROP TABLE IF EXISTS workspace_process_stream_wakeups;
 DROP TABLE IF EXISTS workspaces;
 DROP TABLE IF EXISTS session_start_idempotencies;
 DROP TABLE IF EXISTS session_runs;

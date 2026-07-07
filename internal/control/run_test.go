@@ -2695,13 +2695,16 @@ type fakeStore struct {
 	deploymentPromotions                    []db.PromoteDeploymentParams
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
-	deploymentEvents                        []db.ClaimEventOutboxRow
+	deploymentEvents                        []db.ClaimLiveTelemetryOutboxRow
 	deploymentTasks                         []db.DeploymentTask
 	deploymentStreams                       []db.DeploymentStream
 	ensuredSessionStreams                   []db.EnsureSessionStreamParams
 	artifacts                               []db.Artifact
 	runEvent                                db.AppendRunEventParams
-	events                                  []db.ClaimEventOutboxRow
+	events                                  []db.ClaimLiveTelemetryOutboxRow
+	liveTelemetryOutbox                     []db.ClaimLiveTelemetryOutboxRow
+	publishedLiveTelemetryOutbox            []int64
+	failedLiveTelemetryOutbox               []db.MarkLiveTelemetryOutboxFailedParams
 	stdout                                  []byte
 	stderr                                  []byte
 	runLogSnapshot                          telemetry.RunLogSnapshotQuery
@@ -2787,6 +2790,30 @@ type fakeStore struct {
 	scheduleTriggerNotCurrent               bool
 	closeSessionAttachesRun                 pgtype.UUID
 	closeSessionRetryRun                    db.Run
+}
+
+func (f *fakeStore) ClaimLiveTelemetryOutbox(_ context.Context, arg db.ClaimLiveTelemetryOutboxParams) ([]db.ClaimLiveTelemetryOutboxRow, error) {
+	limit := int(arg.RowLimit)
+	if limit <= 0 || limit > len(f.liveTelemetryOutbox) {
+		limit = len(f.liveTelemetryOutbox)
+	}
+	rows := append([]db.ClaimLiveTelemetryOutboxRow(nil), f.liveTelemetryOutbox[:limit]...)
+	f.liveTelemetryOutbox = f.liveTelemetryOutbox[limit:]
+	return rows, nil
+}
+
+func (f *fakeStore) MarkLiveTelemetryOutboxPublished(_ context.Context, id int64) error {
+	f.publishedLiveTelemetryOutbox = append(f.publishedLiveTelemetryOutbox, id)
+	return nil
+}
+
+func (f *fakeStore) MarkLiveTelemetryOutboxFailed(_ context.Context, arg db.MarkLiveTelemetryOutboxFailedParams) error {
+	f.failedLiveTelemetryOutbox = append(f.failedLiveTelemetryOutbox, arg)
+	return nil
+}
+
+func (f *fakeStore) HasUnpublishedLiveTelemetryOutbox(context.Context, db.HasUnpublishedLiveTelemetryOutboxParams) (bool, error) {
+	return false, nil
 }
 
 type fakeControlTransaction struct {
@@ -2924,7 +2951,7 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 		Kind:    "run.created",
 		Payload: arg.EventPayload,
 	}
-	f.events = append(f.events, db.ClaimEventOutboxRow{
+	f.events = append(f.events, db.ClaimLiveTelemetryOutboxRow{
 		Seq:       int64(len(f.events) + 1),
 		OrgID:     arg.OrgID,
 		RunID:     arg.ID,

@@ -1628,7 +1628,7 @@ func (f *fakeStore) ReleaseRunLease(_ context.Context, arg db.ReleaseRunLeasePar
 	} else if arg.RunStatus == db.RunStatusCancelled {
 		eventKind = "run.cancelled"
 	}
-	f.events = append(f.events, db.ClaimEventOutboxRow{
+	f.events = append(f.events, db.ClaimLiveTelemetryOutboxRow{
 		Seq:           int64(len(f.events) + 1),
 		OrgID:         arg.OrgID,
 		RunID:         arg.RunID,

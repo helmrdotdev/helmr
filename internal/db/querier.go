@@ -44,7 +44,7 @@ type Querier interface {
 	CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error)
 	ClaimDueSessionRunRequests(ctx context.Context, arg ClaimDueSessionRunRequestsParams) ([]SessionRunRequest, error)
 	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
-	ClaimEventOutbox(ctx context.Context, arg ClaimEventOutboxParams) ([]ClaimEventOutboxRow, error)
+	ClaimLiveTelemetryOutbox(ctx context.Context, arg ClaimLiveTelemetryOutboxParams) ([]ClaimLiveTelemetryOutboxRow, error)
 	ClaimMeterEventIngestBatch(ctx context.Context, arg ClaimMeterEventIngestBatchParams) ([]ClaimMeterEventIngestBatchRow, error)
 	ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error)
 	ClaimRuntimeCheckpointWait(ctx context.Context, arg ClaimRuntimeCheckpointWaitParams) (ClaimRuntimeCheckpointWaitRow, error)
@@ -252,6 +252,7 @@ type Querier interface {
 	GetWorkspaceScopedOperationIdempotency(ctx context.Context, arg GetWorkspaceScopedOperationIdempotencyParams) (WorkspaceOperationIdempotency, error)
 	GetWorkspaceSourceForSessionStart(ctx context.Context, arg GetWorkspaceSourceForSessionStartParams) (GetWorkspaceSourceForSessionStartRow, error)
 	GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error)
+	HasUnpublishedLiveTelemetryOutbox(ctx context.Context, arg HasUnpublishedLiveTelemetryOutboxParams) (bool, error)
 	InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg InsertWorkspaceExecOutputStreamChunkParams) (InsertWorkspaceExecOutputStreamChunkRow, error)
 	InsertWorkspaceExecStreamChunk(ctx context.Context, arg InsertWorkspaceExecStreamChunkParams) (WorkspaceProcessStreamChunk, error)
 	InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg InsertWorkspaceExecStreamChunkReceiptParams) (WorkspaceProcessStreamReceipt, error)
@@ -326,9 +327,9 @@ type Querier interface {
 	LockWorkspacePtyForStreamAppend(ctx context.Context, arg LockWorkspacePtyForStreamAppendParams) (LockWorkspacePtyForStreamAppendRow, error)
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
-	MarkEventOutboxFailed(ctx context.Context, arg MarkEventOutboxFailedParams) error
-	MarkEventOutboxPublished(ctx context.Context, id int64) error
 	MarkExpiredRuntimeInstancesLost(ctx context.Context, arg MarkExpiredRuntimeInstancesLostParams) ([]RuntimeInstance, error)
+	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error
+	MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkMagicLinkSent(ctx context.Context, id pgtype.UUID) (int64, error)
 	MarkRunDispatchEnqueueError(ctx context.Context, arg MarkRunDispatchEnqueueErrorParams) (Run, error)
