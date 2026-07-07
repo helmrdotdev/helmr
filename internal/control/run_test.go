@@ -1280,7 +1280,7 @@ func TestSessionStartExternalIDReturnsCurrentDerivedActivity(t *testing.T) {
 	}
 
 	store.run.Status = db.RunStatusSucceeded
-	store.sessionRunRequest = db.SessionRunRequest{
+	store.sessionContinuationRequest = db.SessionContinuationRequest{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 		ProjectID:     testProjectID(),
@@ -1453,12 +1453,15 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 	previousRun := store.run
 	store.ensureWorkspaceMountErr = errors.New("transient mount failure")
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
-	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.sessionRunRequest.Status != "accepted" || !strings.Contains(store.sessionRunRequest.LastError, "transient mount failure") {
-		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
+	if runID.Valid ||
+		store.sessionContinuationRequest.Status != "accepted" ||
+		store.sessionContinuationRequest.LastErrorCode != "continuation_reconcile_failed" ||
+		!strings.Contains(store.sessionContinuationRequest.LastErrorMessage, "transient mount failure") {
+		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
 	}
 	if len(store.sessionRuns) != 1 {
 		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.sessionRuns))
@@ -1466,13 +1469,13 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 
 	store.ensureWorkspaceMountErr = nil
 	store.run = previousRun
-	store.sessionRunRequest.Status = "claimed"
-	runID, err = server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	store.sessionContinuationRequest.Status = "claimed"
+	runID, err = server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runID.Valid || store.sessionRunRequest.Status != "created" || store.sessionRunRequest.RunID != runID {
-		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
+	if !runID.Valid || store.sessionContinuationRequest.Status != "created" || store.sessionContinuationRequest.CreatedRunID != runID {
+		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
 	}
 	if len(store.sessionRuns) != 2 || store.sessionRuns[1].PreviousRunID != store.sessionRuns[0].RunID || store.sessionRuns[1].Reason != "input" {
 		t.Fatalf("session runs = %+v", store.sessionRuns)
@@ -1485,22 +1488,22 @@ func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
 func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusRunning)
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
-	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.sessionRunRequest.Status != "accepted" || store.sessionRunRequest.LastError != "current_run_not_terminal" {
-		t.Fatalf("running reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
+	if runID.Valid || store.sessionContinuationRequest.Status != "accepted" || store.sessionContinuationRequest.LastErrorCode != "current_run_not_terminal" {
+		t.Fatalf("running reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
 	}
 
 	store.run.Status = db.RunStatusSucceeded
-	store.sessionRunRequest.Status = "claimed"
-	runID, err = server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	store.sessionContinuationRequest.Status = "claimed"
+	runID, err = server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runID.Valid || store.sessionRunRequest.Status != "created" {
-		t.Fatalf("terminal reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionRunRequest)
+	if !runID.Valid || store.sessionContinuationRequest.Status != "created" {
+		t.Fatalf("terminal reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
 	}
 	if len(store.sessionRuns) != 2 || store.session.CurrentRunID != runID {
 		t.Fatalf("session runs=%+v current=%s", store.sessionRuns, pgvalue.UUIDString(store.session.CurrentRunID))
@@ -1511,12 +1514,12 @@ func TestContinuationRunRequestUsesSessionWorkerGroup(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
-	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !runID.Valid || store.sessionRunRequest.Status != "created" {
-		t.Fatalf("run=%s request status=%q", pgvalue.UUIDString(runID), store.sessionRunRequest.Status)
+	if !runID.Valid || store.sessionContinuationRequest.Status != "created" {
+		t.Fatalf("run=%s request status=%q", pgvalue.UUIDString(runID), store.sessionContinuationRequest.Status)
 	}
 	if store.getDeploymentTask.WorkerGroupID != store.session.WorkerGroupID {
 		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, store.session.WorkerGroupID)
@@ -1534,12 +1537,12 @@ func TestContinuationRunRequestFailsWhenSessionWorkerGroupPlacementUnavailable(t
 	store.environmentRouteUnavailable = true
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
-	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), store.sessionRunRequest)
+	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runID.Valid || store.sessionRunRequest.Status != "failed" || store.sessionRunRequest.LastError != "session_route_unavailable" {
-		t.Fatalf("run=%s request status=%q last_error=%q", pgvalue.UUIDString(runID), store.sessionRunRequest.Status, store.sessionRunRequest.LastError)
+	if runID.Valid || store.sessionContinuationRequest.Status != "failed" || store.sessionContinuationRequest.StatusReason != "session_route_unavailable" {
+		t.Fatalf("run=%s request status=%q status_reason=%q", pgvalue.UUIDString(runID), store.sessionContinuationRequest.Status, store.sessionContinuationRequest.StatusReason)
 	}
 	if store.createRun.ID.Valid {
 		t.Fatalf("created run: %+v", store.createRun)
@@ -1548,16 +1551,16 @@ func TestContinuationRunRequestFailsWhenSessionWorkerGroupPlacementUnavailable(t
 
 func TestContinuationRunRequestClaimLostRollsBackContinuationCreation(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
-	request := store.sessionRunRequest
-	store.sessionRunRequest.ClaimOwner = "other-control"
+	request := store.sessionContinuationRequest
+	store.sessionContinuationRequest.ClaimOwner = "other-control"
 	previousSessionRunCount := len(store.sessionRuns)
 	previousCurrentRunID := store.session.CurrentRunID
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
 
-	runID, err := server.sessionRunRequestWorkflow().reconcileClaimed(context.Background(), request)
+	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), request)
 
-	if !errors.Is(err, errSessionRunRequestLost) {
-		t.Fatalf("err = %v, want session run request claim lost", err)
+	if !errors.Is(err, errSessionContinuationRequestLost) {
+		t.Fatalf("err = %v, want session continuation request claim lost", err)
 	}
 	if runID.Valid {
 		t.Fatalf("runID = %s, want empty", pgvalue.UUIDString(runID))
@@ -1572,15 +1575,15 @@ func TestActiveRunInputConsumptionLocksSessionAndSkipsRequest(t *testing.T) {
 	activeRunID := store.run.ID
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store}
 
-	if err := server.sessionRunRequestWorkflow().consumeByActiveRun(context.Background(), store.session, activeRunID, store.streamRecord.ID); err != nil {
+	if err := server.sessionContinuationRequestWorkflow().consumeByActiveRun(context.Background(), store.session, activeRunID, store.streamRecord.ID); err != nil {
 		t.Fatal(err)
 	}
 
 	if store.lockSessionCalls != 1 {
 		t.Fatalf("lock session calls = %d, want 1", store.lockSessionCalls)
 	}
-	if store.sessionRunRequest.Status != "skipped" || store.sessionRunRequest.LastError != "consumed_by_active_run" {
-		t.Fatalf("request status=%q last_error=%q", store.sessionRunRequest.Status, store.sessionRunRequest.LastError)
+	if store.sessionContinuationRequest.Status != "skipped" || store.sessionContinuationRequest.StatusReason != "consumed_by_active_run" {
+		t.Fatalf("request status=%q status_reason=%q", store.sessionContinuationRequest.Status, store.sessionContinuationRequest.StatusReason)
 	}
 }
 
@@ -1640,7 +1643,7 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			SourceType:    db.StreamRecordSourceTypeApiKey,
 			CreatedAt:     now,
 		},
-		sessionRunRequest: db.SessionRunRequest{
+		sessionContinuationRequest: db.SessionContinuationRequest{
 			ID:             requestID,
 			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
 			WorkerGroupID:  dbtest.DefaultWorkerGroupID,
@@ -1649,7 +1652,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 			SessionID:      sessionID,
 			StreamRecordID: recordID,
 			StreamID:       streamID,
-			CauseKind:      "stream_record",
 			Status:         "claimed",
 			ClaimOwner:     "control-a",
 			Attempts:       1,
@@ -2091,7 +2093,7 @@ func TestCloseSessionRejectsPendingContinuationRequest(t *testing.T) {
 			EnvironmentID: testEnvironmentID(),
 			Status:        db.RunStatusSucceeded,
 		},
-		sessionRunRequest: db.SessionRunRequest{
+		sessionContinuationRequest: db.SessionContinuationRequest{
 			ID:            requestID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
@@ -2141,7 +2143,7 @@ func TestGetSessionReportsDerivedQueuedActivity(t *testing.T) {
 			EnvironmentID: testEnvironmentID(),
 			Status:        db.RunStatusSucceeded,
 		},
-		sessionRunRequest: db.SessionRunRequest{
+		sessionContinuationRequest: db.SessionContinuationRequest{
 			ID:            requestID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
 			ProjectID:     testProjectID(),
@@ -2780,7 +2782,7 @@ type fakeStore struct {
 	startIdempotency                        db.GetSessionStartIdempotencyRow
 	sessionRuns                             []db.SessionRun
 	streamRecord                            db.StreamRecord
-	sessionRunRequest                       db.SessionRunRequest
+	sessionContinuationRequest              db.SessionContinuationRequest
 	lockSessionCalls                        int
 	deploymentTaskRow                       db.GetDeploymentTaskRow
 	environmentPlacementWorkerGroupID       string
@@ -2817,12 +2819,12 @@ func (f *fakeStore) HasUnpublishedLiveTelemetryOutbox(context.Context, db.HasUnp
 }
 
 type fakeControlTransaction struct {
-	store             *fakeStore
-	session           db.Session
-	run               db.Run
-	sessionRuns       []db.SessionRun
-	sessionRunRequest db.SessionRunRequest
-	committed         bool
+	store                      *fakeStore
+	session                    db.Session
+	run                        db.Run
+	sessionRuns                []db.SessionRun
+	sessionContinuationRequest db.SessionContinuationRequest
+	committed                  bool
 }
 
 func fakeSessionRecord(session db.Session) db.Session {
@@ -2871,17 +2873,17 @@ func (tx *fakeControlTransaction) Rollback(context.Context) error {
 	tx.store.session = tx.session
 	tx.store.run = tx.run
 	tx.store.sessionRuns = append([]db.SessionRun(nil), tx.sessionRuns...)
-	tx.store.sessionRunRequest = tx.sessionRunRequest
+	tx.store.sessionContinuationRequest = tx.sessionContinuationRequest
 	return nil
 }
 
 func (f *fakeStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
 	return f, &fakeControlTransaction{
-		store:             f,
-		session:           f.session,
-		run:               f.run,
-		sessionRuns:       append([]db.SessionRun(nil), f.sessionRuns...),
-		sessionRunRequest: f.sessionRunRequest,
+		store:                      f,
+		session:                    f.session,
+		run:                        f.run,
+		sessionRuns:                append([]db.SessionRun(nil), f.sessionRuns...),
+		sessionContinuationRequest: f.sessionContinuationRequest,
 	}, nil
 }
 
@@ -3416,91 +3418,98 @@ func (f *fakeStore) GetStreamRecord(_ context.Context, arg db.GetStreamRecordPar
 	return db.StreamRecord{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) ClaimDueSessionRunRequests(_ context.Context, _ db.ClaimDueSessionRunRequestsParams) ([]db.SessionRunRequest, error) {
-	if !f.sessionRunRequest.ID.Valid {
+func (f *fakeStore) ClaimDueSessionContinuationRequests(_ context.Context, _ db.ClaimDueSessionContinuationRequestsParams) ([]db.SessionContinuationRequest, error) {
+	if !f.sessionContinuationRequest.ID.Valid {
 		return nil, nil
 	}
-	f.sessionRunRequest.Status = "claimed"
-	f.sessionRunRequest.Attempts++
-	return []db.SessionRunRequest{f.sessionRunRequest}, nil
+	f.sessionContinuationRequest.Status = "claimed"
+	f.sessionContinuationRequest.Attempts++
+	return []db.SessionContinuationRequest{f.sessionContinuationRequest}, nil
 }
 
-func (f *fakeStore) ReleaseSessionRunRequestForRetry(_ context.Context, arg db.ReleaseSessionRunRequestForRetryParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) ReleaseSessionContinuationRequestForRetry(_ context.Context, arg db.ReleaseSessionContinuationRequestForRetryParams) (db.SessionContinuationRequest, error) {
+	if f.sessionContinuationRequest.ID != arg.ID || f.sessionContinuationRequest.Status != "claimed" || f.sessionContinuationRequest.ClaimOwner != arg.ClaimOwner {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	f.sessionRunRequest.Status = "accepted"
-	f.sessionRunRequest.LastError = arg.LastError
-	f.sessionRunRequest.ErrorMessage = arg.LastError
-	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimOwner = ""
-	return f.sessionRunRequest, nil
+	f.sessionContinuationRequest.Status = "accepted"
+	f.sessionContinuationRequest.StatusReason = ""
+	f.sessionContinuationRequest.LastErrorCode = arg.LastErrorCode
+	f.sessionContinuationRequest.LastErrorMessage = arg.LastErrorMessage
+	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimOwner = ""
+	return f.sessionContinuationRequest, nil
 }
 
-func (f *fakeStore) MarkSessionRunRequestCreated(_ context.Context, arg db.MarkSessionRunRequestCreatedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionContinuationRequestCreated(_ context.Context, arg db.MarkSessionContinuationRequestCreatedParams) (db.SessionContinuationRequest, error) {
+	if f.sessionContinuationRequest.ID != arg.ID || f.sessionContinuationRequest.Status != "claimed" || f.sessionContinuationRequest.ClaimOwner != arg.ClaimOwner {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	f.sessionRunRequest.Status = "created"
-	f.sessionRunRequest.RunID = arg.RunID
-	f.sessionRunRequest.LastError = ""
-	f.sessionRunRequest.ErrorMessage = ""
-	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimOwner = ""
-	return f.sessionRunRequest, nil
+	f.sessionContinuationRequest.Status = "created"
+	f.sessionContinuationRequest.StatusReason = ""
+	f.sessionContinuationRequest.CreatedRunID = arg.CreatedRunID
+	f.sessionContinuationRequest.ConsumedByRunID = pgtype.UUID{}
+	f.sessionContinuationRequest.LastErrorCode = ""
+	f.sessionContinuationRequest.LastErrorMessage = ""
+	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimOwner = ""
+	return f.sessionContinuationRequest, nil
 }
 
-func (f *fakeStore) MarkSessionRunRequestSkipped(_ context.Context, arg db.MarkSessionRunRequestSkippedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionContinuationRequestSkipped(_ context.Context, arg db.MarkSessionContinuationRequestSkippedParams) (db.SessionContinuationRequest, error) {
+	if f.sessionContinuationRequest.ID != arg.ID || f.sessionContinuationRequest.Status != "claimed" || f.sessionContinuationRequest.ClaimOwner != arg.ClaimOwner {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	f.sessionRunRequest.Status = "skipped"
-	f.sessionRunRequest.LastError = arg.Reason
-	f.sessionRunRequest.ErrorMessage = arg.Reason
-	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimOwner = ""
-	return f.sessionRunRequest, nil
+	f.sessionContinuationRequest.Status = "skipped"
+	f.sessionContinuationRequest.StatusReason = arg.Reason
+	f.sessionContinuationRequest.LastErrorCode = ""
+	f.sessionContinuationRequest.LastErrorMessage = ""
+	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimOwner = ""
+	return f.sessionContinuationRequest, nil
 }
 
-func (f *fakeStore) MarkSessionRunRequestConsumedByActiveRun(_ context.Context, arg db.MarkSessionRunRequestConsumedByActiveRunParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.OrgID != arg.OrgID ||
-		f.sessionRunRequest.ProjectID != arg.ProjectID ||
-		f.sessionRunRequest.EnvironmentID != arg.EnvironmentID ||
-		f.sessionRunRequest.StreamRecordID != arg.StreamRecordID {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionContinuationRequestConsumedByActiveRun(_ context.Context, arg db.MarkSessionContinuationRequestConsumedByActiveRunParams) (db.SessionContinuationRequest, error) {
+	if f.sessionContinuationRequest.OrgID != arg.OrgID ||
+		f.sessionContinuationRequest.ProjectID != arg.ProjectID ||
+		f.sessionContinuationRequest.EnvironmentID != arg.EnvironmentID ||
+		f.sessionContinuationRequest.StreamRecordID != arg.StreamRecordID {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	if f.sessionRunRequest.Status != "accepted" && f.sessionRunRequest.Status != "claimed" && f.sessionRunRequest.Status != "created" {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+	if f.sessionContinuationRequest.Status != "accepted" && f.sessionContinuationRequest.Status != "claimed" && f.sessionContinuationRequest.Status != "created" {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	if f.sessionRunRequest.Status == "created" && f.sessionRunRequest.RunID == arg.ActiveRunID {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+	if f.sessionContinuationRequest.Status == "created" && f.sessionContinuationRequest.CreatedRunID == arg.ActiveRunID {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	if f.sessionRunRequest.Status == "created" && f.session.CurrentRunID == f.sessionRunRequest.RunID {
+	if f.sessionContinuationRequest.Status == "created" && f.session.CurrentRunID == f.sessionContinuationRequest.CreatedRunID {
 		f.session.CurrentRunID = arg.ActiveRunID
 	}
-	f.sessionRunRequest.Status = "skipped"
-	f.sessionRunRequest.LastError = "consumed_by_active_run"
-	f.sessionRunRequest.ErrorMessage = ""
-	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimOwner = ""
-	return f.sessionRunRequest, nil
+	f.sessionContinuationRequest.Status = "skipped"
+	f.sessionContinuationRequest.StatusReason = "consumed_by_active_run"
+	f.sessionContinuationRequest.ConsumedByRunID = arg.ActiveRunID
+	f.sessionContinuationRequest.LastErrorCode = ""
+	f.sessionContinuationRequest.LastErrorMessage = ""
+	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimOwner = ""
+	return f.sessionContinuationRequest, nil
 }
 
-func (f *fakeStore) MarkSessionRunRequestFailed(_ context.Context, arg db.MarkSessionRunRequestFailedParams) (db.SessionRunRequest, error) {
-	if f.sessionRunRequest.ID != arg.ID || f.sessionRunRequest.Status != "claimed" || f.sessionRunRequest.ClaimOwner != arg.ClaimOwner {
-		return db.SessionRunRequest{}, pgx.ErrNoRows
+func (f *fakeStore) MarkSessionContinuationRequestFailed(_ context.Context, arg db.MarkSessionContinuationRequestFailedParams) (db.SessionContinuationRequest, error) {
+	if f.sessionContinuationRequest.ID != arg.ID || f.sessionContinuationRequest.Status != "claimed" || f.sessionContinuationRequest.ClaimOwner != arg.ClaimOwner {
+		return db.SessionContinuationRequest{}, pgx.ErrNoRows
 	}
-	f.sessionRunRequest.Status = "failed"
-	f.sessionRunRequest.LastError = arg.Reason
-	f.sessionRunRequest.ErrorMessage = arg.Reason
-	f.sessionRunRequest.ClaimedAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimExpiresAt = pgtype.Timestamptz{}
-	f.sessionRunRequest.ClaimOwner = ""
-	return f.sessionRunRequest, nil
+	f.sessionContinuationRequest.Status = "failed"
+	f.sessionContinuationRequest.StatusReason = arg.Reason
+	f.sessionContinuationRequest.LastErrorCode = arg.Reason
+	f.sessionContinuationRequest.LastErrorMessage = arg.Reason
+	f.sessionContinuationRequest.ClaimedAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
+	f.sessionContinuationRequest.ClaimOwner = ""
+	return f.sessionContinuationRequest, nil
 }
 
 func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
@@ -3647,9 +3656,9 @@ func (f *fakeStore) ListSessionActivities(_ context.Context, arg db.ListSessionA
 }
 
 func (f *fakeStore) deriveSessionActivity(session db.Session) (string, bool) {
-	hasPendingRequest := f.sessionRunRequest.ID.Valid &&
-		f.sessionRunRequest.SessionID == session.ID &&
-		(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed")
+	hasPendingRequest := f.sessionContinuationRequest.ID.Valid &&
+		f.sessionContinuationRequest.SessionID == session.ID &&
+		(f.sessionContinuationRequest.Status == "accepted" || f.sessionContinuationRequest.Status == "claimed")
 	if session.Status != db.SessionStatusOpen {
 		return sessionActivityIdle, false
 	}
@@ -3791,9 +3800,9 @@ func (f *fakeStore) CloseSession(_ context.Context, arg db.CloseSessionParams) (
 		if f.session.ExpiresAt.Valid && !f.session.ExpiresAt.Time.After(time.Now()) {
 			return db.Session{}, pgx.ErrNoRows
 		}
-		if f.sessionRunRequest.ID.Valid &&
-			f.sessionRunRequest.SessionID == f.session.ID &&
-			(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed") {
+		if f.sessionContinuationRequest.ID.Valid &&
+			f.sessionContinuationRequest.SessionID == f.session.ID &&
+			(f.sessionContinuationRequest.Status == "accepted" || f.sessionContinuationRequest.Status == "claimed") {
 			return db.Session{}, pgx.ErrNoRows
 		}
 		if f.session.CurrentRunID.Valid {
@@ -3820,9 +3829,9 @@ func (f *fakeStore) ExpireSessionIfDue(_ context.Context, arg db.ExpireSessionIf
 		f.session.Status == db.SessionStatusOpen &&
 		f.session.ExpiresAt.Valid &&
 		!f.session.ExpiresAt.Time.After(time.Now()) {
-		if f.sessionRunRequest.ID.Valid &&
-			f.sessionRunRequest.SessionID == f.session.ID &&
-			(f.sessionRunRequest.Status == "accepted" || f.sessionRunRequest.Status == "claimed") {
+		if f.sessionContinuationRequest.ID.Valid &&
+			f.sessionContinuationRequest.SessionID == f.session.ID &&
+			(f.sessionContinuationRequest.Status == "accepted" || f.sessionContinuationRequest.Status == "claimed") {
 			return db.Session{}, pgx.ErrNoRows
 		}
 		if f.session.CurrentRunID.Valid {

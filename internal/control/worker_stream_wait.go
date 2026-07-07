@@ -36,7 +36,7 @@ func (s *Server) matchBufferedWorkerStreamWait(ctx context.Context, scope db.Get
 	if !found {
 		return nil, false, nil
 	}
-	if err := s.sessionRunRequestWorkflow().consumeByActiveRun(ctx, session, scope.RunID, record.ID); err != nil {
+	if err := s.sessionContinuationRequestWorkflow().consumeByActiveRun(ctx, session, scope.RunID, record.ID); err != nil {
 		return nil, false, err
 	}
 	payload, err := json.Marshal(map[string]any{

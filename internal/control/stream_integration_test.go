@@ -467,7 +467,7 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	}
 }
 
-func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
+func TestWorkerActiveInputReadSkipsAcceptedSessionContinuationRequest(t *testing.T) {
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
@@ -490,7 +490,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+	request, err := queries.EnsureSessionContinuationRequestForStreamRecord(ctx, db.EnsureSessionContinuationRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
 		ProjectID:      pgvalue.UUID(ids.projectID),
@@ -515,7 +515,7 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	if response.Record == nil || response.Record.ID != recordID.String() {
 		t.Fatalf("read response = %+v", response)
 	}
-	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+	stored, err := queries.GetSessionContinuationRequest(ctx, db.GetSessionContinuationRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
@@ -524,12 +524,12 @@ func TestWorkerActiveInputReadSkipsAcceptedSessionRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "skipped" || stored.LastError != "consumed_by_active_run" {
-		t.Fatalf("request status=%q last_error=%q, want skipped consumed_by_active_run", stored.Status, stored.LastError)
+	if stored.Status != "skipped" || stored.StatusReason != "consumed_by_active_run" {
+		t.Fatalf("request status=%q status_reason=%q, want skipped consumed_by_active_run", stored.Status, stored.StatusReason)
 	}
 }
 
-func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
+func TestWorkerActiveInputReadCancelsCreatedSessionContinuationRequest(t *testing.T) {
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
 	ids := seedControlStreamTokenFixture(t, ctx, pool)
@@ -552,7 +552,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+	request, err := queries.EnsureSessionContinuationRequestForStreamRecord(ctx, db.EnsureSessionContinuationRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
 		ProjectID:      pgvalue.UUID(ids.projectID),
@@ -587,9 +587,9 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE session_run_requests
+		UPDATE session_continuation_requests
 		   SET status = 'created',
-		       run_id = $1
+		       created_run_id = $1
 		 WHERE org_id = $2
 		   AND project_id = $3
 		   AND environment_id = $4
@@ -620,7 +620,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	if response.Record == nil || response.Record.ID != recordID.String() {
 		t.Fatalf("read response = %+v", response)
 	}
-	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+	stored, err := queries.GetSessionContinuationRequest(ctx, db.GetSessionContinuationRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
@@ -629,8 +629,8 @@ func TestWorkerActiveInputReadCancelsCreatedSessionRunRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "skipped" || stored.LastError != "consumed_by_active_run" {
-		t.Fatalf("request status=%q last_error=%q, want skipped consumed_by_active_run", stored.Status, stored.LastError)
+	if stored.Status != "skipped" || stored.StatusReason != "consumed_by_active_run" {
+		t.Fatalf("request status=%q status_reason=%q, want skipped consumed_by_active_run", stored.Status, stored.StatusReason)
 	}
 	var runStatus db.RunStatus
 	var executionStatus db.RunExecutionStatus
@@ -672,7 +672,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	}); err != nil {
 		t.Fatal(err)
 	}
-	request, err := queries.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+	request, err := queries.EnsureSessionContinuationRequestForStreamRecord(ctx, db.EnsureSessionContinuationRequestForStreamRecordParams{
 		ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:          pgvalue.UUID(ids.orgID),
 		ProjectID:      pgvalue.UUID(ids.projectID),
@@ -685,9 +685,9 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		UPDATE session_run_requests
+		UPDATE session_continuation_requests
 		   SET status = 'created',
-		       run_id = $1
+		       created_run_id = $1
 		 WHERE org_id = $2
 		   AND project_id = $3
 		   AND environment_id = $4
@@ -708,7 +708,7 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	if response.Record == nil || response.Record.ID != recordID.String() {
 		t.Fatalf("read response = %+v", response)
 	}
-	stored, err := queries.GetSessionRunRequest(ctx, db.GetSessionRunRequestParams{
+	stored, err := queries.GetSessionContinuationRequest(ctx, db.GetSessionContinuationRequestParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
@@ -717,8 +717,8 @@ func TestWorkerActiveInputReadDoesNotSkipCreatedRequestForActiveRun(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stored.Status != "created" || pgvalue.MustUUIDValue(stored.RunID) != leaseIDs.runID {
-		t.Fatalf("request status=%q run_id=%s, want created active run %s", stored.Status, pgvalue.UUIDString(stored.RunID), leaseIDs.runID)
+	if stored.Status != "created" || pgvalue.MustUUIDValue(stored.CreatedRunID) != leaseIDs.runID {
+		t.Fatalf("request status=%q run_id=%s, want created active run %s", stored.Status, pgvalue.UUIDString(stored.CreatedRunID), leaseIDs.runID)
 	}
 	var runStatus db.RunStatus
 	var executionStatus db.RunExecutionStatus

@@ -142,7 +142,7 @@ func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker wo
 			return api.WorkerActiveStreamReadResponse{}, err
 		}
 		if found {
-			if err := s.sessionRunRequestWorkflow().consumeByActiveRun(ctx, session, pgvalue.UUID(leaseIDs.runID), record.ID); err != nil {
+			if err := s.sessionContinuationRequestWorkflow().consumeByActiveRun(ctx, session, pgvalue.UUID(leaseIDs.runID), record.ID); err != nil {
 				return api.WorkerActiveStreamReadResponse{}, err
 			}
 			response := streamRecordResponse(record)

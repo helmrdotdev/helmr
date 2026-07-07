@@ -22,7 +22,7 @@ func TestCloseSessionRejectsPendingContinuationRequest(t *testing.T) {
 	sessionID := seedSessionForRun(t, ctx, pool, ids)
 	seedSessionRun(t, ctx, pool, ids, sessionID)
 	markCurrentRunTerminal(t, ctx, pool, ids)
-	seedPendingSessionRunRequest(t, ctx, pool, ids, sessionID)
+	seedPendingSessionContinuationRequest(t, ctx, pool, ids, sessionID)
 
 	_, err := queries.CloseSession(ctx, db.CloseSessionParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
@@ -107,7 +107,7 @@ func markCurrentRunTerminal(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	}
 }
 
-func seedPendingSessionRunRequest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, sessionID uuid.UUID) {
+func seedPendingSessionContinuationRequest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, sessionID uuid.UUID) {
 	t.Helper()
 	deploymentStreamID := uuid.Must(uuid.NewV7())
 	streamID := uuid.Must(uuid.NewV7())
@@ -135,10 +135,10 @@ func seedPendingSessionRunRequest(t *testing.T, ctx context.Context, pool *pgxpo
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-			INSERT INTO session_run_requests (
-				id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, cause_kind, status
+		INSERT INTO session_continuation_requests (
+				id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status
 			)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'stream_record', 'accepted')
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'accepted')
 		`, requestID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, streamRecordID, streamID); err != nil {
 		t.Fatal(err)
 	}

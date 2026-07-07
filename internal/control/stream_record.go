@@ -121,7 +121,7 @@ func (s *Server) afterInputStreamRecordCommit(ctx context.Context, session db.Se
 	if appended.resolvedWaitCount > 0 {
 		s.requeueResolvedRunWaits(ctx, session.OrgID)
 	}
-	for _, runID := range s.sessionRunRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
+	for _, runID := range s.sessionContinuationRequestWorkflow().reconcileAccepted(ctx, session.OrgID, session.ProjectID, session.EnvironmentID, session.ID) {
 		appended.continuationRunID = runID
 		appended.continuationStatus = "created"
 	}
@@ -222,7 +222,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			}
 		}
 		if !row.IsCached && appended.resolvedWaitCount == 0 {
-			if _, err := store.EnsureSessionRunRequestForStreamRecord(ctx, db.EnsureSessionRunRequestForStreamRecordParams{
+			if _, err := store.EnsureSessionContinuationRequestForStreamRecord(ctx, db.EnsureSessionContinuationRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:          session.OrgID,
 				ProjectID:      session.ProjectID,

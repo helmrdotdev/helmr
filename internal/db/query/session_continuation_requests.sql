@@ -1,5 +1,5 @@
--- name: EnsureSessionRunRequestForStreamRecord :one
-INSERT INTO session_run_requests (
+-- name: EnsureSessionContinuationRequestForStreamRecord :one
+INSERT INTO session_continuation_requests (
     id,
     org_id,
     worker_group_id,
@@ -7,8 +7,7 @@ INSERT INTO session_run_requests (
     environment_id,
     session_id,
     stream_record_id,
-    stream_id,
-    cause_kind
+    stream_id
 )
 SELECT
     sqlc.arg(id),
@@ -18,8 +17,7 @@ SELECT
     stream_records.environment_id,
     stream_records.session_id,
     stream_records.id,
-    stream_records.stream_id,
-    'stream_record'
+    stream_records.stream_id
   FROM stream_records
   JOIN streams
     ON streams.org_id = stream_records.org_id
@@ -41,21 +39,21 @@ SELECT
    AND stream_records.stream_id = sqlc.arg(stream_id)
    AND stream_records.id = sqlc.arg(stream_record_id)
 ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
-DO UPDATE SET updated_at = session_run_requests.updated_at
+DO UPDATE SET updated_at = session_continuation_requests.updated_at
 RETURNING *;
 
--- name: GetSessionRunRequest :one
+-- name: GetSessionContinuationRequest :one
 SELECT *
- FROM session_run_requests
+ FROM session_continuation_requests
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
--- name: ClaimDueSessionRunRequests :many
+-- name: ClaimDueSessionContinuationRequests :many
 WITH eligible AS (
     SELECT id
-     FROM session_run_requests
+     FROM session_continuation_requests
      WHERE status IN ('accepted', 'claimed')
        AND worker_group_id = sqlc.arg(worker_group_id)
        AND (
@@ -84,7 +82,7 @@ WITH eligible AS (
      LIMIT sqlc.arg(limit_count)
      FOR UPDATE SKIP LOCKED
 )
-UPDATE session_run_requests
+UPDATE session_continuation_requests
    SET status = 'claimed',
        attempts = attempts + 1,
        claimed_at = now(),
@@ -92,16 +90,17 @@ UPDATE session_run_requests
        claim_owner = sqlc.arg(claim_owner),
        updated_at = now()
  FROM eligible
- WHERE session_run_requests.id = eligible.id
-   AND session_run_requests.worker_group_id = sqlc.arg(worker_group_id)
-RETURNING session_run_requests.*;
+ WHERE session_continuation_requests.id = eligible.id
+   AND session_continuation_requests.worker_group_id = sqlc.arg(worker_group_id)
+RETURNING session_continuation_requests.*;
 
--- name: ReleaseSessionRunRequestForRetry :one
-UPDATE session_run_requests
+-- name: ReleaseSessionContinuationRequestForRetry :one
+UPDATE session_continuation_requests
    SET status = 'accepted',
        next_attempt_at = now() + sqlc.arg(retry_after)::interval,
-       last_error = sqlc.arg(last_error),
-       error_message = sqlc.arg(last_error),
+       status_reason = '',
+       last_error_code = sqlc.arg(last_error_code),
+       last_error_message = sqlc.arg(last_error_message),
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',
@@ -115,12 +114,14 @@ UPDATE session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkSessionRunRequestCreated :one
-UPDATE session_run_requests
+-- name: MarkSessionContinuationRequestCreated :one
+UPDATE session_continuation_requests
    SET status = 'created',
-       run_id = sqlc.arg(run_id),
-       last_error = '',
-       error_message = '',
+       status_reason = '',
+       created_run_id = sqlc.arg(created_run_id),
+       consumed_by_run_id = NULL,
+       last_error_code = '',
+       last_error_message = '',
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',
@@ -134,11 +135,12 @@ UPDATE session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkSessionRunRequestSkipped :one
-UPDATE session_run_requests
+-- name: MarkSessionContinuationRequestSkipped :one
+UPDATE session_continuation_requests
    SET status = 'skipped',
-       last_error = sqlc.arg(reason),
-       error_message = sqlc.arg(reason),
+       status_reason = sqlc.arg(reason),
+       last_error_code = '',
+       last_error_message = '',
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',
@@ -152,19 +154,19 @@ UPDATE session_run_requests
 	   AND claim_owner = sqlc.arg(claim_owner)
 	RETURNING *;
 
--- name: MarkSessionRunRequestConsumedByActiveRun :one
+-- name: MarkSessionContinuationRequestConsumedByActiveRun :one
 WITH target AS MATERIALIZED (
     SELECT *
-     FROM session_run_requests
-     WHERE session_run_requests.org_id = sqlc.arg(org_id)
-       AND session_run_requests.worker_group_id = sqlc.arg(worker_group_id)
-       AND session_run_requests.project_id = sqlc.arg(project_id)
-       AND session_run_requests.environment_id = sqlc.arg(environment_id)
-       AND session_run_requests.stream_record_id = sqlc.arg(stream_record_id)
-       AND session_run_requests.status IN ('accepted', 'claimed', 'created')
+     FROM session_continuation_requests
+     WHERE session_continuation_requests.org_id = sqlc.arg(org_id)
+       AND session_continuation_requests.worker_group_id = sqlc.arg(worker_group_id)
+       AND session_continuation_requests.project_id = sqlc.arg(project_id)
+       AND session_continuation_requests.environment_id = sqlc.arg(environment_id)
+       AND session_continuation_requests.stream_record_id = sqlc.arg(stream_record_id)
+       AND session_continuation_requests.status IN ('accepted', 'claimed', 'created')
        AND (
-           session_run_requests.status <> 'created'
-           OR session_run_requests.run_id IS DISTINCT FROM sqlc.arg(active_run_id)
+           session_continuation_requests.status <> 'created'
+           OR session_continuation_requests.created_run_id IS DISTINCT FROM sqlc.arg(active_run_id)
        )
      FOR UPDATE
 ),
@@ -193,16 +195,16 @@ cancelled_runs AS (
            updated_at = now()
       FROM target
      WHERE target.status = 'created'
-       AND target.run_id IS NOT NULL
+       AND target.created_run_id IS NOT NULL
        AND runs.org_id = target.org_id
        AND runs.worker_group_id = target.worker_group_id
        AND runs.project_id = target.project_id
        AND runs.environment_id = target.environment_id
-       AND runs.id = target.run_id
+       AND runs.id = target.created_run_id
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
     RETURNING runs.*
 ),
-	ended_session_runs AS (
+ended_session_runs AS (
     UPDATE session_runs
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs
@@ -225,31 +227,34 @@ restored_session_current AS (
        AND sessions.project_id = target.project_id
        AND sessions.environment_id = target.environment_id
        AND sessions.id = target.session_id
-       AND sessions.current_run_id = target.run_id
+       AND sessions.current_run_id = target.created_run_id
        AND target.status = 'created'
     RETURNING sessions.id
 )
-UPDATE session_run_requests
+UPDATE session_continuation_requests
    SET status = 'skipped',
-       last_error = 'consumed_by_active_run',
-       error_message = '',
+       status_reason = 'consumed_by_active_run',
+       consumed_by_run_id = sqlc.arg(active_run_id),
+       last_error_code = '',
+       last_error_message = '',
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',
        updated_at = now()
   FROM target
- WHERE session_run_requests.org_id = target.org_id
-   AND session_run_requests.worker_group_id = target.worker_group_id
-   AND session_run_requests.project_id = target.project_id
-   AND session_run_requests.environment_id = target.environment_id
-   AND session_run_requests.id = target.id
-RETURNING session_run_requests.*;
+ WHERE session_continuation_requests.org_id = target.org_id
+   AND session_continuation_requests.worker_group_id = target.worker_group_id
+   AND session_continuation_requests.project_id = target.project_id
+   AND session_continuation_requests.environment_id = target.environment_id
+   AND session_continuation_requests.id = target.id
+RETURNING session_continuation_requests.*;
 
--- name: MarkSessionRunRequestFailed :one
-UPDATE session_run_requests
+-- name: MarkSessionContinuationRequestFailed :one
+UPDATE session_continuation_requests
    SET status = 'failed',
-       last_error = sqlc.arg(reason),
-       error_message = sqlc.arg(reason),
+       status_reason = sqlc.arg(reason),
+       last_error_code = sqlc.arg(reason),
+       last_error_message = sqlc.arg(reason),
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',

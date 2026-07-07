@@ -1936,7 +1936,7 @@ CREATE TABLE stream_records (
         ON DELETE SET NULL (public_access_token_id)
 );
 
-CREATE TABLE session_run_requests (
+CREATE TABLE session_continuation_requests (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
     worker_group_id TEXT NOT NULL,
@@ -1945,16 +1945,17 @@ CREATE TABLE session_run_requests (
     session_id UUID NOT NULL,
     stream_record_id UUID NOT NULL,
     stream_id UUID NOT NULL,
-    cause_kind TEXT NOT NULL CHECK (cause_kind = 'stream_record'),
     status TEXT NOT NULL DEFAULT 'accepted' CHECK (status IN ('accepted', 'claimed', 'created', 'skipped', 'failed')),
+    status_reason TEXT NOT NULL DEFAULT '',
     attempts INTEGER NOT NULL DEFAULT 0,
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_error TEXT NOT NULL DEFAULT '',
+    last_error_code TEXT NOT NULL DEFAULT '',
+    last_error_message TEXT NOT NULL DEFAULT '',
     claimed_at TIMESTAMPTZ,
     claim_expires_at TIMESTAMPTZ,
     claim_owner TEXT NOT NULL DEFAULT '',
-    run_id UUID,
-    error_message TEXT NOT NULL DEFAULT '',
+    created_run_id UUID,
+    consumed_by_run_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, project_id, environment_id, stream_record_id),
@@ -1970,9 +1971,12 @@ CREATE TABLE session_run_requests (
     FOREIGN KEY (org_id, project_id, environment_id, stream_id)
         REFERENCES streams(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
+    FOREIGN KEY (org_id, project_id, environment_id, created_run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE SET NULL (run_id)
+        ON DELETE SET NULL (created_run_id),
+    FOREIGN KEY (org_id, project_id, environment_id, consumed_by_run_id)
+        REFERENCES runs(org_id, project_id, environment_id, id)
+        ON DELETE SET NULL (consumed_by_run_id)
 );
 
 ALTER TABLE runs
@@ -2925,7 +2929,7 @@ CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, e
 CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
 CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
 CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
-CREATE INDEX session_run_requests_pending_idx ON session_run_requests(next_attempt_at, created_at)
+CREATE INDEX session_continuation_requests_pending_idx ON session_continuation_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');
 CREATE INDEX workspaces_state_idx ON workspaces(org_id, project_id, environment_id, state, updated_at DESC);
 CREATE INDEX workspaces_tags_idx ON workspaces USING GIN (tags);

@@ -20,7 +20,7 @@ DROP INDEX IF EXISTS workspaces_external_id_idx;
 DROP INDEX IF EXISTS workspaces_tags_idx;
 DROP INDEX IF EXISTS workspaces_state_idx;
 DROP INDEX IF EXISTS session_runs_timeline_idx;
-DROP INDEX IF EXISTS session_run_requests_pending_idx;
+DROP INDEX IF EXISTS session_continuation_requests_pending_idx;
 DROP INDEX IF EXISTS session_start_idempotencies_expiry_idx;
 DROP INDEX IF EXISTS sessions_tags_idx;
 DROP INDEX IF EXISTS sessions_scope_status_updated_idx;
@@ -132,7 +132,7 @@ ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_org_id
 ALTER TABLE run_waits DROP CONSTRAINT IF EXISTS run_waits_owner_runtime_instance_id_fkey;
 DROP TABLE IF EXISTS run_waits;
 DROP TABLE IF EXISTS waits;
-DROP TABLE IF EXISTS session_run_requests;
+DROP TABLE IF EXISTS session_continuation_requests;
 DROP TABLE IF EXISTS stream_records;
 DROP TABLE IF EXISTS public_access_token_scopes;
 DROP TABLE IF EXISTS public_access_tokens;

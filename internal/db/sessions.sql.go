@@ -133,12 +133,12 @@ UPDATE sessions
    )
    AND NOT EXISTS (
        SELECT 1
-         FROM session_run_requests
-        WHERE session_run_requests.org_id = sessions.org_id
-          AND session_run_requests.project_id = sessions.project_id
-          AND session_run_requests.environment_id = sessions.environment_id
-          AND session_run_requests.session_id = sessions.id
-          AND session_run_requests.status IN ('accepted', 'claimed')
+         FROM session_continuation_requests
+        WHERE session_continuation_requests.org_id = sessions.org_id
+          AND session_continuation_requests.project_id = sessions.project_id
+          AND session_continuation_requests.environment_id = sessions.environment_id
+          AND session_continuation_requests.session_id = sessions.id
+          AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
@@ -624,13 +624,13 @@ UPDATE sessions
    )
    AND NOT EXISTS (
        SELECT 1
-         FROM session_run_requests
-        WHERE session_run_requests.org_id = sessions.org_id
-          AND session_run_requests.worker_group_id = sessions.worker_group_id
-          AND session_run_requests.project_id = sessions.project_id
-          AND session_run_requests.environment_id = sessions.environment_id
-          AND session_run_requests.session_id = sessions.id
-          AND session_run_requests.status IN ('accepted', 'claimed')
+         FROM session_continuation_requests
+        WHERE session_continuation_requests.org_id = sessions.org_id
+          AND session_continuation_requests.worker_group_id = sessions.worker_group_id
+          AND session_continuation_requests.project_id = sessions.project_id
+          AND session_continuation_requests.environment_id = sessions.environment_id
+          AND session_continuation_requests.session_id = sessions.id
+          AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
@@ -719,12 +719,12 @@ UPDATE sessions
    )
    AND NOT EXISTS (
        SELECT 1
-         FROM session_run_requests
-        WHERE session_run_requests.org_id = sessions.org_id
-          AND session_run_requests.project_id = sessions.project_id
-          AND session_run_requests.environment_id = sessions.environment_id
-          AND session_run_requests.session_id = sessions.id
-          AND session_run_requests.status IN ('accepted', 'claimed')
+         FROM session_continuation_requests
+        WHERE session_continuation_requests.org_id = sessions.org_id
+          AND session_continuation_requests.project_id = sessions.project_id
+          AND session_continuation_requests.environment_id = sessions.environment_id
+          AND session_continuation_requests.session_id = sessions.id
+          AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
 RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
@@ -836,12 +836,12 @@ SELECT sessions.id,
          WHEN sessions.status <> 'open' THEN 'idle'
          WHEN EXISTS (
              SELECT 1
-               FROM session_run_requests
-              WHERE session_run_requests.org_id = sessions.org_id
-                AND session_run_requests.project_id = sessions.project_id
-                AND session_run_requests.environment_id = sessions.environment_id
-                AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
+               FROM session_continuation_requests
+              WHERE session_continuation_requests.org_id = sessions.org_id
+                AND session_continuation_requests.project_id = sessions.project_id
+                AND session_continuation_requests.environment_id = sessions.environment_id
+                AND session_continuation_requests.session_id = sessions.id
+                AND session_continuation_requests.status IN ('accepted', 'claimed')
          ) THEN 'queued'
          WHEN sessions.current_run_id IS NULL THEN 'idle'
          WHEN runs.id IS NULL THEN 'idle'
@@ -861,12 +861,12 @@ SELECT sessions.id,
          )
          AND NOT EXISTS (
              SELECT 1
-               FROM session_run_requests
-              WHERE session_run_requests.org_id = sessions.org_id
-                AND session_run_requests.project_id = sessions.project_id
-                AND session_run_requests.environment_id = sessions.environment_id
-                AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
+               FROM session_continuation_requests
+              WHERE session_continuation_requests.org_id = sessions.org_id
+                AND session_continuation_requests.project_id = sessions.project_id
+                AND session_continuation_requests.environment_id = sessions.environment_id
+                AND session_continuation_requests.session_id = sessions.id
+                AND session_continuation_requests.status IN ('accepted', 'claimed')
          )
        )::bool AS can_close
   FROM sessions
@@ -1600,13 +1600,13 @@ SELECT sessions.id,
          WHEN sessions.status <> 'open' THEN 'idle'
          WHEN EXISTS (
              SELECT 1
-              FROM session_run_requests
-             WHERE session_run_requests.org_id = sessions.org_id
-               AND session_run_requests.worker_group_id = sessions.worker_group_id
-               AND session_run_requests.project_id = sessions.project_id
-               AND session_run_requests.environment_id = sessions.environment_id
-               AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
+              FROM session_continuation_requests
+             WHERE session_continuation_requests.org_id = sessions.org_id
+               AND session_continuation_requests.worker_group_id = sessions.worker_group_id
+               AND session_continuation_requests.project_id = sessions.project_id
+               AND session_continuation_requests.environment_id = sessions.environment_id
+               AND session_continuation_requests.session_id = sessions.id
+                AND session_continuation_requests.status IN ('accepted', 'claimed')
          ) THEN 'queued'
          WHEN sessions.current_run_id IS NULL THEN 'idle'
          WHEN runs.id IS NULL THEN 'idle'
@@ -1626,13 +1626,13 @@ SELECT sessions.id,
          )
          AND NOT EXISTS (
              SELECT 1
-              FROM session_run_requests
-             WHERE session_run_requests.org_id = sessions.org_id
-               AND session_run_requests.worker_group_id = sessions.worker_group_id
-               AND session_run_requests.project_id = sessions.project_id
-               AND session_run_requests.environment_id = sessions.environment_id
-               AND session_run_requests.session_id = sessions.id
-                AND session_run_requests.status IN ('accepted', 'claimed')
+              FROM session_continuation_requests
+             WHERE session_continuation_requests.org_id = sessions.org_id
+               AND session_continuation_requests.worker_group_id = sessions.worker_group_id
+               AND session_continuation_requests.project_id = sessions.project_id
+               AND session_continuation_requests.environment_id = sessions.environment_id
+               AND session_continuation_requests.session_id = sessions.id
+                AND session_continuation_requests.status IN ('accepted', 'claimed')
          )
        )::bool AS can_close
   FROM sessions

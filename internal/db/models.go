@@ -2965,6 +2965,30 @@ type Session struct {
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SessionContinuationRequest struct {
+	ID               pgtype.UUID        `json:"id"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	SessionID        pgtype.UUID        `json:"session_id"`
+	StreamRecordID   pgtype.UUID        `json:"stream_record_id"`
+	StreamID         pgtype.UUID        `json:"stream_id"`
+	Status           string             `json:"status"`
+	StatusReason     string             `json:"status_reason"`
+	Attempts         int32              `json:"attempts"`
+	NextAttemptAt    pgtype.Timestamptz `json:"next_attempt_at"`
+	LastErrorCode    string             `json:"last_error_code"`
+	LastErrorMessage string             `json:"last_error_message"`
+	ClaimedAt        pgtype.Timestamptz `json:"claimed_at"`
+	ClaimExpiresAt   pgtype.Timestamptz `json:"claim_expires_at"`
+	ClaimOwner       string             `json:"claim_owner"`
+	CreatedRunID     pgtype.UUID        `json:"created_run_id"`
+	ConsumedByRunID  pgtype.UUID        `json:"consumed_by_run_id"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type SessionRun struct {
 	ID            pgtype.UUID        `json:"id"`
 	PublicID      string             `json:"public_id"`
@@ -2980,29 +3004,6 @@ type SessionRun struct {
 	Reason        string             `json:"reason"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	EndedAt       pgtype.Timestamptz `json:"ended_at"`
-}
-
-type SessionRunRequest struct {
-	ID             pgtype.UUID        `json:"id"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	WorkerGroupID  string             `json:"worker_group_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	SessionID      pgtype.UUID        `json:"session_id"`
-	StreamRecordID pgtype.UUID        `json:"stream_record_id"`
-	StreamID       pgtype.UUID        `json:"stream_id"`
-	CauseKind      string             `json:"cause_kind"`
-	Status         string             `json:"status"`
-	Attempts       int32              `json:"attempts"`
-	NextAttemptAt  pgtype.Timestamptz `json:"next_attempt_at"`
-	LastError      string             `json:"last_error"`
-	ClaimedAt      pgtype.Timestamptz `json:"claimed_at"`
-	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
-	ClaimOwner     string             `json:"claim_owner"`
-	RunID          pgtype.UUID        `json:"run_id"`
-	ErrorMessage   string             `json:"error_message"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SessionStartIdempotency struct {
