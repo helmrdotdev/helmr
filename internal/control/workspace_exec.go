@@ -21,12 +21,11 @@ import (
 )
 
 const (
-	workspaceExecCreateOperationKind = db.WorkspaceOperationIdempotencyKindWorkspaceCommandCreate
-	workspaceExecIdempotencyTTL      = 24 * time.Hour
-	workspaceExecListDefaultLimit    = int32(50)
-	workspaceExecListMaxLimit        = int32(200)
-	workspaceStreamChunkMaxBytes     = 1024 * 1024
-	workspaceStreamRetainedMaxBytes  = 64 * 1024 * 1024
+	workspaceExecIdempotencyTTL     = 24 * time.Hour
+	workspaceExecListDefaultLimit   = int32(50)
+	workspaceExecListMaxLimit       = int32(200)
+	workspaceStreamChunkMaxBytes    = 1024 * 1024
+	workspaceStreamRetainedMaxBytes = 64 * 1024 * 1024
 )
 
 var (
@@ -282,39 +281,37 @@ func (s *Server) requestWorkspaceExecStdinClose(ctx context.Context, exec db.Wor
 func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.Actor, ws db.Workspace, command []string, cwd string, envShape []byte, detached bool, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspaceProcess, bool, error) {
 	var row db.WorkspaceProcess
 	var existing bool
+	idempotencyExpiresAt := pgtype.Timestamptz{}
+	if idempotencyKey != "" {
+		idempotencyExpiresAt = pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL))
+	}
 	err := s.inTx(ctx, func(work *txWork) error {
 		if idempotencyKey != "" {
-			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, work.q, db.EnsureWorkspaceOperationIdempotencyParams{
-				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          ws.ProjectID,
-				EnvironmentID:      ws.EnvironmentID,
-				WorkspaceID:        ws.ID,
-				OperationKind:      workspaceExecCreateOperationKind,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   pgtype.UUID{},
-				ResponseBody:       []byte(`{}`),
-				ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
-			})
-			if err != nil {
+			if err := work.q.ClearExpiredWorkspaceExecIdempotency(ctx, db.ClearExpiredWorkspaceExecIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			}); err != nil {
 				return err
 			}
-			if !idempotency.Inserted {
-				if idempotency.RequestFingerprint != fingerprint {
+			existingExec, err := work.q.GetWorkspaceExecByIdempotency(ctx, db.GetWorkspaceExecByIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			})
+			if err == nil {
+				if existingExec.RequestFingerprint != fingerprint {
 					return errWorkspaceOperationIdempotencyUsed
 				}
-				if !idempotency.ResultResourceID.Valid {
-					return errWorkspaceOperationPending
-				}
-				row, err = work.q.GetWorkspaceExec(ctx, db.GetWorkspaceExecParams{
-					OrgID:         pgvalue.UUID(actor.OrgID),
-					ProjectID:     ws.ProjectID,
-					EnvironmentID: ws.EnvironmentID,
-					WorkspaceID:   ws.ID,
-					ID:            idempotency.ResultResourceID,
-				})
+				row = existingExec
 				existing = true
+				return nil
+			}
+			if !isNoRows(err) {
 				return err
 			}
 		}
@@ -334,6 +331,7 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 			State:                db.WorkspaceProcessStateStarting,
 			Detached:             detached,
 			IdempotencyKey:       idempotencyKey,
+			IdempotencyExpiresAt: idempotencyExpiresAt,
 			RequestFingerprint:   fingerprint,
 			CreatedBySubjectType: string(actor.Kind),
 			CreatedBySubjectID:   actorSubjectID(actor),
@@ -389,25 +387,24 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 				return err
 			}
 		}
-		if idempotencyKey != "" {
-			_, err = work.q.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          ws.ProjectID,
-				EnvironmentID:      ws.EnvironmentID,
-				OperationKind:      workspaceExecCreateOperationKind,
-				WorkspaceID:        ws.ID,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   row.ID,
-				ResponseBody:       []byte(`{}`),
-			})
-			if err != nil {
-				return err
-			}
-		}
 		return nil
 	})
 	if err != nil {
+		if idempotencyKey != "" && isUniqueViolation(err) {
+			existingExec, getErr := s.db.GetWorkspaceExecByIdempotency(ctx, db.GetWorkspaceExecByIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			})
+			if getErr == nil {
+				if existingExec.RequestFingerprint != fingerprint {
+					return db.WorkspaceProcess{}, false, errWorkspaceOperationIdempotencyUsed
+				}
+				return existingExec, true, nil
+			}
+		}
 		return db.WorkspaceProcess{}, false, err
 	}
 	return row, existing, nil

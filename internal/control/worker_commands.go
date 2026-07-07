@@ -230,11 +230,11 @@ func (s *Server) workerReadCommands(w http.ResponseWriter, r *http.Request) {
 		if err := r.Context().Err(); err != nil {
 			return
 		}
-		if _, err := s.db.CreateDueLiveRuntimeCheckpointWaitCommandsForWorker(r.Context(), db.CreateDueLiveRuntimeCheckpointWaitCommandsForWorkerParams{
+		if _, err := s.db.CreateDueLiveRunCheckpointWaitCommandsForWorker(r.Context(), db.CreateDueLiveRunCheckpointWaitCommandsForWorkerParams{
 			WorkerInstanceID: workerInstanceID,
 			LimitCount:       workerDueCheckpointLimit,
 		}); err != nil {
-			s.log.Warn("create due live runtime checkpoint commands failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
+			s.log.Warn("create due live run checkpoint commands failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 			writeWorkerCommandSSEError(w, flusher, err)
 			return
 		}

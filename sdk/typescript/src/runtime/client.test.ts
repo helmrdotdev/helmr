@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test"
 
 import { HelmrClient, WorkspaceStreamError, WorkspaceStreamTerminalError, tokenClientMethod, type SessionSnapshot } from "./client"
 import { runStateBooleans } from "./run"
-import { PayloadSchemaValidationError, auth, idempotencyKeys, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
+import { PayloadSchemaValidationError, auth, image, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 import { resetDefaultClientForTest } from "../start"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
 
@@ -720,14 +720,11 @@ test("sessions.start returns session and run handles from the session start resp
   }) as typeof fetch
 
   const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const key = idempotencyKeys.create("case-123")
   const started = await client.sessions.start("inspect", { issue: 123 }, {
     projectId: "project-1",
     environmentId: "env-1",
     externalId: "case-123",
     workspaceId: "workspace-1",
-    idempotencyKey: key,
-    idempotencyKeyTTL: "24h",
     expiresAt: "2026-04-21T00:00:00Z",
   })
 
@@ -736,8 +733,6 @@ test("sessions.start returns session and run handles from the session start resp
     task_id: "inspect",
     payload: { issue: 123 },
     external_id: "case-123",
-    idempotency_key: key.value,
-    idempotency_key_ttl: "24h",
     expires_at: "2026-04-21T00:00:00.000Z",
     workspace_id: "workspace-1",
   })
@@ -745,6 +740,18 @@ test("sessions.start returns session and run handles from the session start resp
   expect(started.session.id).toBe("session-1")
   expect(started.session.currentRunId).toBe("run-1")
   expect(started.isCached).toBe(true)
+})
+
+test("sessions.start treats accepted responses as errors", async () => {
+  let calls = 0
+  globalThis.fetch = (async () => {
+    calls += 1
+    return Response.json({ error: "accepted elsewhere" }, { status: 202 })
+  }) as typeof fetch
+
+  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
+  await expect(client.sessions.start("inspect", {})).rejects.toThrow("accepted elsewhere")
+  expect(calls).toBe(1)
 })
 
 test("sessions.startAndWait posts one start-and-wait request and returns the terminal run", async () => {
@@ -822,32 +829,6 @@ test("sessions.start requires complete project environment scope", async () => {
   await expect(client.sessions.start("inspect", { projectId: "project-1" })).rejects.toThrow(
     "projectId and environmentId must be provided together",
   )
-})
-
-test("sessions.startAndWait retries a pending idempotent start before returning the session", async () => {
-  const requestedUrls: string[] = []
-  let calls = 0
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    requestedUrls.push(String(input))
-    calls++
-    if (calls === 1) {
-      return Response.json({ code: "idempotency_pending", retry_after_ms: 1 }, {
-        status: 202,
-        headers: { "retry-after": "0" },
-      })
-    }
-    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "succeeded", output: { ok: true } }))
-  }) as typeof fetch
-
-  const client = new HelmrClient({ url: "https://api.example.test", apiKey: "token" })
-  const started = await client.sessions.startAndWait("inspect", { idempotencyKey: "retry-key" })
-
-  expect(requestedUrls).toEqual([
-    "https://api.example.test/api/sessions/start-and-wait",
-    "https://api.example.test/api/sessions/start-and-wait",
-  ])
-  expect(started.run.status).toBe("succeeded")
-  expect(started.run.output).toEqual({ ok: true })
 })
 
 test("sessions facade retrieves state and reads/writes session streams", async () => {
@@ -1299,115 +1280,6 @@ test("client.sessions.start accepts task objects and returns session and run han
     run: { id: "018f0000000070008000000000000001", taskId: "inspect" },
     isCached: false,
   })
-})
-
-test("sessions.start(task) posts idempotency options", async () => {
-  process.env["HELMR_API_URL"] = "https://api.example.test"
-  let body: unknown
-  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    body = JSON.parse(String(init?.body))
-    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 201 })
-  }) as typeof fetch
-
-  const key = idempotencyKeys.create(["deploy", "prod"], { scope: "global" })
-  const inspect = task({
-    id: "inspect",
-    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    run: async () => undefined,
-  })
-  await sessions.start(inspect, {
-    idempotencyKey: key,
-    idempotencyKeyTTL: "24h",
-  })
-
-  expect(body).toMatchObject({
-    task_id: "inspect",
-    idempotency_key: key.value,
-    idempotency_key_ttl: "24h",
-    max_duration_seconds: 900,
-  })
-})
-
-test("sessions.start(task) retries pending session start before returning the start response", async () => {
-  process.env["HELMR_API_URL"] = "https://api.example.test"
-  let calls = 0
-  let pendingBodyPulls = 0
-  globalThis.fetch = (async () => {
-    calls += 1
-    if (calls === 1) {
-      return new Response(
-        new ReadableStream({
-          pull(controller) {
-            pendingBodyPulls += 1
-            controller.enqueue(new TextEncoder().encode(`{"code":"idempotency_pending","error":"session_start_pending"}`))
-            controller.close()
-          },
-        }),
-        { status: 202, headers: { "retry-after": "0.001" } },
-      )
-    }
-    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
-  }) as typeof fetch
-
-  const inspect = task({
-    id: "inspect",
-    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    run: async () => undefined,
-  })
-
-  await expect(sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })).resolves.toMatchObject({
-    session: { id: "session-1", taskId: "inspect", currentRunId: "run-1" },
-    run: { id: "run-1", taskId: "inspect" },
-  })
-  expect(calls).toBe(2)
-  expect(pendingBodyPulls).toBe(1)
-})
-
-test("sessions.start(task) does not retry non-pending accepted responses", async () => {
-  process.env["HELMR_API_URL"] = "https://api.example.test"
-  let calls = 0
-  globalThis.fetch = (async () => {
-    calls += 1
-    return Response.json({ error: "accepted elsewhere" }, { status: 202 })
-  }) as typeof fetch
-
-  const inspect = task({
-    id: "inspect",
-    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    run: async () => undefined,
-  })
-
-  await expect(sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })).rejects.toThrow(
-    "accepted elsewhere",
-  )
-  expect(calls).toBe(1)
-})
-
-test("sessions.start(task) backs off for stale HTTP-date retry-after headers", async () => {
-  process.env["HELMR_API_URL"] = "https://api.example.test"
-  let calls = 0
-  globalThis.fetch = (async () => {
-    calls += 1
-    if (calls === 1) {
-      return Response.json(
-        { code: "idempotency_pending", error: "session_start_pending" },
-        { status: 202, headers: { "retry-after": new Date(Date.now() - 1000).toUTCString() } },
-      )
-    }
-    return Response.json(sessionStartFixture({ id: "run-1", task_id: "inspect", status: "queued" }), { status: 200 })
-  }) as typeof fetch
-
-  const inspect = task({
-    id: "inspect",
-    sandbox: sandbox("inspect").image(image("inspect").from("debian:trixie-slim")),
-    run: async () => undefined,
-  })
-
-  const startedAt = Date.now()
-  await sessions.start(inspect, { idempotencyKey: idempotencyKeys.create("inspect") })
-
-  expect(calls).toBe(2)
-  expect(Date.now() - startedAt).toBeGreaterThanOrEqual(100)
 })
 
 test("sessions.start(task) posts scheduling options", async () => {

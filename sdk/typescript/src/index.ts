@@ -54,7 +54,7 @@ import {
 } from "./internal"
 import { PayloadSchemaValidationError } from "./schema/payload"
 import { idempotencyKeys } from "./idempotency"
-export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyInput, IdempotencyKeyScope } from "./idempotency"
+export type { IdempotencyKey, IdempotencyKeyCreateOptions, IdempotencyKeyScope } from "./idempotency"
 import { parsePayloadWithSchema, type PayloadSchema, type StandardSchemaV1 } from "./schema/payload"
 import {
   HelmrClient,

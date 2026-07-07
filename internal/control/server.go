@@ -616,7 +616,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 			r.Post("/leases/streams/input/read", s.workerReadInputStream)
 			r.Post("/leases/streams/output", s.workerAppendOutputStream)
 			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
-			r.Post("/leases/checkpoints/claim", s.workerClaimRuntimeCheckpointWait)
+			r.Post("/leases/checkpoints/claim", s.workerClaimRunCheckpointWait)
 			r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
 			r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
 			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)

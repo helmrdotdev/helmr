@@ -1,7 +1,7 @@
 {
   "runtime_contract_version": 0,
   "adapter_files": {
-    "main.js": "sha256:fdfeb5c8f179b54eb654ed707bd66ec1ff4d50e50c9b108f7460fc6f04eb5edb",
+    "main.js": "sha256:12a7b3d2d1fcee2e54fd00de45c5792e065ada9c765bf48b8c300a7ca5340b82",
     "register.mjs": "sha256:5c1d2c0717ddf23f9b0b44a9311935b9a69c9277b74b236c8a633d6b2896ac74",
     "loader.mjs": "sha256:966b6109943f62c7d542eb2b84ee334d47c52d8c9225f9f83611f21a7a98041a"
   },

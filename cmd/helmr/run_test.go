@@ -61,8 +61,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 		"--tag", "deploy",
 		"--tag", "prod",
 		"--retry-json", `{"maxAttempts":3}`,
-		"--idempotency-key", "deploy-prod",
-		"--idempotency-key-ttl", "24h",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
@@ -84,9 +82,6 @@ func TestRunCommandCreatesGitHubRun(t *testing.T) {
 	}
 	if request.ProjectID != "" || request.EnvironmentID != "" {
 		t.Fatalf("scope = %s/%s", request.ProjectID, request.EnvironmentID)
-	}
-	if request.Options.IdempotencyKey != "deploy-prod" || request.Options.IdempotencyKeyTTL != "24h" {
-		t.Fatalf("idempotency options = %+v", request.Options)
 	}
 	if string(request.Options.Metadata) != `{"source":"cli"}` || string(request.Options.Retry) != `{"maxAttempts":3}` {
 		t.Fatalf("run options JSON = %+v", request.Options)

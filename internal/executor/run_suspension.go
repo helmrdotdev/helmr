@@ -16,7 +16,7 @@ type RunWaitClient interface {
 	FollowWorkerCommands(context.Context, int64, func(api.WorkerCommand) error) error
 	AcceptWorkerCommand(context.Context, int64) (api.WorkerCommandAcceptResponse, error)
 	AcknowledgeWorkerCommand(context.Context, int64) (api.WorkerCommandAckResponse, error)
-	ClaimRuntimeCheckpointWait(context.Context, api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error)
+	ClaimRunCheckpointWait(context.Context, api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error)
 	CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error)
 	AcknowledgeRestore(context.Context, api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error)
 	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error)
@@ -99,13 +99,13 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 				return errWorkerCommandHandled
 			}
 			switch command.Kind {
-			case string(api.WorkerCommandKindRuntimeResumeWait):
+			case string(api.WorkerCommandKindRunResumeWait):
 				if _, err := w.Client.AcceptWorkerCommand(ctx, command.ID); err != nil {
 					handled = fmt.Errorf("accept worker command: %w", err)
 					return errWorkerCommandHandled
 				}
 				handled = w.handleResumeDecision(ctx, request, command)
-			case string(api.WorkerCommandKindRuntimeCheckpointWait):
+			case string(api.WorkerCommandKindRunCheckpointWait):
 				if _, err := w.Client.AcceptWorkerCommand(ctx, command.ID); err != nil {
 					handled = fmt.Errorf("accept worker command: %w", err)
 					return errWorkerCommandHandled
@@ -124,7 +124,7 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 			}
 			if handled == nil || errors.Is(handled, ErrDetached) || errors.Is(handled, errCheckpointAttemptRecorded) {
 				if _, ackErr := w.Client.AcknowledgeWorkerCommand(ctx, command.ID); ackErr != nil && !errors.Is(handled, ErrDetached) {
-					if command.Kind != string(api.WorkerCommandKindRuntimeResumeWait) {
+					if command.Kind != string(api.WorkerCommandKindRunResumeWait) {
 						handled = fmt.Errorf("acknowledge worker command: %w", ackErr)
 					}
 				}
@@ -191,7 +191,7 @@ func (w ControlRunWaits) handleResumeDecision(ctx context.Context, request WaitR
 }
 
 func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, opened api.WorkerCreateRunWaitResponse, command api.WorkerCommand) error {
-	claim, err := w.Client.ClaimRuntimeCheckpointWait(ctx, api.WorkerCheckpointClaimRequest{
+	claim, err := w.Client.ClaimRunCheckpointWait(ctx, api.WorkerCheckpointClaimRequest{
 		Lease:     request.currentLease(),
 		RunWaitID: opened.RunWaitID,
 	})
@@ -221,7 +221,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		return errCheckpointAttemptRecorded
 	}
 	if request.Checkpointer == nil {
-		err := errors.New("runtime checkpoint support is required")
+		err := errors.New("run checkpoint support is required")
 		if failErr := failCheckpoint(err); failErr != nil {
 			return fmt.Errorf("mark checkpoint failed after unsupported checkpoint: %w", failErr)
 		}

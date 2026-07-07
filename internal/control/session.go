@@ -35,23 +35,20 @@ const (
 )
 
 var (
-	errTaskArchived                       = codedError{code: "task_archived"}
-	errTaskNotDeployed                    = codedError{code: "task_not_deployed"}
-	errSessionStartSessionFingerprint     = codedError{code: "session_fingerprint_mismatch", message: "session start fingerprint mismatch"}
-	errSessionStartIdempotencyFingerprint = codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different session start parameters"}
-	errSessionStartIdempotencyExternalID  = codedError{code: "idempotency_external_id_mismatch", message: "idempotency_key resolves to a different session"}
-	errSessionTerminated                  = codedError{code: "session_terminal", message: "session is terminal"}
-	errSessionExpired                     = codedError{code: "session_expired", message: "session is expired"}
-	errSessionNoCurrentRun                = codedError{code: "session_has_no_current_run"}
-	errCloseRunActive                     = codedError{code: "close_run_active"}
-	errSessionExpiresAtPatch              = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
-	errSandboxNotDeployed                 = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
-	errWorkspaceSandboxIncompatible       = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
-	errWorkspaceResourceFloor             = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
-	errAPIKeyEnvironmentScopeRequired     = errors.New("API key is not bound to an environment")
-	errSessionExternalIDScopeRequired     = errors.New("external_id session addressing requires project_id and environment_id")
-	errSessionStartExistingHitRollback    = errors.New("session start idempotency hit")
-	errSessionStartExternalIDRace         = errors.New("session start external id race")
+	errTaskArchived                   = codedError{code: "task_archived"}
+	errTaskNotDeployed                = codedError{code: "task_not_deployed"}
+	errSessionStartSessionFingerprint = codedError{code: "session_fingerprint_mismatch", message: "session start fingerprint mismatch"}
+	errSessionTerminated              = codedError{code: "session_terminal", message: "session is terminal"}
+	errSessionExpired                 = codedError{code: "session_expired", message: "session is expired"}
+	errSessionNoCurrentRun            = codedError{code: "session_has_no_current_run"}
+	errCloseRunActive                 = codedError{code: "close_run_active"}
+	errSessionExpiresAtPatch          = codedError{code: "session_expires_at_not_extendable", message: "session expires_at can only extend an existing future expiry"}
+	errSandboxNotDeployed             = codedError{code: "sandbox_not_deployed", message: "task sandbox is not deployed"}
+	errWorkspaceSandboxIncompatible   = codedError{code: "workspace_sandbox_incompatible", message: "workspace sandbox is incompatible with this task"}
+	errWorkspaceResourceFloor         = codedError{code: "workspace_resource_floor_unsatisfied", message: "workspace resource floor is lower than this task requires"}
+	errAPIKeyEnvironmentScopeRequired = errors.New("API key is not bound to an environment")
+	errSessionExternalIDScopeRequired = errors.New("external_id session addressing requires project_id and environment_id")
+	errSessionStartExternalIDRace     = errors.New("session start external id race")
 )
 
 type sessionStartSource struct {
@@ -66,24 +63,9 @@ type sessionStartSource struct {
 }
 
 type sessionStartResult struct {
-	session        db.Session
-	run            runSummary
-	idempotencyHit bool
-	sessionReused  bool
-}
-
-type sessionStartIdempotencyBinding struct {
-	ID                 pgtype.UUID
-	OrgID              pgtype.UUID
-	WorkerGroupID      string
-	ProjectID          pgtype.UUID
-	EnvironmentID      pgtype.UUID
-	TaskID             string
-	IdempotencyKey     string
-	RequestFingerprint string
-	SessionID          pgtype.UUID
-	FirstRunID         pgtype.UUID
-	ExpiresAt          pgtype.Timestamptz
+	session       db.Session
+	run           runSummary
+	sessionReused bool
 }
 
 type sessionAddress struct {
@@ -126,13 +108,13 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := http.StatusCreated
-	if result.idempotencyHit || result.sessionReused {
+	if result.sessionReused {
 		status = http.StatusOK
 	}
 	writeJSON(w, status, api.SessionStartResponse{
 		Session:  sessionResponseWithDerived(result.session, sessionActivity),
 		Run:      runResponse,
-		IsCached: result.idempotencyHit || result.sessionReused,
+		IsCached: result.sessionReused,
 	})
 }
 
@@ -181,7 +163,7 @@ func (s *Server) startSessionAndWait(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.SessionStartResponse{
 		Session:  sessionResponseWithDerived(session, sessionActivity),
 		Run:      runResponse(run),
-		IsCached: result.idempotencyHit || result.sessionReused,
+		IsCached: result.sessionReused,
 		TimedOut: timedOut,
 	})
 }
@@ -206,10 +188,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		return sessionStartResult{}, errPermissionRequired
 	}
 	runOptions := sessionStartRunOptions(request.Options)
-	idempotency, err := normalizeRunIdempotency(runOptions)
-	if err != nil {
-		return sessionStartResult{}, err
-	}
 	payload := request.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
@@ -236,10 +214,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	startFingerprint, err := sessionStartRequestFingerprint(taskID, payload, request.Options, externalID, request.Options.ExpiresAt)
 	if err != nil {
 		return sessionStartResult{}, err
-	}
-	idempotencyFingerprint := pgtype.Text{}
-	if idempotency.key.Valid {
-		idempotencyFingerprint = startFingerprint
 	}
 	var placementWorkerGroupID string
 	var attachedWorkspace db.GetWorkspaceSourceForSessionStartRow
@@ -268,18 +242,8 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		}
 		placementWorkerGroupID = placement.WorkerGroupID
 	}
-	if idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
-			return sessionStartResult{}, err
-		} else if hit {
-			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
-				return sessionStartResult{}, err
-			}
-			return existing, nil
-		}
-	}
-	if externalID != "" && !idempotency.key.Valid {
-		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source); err == nil {
+	if externalID != "" {
+		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, externalID, startFingerprint.String, source); err == nil {
 			return existing, nil
 		} else if !isNoRows(err) {
 			return sessionStartResult{}, err
@@ -348,36 +312,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	if err != nil {
 		return sessionStartResult{}, err
 	}
-	startClaim, err := s.claimSessionStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
-	if err != nil {
-		return sessionStartResult{}, err
-	}
-	claimResolved := false
-	defer func() {
-		if !claimResolved {
-			startClaim.release(context.WithoutCancel(ctx))
-		}
-	}()
-	resolvedClaimIsStale := false
-	if startClaim.resolved && idempotency.key.Valid {
-		if existing, hit, err := s.existingSessionStartIdempotency(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotencyFingerprint.String, externalID); err != nil {
-			return sessionStartResult{}, err
-		} else if hit {
-			if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
-				return sessionStartResult{}, err
-			}
-			return existing, nil
-		}
-		startClaim.clearResolved(context.WithoutCancel(ctx))
-		startClaim, err = s.claimSessionStart(ctx, actor.OrgID, projectID, environmentID, taskID, idempotency.key.String, idempotency.expiresAt)
-		if err != nil {
-			return sessionStartResult{}, err
-		}
-		if startClaim.resolved {
-			return sessionStartResult{}, errSessionStartPending
-		}
-		resolvedClaimIsStale = true
-	}
 	versionMetadata := requestVersionMetadataFromContext(ctx)
 	runID := uuid.Must(uuid.NewV7())
 	sessionID := uuid.Must(uuid.NewV7())
@@ -411,43 +345,15 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				if !existing.CurrentRunID.Valid {
 					return errSessionNoCurrentRun
 				}
-				if idempotency.key.Valid {
-					existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
-						ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-						OrgID:              pgvalue.UUID(actor.OrgID),
-						ProjectID:          projectID,
-						EnvironmentID:      environmentID,
-						TaskID:             taskID,
-						IdempotencyKey:     idempotency.key.String,
-						RequestFingerprint: idempotencyFingerprint.String,
-						SessionID:          existing.ID,
-						FirstRunID:         existing.CurrentRunID,
-						ExpiresAt:          idempotency.expiresAt,
-					}, externalID, source)
-					if err != nil {
-						return err
-					}
-					if existingHit {
-						result = existingResult
-						return errSessionStartExistingHitRollback
-					}
-				}
 				runRow, err := work.q.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(actor.OrgID), ID: existing.CurrentRunID})
 				if err != nil {
 					return err
 				}
-				work.AfterCommit(func(postCommitCtx context.Context) {
-					startClaim.resolve(postCommitCtx)
-					claimResolved = true
-				})
-				result = sessionStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}
+				result = sessionStartResult{session: existing, run: getRunSummary(runRow), sessionReused: true}
 				return nil
 			} else if !isNoRows(err) {
 				return err
 			}
-		}
-		if startClaim.resolved && !resolvedClaimIsStale {
-			return errSessionStartPending
 		}
 		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, placementWorkerGroupID, deploymentTask, requestedWorkspaceID)
 		if err != nil {
@@ -583,30 +489,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return err
 		}
-		if idempotency.key.Valid {
-			existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
-				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          projectID,
-				EnvironmentID:      environmentID,
-				TaskID:             taskID,
-				IdempotencyKey:     idempotency.key.String,
-				RequestFingerprint: idempotencyFingerprint.String,
-				SessionID:          session.ID,
-				FirstRunID:         run.ID,
-				ExpiresAt:          idempotency.expiresAt,
-			}, externalID, source)
-			if err != nil {
-				return err
-			}
-			if existingHit {
-				result = existingResult
-				return errSessionStartExistingHitRollback
-			}
-		}
 		work.AfterCommit(func(postCommitCtx context.Context) {
-			startClaim.resolve(postCommitCtx)
-			claimResolved = true
 			s.reconcilePreparedRuntimeSupplyForSandboxAsync(postCommitCtx, deploymentTask.DeploymentSandboxID, "session_start")
 			if s.runEnqueuer != nil {
 				if _, err := s.runEnqueuer.EnqueueRun(postCommitCtx, run.OrgID, run.ID); err != nil {
@@ -617,16 +500,11 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		result = sessionStartResult{session: session, run: createScopedRunSummary(run)}
 		return nil
 	})
-	if errors.Is(err, errSessionStartExistingHitRollback) {
-		return result, nil
-	}
 	if errors.Is(err, errSessionStartExternalIDRace) {
-		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, taskID, externalID, startFingerprint.String, idempotency, idempotencyFingerprint.String, source)
+		existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, externalID, startFingerprint.String, source)
 		if err != nil {
 			return sessionStartResult{}, err
 		}
-		startClaim.resolve(context.WithoutCancel(ctx))
-		claimResolved = true
 		return existing, nil
 	}
 	if err != nil {
@@ -842,69 +720,7 @@ func decodeWorkspaceResourceFloor(raw []byte) (workspaceResourceFloor, error) {
 	return workspaceResourceFloor{milliCPU: decoded.MilliCPU, memoryMiB: decoded.MemoryMiB}, nil
 }
 
-func (s *Server) createSessionStartIdempotency(ctx context.Context, store db.Querier, binding sessionStartIdempotencyBinding, externalID string, source sessionStartSource) (sessionStartResult, bool, error) {
-	created, existingResult, existingHit, err := s.tryCreateSessionStartIdempotency(ctx, store, binding, externalID, source)
-	if err != nil || created.ID.Valid || existingHit {
-		return existingResult, existingHit, err
-	}
-	if err := store.DeleteExpiredSessionStartIdempotency(ctx, db.DeleteExpiredSessionStartIdempotencyParams{
-		OrgID:          binding.OrgID,
-		ProjectID:      binding.ProjectID,
-		EnvironmentID:  binding.EnvironmentID,
-		TaskID:         binding.TaskID,
-		IdempotencyKey: binding.IdempotencyKey,
-	}); err != nil {
-		return sessionStartResult{}, false, err
-	}
-	created, existingResult, existingHit, err = s.tryCreateSessionStartIdempotency(ctx, store, binding, externalID, source)
-	if err != nil || created.ID.Valid || existingHit {
-		return existingResult, existingHit, err
-	}
-	return sessionStartResult{}, false, errSessionStartPending
-}
-
-func (s *Server) tryCreateSessionStartIdempotency(ctx context.Context, store db.Querier, binding sessionStartIdempotencyBinding, externalID string, source sessionStartSource) (db.SessionStartIdempotency, sessionStartResult, bool, error) {
-	created, err := store.CreateSessionStartIdempotency(ctx, db.CreateSessionStartIdempotencyParams{
-		ID:                 binding.ID,
-		OrgID:              binding.OrgID,
-		ProjectID:          binding.ProjectID,
-		EnvironmentID:      binding.EnvironmentID,
-		TaskID:             binding.TaskID,
-		IdempotencyKey:     binding.IdempotencyKey,
-		RequestFingerprint: binding.RequestFingerprint,
-		SessionID:          binding.SessionID,
-		FirstRunID:         binding.FirstRunID,
-		ExpiresAt:          binding.ExpiresAt,
-	})
-	if err == nil {
-		return created, sessionStartResult{}, false, nil
-	}
-	if !isNoRows(err) {
-		return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
-	}
-	if existingResult, hit, hitErr := s.existingSessionStartIdempotency(ctx, pgvalue.MustUUIDValue(binding.OrgID), binding.ProjectID, binding.EnvironmentID, binding.TaskID, binding.IdempotencyKey, binding.RequestFingerprint, externalID); hitErr != nil {
-		return db.SessionStartIdempotency{}, sessionStartResult{}, false, hitErr
-	} else if hit {
-		if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
-			return db.SessionStartIdempotency{}, sessionStartResult{}, false, err
-		}
-		return db.SessionStartIdempotency{
-			ID:                 binding.ID,
-			OrgID:              binding.OrgID,
-			ProjectID:          binding.ProjectID,
-			EnvironmentID:      binding.EnvironmentID,
-			TaskID:             binding.TaskID,
-			IdempotencyKey:     binding.IdempotencyKey,
-			RequestFingerprint: binding.RequestFingerprint,
-			SessionID:          existingResult.session.ID,
-			FirstRunID:         existingResult.run.ID,
-			ExpiresAt:          binding.ExpiresAt,
-		}, existingResult, true, nil
-	}
-	return db.SessionStartIdempotency{}, sessionStartResult{}, false, nil
-}
-
-func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, externalID string, startFingerprint string, idempotency runIdempotency, idempotencyFingerprint string, source sessionStartSource) (sessionStartResult, error) {
+func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, externalID string, startFingerprint string, source sessionStartSource) (sessionStartResult, error) {
 	existing, err := store.GetSessionByExternalIDInWorkerGroup(ctx, db.GetSessionByExternalIDInWorkerGroupParams{
 		OrgID:         pgvalue.UUID(orgID),
 		ProjectID:     projectID,
@@ -923,29 +739,14 @@ func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier,
 	if !existing.CurrentRunID.Valid {
 		return sessionStartResult{}, errSessionNoCurrentRun
 	}
-	if idempotency.key.Valid {
-		if existingResult, existingHit, err := s.createSessionStartIdempotency(ctx, store, sessionStartIdempotencyBinding{
-			ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:              pgvalue.UUID(orgID),
-			ProjectID:          projectID,
-			EnvironmentID:      environmentID,
-			TaskID:             taskID,
-			IdempotencyKey:     idempotency.key.String,
-			RequestFingerprint: idempotencyFingerprint,
-			SessionID:          existing.ID,
-			FirstRunID:         existing.CurrentRunID,
-			ExpiresAt:          idempotency.expiresAt,
-		}, externalID, source); err != nil {
-			return sessionStartResult{}, err
-		} else if existingHit {
-			return existingResult, nil
-		}
+	if err := s.ensureSessionStartSourceCurrent(ctx, source); err != nil {
+		return sessionStartResult{}, err
 	}
 	runRow, err := store.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: existing.CurrentRunID})
 	if err != nil {
 		return sessionStartResult{}, err
 	}
-	return sessionStartResult{session: existing, run: getRunSummary(runRow), idempotencyHit: idempotency.key.Valid, sessionReused: true}, nil
+	return sessionStartResult{session: existing, run: getRunSummary(runRow), sessionReused: true}, nil
 }
 
 func (s *Server) ensureSessionStartSourceCurrent(ctx context.Context, source sessionStartSource) error {
@@ -980,8 +781,6 @@ func sessionStartRunOptions(options api.SessionStartOptions) api.CreateRunOption
 		Retry:              options.Retry,
 		Metadata:           options.Metadata,
 		Tags:               options.Tags,
-		IdempotencyKey:     options.IdempotencyKey,
-		IdempotencyKeyTTL:  options.IdempotencyKeyTTL,
 	}
 }
 
@@ -997,11 +796,21 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 			return pgtype.Text{}, fmt.Errorf("retry canonicalization failed: %w", err)
 		}
 	}
+	metadata, err := normalizedJSONObject(options.Metadata, "metadata")
+	if err != nil {
+		return pgtype.Text{}, err
+	}
+	tags, err := normalizedRunTags(options.Tags)
+	if err != nil {
+		return pgtype.Text{}, err
+	}
 	fingerprint := struct {
 		TaskID     string          `json:"task_id"`
 		Payload    json.RawMessage `json:"payload"`
 		ExternalID string          `json:"external_id,omitempty"`
 		ExpiresAt  string          `json:"expires_at,omitempty"`
+		Metadata   json.RawMessage `json:"metadata"`
+		Tags       []string        `json:"tags"`
 		Options    struct {
 			QueueName          string `json:"queue_name,omitempty"`
 			ConcurrencyKey     string `json:"concurrency_key,omitempty"`
@@ -1015,6 +824,8 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 		TaskID:      taskID,
 		Payload:     canonicalPayload,
 		ExternalID:  strings.TrimSpace(externalID),
+		Metadata:    metadata,
+		Tags:        tags,
 		RetryPolicy: retry,
 	}
 	if expiresAt != nil {
@@ -1034,84 +845,6 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 	}
 	digest := sha256.Sum256(body)
 	return pgtype.Text{String: hex.EncodeToString(digest[:]), Valid: true}, nil
-}
-
-func (s *Server) existingSessionStartIdempotency(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, key string, fingerprint string, externalID string) (sessionStartResult, bool, error) {
-	existing, err := s.db.GetSessionStartIdempotency(ctx, db.GetSessionStartIdempotencyParams{
-		OrgID:          pgvalue.UUID(orgID),
-		ProjectID:      projectID,
-		EnvironmentID:  environmentID,
-		TaskID:         taskID,
-		IdempotencyKey: key,
-	})
-	if isNoRows(err) {
-		return sessionStartResult{}, false, nil
-	}
-	if err != nil {
-		return sessionStartResult{}, false, err
-	}
-	if existing.RequestFingerprint != fingerprint {
-		return sessionStartResult{}, false, errSessionStartIdempotencyFingerprint
-	}
-	session := sessionFromIdempotency(existing)
-	if strings.TrimSpace(externalID) != "" && session.ExternalID != strings.TrimSpace(externalID) {
-		return sessionStartResult{}, false, errSessionStartIdempotencyExternalID
-	}
-	_ = s.db.TouchSessionStartIdempotency(ctx, db.TouchSessionStartIdempotencyParams{OrgID: pgvalue.UUID(orgID), ID: existing.ID})
-	return sessionStartResult{session: session, run: runSummaryFromIdempotency(existing), idempotencyHit: true}, true, nil
-}
-
-func sessionFromIdempotency(row db.GetSessionStartIdempotencyRow) db.Session {
-	return db.Session{
-		ID:                  row.SessionID,
-		OrgID:               row.SessionOrgID,
-		ProjectID:           row.SessionProjectID,
-		EnvironmentID:       row.SessionEnvironmentID,
-		TaskID:              row.SessionTaskID,
-		InitialDeploymentID: row.SessionInitialDeploymentID,
-		ActiveDeploymentID:  row.SessionActiveDeploymentID,
-		ExternalID:          row.SessionExternalID,
-		StartFingerprint:    row.SessionStartFingerprint,
-		Status:              row.SessionStatus,
-		CurrentRunID:        row.SessionCurrentRunID,
-		CurrentRunVersion:   row.SessionCurrentRunVersion,
-		WorkspaceID:         row.SessionWorkspaceID,
-		Metadata:            row.SessionMetadata,
-		Tags:                row.SessionTags,
-		Result:              row.SessionResult,
-		TerminalReason:      row.SessionTerminalReason,
-		ExpiresAt:           row.SessionExpiresAt,
-		CancelledAt:         row.SessionCancelledAt,
-		CreatedAt:           row.SessionCreatedAt,
-		UpdatedAt:           row.SessionUpdatedAt,
-	}
-}
-
-func runSummaryFromIdempotency(row db.GetSessionStartIdempotencyRow) runSummary {
-	return runSummary{
-		ID:                   row.RunID,
-		OrgID:                row.RunOrgID,
-		ProjectID:            row.RunProjectID,
-		EnvironmentID:        row.RunEnvironmentID,
-		DeploymentID:         row.RunDeploymentID,
-		DeploymentTaskID:     row.RunDeploymentTaskID,
-		SessionID:            row.SessionID,
-		DeploymentVersion:    row.RunDeploymentVersion,
-		APIVersion:           row.RunApiVersion,
-		SDKVersion:           row.RunSdkVersion,
-		CLIVersion:           row.RunCliVersion,
-		TaskID:               row.RunTaskID,
-		Status:               row.RunStatus,
-		ExecutionStatus:      row.RunExecutionStatus,
-		TerminalOutcome:      row.RunTerminalOutcome,
-		Metadata:             row.RunMetadata,
-		Tags:                 row.RunTags,
-		CurrentAttemptNumber: row.RunAttemptNumber,
-		ExitCode:             row.RunExitCode,
-		Output:               row.RunOutput,
-		CreatedAt:            row.RunCreatedAt,
-		UpdatedAt:            row.RunUpdatedAt,
-	}
 }
 
 func timePtrToTimestamptz(value *time.Time) pgtype.Timestamptz {
@@ -1139,13 +872,8 @@ func (s *Server) writeSessionStartError(w http.ResponseWriter, err error) {
 		return
 	}
 	switch {
-	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errSessionStartSessionFingerprint), errors.Is(err, errSessionStartIdempotencyFingerprint), errors.Is(err, errSessionStartIdempotencyExternalID), errors.Is(err, errSessionTerminated), errors.Is(err, errSessionNoCurrentRun), errors.Is(err, errSandboxNotDeployed), errors.Is(err, errWorkspaceSandboxIncompatible), errors.Is(err, errWorkspaceResourceFloor):
+	case errors.Is(err, errTaskArchived), errors.Is(err, errTaskNotDeployed), errors.Is(err, errSessionStartSessionFingerprint), errors.Is(err, errSessionTerminated), errors.Is(err, errSessionNoCurrentRun), errors.Is(err, errSandboxNotDeployed), errors.Is(err, errWorkspaceSandboxIncompatible), errors.Is(err, errWorkspaceResourceFloor):
 		writeError(w, conflict(err))
-	case errors.Is(err, errSessionStartPending):
-		w.Header().Set("Retry-After", "1")
-		writeErrorStatus(w, http.StatusAccepted, err)
-	case errors.Is(err, errSessionStartCoordinationUnavailable):
-		writeError(w, unavailable(err))
 	case errors.Is(err, errPermissionRequired):
 		writeError(w, forbidden(err))
 	case isCreateRunConfigError(err):

@@ -60,7 +60,7 @@ func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeSt
 	}
 	for _, row := range rows {
 		request, err := json.Marshal(map[string]string{
-			"source":      "runtime_resume_wait",
+			"source":      "run_resume_wait",
 			"run_id":      pgvalue.MustUUIDValue(row.RunID).String(),
 			"run_wait_id": pgvalue.MustUUIDValue(row.ID).String(),
 		})
@@ -82,7 +82,7 @@ func requeueResolvedRunWaitsWithStore(ctx context.Context, store runWaitResumeSt
 		}
 		if log != nil {
 			log.Debug("queued run workspace mount ensured",
-				"source", "runtime_resume_wait",
+				"source", "run_resume_wait",
 				"org_id", pgvalue.UUIDString(row.OrgID),
 				"run_id", pgvalue.UUIDString(row.RunID),
 				"run_wait_id", pgvalue.UUIDString(row.ID),

@@ -34,8 +34,8 @@ type ExpirySweepOrgStore interface {
 	ExpireDueSessions(ctx context.Context, arg db.ExpireDueSessionsParams) ([]db.Session, error)
 	ExpireDueTokens(ctx context.Context, orgID pgtype.UUID) ([]db.ExpireDueTokensRow, error)
 	ResolveDueTimerWaits(ctx context.Context, arg db.ResolveDueTimerWaitsParams) ([]db.ResolveDueTimerWaitsRow, error)
-	CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
-	CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
+	CreateResolvedLiveRunResumeWaitCommandsForOrg(ctx context.Context, arg db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
+	CreateDueLiveRunCheckpointWaitCommandsForOrg(ctx context.Context, arg db.CreateDueLiveRunCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error)
 	ExpireDueRunWaits(ctx context.Context, arg db.ExpireDueRunWaitsParams) ([]db.ExpireDueRunWaitsRow, error)
 	FailStaleResolvedRunWaits(ctx context.Context, arg db.FailStaleResolvedRunWaitsParams) ([]db.FailStaleResolvedRunWaitsRow, error)
 	RequeueResolvedRunWaits(ctx context.Context, arg db.RequeueResolvedRunWaitsParams) ([]db.RequeueResolvedRunWaitsRow, error)
@@ -239,14 +239,14 @@ func SweepExpiredForOrg(ctx context.Context, store ExpirySweepOrgStore, workerGr
 	if _, err := store.ExpireDueRunWaits(ctx, db.ExpireDueRunWaitsParams{OrgID: orgID, WorkerGroupID: workerGroupID}); err != nil {
 		return err
 	}
-	if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+	if _, err := store.CreateResolvedLiveRunResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams{
 		OrgID:         orgID,
 		WorkerGroupID: workerGroupID,
 		LimitCount:    1000,
 	}); err != nil {
 		return err
 	}
-	if _, err := store.CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams{
+	if _, err := store.CreateDueLiveRunCheckpointWaitCommandsForOrg(ctx, db.CreateDueLiveRunCheckpointWaitCommandsForOrgParams{
 		OrgID:         orgID,
 		WorkerGroupID: workerGroupID,
 		LimitCount:    1000,

@@ -12,13 +12,6 @@ export interface IdempotencyKey {
   readonly scope: IdempotencyKeyScope
 }
 
-export type IdempotencyKeyInput = IdempotencyKeyMaterial | IdempotencyKey
-
-export interface SessionStartIdempotencyRequestFields {
-  readonly idempotency_key?: string
-  readonly idempotency_key_ttl?: string
-}
-
 export const idempotencyKeys = {
   create(key: IdempotencyKeyMaterial, options: IdempotencyKeyCreateOptions = {}): IdempotencyKey {
     const scope = options.scope ?? "global"
@@ -30,20 +23,6 @@ export const idempotencyKeys = {
   },
 }
 
-export function sessionStartIdempotencyRequestFields(
-  input: IdempotencyKeyInput | undefined,
-  ttl: string | undefined,
-): SessionStartIdempotencyRequestFields {
-  if (input === undefined) {
-    return {}
-  }
-  const key = isIdempotencyKey(input) ? input : idempotencyKeys.create(input)
-  return {
-    idempotency_key: key.value,
-    ...(ttl === undefined ? {} : { idempotency_key_ttl: ttl }),
-  }
-}
-
 function createIdempotencyKey(
   key: IdempotencyKeyMaterial,
   scope: IdempotencyKeyScope,
@@ -53,8 +32,4 @@ function createIdempotencyKey(
     key: Array.isArray(key) ? [...key] : [key],
   }
   return createHash("sha256").update(JSON.stringify(material)).digest("hex")
-}
-
-function isIdempotencyKey(value: IdempotencyKeyInput): value is IdempotencyKey {
-  return typeof value === "object" && value !== null && "value" in value && "key" in value && "scope" in value
 }

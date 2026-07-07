@@ -118,8 +118,8 @@ type WorkerCommandKind string
 
 const (
 	WorkerCommandKindRuntimePrepare          WorkerCommandKind = "runtime_prepare"
-	WorkerCommandKindRuntimeResumeWait       WorkerCommandKind = "runtime_resume_wait"
-	WorkerCommandKindRuntimeCheckpointWait   WorkerCommandKind = "runtime_checkpoint_wait"
+	WorkerCommandKindRunResumeWait           WorkerCommandKind = "run_resume_wait"
+	WorkerCommandKindRunCheckpointWait       WorkerCommandKind = "run_checkpoint_wait"
 	WorkerCommandKindRuntimeStop             WorkerCommandKind = "runtime_stop"
 	WorkerCommandKindRuntimeSubstratePrepare WorkerCommandKind = "runtime_substrate_prepare"
 )

@@ -33,7 +33,7 @@ func ptyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.
 	if err != nil {
 		return "", fmt.Errorf("encode workspace pty fingerprint payload: %w", err)
 	}
-	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate), payload)
+	return wire.RequestFingerprint("workspace_pty_create", payload)
 }
 
 func ptyStateTerminal(state db.WorkspaceProcessState) bool {

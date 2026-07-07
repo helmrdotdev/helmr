@@ -1418,7 +1418,7 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	f.run.CurrentRunLeaseID = f.sessionID
 	f.run.StateVersion++
 	restoreCheckpointID := pgtype.UUID{}
-	if f.run.LatestRuntimeCheckpointID.Valid && f.run.LatestRuntimeCheckpointID == f.checkpoint.ID && f.checkpoint.State == db.RuntimeCheckpointStateReady {
+	if f.run.LatestRunCheckpointID.Valid && f.run.LatestRunCheckpointID == f.checkpoint.ID && f.checkpoint.State == db.RunCheckpointStateReady {
 		restoreCheckpointID = f.checkpoint.ID
 	}
 	projectID := f.run.ProjectID
@@ -1432,51 +1432,51 @@ func (f *fakeStore) LeaseRunLease(_ context.Context, arg db.LeaseRunLeaseParams)
 	requirements := testRunRuntimeRequirements()
 	networkPolicy, _ := json.Marshal(requirements.Network)
 	return db.LeaseRunLeaseRow{
-		ID:                                 f.run.ID,
-		OrgID:                              f.run.OrgID,
-		WorkerGroupID:                      dbtest.DefaultWorkerGroupID,
-		ProjectID:                          projectID,
-		EnvironmentID:                      environmentID,
-		SessionID:                          fakeRunSessionID(f.run),
-		TaskID:                             f.run.TaskID,
-		Status:                             f.run.Status,
-		Payload:                            f.run.Output,
-		StateVersion:                       f.run.StateVersion,
-		DeploymentTaskID:                   testDeploymentTaskID(),
-		DeploymentTaskFilePath:             "src/task.ts",
-		DeploymentTaskExportName:           "deploy",
-		DeploymentTaskSecretDeclarations:   f.currentDeploymentTaskSecretDeclarations,
-		DeploymentWorkerProtocolVersion:    api.CurrentWorkerProtocolVersion,
-		DeploymentSourceDigest:             "sha256:" + strings.Repeat("a", 64),
-		MaxActiveDurationMs:                f.run.MaxActiveDurationMs,
-		ExitCode:                           f.run.ExitCode,
-		ErrorMessage:                       f.run.ErrorMessage,
-		CreatedAt:                          f.run.CreatedAt,
-		UpdatedAt:                          f.run.UpdatedAt,
-		StartedAt:                          f.run.StartedAt,
-		FinishedAt:                         f.run.FinishedAt,
-		RequestedMilliCpu:                  requirements.Resources.MilliCPU,
-		RequestedMemoryMib:                 requirements.Resources.MemoryMiB,
-		RequestedDiskMib:                   requirements.Resources.DiskMiB,
-		RequestedExecutionSlots:            requirements.Resources.Slots,
-		RequirementsRuntimeID:              requirements.Runtime.ID,
-		RequirementsRuntimeArch:            requirements.Runtime.Arch,
-		RequirementsRuntimeAbi:             requirements.Runtime.ABI,
-		RequirementsKernelDigest:           requirements.Runtime.KernelDigest,
-		RequirementsInitramfsDigest:        requirements.Runtime.InitramfsDigest,
-		RequirementsRootfsDigest:           requirements.Runtime.RootfsDigest,
-		RequirementsCniProfile:             requirements.Runtime.CNIProfile,
-		RequirementsNetworkPolicy:          networkPolicy,
-		RunLeaseID:                         f.sessionID,
-		RunLeaseWorkerInstanceID:           f.executionWorkerInstanceID,
-		RunLeaseDispatchMessageID:          arg.DispatchMessageID,
-		RunLeaseDispatchLeaseID:            arg.DispatchLeaseID,
-		RunLeaseDispatchAttempt:            arg.DispatchAttempt,
-		RunLeaseAttemptNumber:              1,
-		RunLeaseExpiresAt:                  f.executionLeaseExpiresAt,
-		RunLeaseWorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
-		RunLeaseRestoreRuntimeCheckpointID: restoreCheckpointID,
-		WorkspaceFencingToken:              "workspace-fence-1",
+		ID:                               f.run.ID,
+		OrgID:                            f.run.OrgID,
+		WorkerGroupID:                    dbtest.DefaultWorkerGroupID,
+		ProjectID:                        projectID,
+		EnvironmentID:                    environmentID,
+		SessionID:                        fakeRunSessionID(f.run),
+		TaskID:                           f.run.TaskID,
+		Status:                           f.run.Status,
+		Payload:                          f.run.Output,
+		StateVersion:                     f.run.StateVersion,
+		DeploymentTaskID:                 testDeploymentTaskID(),
+		DeploymentTaskFilePath:           "src/task.ts",
+		DeploymentTaskExportName:         "deploy",
+		DeploymentTaskSecretDeclarations: f.currentDeploymentTaskSecretDeclarations,
+		DeploymentWorkerProtocolVersion:  api.CurrentWorkerProtocolVersion,
+		DeploymentSourceDigest:           "sha256:" + strings.Repeat("a", 64),
+		MaxActiveDurationMs:              f.run.MaxActiveDurationMs,
+		ExitCode:                         f.run.ExitCode,
+		ErrorMessage:                     f.run.ErrorMessage,
+		CreatedAt:                        f.run.CreatedAt,
+		UpdatedAt:                        f.run.UpdatedAt,
+		StartedAt:                        f.run.StartedAt,
+		FinishedAt:                       f.run.FinishedAt,
+		RequestedMilliCpu:                requirements.Resources.MilliCPU,
+		RequestedMemoryMib:               requirements.Resources.MemoryMiB,
+		RequestedDiskMib:                 requirements.Resources.DiskMiB,
+		RequestedExecutionSlots:          requirements.Resources.Slots,
+		RequirementsRuntimeID:            requirements.Runtime.ID,
+		RequirementsRuntimeArch:          requirements.Runtime.Arch,
+		RequirementsRuntimeAbi:           requirements.Runtime.ABI,
+		RequirementsKernelDigest:         requirements.Runtime.KernelDigest,
+		RequirementsInitramfsDigest:      requirements.Runtime.InitramfsDigest,
+		RequirementsRootfsDigest:         requirements.Runtime.RootfsDigest,
+		RequirementsCniProfile:           requirements.Runtime.CNIProfile,
+		RequirementsNetworkPolicy:        networkPolicy,
+		RunLeaseID:                       f.sessionID,
+		RunLeaseWorkerInstanceID:         f.executionWorkerInstanceID,
+		RunLeaseDispatchMessageID:        arg.DispatchMessageID,
+		RunLeaseDispatchLeaseID:          arg.DispatchLeaseID,
+		RunLeaseDispatchAttempt:          arg.DispatchAttempt,
+		RunLeaseAttemptNumber:            1,
+		RunLeaseExpiresAt:                f.executionLeaseExpiresAt,
+		RunLeaseWorkerProtocolVersion:    api.CurrentWorkerProtocolVersion,
+		RunLeaseRestoreRunCheckpointID:   restoreCheckpointID,
+		WorkspaceFencingToken:            "workspace-fence-1",
 	}, nil
 }
 
@@ -1534,12 +1534,12 @@ func (f *fakeStore) GetRunRestorePayload(_ context.Context, arg db.GetRunRestore
 	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
-	if !f.run.LatestRuntimeCheckpointID.Valid || f.checkpoint.ID != f.run.LatestRuntimeCheckpointID || f.checkpoint.State != db.RuntimeCheckpointStateReady {
+	if !f.run.LatestRunCheckpointID.Valid || f.checkpoint.ID != f.run.LatestRunCheckpointID || f.checkpoint.State != db.RunCheckpointStateReady {
 		return db.GetRunRestorePayloadRow{}, pgx.ErrNoRows
 	}
 	return db.GetRunRestorePayloadRow{
-		RuntimeCheckpointID: f.checkpoint.ID,
-		Manifest:            f.checkpoint.Manifest,
+		RunCheckpointID: f.checkpoint.ID,
+		Manifest:        f.checkpoint.Manifest,
 	}, nil
 }
 

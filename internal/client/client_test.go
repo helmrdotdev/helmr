@@ -41,13 +41,6 @@ func TestClientErrorUsesServerMessage(t *testing.T) {
 	}
 }
 
-func TestSessionStartPendingRetryDelayClampsPastHTTPDate(t *testing.T) {
-	raw := time.Now().Add(-time.Second).UTC().Format(http.TimeFormat)
-	if got := sessionStartPendingRetryDelay(raw); got != sessionStartPendingDefaultDelay {
-		t.Fatalf("delay = %v, want %v", got, sessionStartPendingDefaultDelay)
-	}
-}
-
 func TestNewRejectsBaseURLQueryAndFragment(t *testing.T) {
 	for _, raw := range []string{"https://helmr.example?x=1", "https://helmr.example/#fragment"} {
 		if _, err := New(raw); err == nil || !strings.Contains(err.Error(), "must not include query or fragment") {
@@ -192,29 +185,7 @@ func TestStartSession(t *testing.T) {
 	}
 }
 
-func TestStartSessionReturnsAcceptedAsPendingError(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/sessions" {
-			t.Fatalf("%s %s", r.Method, r.URL.Path)
-		}
-		w.Header().Set("Retry-After", "11")
-		w.WriteHeader(http.StatusAccepted)
-		_, _ = w.Write([]byte(`{"code":"idempotency_pending","error":"session_start_pending"}`))
-	}))
-	defer server.Close()
-
-	client, err := New(server.URL, WithHTTPClient(server.Client()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
-	var httpErr *HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "session_start_pending") {
-		t.Fatalf("err = %#v, want 202 pending HTTPError", err)
-	}
-}
-
-func TestStartSessionDoesNotRetryNonPendingAccepted(t *testing.T) {
+func TestStartSessionReturnsAcceptedHTTPError(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -233,7 +204,7 @@ func TestStartSessionDoesNotRetryNonPendingAccepted(t *testing.T) {
 	_, err = client.StartSession(context.Background(), "deploy", api.SessionStartRequest{})
 	var httpErr *HTTPError
 	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusAccepted || !strings.Contains(httpErr.Message, "accepted elsewhere") {
-		t.Fatalf("err = %#v, want non-pending 202 HTTPError", err)
+		t.Fatalf("err = %#v, want 202 HTTPError", err)
 	}
 	if calls != 1 {
 		t.Fatalf("calls = %d, want 1", calls)

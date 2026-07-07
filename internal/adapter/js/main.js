@@ -4327,39 +4327,6 @@ function hasBrand(value, brand) {
   return value !== null && typeof value === "object" && value[brand] === true;
 }
 
-// sdk/typescript/src/idempotency.ts
-import { createHash } from "node:crypto";
-var idempotencyKeys = {
-  create(key, options = {}) {
-    const scope = options.scope ?? "global";
-    return {
-      value: createIdempotencyKey(key, scope),
-      key,
-      scope
-    };
-  }
-};
-function sessionStartIdempotencyRequestFields(input, ttl) {
-  if (input === undefined) {
-    return {};
-  }
-  const key = isIdempotencyKey(input) ? input : idempotencyKeys.create(input);
-  return {
-    idempotency_key: key.value,
-    ...ttl === undefined ? {} : { idempotency_key_ttl: ttl }
-  };
-}
-function createIdempotencyKey(key, scope) {
-  const material = {
-    scope,
-    key: Array.isArray(key) ? [...key] : [key]
-  };
-  return createHash("sha256").update(JSON.stringify(material)).digest("hex");
-}
-function isIdempotencyKey(value) {
-  return typeof value === "object" && value !== null && "value" in value && "key" in value && "scope" in value;
-}
-
 // sdk/typescript/src/runtime/errors.ts
 class AuthError extends Error {
   constructor(message) {
@@ -4449,8 +4416,6 @@ function runStatus(status) {
 var MAX_SSE_BUFFER_CHARS = 1024 * 1024;
 var RUN_EVENT_RECONNECT_DELAY_MS = 1000;
 var RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100;
-var TASK_START_PENDING_MAX_WAIT_MS = 1e4;
-var TASK_START_PENDING_DEFAULT_RETRY_MS = 250;
 var tokenClientMethod = Symbol.for("helmr.sdk.client.token");
 
 class WorkspaceStreamTerminalError extends Error {
@@ -4683,28 +4648,15 @@ class HelmrClient {
     validateRetryPolicy(opts.retry, "retry");
     const body = sessionStartBody(taskId, payload, opts, maxDurationSeconds);
     const path = sessionStartPath(opts, "start");
-    const startedAt = Date.now();
-    for (;; ) {
-      const response = await this.#fetch(path, {
-        method: "POST",
-        body: JSON.stringify(body),
-        headers: { "content-type": "application/json" },
-        ...requestSignal(opts.signal)
-      });
-      if (response.status !== 202) {
-        const start = await response.json();
-        return sessionStartFromResponse(start);
-      }
-      const pendingBody = await response.text();
-      if (!sessionStartPendingResponse(pendingBody)) {
-        throw new HelmrApiError(response.status, pendingBody);
-      }
-      const retryDelay = sessionStartPendingRetryDelay(response);
-      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
-        throw new HelmrApiError(response.status, pendingBody);
-      }
-      await delay(retryDelay, opts.signal);
-    }
+    const response = await this.#fetch(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal)
+    });
+    await requireSessionStartResponseStatus(response);
+    const start = await response.json();
+    return sessionStartFromResponse(start);
   }
   async#startSessionAndWait(taskId, payload, opts, maxDurationSeconds) {
     validateRetryPolicy(opts.retry, "retry");
@@ -4713,27 +4665,14 @@ class HelmrClient {
       ...opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }
     };
     const path = sessionStartPath(opts, "start-and-wait");
-    const startedAt = Date.now();
-    for (;; ) {
-      const response = await this.#fetch(path, {
-        method: "POST",
-        body: JSON.stringify(body),
-        headers: { "content-type": "application/json" },
-        ...requestSignal(opts.signal)
-      });
-      if (response.status !== 202) {
-        return sessionStartAndWaitFromResponse(await response.json());
-      }
-      const pendingBody = await response.text();
-      if (!sessionStartPendingResponse(pendingBody)) {
-        throw new HelmrApiError(response.status, pendingBody);
-      }
-      const retryDelay = sessionStartPendingRetryDelay(response);
-      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
-        throw new HelmrApiError(response.status, pendingBody);
-      }
-      await delay(retryDelay, opts.signal);
-    }
+    const response = await this.#fetch(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal)
+    });
+    await requireSessionStartResponseStatus(response);
+    return sessionStartAndWaitFromResponse(await response.json());
   }
   #openWorkspace(id) {
     return {
@@ -5568,9 +5507,14 @@ function sessionStartBody(taskId, payload, opts, maxDurationSeconds) {
     ...opts.tags === undefined ? {} : { tags: opts.tags },
     ...opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") },
     ...opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId },
-    ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds },
-    ...sessionStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL)
+    ...maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }
   };
+}
+async function requireSessionStartResponseStatus(response) {
+  if (response.status === 200 || response.status === 201) {
+    return;
+  }
+  throw new HelmrApiError(response.status, await response.text());
 }
 function sessionStartPath(opts, operation) {
   if (opts.projectId !== undefined || opts.environmentId !== undefined) {
@@ -6250,36 +6194,6 @@ function delay(ms, signal) {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
   });
-}
-function sessionStartPendingRetryDelay(response) {
-  const retryAfter = response.headers.get("retry-after");
-  if (retryAfter === null) {
-    return TASK_START_PENDING_DEFAULT_RETRY_MS;
-  }
-  const retryAfterSeconds = Number(retryAfter);
-  if (Number.isFinite(retryAfterSeconds)) {
-    if (retryAfterSeconds > 0) {
-      return Math.min(retryAfterSeconds * 1000, TASK_START_PENDING_MAX_WAIT_MS);
-    }
-    return TASK_START_PENDING_DEFAULT_RETRY_MS;
-  }
-  const retryAt = Date.parse(retryAfter);
-  if (Number.isFinite(retryAt)) {
-    const delayMs = retryAt - Date.now();
-    if (delayMs <= 0) {
-      return TASK_START_PENDING_DEFAULT_RETRY_MS;
-    }
-    return Math.min(delayMs, TASK_START_PENDING_MAX_WAIT_MS);
-  }
-  return TASK_START_PENDING_DEFAULT_RETRY_MS;
-}
-function sessionStartPendingResponse(body) {
-  try {
-    const decoded = JSON.parse(body);
-    return decoded.code === "idempotency_pending";
-  } catch {
-    return false;
-  }
 }
 
 class HelmrApiError extends Error {
@@ -7051,7 +6965,7 @@ import { resolve as resolve2 } from "node:path";
 import { inspect } from "node:util";
 
 // sdk/typescript/src/compile.ts
-import { createHash as createHash2 } from "node:crypto";
+import { createHash } from "node:crypto";
 var IMAGE_FORMAT_VERSION = 0;
 var IMAGE_KEY_DOMAIN = `helmr.image.v0
 `;
@@ -7195,7 +7109,7 @@ function streamSchemaMetadata(stream) {
   };
 }
 function streamSchemaFingerprint(metadata2) {
-  const hash = createHash2("sha256");
+  const hash = createHash("sha256");
   hash.update(`helmr.stream-schema.v0
 `);
   hash.update(JSON.stringify(metadata2));
@@ -7405,7 +7319,7 @@ function compileProvisionalImageKey(image) {
   return canonicalImageKey(image);
 }
 function canonicalImageKey(image) {
-  const hash = createHash2("sha256");
+  const hash = createHash("sha256");
   hash.update(IMAGE_KEY_DOMAIN);
   hash.update(u32be(image.formatVersion));
   hashLenPrefixedBytes(hash, image.platform ? toBinary(PlatformSchema, image.platform) : new Uint8Array);

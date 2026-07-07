@@ -18,8 +18,8 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseR
 		WorkerInstanceID: row.RunLeaseWorkerInstanceID,
 	})
 	if isNoRows(err) {
-		if row.RunLeaseRestoreRuntimeCheckpointID.Valid {
-			return nil, fmt.Errorf("restore runtime checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreRuntimeCheckpointID).String())
+		if row.RunLeaseRestoreRunCheckpointID.Valid {
+			return nil, fmt.Errorf("restore run checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreRunCheckpointID).String())
 		}
 		return nil, nil
 	}
@@ -35,7 +35,7 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseR
 		return nil, err
 	}
 	return &api.WorkerRestore{
-		CheckpointID: pgvalue.MustUUIDValue(payload.RuntimeCheckpointID).String(),
+		CheckpointID: pgvalue.MustUUIDValue(payload.RunCheckpointID).String(),
 		Checkpoint:   manifest,
 		RunWait:      runWait,
 	}, nil

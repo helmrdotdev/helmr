@@ -21,9 +21,8 @@ import (
 )
 
 const (
-	workspacePtyCreateOperationKind = db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate
-	workspacePtyListDefaultLimit    = int32(50)
-	workspacePtyListMaxLimit        = int32(200)
+	workspacePtyListDefaultLimit = int32(50)
+	workspacePtyListMaxLimit     = int32(200)
 )
 
 var (
@@ -283,39 +282,37 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, ws db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspaceProcess, bool, error) {
 	var row db.WorkspaceProcess
 	var existing bool
+	idempotencyExpiresAt := pgtype.Timestamptz{}
+	if idempotencyKey != "" {
+		idempotencyExpiresAt = pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL))
+	}
 	err := s.inTx(ctx, func(work *txWork) error {
 		if idempotencyKey != "" {
-			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, work.q, db.EnsureWorkspaceOperationIdempotencyParams{
-				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          ws.ProjectID,
-				EnvironmentID:      ws.EnvironmentID,
-				WorkspaceID:        ws.ID,
-				OperationKind:      workspacePtyCreateOperationKind,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   pgtype.UUID{},
-				ResponseBody:       []byte(`{}`),
-				ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
-			})
-			if err != nil {
+			if err := work.q.ClearExpiredWorkspacePtyIdempotency(ctx, db.ClearExpiredWorkspacePtyIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			}); err != nil {
 				return err
 			}
-			if !idempotency.Inserted {
-				if idempotency.RequestFingerprint != fingerprint {
+			existingPty, err := work.q.GetWorkspacePtySessionByIdempotency(ctx, db.GetWorkspacePtySessionByIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			})
+			if err == nil {
+				if existingPty.RequestFingerprint != fingerprint {
 					return errWorkspaceOperationIdempotencyUsed
 				}
-				if !idempotency.ResultResourceID.Valid {
-					return errWorkspaceOperationPending
-				}
-				row, err = work.q.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
-					OrgID:         pgvalue.UUID(actor.OrgID),
-					ProjectID:     ws.ProjectID,
-					EnvironmentID: ws.EnvironmentID,
-					WorkspaceID:   ws.ID,
-					ID:            idempotency.ResultResourceID,
-				})
+				row = existingPty
 				existing = true
+				return nil
+			}
+			if !isNoRows(err) {
 				return err
 			}
 		}
@@ -330,6 +327,9 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			PtyRows:              pgtype.Int4{Int32: rows, Valid: true},
 			FilesystemMode:       filesystemMode,
 			State:                db.WorkspaceProcessStateStarting,
+			IdempotencyKey:       idempotencyKey,
+			IdempotencyExpiresAt: idempotencyExpiresAt,
+			RequestFingerprint:   fingerprint,
 			CreatedBySubjectType: string(actor.Kind),
 			CreatedBySubjectID:   actorSubjectID(actor),
 			OrgID:                pgvalue.UUID(actor.OrgID),
@@ -380,25 +380,24 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 				return err
 			}
 		}
-		if idempotencyKey != "" {
-			_, err = work.q.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          ws.ProjectID,
-				EnvironmentID:      ws.EnvironmentID,
-				OperationKind:      workspacePtyCreateOperationKind,
-				WorkspaceID:        ws.ID,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   row.ID,
-				ResponseBody:       []byte(`{}`),
-			})
-			if err != nil {
-				return err
-			}
-		}
 		return nil
 	})
 	if err != nil {
+		if idempotencyKey != "" && isUniqueViolation(err) {
+			existingPty, getErr := s.db.GetWorkspacePtySessionByIdempotency(ctx, db.GetWorkspacePtySessionByIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      ws.ProjectID,
+				EnvironmentID:  ws.EnvironmentID,
+				WorkspaceID:    ws.ID,
+				IdempotencyKey: idempotencyKey,
+			})
+			if getErr == nil {
+				if existingPty.RequestFingerprint != fingerprint {
+					return db.WorkspaceProcess{}, false, errWorkspaceOperationIdempotencyUsed
+				}
+				return existingPty, true, nil
+			}
+		}
 		return db.WorkspaceProcess{}, false, err
 	}
 	return row, existing, nil

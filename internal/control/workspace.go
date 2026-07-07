@@ -27,62 +27,9 @@ const (
 	defaultWorkspaceListLimit      = int32(100)
 	maxWorkspaceListLimit          = int32(200)
 	defaultWorkspaceIdempotencyTTL = 24 * time.Hour
-	workspaceCreateOperationKind   = db.WorkspaceOperationIdempotencyKindWorkspaceCreate
-	workspaceStopOperationKind     = db.WorkspaceOperationIdempotencyKindWorkspaceStop
 )
 
 var errWorkspaceOperationPending = codedError{code: "idempotency_pending", message: "workspace_operation_pending"}
-
-type workspaceOperationIdempotencyStore interface {
-	EnsureWorkspaceOperationIdempotency(context.Context, db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error)
-	GetWorkspaceOperationIdempotency(context.Context, db.GetWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error)
-	GetWorkspaceScopedOperationIdempotency(context.Context, db.GetWorkspaceScopedOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error)
-}
-
-func ensureWorkspaceOperationIdempotency(ctx context.Context, store workspaceOperationIdempotencyStore, params db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error) {
-	row, err := store.EnsureWorkspaceOperationIdempotency(ctx, params)
-	if !isNoRows(err) {
-		return row, err
-	}
-	var existing db.WorkspaceOperationIdempotency
-	if params.WorkspaceID.Valid {
-		existing, err = store.GetWorkspaceScopedOperationIdempotency(ctx, db.GetWorkspaceScopedOperationIdempotencyParams{
-			OrgID:          params.OrgID,
-			ProjectID:      params.ProjectID,
-			EnvironmentID:  params.EnvironmentID,
-			WorkspaceID:    params.WorkspaceID,
-			OperationKind:  params.OperationKind,
-			IdempotencyKey: params.IdempotencyKey,
-		})
-	} else {
-		existing, err = store.GetWorkspaceOperationIdempotency(ctx, db.GetWorkspaceOperationIdempotencyParams{
-			OrgID:          params.OrgID,
-			ProjectID:      params.ProjectID,
-			EnvironmentID:  params.EnvironmentID,
-			OperationKind:  params.OperationKind,
-			IdempotencyKey: params.IdempotencyKey,
-		})
-	}
-	if err != nil {
-		return db.EnsureWorkspaceOperationIdempotencyRow{}, err
-	}
-	return db.EnsureWorkspaceOperationIdempotencyRow{
-		ID:                 existing.ID,
-		OrgID:              existing.OrgID,
-		ProjectID:          existing.ProjectID,
-		EnvironmentID:      existing.EnvironmentID,
-		WorkspaceID:        existing.WorkspaceID,
-		OperationKind:      existing.OperationKind,
-		IdempotencyKey:     existing.IdempotencyKey,
-		RequestFingerprint: existing.RequestFingerprint,
-		ResultResourceID:   existing.ResultResourceID,
-		ResponseBody:       existing.ResponseBody,
-		ExpiresAt:          existing.ExpiresAt,
-		CreatedAt:          existing.CreatedAt,
-		LastUsedAt:         existing.LastUsedAt,
-		Inserted:           false,
-	}, nil
-}
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
@@ -258,41 +205,77 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 	}
 	idempotencyKey := strings.TrimSpace(request.IdempotencyKey)
 	var idempotencyTTL time.Duration
+	var idempotencyExpiresAt pgtype.Timestamptz
+	var createClaim workspaceCreateClaim
+	claimResolved := false
 	if idempotencyKey != "" {
 		idempotencyTTL, err = workspaceIdempotencyTTL(request.IdempotencyKeyTTL)
 		if err != nil {
 			return db.Workspace{}, false, err
 		}
-		cached, err := s.db.GetWorkspaceOperationIdempotency(ctx, db.GetWorkspaceOperationIdempotencyParams{
+		idempotencyExpiresAt = pgvalue.Timestamptz(time.Now().Add(idempotencyTTL))
+		cached, err := s.db.GetWorkspaceByCreateIdempotency(ctx, db.GetWorkspaceByCreateIdempotencyParams{
 			OrgID:          pgvalue.UUID(actor.OrgID),
 			ProjectID:      projectID,
 			EnvironmentID:  environmentID,
-			OperationKind:  workspaceCreateOperationKind,
 			IdempotencyKey: idempotencyKey,
 		})
 		if err == nil {
-			if cached.RequestFingerprint != fingerprint {
+			if cached.CreateRequestFingerprint != fingerprint {
 				return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
 			}
-			if !cached.ResultResourceID.Valid {
-				return db.Workspace{}, false, errWorkspaceOperationPending
-			}
-			row, err := s.db.GetWorkspace(ctx, db.GetWorkspaceParams{
-				OrgID:         pgvalue.UUID(actor.OrgID),
-				ProjectID:     projectID,
-				EnvironmentID: environmentID,
-				ID:            cached.ResultResourceID,
-			})
-			if err != nil {
+			if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, cached.WorkerGroupID); err != nil {
 				return db.Workspace{}, false, err
 			}
-			if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, row.WorkerGroupID); err != nil {
-				return db.Workspace{}, false, err
-			}
-			return row, true, nil
+			return cached, true, nil
 		}
 		if !isNoRows(err) {
 			return db.Workspace{}, false, err
+		}
+		if err := s.db.ClearExpiredWorkspaceCreateIdempotency(ctx, db.ClearExpiredWorkspaceCreateIdempotencyParams{
+			OrgID:          pgvalue.UUID(actor.OrgID),
+			ProjectID:      projectID,
+			EnvironmentID:  environmentID,
+			IdempotencyKey: idempotencyKey,
+		}); err != nil {
+			return db.Workspace{}, false, err
+		}
+		createClaim, err = s.claimWorkspaceCreate(ctx, actor.OrgID, projectID, environmentID, idempotencyKey, idempotencyExpiresAt)
+		if err != nil {
+			return db.Workspace{}, false, err
+		}
+		defer func() {
+			if !claimResolved {
+				createClaim.release(context.WithoutCancel(ctx))
+			}
+		}()
+		if createClaim.resolved {
+			cached, err = s.db.GetWorkspaceByCreateIdempotency(ctx, db.GetWorkspaceByCreateIdempotencyParams{
+				OrgID:          pgvalue.UUID(actor.OrgID),
+				ProjectID:      projectID,
+				EnvironmentID:  environmentID,
+				IdempotencyKey: idempotencyKey,
+			})
+			if err == nil {
+				if cached.CreateRequestFingerprint != fingerprint {
+					return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
+				}
+				if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, cached.WorkerGroupID); err != nil {
+					return db.Workspace{}, false, err
+				}
+				return cached, true, nil
+			}
+			if !isNoRows(err) {
+				return db.Workspace{}, false, err
+			}
+			createClaim.clearResolved(context.WithoutCancel(ctx))
+			createClaim, err = s.claimWorkspaceCreate(ctx, actor.OrgID, projectID, environmentID, idempotencyKey, idempotencyExpiresAt)
+			if err != nil {
+				return db.Workspace{}, false, err
+			}
+			if createClaim.resolved {
+				return db.Workspace{}, false, errWorkspaceOperationPending
+			}
 		}
 	}
 	placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, projectID, environmentID)
@@ -320,41 +303,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 	replayed := false
 	err = s.inTx(ctx, func(work *txWork) error {
 		workspaceStore := work.q
-		if idempotencyKey != "" {
-			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, workspaceStore, db.EnsureWorkspaceOperationIdempotencyParams{
-				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          projectID,
-				EnvironmentID:      environmentID,
-				WorkspaceID:        pgtype.UUID{},
-				OperationKind:      workspaceCreateOperationKind,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   pgtype.UUID{},
-				ResponseBody:       []byte(`{}`),
-				ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
-			})
-			if err != nil {
-				return err
-			}
-			if !idempotency.Inserted {
-				if idempotency.RequestFingerprint != fingerprint {
-					return codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
-				}
-				if !idempotency.ResultResourceID.Valid {
-					return errWorkspaceOperationPending
-				}
-				existing, getWorkspaceErr := workspaceStore.GetWorkspace(ctx, db.GetWorkspaceParams{
-					OrgID:         pgvalue.UUID(actor.OrgID),
-					ProjectID:     projectID,
-					EnvironmentID: environmentID,
-					ID:            idempotency.ResultResourceID,
-				})
-				row = existing
-				replayed = true
-				return getWorkspaceErr
-			}
-		}
 		workspaceArtifact, emptyArtifact, err := s.createInitialWorkspaceArtifact(ctx, workspaceStore, actor.OrgID, projectID, environmentID)
 		if err != nil {
 			return err
@@ -365,24 +313,27 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			{prefix: publicid.WorkspaceVersion, value: &initialVersionPublicID},
 		}, func() (db.CreateWorkspaceFromSandboxRow, error) {
 			return workspaceStore.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
-				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				PublicID:                  workspacePublicID,
-				OrgID:                     pgvalue.UUID(actor.OrgID),
-				WorkerGroupID:             placement.WorkerGroupID,
-				ProjectID:                 projectID,
-				EnvironmentID:             environmentID,
-				DeploymentSandboxID:       deploymentSandbox.ID,
-				ExternalID:                strings.TrimSpace(request.ExternalID),
-				Metadata:                  metadata,
-				Tags:                      tags,
-				RetentionPolicy:           []byte(`{}`),
-				InitialVersionID:          pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				InitialVersionPublicID:    initialVersionPublicID,
-				InitialArtifactID:         workspaceArtifact.ID,
-				InitialArtifactEncoding:   emptyArtifact.Encoding,
-				InitialArtifactEntryCount: int32(emptyArtifact.EntryCount),
-				InitialContentDigest:      workspaceArtifact.Digest,
-				InitialSizeBytes:          workspaceArtifact.SizeBytes,
+				ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				PublicID:                   workspacePublicID,
+				OrgID:                      pgvalue.UUID(actor.OrgID),
+				WorkerGroupID:              placement.WorkerGroupID,
+				ProjectID:                  projectID,
+				EnvironmentID:              environmentID,
+				DeploymentSandboxID:        deploymentSandbox.ID,
+				ExternalID:                 strings.TrimSpace(request.ExternalID),
+				CreateIdempotencyKey:       idempotencyKey,
+				CreateIdempotencyExpiresAt: idempotencyExpiresAt,
+				CreateRequestFingerprint:   fingerprint,
+				Metadata:                   metadata,
+				Tags:                       tags,
+				RetentionPolicy:            []byte(`{}`),
+				InitialVersionID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				InitialVersionPublicID:     initialVersionPublicID,
+				InitialArtifactID:          workspaceArtifact.ID,
+				InitialArtifactEncoding:    emptyArtifact.Encoding,
+				InitialArtifactEntryCount:  int32(emptyArtifact.EntryCount),
+				InitialContentDigest:       workspaceArtifact.Digest,
+				InitialSizeBytes:           workspaceArtifact.SizeBytes,
 			})
 		})
 		if err != nil {
@@ -390,19 +341,10 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		}
 		row = workspaceFromCreateWorkspaceFromSandbox(created)
 		if idempotencyKey != "" {
-			_, err = workspaceStore.CompleteWorkspaceOperationIdempotency(ctx, db.CompleteWorkspaceOperationIdempotencyParams{
-				OrgID:              pgvalue.UUID(actor.OrgID),
-				ProjectID:          projectID,
-				EnvironmentID:      environmentID,
-				OperationKind:      workspaceCreateOperationKind,
-				IdempotencyKey:     idempotencyKey,
-				RequestFingerprint: fingerprint,
-				ResultResourceID:   row.ID,
-				ResponseBody:       []byte(`{}`),
+			work.AfterCommit(func(postCommitCtx context.Context) {
+				createClaim.resolve(postCommitCtx)
+				claimResolved = true
 			})
-			if err != nil {
-				return err
-			}
 		}
 		return nil
 	})

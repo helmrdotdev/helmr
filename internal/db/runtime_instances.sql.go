@@ -1233,24 +1233,24 @@ SELECT worker_sandbox_scope.org_id,
  WHERE sandbox_demand.demand_count > 0
    AND NOT EXISTS (
            SELECT 1
-            FROM runtime_substrate_artifacts
-            WHERE runtime_substrate_artifacts.org_id = worker_sandbox_scope.org_id
-              AND runtime_substrate_artifacts.worker_group_id = worker_sandbox_scope.worker_group_id
-              AND runtime_substrate_artifacts.project_id = worker_sandbox_scope.project_id
-              AND runtime_substrate_artifacts.environment_id = worker_sandbox_scope.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
-              AND runtime_substrate_artifacts.substrate_format = $1
-              AND runtime_substrate_artifacts.builder_abi = $2
-              AND runtime_substrate_artifacts.layout_abi = $3
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'sandbox_artifact_digest' = worker_sandbox_scope.image_artifact_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'sandbox_artifact_format' = worker_sandbox_scope.image_artifact_format
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'image_digest' = worker_sandbox_scope.image_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'rootfs_digest' = worker_sandbox_scope.rootfs_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'runtime_abi' = worker_sandbox_scope.runtime_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'guestd_abi' = worker_sandbox_scope.guestd_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'adapter_abi' = worker_sandbox_scope.adapter_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'workspace_mount_path' = worker_sandbox_scope.workspace_mount_path
-              AND runtime_substrate_artifacts.retired_at IS NULL
+            FROM runtime_substrates
+            WHERE runtime_substrates.org_id = worker_sandbox_scope.org_id
+              AND runtime_substrates.worker_group_id = worker_sandbox_scope.worker_group_id
+              AND runtime_substrates.project_id = worker_sandbox_scope.project_id
+              AND runtime_substrates.environment_id = worker_sandbox_scope.environment_id
+              AND runtime_substrates.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
+              AND runtime_substrates.substrate_format = $1
+              AND runtime_substrates.builder_abi = $2
+              AND runtime_substrates.layout_abi = $3
+              AND runtime_substrates.source->'substrate_source'->>'sandbox_artifact_digest' = worker_sandbox_scope.image_artifact_digest
+              AND runtime_substrates.source->'substrate_source'->>'sandbox_artifact_format' = worker_sandbox_scope.image_artifact_format
+              AND runtime_substrates.source->'substrate_source'->>'image_digest' = worker_sandbox_scope.image_digest
+              AND runtime_substrates.source->'substrate_source'->>'rootfs_digest' = worker_sandbox_scope.rootfs_digest
+              AND runtime_substrates.source->'substrate_source'->>'runtime_abi' = worker_sandbox_scope.runtime_abi
+              AND runtime_substrates.source->'substrate_source'->>'guestd_abi' = worker_sandbox_scope.guestd_abi
+              AND runtime_substrates.source->'substrate_source'->>'adapter_abi' = worker_sandbox_scope.adapter_abi
+              AND runtime_substrates.source->'substrate_source'->>'workspace_mount_path' = worker_sandbox_scope.workspace_mount_path
+              AND runtime_substrates.retired_at IS NULL
        )
    AND NOT EXISTS (
            SELECT 1
@@ -1772,23 +1772,23 @@ UPDATE runtime_instances
        $1::uuid IS NULL
        OR EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+             FROM runtime_substrates
              JOIN artifacts
-               ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.project_id = runtime_substrate_artifacts.project_id
-              AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
-              AND artifacts.id = runtime_substrate_artifacts.artifact_id
+               ON artifacts.org_id = runtime_substrates.org_id
+              AND artifacts.project_id = runtime_substrates.project_id
+              AND artifacts.environment_id = runtime_substrates.environment_id
+              AND artifacts.id = runtime_substrates.artifact_id
              JOIN deployment_sandboxes
-               ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
-              AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
-              AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
-            WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
-              AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
-              AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrate_artifacts.id = $1::uuid
+               ON deployment_sandboxes.org_id = runtime_substrates.org_id
+              AND deployment_sandboxes.project_id = runtime_substrates.project_id
+              AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
+              AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
+            WHERE runtime_substrates.org_id = runtime_instances.org_id
+              AND runtime_substrates.worker_group_id = runtime_instances.worker_group_id
+              AND runtime_substrates.project_id = runtime_instances.project_id
+              AND runtime_substrates.environment_id = runtime_instances.environment_id
+              AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
+              AND runtime_substrates.id = $1::uuid
        )
    )
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at
@@ -1894,23 +1894,23 @@ UPDATE runtime_instances
        $5::uuid IS NULL
        OR EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+             FROM runtime_substrates
              JOIN artifacts
-               ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.project_id = runtime_substrate_artifacts.project_id
-              AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
-              AND artifacts.id = runtime_substrate_artifacts.artifact_id
+               ON artifacts.org_id = runtime_substrates.org_id
+              AND artifacts.project_id = runtime_substrates.project_id
+              AND artifacts.environment_id = runtime_substrates.environment_id
+              AND artifacts.id = runtime_substrates.artifact_id
              JOIN deployment_sandboxes
-               ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
-              AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
-              AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
-            WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
-              AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
-              AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrate_artifacts.id = $5::uuid
+               ON deployment_sandboxes.org_id = runtime_substrates.org_id
+              AND deployment_sandboxes.project_id = runtime_substrates.project_id
+              AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
+              AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
+            WHERE runtime_substrates.org_id = runtime_instances.org_id
+              AND runtime_substrates.worker_group_id = runtime_instances.worker_group_id
+              AND runtime_substrates.project_id = runtime_instances.project_id
+              AND runtime_substrates.environment_id = runtime_instances.environment_id
+              AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
+              AND runtime_substrates.id = $5::uuid
        )
    )
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.worker_instance_id, runtime_instances.runtime_release_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_artifact_id, runtime_instances.runtime_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.workspace_mount_path, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_mib, runtime_instances.reserved_disk_mib, runtime_instances.reserved_execution_slots, runtime_instances.adopting_workspace_mount_id, runtime_instances.adopted_at, runtime_instances.adoption_expires_at, runtime_instances.workspace_mount_id, runtime_instances.owner_run_id, runtime_instances.owner_run_lease_id, runtime_instances.owner_run_wait_id, runtime_instances.owner_workspace_id, runtime_instances.owner_workspace_version_id, runtime_instances.owner_run_state_version, runtime_instances.state, runtime_instances.instance_token, runtime_instances.last_heartbeat_at, runtime_instances.expires_at, runtime_instances.prepared_at, runtime_instances.bound_at, runtime_instances.running_at, runtime_instances.waiting_at, runtime_instances.checkpointing_at, runtime_instances.stopping_requested_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.last_reclaim_reason, runtime_instances.error, runtime_instances.created_at, runtime_instances.updated_at

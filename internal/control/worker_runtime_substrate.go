@@ -70,7 +70,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		writeError(w, badRequest(fmt.Errorf("runtime substrate artifact media_type must be %s", cas.RuntimeSubstrateMediaType)))
 		return
 	}
-	var row db.RuntimeSubstrateArtifact
+	var row db.RuntimeSubstrate
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		sandbox, err := work.q.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
 			ID:            deploymentSandboxID,
@@ -231,7 +231,7 @@ func validateRuntimeSubstrateArtifactLookupRequest(request api.WorkerRuntimeSubs
 	return nil
 }
 
-func runtimeSubstrateArtifactResponse(row db.RuntimeSubstrateArtifact, artifact api.CASObject) api.WorkerRuntimeSubstrateArtifact {
+func runtimeSubstrateArtifactResponse(row db.RuntimeSubstrate, artifact api.CASObject) api.WorkerRuntimeSubstrateArtifact {
 	return api.WorkerRuntimeSubstrateArtifact{
 		ID:                  pgvalue.UUIDString(row.ID),
 		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),

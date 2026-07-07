@@ -26,7 +26,6 @@ const (
 	defaultRunMaxDurationSeconds  = int32(900)
 	minRunMaxDurationSeconds      = int32(5)
 	maxRunDurationSeconds         = int32(86400)
-	defaultIdempotencyKeyTTL      = 30 * 24 * time.Hour
 	maxIdempotencyKeyLength       = 512
 	maxRunLogSnapshotBytes        = int64(1 << 20)
 	runLogStreamBatchSize         = int32(100)
@@ -76,9 +75,14 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 	if err != nil {
 		return pgtype.UUID{}, err
 	}
+	externalID, err := scheduleFireSessionExternalID(row)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
 	startRequest := api.SessionStartRequest{
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
+		ExternalID:    externalID,
 		Payload:       request.Payload,
 		Options: api.SessionStartOptions{
 			Queue:              request.Options.Queue,
@@ -89,8 +93,6 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 			Retry:              request.Options.Retry,
 			Metadata:           request.Options.Metadata,
 			Tags:               request.Options.Tags,
-			IdempotencyKey:     schedule.TriggerIdempotencyKey(row.InstanceID, row.Generation, row.NextFireAt),
-			IdempotencyKeyTTL:  schedule.TriggerIdempotencyKeyTTL,
 		},
 	}
 	orgID, err := pgvalue.UUIDValue(row.OrgID)
@@ -112,12 +114,39 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduledAt:           row.NextFireAt,
 	})
 	if err != nil {
-		if errors.Is(err, errSessionStartPending) || errors.Is(err, errSessionStartCoordinationUnavailable) {
-			return pgtype.UUID{}, fmt.Errorf("%w: %w", schedule.ErrTriggerDeferred, err)
-		}
 		return pgtype.UUID{}, err
 	}
 	return started.run.ID, nil
+}
+
+func scheduleFireSessionExternalID(row db.GetScheduleTriggerCandidateRow) (string, error) {
+	if !row.ScheduleID.Valid {
+		return "", errors.New("schedule id is required")
+	}
+	if !row.InstanceID.Valid {
+		return "", errors.New("schedule instance id is required")
+	}
+	if row.Generation <= 0 {
+		return "", errors.New("schedule generation must be positive")
+	}
+	if !row.NextFireAt.Valid {
+		return "", errors.New("scheduled timestamp is required")
+	}
+	scheduleID, err := pgvalue.UUIDValue(row.ScheduleID)
+	if err != nil {
+		return "", fmt.Errorf("schedule id is invalid: %v", err)
+	}
+	instanceID, err := pgvalue.UUIDValue(row.InstanceID)
+	if err != nil {
+		return "", fmt.Errorf("schedule instance id is invalid: %v", err)
+	}
+	return fmt.Sprintf(
+		"schedule_fire:%s:%s:%d:%s",
+		scheduleID.String(),
+		instanceID.String(),
+		row.Generation,
+		row.NextFireAt.Time.UTC().Format(time.RFC3339Nano),
+	), nil
 }
 
 type runDeploymentSelection struct {

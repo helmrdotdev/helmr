@@ -213,7 +213,7 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 		}
 		appended.resolvedWaitCount = len(resolved)
 		if appended.resolvedWaitCount > 0 {
-			if _, err := store.CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams{
+			if _, err := store.CreateResolvedLiveRunResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams{
 				OrgID:         session.OrgID,
 				WorkerGroupID: session.WorkerGroupID,
 				LimitCount:    int32(appended.resolvedWaitCount),

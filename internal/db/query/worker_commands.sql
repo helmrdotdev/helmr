@@ -174,7 +174,7 @@ eligible_resume AS MATERIALIZED (
        AND runtime_instances.owner_run_wait_id = target.run_wait_id
        AND runtime_instances.owner_run_state_version = target.run_state_version
        AND runtime_instances.state = 'waiting_hot'
-     WHERE target.kind = 'runtime_resume_wait'
+     WHERE target.kind = 'run_resume_wait'
        AND target.acknowledged_at IS NULL
      FOR UPDATE OF run_waits, runtime_instances
 ),
@@ -224,7 +224,7 @@ resumed_runtime_instance AS (
 stale_resume AS MATERIALIZED (
     SELECT target.*
       FROM target
-     WHERE target.kind = 'runtime_resume_wait'
+     WHERE target.kind = 'run_resume_wait'
        AND target.acknowledged_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM eligible_resume)
 ),
@@ -253,13 +253,13 @@ active_checkpoint AS MATERIALIZED (
        AND runtime_instances.owner_run_wait_id = target.run_wait_id
        AND runtime_instances.owner_run_state_version = target.run_state_version
        AND runtime_instances.state IN ('waiting_hot', 'checkpointing')
-     WHERE target.kind = 'runtime_checkpoint_wait'
+     WHERE target.kind = 'run_checkpoint_wait'
        AND target.acknowledged_at IS NULL
 ),
 stale_checkpoint AS MATERIALIZED (
     SELECT target.*
       FROM target
-     WHERE target.kind = 'runtime_checkpoint_wait'
+     WHERE target.kind = 'run_checkpoint_wait'
        AND target.acknowledged_at IS NULL
        AND NOT EXISTS (SELECT 1 FROM active_checkpoint)
 ),
@@ -274,7 +274,7 @@ acknowledged AS (
      WHERE worker_commands.id = target.id
        AND target.acknowledged_at IS NULL
        AND (
-           target.kind NOT IN ('runtime_resume_wait', 'runtime_checkpoint_wait')
+           target.kind NOT IN ('run_resume_wait', 'run_checkpoint_wait')
            OR (
                EXISTS (SELECT 1 FROM resumed_live_wait)
                AND EXISTS (SELECT 1 FROM resumed_runtime_instance)
@@ -308,23 +308,23 @@ UPDATE worker_commands
    AND worker_commands.kind = sqlc.arg(kind)
    AND (
        worker_commands.acknowledged_at IS NOT NULL
-       OR worker_commands.kind <> 'runtime_checkpoint_wait'
+       OR worker_commands.kind <> 'run_checkpoint_wait'
        OR EXISTS (
            SELECT 1
-             FROM runtime_checkpoints
-            WHERE runtime_checkpoints.org_id = worker_commands.org_id
-              AND runtime_checkpoints.worker_group_id = worker_commands.worker_group_id
-              AND runtime_checkpoints.project_id = worker_commands.project_id
-              AND runtime_checkpoints.environment_id = worker_commands.environment_id
-              AND runtime_checkpoints.run_id = worker_commands.run_id
-              AND runtime_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
-              AND runtime_checkpoints.owner_run_wait_id = worker_commands.run_wait_id
-              AND runtime_checkpoints.owner_run_lease_id = worker_commands.run_lease_id
-              AND runtime_checkpoints.owner_worker_instance_id = worker_commands.worker_instance_id
-              AND runtime_checkpoints.owner_runtime_instance_id = worker_commands.runtime_instance_id
-              AND runtime_checkpoints.owner_runtime_epoch = worker_commands.runtime_epoch
-              AND runtime_checkpoints.created_at >= worker_commands.accepted_at
-              AND runtime_checkpoints.state IN ('ready', 'invalid')
+             FROM run_checkpoints
+            WHERE run_checkpoints.org_id = worker_commands.org_id
+              AND run_checkpoints.worker_group_id = worker_commands.worker_group_id
+              AND run_checkpoints.project_id = worker_commands.project_id
+              AND run_checkpoints.environment_id = worker_commands.environment_id
+              AND run_checkpoints.run_id = worker_commands.run_id
+              AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
+              AND run_checkpoints.owner_run_wait_id = worker_commands.run_wait_id
+              AND run_checkpoints.owner_run_lease_id = worker_commands.run_lease_id
+              AND run_checkpoints.owner_worker_instance_id = worker_commands.worker_instance_id
+              AND run_checkpoints.owner_runtime_instance_id = worker_commands.runtime_instance_id
+              AND run_checkpoints.owner_runtime_epoch = worker_commands.runtime_epoch
+              AND run_checkpoints.created_at >= worker_commands.accepted_at
+              AND run_checkpoints.state IN ('ready', 'invalid')
        )
    )
    AND EXISTS (
@@ -339,7 +339,7 @@ UPDATE worker_commands
    )
 RETURNING *;
 
--- name: CreateDueLiveRuntimeCheckpointWaitCommandsForOrg :many
+-- name: CreateDueLiveRunCheckpointWaitCommandsForOrg :many
 WITH due AS (
     SELECT run_waits.*
       FROM run_waits
@@ -366,9 +366,9 @@ WITH due AS (
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND run_waits.state = 'hot_waiting'
-       AND run_waits.runtime_checkpoint_due_at IS NOT NULL
+       AND run_waits.run_checkpoint_due_at IS NOT NULL
        AND (
-           run_waits.runtime_checkpoint_due_at <= now()
+           run_waits.run_checkpoint_due_at <= now()
            OR worker_instances.status = 'draining'
        )
        AND run_waits.owner_run_lease_id IS NOT NULL
@@ -399,10 +399,10 @@ WITH due AS (
              FROM worker_commands
             WHERE worker_commands.org_id = run_waits.org_id
               AND worker_commands.run_wait_id = run_waits.id
-              AND worker_commands.kind = 'runtime_checkpoint_wait'
+              AND worker_commands.kind = 'run_checkpoint_wait'
               AND worker_commands.acknowledged_at IS NULL
        )
-     ORDER BY run_waits.runtime_checkpoint_due_at ASC, run_waits.id ASC
+     ORDER BY run_waits.run_checkpoint_due_at ASC, run_waits.id ASC
      LIMIT sqlc.arg(limit_count)
 )
 INSERT INTO worker_commands (
@@ -431,13 +431,13 @@ SELECT due.org_id,
        due.owner_runtime_instance_id,
        due.owner_runtime_epoch,
        due.owner_run_state_version,
-       'runtime_checkpoint_wait',
+       'run_checkpoint_wait',
        '{}'::jsonb
   FROM due
-ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
+ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'run_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
 RETURNING *;
 
--- name: CreateDueLiveRuntimeCheckpointWaitCommandsForWorker :many
+-- name: CreateDueLiveRunCheckpointWaitCommandsForWorker :many
 WITH due AS (
     SELECT run_waits.*
       FROM run_waits
@@ -463,9 +463,9 @@ WITH due AS (
        )
      WHERE run_waits.owner_worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_waits.state = 'hot_waiting'
-       AND run_waits.runtime_checkpoint_due_at IS NOT NULL
+       AND run_waits.run_checkpoint_due_at IS NOT NULL
        AND (
-           run_waits.runtime_checkpoint_due_at <= now()
+           run_waits.run_checkpoint_due_at <= now()
            OR worker_instances.status = 'draining'
        )
        AND run_waits.owner_run_lease_id IS NOT NULL
@@ -496,10 +496,10 @@ WITH due AS (
              FROM worker_commands
             WHERE worker_commands.org_id = run_waits.org_id
               AND worker_commands.run_wait_id = run_waits.id
-              AND worker_commands.kind = 'runtime_checkpoint_wait'
+              AND worker_commands.kind = 'run_checkpoint_wait'
               AND worker_commands.acknowledged_at IS NULL
        )
-     ORDER BY run_waits.runtime_checkpoint_due_at ASC, run_waits.id ASC
+     ORDER BY run_waits.run_checkpoint_due_at ASC, run_waits.id ASC
      LIMIT sqlc.arg(limit_count)
 )
 INSERT INTO worker_commands (
@@ -528,13 +528,13 @@ SELECT due.org_id,
        due.owner_runtime_instance_id,
        due.owner_runtime_epoch,
        due.owner_run_state_version,
-       'runtime_checkpoint_wait',
+       'run_checkpoint_wait',
        '{}'::jsonb
   FROM due
-ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
+ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'run_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
 RETURNING *;
 
--- name: CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorker :many
+-- name: CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorker :many
 WITH worker_scope AS MATERIALIZED (
     SELECT worker_instances.*
       FROM worker_instances
@@ -613,7 +613,7 @@ victim AS (
              FROM worker_commands
             WHERE worker_commands.org_id = run_waits.org_id
               AND worker_commands.run_wait_id = run_waits.id
-              AND worker_commands.kind = 'runtime_checkpoint_wait'
+              AND worker_commands.kind = 'run_checkpoint_wait'
               AND worker_commands.acknowledged_at IS NULL
        )
      ORDER BY run_waits.hot_wait_started_at ASC, run_waits.id ASC
@@ -646,13 +646,13 @@ SELECT victim.org_id,
        victim.owner_runtime_instance_id,
        victim.owner_runtime_epoch,
        victim.owner_run_state_version,
-       'runtime_checkpoint_wait',
+       'run_checkpoint_wait',
        '{}'::jsonb
   FROM victim
-ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
+ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'run_checkpoint_wait' AND acknowledged_at IS NULL DO NOTHING
 RETURNING *;
 
--- name: CreateResolvedLiveRuntimeResumeWaitCommandsForOrg :many
+-- name: CreateResolvedLiveRunResumeWaitCommandsForOrg :many
 WITH resolved AS (
     SELECT run_waits.*,
            CASE
@@ -700,7 +700,7 @@ WITH resolved AS (
              FROM worker_commands
             WHERE worker_commands.org_id = run_waits.org_id
               AND worker_commands.run_wait_id = run_waits.id
-              AND worker_commands.kind = 'runtime_resume_wait'
+              AND worker_commands.kind = 'run_resume_wait'
        )
      ORDER BY run_waits.resuming_at ASC, run_waits.id ASC
      LIMIT sqlc.arg(limit_count)
@@ -731,11 +731,11 @@ SELECT resolved.org_id,
        resolved.owner_runtime_instance_id,
        resolved.owner_runtime_epoch,
        resolved.owner_run_state_version,
-       'runtime_resume_wait',
+       'run_resume_wait',
        jsonb_build_object(
            'resume_kind', resolved.resume_kind,
            'resume_payload', resolved.resume_payload
        )
   FROM resolved
-ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'runtime_resume_wait' DO NOTHING
+ON CONFLICT (org_id, run_wait_id, kind, run_lease_id, runtime_instance_id, runtime_epoch, run_state_version) WHERE kind = 'run_resume_wait' DO NOTHING
 RETURNING *;

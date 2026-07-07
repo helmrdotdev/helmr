@@ -11,7 +11,6 @@ import {
   validateQueueName,
   validateTaskId,
 } from "./schema/task"
-import type { IdempotencyKeyInput } from "./idempotency"
 
 export { parsePayloadWithSchema } from "./schema/payload"
 
@@ -519,8 +518,6 @@ export type TaskRunOptions<TSecrets extends SecretDecls> = {
   readonly tags?: readonly string[]
   readonly externalId?: string
   readonly expiresAt?: string | Date
-  readonly idempotencyKey?: IdempotencyKeyInput
-  readonly idempotencyKeyTTL?: string
   readonly signal?: AbortSignal
 }
 

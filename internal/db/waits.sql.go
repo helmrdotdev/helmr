@@ -105,9 +105,9 @@ updated_run_wait AS (
      WHERE run_waits.org_id = due_wait.org_id
        AND run_waits.id = due_wait.run_wait_id
        AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.run_checkpoint_due_at, run_waits.run_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.run_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, run_checkpoint_due_at, run_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, run_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
   FROM updated_run_wait
 `
 
@@ -119,31 +119,31 @@ type ResolveDueTimerWaitForRunWaitParams struct {
 }
 
 type ResolveDueTimerWaitForRunWaitRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	WaitID                     pgtype.UUID        `json:"wait_id"`
-	State                      RunWaitState       `json:"state"`
-	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
-	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
-	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
-	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
-	OwnerRunStateVersion       pgtype.Int8        `json:"owner_run_state_version"`
-	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
-	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
-	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
-	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	WaitID                 pgtype.UUID        `json:"wait_id"`
+	State                  RunWaitState       `json:"state"`
+	RunCheckpointDueAt     pgtype.Timestamptz `json:"run_checkpoint_due_at"`
+	RunCheckpointStartedAt pgtype.Timestamptz `json:"run_checkpoint_started_at"`
+	HotWaitStartedAt       pgtype.Timestamptz `json:"hot_wait_started_at"`
+	OwnerRuntimeInstanceID pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch      pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerRunStateVersion   pgtype.Int8        `json:"owner_run_state_version"`
+	OwnerWorkerInstanceID  pgtype.UUID        `json:"owner_worker_instance_id"`
+	RunCheckpointID        pgtype.UUID        `json:"run_checkpoint_id"`
+	WorkspaceVersionID     pgtype.UUID        `json:"workspace_version_id"`
+	ActiveElapsedMsAtPark  pgtype.Int8        `json:"active_elapsed_ms_at_park"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ResumingAt             pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt             pgtype.Timestamptz `json:"released_at"`
+	CancelledAt            pgtype.Timestamptz `json:"cancelled_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ResolveDueTimerWaitForRunWait(ctx context.Context, arg ResolveDueTimerWaitForRunWaitParams) (ResolveDueTimerWaitForRunWaitRow, error) {
@@ -163,8 +163,8 @@ func (q *Queries) ResolveDueTimerWaitForRunWait(ctx context.Context, arg Resolve
 		&i.RunID,
 		&i.WaitID,
 		&i.State,
-		&i.RuntimeCheckpointDueAt,
-		&i.RuntimeCheckpointStartedAt,
+		&i.RunCheckpointDueAt,
+		&i.RunCheckpointStartedAt,
 		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
@@ -172,7 +172,7 @@ func (q *Queries) ResolveDueTimerWaitForRunWait(ctx context.Context, arg Resolve
 		&i.OwnerRunLeaseID,
 		&i.OwnerRunStateVersion,
 		&i.OwnerWorkerInstanceID,
-		&i.RuntimeCheckpointID,
+		&i.RunCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
 		&i.CreatedAt,
@@ -224,9 +224,9 @@ updated_run_waits AS (
      WHERE run_waits.org_id = due_waits.org_id
        AND run_waits.id = due_waits.run_wait_id
        AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.run_checkpoint_due_at, run_waits.run_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.run_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, runtime_checkpoint_due_at, runtime_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
+SELECT id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id, state, run_checkpoint_due_at, run_checkpoint_started_at, hot_wait_started_at, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_lease_id, owner_run_state_version, owner_worker_instance_id, run_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park, created_at, resuming_at, released_at, cancelled_at, updated_at
   FROM updated_run_waits
 `
 
@@ -237,31 +237,31 @@ type ResolveDueTimerWaitsParams struct {
 }
 
 type ResolveDueTimerWaitsRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	WaitID                     pgtype.UUID        `json:"wait_id"`
-	State                      RunWaitState       `json:"state"`
-	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
-	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
-	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
-	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
-	OwnerRunStateVersion       pgtype.Int8        `json:"owner_run_state_version"`
-	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
-	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
-	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
-	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	WaitID                 pgtype.UUID        `json:"wait_id"`
+	State                  RunWaitState       `json:"state"`
+	RunCheckpointDueAt     pgtype.Timestamptz `json:"run_checkpoint_due_at"`
+	RunCheckpointStartedAt pgtype.Timestamptz `json:"run_checkpoint_started_at"`
+	HotWaitStartedAt       pgtype.Timestamptz `json:"hot_wait_started_at"`
+	OwnerRuntimeInstanceID pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch      pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerRunStateVersion   pgtype.Int8        `json:"owner_run_state_version"`
+	OwnerWorkerInstanceID  pgtype.UUID        `json:"owner_worker_instance_id"`
+	RunCheckpointID        pgtype.UUID        `json:"run_checkpoint_id"`
+	WorkspaceVersionID     pgtype.UUID        `json:"workspace_version_id"`
+	ActiveElapsedMsAtPark  pgtype.Int8        `json:"active_elapsed_ms_at_park"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ResumingAt             pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt             pgtype.Timestamptz `json:"released_at"`
+	CancelledAt            pgtype.Timestamptz `json:"cancelled_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ResolveDueTimerWaits(ctx context.Context, arg ResolveDueTimerWaitsParams) ([]ResolveDueTimerWaitsRow, error) {
@@ -282,8 +282,8 @@ func (q *Queries) ResolveDueTimerWaits(ctx context.Context, arg ResolveDueTimerW
 			&i.RunID,
 			&i.WaitID,
 			&i.State,
-			&i.RuntimeCheckpointDueAt,
-			&i.RuntimeCheckpointStartedAt,
+			&i.RunCheckpointDueAt,
+			&i.RunCheckpointStartedAt,
 			&i.HotWaitStartedAt,
 			&i.OwnerRuntimeInstanceID,
 			&i.OwnerRuntimeEpoch,
@@ -291,7 +291,7 @@ func (q *Queries) ResolveDueTimerWaits(ctx context.Context, arg ResolveDueTimerW
 			&i.OwnerRunLeaseID,
 			&i.OwnerRunStateVersion,
 			&i.OwnerWorkerInstanceID,
-			&i.RuntimeCheckpointID,
+			&i.RunCheckpointID,
 			&i.WorkspaceVersionID,
 			&i.ActiveElapsedMsAtPark,
 			&i.CreatedAt,
@@ -375,9 +375,9 @@ updated_run_wait AS (
      WHERE run_waits.org_id = target.org_id
        AND run_waits.id = target.run_wait_id
        AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.runtime_checkpoint_due_at, run_waits.runtime_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.runtime_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
+    RETURNING run_waits.id, run_waits.org_id, run_waits.worker_group_id, run_waits.project_id, run_waits.environment_id, run_waits.run_id, run_waits.wait_id, run_waits.state, run_waits.run_checkpoint_due_at, run_waits.run_checkpoint_started_at, run_waits.hot_wait_started_at, run_waits.owner_runtime_instance_id, run_waits.owner_runtime_epoch, run_waits.owner_run_id, run_waits.owner_run_lease_id, run_waits.owner_run_state_version, run_waits.owner_worker_instance_id, run_waits.run_checkpoint_id, run_waits.workspace_version_id, run_waits.active_elapsed_ms_at_park, run_waits.created_at, run_waits.resuming_at, run_waits.released_at, run_waits.cancelled_at, run_waits.updated_at
 )
-SELECT updated_run_wait.id, updated_run_wait.org_id, updated_run_wait.worker_group_id, updated_run_wait.project_id, updated_run_wait.environment_id, updated_run_wait.run_id, updated_run_wait.wait_id, updated_run_wait.state, updated_run_wait.runtime_checkpoint_due_at, updated_run_wait.runtime_checkpoint_started_at, updated_run_wait.hot_wait_started_at, updated_run_wait.owner_runtime_instance_id, updated_run_wait.owner_runtime_epoch, updated_run_wait.owner_run_id, updated_run_wait.owner_run_lease_id, updated_run_wait.owner_run_state_version, updated_run_wait.owner_worker_instance_id, updated_run_wait.runtime_checkpoint_id, updated_run_wait.workspace_version_id, updated_run_wait.active_elapsed_ms_at_park, updated_run_wait.created_at, updated_run_wait.resuming_at, updated_run_wait.released_at, updated_run_wait.cancelled_at, updated_run_wait.updated_at
+SELECT updated_run_wait.id, updated_run_wait.org_id, updated_run_wait.worker_group_id, updated_run_wait.project_id, updated_run_wait.environment_id, updated_run_wait.run_id, updated_run_wait.wait_id, updated_run_wait.state, updated_run_wait.run_checkpoint_due_at, updated_run_wait.run_checkpoint_started_at, updated_run_wait.hot_wait_started_at, updated_run_wait.owner_runtime_instance_id, updated_run_wait.owner_runtime_epoch, updated_run_wait.owner_run_id, updated_run_wait.owner_run_lease_id, updated_run_wait.owner_run_state_version, updated_run_wait.owner_worker_instance_id, updated_run_wait.run_checkpoint_id, updated_run_wait.workspace_version_id, updated_run_wait.active_elapsed_ms_at_park, updated_run_wait.created_at, updated_run_wait.resuming_at, updated_run_wait.released_at, updated_run_wait.cancelled_at, updated_run_wait.updated_at
   FROM updated_run_wait
 `
 
@@ -390,31 +390,31 @@ type ResolveImmediateTokenWaitForRunWaitParams struct {
 }
 
 type ResolveImmediateTokenWaitForRunWaitRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	WaitID                     pgtype.UUID        `json:"wait_id"`
-	State                      RunWaitState       `json:"state"`
-	RuntimeCheckpointDueAt     pgtype.Timestamptz `json:"runtime_checkpoint_due_at"`
-	RuntimeCheckpointStartedAt pgtype.Timestamptz `json:"runtime_checkpoint_started_at"`
-	HotWaitStartedAt           pgtype.Timestamptz `json:"hot_wait_started_at"`
-	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
-	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
-	OwnerRunStateVersion       pgtype.Int8        `json:"owner_run_state_version"`
-	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
-	RuntimeCheckpointID        pgtype.UUID        `json:"runtime_checkpoint_id"`
-	WorkspaceVersionID         pgtype.UUID        `json:"workspace_version_id"`
-	ActiveElapsedMsAtPark      pgtype.Int8        `json:"active_elapsed_ms_at_park"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	ResumingAt                 pgtype.Timestamptz `json:"resuming_at"`
-	ReleasedAt                 pgtype.Timestamptz `json:"released_at"`
-	CancelledAt                pgtype.Timestamptz `json:"cancelled_at"`
-	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	WaitID                 pgtype.UUID        `json:"wait_id"`
+	State                  RunWaitState       `json:"state"`
+	RunCheckpointDueAt     pgtype.Timestamptz `json:"run_checkpoint_due_at"`
+	RunCheckpointStartedAt pgtype.Timestamptz `json:"run_checkpoint_started_at"`
+	HotWaitStartedAt       pgtype.Timestamptz `json:"hot_wait_started_at"`
+	OwnerRuntimeInstanceID pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch      pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerRunStateVersion   pgtype.Int8        `json:"owner_run_state_version"`
+	OwnerWorkerInstanceID  pgtype.UUID        `json:"owner_worker_instance_id"`
+	RunCheckpointID        pgtype.UUID        `json:"run_checkpoint_id"`
+	WorkspaceVersionID     pgtype.UUID        `json:"workspace_version_id"`
+	ActiveElapsedMsAtPark  pgtype.Int8        `json:"active_elapsed_ms_at_park"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ResumingAt             pgtype.Timestamptz `json:"resuming_at"`
+	ReleasedAt             pgtype.Timestamptz `json:"released_at"`
+	CancelledAt            pgtype.Timestamptz `json:"cancelled_at"`
+	UpdatedAt              pgtype.Timestamptz `json:"updated_at"`
 }
 
 func (q *Queries) ResolveImmediateTokenWaitForRunWait(ctx context.Context, arg ResolveImmediateTokenWaitForRunWaitParams) (ResolveImmediateTokenWaitForRunWaitRow, error) {
@@ -435,8 +435,8 @@ func (q *Queries) ResolveImmediateTokenWaitForRunWait(ctx context.Context, arg R
 		&i.RunID,
 		&i.WaitID,
 		&i.State,
-		&i.RuntimeCheckpointDueAt,
-		&i.RuntimeCheckpointStartedAt,
+		&i.RunCheckpointDueAt,
+		&i.RunCheckpointStartedAt,
 		&i.HotWaitStartedAt,
 		&i.OwnerRuntimeInstanceID,
 		&i.OwnerRuntimeEpoch,
@@ -444,7 +444,7 @@ func (q *Queries) ResolveImmediateTokenWaitForRunWait(ctx context.Context, arg R
 		&i.OwnerRunLeaseID,
 		&i.OwnerRunStateVersion,
 		&i.OwnerWorkerInstanceID,
-		&i.RuntimeCheckpointID,
+		&i.RunCheckpointID,
 		&i.WorkspaceVersionID,
 		&i.ActiveElapsedMsAtPark,
 		&i.CreatedAt,

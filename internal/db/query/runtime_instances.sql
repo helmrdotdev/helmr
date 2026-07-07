@@ -319,23 +319,23 @@ UPDATE runtime_instances
        sqlc.narg(runtime_substrate_artifact_id)::uuid IS NULL
        OR EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+             FROM runtime_substrates
              JOIN artifacts
-               ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.project_id = runtime_substrate_artifacts.project_id
-              AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
-              AND artifacts.id = runtime_substrate_artifacts.artifact_id
+               ON artifacts.org_id = runtime_substrates.org_id
+              AND artifacts.project_id = runtime_substrates.project_id
+              AND artifacts.environment_id = runtime_substrates.environment_id
+              AND artifacts.id = runtime_substrates.artifact_id
              JOIN deployment_sandboxes
-               ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
-              AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
-              AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
-            WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
-              AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
-              AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrate_artifacts.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
+               ON deployment_sandboxes.org_id = runtime_substrates.org_id
+              AND deployment_sandboxes.project_id = runtime_substrates.project_id
+              AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
+              AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
+            WHERE runtime_substrates.org_id = runtime_instances.org_id
+              AND runtime_substrates.worker_group_id = runtime_instances.worker_group_id
+              AND runtime_substrates.project_id = runtime_instances.project_id
+              AND runtime_substrates.environment_id = runtime_instances.environment_id
+              AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
+              AND runtime_substrates.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
        )
    )
 RETURNING runtime_instances.*;
@@ -366,23 +366,23 @@ UPDATE runtime_instances
        sqlc.narg(runtime_substrate_artifact_id)::uuid IS NULL
        OR EXISTS (
            SELECT 1
-             FROM runtime_substrate_artifacts
+             FROM runtime_substrates
              JOIN artifacts
-               ON artifacts.org_id = runtime_substrate_artifacts.org_id
-              AND artifacts.project_id = runtime_substrate_artifacts.project_id
-              AND artifacts.environment_id = runtime_substrate_artifacts.environment_id
-              AND artifacts.id = runtime_substrate_artifacts.artifact_id
+               ON artifacts.org_id = runtime_substrates.org_id
+              AND artifacts.project_id = runtime_substrates.project_id
+              AND artifacts.environment_id = runtime_substrates.environment_id
+              AND artifacts.id = runtime_substrates.artifact_id
              JOIN deployment_sandboxes
-               ON deployment_sandboxes.org_id = runtime_substrate_artifacts.org_id
-              AND deployment_sandboxes.project_id = runtime_substrate_artifacts.project_id
-              AND deployment_sandboxes.environment_id = runtime_substrate_artifacts.environment_id
-              AND deployment_sandboxes.id = runtime_substrate_artifacts.deployment_sandbox_id
-            WHERE runtime_substrate_artifacts.org_id = runtime_instances.org_id
-              AND runtime_substrate_artifacts.worker_group_id = runtime_instances.worker_group_id
-              AND runtime_substrate_artifacts.project_id = runtime_instances.project_id
-              AND runtime_substrate_artifacts.environment_id = runtime_instances.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrate_artifacts.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
+               ON deployment_sandboxes.org_id = runtime_substrates.org_id
+              AND deployment_sandboxes.project_id = runtime_substrates.project_id
+              AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
+              AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
+            WHERE runtime_substrates.org_id = runtime_instances.org_id
+              AND runtime_substrates.worker_group_id = runtime_instances.worker_group_id
+              AND runtime_substrates.project_id = runtime_instances.project_id
+              AND runtime_substrates.environment_id = runtime_instances.environment_id
+              AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
+              AND runtime_substrates.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
        )
    )
 RETURNING runtime_instances.*;
@@ -1005,24 +1005,24 @@ SELECT worker_sandbox_scope.org_id,
  WHERE sandbox_demand.demand_count > 0
    AND NOT EXISTS (
            SELECT 1
-            FROM runtime_substrate_artifacts
-            WHERE runtime_substrate_artifacts.org_id = worker_sandbox_scope.org_id
-              AND runtime_substrate_artifacts.worker_group_id = worker_sandbox_scope.worker_group_id
-              AND runtime_substrate_artifacts.project_id = worker_sandbox_scope.project_id
-              AND runtime_substrate_artifacts.environment_id = worker_sandbox_scope.environment_id
-              AND runtime_substrate_artifacts.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
-              AND runtime_substrate_artifacts.substrate_format = sqlc.arg(substrate_format)
-              AND runtime_substrate_artifacts.builder_abi = sqlc.arg(substrate_builder_abi)
-              AND runtime_substrate_artifacts.layout_abi = sqlc.arg(substrate_layout_abi)
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'sandbox_artifact_digest' = worker_sandbox_scope.image_artifact_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'sandbox_artifact_format' = worker_sandbox_scope.image_artifact_format
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'image_digest' = worker_sandbox_scope.image_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'rootfs_digest' = worker_sandbox_scope.rootfs_digest
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'runtime_abi' = worker_sandbox_scope.runtime_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'guestd_abi' = worker_sandbox_scope.guestd_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'adapter_abi' = worker_sandbox_scope.adapter_abi
-              AND runtime_substrate_artifacts.source->'substrate_source'->>'workspace_mount_path' = worker_sandbox_scope.workspace_mount_path
-              AND runtime_substrate_artifacts.retired_at IS NULL
+            FROM runtime_substrates
+            WHERE runtime_substrates.org_id = worker_sandbox_scope.org_id
+              AND runtime_substrates.worker_group_id = worker_sandbox_scope.worker_group_id
+              AND runtime_substrates.project_id = worker_sandbox_scope.project_id
+              AND runtime_substrates.environment_id = worker_sandbox_scope.environment_id
+              AND runtime_substrates.deployment_sandbox_id = worker_sandbox_scope.deployment_sandbox_id
+              AND runtime_substrates.substrate_format = sqlc.arg(substrate_format)
+              AND runtime_substrates.builder_abi = sqlc.arg(substrate_builder_abi)
+              AND runtime_substrates.layout_abi = sqlc.arg(substrate_layout_abi)
+              AND runtime_substrates.source->'substrate_source'->>'sandbox_artifact_digest' = worker_sandbox_scope.image_artifact_digest
+              AND runtime_substrates.source->'substrate_source'->>'sandbox_artifact_format' = worker_sandbox_scope.image_artifact_format
+              AND runtime_substrates.source->'substrate_source'->>'image_digest' = worker_sandbox_scope.image_digest
+              AND runtime_substrates.source->'substrate_source'->>'rootfs_digest' = worker_sandbox_scope.rootfs_digest
+              AND runtime_substrates.source->'substrate_source'->>'runtime_abi' = worker_sandbox_scope.runtime_abi
+              AND runtime_substrates.source->'substrate_source'->>'guestd_abi' = worker_sandbox_scope.guestd_abi
+              AND runtime_substrates.source->'substrate_source'->>'adapter_abi' = worker_sandbox_scope.adapter_abi
+              AND runtime_substrates.source->'substrate_source'->>'workspace_mount_path' = worker_sandbox_scope.workspace_mount_path
+              AND runtime_substrates.retired_at IS NULL
        )
    AND NOT EXISTS (
            SELECT 1

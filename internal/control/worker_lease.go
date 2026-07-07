@@ -74,7 +74,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		})
 		if isNoRows(err) {
 			s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
-			s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
+			s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "run_dispatch_capacity_missing")
 			writeJSON(w, http.StatusOK, api.WorkerRunLeaseResponse{})
 			return
 		}
@@ -85,7 +85,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 		}
 		if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 {
 			s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "run_dispatch_no_available_capacity")
-			s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "run_dispatch_no_available_capacity")
+			s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "run_dispatch_no_available_capacity")
 			if s.log != nil {
 				s.log.Info("worker run lease capacity constrained",
 					"worker_instance_id", worker.WorkerInstanceID.String(),
@@ -227,7 +227,7 @@ func (s *Server) workerLease(w http.ResponseWriter, r *http.Request) {
 							"run_id", pgvalue.UUIDString(candidateRun.ID),
 							"workspace_id", pgvalue.UUIDString(candidateRun.WorkspaceID),
 							"workspace_mount_id", pgvalue.UUIDString(candidateRun.WorkspaceMountID),
-							"restore_runtime_checkpoint_id", pgvalue.UUIDString(candidateRun.RunLeaseRestoreRuntimeCheckpointID),
+							"restore_run_checkpoint_id", pgvalue.UUIDString(candidateRun.RunLeaseRestoreRunCheckpointID),
 						)
 						queueLease = candidateLease
 						leasedRun = candidateRun

@@ -158,7 +158,6 @@ describe("Slack approval bridge", () => {
         },
         opts: {
           externalId: "slack:C123:v1.2.3",
-          idempotencyKey: "slack-approval:slack-approval:C123:v1.2.3:start",
           metadata: {
             release: "v1.2.3",
             summary: "Ship v1.2.3",

@@ -742,35 +742,35 @@ released_workspace_leases AS (
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
-invalidated_runtime_checkpoints AS (
-    UPDATE runtime_checkpoints
+invalidated_run_checkpoints AS (
+    UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
            invalidated_at = now()
       FROM updated
      WHERE (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
-       AND runtime_checkpoints.org_id = updated.org_id
-       AND runtime_checkpoints.run_id = updated.id
-       AND runtime_checkpoints.state = 'creating'
-    RETURNING runtime_checkpoints.id
+       AND run_checkpoints.org_id = updated.org_id
+       AND run_checkpoints.run_id = updated.id
+       AND run_checkpoints.state = 'creating'
+    RETURNING run_checkpoints.id
 ),
-failed_runtime_checkpoint_restores AS (
-    UPDATE runtime_checkpoint_restores
+failed_run_checkpoint_restores AS (
+    UPDATE run_checkpoint_restores
        SET status = 'failed',
            error_message = COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
-           finished_at = COALESCE(runtime_checkpoint_restores.finished_at, now()),
+           finished_at = COALESCE(run_checkpoint_restores.finished_at, now()),
            updated_at = now()
       FROM updated
       JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
                               AND cancelled_run_lease.run_id = updated.id
                               AND cancelled_run_lease.id = updated.previous_run_lease_id
      WHERE (updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool)
-       AND runtime_checkpoint_restores.org_id = updated.org_id
-       AND runtime_checkpoint_restores.run_id = updated.id
-       AND runtime_checkpoint_restores.run_lease_id = cancelled_run_lease.id
-       AND runtime_checkpoint_restores.runtime_checkpoint_id = cancelled_run_lease.restore_runtime_checkpoint_id
-       AND runtime_checkpoint_restores.status = 'restoring'
-    RETURNING runtime_checkpoint_restores.id
+       AND run_checkpoint_restores.org_id = updated.org_id
+       AND run_checkpoint_restores.run_id = updated.id
+       AND run_checkpoint_restores.run_lease_id = cancelled_run_lease.id
+       AND run_checkpoint_restores.run_checkpoint_id = cancelled_run_lease.restore_run_checkpoint_id
+       AND run_checkpoint_restores.status = 'restoring'
+    RETURNING run_checkpoint_restores.id
 ),
 active_time_delta AS (
     SELECT GREATEST(
@@ -926,8 +926,8 @@ SELECT updated.*
    AND (SELECT count(*) FROM terminal_sessions) >= 0
    AND (SELECT count(*) FROM cancelled_run_lease) >= 0
    AND (SELECT count(*) FROM released_workspace_leases) >= 0
-   AND (SELECT count(*) FROM invalidated_runtime_checkpoints) >= 0
-   AND (SELECT count(*) FROM failed_runtime_checkpoint_restores) >= 0
+   AND (SELECT count(*) FROM invalidated_run_checkpoints) >= 0
+   AND (SELECT count(*) FROM failed_run_checkpoint_restores) >= 0
    AND (SELECT count(*) FROM active_time_meter_event_outbox) >= 0
 UNION ALL
 SELECT target.*, NULL::uuid AS previous_run_lease_id

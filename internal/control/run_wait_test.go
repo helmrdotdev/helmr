@@ -52,7 +52,7 @@ func TestRequeueResolvedRunWaitsEnsuresWorkspaceMount(t *testing.T) {
 	if err := json.Unmarshal(store.ensureParams.Request, &request); err != nil {
 		t.Fatal(err)
 	}
-	if request["source"] != "runtime_resume_wait" || request["run_id"] != runID.String() || request["run_wait_id"] != runWaitID.String() {
+	if request["source"] != "run_resume_wait" || request["run_id"] != runID.String() || request["run_wait_id"] != runWaitID.String() {
 		t.Fatalf("ensure request = %+v", request)
 	}
 	if store.linkParams.RunID != pgvalue.UUID(runID) || store.linkParams.WorkspaceMountID != pgvalue.UUID(workspaceMountID) {

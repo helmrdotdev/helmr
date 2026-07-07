@@ -73,7 +73,7 @@ Main surfaces:
 
 The top-level `sessions`, `runs`, `workspaces`, `tokens`, `schedules`, and `auth` facades mirror the client namespaces and use the default client from `HELMR_API_URL` and `HELMR_API_KEY`. Use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. Imported task definitions are typed targets for the sessions namespace; they do not expose direct `.start()` or `.startAndWait()` helpers.
 
-Session handles are explicit. `sessions.open("session-id")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK sends that external id as a server-resolved session address.
+Session handles are explicit. `sessions.open("session-id")` treats the string as a session id only. Use `sessions.open({ externalId })` or `sessions.retrieve({ externalId })` when the caller knows the environment-scoped external conversation id; the SDK sends that external id as a server-resolved session address. Session starts use the same `externalId` as the retry-safe resource identity; they do not expose a separate start-request idempotency key.
 
 Session start `payload` is persisted as audit data in the control plane. Put secret values in declared `secrets`, not in payload. Follow-up user messages, webhooks, or operator replies belong in session input streams, not in session start payload.
 

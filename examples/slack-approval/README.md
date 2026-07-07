@@ -57,9 +57,9 @@ decision. Slack never receives a Helmr bearer capability; the bridge owns
    idempotency key has accepted the first decision.
 
 If setup fails after the session starts, the bridge cancels the parked session
-so the approval does not sit waiting forever. By default the bridge derives
-Helmr idempotency keys from the task, channel, and release; set
-`HELMR_START_IDEMPOTENCY_KEY` when you need a different retry boundary.
+so the approval does not sit waiting forever. By default the bridge derives a
+stable session external id from the task, channel, and release; set
+`HELMR_SESSION_EXTERNAL_ID` when you need a different retry boundary.
 
 The long approval timeout belongs to the stream wait, not to active task
 compute. The task's `maxDuration` remains a short active budget because parked
