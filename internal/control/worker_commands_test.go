@@ -31,7 +31,7 @@ func TestWorkerCommandStreamDeliversWorkerScopedCommand(t *testing.T) {
 		RunLeaseID:       pgvalue.UUID(uuid.MustParse("019f0d01-0000-7000-8000-000000000007")),
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		RunStateVersion:  pgtype.Int8{Int64: 3, Valid: true},
-		Kind:             db.WorkerCommandKindRuntimeResumeWait,
+		Kind:             db.WorkerCommandKindRunResumeWait,
 		Payload:          []byte(`{"kind":"completed"}`),
 	}
 	stream := &WorkerCommandStream{
@@ -58,7 +58,7 @@ func TestWorkerCommandStreamDeliversWorkerScopedCommand(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if payload.ID != 42 || payload.WorkerInstanceID != workerInstanceID.String() || payload.Kind != string(db.WorkerCommandKindRuntimeResumeWait) || payload.RunStateVersion != 3 {
+	if payload.ID != 42 || payload.WorkerInstanceID != workerInstanceID.String() || payload.Kind != string(db.WorkerCommandKindRunResumeWait) || payload.RunStateVersion != 3 {
 		t.Fatalf("payload = %+v", payload)
 	}
 	if string(payload.Payload) != `{"kind":"completed"}` {

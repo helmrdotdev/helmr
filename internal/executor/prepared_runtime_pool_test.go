@@ -305,7 +305,7 @@ func TestPreparedRuntimePoolFollowWarmCommandsAdvancesIgnoredCommandCursor(t *te
 		afterIDs = append(afterIDs, afterID)
 		switch len(afterIDs) {
 		case 1:
-			if err := handle(api.WorkerCommand{ID: 10, Kind: string(api.WorkerCommandKindRuntimeResumeWait)}); err != nil {
+			if err := handle(api.WorkerCommand{ID: 10, Kind: string(api.WorkerCommandKindRunResumeWait)}); err != nil {
 				return err
 			}
 			return errors.New("disconnect")

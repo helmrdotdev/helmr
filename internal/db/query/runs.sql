@@ -768,7 +768,7 @@ failed_run_checkpoint_restores AS (
        AND run_checkpoint_restores.org_id = updated.org_id
        AND run_checkpoint_restores.run_id = updated.id
        AND run_checkpoint_restores.run_lease_id = cancelled_run_lease.id
-       AND run_checkpoint_restores.runtime_checkpoint_id = cancelled_run_lease.restore_runtime_checkpoint_id
+       AND run_checkpoint_restores.run_checkpoint_id = cancelled_run_lease.restore_run_checkpoint_id
        AND run_checkpoint_restores.status = 'restoring'
     RETURNING run_checkpoint_restores.id
 ),

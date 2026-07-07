@@ -61,7 +61,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 	})
 	if isNoRows(err) {
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
-		s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
+		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
 		if s.log != nil {
 			s.log.Info("worker workspace mount claim skipped",
 				"worker_instance_id", worker.WorkerInstanceID.String(),
@@ -78,7 +78,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 	}
 	if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 || capacity.AvailableDiskMib <= 0 {
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "no_available_capacity")
-		s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_available_capacity")
+		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_available_capacity")
 		if s.log != nil {
 			s.log.Info("worker workspace mount claim capacity constrained",
 				"worker_instance_id", worker.WorkerInstanceID.String(),
@@ -176,7 +176,7 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "no_claimable_mount")
-		s.createCapacityPressureLiveRuntimeCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_claimable_mount")
+		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_claimable_mount")
 		if s.log != nil {
 			s.log.Info("worker workspace mount claim skipped",
 				"worker_instance_id", worker.WorkerInstanceID.String(),

@@ -79,7 +79,7 @@ path_hint_columns = (
     "has_workspace_mount_evidence",
 )
 checkpoint_artifact_summary_columns = (
-    "runtime_checkpoint_id",
+    "run_checkpoint_id",
     "role",
     "artifact_count",
     "total_size_bytes",
@@ -90,7 +90,7 @@ checkpoint_artifact_summary_columns = (
 )
 checkpoint_restore_columns = (
     "id",
-    "runtime_checkpoint_id",
+    "run_checkpoint_id",
     "run_wait_id",
     "run_lease_id",
     "worker_instance_id",
@@ -103,7 +103,7 @@ checkpoint_restore_columns = (
     "error_message",
 )
 checkpoint_restore_phase_columns = (
-    "runtime_checkpoint_restore_id",
+    "run_checkpoint_restore_id",
     "ordinal",
     "name",
     "role",
@@ -121,7 +121,7 @@ checkpoint_restore_phase_columns = (
     "filepack_unpack_written_bytes",
 )
 checkpoint_phase_columns = (
-    "runtime_checkpoint_id",
+    "run_checkpoint_id",
     "ordinal",
     "name",
     "role",

@@ -1,6 +1,6 @@
 -- name: GetRunRestorePayload :one
 SELECT
-    run_checkpoints.id AS runtime_checkpoint_id,
+    run_checkpoints.id AS run_checkpoint_id,
     run_checkpoints.manifest,
     run_waits.id AS run_wait_id,
     waits.correlation_key AS run_wait_correlation_key,
@@ -19,11 +19,11 @@ SELECT
                       AND run_leases.run_id = runs.id
                       AND run_leases.worker_group_id = runs.worker_group_id
                       AND run_leases.id = runs.current_run_lease_id
-                      AND run_leases.restore_runtime_checkpoint_id = runs.latest_runtime_checkpoint_id
+                      AND run_leases.restore_run_checkpoint_id = runs.latest_run_checkpoint_id
   JOIN run_checkpoints ON run_checkpoints.org_id = runs.org_id
                   AND run_checkpoints.worker_group_id = runs.worker_group_id
                   AND run_checkpoints.run_id = runs.id
-                  AND run_checkpoints.id = runs.latest_runtime_checkpoint_id
+                  AND run_checkpoints.id = runs.latest_run_checkpoint_id
   JOIN worker_instances ON worker_instances.id = run_leases.worker_instance_id
                        AND worker_instances.worker_group_id = runs.worker_group_id
   JOIN worker_groups
@@ -33,14 +33,14 @@ SELECT
                                   AND run_checkpoint_restores.worker_group_id = runs.worker_group_id
                                   AND run_checkpoint_restores.run_id = runs.id
                                   AND run_checkpoint_restores.run_lease_id = run_leases.id
-                                  AND run_checkpoint_restores.runtime_checkpoint_id = run_checkpoints.id
+                                  AND run_checkpoint_restores.run_checkpoint_id = run_checkpoints.id
                                   AND run_checkpoint_restores.status = 'restoring'
   JOIN run_waits ON run_waits.org_id = runs.org_id
                 AND run_waits.project_id = runs.project_id
                 AND run_waits.environment_id = runs.environment_id
                 AND run_waits.worker_group_id = runs.worker_group_id
                 AND run_waits.run_id = runs.id
-                AND run_waits.runtime_checkpoint_id = run_checkpoints.id
+                AND run_waits.run_checkpoint_id = run_checkpoints.id
                 AND run_waits.state = 'resuming'
   JOIN waits ON waits.org_id = run_waits.org_id
             AND waits.project_id = run_waits.project_id
@@ -64,13 +64,13 @@ SELECT
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.status IN ('leased', 'running')
    AND run_leases.lease_expires_at > now()
-   AND runs.latest_runtime_checkpoint_id IS NOT NULL
+   AND runs.latest_run_checkpoint_id IS NOT NULL
    AND run_checkpoints.state = 'ready'
    AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
  LIMIT 1;
 
--- name: GetAcknowledgedReadyRuntimeCheckpointForRunWait :one
-SELECT run_checkpoints.id AS runtime_checkpoint_id
+-- name: GetAcknowledgedReadyRunCheckpointForRunWait :one
+SELECT run_checkpoints.id AS run_checkpoint_id
   FROM run_checkpoints
   JOIN run_waits
     ON run_waits.org_id = run_checkpoints.org_id
@@ -78,7 +78,7 @@ SELECT run_checkpoints.id AS runtime_checkpoint_id
    AND run_waits.project_id = run_checkpoints.project_id
    AND run_waits.environment_id = run_checkpoints.environment_id
    AND run_waits.run_id = run_checkpoints.run_id
-   AND run_waits.runtime_checkpoint_id = run_checkpoints.id
+   AND run_waits.run_checkpoint_id = run_checkpoints.id
   JOIN worker_commands
     ON worker_commands.org_id = run_checkpoints.org_id
    AND worker_commands.worker_group_id = run_checkpoints.worker_group_id
@@ -90,7 +90,7 @@ SELECT run_checkpoints.id AS runtime_checkpoint_id
    AND worker_commands.worker_instance_id = run_checkpoints.owner_worker_instance_id
    AND worker_commands.runtime_instance_id = run_checkpoints.owner_runtime_instance_id
    AND worker_commands.runtime_epoch = run_checkpoints.owner_runtime_epoch
-   AND worker_commands.kind = 'runtime_checkpoint_wait'
+   AND worker_commands.kind = 'run_checkpoint_wait'
   JOIN worker_instances
     ON worker_instances.id = run_checkpoints.owner_worker_instance_id
    AND worker_instances.worker_group_id = run_checkpoints.worker_group_id
@@ -99,7 +99,7 @@ SELECT run_checkpoints.id AS runtime_checkpoint_id
    AND worker_groups.state IN ('active', 'draining')
  WHERE run_checkpoints.org_id = sqlc.arg(org_id)
    AND run_checkpoints.run_id = sqlc.arg(run_id)
-   AND run_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
+   AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
    AND run_checkpoints.state = 'ready'
    AND run_waits.id = sqlc.arg(run_wait_id)
    AND run_waits.owner_run_lease_id = sqlc.arg(run_lease_id)
@@ -108,7 +108,7 @@ SELECT run_checkpoints.id AS runtime_checkpoint_id
    AND worker_commands.acknowledged_at IS NOT NULL
  LIMIT 1;
 
--- name: CreateReadyRuntimeCheckpointForRunWait :one
+-- name: CreateReadyRunCheckpointForRunWait :one
 WITH wait_scope AS (
     SELECT run_waits.*,
            waits.expires_at AS wait_expires_at,
@@ -139,7 +139,7 @@ WITH wait_scope AS (
        AND run_checkpoints.project_id = run_waits.project_id
        AND run_checkpoints.environment_id = run_waits.environment_id
        AND run_checkpoints.run_id = run_waits.run_id
-       AND run_checkpoints.id = run_waits.runtime_checkpoint_id
+       AND run_checkpoints.id = run_waits.run_checkpoint_id
        AND run_checkpoints.state = 'creating'
        AND run_checkpoints.owner_runtime_instance_id = run_waits.owner_runtime_instance_id
        AND run_checkpoints.owner_runtime_epoch = run_waits.owner_runtime_epoch
@@ -160,7 +160,7 @@ WITH wait_scope AS (
        AND worker_commands.runtime_instance_id = run_waits.owner_runtime_instance_id
        AND worker_commands.runtime_epoch = run_waits.owner_runtime_epoch
        AND worker_commands.run_state_version = run_waits.owner_run_state_version
-       AND worker_commands.kind = 'runtime_checkpoint_wait'
+       AND worker_commands.kind = 'run_checkpoint_wait'
        AND worker_commands.id = sqlc.arg(worker_command_id)
        AND worker_commands.accepted_at IS NOT NULL
        AND worker_commands.acknowledged_at IS NULL
@@ -202,7 +202,7 @@ WITH wait_scope AS (
        AND run_waits.environment_id = sqlc.arg(environment_id)
        AND run_waits.id = sqlc.arg(run_wait_id)
        AND run_waits.run_id = sqlc.arg(run_id)
-       AND run_waits.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
+       AND run_waits.run_checkpoint_id = sqlc.arg(run_checkpoint_id)
        AND run_waits.state = 'checkpointing'
        AND runs.status = 'running'
        AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
@@ -269,7 +269,7 @@ created_checkpoint AS (
        AND run_checkpoints.project_id = wait_scope.project_id
        AND run_checkpoints.environment_id = wait_scope.environment_id
        AND run_checkpoints.run_id = wait_scope.run_id
-       AND run_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
+       AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
        AND run_checkpoints.state = 'creating'
        AND run_checkpoints.owner_runtime_instance_id = wait_scope.owner_runtime_instance_id
        AND run_checkpoints.owner_runtime_epoch = wait_scope.owner_runtime_epoch
@@ -296,7 +296,7 @@ created_checkpoint AS (
 updated_wait AS (
     UPDATE run_waits
        SET state = 'checkpointed_waiting',
-           runtime_checkpoint_id = created_checkpoint.id,
+           run_checkpoint_id = created_checkpoint.id,
            workspace_version_id = created_checkpoint.base_workspace_version_id,
            active_elapsed_ms_at_park = LEAST(
                wait_scope.max_active_duration_ms,
@@ -377,7 +377,7 @@ parked_run AS (
        SET status = 'waiting',
            execution_status = 'waiting',
            current_run_lease_id = NULL,
-	           latest_runtime_checkpoint_id = created_checkpoint.id,
+	           latest_run_checkpoint_id = created_checkpoint.id,
 	           active_elapsed_ms = updated_wait.active_elapsed_ms_at_park,
 	           active_started_at = NULL,
 	           dispatch_generation = runs.dispatch_generation + 1,
@@ -393,10 +393,10 @@ parked_run AS (
               wait_scope.current_run_lease_id AS source_run_lease_id,
               wait_scope.owner_worker_instance_id AS source_worker_instance_id,
               wait_scope.owner_runtime_instance_id AS source_runtime_instance_id,
-              created_checkpoint.id AS source_runtime_checkpoint_id
+              created_checkpoint.id AS source_run_checkpoint_id
 ),
 parked_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, worker_instance_id, runtime_instance_id, runtime_checkpoint_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_lease_id, worker_instance_id, runtime_instance_id, run_checkpoint_id, previous_version, transition, reason)
     SELECT parked_run.org_id,
            parked_run.worker_group_id,
            parked_run.id,
@@ -407,10 +407,10 @@ parked_snapshot AS (
            parked_run.source_run_lease_id,
            parked_run.source_worker_instance_id,
            parked_run.source_runtime_instance_id,
-           parked_run.source_runtime_checkpoint_id,
+           parked_run.source_run_checkpoint_id,
            parked_run.state_version - 1,
            'run.waiting',
-           jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id)
+           jsonb_build_object('run_checkpoint_id', parked_run.source_run_checkpoint_id)
       FROM parked_run
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
 ),
@@ -441,7 +441,7 @@ parked_event AS (
            COALESCE(NULLIF('control', ''), 'control'),
            'run.waiting',
            COALESCE('run.waiting', ''),
-           COALESCE(jsonb_build_object('runtime_checkpoint_id', parked_run.source_runtime_checkpoint_id), '{}'::jsonb),
+           COALESCE(jsonb_build_object('run_checkpoint_id', parked_run.source_run_checkpoint_id), '{}'::jsonb),
            COALESCE(NULLIF('internal', ''), 'internal'),
            parked_run.state_version,
            now()
@@ -464,14 +464,14 @@ SELECT created_checkpoint.*
 	  JOIN parked_event ON true
 	  JOIN parked_marker ON true;
 
--- name: CreateRuntimeCheckpointArtifact :one
+-- name: CreateRunCheckpointArtifact :one
 INSERT INTO run_checkpoint_artifacts (
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     run_id,
-    runtime_checkpoint_id,
+    run_checkpoint_id,
     role,
     ordinal,
     artifact_id,
@@ -487,7 +487,7 @@ SELECT run_checkpoints.org_id,
        run_checkpoints.environment_id,
        run_checkpoints.run_id,
        run_checkpoints.id,
-       sqlc.arg(role)::runtime_checkpoint_artifact_role,
+       sqlc.arg(role)::run_checkpoint_artifact_role,
        sqlc.arg(ordinal)::int,
        artifacts.id,
        artifacts.size_bytes,
@@ -505,10 +505,10 @@ SELECT run_checkpoints.org_id,
    AND run_checkpoints.project_id = sqlc.arg(project_id)
    AND run_checkpoints.environment_id = sqlc.arg(environment_id)
    AND run_checkpoints.run_id = sqlc.arg(run_id)
-   AND run_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
+   AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
 RETURNING *;
 
--- name: FailRuntimeCheckpointAttempt :one
+-- name: FailRunCheckpointAttempt :one
 WITH wait_scope AS MATERIALIZED (
     SELECT run_waits.*
       FROM run_waits
@@ -518,8 +518,8 @@ WITH wait_scope AS MATERIALIZED (
        AND run_checkpoints.project_id = run_waits.project_id
        AND run_checkpoints.environment_id = run_waits.environment_id
        AND run_checkpoints.run_id = run_waits.run_id
-       AND run_checkpoints.id = run_waits.runtime_checkpoint_id
-       AND run_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
+       AND run_checkpoints.id = run_waits.run_checkpoint_id
+       AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
        AND run_checkpoints.state = 'creating'
        AND run_checkpoints.owner_runtime_instance_id = run_waits.owner_runtime_instance_id
        AND run_checkpoints.owner_runtime_epoch = run_waits.owner_runtime_epoch
@@ -551,7 +551,7 @@ WITH wait_scope AS MATERIALIZED (
        AND worker_commands.runtime_instance_id = run_waits.owner_runtime_instance_id
        AND worker_commands.runtime_epoch = run_waits.owner_runtime_epoch
        AND worker_commands.run_state_version = run_waits.owner_run_state_version
-       AND worker_commands.kind = 'runtime_checkpoint_wait'
+       AND worker_commands.kind = 'run_checkpoint_wait'
        AND worker_commands.id = sqlc.arg(worker_command_id)
        AND worker_commands.accepted_at IS NOT NULL
        AND worker_commands.acknowledged_at IS NULL
@@ -575,14 +575,14 @@ WITH wait_scope AS MATERIALIZED (
 invalidated_checkpoint AS (
     UPDATE run_checkpoints
        SET state = 'invalid',
-           error_message = COALESCE(NULLIF(sqlc.arg(error_message)::text, ''), 'runtime checkpoint failed'),
+           error_message = COALESCE(NULLIF(sqlc.arg(error_message)::text, ''), 'run checkpoint failed'),
            invalidated_at = COALESCE(run_checkpoints.invalidated_at, now())
       FROM wait_scope
      WHERE run_checkpoints.org_id = wait_scope.org_id
        AND run_checkpoints.project_id = wait_scope.project_id
        AND run_checkpoints.environment_id = wait_scope.environment_id
        AND run_checkpoints.run_id = wait_scope.run_id
-       AND run_checkpoints.id = sqlc.arg(runtime_checkpoint_id)
+       AND run_checkpoints.id = sqlc.arg(run_checkpoint_id)
        AND run_checkpoints.state = 'creating'
     RETURNING run_checkpoints.id
 ),
@@ -606,9 +606,9 @@ waiting_runtime_instance AS (
 updated_wait AS (
     UPDATE run_waits
        SET state = 'hot_waiting',
-           runtime_checkpoint_id = NULL,
-           runtime_checkpoint_started_at = NULL,
-           runtime_checkpoint_due_at = now() + interval '5 seconds',
+           run_checkpoint_id = NULL,
+           run_checkpoint_started_at = NULL,
+           run_checkpoint_due_at = now() + interval '5 seconds',
            updated_at = now()
       FROM wait_scope, invalidated_checkpoint, waiting_runtime_instance
      WHERE run_waits.org_id = wait_scope.org_id

@@ -266,7 +266,7 @@ WITH expired AS (
            run_leases.span_id AS source_span_id,
            run_leases.parent_span_id AS source_parent_span_id,
            run_leases.traceparent AS source_traceparent,
-           run_leases.restore_runtime_checkpoint_id AS source_restore_runtime_checkpoint_id
+           run_leases.restore_run_checkpoint_id AS source_restore_run_checkpoint_id
       FROM runs
       JOIN run_leases
         ON run_leases.org_id = runs.org_id
@@ -381,7 +381,7 @@ failed_runs AS (
       LEFT JOIN retry_plan ON retry_plan.run_id = expired.id
      WHERE runs.org_id = expired.org_id
        AND runs.id = expired.id
-    RETURNING runs.*, expired.source_run_lease_id, expired.source_worker_instance_id, expired.source_attempt_number, expired.source_trace_id, expired.source_span_id, expired.source_parent_span_id, expired.source_traceparent, expired.source_restore_runtime_checkpoint_id
+    RETURNING runs.*, expired.source_run_lease_id, expired.source_worker_instance_id, expired.source_attempt_number, expired.source_trace_id, expired.source_span_id, expired.source_parent_span_id, expired.source_traceparent, expired.source_restore_run_checkpoint_id
 ),
 terminal_session_runs AS (
     UPDATE session_runs
@@ -465,12 +465,12 @@ failed_run_checkpoint_restores AS (
      WHERE run_checkpoint_restores.org_id = failed_runs.org_id
        AND run_checkpoint_restores.run_id = failed_runs.id
        AND run_checkpoint_restores.run_lease_id = failed_runs.source_run_lease_id
-       AND run_checkpoint_restores.runtime_checkpoint_id = failed_runs.source_restore_runtime_checkpoint_id
+       AND run_checkpoint_restores.run_checkpoint_id = failed_runs.source_restore_run_checkpoint_id
        AND run_checkpoint_restores.status = 'restoring'
     RETURNING run_checkpoint_restores.id
 ),
 failed_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, worker_instance_id, runtime_checkpoint_id, previous_version, transition, reason, error)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, worker_instance_id, run_checkpoint_id, previous_version, transition, reason, error)
     SELECT failed_runs.org_id,
            failed_runs.worker_group_id,
            failed_runs.id,
@@ -481,7 +481,7 @@ failed_snapshot AS (
            failed_runs.source_attempt_number,
            failed_runs.source_run_lease_id,
            failed_runs.source_worker_instance_id,
-           failed_runs.source_restore_runtime_checkpoint_id,
+           failed_runs.source_restore_run_checkpoint_id,
            CASE WHEN retry_plan.run_id IS NOT NULL THEN failed_runs.state_version - 2 ELSE failed_runs.state_version - 1 END,
            effective_expiry.terminal_event_kind,
            effective_expiry.terminal_event_payload,
@@ -733,7 +733,7 @@ candidate AS MATERIALIZED (
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
        AND (
-           runs.latest_runtime_checkpoint_id IS NULL
+           runs.latest_run_checkpoint_id IS NULL
            OR EXISTS (
                SELECT 1
                  FROM run_checkpoints
@@ -742,7 +742,7 @@ candidate AS MATERIALIZED (
                   AND run_checkpoints.project_id = runs.project_id
                   AND run_checkpoints.environment_id = runs.environment_id
                   AND run_checkpoints.run_id = runs.id
-                  AND run_checkpoints.id = runs.latest_runtime_checkpoint_id
+                  AND run_checkpoints.id = runs.latest_run_checkpoint_id
                   AND run_checkpoints.state = 'ready'
                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
                   AND EXISTS (
@@ -857,7 +857,7 @@ leased_run_lease AS (
         span_id,
         parent_span_id,
         traceparent,
-        restore_runtime_checkpoint_id
+        restore_run_checkpoint_id
     )
     SELECT sqlc.arg(run_lease_id),
            concurrency_guard.org_id,
@@ -882,7 +882,7 @@ leased_run_lease AS (
            sqlc.arg(run_lease_span_id),
            concurrency_guard.root_span_id,
            '00-' || concurrency_guard.trace_id || '-' || sqlc.arg(run_lease_span_id)::text || '-01',
-           concurrency_guard.latest_runtime_checkpoint_id
+           concurrency_guard.latest_run_checkpoint_id
       FROM concurrency_guard
       JOIN workspace_lease_guard ON true
     RETURNING *
@@ -919,14 +919,14 @@ leased_snapshot AS (
       FROM updated, leased_run_lease
     RETURNING run_state_snapshots.run_id
 ),
-runtime_checkpoint_restore AS (
+run_checkpoint_restore AS (
     INSERT INTO run_checkpoint_restores (
         org_id,
         worker_group_id,
         project_id,
         environment_id,
         run_id,
-        runtime_checkpoint_id,
+        run_checkpoint_id,
         run_wait_id,
         run_lease_id,
         worker_instance_id
@@ -936,7 +936,7 @@ runtime_checkpoint_restore AS (
            leased_run_lease.project_id,
            leased_run_lease.environment_id,
            leased_run_lease.run_id,
-           leased_run_lease.restore_runtime_checkpoint_id,
+           leased_run_lease.restore_run_checkpoint_id,
            run_checkpoints.owner_run_wait_id,
            leased_run_lease.id,
            leased_run_lease.worker_instance_id
@@ -947,15 +947,15 @@ runtime_checkpoint_restore AS (
        AND run_checkpoints.project_id = leased_run_lease.project_id
        AND run_checkpoints.environment_id = leased_run_lease.environment_id
        AND run_checkpoints.run_id = leased_run_lease.run_id
-       AND run_checkpoints.id = leased_run_lease.restore_runtime_checkpoint_id
+       AND run_checkpoints.id = leased_run_lease.restore_run_checkpoint_id
        AND run_checkpoints.state = 'ready'
        AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
-     WHERE leased_run_lease.restore_runtime_checkpoint_id IS NOT NULL
+     WHERE leased_run_lease.restore_run_checkpoint_id IS NOT NULL
     RETURNING id
 ),
-runtime_checkpoint_restore_cleanup AS (
+run_checkpoint_restore_cleanup AS (
     SELECT count(*) AS restore_count
-      FROM runtime_checkpoint_restore
+      FROM run_checkpoint_restore
 )
 SELECT
     updated.id,
@@ -1017,7 +1017,7 @@ SELECT
     leased_run_lease.trace_id AS run_lease_trace_id,
     leased_run_lease.span_id AS run_lease_span_id,
     leased_run_lease.traceparent AS run_lease_traceparent,
-    leased_run_lease.restore_runtime_checkpoint_id AS run_lease_restore_runtime_checkpoint_id,
+    leased_run_lease.restore_run_checkpoint_id AS run_lease_restore_run_checkpoint_id,
     updated.active_elapsed_ms AS active_duration_ms,
     workspaces.id AS workspace_id,
     workspace_write_lease.id AS workspace_lease_id,
@@ -1055,7 +1055,7 @@ FROM updated
 JOIN leased_run_lease ON true
 JOIN workspace_lease_guard ON true
 JOIN leased_snapshot ON true
-JOIN runtime_checkpoint_restore_cleanup ON runtime_checkpoint_restore_cleanup.restore_count >= 0
+JOIN run_checkpoint_restore_cleanup ON run_checkpoint_restore_cleanup.restore_count >= 0
 JOIN deployments ON deployments.org_id = updated.org_id
                 AND deployments.id = updated.deployment_id
 JOIN deployment_tasks ON deployment_tasks.org_id = updated.org_id
@@ -1301,7 +1301,7 @@ eligible AS MATERIALIZED (
            run_leases.span_id AS source_span_id,
            run_leases.parent_span_id AS source_parent_span_id,
            run_leases.traceparent AS source_traceparent,
-           run_leases.restore_runtime_checkpoint_id AS source_restore_runtime_checkpoint_id
+           run_leases.restore_run_checkpoint_id AS source_restore_run_checkpoint_id
       FROM runs
       JOIN run_leases
         ON run_leases.org_id = runs.org_id
@@ -1810,7 +1810,7 @@ completed_run_checkpoint_restore AS (
      WHERE run_checkpoint_restores.org_id = released.org_id
        AND run_checkpoint_restores.run_id = released.id
        AND run_checkpoint_restores.run_lease_id = released_run_lease.id
-       AND run_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
+       AND run_checkpoint_restores.run_checkpoint_id = released_run_lease.restore_run_checkpoint_id
        AND run_checkpoint_restores.status = 'restoring'
        AND effective_release.run_status = 'succeeded'
     RETURNING run_checkpoint_restores.id
@@ -1827,7 +1827,7 @@ failed_run_checkpoint_restore AS (
      WHERE run_checkpoint_restores.org_id = released.org_id
        AND run_checkpoint_restores.run_id = released.id
        AND run_checkpoint_restores.run_lease_id = released_run_lease.id
-       AND run_checkpoint_restores.runtime_checkpoint_id = released_run_lease.restore_runtime_checkpoint_id
+       AND run_checkpoint_restores.run_checkpoint_id = released_run_lease.restore_run_checkpoint_id
        AND run_checkpoint_restores.status = 'restoring'
        AND effective_release.run_status <> 'succeeded'
     RETURNING run_checkpoint_restores.id

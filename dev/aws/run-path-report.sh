@@ -124,7 +124,7 @@ SELECT 'run' AS section,
        runs.execution_status,
        runs.workspace_id,
        runs.workspace_mount_id,
-       runs.latest_runtime_checkpoint_id,
+       runs.latest_run_checkpoint_id,
        runs.created_at,
        runs.started_at,
        runs.finished_at,
@@ -148,16 +148,16 @@ SELECT 'wait' AS section,
        run_waits.owner_runtime_instance_id,
        run_waits.owner_worker_instance_id,
        run_waits.owner_runtime_instance_id IS NOT NULL AS had_runtime_owner,
-       run_waits.runtime_checkpoint_id IS NOT NULL AS has_runtime_checkpoint,
+       run_waits.run_checkpoint_id IS NOT NULL AS has_run_checkpoint,
        run_waits.hot_wait_started_at,
-       run_waits.runtime_checkpoint_due_at,
-       run_waits.runtime_checkpoint_started_at,
+       run_waits.run_checkpoint_due_at,
+       run_waits.run_checkpoint_started_at,
        waits.completed_at,
        run_waits.released_at,
        CASE
          WHEN run_waits.hot_wait_started_at IS NOT NULL
-          AND run_waits.runtime_checkpoint_started_at IS NOT NULL
-         THEN round(extract(epoch FROM run_waits.runtime_checkpoint_started_at - run_waits.hot_wait_started_at) * 1000)::bigint
+          AND run_waits.run_checkpoint_started_at IS NOT NULL
+         THEN round(extract(epoch FROM run_waits.run_checkpoint_started_at - run_waits.hot_wait_started_at) * 1000)::bigint
        END AS live_to_checkpoint_start_ms,
        CASE
          WHEN waits.completed_at IS NOT NULL
@@ -232,7 +232,7 @@ WITH target AS MATERIALIZED (
 )
 SELECT 'checkpoint_restore' AS section,
        run_checkpoint_restores.id,
-       run_checkpoint_restores.runtime_checkpoint_id,
+       run_checkpoint_restores.run_checkpoint_id,
        run_checkpoint_restores.run_wait_id,
        run_checkpoint_restores.run_lease_id,
        run_checkpoint_restores.worker_instance_id,
@@ -262,8 +262,8 @@ WITH target AS MATERIALIZED (
       FROM runs
      WHERE id = '${run_id}'::uuid
 ),
-runtime_checkpoint_phases AS (
-    SELECT run_checkpoints.id AS runtime_checkpoint_id,
+run_checkpoint_phases AS (
+    SELECT run_checkpoints.id AS run_checkpoint_id,
            (phase.ordinality - 1)::int AS ordinal,
            phase.value->>'name' AS name,
            phase.value->>'role' AS role,
@@ -312,33 +312,33 @@ runtime_checkpoint_phases AS (
       ) WITH ORDINALITY AS phase(value, ordinality)
 )
 SELECT 'checkpoint_phase' AS section,
-       runtime_checkpoint_phases.runtime_checkpoint_id,
-       runtime_checkpoint_phases.ordinal,
-       runtime_checkpoint_phases.name,
-       runtime_checkpoint_phases.role,
-       runtime_checkpoint_phases.media_type,
-       runtime_checkpoint_phases.duration_ms,
-       runtime_checkpoint_phases.error_class,
-       runtime_checkpoint_phases.filepack_logical_bytes,
-       runtime_checkpoint_phases.filepack_allocated_bytes,
-       runtime_checkpoint_phases.filepack_sparse_supported,
-       runtime_checkpoint_phases.filepack_sparse_data_ranges,
-       runtime_checkpoint_phases.filepack_sparse_data_bytes,
-       runtime_checkpoint_phases.filepack_zero_chunks_skipped,
-       runtime_checkpoint_phases.filepack_encoded_chunks,
-       runtime_checkpoint_phases.filepack_compressed_bytes,
-       runtime_checkpoint_phases.filepack_unpack_written_bytes
-  FROM runtime_checkpoint_phases
- ORDER BY runtime_checkpoint_phases.runtime_checkpoint_id,
-          runtime_checkpoint_phases.ordinal;
+       run_checkpoint_phases.run_checkpoint_id,
+       run_checkpoint_phases.ordinal,
+       run_checkpoint_phases.name,
+       run_checkpoint_phases.role,
+       run_checkpoint_phases.media_type,
+       run_checkpoint_phases.duration_ms,
+       run_checkpoint_phases.error_class,
+       run_checkpoint_phases.filepack_logical_bytes,
+       run_checkpoint_phases.filepack_allocated_bytes,
+       run_checkpoint_phases.filepack_sparse_supported,
+       run_checkpoint_phases.filepack_sparse_data_ranges,
+       run_checkpoint_phases.filepack_sparse_data_bytes,
+       run_checkpoint_phases.filepack_zero_chunks_skipped,
+       run_checkpoint_phases.filepack_encoded_chunks,
+       run_checkpoint_phases.filepack_compressed_bytes,
+       run_checkpoint_phases.filepack_unpack_written_bytes
+  FROM run_checkpoint_phases
+ ORDER BY run_checkpoint_phases.run_checkpoint_id,
+          run_checkpoint_phases.ordinal;
 
 WITH target AS MATERIALIZED (
     SELECT *
       FROM runs
      WHERE id = '${run_id}'::uuid
 ),
-runtime_checkpoint_restore_phases AS (
-    SELECT run_checkpoint_restores.id AS runtime_checkpoint_restore_id,
+run_checkpoint_restore_phases AS (
+    SELECT run_checkpoint_restores.id AS run_checkpoint_restore_id,
            (phase.ordinality - 1)::int AS ordinal,
            phase.value->>'name' AS name,
            phase.value->>'role' AS role,
@@ -387,25 +387,25 @@ runtime_checkpoint_restore_phases AS (
       ) WITH ORDINALITY AS phase(value, ordinality)
 )
 SELECT 'checkpoint_restore_phase' AS section,
-       runtime_checkpoint_restore_phases.runtime_checkpoint_restore_id,
-       runtime_checkpoint_restore_phases.ordinal,
-       runtime_checkpoint_restore_phases.name,
-       runtime_checkpoint_restore_phases.role,
-       runtime_checkpoint_restore_phases.media_type,
-       runtime_checkpoint_restore_phases.duration_ms,
-       runtime_checkpoint_restore_phases.error_class,
-       runtime_checkpoint_restore_phases.filepack_logical_bytes,
-       runtime_checkpoint_restore_phases.filepack_allocated_bytes,
-       runtime_checkpoint_restore_phases.filepack_sparse_supported,
-       runtime_checkpoint_restore_phases.filepack_sparse_data_ranges,
-       runtime_checkpoint_restore_phases.filepack_sparse_data_bytes,
-       runtime_checkpoint_restore_phases.filepack_zero_chunks_skipped,
-       runtime_checkpoint_restore_phases.filepack_encoded_chunks,
-       runtime_checkpoint_restore_phases.filepack_compressed_bytes,
-       runtime_checkpoint_restore_phases.filepack_unpack_written_bytes
-  FROM runtime_checkpoint_restore_phases
- ORDER BY runtime_checkpoint_restore_phases.runtime_checkpoint_restore_id,
-          runtime_checkpoint_restore_phases.ordinal;
+       run_checkpoint_restore_phases.run_checkpoint_restore_id,
+       run_checkpoint_restore_phases.ordinal,
+       run_checkpoint_restore_phases.name,
+       run_checkpoint_restore_phases.role,
+       run_checkpoint_restore_phases.media_type,
+       run_checkpoint_restore_phases.duration_ms,
+       run_checkpoint_restore_phases.error_class,
+       run_checkpoint_restore_phases.filepack_logical_bytes,
+       run_checkpoint_restore_phases.filepack_allocated_bytes,
+       run_checkpoint_restore_phases.filepack_sparse_supported,
+       run_checkpoint_restore_phases.filepack_sparse_data_ranges,
+       run_checkpoint_restore_phases.filepack_sparse_data_bytes,
+       run_checkpoint_restore_phases.filepack_zero_chunks_skipped,
+       run_checkpoint_restore_phases.filepack_encoded_chunks,
+       run_checkpoint_restore_phases.filepack_compressed_bytes,
+       run_checkpoint_restore_phases.filepack_unpack_written_bytes
+  FROM run_checkpoint_restore_phases
+ ORDER BY run_checkpoint_restore_phases.run_checkpoint_restore_id,
+          run_checkpoint_restore_phases.ordinal;
 
 WITH target AS MATERIALIZED (
     SELECT *
@@ -413,7 +413,7 @@ WITH target AS MATERIALIZED (
      WHERE id = '${run_id}'::uuid
 )
 SELECT 'checkpoint_artifact' AS section,
-       run_checkpoint_artifacts.runtime_checkpoint_id,
+       run_checkpoint_artifacts.run_checkpoint_id,
        run_checkpoint_artifacts.role,
        run_checkpoint_artifacts.ordinal,
        run_checkpoint_artifacts.size_bytes,
@@ -426,7 +426,7 @@ SELECT 'checkpoint_artifact' AS section,
   JOIN run_checkpoint_artifacts
     ON run_checkpoint_artifacts.org_id = target.org_id
    AND run_checkpoint_artifacts.run_id = target.id
- ORDER BY run_checkpoint_artifacts.runtime_checkpoint_id,
+ ORDER BY run_checkpoint_artifacts.run_checkpoint_id,
           run_checkpoint_artifacts.role,
           run_checkpoint_artifacts.ordinal;
 
@@ -436,7 +436,7 @@ WITH target AS MATERIALIZED (
      WHERE id = '${run_id}'::uuid
 )
 SELECT 'checkpoint_artifact_summary' AS section,
-       run_checkpoint_artifacts.runtime_checkpoint_id,
+       run_checkpoint_artifacts.run_checkpoint_id,
        run_checkpoint_artifacts.role,
        count(*) AS artifact_count,
        sum(run_checkpoint_artifacts.size_bytes)::bigint AS total_size_bytes,
@@ -448,9 +448,9 @@ SELECT 'checkpoint_artifact_summary' AS section,
   JOIN run_checkpoint_artifacts
     ON run_checkpoint_artifacts.org_id = target.org_id
    AND run_checkpoint_artifacts.run_id = target.id
- GROUP BY run_checkpoint_artifacts.runtime_checkpoint_id,
+ GROUP BY run_checkpoint_artifacts.run_checkpoint_id,
           run_checkpoint_artifacts.role
- ORDER BY run_checkpoint_artifacts.runtime_checkpoint_id,
+ ORDER BY run_checkpoint_artifacts.run_checkpoint_id,
           run_checkpoint_artifacts.role;
 
 WITH target AS MATERIALIZED (
@@ -462,7 +462,7 @@ SELECT 'lease' AS section,
        run_leases.id,
        run_leases.status,
        run_leases.worker_instance_id,
-       run_leases.restore_runtime_checkpoint_id,
+       run_leases.restore_run_checkpoint_id,
        run_leases.leased_at,
        run_leases.started_at,
        run_leases.released_at,
@@ -636,21 +636,21 @@ evidence AS (
                   AND run_waits.run_id = target.id
                   AND run_waits.state = 'released'
                   AND run_waits.hot_wait_started_at IS NOT NULL
-                  AND run_waits.runtime_checkpoint_id IS NULL
+                  AND run_waits.run_checkpoint_id IS NULL
            ) AS has_resident_live_resume_evidence,
            EXISTS (
                SELECT 1
                  FROM run_waits
                 WHERE run_waits.org_id = target.org_id
                   AND run_waits.run_id = target.id
-                  AND run_waits.runtime_checkpoint_id IS NOT NULL
+                  AND run_waits.run_checkpoint_id IS NOT NULL
            ) AS has_checkpoint_wait_evidence,
            EXISTS (
                SELECT 1
                  FROM run_leases
                 WHERE run_leases.org_id = target.org_id
                   AND run_leases.run_id = target.id
-                  AND run_leases.restore_runtime_checkpoint_id IS NOT NULL
+                  AND run_leases.restore_run_checkpoint_id IS NOT NULL
            ) AS has_checkpoint_restore_lease_evidence,
            EXISTS (
                SELECT 1

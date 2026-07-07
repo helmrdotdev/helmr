@@ -492,7 +492,7 @@ func TestWorkerCreateTokenReturnsConflictWhenLeaseIsNotActive(t *testing.T) {
 
 func TestWorkerMarkCheckpointFailedScopesRunWaitToLease(t *testing.T) {
 	store := newRunWaitControlStore()
-	store.failRuntimeCheckpointAttemptErr = pgx.ErrNoRows
+	store.failRunCheckpointAttemptErr = pgx.ErrNoRows
 	workerID := pgvalue.MustUUIDValue(store.scope.WorkerInstanceID)
 	runID := pgvalue.MustUUIDValue(store.scope.RunID)
 	runLeaseID := pgvalue.MustUUIDValue(store.scope.CurrentRunLeaseID)
@@ -526,33 +526,33 @@ func TestWorkerMarkCheckpointFailedScopesRunWaitToLease(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d body = %s, want 409", rec.Code, rec.Body.String())
 	}
-	if store.failRuntimeCheckpointAttemptCalls != 1 {
-		t.Fatalf("fail checkpoint attempt calls = %d, want 1", store.failRuntimeCheckpointAttemptCalls)
+	if store.failRunCheckpointAttemptCalls != 1 {
+		t.Fatalf("fail checkpoint attempt calls = %d, want 1", store.failRunCheckpointAttemptCalls)
 	}
-	if pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunID) != runID {
-		t.Fatalf("fail checkpoint attempt run id = %s, want %s", pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunID), runID)
+	if pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunID) != runID {
+		t.Fatalf("fail checkpoint attempt run id = %s, want %s", pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunID), runID)
 	}
-	if pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunWaitID) != runWaitID {
-		t.Fatalf("fail checkpoint attempt run wait id = %s, want %s", pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunWaitID), runWaitID)
+	if pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunWaitID) != runWaitID {
+		t.Fatalf("fail checkpoint attempt run wait id = %s, want %s", pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunWaitID), runWaitID)
 	}
-	if pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RuntimeCheckpointID) != checkpointID {
-		t.Fatalf("fail checkpoint attempt checkpoint id = %s, want %s", pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RuntimeCheckpointID), checkpointID)
+	if pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunCheckpointID) != checkpointID {
+		t.Fatalf("fail checkpoint attempt checkpoint id = %s, want %s", pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunCheckpointID), checkpointID)
 	}
-	if pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunLeaseID) != runLeaseID {
-		t.Fatalf("fail checkpoint attempt run lease id = %s, want %s", pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.RunLeaseID), runLeaseID)
+	if pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunLeaseID) != runLeaseID {
+		t.Fatalf("fail checkpoint attempt run lease id = %s, want %s", pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.RunLeaseID), runLeaseID)
 	}
-	if pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.WorkerInstanceID) != workerID {
-		t.Fatalf("fail checkpoint attempt worker id = %s, want %s", pgvalue.MustUUIDValue(store.failRuntimeCheckpointAttemptParams.WorkerInstanceID), workerID)
+	if pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.WorkerInstanceID) != workerID {
+		t.Fatalf("fail checkpoint attempt worker id = %s, want %s", pgvalue.MustUUIDValue(store.failRunCheckpointAttemptParams.WorkerInstanceID), workerID)
 	}
-	if store.failRuntimeCheckpointAttemptParams.ErrorMessage != "checkpoint failed" {
-		t.Fatalf("fail checkpoint attempt error = %q, want checkpoint failed", store.failRuntimeCheckpointAttemptParams.ErrorMessage)
+	if store.failRunCheckpointAttemptParams.ErrorMessage != "checkpoint failed" {
+		t.Fatalf("fail checkpoint attempt error = %q, want checkpoint failed", store.failRunCheckpointAttemptParams.ErrorMessage)
 	}
 	if store.ackWorkerCommandForRunWaitCalls != 0 {
 		t.Fatalf("ack worker command calls = %d, want 0 after failed scope check", store.ackWorkerCommandForRunWaitCalls)
 	}
 }
 
-func TestWorkerClaimRuntimeCheckpointWaitTreatsAdvancedWaitAsStaleWithoutActiveLease(t *testing.T) {
+func TestWorkerClaimRunCheckpointWaitTreatsAdvancedWaitAsStaleWithoutActiveLease(t *testing.T) {
 	store := newRunWaitControlStore()
 	workerID := pgvalue.MustUUIDValue(store.scope.WorkerInstanceID)
 	runID := pgvalue.MustUUIDValue(store.scope.RunID)
@@ -560,19 +560,19 @@ func TestWorkerClaimRuntimeCheckpointWaitTreatsAdvancedWaitAsStaleWithoutActiveL
 	runWaitID := uuid.Must(uuid.NewV7())
 	store.scopeErr = pgx.ErrNoRows
 	store.runWaitByRun = db.RunWait{
-		ID:                         pgvalue.UUID(runWaitID),
-		OrgID:                      store.scope.OrgID,
-		ProjectID:                  store.scope.ProjectID,
-		EnvironmentID:              store.scope.EnvironmentID,
-		RunID:                      store.scope.RunID,
-		State:                      db.RunWaitStateCheckpointedWaiting,
-		OwnerRunLeaseID:            store.scope.CurrentRunLeaseID,
-		OwnerWorkerInstanceID:      store.scope.WorkerInstanceID,
-		OwnerRunStateVersion:       pgtype.Int8{Int64: 7, Valid: true},
-		RuntimeCheckpointID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		WorkspaceVersionID:         store.scope.WorkspaceCurrentVersionID,
-		ActiveElapsedMsAtPark:      pgtype.Int8{Int64: 100, Valid: true},
-		RuntimeCheckpointStartedAt: pgvalue.Timestamptz(time.Now()),
+		ID:                     pgvalue.UUID(runWaitID),
+		OrgID:                  store.scope.OrgID,
+		ProjectID:              store.scope.ProjectID,
+		EnvironmentID:          store.scope.EnvironmentID,
+		RunID:                  store.scope.RunID,
+		State:                  db.RunWaitStateCheckpointedWaiting,
+		OwnerRunLeaseID:        store.scope.CurrentRunLeaseID,
+		OwnerWorkerInstanceID:  store.scope.WorkerInstanceID,
+		OwnerRunStateVersion:   pgtype.Int8{Int64: 7, Valid: true},
+		RunCheckpointID:        pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkspaceVersionID:     store.scope.WorkspaceCurrentVersionID,
+		ActiveElapsedMsAtPark:  pgtype.Int8{Int64: 100, Valid: true},
+		RunCheckpointStartedAt: pgvalue.Timestamptz(time.Now()),
 	}
 	server := &Server{db: store}
 	body, err := json.Marshal(api.WorkerCheckpointClaimRequest{
@@ -594,7 +594,7 @@ func TestWorkerClaimRuntimeCheckpointWaitTreatsAdvancedWaitAsStaleWithoutActiveL
 	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, workerActor{WorkerInstanceID: workerID}))
 	rec := httptest.NewRecorder()
 
-	server.workerClaimRuntimeCheckpointWait(rec, req)
+	server.workerClaimRunCheckpointWait(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body = %s, want 200", rec.Code, rec.Body.String())
@@ -657,30 +657,30 @@ type runWaitControlStore struct {
 	token  db.Token
 	stream db.Stream
 
-	scopeErr                              error
-	runWaitByRun                          db.RunWait
-	runWaitByRunErr                       error
-	tokenErr                              error
-	streamErr                             error
-	records                               []db.StreamRecord
-	txStore                               *runWaitControlStore
-	beginCalls                            int
-	createHotRunWaitCalls                 int
-	createHotRunWaitParams                db.CreateHotRunWaitParams
-	setRunWaitWorkspaceVersionCalls       int
-	failRuntimeCheckpointAttemptCalls     int
-	failRuntimeCheckpointAttemptParams    db.FailRuntimeCheckpointAttemptParams
-	failRuntimeCheckpointAttemptErr       error
-	ackWorkerCommandForRunWaitCalls       int
-	ackWorkerCommandForRunWaitParams      db.AcknowledgeWorkerCommandForRunWaitParams
-	ackWorkerCommandForRunWaitErr         error
-	commitCalls                           int
-	rollbackCalls                         int
-	createReadyCheckpointCalls            int
-	createReadyCheckpointParams           db.CreateReadyRuntimeCheckpointForRunWaitParams
-	createArtifactParams                  []db.CreateArtifactParams
-	createRuntimeCheckpointArtifactParams []db.CreateRuntimeCheckpointArtifactParams
-	acknowledgedReadyCheckpoint           bool
+	scopeErr                          error
+	runWaitByRun                      db.RunWait
+	runWaitByRunErr                   error
+	tokenErr                          error
+	streamErr                         error
+	records                           []db.StreamRecord
+	txStore                           *runWaitControlStore
+	beginCalls                        int
+	createHotRunWaitCalls             int
+	createHotRunWaitParams            db.CreateHotRunWaitParams
+	setRunWaitWorkspaceVersionCalls   int
+	failRunCheckpointAttemptCalls     int
+	failRunCheckpointAttemptParams    db.FailRunCheckpointAttemptParams
+	failRunCheckpointAttemptErr       error
+	ackWorkerCommandForRunWaitCalls   int
+	ackWorkerCommandForRunWaitParams  db.AcknowledgeWorkerCommandForRunWaitParams
+	ackWorkerCommandForRunWaitErr     error
+	commitCalls                       int
+	rollbackCalls                     int
+	createReadyCheckpointCalls        int
+	createReadyCheckpointParams       db.CreateReadyRunCheckpointForRunWaitParams
+	createArtifactParams              []db.CreateArtifactParams
+	createRunCheckpointArtifactParams []db.CreateRunCheckpointArtifactParams
+	acknowledgedReadyCheckpoint       bool
 }
 
 func newRunWaitControlStore() *runWaitControlStore {
@@ -791,13 +791,13 @@ func (s *runWaitControlStore) SetRunWaitWorkspaceVersion(_ context.Context, arg 
 	}, nil
 }
 
-func (s *runWaitControlStore) FailRuntimeCheckpointAttempt(_ context.Context, arg db.FailRuntimeCheckpointAttemptParams) (db.FailRuntimeCheckpointAttemptRow, error) {
-	s.failRuntimeCheckpointAttemptCalls++
-	s.failRuntimeCheckpointAttemptParams = arg
-	if s.failRuntimeCheckpointAttemptErr != nil {
-		return db.FailRuntimeCheckpointAttemptRow{}, s.failRuntimeCheckpointAttemptErr
+func (s *runWaitControlStore) FailRunCheckpointAttempt(_ context.Context, arg db.FailRunCheckpointAttemptParams) (db.FailRunCheckpointAttemptRow, error) {
+	s.failRunCheckpointAttemptCalls++
+	s.failRunCheckpointAttemptParams = arg
+	if s.failRunCheckpointAttemptErr != nil {
+		return db.FailRunCheckpointAttemptRow{}, s.failRunCheckpointAttemptErr
 	}
-	return db.FailRuntimeCheckpointAttemptRow{
+	return db.FailRunCheckpointAttemptRow{
 		ID:            arg.RunWaitID,
 		OrgID:         arg.OrgID,
 		ProjectID:     arg.ProjectID,
@@ -825,11 +825,11 @@ func (s *runWaitControlStore) AcknowledgeWorkerCommandForRunWait(_ context.Conte
 	}, nil
 }
 
-func (s *runWaitControlStore) GetAcknowledgedReadyRuntimeCheckpointForRunWait(_ context.Context, arg db.GetAcknowledgedReadyRuntimeCheckpointForRunWaitParams) (pgtype.UUID, error) {
+func (s *runWaitControlStore) GetAcknowledgedReadyRunCheckpointForRunWait(_ context.Context, arg db.GetAcknowledgedReadyRunCheckpointForRunWaitParams) (pgtype.UUID, error) {
 	if !s.acknowledgedReadyCheckpoint {
 		return pgtype.UUID{}, pgx.ErrNoRows
 	}
-	return arg.RuntimeCheckpointID, nil
+	return arg.RunCheckpointID, nil
 }
 
 func (s *runWaitControlStore) UpsertCasObject(_ context.Context, arg db.UpsertCasObjectParams) (db.CasObject, error) {
@@ -855,11 +855,11 @@ func (s *runWaitControlStore) CreateArtifact(_ context.Context, arg db.CreateArt
 	}, nil
 }
 
-func (s *runWaitControlStore) CreateReadyRuntimeCheckpointForRunWait(_ context.Context, arg db.CreateReadyRuntimeCheckpointForRunWaitParams) (db.CreateReadyRuntimeCheckpointForRunWaitRow, error) {
+func (s *runWaitControlStore) CreateReadyRunCheckpointForRunWait(_ context.Context, arg db.CreateReadyRunCheckpointForRunWaitParams) (db.CreateReadyRunCheckpointForRunWaitRow, error) {
 	s.createReadyCheckpointCalls++
 	s.createReadyCheckpointParams = arg
-	return db.CreateReadyRuntimeCheckpointForRunWaitRow{
-		ID:            arg.RuntimeCheckpointID,
+	return db.CreateReadyRunCheckpointForRunWaitRow{
+		ID:            arg.RunCheckpointID,
 		OrgID:         arg.OrgID,
 		ProjectID:     arg.ProjectID,
 		EnvironmentID: arg.EnvironmentID,
@@ -868,8 +868,8 @@ func (s *runWaitControlStore) CreateReadyRuntimeCheckpointForRunWait(_ context.C
 	}, nil
 }
 
-func (s *runWaitControlStore) CreateRuntimeCheckpointArtifact(_ context.Context, arg db.CreateRuntimeCheckpointArtifactParams) (db.RunCheckpointArtifact, error) {
-	s.createRuntimeCheckpointArtifactParams = append(s.createRuntimeCheckpointArtifactParams, arg)
+func (s *runWaitControlStore) CreateRunCheckpointArtifact(_ context.Context, arg db.CreateRunCheckpointArtifactParams) (db.RunCheckpointArtifact, error) {
+	s.createRunCheckpointArtifactParams = append(s.createRunCheckpointArtifactParams, arg)
 	return db.RunCheckpointArtifact{}, nil
 }
 

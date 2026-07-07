@@ -79,7 +79,7 @@ inserted_run_wait AS (
         run_id,
         wait_id,
         state,
-        runtime_checkpoint_due_at,
+        run_checkpoint_due_at,
         hot_wait_started_at,
         owner_runtime_instance_id,
         owner_runtime_epoch,
@@ -206,7 +206,7 @@ updated_run_wait AS (
 SELECT *
   FROM updated_run_wait;
 
--- name: ClaimRuntimeCheckpointWait :one
+-- name: ClaimRunCheckpointWait :one
 WITH scope AS (
     SELECT run_waits.*,
            runs.workspace_id,
@@ -316,7 +316,7 @@ claimed_checkpoint AS (
         manifest,
         creation_expires_at
     )
-    SELECT sqlc.arg(runtime_checkpoint_id),
+    SELECT sqlc.arg(run_checkpoint_id),
            scope.org_id,
            scope.worker_group_id,
            scope.project_id,
@@ -344,7 +344,7 @@ claimed_checkpoint AS (
            scope.owner_worker_instance_id,
            scope.cni_profile,
            '{}'::jsonb,
-           scope.runtime_checkpoint_due_at + interval '5 minutes'
+           scope.run_checkpoint_due_at + interval '5 minutes'
       FROM scope
      WHERE scope.state = 'hot_waiting'
        AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
@@ -354,8 +354,8 @@ claimed_checkpoint AS (
 claimed_wait AS (
     UPDATE run_waits
        SET state = 'checkpointing',
-           runtime_checkpoint_started_at = COALESCE(run_waits.runtime_checkpoint_started_at, now()),
-           runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id),
+           run_checkpoint_started_at = COALESCE(run_waits.run_checkpoint_started_at, now()),
+           run_checkpoint_id = sqlc.arg(run_checkpoint_id),
            updated_at = now()
       FROM scope
      WHERE run_waits.org_id = scope.org_id
@@ -373,7 +373,7 @@ selected_wait AS (
       JOIN scope ON scope.org_id = run_waits.org_id
                 AND scope.id = run_waits.id
      WHERE scope.state = 'checkpointing'
-       AND run_waits.runtime_checkpoint_id IS NOT NULL
+       AND run_waits.run_checkpoint_id IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM claimed_wait)
 ),
 selected_checkpoint AS (
@@ -388,7 +388,7 @@ selected_checkpoint AS (
                 AND scope.run_id = run_checkpoints.run_id
       JOIN selected_wait ON selected_wait.org_id = scope.org_id
                         AND selected_wait.id = scope.id
-                        AND selected_wait.runtime_checkpoint_id = run_checkpoints.id
+                        AND selected_wait.run_checkpoint_id = run_checkpoints.id
      WHERE scope.state = 'checkpointing'
        AND run_checkpoints.state = 'creating'
        AND run_checkpoints.owner_runtime_instance_id = scope.owner_runtime_instance_id
@@ -421,7 +421,7 @@ checkpointing_runtime_instance AS (
        AND runtime_instances.state IN ('waiting_hot', 'checkpointing')
     RETURNING runtime_instances.id
 )
-SELECT selected_checkpoint.id AS runtime_checkpoint_id,
+SELECT selected_checkpoint.id AS run_checkpoint_id,
        scope.org_id,
        scope.project_id,
        scope.environment_id,
@@ -441,7 +441,7 @@ SELECT selected_checkpoint.id AS runtime_checkpoint_id,
   JOIN checkpointing_runtime_instance ON true
  LIMIT 1;
 
--- name: MarkRuntimeResumeWaitResumed :one
+-- name: MarkRunResumeWaitResumed :one
 WITH current_wait AS (
     SELECT run_waits.*
       FROM run_waits
@@ -452,7 +452,7 @@ WITH current_wait AS (
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.id = sqlc.arg(id)
        AND run_waits.run_id = sqlc.arg(run_id)
-       AND run_waits.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
+       AND run_waits.run_checkpoint_id = sqlc.arg(run_checkpoint_id)
        AND run_waits.state = 'resuming'
        AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
        AND runs.status = 'running'
@@ -480,7 +480,7 @@ updated_restore AS (
        AND run_checkpoint_restores.project_id = current_wait.project_id
        AND run_checkpoint_restores.environment_id = current_wait.environment_id
        AND run_checkpoint_restores.run_id = sqlc.arg(run_id)
-       AND run_checkpoint_restores.runtime_checkpoint_id = sqlc.arg(runtime_checkpoint_id)
+       AND run_checkpoint_restores.run_checkpoint_id = sqlc.arg(run_checkpoint_id)
        AND run_checkpoint_restores.run_wait_id = current_wait.id
        AND run_checkpoint_restores.run_lease_id = sqlc.arg(run_lease_id)
        AND run_checkpoint_restores.status = 'restoring'
@@ -519,8 +519,8 @@ WITH eligible_waits AS (
                               AND run_checkpoints.project_id = run_waits.project_id
                               AND run_checkpoints.environment_id = run_waits.environment_id
                               AND run_checkpoints.run_id = run_waits.run_id
-                              AND run_checkpoints.id = run_waits.runtime_checkpoint_id
-                              AND run_checkpoints.id = runs.latest_runtime_checkpoint_id
+                              AND run_checkpoints.id = run_waits.run_checkpoint_id
+                              AND run_checkpoints.id = runs.latest_run_checkpoint_id
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
@@ -529,7 +529,7 @@ WITH eligible_waits AS (
      WHERE run_waits.org_id = sqlc.arg(org_id)
        AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND run_waits.state = 'resuming'
-       AND run_waits.runtime_checkpoint_id IS NOT NULL
+       AND run_waits.run_checkpoint_id IS NOT NULL
        AND runs.status = 'waiting'
        AND runs.current_run_lease_id IS NULL
        AND run_checkpoints.state = 'ready'
@@ -567,10 +567,10 @@ updated_runs AS (
        AND runs.current_run_lease_id IS NULL
 	    RETURNING runs.*,
 	              eligible_waits.id AS source_run_wait_id,
-	              eligible_waits.runtime_checkpoint_id AS source_runtime_checkpoint_id
+	              eligible_waits.run_checkpoint_id AS source_run_checkpoint_id
 ),
 resumed_snapshots AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, runtime_checkpoint_id, previous_version, transition, reason)
+    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, run_checkpoint_id, previous_version, transition, reason)
     SELECT updated_runs.org_id,
            updated_runs.worker_group_id,
            updated_runs.id,
@@ -578,12 +578,12 @@ resumed_snapshots AS (
            updated_runs.status,
            updated_runs.execution_status,
            updated_runs.current_attempt_number,
-           updated_runs.source_runtime_checkpoint_id,
+           updated_runs.source_run_checkpoint_id,
            updated_runs.state_version - 1,
            'run.resumed',
            jsonb_build_object(
                'run_wait_id', updated_runs.source_run_wait_id,
-               'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
+               'run_checkpoint_id', updated_runs.source_run_checkpoint_id
            )
       FROM updated_runs
     RETURNING run_state_snapshots.run_id, run_state_snapshots.version
@@ -617,7 +617,7 @@ resumed_events AS (
            COALESCE('run.resumed', ''),
            COALESCE(jsonb_build_object(
               'run_wait_id', updated_runs.source_run_wait_id,
-              'runtime_checkpoint_id', updated_runs.source_runtime_checkpoint_id
+              'run_checkpoint_id', updated_runs.source_run_checkpoint_id
           ), '{}'::jsonb),
            COALESCE(NULLIF('internal', ''), 'internal'),
            updated_runs.state_version,
@@ -653,24 +653,24 @@ WITH stale_waits AS MATERIALIZED (
            runs.trace_id,
            runs.root_span_id,
            runs.state_version + 1 AS next_state_version,
-           run_checkpoints.id AS runtime_checkpoint_id,
+           run_checkpoints.id AS run_checkpoint_id,
            run_checkpoints.base_workspace_version_id,
-           run_checkpoints.expires_at AS runtime_checkpoint_expires_at,
+           run_checkpoints.expires_at AS run_checkpoint_expires_at,
            workspaces.current_version_id,
            run_waits.state AS run_wait_state,
            runs.status AS run_status,
            CASE
-             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
-             THEN 'non_latest_runtime_checkpoint'
+             WHEN runs.latest_run_checkpoint_id IS DISTINCT FROM run_checkpoints.id
+             THEN 'non_latest_run_checkpoint'
              WHEN run_checkpoints.expires_at <= now()
-             THEN 'runtime_checkpoint_expired'
+             THEN 'run_checkpoint_expired'
              ELSE 'workspace_version_mismatch'
            END AS failure_reason,
            CASE
-             WHEN runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
-             THEN 'resolved wait is not attached to the latest runtime checkpoint'
+             WHEN runs.latest_run_checkpoint_id IS DISTINCT FROM run_checkpoints.id
+             THEN 'resolved wait is not attached to the latest run checkpoint'
              WHEN run_checkpoints.expires_at <= now()
-             THEN 'runtime checkpoint expired while run was parked'
+             THEN 'run checkpoint expired while run was parked'
              ELSE 'workspace advanced while run was parked'
            END AS failure_message
       FROM run_waits
@@ -686,7 +686,7 @@ WITH stale_waits AS MATERIALIZED (
                               AND run_checkpoints.project_id = run_waits.project_id
                               AND run_checkpoints.environment_id = run_waits.environment_id
                               AND run_checkpoints.run_id = run_waits.run_id
-                              AND run_checkpoints.id = run_waits.runtime_checkpoint_id
+                              AND run_checkpoints.id = run_waits.run_checkpoint_id
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
@@ -697,11 +697,11 @@ WITH stale_waits AS MATERIALIZED (
            (run_waits.state = 'resuming' AND runs.status = 'waiting')
            OR (run_waits.state = 'resuming' AND runs.status = 'queued')
        )
-       AND run_waits.runtime_checkpoint_id IS NOT NULL
+       AND run_waits.run_checkpoint_id IS NOT NULL
        AND runs.current_run_lease_id IS NULL
        AND run_checkpoints.state = 'ready'
        AND (
-           runs.latest_runtime_checkpoint_id IS DISTINCT FROM run_checkpoints.id
+           runs.latest_run_checkpoint_id IS DISTINCT FROM run_checkpoints.id
            OR workspaces.current_version_id IS DISTINCT FROM run_checkpoints.base_workspace_version_id
            OR run_checkpoints.expires_at <= now()
        )
@@ -738,9 +738,9 @@ failed_runs AS (
        AND runs.current_run_lease_id IS NULL
 	    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id,
 	              runs.current_attempt_number, runs.trace_id, runs.root_span_id,
-              runs.state_version, runs.error_message, stale_waits.runtime_checkpoint_id,
+              runs.state_version, runs.error_message, stale_waits.run_checkpoint_id,
               stale_waits.base_workspace_version_id, stale_waits.current_version_id,
-              stale_waits.runtime_checkpoint_expires_at, stale_waits.failure_reason
+              stale_waits.run_checkpoint_expires_at, stale_waits.failure_reason
 ),
 invalidated_checkpoints AS (
     UPDATE run_checkpoints
@@ -752,7 +752,7 @@ invalidated_checkpoints AS (
        AND run_checkpoints.project_id = failed_runs.project_id
        AND run_checkpoints.environment_id = failed_runs.environment_id
        AND run_checkpoints.run_id = failed_runs.id
-       AND run_checkpoints.id = failed_runs.runtime_checkpoint_id
+       AND run_checkpoints.id = failed_runs.run_checkpoint_id
        AND run_checkpoints.state = 'ready'
     RETURNING run_checkpoints.id
 ),
@@ -782,7 +782,7 @@ failed_snapshots AS (
         terminal_outcome,
         attempt_number,
         transition,
-        runtime_checkpoint_id,
+        run_checkpoint_id,
         reason,
         error
     )
@@ -795,17 +795,17 @@ failed_snapshots AS (
            'failed',
            failed_runs.current_attempt_number,
            'run.failed',
-           failed_runs.runtime_checkpoint_id,
+           failed_runs.run_checkpoint_id,
            jsonb_build_object(
-               'origin', 'runtime_resume_wait',
+               'origin', 'run_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message,
                'base_workspace_version_id', failed_runs.base_workspace_version_id,
                'current_workspace_version_id', failed_runs.current_version_id,
-               'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
+               'run_checkpoint_expires_at', failed_runs.run_checkpoint_expires_at
            ),
            jsonb_build_object(
-               'origin', 'runtime_resume_wait',
+               'origin', 'run_resume_wait',
                'reason', failed_runs.failure_reason,
                'message', failed_runs.error_message
            )
@@ -840,13 +840,13 @@ failed_events AS (
            'run.failed',
            COALESCE('run.failed', ''),
            COALESCE(jsonb_build_object(
-              'origin', 'runtime_resume_wait',
+              'origin', 'run_resume_wait',
               'reason', failed_runs.failure_reason,
               'message', failed_runs.error_message,
-              'runtime_checkpoint_id', failed_runs.runtime_checkpoint_id,
+              'run_checkpoint_id', failed_runs.run_checkpoint_id,
               'base_workspace_version_id', failed_runs.base_workspace_version_id,
               'current_workspace_version_id', failed_runs.current_version_id,
-              'runtime_checkpoint_expires_at', failed_runs.runtime_checkpoint_expires_at
+              'run_checkpoint_expires_at', failed_runs.run_checkpoint_expires_at
           ), '{}'::jsonb),
            COALESCE(NULLIF('internal', ''), 'internal'),
            failed_runs.state_version,

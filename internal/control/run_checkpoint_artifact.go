@@ -88,38 +88,38 @@ func validateWorkerCheckpointArtifact(label string, artifact api.WorkerCheckpoin
 	return nil
 }
 
-type runtimeCheckpointArtifactIDs struct {
+type runCheckpointArtifactIDs struct {
 	config      pgtype.UUID
 	vmState     pgtype.UUID
 	scratchDisk pgtype.UUID
 	memory      []pgtype.UUID
 }
 
-func (s *Server) createRuntimeCheckpointArtifacts(ctx context.Context, store db.Querier, workerInstanceID pgtype.UUID, scope db.GetWorkerRunWaitScopeRow, manifest api.WorkerCheckpointManifest) (runtimeCheckpointArtifactIDs, error) {
-	config, err := createRuntimeCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.ConfigArtifact, db.ArtifactKindRuntimeCheckpointConfig)
+func (s *Server) createRunCheckpointArtifacts(ctx context.Context, store db.Querier, workerInstanceID pgtype.UUID, scope db.GetWorkerRunWaitScopeRow, manifest api.WorkerCheckpointManifest) (runCheckpointArtifactIDs, error) {
+	config, err := createRunCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.ConfigArtifact, db.ArtifactKindRunCheckpointConfig)
 	if err != nil {
-		return runtimeCheckpointArtifactIDs{}, err
+		return runCheckpointArtifactIDs{}, err
 	}
-	vmState, err := createRuntimeCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.VMStateArtifact, db.ArtifactKindRuntimeCheckpointVmState)
+	vmState, err := createRunCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.VMStateArtifact, db.ArtifactKindRunCheckpointVmState)
 	if err != nil {
-		return runtimeCheckpointArtifactIDs{}, err
+		return runCheckpointArtifactIDs{}, err
 	}
-	scratchDisk, err := createRuntimeCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.ScratchDiskArtifact, db.ArtifactKindRuntimeCheckpointScratchDisk)
+	scratchDisk, err := createRunCheckpointArtifact(ctx, store, workerInstanceID, scope, manifest.RuntimeState.ScratchDiskArtifact, db.ArtifactKindRunCheckpointScratchDisk)
 	if err != nil {
-		return runtimeCheckpointArtifactIDs{}, err
+		return runCheckpointArtifactIDs{}, err
 	}
 	memory := make([]pgtype.UUID, 0, len(manifest.RuntimeState.MemoryArtifacts))
 	for _, artifact := range manifest.RuntimeState.MemoryArtifacts {
-		row, err := createRuntimeCheckpointArtifact(ctx, store, workerInstanceID, scope, artifact, db.ArtifactKindRuntimeCheckpointMemory)
+		row, err := createRunCheckpointArtifact(ctx, store, workerInstanceID, scope, artifact, db.ArtifactKindRunCheckpointMemory)
 		if err != nil {
-			return runtimeCheckpointArtifactIDs{}, err
+			return runCheckpointArtifactIDs{}, err
 		}
 		memory = append(memory, row.ID)
 	}
-	return runtimeCheckpointArtifactIDs{config: config.ID, vmState: vmState.ID, scratchDisk: scratchDisk.ID, memory: memory}, nil
+	return runCheckpointArtifactIDs{config: config.ID, vmState: vmState.ID, scratchDisk: scratchDisk.ID, memory: memory}, nil
 }
 
-func createRuntimeCheckpointArtifact(ctx context.Context, store db.Querier, workerInstanceID pgtype.UUID, scope db.GetWorkerRunWaitScopeRow, artifact api.WorkerCheckpointArtifact, kind db.ArtifactKind) (db.Artifact, error) {
+func createRunCheckpointArtifact(ctx context.Context, store db.Querier, workerInstanceID pgtype.UUID, scope db.GetWorkerRunWaitScopeRow, artifact api.WorkerCheckpointArtifact, kind db.ArtifactKind) (db.Artifact, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     scope.OrgID,
 		Digest:    artifact.Digest,
@@ -141,27 +141,27 @@ func createRuntimeCheckpointArtifact(ctx context.Context, store db.Querier, work
 	})
 }
 
-func (s *Server) createRuntimeCheckpointArtifactRows(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, runtimeCheckpointID pgtype.UUID, manifest api.WorkerCheckpointManifest, artifacts runtimeCheckpointArtifactIDs) error {
+func (s *Server) createRunCheckpointArtifactRows(ctx context.Context, store db.Querier, scope db.GetWorkerRunWaitScopeRow, runCheckpointID pgtype.UUID, manifest api.WorkerCheckpointManifest, artifacts runCheckpointArtifactIDs) error {
 	rows := []struct {
-		role     db.RuntimeCheckpointArtifactRole
+		role     db.RunCheckpointArtifactRole
 		ordinal  int32
 		id       pgtype.UUID
 		artifact api.WorkerCheckpointArtifact
 	}{
-		{role: db.RuntimeCheckpointArtifactRoleRuntimeConfig, id: artifacts.config, artifact: manifest.RuntimeState.ConfigArtifact},
-		{role: db.RuntimeCheckpointArtifactRoleVmState, id: artifacts.vmState, artifact: manifest.RuntimeState.VMStateArtifact},
-		{role: db.RuntimeCheckpointArtifactRoleScratchDisk, id: artifacts.scratchDisk, artifact: manifest.RuntimeState.ScratchDiskArtifact},
+		{role: db.RunCheckpointArtifactRoleRuntimeConfig, id: artifacts.config, artifact: manifest.RuntimeState.ConfigArtifact},
+		{role: db.RunCheckpointArtifactRoleVmState, id: artifacts.vmState, artifact: manifest.RuntimeState.VMStateArtifact},
+		{role: db.RunCheckpointArtifactRoleScratchDisk, id: artifacts.scratchDisk, artifact: manifest.RuntimeState.ScratchDiskArtifact},
 	}
 	for index, artifact := range manifest.RuntimeState.MemoryArtifacts {
 		rows = append(rows, struct {
-			role     db.RuntimeCheckpointArtifactRole
+			role     db.RunCheckpointArtifactRole
 			ordinal  int32
 			id       pgtype.UUID
 			artifact api.WorkerCheckpointArtifact
-		}{role: db.RuntimeCheckpointArtifactRoleMemory, ordinal: int32(index), id: artifacts.memory[index], artifact: artifact})
+		}{role: db.RunCheckpointArtifactRoleMemory, ordinal: int32(index), id: artifacts.memory[index], artifact: artifact})
 	}
 	for _, row := range rows {
-		if _, err := store.CreateRuntimeCheckpointArtifact(ctx, db.CreateRuntimeCheckpointArtifactParams{
+		if _, err := store.CreateRunCheckpointArtifact(ctx, db.CreateRunCheckpointArtifactParams{
 			Role:                row.role,
 			Ordinal:             row.ordinal,
 			EncryptDurationMs:   row.artifact.EncryptDurationMs,
@@ -172,7 +172,7 @@ func (s *Server) createRuntimeCheckpointArtifactRows(ctx context.Context, store 
 			ProjectID:           scope.ProjectID,
 			EnvironmentID:       scope.EnvironmentID,
 			RunID:               scope.RunID,
-			RuntimeCheckpointID: runtimeCheckpointID,
+			RunCheckpointID: runCheckpointID,
 		}); err != nil {
 			return err
 		}

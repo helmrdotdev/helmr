@@ -464,7 +464,7 @@ func (c *Client) CreateRunWait(ctx context.Context, request api.WorkerCreateRunW
 	return response, nil
 }
 
-func (c *Client) ClaimRuntimeCheckpointWait(ctx context.Context, request api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error) {
+func (c *Client) ClaimRunCheckpointWait(ctx context.Context, request api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error) {
 	var response api.WorkerCheckpointClaimResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/claim", request, &response); err != nil {
 		return api.WorkerCheckpointClaimResponse{}, err

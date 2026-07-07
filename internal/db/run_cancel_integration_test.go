@@ -235,7 +235,7 @@ func TestForceCancelRunCleansRuntimeAuthority(t *testing.T) {
 	if usageCount != 1 {
 		t.Fatalf("active_time usage count = %d, want 1", usageCount)
 	}
-	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusFailed)
+	assertRunCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RunCheckpointRestoreStatusFailed)
 }
 
 func TestCancelSessionLeavesPendingCancelRunForRelease(t *testing.T) {

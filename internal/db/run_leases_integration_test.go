@@ -628,10 +628,10 @@ func TestReleaseRunLeaseRetryFailsPendingCheckpointRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	leasedRunLeaseID := pgvalue.MustUUIDValue(leased.RunLeaseID)
-	if got := pgvalue.MustUUIDValue(leased.RunLeaseRestoreRuntimeCheckpointID); got != checkpointed.runtimeCheckpointID {
-		t.Fatalf("restore runtime checkpoint id = %s, want %s", got, checkpointed.runtimeCheckpointID)
+	if got := pgvalue.MustUUIDValue(leased.RunLeaseRestoreRunCheckpointID); got != checkpointed.runCheckpointID {
+		t.Fatalf("restore run checkpoint id = %s, want %s", got, checkpointed.runCheckpointID)
 	}
-	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusRestoring)
+	assertRunCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RunCheckpointRestoreStatusRestoring)
 
 	started, err := queries.StartRunLease(ctx, db.StartRunLeaseParams{
 		OrgID:             pgvalue.UUID(ids.orgID),
@@ -666,7 +666,7 @@ func TestReleaseRunLeaseRetryFailsPendingCheckpointRestore(t *testing.T) {
 	if released.Status != db.RunStatusQueued || released.ExecutionStatus != db.RunExecutionStatusQueued || released.CurrentAttemptNumber != 2 {
 		t.Fatalf("released run state = %s/%s attempt=%d, want queued/queued/2", released.Status, released.ExecutionStatus, released.CurrentAttemptNumber)
 	}
-	assertRuntimeCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RuntimeCheckpointRestoreStatusFailed)
+	assertRunCheckpointRestore(t, ctx, pool, ids.orgID, ids.runID, checkpointed.runWaitID, leasedRunLeaseID, workerID, db.RunCheckpointRestoreStatusFailed)
 	assertRunLifecycleTransitions(t, ctx, pool, ids, []string{"run.started", "run.waiting", "run.resumed", "run_lease.leased", "run_lease.started", "run.failed", "run.retry_scheduled"}, []string{"run.waiting", "run.resumed", "run.failed", "run.retry_scheduled"})
 }
 
@@ -769,7 +769,7 @@ func TestRenewRunLeaseRejectsStaleDispatchGeneration(t *testing.T) {
 	}
 }
 
-func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
+func TestLeaseRunLeaseRejectsExpiredRunCheckpointRestore(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -777,7 +777,7 @@ func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
 	_, _, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 	runWaitID := uuid.Must(uuid.NewV7())
 	waitID := uuid.Must(uuid.NewV7())
-	runtimeCheckpointID := uuid.Must(uuid.NewV7())
+	runCheckpointID := uuid.Must(uuid.NewV7())
 	workspaceLeaseID := uuid.Must(uuid.NewV7())
 
 	if _, err := pool.Exec(ctx, `
@@ -842,21 +842,21 @@ func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
 		 WHERE runs.org_id = $2
 		   AND runs.id = $3
 		 LIMIT 1
-	`, runtimeCheckpointID, ids.orgID, ids.runID, runWaitID, workerID, workspaceLeaseID); err != nil {
+	`, runCheckpointID, ids.orgID, ids.runID, runWaitID, workerID, workspaceLeaseID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
-		   SET latest_runtime_checkpoint_id = $3
+		   SET latest_run_checkpoint_id = $3
 		 WHERE org_id = $1
 		   AND id = $2
-	`, ids.orgID, ids.runID, runtimeCheckpointID); err != nil {
+	`, ids.orgID, ids.runID, runCheckpointID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_waits (
 			id, org_id, worker_group_id, project_id, environment_id, run_id, wait_id,
-			state, runtime_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park
+			state, run_checkpoint_id, workspace_version_id, active_elapsed_ms_at_park
 		)
 		SELECT $1, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.id, $2,
 		       'resuming', $3, workspaces.current_version_id, 0
@@ -867,7 +867,7 @@ func TestLeaseRunLeaseRejectsExpiredRuntimeCheckpointRestore(t *testing.T) {
 		                 AND workspaces.id = runs.workspace_id
 		 WHERE runs.org_id = $4
 		   AND runs.id = $5
-	`, runWaitID, waitID, runtimeCheckpointID, ids.orgID, ids.runID); err != nil {
+	`, runWaitID, waitID, runCheckpointID, ids.orgID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 

@@ -335,7 +335,7 @@ func (f *fakeSweeperOrgStore) ResolveDueTimerWaits(_ context.Context, arg db.Res
 	return nil, f.timerErr
 }
 
-func (f *fakeSweeperOrgStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(_ context.Context, arg db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+func (f *fakeSweeperOrgStore) CreateResolvedLiveRunResumeWaitCommandsForOrg(_ context.Context, arg db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
 	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
 		return nil, fmt.Errorf("publish-hot-resumes worker_group_id = %q", arg.WorkerGroupID)
 	}
@@ -344,7 +344,7 @@ func (f *fakeSweeperOrgStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(
 	return nil, nil
 }
 
-func (f *fakeSweeperOrgStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(_ context.Context, arg db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+func (f *fakeSweeperOrgStore) CreateDueLiveRunCheckpointWaitCommandsForOrg(_ context.Context, arg db.CreateDueLiveRunCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
 	if arg.WorkerGroupID != expirySweeperTestWorkerGroupID {
 		return nil, fmt.Errorf("publish-hot-checkpoints worker_group_id = %q", arg.WorkerGroupID)
 	}

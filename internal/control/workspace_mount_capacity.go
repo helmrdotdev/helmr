@@ -8,11 +8,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func (s *Server) createCapacityPressureLiveRuntimeCheckpointWaitCommands(ctx context.Context, workerInstanceID uuid.UUID, trigger string) {
+func (s *Server) createCapacityPressureLiveRunCheckpointWaitCommands(ctx context.Context, workerInstanceID uuid.UUID, trigger string) {
 	if s.db == nil {
 		return
 	}
-	commands, err := s.db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorker(ctx, db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams{
+	commands, err := s.db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorker(ctx, db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorkerParams{
 		WorkerInstanceID: pgvalue.UUID(workerInstanceID),
 		GuestdAbi:        currentGuestdABI,
 		AdapterAbi:       currentAdapterABI,

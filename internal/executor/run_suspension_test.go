@@ -25,7 +25,7 @@ func TestControlRunWaitsDetachesAfterCheckpointReady(t *testing.T) {
 		},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest:         testRuntimeCheckpointWaitManifest(),
+		manifest:         testRunCheckpointWaitManifest(),
 		workspaceCapture: testRunWaitWorkspaceCapture(),
 	}
 
@@ -88,7 +88,7 @@ func TestControlRunWaitsUsesCurrentLeaseAfterCheckpoint(t *testing.T) {
 		WorkerInstanceID: "worker-1",
 	}}
 	checkpointer := &fakeCheckpointer{
-		manifest: testRuntimeCheckpointWaitManifest(),
+		manifest: testRunCheckpointWaitManifest(),
 		onCreate: func() {
 			leases.lease.ID = "lease-2"
 		},
@@ -123,7 +123,7 @@ func TestControlRunWaitsCapturesDirtyWorkspaceBeforeCheckpointReady(t *testing.T
 		},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: testRuntimeCheckpointWaitManifest(),
+		manifest: testRunCheckpointWaitManifest(),
 		workspaceCapture: &workspace.WorkspaceArtifact{
 			Digest:     "sha256:workspace-capture",
 			MediaType:  workspace.ArtifactMediaType,
@@ -167,7 +167,7 @@ func TestControlRunWaitsContinuesAfterCheckpointReadyError(t *testing.T) {
 		readyErr: errors.New("connection reset"),
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest:         testRuntimeCheckpointWaitManifest(),
+		manifest:         testRunCheckpointWaitManifest(),
 		workspaceCapture: testRunWaitWorkspaceCapture(),
 	}
 
@@ -207,7 +207,7 @@ func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerRunWaitKindStream,
 		Params:        json.RawMessage(`{"stream":"approval"}`),
-		Checkpointer:  &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer:  &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -235,7 +235,7 @@ func TestControlRunWaitsResumesFromWorkerCommandStream(t *testing.T) {
 		CorrelationID: "approval-1",
 		Kind:          api.WorkerRunWaitKindStream,
 		Params:        json.RawMessage(`{"stream":"approval"}`),
-		Checkpointer:  &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer:  &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -272,7 +272,7 @@ func TestControlRunWaitsSkipsStaleEpochResumeCommand(t *testing.T) {
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:        testRunLease(),
 		Kind:         api.WorkerRunWaitKindStream,
-		Checkpointer: &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer: &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -302,7 +302,7 @@ func TestControlRunWaitsDoesNotRetryResumeWhenAckFailsAfterResume(t *testing.T) 
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:        testRunLease(),
 		Kind:         api.WorkerRunWaitKindStream,
-		Checkpointer: &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer: &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -331,7 +331,7 @@ func TestControlRunWaitsReconnectsWorkerCommandStreamAfterCleanEOF(t *testing.T)
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:        testRunLease(),
 		Kind:         api.WorkerRunWaitKindStream,
-		Checkpointer: &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer: &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -368,7 +368,7 @@ func TestControlRunWaitsSkipsStaleCheckpointDueAndWaitsForResume(t *testing.T) {
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
 		Lease:        testRunLease(),
 		Kind:         api.WorkerRunWaitKindToken,
-		Checkpointer: &fakeCheckpointer{manifest: testRuntimeCheckpointWaitManifest()},
+		Checkpointer: &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()},
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -482,7 +482,7 @@ func (c *fakeRunWaitClient) AcceptWorkerCommand(_ context.Context, id int64) (ap
 	return api.WorkerCommandAcceptResponse{ID: id}, nil
 }
 
-func (c *fakeRunWaitClient) ClaimRuntimeCheckpointWait(_ context.Context, request api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error) {
+func (c *fakeRunWaitClient) ClaimRunCheckpointWait(_ context.Context, request api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error) {
 	c.claimRequest = &request
 	if c.claim.RunWaitID == "" {
 		c.claim = api.WorkerCheckpointClaimResponse{
@@ -516,7 +516,7 @@ func checkpointDueCommand(id int64, runWaitID string) api.WorkerCommand {
 		WorkerInstanceID:  "worker-1",
 		RuntimeInstanceID: "runtime-instance-1",
 		RuntimeEpoch:      42,
-		Kind:              "runtime_checkpoint_wait",
+		Kind:              "run_checkpoint_wait",
 	}
 }
 
@@ -533,7 +533,7 @@ func resumeDecisionCommand(id int64, runWaitID string, kind string, payload stri
 		WorkerInstanceID:  "worker-1",
 		RuntimeInstanceID: "runtime-instance-1",
 		RuntimeEpoch:      42,
-		Kind:              "runtime_resume_wait",
+		Kind:              "run_resume_wait",
 		Payload:           body,
 	}
 }
@@ -611,7 +611,7 @@ func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease {
 	return p.lease
 }
 
-func testRuntimeCheckpointWaitManifest() api.WorkerCheckpointManifest {
+func testRunCheckpointWaitManifest() api.WorkerCheckpointManifest {
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			Runtime: api.WorkerCheckpointRuntime{

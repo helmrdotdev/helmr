@@ -2640,7 +2640,7 @@ type fakeStore struct {
 	claimWorkspaceMountCalls                int
 	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
 	requestCapacityPressureStopsCalls       int
-	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams
+	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorkerParams
 	createCapacityPressureCheckpointsCalls  int
 	session                                 db.Session
 	lockSession                             db.Session
@@ -3599,15 +3599,15 @@ func (f *fakeStore) FailExpiredRunningRunLeases(context.Context, db.FailExpiredR
 	return nil
 }
 
-func (f *fakeStore) CreateResolvedLiveRuntimeResumeWaitCommandsForOrg(context.Context, db.CreateResolvedLiveRuntimeResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+func (f *fakeStore) CreateResolvedLiveRunResumeWaitCommandsForOrg(context.Context, db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) CreateDueLiveRuntimeCheckpointWaitCommandsForOrg(context.Context, db.CreateDueLiveRuntimeCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
+func (f *fakeStore) CreateDueLiveRunCheckpointWaitCommandsForOrg(context.Context, db.CreateDueLiveRunCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
 	return nil, nil
 }
 
-func (f *fakeStore) CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorker(_ context.Context, arg db.CreateCapacityPressureLiveRuntimeCheckpointWaitCommandsForWorkerParams) ([]db.WorkerCommand, error) {
+func (f *fakeStore) CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorker(_ context.Context, arg db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorkerParams) ([]db.WorkerCommand, error) {
 	f.createCapacityPressureCheckpoints = arg
 	f.createCapacityPressureCheckpointsCalls++
 	return nil, nil
