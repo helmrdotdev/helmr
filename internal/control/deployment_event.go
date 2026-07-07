@@ -88,7 +88,7 @@ func (s *Server) getDeploymentEvents(w http.ResponseWriter, r *http.Request) {
 	page, err := s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
 		OrgID:         actor.OrgID,
 		WorkerGroupID: deployment.BuildWorkerGroupID,
-		SubjectType:   string(db.EventSubjectTypeDeployment),
+		SubjectType:   eventSubjectTypeDeployment,
 		SubjectID:     pgvalue.MustUUIDValue(deployment.ID),
 		AfterSeq:      cursor,
 		Limit:         limit + 1,
@@ -122,7 +122,7 @@ func (s *Server) followDeploymentEvents(w http.ResponseWriter, r *http.Request, 
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, db.EventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, eventSubjectTypeDeployment, deploymentID, cursor, func(event api.RunEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: deployment_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

@@ -236,48 +236,6 @@ func (ns NullDeviceCodeStatus) Value() (driver.Value, error) {
 	return string(ns.DeviceCodeStatus), nil
 }
 
-type EventSubjectType string
-
-const (
-	EventSubjectTypeRun        EventSubjectType = "run"
-	EventSubjectTypeDeployment EventSubjectType = "deployment"
-)
-
-func (e *EventSubjectType) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = EventSubjectType(s)
-	case string:
-		*e = EventSubjectType(s)
-	default:
-		return fmt.Errorf("unsupported scan type for EventSubjectType: %T", src)
-	}
-	return nil
-}
-
-type NullEventSubjectType struct {
-	EventSubjectType EventSubjectType `json:"event_subject_type"`
-	Valid            bool             `json:"valid"` // Valid is true if EventSubjectType is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullEventSubjectType) Scan(value interface{}) error {
-	if value == nil {
-		ns.EventSubjectType, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.EventSubjectType.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullEventSubjectType) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.EventSubjectType), nil
-}
-
 type MagicLinkPurpose string
 
 const (
@@ -627,48 +585,6 @@ func (ns NullRunLeaseStatus) Value() (driver.Value, error) {
 		return nil, nil
 	}
 	return string(ns.RunLeaseStatus), nil
-}
-
-type RunLogStream string
-
-const (
-	RunLogStreamStdout RunLogStream = "stdout"
-	RunLogStreamStderr RunLogStream = "stderr"
-)
-
-func (e *RunLogStream) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = RunLogStream(s)
-	case string:
-		*e = RunLogStream(s)
-	default:
-		return fmt.Errorf("unsupported scan type for RunLogStream: %T", src)
-	}
-	return nil
-}
-
-type NullRunLogStream struct {
-	RunLogStream RunLogStream `json:"run_log_stream"`
-	Valid        bool         `json:"valid"` // Valid is true if RunLogStream is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullRunLogStream) Scan(value interface{}) error {
-	if value == nil {
-		ns.RunLogStream, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.RunLogStream.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullRunLogStream) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.RunLogStream), nil
 }
 
 type RunOperationKind string
@@ -2177,48 +2093,6 @@ func (ns NullWorkspaceState) Value() (driver.Value, error) {
 	return string(ns.WorkspaceState), nil
 }
 
-type WorkspaceStreamNotificationKind string
-
-const (
-	WorkspaceStreamNotificationKindChunk    WorkspaceStreamNotificationKind = "chunk"
-	WorkspaceStreamNotificationKindTerminal WorkspaceStreamNotificationKind = "terminal"
-)
-
-func (e *WorkspaceStreamNotificationKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspaceStreamNotificationKind(s)
-	case string:
-		*e = WorkspaceStreamNotificationKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspaceStreamNotificationKind: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspaceStreamNotificationKind struct {
-	WorkspaceStreamNotificationKind WorkspaceStreamNotificationKind `json:"workspace_stream_notification_kind"`
-	Valid                           bool                            `json:"valid"` // Valid is true if WorkspaceStreamNotificationKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspaceStreamNotificationKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspaceStreamNotificationKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspaceStreamNotificationKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspaceStreamNotificationKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspaceStreamNotificationKind), nil
-}
-
 type WorkspaceVersionKind string
 
 const (
@@ -3452,33 +3326,28 @@ type WorkerInstanceCredential struct {
 }
 
 type Workspace struct {
-	ID                          pgtype.UUID               `json:"id"`
-	PublicID                    string                    `json:"public_id"`
-	OrgID                       pgtype.UUID               `json:"org_id"`
-	WorkerGroupID               string                    `json:"worker_group_id"`
-	ProjectID                   pgtype.UUID               `json:"project_id"`
-	EnvironmentID               pgtype.UUID               `json:"environment_id"`
-	DeploymentSandboxID         pgtype.UUID               `json:"deployment_sandbox_id"`
-	SandboxID                   string                    `json:"sandbox_id"`
-	SandboxFingerprint          string                    `json:"sandbox_fingerprint"`
-	ExternalID                  string                    `json:"external_id"`
-	CurrentVersionID            pgtype.UUID               `json:"current_version_id"`
-	CurrentVersionRequiredState NullWorkspaceVersionState `json:"current_version_required_state"`
-	State                       WorkspaceState            `json:"state"`
-	DesiredState                WorkspaceDesiredState     `json:"desired_state"`
-	DirtyState                  WorkspaceDirtyState       `json:"dirty_state"`
-	LastWorkspaceMountID        pgtype.UUID               `json:"last_workspace_mount_id"`
-	Metadata                    []byte                    `json:"metadata"`
-	Tags                        []string                  `json:"tags"`
-	RetentionPolicy             []byte                    `json:"retention_policy"`
-	AutoStopAt                  pgtype.Timestamptz        `json:"auto_stop_at"`
-	AutoArchiveAt               pgtype.Timestamptz        `json:"auto_archive_at"`
-	AutoDeleteAt                pgtype.Timestamptz        `json:"auto_delete_at"`
-	LastActivityAt              pgtype.Timestamptz        `json:"last_activity_at"`
-	CreatedAt                   pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz        `json:"updated_at"`
-	ArchivedAt                  pgtype.Timestamptz        `json:"archived_at"`
-	DeletedAt                   pgtype.Timestamptz        `json:"deleted_at"`
+	ID                  pgtype.UUID           `json:"id"`
+	PublicID            string                `json:"public_id"`
+	OrgID               pgtype.UUID           `json:"org_id"`
+	WorkerGroupID       string                `json:"worker_group_id"`
+	ProjectID           pgtype.UUID           `json:"project_id"`
+	EnvironmentID       pgtype.UUID           `json:"environment_id"`
+	DeploymentSandboxID pgtype.UUID           `json:"deployment_sandbox_id"`
+	SandboxID           string                `json:"sandbox_id"`
+	SandboxFingerprint  string                `json:"sandbox_fingerprint"`
+	ExternalID          string                `json:"external_id"`
+	CurrentVersionID    pgtype.UUID           `json:"current_version_id"`
+	State               WorkspaceState        `json:"state"`
+	DesiredState        WorkspaceDesiredState `json:"desired_state"`
+	DirtyState          WorkspaceDirtyState   `json:"dirty_state"`
+	Metadata            []byte                `json:"metadata"`
+	Tags                []string              `json:"tags"`
+	RetentionPolicy     []byte                `json:"retention_policy"`
+	LastActivityAt      pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt           pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz    `json:"updated_at"`
+	ArchivedAt          pgtype.Timestamptz    `json:"archived_at"`
+	DeletedAt           pgtype.Timestamptz    `json:"deleted_at"`
 }
 
 type WorkspaceLease struct {
@@ -3681,23 +3550,6 @@ type WorkspaceProcessStreamReceipt struct {
 	DataSize      int32              `json:"data_size"`
 	ObservedAt    pgtype.Timestamptz `json:"observed_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-type WorkspaceProcessStreamWakeup struct {
-	ID               int64                           `json:"id"`
-	OrgID            pgtype.UUID                     `json:"org_id"`
-	WorkerGroupID    string                          `json:"worker_group_id"`
-	ProjectID        pgtype.UUID                     `json:"project_id"`
-	EnvironmentID    pgtype.UUID                     `json:"environment_id"`
-	WorkspaceID      pgtype.UUID                     `json:"workspace_id"`
-	ProcessID        pgtype.UUID                     `json:"process_id"`
-	StreamName       string                          `json:"stream_name"`
-	CursorOffset     int64                           `json:"cursor_offset"`
-	NotificationKind WorkspaceStreamNotificationKind `json:"notification_kind"`
-	Attempts         int32                           `json:"attempts"`
-	LockedUntil      pgtype.Timestamptz              `json:"locked_until"`
-	LastError        string                          `json:"last_error"`
-	CreatedAt        pgtype.Timestamptz              `json:"created_at"`
 }
 
 type WorkspaceVersion struct {

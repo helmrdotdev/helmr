@@ -145,11 +145,6 @@ func main() {
 		log.Error("configure telemetry ingester", "error", err)
 		os.Exit(1)
 	}
-	workspaceStreams, err := control.NewWorkspaceStreamNotifier(log, queries, redisClient)
-	if err != nil {
-		log.Error("configure workspace stream notifier", "error", err)
-		os.Exit(1)
-	}
 	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.workerGroupID)
 	if err != nil {
 		log.Error("configure worker command stream", "error", err)
@@ -158,11 +153,6 @@ func main() {
 	go func() {
 		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
-		}
-	}()
-	go func() {
-		if err := workspaceStreams.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("workspace stream notifier stopped", "error", err)
 		}
 	}()
 	go func() {
@@ -230,7 +220,6 @@ func main() {
 		ReadinessComponent:  workergroup.ComponentDevControl,
 		EventStream:         eventStream,
 		TelemetryReader:     telemetryReader,
-		WorkspaceStreams:    workspaceStreams,
 		WorkerCommands:      workerCommands,
 	})
 	if err != nil {

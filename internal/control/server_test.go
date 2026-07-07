@@ -41,7 +41,6 @@ type testServerConfig struct {
 	ScheduleEngine      ScheduleRegistrar
 	EventStream         *EventStream
 	TelemetryReader     telemetry.Reader
-	WorkspaceStreams    *WorkspaceStreamNotifier
 	WorkerCommands      *WorkerCommandStream
 	WorkerTokenSecret   []byte
 	WorkerTokenTTL      time.Duration
@@ -130,9 +129,6 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 			cfg.EventStream.telemetryReader = cfg.TelemetryReader
 		}
 	}
-	if testCfg.WorkspaceStreams != nil {
-		cfg.WorkspaceStreams = testCfg.WorkspaceStreams
-	}
 	if testCfg.WorkerCommands != nil {
 		cfg.WorkerCommands = testCfg.WorkerCommands
 	}
@@ -201,7 +197,7 @@ func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.Eve
 	events := make([]api.RunEvent, 0, len(r.store.events)+len(r.store.deploymentEvents))
 	last := query.AfterSeq
 	for _, row := range r.store.events {
-		if query.SubjectType != string(db.EventSubjectTypeRun) || row.RunID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
+		if query.SubjectType != eventSubjectTypeRun || row.RunID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
 			continue
 		}
 		events = append(events, eventResponseFromClaim(row))
@@ -211,7 +207,7 @@ func (r fakeTelemetryReader) ListEvents(ctx context.Context, query telemetry.Eve
 		}
 	}
 	for _, row := range r.store.deploymentEvents {
-		if query.SubjectType != string(db.EventSubjectTypeDeployment) || row.DeploymentID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
+		if query.SubjectType != eventSubjectTypeDeployment || row.DeploymentID != pgvalue.UUID(query.SubjectID) || row.Seq <= query.AfterSeq {
 			continue
 		}
 		events = append(events, eventResponseFromClaim(row))

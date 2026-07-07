@@ -23,28 +23,24 @@ type WorkspacePatchRequest struct {
 }
 
 type WorkspaceResponse struct {
-	ID                   string          `json:"id"`
-	ProjectID            string          `json:"project_id"`
-	EnvironmentID        string          `json:"environment_id"`
-	DeploymentSandboxID  string          `json:"deployment_sandbox_id"`
-	SandboxID            string          `json:"sandbox_id"`
-	SandboxFingerprint   string          `json:"sandbox_fingerprint"`
-	ExternalID           string          `json:"external_id,omitempty"`
-	CurrentVersionID     string          `json:"current_version_id,omitempty"`
-	State                string          `json:"state"`
-	DesiredState         string          `json:"desired_state"`
-	DirtyState           string          `json:"dirty_state"`
-	LastWorkspaceMountID string          `json:"last_workspace_mount_id,omitempty"`
-	Metadata             json.RawMessage `json:"metadata,omitempty"`
-	Tags                 []string        `json:"tags,omitempty"`
-	AutoStopAt           *time.Time      `json:"auto_stop_at,omitempty"`
-	AutoArchiveAt        *time.Time      `json:"auto_archive_at,omitempty"`
-	AutoDeleteAt         *time.Time      `json:"auto_delete_at,omitempty"`
-	LastActivityAt       time.Time       `json:"last_activity_at"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
-	ArchivedAt           *time.Time      `json:"archived_at,omitempty"`
-	DeletedAt            *time.Time      `json:"deleted_at,omitempty"`
+	ID                  string          `json:"id"`
+	ProjectID           string          `json:"project_id"`
+	EnvironmentID       string          `json:"environment_id"`
+	DeploymentSandboxID string          `json:"deployment_sandbox_id"`
+	SandboxID           string          `json:"sandbox_id"`
+	SandboxFingerprint  string          `json:"sandbox_fingerprint"`
+	ExternalID          string          `json:"external_id,omitempty"`
+	CurrentVersionID    string          `json:"current_version_id,omitempty"`
+	State               string          `json:"state"`
+	DesiredState        string          `json:"desired_state"`
+	DirtyState          string          `json:"dirty_state"`
+	Metadata            json.RawMessage `json:"metadata,omitempty"`
+	Tags                []string        `json:"tags,omitempty"`
+	LastActivityAt      time.Time       `json:"last_activity_at"`
+	CreatedAt           time.Time       `json:"created_at"`
+	UpdatedAt           time.Time       `json:"updated_at"`
+	ArchivedAt          *time.Time      `json:"archived_at,omitempty"`
+	DeletedAt           *time.Time      `json:"deleted_at,omitempty"`
 }
 
 type WorkspaceEnvelope struct {

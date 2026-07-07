@@ -30,6 +30,11 @@ const (
 	liveTelemetryStreamMaxLen        = int64(10000)
 )
 
+const (
+	eventSubjectTypeRun        = "run"
+	eventSubjectTypeDeployment = "deployment"
+)
+
 var errLiveTelemetryFollowComplete = errors.New("live telemetry follow complete")
 
 type EventStream struct {
@@ -210,7 +215,7 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 	return latestSeq > seq, nil
 }
 
-func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
+func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
 	streamKey := eventStreamKey(orgID, workerGroupID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
@@ -488,11 +493,11 @@ func (s *EventStream) redisTerminalStreamCoversCursor(ctx context.Context, strea
 	return chunk.OffsetStart <= cursor, nil
 }
 
-func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
+func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
 		OrgID:         orgID,
 		WorkerGroupID: workerGroupID,
-		SubjectType:   string(subjectType),
+		SubjectType:   subjectType,
 		SubjectID:     subjectID,
 		AfterSeq:      cursor,
 		Limit:         runEventsPageSize,
@@ -513,8 +518,8 @@ func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.U
 	return cursor, len(page.Events) == int(runEventsPageSize), nil
 }
 
-func eventStreamKey(orgID uuid.UUID, workerGroupID string, subjectType db.EventSubjectType, subjectID uuid.UUID) string {
-	return "helmr:events:" + orgID.String() + ":" + workerGroupID + ":" + string(subjectType) + ":" + subjectID.String()
+func eventStreamKey(orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID) string {
+	return "helmr:events:" + orgID.String() + ":" + workerGroupID + ":" + subjectType + ":" + subjectID.String()
 }
 
 func runLogStreamKey(orgID uuid.UUID, workerGroupID string, runID uuid.UUID) string {

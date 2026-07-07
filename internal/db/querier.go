@@ -52,7 +52,6 @@ type Querier interface {
 	ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error)
 	ClaimWorkspaceOperation(ctx context.Context, arg ClaimWorkspaceOperationParams) (WorkspaceProcessOperation, error)
 	ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspaceProcessTerminalOutputIngestBatchParams) ([]ClaimWorkspaceProcessTerminalOutputIngestBatchRow, error)
-	ClaimWorkspaceStreamWakeups(ctx context.Context, arg ClaimWorkspaceStreamWakeupsParams) ([]ClaimWorkspaceStreamWakeupsRow, error)
 	ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRunWorkspaceReuseParams) (ClassifyRunWorkspaceReuseRow, error)
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	CloseSession(ctx context.Context, arg CloseSessionParams) (Session, error)
@@ -113,7 +112,6 @@ type Querier interface {
 	CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceExecParams) (WorkspaceProcess, error)
 	CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWorkspaceFromSandboxParams) (CreateWorkspaceFromSandboxRow, error)
 	CreateWorkspacePtySession(ctx context.Context, arg CreateWorkspacePtySessionParams) (WorkspaceProcess, error)
-	CreateWorkspaceStreamWakeup(ctx context.Context, arg CreateWorkspaceStreamWakeupParams) (WorkspaceProcessStreamWakeup, error)
 	DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error)
 	DeferScheduleInstanceTrigger(ctx context.Context, arg DeferScheduleInstanceTriggerParams) (int64, error)
 	DeleteAPIKeyGrant(ctx context.Context, arg DeleteAPIKeyGrantParams) (int64, error)
@@ -125,7 +123,6 @@ type Querier interface {
 	DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecretParams) (int64, error)
 	DeleteWorkspaceExecStreamChunksBefore(ctx context.Context, arg DeleteWorkspaceExecStreamChunksBeforeParams) error
 	DeleteWorkspacePtyStreamChunksBefore(ctx context.Context, arg DeleteWorkspacePtyStreamChunksBeforeParams) error
-	DeleteWorkspaceStreamWakeup(ctx context.Context, id int64) error
 	DenyDeviceCode(ctx context.Context, arg DenyDeviceCodeParams) (DeviceCode, error)
 	DisableOrgMember(ctx context.Context, arg DisableOrgMemberParams) (OrgMember, error)
 	DisableOrgMemberAndRevokeOrgSessions(ctx context.Context, arg DisableOrgMemberAndRevokeOrgSessionsParams) (DisableOrgMemberAndRevokeOrgSessionsRow, error)
@@ -357,7 +354,6 @@ type Querier interface {
 	MarkWorkspacePtyFailed(ctx context.Context, arg MarkWorkspacePtyFailedParams) (MarkWorkspacePtyFailedRow, error)
 	MarkWorkspacePtyOpen(ctx context.Context, arg MarkWorkspacePtyOpenParams) (MarkWorkspacePtyOpenRow, error)
 	MarkWorkspacePtyResizeApplied(ctx context.Context, arg MarkWorkspacePtyResizeAppliedParams) (WorkspaceProcess, error)
-	MarkWorkspaceStreamWakeupFailed(ctx context.Context, arg MarkWorkspaceStreamWakeupFailedParams) error
 	MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWorkspaceWriteLeaseDirtyParams) (MarkWorkspaceWriteLeaseDirtyRow, error)
 	OwnerExists(ctx context.Context, orgID pgtype.UUID) (bool, error)
 	PatchSession(ctx context.Context, arg PatchSessionParams) (Session, error)

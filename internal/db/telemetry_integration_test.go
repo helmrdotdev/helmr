@@ -16,7 +16,11 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const testWorkerGroupID = "us-east-1-worker-group-1"
+const (
+	testWorkerGroupID = "us-east-1-worker-group-1"
+	runLogStdout      = "stdout"
+	runLogStderr      = "stderr"
+)
 
 func TestAppendRunLogChunkWritesSelfContainedOutboxAndUsage(t *testing.T) {
 	ctx := context.Background()
@@ -25,13 +29,13 @@ func TestAppendRunLogChunkWritesSelfContainedOutboxAndUsage(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 
-	first := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 1, []byte("alpha"))
-	duplicate := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 1, []byte("different"))
+	first := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStdout, 1, []byte("alpha"))
+	duplicate := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStdout, 1, []byte("different"))
 	if duplicate.Seq != first.Seq || pgvalue.Int8Value(duplicate.SizeBytes) != pgvalue.Int8Value(first.SizeBytes) || !bytes.Equal(duplicate.Content, first.Content) {
 		t.Fatalf("duplicate chunk = %+v, want existing first chunk %+v", duplicate, first)
 	}
-	second := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStderr, 2, []byte("beta"))
-	third := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 3, []byte("gamma"))
+	second := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStderr, 2, []byte("beta"))
+	third := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStdout, 3, []byte("gamma"))
 	if !(first.Seq < second.Seq && second.Seq < third.Seq) {
 		t.Fatalf("run log seqs = %d,%d,%d, want run-wide monotonic seq", first.Seq, second.Seq, third.Seq)
 	}
@@ -112,7 +116,7 @@ func TestMeterEventsSurviveRunDeletion(t *testing.T) {
 	queries := db.New(pool)
 	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
 
-	appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 1, []byte("billable"))
+	appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStdout, 1, []byte("billable"))
 	if _, err := pool.Exec(ctx, `
 		DELETE FROM runs
 		 WHERE org_id = $1
@@ -186,7 +190,7 @@ func TestWorkerTelemetryAppendRejectsDisabledWorkerGroup(t *testing.T) {
 		RunID:            pgvalue.UUID(ids.runID),
 		RunLeaseID:       pgvalue.UUID(runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(workerID),
-		Stream:           db.RunLogStreamStdout,
+		Stream:           runLogStdout,
 		ObservedSeq:      1,
 		Content:          []byte("wrong-worker-group"),
 	})
@@ -233,7 +237,7 @@ func TestWorkerTelemetryAppendAllowsStaleWorkerGroupHealthForInFlightLease(t *te
 		t.Fatal(err)
 	}
 
-	chunk := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 1, []byte("still-running"))
+	chunk := appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, runLogStdout, 1, []byte("still-running"))
 	if chunk.Seq != 1 {
 		t.Fatalf("chunk seq = %d, want 1", chunk.Seq)
 	}
@@ -261,7 +265,7 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 				RunID:            pgvalue.UUID(ids.runID),
 				RunLeaseID:       pgvalue.UUID(runLeaseID),
 				WorkerInstanceID: pgvalue.UUID(workerID),
-				Stream:           db.RunLogStreamStdout,
+				Stream:           runLogStdout,
 				ObservedSeq:      1,
 				Content:          []byte("alpha"),
 			})
@@ -440,11 +444,11 @@ func TestDeadLetteredUnpublishedEventDoesNotBlockLaterPublish(t *testing.T) {
 	}
 }
 
-func appendRunLog(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, runLeaseID uuid.UUID, workerID uuid.UUID, stream db.RunLogStream, observedSeq int64, content []byte) db.AppendRunLogChunkRow {
+func appendRunLog(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, runLeaseID uuid.UUID, workerID uuid.UUID, stream string, observedSeq int64, content []byte) db.AppendRunLogChunkRow {
 	t.Helper()
 	row, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
 		Kind:             "run.log",
-		Payload:          []byte(`{"stream":"` + string(stream) + `"}`),
+		Payload:          []byte(`{"stream":"` + stream + `"}`),
 		OrgID:            pgvalue.UUID(ids.orgID),
 		WorkerGroupID:    testWorkerGroupID,
 		RunID:            pgvalue.UUID(ids.runID),

@@ -48,11 +48,11 @@ current_run_lease AS (
 ),
 candidate AS (
     SELECT current_run_lease.org_id, current_run_lease.worker_group_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $8::run_log_stream AS stream,
+           $8::text AS stream,
            $9::bigint AS observed_seq,
            $10::bytea AS content,
            octet_length($10::bytea)::bigint AS size_bytes,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || ($8::run_log_stream)::text || ':' || ($9::bigint)::text AS idempotency_key
+           'run_log:' || current_run_lease.run_lease_id::text || ':' || $8::text || ':' || ($9::bigint)::text AS idempotency_key
       FROM current_run_lease
 ),
 inserted_chunk AS (
@@ -95,7 +95,7 @@ inserted_chunk AS (
               telemetry_outbox.run_id,
               telemetry_outbox.run_lease_id,
               telemetry_outbox.attempt_number,
-              telemetry_outbox.stream_name::run_log_stream AS stream,
+              telemetry_outbox.stream_name AS stream,
               telemetry_outbox.id AS seq,
               telemetry_outbox.observed_seq,
               telemetry_outbox.content,
@@ -109,7 +109,7 @@ existing_chunk AS (
            telemetry_outbox.run_id,
            telemetry_outbox.run_lease_id,
            telemetry_outbox.attempt_number,
-           telemetry_outbox.stream_name::run_log_stream AS stream,
+           telemetry_outbox.stream_name AS stream,
            telemetry_outbox.id AS seq,
            telemetry_outbox.observed_seq,
            telemetry_outbox.content,
@@ -257,16 +257,16 @@ SELECT selected_chunk.org_id,
 `
 
 type AppendRunLogChunkParams struct {
-	Kind             string       `json:"kind"`
-	Payload          []byte       `json:"payload"`
-	OrgID            pgtype.UUID  `json:"org_id"`
-	WorkerGroupID    string       `json:"worker_group_id"`
-	RunID            pgtype.UUID  `json:"run_id"`
-	RunLeaseID       pgtype.UUID  `json:"run_lease_id"`
-	WorkerInstanceID pgtype.UUID  `json:"worker_instance_id"`
-	Stream           RunLogStream `json:"stream"`
-	ObservedSeq      int64        `json:"observed_seq"`
-	Content          []byte       `json:"content"`
+	Kind             string      `json:"kind"`
+	Payload          []byte      `json:"payload"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	WorkerGroupID    string      `json:"worker_group_id"`
+	RunID            pgtype.UUID `json:"run_id"`
+	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	Stream           string      `json:"stream"`
+	ObservedSeq      int64       `json:"observed_seq"`
+	Content          []byte      `json:"content"`
 }
 
 type AppendRunLogChunkRow struct {
@@ -274,7 +274,7 @@ type AppendRunLogChunkRow struct {
 	RunID         pgtype.UUID        `json:"run_id"`
 	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
 	AttemptNumber pgtype.Int4        `json:"attempt_number"`
-	Stream        RunLogStream       `json:"stream"`
+	Stream        string             `json:"stream"`
 	Seq           int64              `json:"seq"`
 	ObservedSeq   pgtype.Int8        `json:"observed_seq"`
 	Content       []byte             `json:"content"`

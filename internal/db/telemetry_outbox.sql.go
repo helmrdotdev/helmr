@@ -37,7 +37,7 @@ updated AS (
 SELECT updated.id AS outbox_id,
        updated.retry_count,
        COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
-       updated.source_kind::event_subject_type AS subject_type,
+       updated.source_kind AS subject_type,
        updated.source_id AS subject_id,
        updated.id AS seq,
        updated.org_id,
@@ -75,7 +75,7 @@ type ClaimEventIngestBatchRow struct {
 	OutboxID        int64              `json:"outbox_id"`
 	RetryCount      int32              `json:"retry_count"`
 	IdempotencyKey  string             `json:"idempotency_key"`
-	SubjectType     EventSubjectType   `json:"subject_type"`
+	SubjectType     string             `json:"subject_type"`
 	SubjectID       pgtype.UUID        `json:"subject_id"`
 	Seq             int64              `json:"seq"`
 	OrgID           pgtype.UUID        `json:"org_id"`
@@ -495,7 +495,7 @@ SELECT updated.id AS outbox_id,
        updated.run_id,
        updated.run_lease_id,
        updated.attempt_number,
-       updated.stream_name::run_log_stream AS stream,
+       updated.stream_name AS stream,
        updated.id AS seq,
        updated.observed_seq,
        updated.content,
@@ -521,7 +521,7 @@ type ClaimRunLogIngestBatchRow struct {
 	RunID          pgtype.UUID        `json:"run_id"`
 	RunLeaseID     pgtype.UUID        `json:"run_lease_id"`
 	AttemptNumber  pgtype.Int4        `json:"attempt_number"`
-	Stream         RunLogStream       `json:"stream"`
+	Stream         string             `json:"stream"`
 	Seq            int64              `json:"seq"`
 	ObservedSeq    pgtype.Int8        `json:"observed_seq"`
 	Content        []byte             `json:"content"`

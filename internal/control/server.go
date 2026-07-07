@@ -66,7 +66,6 @@ type Server struct {
 	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
-	workspaceStreams      *WorkspaceStreamNotifier
 	workerCommandStream   *WorkerCommandStream
 	workerLeaseScanSeed   atomic.Uint64
 	workerTokenSecret     []byte
@@ -142,7 +141,6 @@ type ServerConfig struct {
 	ScheduleEngine        ScheduleRegistrar
 	EventStream           *EventStream
 	TelemetryReader       telemetry.Reader
-	WorkspaceStreams      *WorkspaceStreamNotifier
 	WorkerCommands        *WorkerCommandStream
 	Mailer                email.Sender
 	AuthProvider          AuthProvider
@@ -243,7 +241,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		workspaceStreams:      cfg.WorkspaceStreams,
 		workerCommandStream:   cfg.WorkerCommands,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
 		workerTokenTTL:        workerTokenTTL,

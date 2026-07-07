@@ -1628,25 +1628,9 @@ released_write_lease AS (
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
-),
-stream_wakeups AS (
-    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
-    SELECT updated_exec.org_id,
-           updated_exec.project_id,
-           updated_exec.environment_id,
-           updated_exec.workspace_id,
-           updated_exec.worker_group_id,
-           updated_exec.id,
-           stream_names.stream_name,
-           stream_names.cursor_offset,
-           'terminal'::workspace_stream_notification_kind
-      FROM updated_exec
-      CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
-    RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
   FROM updated_exec
- WHERE (SELECT count(*) FROM stream_wakeups) >= 0
 `
 
 type MarkWorkspaceExecExitedParams struct {
