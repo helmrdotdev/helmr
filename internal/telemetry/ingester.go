@@ -71,11 +71,6 @@ func (i *Ingestor) Run(ctx context.Context) error {
 			return err
 		}
 		hadError := false
-		orphanCount, err := i.deadLetterOrphans(ctx)
-		if err != nil {
-			hadError = true
-			i.log.Warn("dead-letter orphaned telemetry failed", "error", err)
-		}
 		eventCount, err := i.ingestEvents(ctx)
 		if err != nil {
 			hadError = true
@@ -105,17 +100,12 @@ func (i *Ingestor) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		if orphanCount == 0 && eventCount == 0 && logCount == 0 && meterEventCount == 0 && terminalCount == 0 {
+		if eventCount == 0 && logCount == 0 && meterEventCount == 0 && terminalCount == 0 {
 			if err := sleep(ctx, i.idleEvery); err != nil {
 				return err
 			}
 		}
 	}
-}
-
-func (i *Ingestor) deadLetterOrphans(ctx context.Context) (int, error) {
-	ids, err := i.db.DeadLetterOrphanedTelemetryOutbox(ctx, i.batchSize)
-	return len(ids), err
 }
 
 func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {

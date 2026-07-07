@@ -203,7 +203,6 @@ ALTER TABLE telemetry_outbox DROP CONSTRAINT IF EXISTS telemetry_outbox_run_leas
 DROP TABLE IF EXISTS run_state_snapshots;
 DROP TABLE IF EXISTS run_leases;
 DROP TYPE IF EXISTS run_log_stream;
-DROP TABLE IF EXISTS telemetry_replay_errors;
 DROP TABLE IF EXISTS telemetry_outbox;
 DROP TYPE IF EXISTS event_subject_type;
 DROP TABLE IF EXISTS worker_instance_credentials;
@@ -231,7 +230,6 @@ DROP TABLE IF EXISTS worker_groups;
 DROP TABLE IF EXISTS runtime_release_selections;
 DROP TABLE IF EXISTS runtime_releases;
 DROP TABLE IF EXISTS secrets;
-DROP TYPE IF EXISTS telemetry_replay_error_state;
 DROP TYPE IF EXISTS telemetry_outbox_state;
 DROP TYPE IF EXISTS telemetry_stream_kind;
 DROP TYPE IF EXISTS worker_group_state;

@@ -384,35 +384,6 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 	}
 }
 
-func TestDeadLetterOrphanedTelemetryOutboxIsNoOpWithoutHotPayloadTables(t *testing.T) {
-	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
-	queries := db.New(pool)
-	_, runLeaseID, workerID := seedRunningSessionLease(t, ctx, pool, ids)
-	appendRunLog(t, ctx, queries, ids, runLeaseID, workerID, db.RunLogStreamStdout, 1, []byte("alpha"))
-
-	deadLettered, err := queries.DeadLetterOrphanedTelemetryOutbox(ctx, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(deadLettered) != 0 {
-		t.Fatalf("dead-lettered orphan outbox rows = %v, want none", deadLettered)
-	}
-	var deadLetteredCount int64
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM telemetry_outbox
-		 WHERE org_id = $1
-		   AND state = 'dead_lettered'
-	`, ids.orgID).Scan(&deadLetteredCount); err != nil {
-		t.Fatal(err)
-	}
-	if deadLetteredCount != 0 {
-		t.Fatalf("dead-lettered count = %d, want 0", deadLetteredCount)
-	}
-}
-
 func TestDeadLetteredUnpublishedEventDoesNotBlockLaterPublish(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)

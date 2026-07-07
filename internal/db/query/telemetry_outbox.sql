@@ -187,12 +187,6 @@ SELECT updated.id AS outbox_id,
  FROM updated
  ORDER BY updated.id ASC;
 
--- name: DeadLetterOrphanedTelemetryOutbox :many
-SELECT telemetry_outbox.id
-  FROM telemetry_outbox
- WHERE false
- LIMIT sqlc.arg(row_limit);
-
 -- name: MarkTelemetryOutboxWritten :exec
 UPDATE telemetry_outbox
    SET state = 'written',
@@ -221,31 +215,6 @@ UPDATE telemetry_outbox
        last_error = sqlc.arg(last_error)
  WHERE id = ANY(sqlc.arg(ids)::bigint[])
    AND written_at IS NOT NULL;
-
--- name: DeadLetterTelemetryOutbox :exec
-WITH dead_lettered AS (
-    UPDATE telemetry_outbox
-       SET state = 'dead_lettered',
-           next_retry_at = NULL,
-           updated_at = now(),
-           last_error = sqlc.arg(last_error)
-     WHERE telemetry_outbox.id = sqlc.arg(id)
-       AND telemetry_outbox.written_at IS NULL
-    RETURNING *
-)
-INSERT INTO telemetry_replay_errors (org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name, seq, state, retry_count, last_error, next_retry_at)
-SELECT org_id,
-       worker_group_id,
-       stream_kind,
-       source_kind,
-       source_id,
-       stream_name,
-       id,
-       'dead_lettered',
-       retry_count,
-       last_error,
-       NULL
-  FROM dead_lettered;
 
 -- name: PruneTelemetryOutboxWritten :many
 DELETE FROM telemetry_outbox
