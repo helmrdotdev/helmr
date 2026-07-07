@@ -1,11 +1,12 @@
 -- name: CreateWorkspaceExec :one
-INSERT INTO workspace_execs (
+INSERT INTO workspace_processes (
     id,
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
+    kind,
     command,
     cwd,
     env_shape,
@@ -23,11 +24,12 @@ SELECT sqlc.arg(id),
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
+       'command',
        sqlc.arg(command)::jsonb,
        coalesce(sqlc.arg(cwd)::text, ''),
        coalesce(sqlc.arg(env_shape)::jsonb, '{}'::jsonb),
        sqlc.arg(filesystem_mode)::workspace_filesystem_mode,
-       sqlc.arg(state)::workspace_exec_state,
+       sqlc.arg(state)::workspace_process_state,
        sqlc.arg(detached),
        coalesce(sqlc.arg(idempotency_key)::text, ''),
        coalesce(sqlc.arg(request_fingerprint)::text, ''),
@@ -45,21 +47,23 @@ RETURNING *;
 
 -- name: GetWorkspaceExec :one
 SELECT *
-  FROM workspace_execs
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id);
+   AND id = sqlc.arg(id)
+   AND kind = 'command';
 
 -- name: ListWorkspaceExecs :many
 SELECT *
-  FROM workspace_execs
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND (sqlc.narg(state)::workspace_exec_state IS NULL OR state = sqlc.narg(state)::workspace_exec_state)
+   AND kind = 'command'
+   AND (sqlc.narg(state)::workspace_process_state IS NULL OR state = sqlc.narg(state)::workspace_process_state)
  ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(limit_count);
 
@@ -78,22 +82,13 @@ SELECT id
 -- name: WorkspaceHasActivePrimitiveWriter :one
 SELECT EXISTS (
     SELECT 1
-      FROM workspace_execs
-     WHERE workspace_execs.org_id = sqlc.arg(org_id)
-       AND workspace_execs.project_id = sqlc.arg(project_id)
-       AND workspace_execs.environment_id = sqlc.arg(environment_id)
-       AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_execs.filesystem_mode = 'write'
-       AND workspace_execs.state NOT IN ('exited', 'terminated', 'lost', 'failed')
-    UNION ALL
-    SELECT 1
-      FROM workspace_pty_sessions
-     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_pty_sessions.filesystem_mode = 'write'
-       AND workspace_pty_sessions.state NOT IN ('closed', 'lost', 'failed')
+      FROM workspace_processes
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.filesystem_mode = 'write'
+       AND workspace_processes.state NOT IN ('exited', 'lost', 'failed')
     UNION ALL
     SELECT 1
       FROM workspace_leases
@@ -106,72 +101,75 @@ SELECT EXISTS (
 );
 
 -- name: BindWorkspaceExecWorkspaceMount :one
-UPDATE workspace_execs
+UPDATE workspace_processes
    SET workspace_mount_id = sqlc.arg(workspace_mount_id),
        instance_lease_id = sqlc.narg(instance_lease_id),
        write_lease_id = sqlc.narg(write_lease_id),
-       state = sqlc.arg(state)::workspace_exec_state,
+       state = sqlc.arg(state)::workspace_process_state,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('queued', 'materializing')
+   AND kind = 'command'
+   AND state IN ('queued', 'starting')
 RETURNING *;
 
 -- name: ListWorkspaceExecsAwaitingDispatch :many
-SELECT workspace_execs.*
-  FROM workspace_execs
+SELECT workspace_processes.*
+  FROM workspace_processes
   JOIN workspace_mounts
-    ON workspace_mounts.org_id = workspace_execs.org_id
-   AND workspace_mounts.project_id = workspace_execs.project_id
-   AND workspace_mounts.environment_id = workspace_execs.environment_id
-   AND workspace_mounts.workspace_id = workspace_execs.workspace_id
-   AND workspace_mounts.id = workspace_execs.workspace_mount_id
- WHERE workspace_execs.org_id = sqlc.arg(org_id)
-   AND workspace_execs.project_id = sqlc.arg(project_id)
-   AND workspace_execs.environment_id = sqlc.arg(environment_id)
-   AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
-   AND workspace_execs.state IN ('materializing', 'queued')
+    ON workspace_mounts.org_id = workspace_processes.org_id
+   AND workspace_mounts.project_id = workspace_processes.project_id
+   AND workspace_mounts.environment_id = workspace_processes.environment_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+   AND workspace_mounts.id = workspace_processes.workspace_mount_id
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND workspace_processes.kind = 'command'
+   AND workspace_processes.state IN ('starting', 'queued')
    AND workspace_mounts.state = 'mounted'
- ORDER BY workspace_execs.created_at ASC, workspace_execs.id ASC
+ ORDER BY workspace_processes.created_at ASC, workspace_processes.id ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: MarkWorkspaceExecStarted :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_execs.*
-      FROM workspace_execs
+    SELECT workspace_processes.*
+      FROM workspace_processes
       JOIN workspace_mounts
-        ON workspace_mounts.org_id = workspace_execs.org_id
-       AND workspace_mounts.project_id = workspace_execs.project_id
-       AND workspace_mounts.environment_id = workspace_execs.environment_id
-       AND workspace_mounts.workspace_id = workspace_execs.workspace_id
-       AND workspace_mounts.id = workspace_execs.workspace_mount_id
-     WHERE workspace_execs.org_id = sqlc.arg(org_id)
-       AND workspace_execs.project_id = sqlc.arg(project_id)
-       AND workspace_execs.environment_id = sqlc.arg(environment_id)
-       AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_execs.id = sqlc.arg(id)
-       AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+        ON workspace_mounts.org_id = workspace_processes.org_id
+       AND workspace_mounts.project_id = workspace_processes.project_id
+       AND workspace_mounts.environment_id = workspace_processes.environment_id
+       AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+       AND workspace_mounts.id = workspace_processes.workspace_mount_id
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.id = sqlc.arg(id)
+       AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
        AND workspace_mounts.state = 'mounted'
-     FOR UPDATE OF workspace_execs, workspace_mounts
+     FOR UPDATE OF workspace_processes, workspace_mounts
 ),
 updated_exec AS (
-    UPDATE workspace_execs
+    UPDATE workspace_processes
        SET state = 'running',
-           process_id = sqlc.arg(process_id),
-           started_at = coalesce(workspace_execs.started_at, now()),
+           runtime_process_id = sqlc.arg(runtime_process_id),
+           started_at = coalesce(workspace_processes.started_at, now()),
            updated_at = now()
       FROM target
-     WHERE workspace_execs.org_id = target.org_id
-       AND workspace_execs.project_id = target.project_id
-       AND workspace_execs.environment_id = target.environment_id
-       AND workspace_execs.workspace_id = target.workspace_id
-       AND workspace_execs.id = target.id
-    RETURNING workspace_execs.*
+     WHERE workspace_processes.org_id = target.org_id
+       AND workspace_processes.project_id = target.project_id
+       AND workspace_processes.environment_id = target.environment_id
+       AND workspace_processes.workspace_id = target.workspace_id
+       AND workspace_processes.id = target.id
+    RETURNING workspace_processes.*
 ),
 dirtied_mount AS (
     UPDATE workspace_mounts
@@ -185,7 +183,7 @@ dirtied_mount AS (
        AND workspace_leases.environment_id = updated_exec.environment_id
        AND workspace_leases.workspace_id = updated_exec.workspace_id
        AND workspace_leases.id = updated_exec.write_lease_id
-       AND workspace_leases.owner_exec_id = updated_exec.id
+       AND workspace_leases.owner_process_id = updated_exec.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state = 'active'
      WHERE target.state <> 'running'
@@ -214,33 +212,35 @@ SELECT *
  WHERE (SELECT count(*) FROM updated_workspace) >= 0;
 
 -- name: CloseWorkspaceExecStdin :one
-UPDATE workspace_execs
-   SET stdin_closed_at = coalesce(workspace_execs.stdin_closed_at, now()),
+UPDATE workspace_processes
+   SET stdin_closed_at = coalesce(workspace_processes.stdin_closed_at, now()),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('queued', 'materializing', 'running')
+   AND kind = 'command'
+   AND state IN ('queued', 'starting', 'running')
 RETURNING *;
 
 -- name: MarkWorkspaceExecExited :one
 WITH updated_exec AS (
-    UPDATE workspace_execs
-       SET state = sqlc.arg(state)::workspace_exec_state,
+    UPDATE workspace_processes
+       SET state = sqlc.arg(state)::workspace_process_state,
            exit_code = sqlc.narg(exit_code),
-           signal = coalesce(sqlc.arg(signal)::text, workspace_execs.signal),
+           signal = coalesce(sqlc.arg(signal)::text, workspace_processes.signal),
            error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
-           exited_at = coalesce(workspace_execs.exited_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
-     WHERE workspace_execs.org_id = sqlc.arg(org_id)
-       AND workspace_execs.project_id = sqlc.arg(project_id)
-       AND workspace_execs.environment_id = sqlc.arg(environment_id)
-       AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_execs.id = sqlc.arg(id)
-       AND workspace_execs.workspace_mount_id = sqlc.arg(workspace_mount_id)
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.id = sqlc.arg(id)
+       AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
     RETURNING *
 ),
 released_write_lease AS (
@@ -254,24 +254,24 @@ released_write_lease AS (
        AND workspace_leases.environment_id = updated_exec.environment_id
        AND workspace_leases.workspace_id = updated_exec.workspace_id
        AND workspace_leases.id = updated_exec.write_lease_id
-       AND workspace_leases.owner_exec_id = updated_exec.id
+       AND workspace_leases.owner_process_id = updated_exec.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
     SELECT updated_exec.org_id,
            updated_exec.project_id,
            updated_exec.environment_id,
            updated_exec.workspace_id,
-           'workspace_exec'::workspace_resource_kind,
+           updated_exec.worker_group_id,
            updated_exec.id,
-           stream_names.stream,
+           stream_names.stream_name,
            stream_names.cursor_offset,
            'terminal'::workspace_stream_notification_kind
       FROM updated_exec
-      CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream, cursor_offset)
+      CROSS JOIN LATERAL (VALUES ('stdout', updated_exec.stdout_cursor), ('stderr', updated_exec.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
     RETURNING id
 )
 SELECT *
@@ -289,23 +289,25 @@ SELECT id,
        stderr_cursor,
        stdin_closed_at,
        state
-  FROM workspace_execs
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(exec_id)
+   AND id = sqlc.arg(process_id)
+   AND kind = 'command'
  FOR UPDATE;
 
 -- name: InsertWorkspaceExecStreamChunk :one
-INSERT INTO workspace_exec_stream_chunks (
+INSERT INTO workspace_process_stream_chunks (
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
-    exec_id,
-    stream,
+    process_id,
+    stream_name,
+    direction,
     offset_start,
     offset_end,
     data,
@@ -316,8 +318,9 @@ INSERT INTO workspace_exec_stream_chunks (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
-    sqlc.arg(exec_id),
-    sqlc.arg(stream)::workspace_exec_stream,
+    sqlc.arg(process_id),
+    sqlc.arg(stream_name)::text,
+    CASE WHEN sqlc.arg(stream_name)::text = 'stdin' THEN 'input' ELSE 'output' END,
     sqlc.arg(offset_start),
     sqlc.arg(offset_end),
     sqlc.arg(data),
@@ -327,14 +330,15 @@ RETURNING *;
 
 -- name: InsertWorkspaceExecOutputStreamChunk :one
 WITH inserted AS (
-    INSERT INTO workspace_exec_stream_chunks (
+    INSERT INTO workspace_process_stream_chunks (
         org_id,
         worker_group_id,
         project_id,
         environment_id,
         workspace_id,
-        exec_id,
-        stream,
+        process_id,
+        stream_name,
+        direction,
         offset_start,
         offset_end,
         data,
@@ -345,8 +349,9 @@ WITH inserted AS (
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(workspace_id),
-        sqlc.arg(exec_id),
-        sqlc.arg(stream)::workspace_exec_stream,
+        sqlc.arg(process_id),
+        sqlc.arg(stream_name)::text,
+        CASE WHEN sqlc.arg(stream_name)::text = 'stdin' THEN 'input' ELSE 'output' END,
         sqlc.arg(offset_start),
         sqlc.arg(offset_end),
         sqlc.arg(data),
@@ -383,16 +388,16 @@ terminal_telemetry_outbox AS (
     SELECT inserted.org_id,
            inserted.worker_group_id,
            'terminal_output',
-           'workspace_exec',
-           inserted.exec_id,
-           inserted.stream::text,
+           'workspace_process',
+           inserted.process_id,
+           inserted.stream_name::text,
            inserted.offset_start,
-           'terminal_output:workspace_exec:' || inserted.exec_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text,
+           'terminal_output:workspace_process:' || inserted.process_id::text || ':' || inserted.stream_name::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text,
            inserted.project_id,
            inserted.environment_id,
            inserted.workspace_id,
-           'workspace_exec',
-           inserted.exec_id,
+           'workspace_process',
+           inserted.process_id,
            inserted.data,
            octet_length(inserted.data)::bigint,
            inserted.offset_end,
@@ -411,17 +416,17 @@ SELECT *
  WHERE (SELECT count(*) FROM terminal_telemetry_outbox) >= 0;
 
 -- name: AdvanceWorkspaceExecStreamCursor :one
-UPDATE workspace_execs
-   SET stdin_cursor = CASE WHEN sqlc.arg(stream)::workspace_exec_stream = 'stdin' THEN sqlc.arg(offset_end) ELSE stdin_cursor END,
-       stdout_cursor = CASE WHEN sqlc.arg(stream)::workspace_exec_stream = 'stdout' THEN sqlc.arg(offset_end) ELSE stdout_cursor END,
-       stderr_cursor = CASE WHEN sqlc.arg(stream)::workspace_exec_stream = 'stderr' THEN sqlc.arg(offset_end) ELSE stderr_cursor END,
+UPDATE workspace_processes
+   SET stdin_cursor = CASE WHEN sqlc.arg(stream_name) = 'stdin' THEN sqlc.arg(offset_end) ELSE stdin_cursor END,
+       stdout_cursor = CASE WHEN sqlc.arg(stream_name) = 'stdout' THEN sqlc.arg(offset_end) ELSE stdout_cursor END,
+       stderr_cursor = CASE WHEN sqlc.arg(stream_name) = 'stderr' THEN sqlc.arg(offset_end) ELSE stderr_cursor END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(exec_id)
-   AND sqlc.arg(offset_start) = CASE sqlc.arg(stream)::workspace_exec_stream
+   AND id = sqlc.arg(process_id)
+   AND sqlc.arg(offset_start) = CASE sqlc.arg(stream_name)
          WHEN 'stdin' THEN stdin_cursor
          WHEN 'stdout' THEN stdout_cursor
          WHEN 'stderr' THEN stderr_cursor
@@ -430,17 +435,17 @@ RETURNING *;
 
 -- name: AdvanceWorkspaceExecOutputCursor :one
 WITH RECURSIVE current_cursor AS (
-    SELECT CASE sqlc.arg(stream)::workspace_exec_stream
+    SELECT CASE sqlc.arg(stream_name)
              WHEN 'stdout' THEN stdout_cursor
              WHEN 'stderr' THEN stderr_cursor
              ELSE -1
            END AS cursor
-      FROM workspace_execs
+      FROM workspace_processes
      WHERE org_id = sqlc.arg(org_id)
        AND project_id = sqlc.arg(project_id)
        AND environment_id = sqlc.arg(environment_id)
        AND workspace_id = sqlc.arg(workspace_id)
-       AND id = sqlc.arg(exec_id)
+       AND id = sqlc.arg(process_id)
      FOR UPDATE
 ),
 contiguous(end_offset) AS (
@@ -448,61 +453,62 @@ contiguous(end_offset) AS (
     UNION
     SELECT chunks.offset_end
       FROM contiguous
-      JOIN workspace_exec_stream_chunks AS chunks
+      JOIN workspace_process_stream_chunks AS chunks
         ON chunks.org_id = sqlc.arg(org_id)
        AND chunks.project_id = sqlc.arg(project_id)
        AND chunks.environment_id = sqlc.arg(environment_id)
        AND chunks.workspace_id = sqlc.arg(workspace_id)
-       AND chunks.exec_id = sqlc.arg(exec_id)
-       AND chunks.stream = sqlc.arg(stream)::workspace_exec_stream
+       AND chunks.process_id = sqlc.arg(process_id)
+       AND chunks.stream_name = sqlc.arg(stream_name)
        AND chunks.offset_start = contiguous.end_offset
 ),
 advanced AS (
     SELECT max(end_offset)::bigint AS cursor FROM contiguous
 )
-UPDATE workspace_execs
-   SET stdout_cursor = CASE WHEN sqlc.arg(stream)::workspace_exec_stream = 'stdout' THEN advanced.cursor ELSE stdout_cursor END,
-       stderr_cursor = CASE WHEN sqlc.arg(stream)::workspace_exec_stream = 'stderr' THEN advanced.cursor ELSE stderr_cursor END,
+UPDATE workspace_processes
+   SET stdout_cursor = CASE WHEN sqlc.arg(stream_name) = 'stdout' THEN advanced.cursor ELSE stdout_cursor END,
+       stderr_cursor = CASE WHEN sqlc.arg(stream_name) = 'stderr' THEN advanced.cursor ELSE stderr_cursor END,
        updated_at = now()
   FROM advanced
- WHERE workspace_execs.org_id = sqlc.arg(org_id)
-   AND workspace_execs.project_id = sqlc.arg(project_id)
-   AND workspace_execs.environment_id = sqlc.arg(environment_id)
-   AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_execs.id = sqlc.arg(exec_id)
-   AND sqlc.arg(stream)::workspace_exec_stream IN ('stdout', 'stderr')
-RETURNING workspace_execs.*;
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND sqlc.arg(stream_name) IN ('stdout', 'stderr')
+RETURNING workspace_processes.*;
 
 -- name: DeleteWorkspaceExecStreamChunksBefore :exec
-DELETE FROM workspace_exec_stream_chunks
- WHERE workspace_exec_stream_chunks.org_id = sqlc.arg(org_id)
-   AND workspace_exec_stream_chunks.project_id = sqlc.arg(project_id)
-   AND workspace_exec_stream_chunks.environment_id = sqlc.arg(environment_id)
-   AND workspace_exec_stream_chunks.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_exec_stream_chunks.exec_id = sqlc.arg(exec_id)
-   AND workspace_exec_stream_chunks.stream = sqlc.arg(stream)::workspace_exec_stream
-   AND workspace_exec_stream_chunks.offset_end <= sqlc.arg(retain_after_offset);
+DELETE FROM workspace_process_stream_chunks
+ WHERE workspace_process_stream_chunks.org_id = sqlc.arg(org_id)
+   AND workspace_process_stream_chunks.project_id = sqlc.arg(project_id)
+   AND workspace_process_stream_chunks.environment_id = sqlc.arg(environment_id)
+   AND workspace_process_stream_chunks.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_process_stream_chunks.process_id = sqlc.arg(process_id)
+   AND workspace_process_stream_chunks.stream_name = sqlc.arg(stream_name)
+   AND workspace_process_stream_chunks.offset_end <= sqlc.arg(retain_after_offset);
 
 -- name: GetWorkspaceExecStreamChunkAtOffset :one
 SELECT *
-  FROM workspace_exec_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND exec_id = sqlc.arg(exec_id)
-   AND stream = sqlc.arg(stream)::workspace_exec_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_start = sqlc.arg(offset_start);
 
 -- name: InsertWorkspaceExecStreamChunkReceipt :one
-INSERT INTO workspace_exec_stream_chunk_receipts (
+INSERT INTO workspace_process_stream_receipts (
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
-    exec_id,
-    stream,
+    process_id,
+    stream_name,
+    direction,
     offset_start,
     offset_end,
     data_sha256,
@@ -514,8 +520,9 @@ INSERT INTO workspace_exec_stream_chunk_receipts (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
-    sqlc.arg(exec_id),
-    sqlc.arg(stream)::workspace_exec_stream,
+    sqlc.arg(process_id),
+    sqlc.arg(stream_name)::text,
+    CASE WHEN sqlc.arg(stream_name)::text = 'stdin' THEN 'input' ELSE 'output' END,
     sqlc.arg(offset_start),
     sqlc.arg(offset_end),
     sqlc.arg(data_sha256),
@@ -527,24 +534,24 @@ RETURNING *;
 
 -- name: GetWorkspaceExecStreamChunkReceiptAtOffset :one
 SELECT *
-  FROM workspace_exec_stream_chunk_receipts
+  FROM workspace_process_stream_receipts
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND exec_id = sqlc.arg(exec_id)
-   AND stream = sqlc.arg(stream)::workspace_exec_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_start = sqlc.arg(offset_start);
 
 -- name: ListWorkspaceExecStreamChunksAfter :many
 SELECT *
-  FROM workspace_exec_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND exec_id = sqlc.arg(exec_id)
-   AND stream = sqlc.arg(stream)::workspace_exec_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_end > sqlc.arg(cursor_offset)
  ORDER BY offset_start ASC
  LIMIT sqlc.arg(limit_count);
@@ -552,53 +559,53 @@ SELECT *
 -- name: GetWorkspaceExecStreamBounds :one
 SELECT coalesce(min(offset_start), 0)::bigint AS earliest_offset,
        coalesce(max(offset_end), 0)::bigint AS latest_offset
-  FROM workspace_exec_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND exec_id = sqlc.arg(exec_id)
-   AND stream = sqlc.arg(stream)::workspace_exec_stream;
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name);
 
 -- name: ListWorkspaceExecStdinChunksAfterDelivered :many
 SELECT chunks.*
-  FROM workspace_execs
-  JOIN workspace_exec_stream_chunks AS chunks
-    ON chunks.org_id = workspace_execs.org_id
-   AND chunks.project_id = workspace_execs.project_id
-   AND chunks.environment_id = workspace_execs.environment_id
-   AND chunks.workspace_id = workspace_execs.workspace_id
-   AND chunks.exec_id = workspace_execs.id
-   AND chunks.stream = 'stdin'
- WHERE workspace_execs.org_id = sqlc.arg(org_id)
-   AND workspace_execs.project_id = sqlc.arg(project_id)
-   AND workspace_execs.environment_id = sqlc.arg(environment_id)
-   AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_execs.id = sqlc.arg(exec_id)
-   AND chunks.offset_end > workspace_execs.stdin_delivered_cursor
+  FROM workspace_processes
+  JOIN workspace_process_stream_chunks AS chunks
+    ON chunks.org_id = workspace_processes.org_id
+   AND chunks.project_id = workspace_processes.project_id
+   AND chunks.environment_id = workspace_processes.environment_id
+   AND chunks.workspace_id = workspace_processes.workspace_id
+   AND chunks.process_id = workspace_processes.id
+   AND chunks.stream_name = 'stdin'
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND chunks.offset_end > workspace_processes.stdin_delivered_cursor
  ORDER BY chunks.offset_start ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: AdvanceWorkspaceExecStdinDeliveredCursor :one
-UPDATE workspace_execs
+UPDATE workspace_processes
    SET stdin_delivered_cursor = sqlc.arg(offset_end),
        updated_at = now()
- WHERE workspace_execs.org_id = sqlc.arg(org_id)
-   AND workspace_execs.project_id = sqlc.arg(project_id)
-   AND workspace_execs.environment_id = sqlc.arg(environment_id)
-   AND workspace_execs.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_execs.id = sqlc.arg(exec_id)
-   AND sqlc.arg(offset_start) = workspace_execs.stdin_delivered_cursor
-   AND sqlc.arg(offset_end) <= workspace_execs.stdin_cursor
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND sqlc.arg(offset_start) = workspace_processes.stdin_delivered_cursor
+   AND sqlc.arg(offset_end) <= workspace_processes.stdin_cursor
    AND EXISTS (
        SELECT 1
-         FROM workspace_exec_stream_chunks AS chunks
-        WHERE chunks.org_id = workspace_execs.org_id
-          AND chunks.project_id = workspace_execs.project_id
-          AND chunks.environment_id = workspace_execs.environment_id
-          AND chunks.workspace_id = workspace_execs.workspace_id
-          AND chunks.exec_id = workspace_execs.id
-          AND chunks.stream = 'stdin'
+         FROM workspace_process_stream_chunks AS chunks
+        WHERE chunks.org_id = workspace_processes.org_id
+          AND chunks.project_id = workspace_processes.project_id
+          AND chunks.environment_id = workspace_processes.environment_id
+          AND chunks.workspace_id = workspace_processes.workspace_id
+          AND chunks.process_id = workspace_processes.id
+          AND chunks.stream_name = 'stdin'
           AND chunks.offset_start = sqlc.arg(offset_start)
           AND chunks.offset_end = sqlc.arg(offset_end)
    )

@@ -1732,23 +1732,25 @@ waiting_runtime_instance AS (
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_execs
-            WHERE workspace_execs.org_id = workspace_mounts.org_id
-              AND workspace_execs.project_id = workspace_mounts.project_id
-              AND workspace_execs.environment_id = workspace_mounts.environment_id
-              AND workspace_execs.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_execs.workspace_mount_id = workspace_mounts.id OR workspace_execs.workspace_mount_id IS NULL)
-              AND workspace_execs.state IN ('queued', 'materializing', 'running')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.kind = 'command'
+              AND workspace_processes.state IN ('queued', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_pty_sessions
-            WHERE workspace_pty_sessions.org_id = workspace_mounts.org_id
-              AND workspace_pty_sessions.project_id = workspace_mounts.project_id
-              AND workspace_pty_sessions.environment_id = workspace_mounts.environment_id
-              AND workspace_pty_sessions.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
-              AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.kind = 'pty'
+              AND workspace_processes.state IN ('starting', 'running', 'closing')
        )
     RETURNING runtime_instances.id
 ),

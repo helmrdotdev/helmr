@@ -51,7 +51,7 @@ func TestHistoricalReaderListsTerminalOutputFromClickHouse(t *testing.T) {
 		OrgID:         uuid.Must(uuid.NewV7()),
 		WorkerGroupID: "us-east-1-worker-group-1",
 		WorkspaceID:   uuid.Must(uuid.NewV7()),
-		ResourceKind:  "workspace_pty",
+		ResourceKind:  "workspace_process",
 		ResourceID:    resourceID,
 		StreamName:    "output",
 		AfterOffset:   5,

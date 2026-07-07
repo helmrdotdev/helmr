@@ -74,43 +74,43 @@ func execCreateFingerprint(command []string, cwd string, envShape []byte, detach
 	if err != nil {
 		return "", fmt.Errorf("encode workspace exec fingerprint payload: %w", err)
 	}
-	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceExecCreate), payload)
+	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceCommandCreate), payload)
 }
 
-func execStateTerminal(state db.WorkspaceExecState) bool {
+func execStateTerminal(state db.WorkspaceProcessState) bool {
 	switch state {
-	case db.WorkspaceExecStateExited, db.WorkspaceExecStateLost, db.WorkspaceExecStateFailed, db.WorkspaceExecStateTerminated:
+	case db.WorkspaceProcessStateExited, db.WorkspaceProcessStateLost, db.WorkspaceProcessStateFailed:
 		return true
 	default:
 		return false
 	}
 }
 
-func execStreamCursor(row db.LockWorkspaceExecForStreamAppendRow, stream db.WorkspaceExecStream) int64 {
+func execStreamCursor(row db.LockWorkspaceExecForStreamAppendRow, stream string) int64 {
 	switch stream {
-	case db.WorkspaceExecStreamStdin:
+	case workspaceStreamStdin:
 		return row.StdinCursor
-	case db.WorkspaceExecStreamStdout:
+	case workspaceStreamStdout:
 		return row.StdoutCursor
-	case db.WorkspaceExecStreamStderr:
+	case workspaceStreamStderr:
 		return row.StderrCursor
 	default:
 		return -1
 	}
 }
 
-func execStreamCursorFromRow(row db.WorkspaceExec, stream db.WorkspaceExecStream) int64 {
+func execStreamCursorFromRow(row db.WorkspaceProcess, stream string) int64 {
 	switch stream {
-	case db.WorkspaceExecStreamStdout:
+	case workspaceStreamStdout:
 		return row.StdoutCursor
-	case db.WorkspaceExecStreamStderr:
+	case workspaceStreamStderr:
 		return row.StderrCursor
 	default:
 		return 0
 	}
 }
 
-func execStartOperationRequest(row db.WorkspaceExec) ([]byte, error) {
+func execStartOperationRequest(row db.WorkspaceProcess) ([]byte, error) {
 	return json.Marshal(struct {
 		ExecID         string          `json:"exec_id"`
 		Command        json.RawMessage `json:"command"`

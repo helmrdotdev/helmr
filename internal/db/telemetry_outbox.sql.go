@@ -376,12 +376,12 @@ func (q *Queries) ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIng
 	return items, nil
 }
 
-const claimWorkspaceExecTerminalOutputIngestBatch = `-- name: ClaimWorkspaceExecTerminalOutputIngestBatch :many
+const claimWorkspaceProcessTerminalOutputIngestBatch = `-- name: ClaimWorkspaceProcessTerminalOutputIngestBatch :many
 WITH claimed AS (
     SELECT telemetry_outbox.id
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'terminal_output'
-       AND telemetry_outbox.source_kind = 'workspace_exec'
+       AND telemetry_outbox.source_kind = 'workspace_process'
        AND telemetry_outbox.written_at IS NULL
        AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
        AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
@@ -415,16 +415,16 @@ SELECT updated.id AS outbox_id,
        updated.offset_end,
        updated.content AS data,
        updated.observed_at
-  FROM updated
+ FROM updated
  ORDER BY updated.id ASC
 `
 
-type ClaimWorkspaceExecTerminalOutputIngestBatchParams struct {
+type ClaimWorkspaceProcessTerminalOutputIngestBatchParams struct {
 	RowLimit      int32           `json:"row_limit"`
 	LeaseDuration pgtype.Interval `json:"lease_duration"`
 }
 
-type ClaimWorkspaceExecTerminalOutputIngestBatchRow struct {
+type ClaimWorkspaceProcessTerminalOutputIngestBatchRow struct {
 	OutboxID       int64              `json:"outbox_id"`
 	RetryCount     int32              `json:"retry_count"`
 	IdempotencyKey string             `json:"idempotency_key"`
@@ -442,117 +442,15 @@ type ClaimWorkspaceExecTerminalOutputIngestBatchRow struct {
 	ObservedAt     pgtype.Timestamptz `json:"observed_at"`
 }
 
-func (q *Queries) ClaimWorkspaceExecTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspaceExecTerminalOutputIngestBatchParams) ([]ClaimWorkspaceExecTerminalOutputIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimWorkspaceExecTerminalOutputIngestBatch, arg.RowLimit, arg.LeaseDuration)
+func (q *Queries) ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspaceProcessTerminalOutputIngestBatchParams) ([]ClaimWorkspaceProcessTerminalOutputIngestBatchRow, error) {
+	rows, err := q.db.Query(ctx, claimWorkspaceProcessTerminalOutputIngestBatch, arg.RowLimit, arg.LeaseDuration)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ClaimWorkspaceExecTerminalOutputIngestBatchRow
+	var items []ClaimWorkspaceProcessTerminalOutputIngestBatchRow
 	for rows.Next() {
-		var i ClaimWorkspaceExecTerminalOutputIngestBatchRow
-		if err := rows.Scan(
-			&i.OutboxID,
-			&i.RetryCount,
-			&i.IdempotencyKey,
-			&i.OrgID,
-			&i.WorkerGroupID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.WorkspaceID,
-			&i.ResourceKind,
-			&i.ResourceID,
-			&i.StreamName,
-			&i.OffsetStart,
-			&i.OffsetEnd,
-			&i.Data,
-			&i.ObservedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const claimWorkspacePtyTerminalOutputIngestBatch = `-- name: ClaimWorkspacePtyTerminalOutputIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.stream_kind = 'terminal_output'
-       AND telemetry_outbox.source_kind = 'workspace_pty'
-       AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
-       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
-     ORDER BY telemetry_outbox.id ASC
-     LIMIT $1
-     FOR UPDATE SKIP LOCKED
-),
-updated AS (
-    UPDATE telemetry_outbox
-       SET state = 'claimed',
-           retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + $2::interval,
-           updated_at = now(),
-           last_error = ''
-      FROM claimed
-     WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.workspace_id, telemetry_outbox.resource_kind, telemetry_outbox.resource_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.offset_start, telemetry_outbox.offset_end, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at
-)
-SELECT updated.id AS outbox_id,
-       updated.retry_count,
-       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
-       updated.org_id,
-       updated.worker_group_id,
-       updated.project_id,
-       updated.environment_id,
-       updated.workspace_id,
-       updated.resource_kind,
-       updated.resource_id,
-       updated.stream_name,
-       COALESCE(updated.offset_start, 0)::bigint AS offset_start,
-       updated.offset_end,
-       updated.content AS data,
-       updated.observed_at
-  FROM updated
- ORDER BY updated.id ASC
-`
-
-type ClaimWorkspacePtyTerminalOutputIngestBatchParams struct {
-	RowLimit      int32           `json:"row_limit"`
-	LeaseDuration pgtype.Interval `json:"lease_duration"`
-}
-
-type ClaimWorkspacePtyTerminalOutputIngestBatchRow struct {
-	OutboxID       int64              `json:"outbox_id"`
-	RetryCount     int32              `json:"retry_count"`
-	IdempotencyKey string             `json:"idempotency_key"`
-	OrgID          pgtype.UUID        `json:"org_id"`
-	WorkerGroupID  string             `json:"worker_group_id"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	EnvironmentID  pgtype.UUID        `json:"environment_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ResourceKind   string             `json:"resource_kind"`
-	ResourceID     pgtype.UUID        `json:"resource_id"`
-	StreamName     string             `json:"stream_name"`
-	OffsetStart    int64              `json:"offset_start"`
-	OffsetEnd      pgtype.Int8        `json:"offset_end"`
-	Data           []byte             `json:"data"`
-	ObservedAt     pgtype.Timestamptz `json:"observed_at"`
-}
-
-func (q *Queries) ClaimWorkspacePtyTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspacePtyTerminalOutputIngestBatchParams) ([]ClaimWorkspacePtyTerminalOutputIngestBatchRow, error) {
-	rows, err := q.db.Query(ctx, claimWorkspacePtyTerminalOutputIngestBatch, arg.RowLimit, arg.LeaseDuration)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ClaimWorkspacePtyTerminalOutputIngestBatchRow
-	for rows.Next() {
-		var i ClaimWorkspacePtyTerminalOutputIngestBatchRow
+		var i ClaimWorkspaceProcessTerminalOutputIngestBatchRow
 		if err := rows.Scan(
 			&i.OutboxID,
 			&i.RetryCount,

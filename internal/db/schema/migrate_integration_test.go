@@ -118,16 +118,15 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		   AND table_name IN (
 		       'event_hot_payloads',
 		       'run_log_hot_chunks',
-		       'workspace_exec_stream_chunks',
-		       'workspace_pty_stream_chunks'
+		       'workspace_process_stream_chunks'
 		   )
 		   AND column_name = 'expires_at'
 		   AND is_nullable = 'NO'
 	`).Scan(&boundedHotTables); err != nil {
 		t.Fatal(err)
 	}
-	if boundedHotTables != 2 {
-		t.Fatalf("bounded telemetry hot payload tables = %d, want 2", boundedHotTables)
+	if boundedHotTables != 1 {
+		t.Fatalf("bounded telemetry hot payload tables = %d, want 1", boundedHotTables)
 	}
 	var oldUsageEnums int
 	if err := pool.QueryRow(ctx, `
@@ -161,7 +160,7 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 			SELECT 1
 			  FROM information_schema.columns
 			 WHERE table_schema = 'public'
-			   AND table_name IN ('workspace_exec_stream_chunks', 'workspace_pty_stream_chunks')
+			   AND table_name = 'workspace_process_stream_chunks'
 			   AND column_name = 'sequence'
 		)
 	`).Scan(&hasSequence); err != nil {
@@ -176,7 +175,7 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 			SELECT 1
 			  FROM pg_enum
 			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-			 WHERE pg_type.typname = 'workspace_pty_stream'
+			 WHERE pg_type.typname = 'workspace_process_stream'
 			   AND pg_enum.enumlabel = 'resize'
 		)
 	`).Scan(&hasResize); err != nil {
@@ -189,16 +188,15 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
 		  FROM pg_constraint
-		 WHERE conname IN (
-		 	'workspace_exec_stream_chunks_no_overlap',
-		 	'workspace_pty_stream_chunks_no_overlap'
-		 )
+			 WHERE conname IN (
+				'workspace_process_stream_chunks_no_overlap'
+			 )
 		   AND contype = 'x'
 	`).Scan(&constraintCount); err != nil {
 		t.Fatal(err)
 	}
-	if constraintCount != 2 {
-		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 2", constraintCount)
+	if constraintCount != 1 {
+		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 1", constraintCount)
 	}
 	var hasActiveResourceIndex bool
 	if err := pool.QueryRow(ctx, `
@@ -206,16 +204,16 @@ func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpoo
 			SELECT 1
 			  FROM pg_indexes
 			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_operations'
-			   AND indexname = 'workspace_operations_active_resource_idx'
+			   AND tablename = 'workspace_process_operations'
+			   AND indexname = 'workspace_process_operations_active_process_idx'
 			   AND indexdef ILIKE '%WHERE%state%queued%'
-			   AND indexdef ILIKE '%resource_id IS NOT NULL%'
+			   AND indexdef ILIKE '%process_id%'
 		)
 	`).Scan(&hasActiveResourceIndex); err != nil {
 		t.Fatal(err)
 	}
 	if !hasActiveResourceIndex {
-		t.Fatal("workspace operations must prevent duplicate active resource dispatch")
+		t.Fatal("workspace process operations must prevent duplicate active process dispatch")
 	}
 }
 

@@ -80,14 +80,14 @@ func (s *Server) listWorkspacePtys(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	state := db.NullWorkspacePtyState{}
+	state := db.NullWorkspaceProcessState{}
 	if raw := strings.TrimSpace(r.URL.Query().Get("state")); raw != "" {
 		normalized, err := normalizeWorkspacePtyStateFilter(raw)
 		if err != nil {
 			writeError(w, badRequest(err))
 			return
 		}
-		state = db.NullWorkspacePtyState{WorkspacePtyState: normalized, Valid: true}
+		state = db.NullWorkspaceProcessState{WorkspaceProcessState: normalized, Valid: true}
 	}
 	rows, err := s.db.ListWorkspacePtySessions(r.Context(), db.ListWorkspacePtySessionsParams{
 		OrgID:         workspace.OrgID,
@@ -108,16 +108,15 @@ func (s *Server) listWorkspacePtys(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, api.ListWorkspacePtySessionsResponse{Ptys: out})
 }
 
-func normalizeWorkspacePtyStateFilter(raw string) (db.WorkspacePtyState, error) {
-	switch db.WorkspacePtyState(strings.TrimSpace(raw)) {
-	case db.WorkspacePtyStateCreating,
-		db.WorkspacePtyStateOpen,
-		db.WorkspacePtyStateResizing,
-		db.WorkspacePtyStateClosing,
-		db.WorkspacePtyStateClosed,
-		db.WorkspacePtyStateLost,
-		db.WorkspacePtyStateFailed:
-		return db.WorkspacePtyState(strings.TrimSpace(raw)), nil
+func normalizeWorkspacePtyStateFilter(raw string) (db.WorkspaceProcessState, error) {
+	switch db.WorkspaceProcessState(strings.TrimSpace(raw)) {
+	case db.WorkspaceProcessStateStarting,
+		db.WorkspaceProcessStateRunning,
+		db.WorkspaceProcessStateClosing,
+		db.WorkspaceProcessStateExited,
+		db.WorkspaceProcessStateLost,
+		db.WorkspaceProcessStateFailed:
+		return db.WorkspaceProcessState(strings.TrimSpace(raw)), nil
 	default:
 		return "", errors.New("state must be one of creating, open, resizing, closing, closed, lost, failed")
 	}
@@ -141,7 +140,7 @@ func (s *Server) writeWorkspacePtyInput(w http.ResponseWriter, r *http.Request) 
 		writeError(w, badRequest(fmt.Errorf("invalid workspace pty input request JSON: %w", err)))
 		return
 	}
-	chunk, err := s.appendWorkspacePtyStreamChunk(r.Context(), pty, db.WorkspacePtyStreamInput, request.Offset, request.Data)
+	chunk, err := s.appendWorkspacePtyStreamChunk(r.Context(), pty, workspaceStreamInput, request.Offset, request.Data)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "write workspace pty input", err)
 		return
@@ -221,16 +220,16 @@ func (s *Server) requestWorkspacePtyClose(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, api.WorkspacePtyEnvelope{Pty: workspacePtyResponse(row)})
 }
 
-func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.WorkspacePtySession, cols int32, rows int32) (db.WorkspacePtySession, error) {
-	if pty.State != db.WorkspacePtyStateOpen && pty.State != db.WorkspacePtyStateResizing {
-		return db.WorkspacePtySession{}, conflict(errWorkspacePtyNotOpen)
+func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.WorkspaceProcess, cols int32, rows int32) (db.WorkspaceProcess, error) {
+	if pty.State != db.WorkspaceProcessStateRunning {
+		return db.WorkspaceProcess{}, conflict(errWorkspacePtyNotOpen)
 	}
-	var row db.WorkspacePtySession
+	var row db.WorkspaceProcess
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
 		row, err = work.q.ResizeWorkspacePtySession(ctx, db.ResizeWorkspacePtySessionParams{
-			Cols:          pgtype.Int4{Int32: cols, Valid: true},
-			Rows:          pgtype.Int4{Int32: rows, Valid: true},
+			PtyCols:       pgtype.Int4{Int32: cols, Valid: true},
+			PtyRows:       pgtype.Int4{Int32: rows, Valid: true},
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
@@ -247,16 +246,16 @@ func (s *Server) requestWorkspacePtyResize(ctx context.Context, pty db.Workspace
 		return requestWorkspacePtyControlOperation(ctx, work.q, row, workspaceOperationKindResizePty, request)
 	})
 	if err != nil {
-		return db.WorkspacePtySession{}, err
+		return db.WorkspaceProcess{}, err
 	}
 	return row, nil
 }
 
-func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.WorkspacePtySession) (db.WorkspacePtySession, error) {
-	if pty.State != db.WorkspacePtyStateOpen && pty.State != db.WorkspacePtyStateResizing && pty.State != db.WorkspacePtyStateClosing {
-		return db.WorkspacePtySession{}, conflict(errWorkspacePtyNotOpen)
+func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.WorkspaceProcess) (db.WorkspaceProcess, error) {
+	if pty.State != db.WorkspaceProcessStateRunning && pty.State != db.WorkspaceProcessStateClosing {
+		return db.WorkspaceProcess{}, conflict(errWorkspacePtyNotOpen)
 	}
-	var row db.WorkspacePtySession
+	var row db.WorkspaceProcess
 	err := s.inTx(ctx, func(work *txWork) error {
 		var err error
 		row, err = work.q.RequestWorkspacePtyClose(ctx, db.RequestWorkspacePtyCloseParams{
@@ -276,13 +275,13 @@ func (s *Server) requestWorkspacePtyCloseOperation(ctx context.Context, pty db.W
 		return requestWorkspacePtyControlOperation(ctx, work.q, row, workspaceOperationKindClosePty, request)
 	})
 	if err != nil {
-		return db.WorkspacePtySession{}, err
+		return db.WorkspaceProcess{}, err
 	}
 	return row, nil
 }
 
-func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, ws db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspacePtySession, bool, error) {
-	var row db.WorkspacePtySession
+func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Actor, ws db.Workspace, cwd string, cols int32, rows int32, filesystemMode db.WorkspaceFilesystemMode, idempotencyKey string, fingerprint string) (db.WorkspaceProcess, bool, error) {
+	var row db.WorkspaceProcess
 	var existing bool
 	err := s.inTx(ctx, func(work *txWork) error {
 		if idempotencyKey != "" {
@@ -328,10 +327,10 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		row, err = work.q.CreateWorkspacePtySession(ctx, db.CreateWorkspacePtySessionParams{
 			ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			Cwd:                  cwd,
-			Cols:                 cols,
-			Rows:                 rows,
+			PtyCols:              pgtype.Int4{Int32: cols, Valid: true},
+			PtyRows:              pgtype.Int4{Int32: rows, Valid: true},
 			FilesystemMode:       filesystemMode,
-			State:                db.WorkspacePtyStateCreating,
+			State:                db.WorkspaceProcessStateStarting,
 			CreatedBySubjectType: string(actor.Kind),
 			CreatedBySubjectID:   actorSubjectID(actor),
 			OrgID:                pgvalue.UUID(actor.OrgID),
@@ -358,7 +357,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			WorkspaceMountID: mount.ID,
 			InstanceLeaseID:  pgtype.UUID{},
 			WriteLeaseID:     pgtype.UUID{},
-			State:            db.WorkspacePtyStateCreating,
+			State:            db.WorkspaceProcessStateStarting,
 			OrgID:            pgvalue.UUID(actor.OrgID),
 			ProjectID:        ws.ProjectID,
 			EnvironmentID:    ws.EnvironmentID,
@@ -378,7 +377,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			if err != nil {
 				return err
 			}
-			if err := requestWorkspacePrimitiveOperation(ctx, work.q, workspaceMountFromEnsureRow(mount), workspaceOperationKindCreatePty, workspaceOperationResourcePty, row.ID, request, lease); err != nil {
+			if err := requestWorkspacePrimitiveOperation(ctx, work.q, workspaceMountFromEnsureRow(mount), workspaceOperationKindCreatePty, row.ID, request, lease); err != nil {
 				return err
 			}
 		}
@@ -402,29 +401,29 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		return nil
 	})
 	if err != nil {
-		return db.WorkspacePtySession{}, false, err
+		return db.WorkspaceProcess{}, false, err
 	}
 	return row, existing, nil
 }
 
-func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.WorkspacePtySession, stream db.WorkspacePtyStream, offset int64, data []byte) (db.WorkspacePtyStreamChunk, error) {
+func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.WorkspaceProcess, stream string, offset int64, data []byte) (db.WorkspaceProcessStreamChunk, error) {
 	if offset < 0 {
-		return db.WorkspacePtyStreamChunk{}, badRequest(errors.New("offset must be non-negative"))
+		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("offset must be non-negative"))
 	}
 	if len(data) == 0 {
-		return db.WorkspacePtyStreamChunk{}, badRequest(errors.New("data is required"))
+		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("data is required"))
 	}
 	if len(data) > workspaceStreamChunkMaxBytes {
-		return db.WorkspacePtyStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
+		return db.WorkspaceProcessStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
 	}
-	var chunk db.WorkspacePtyStreamChunk
+	var chunk db.WorkspaceProcessStreamChunk
 	err := s.inTx(ctx, func(work *txWork) error {
 		locked, err := work.q.LockWorkspacePtyForStreamAppend(ctx, db.LockWorkspacePtyForStreamAppendParams{
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
-			PtySessionID:  pty.ID,
+			ProcessID:     pty.ID,
 		})
 		if err != nil {
 			return err
@@ -432,7 +431,7 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		if ptyStateTerminal(locked.State) {
 			return conflict(errWorkspacePtyTerminal)
 		}
-		if stream == db.WorkspacePtyStreamInput && locked.State != db.WorkspacePtyStateOpen && locked.State != db.WorkspacePtyStateResizing {
+		if stream == workspaceStreamInput && locked.State != db.WorkspaceProcessStateRunning {
 			return conflict(errWorkspacePtyNotOpen)
 		}
 		want := ptyStreamCursor(locked, stream)
@@ -442,8 +441,8 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 				ProjectID:     pty.ProjectID,
 				EnvironmentID: pty.EnvironmentID,
 				WorkspaceID:   pty.WorkspaceID,
-				PtySessionID:  pty.ID,
-				Stream:        stream,
+				ProcessID:     pty.ID,
+				StreamName:    stream,
 				OffsetStart:   offset,
 			})
 			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
@@ -455,8 +454,8 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 				ProjectID:     pty.ProjectID,
 				EnvironmentID: pty.EnvironmentID,
 				WorkspaceID:   pty.WorkspaceID,
-				PtySessionID:  pty.ID,
-				Stream:        stream,
+				ProcessID:     pty.ID,
+				StreamName:    stream,
 				OffsetStart:   offset,
 			})
 			if receiptErr == nil && receipt.OffsetEnd == offset+int64(len(data)) && receipt.DataSize == int32(len(data)) && bytes.Equal(receipt.DataSha256, streamDataSHA256(data)) {
@@ -471,8 +470,8 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
-			PtySessionID:  pty.ID,
-			Stream:        stream,
+			ProcessID:     pty.ID,
+			StreamName:    stream,
 			OffsetStart:   offset,
 			OffsetEnd:     offset + int64(len(data)),
 			Data:          data,
@@ -485,13 +484,13 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 			return err
 		}
 		if _, err := work.q.AdvanceWorkspacePtyStreamCursor(ctx, db.AdvanceWorkspacePtyStreamCursorParams{
-			Stream:        stream,
+			StreamName:    stream,
 			OffsetEnd:     chunk.OffsetEnd,
 			OrgID:         pty.OrgID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
-			PtySessionID:  pty.ID,
+			ProcessID:     pty.ID,
 			OffsetStart:   offset,
 		}); err != nil {
 			return err
@@ -499,20 +498,20 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		return nil
 	})
 	if err != nil {
-		return db.WorkspacePtyStreamChunk{}, err
+		return db.WorkspaceProcessStreamChunk{}, err
 	}
 	return chunk, nil
 }
 
-func (s *Server) loadWorkspacePtyForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.WorkspacePtySession, bool) {
+func (s *Server) loadWorkspacePtyForRequest(w http.ResponseWriter, r *http.Request, permission auth.Permission) (db.WorkspaceProcess, bool) {
 	workspace, ok := s.loadWorkspaceForRequest(w, r, permission)
 	if !ok {
-		return db.WorkspacePtySession{}, false
+		return db.WorkspaceProcess{}, false
 	}
 	ptyID, err := parseRequiredWorkspaceUUID("pty_id", chi.URLParam(r, "ptyID"))
 	if err != nil {
 		writeError(w, badRequest(err))
-		return db.WorkspacePtySession{}, false
+		return db.WorkspaceProcess{}, false
 	}
 	row, err := s.db.GetWorkspacePtySession(r.Context(), db.GetWorkspacePtySessionParams{
 		OrgID:         workspace.OrgID,
@@ -523,48 +522,48 @@ func (s *Server) loadWorkspacePtyForRequest(w http.ResponseWriter, r *http.Reque
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("workspace pty not found")))
-		return db.WorkspacePtySession{}, false
+		return db.WorkspaceProcess{}, false
 	}
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace pty", err)
-		return db.WorkspacePtySession{}, false
+		return db.WorkspaceProcess{}, false
 	}
 	return row, true
 }
 
-func workspacePtyResponse(row db.WorkspacePtySession) api.WorkspacePtyResponse {
+func workspacePtyResponse(row db.WorkspaceProcess) api.WorkspacePtyResponse {
 	return api.WorkspacePtyResponse{
 		ID:               pgvalue.MustUUIDValue(row.ID).String(),
 		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		WorkspaceMountID: optionalUUIDString(row.WorkspaceMountID),
 		Cwd:              row.Cwd,
-		Cols:             row.Cols,
-		Rows:             row.Rows,
+		Cols:             row.PtyCols.Int32,
+		Rows:             row.PtyRows.Int32,
 		FilesystemMode:   string(row.FilesystemMode),
 		State:            string(row.State),
-		ProcessID:        row.ProcessID,
+		ProcessID:        row.RuntimeProcessID,
 		OutputCursor:     row.OutputCursor,
 		InputCursor:      row.InputCursor,
 		Error:            json.RawMessage(row.Error),
 		CreatedAt:        pgvalue.Time(row.CreatedAt),
 		StartedAt:        pgvalue.TimePtr(row.StartedAt),
-		ClosedAt:         pgvalue.TimePtr(row.ClosedAt),
+		ClosedAt:         pgvalue.TimePtr(row.ExitedAt),
 		UpdatedAt:        pgvalue.Time(row.UpdatedAt),
 	}
 }
 
-func workspacePtyFromClosedRow(row db.MarkWorkspacePtyClosedRow) db.WorkspacePtySession {
-	return db.WorkspacePtySession(row)
+func workspacePtyFromClosedRow(row db.MarkWorkspacePtyClosedRow) db.WorkspaceProcess {
+	return db.WorkspaceProcess(row)
 }
 
-func workspacePtyFromFailedRow(row db.MarkWorkspacePtyFailedRow) db.WorkspacePtySession {
-	return db.WorkspacePtySession(row)
+func workspacePtyFromFailedRow(row db.MarkWorkspacePtyFailedRow) db.WorkspaceProcess {
+	return db.WorkspaceProcess(row)
 }
 
-func workspacePtyStreamChunkResponse(row db.WorkspacePtyStreamChunk) api.WorkspacePtyStreamChunkResponse {
+func workspacePtyStreamChunkResponse(row db.WorkspaceProcessStreamChunk) api.WorkspacePtyStreamChunkResponse {
 	return api.WorkspacePtyStreamChunkResponse{
 		ID:          pgvalue.MustUUIDValue(row.ID).String(),
-		Stream:      string(row.Stream),
+		Stream:      row.StreamName,
 		OffsetStart: row.OffsetStart,
 		OffsetEnd:   row.OffsetEnd,
 		Data:        row.Data,

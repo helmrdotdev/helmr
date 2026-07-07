@@ -36,27 +36,27 @@ func ptyCreateFingerprint(cwd string, cols int32, rows int32, filesystemMode db.
 	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspacePtyCreate), payload)
 }
 
-func ptyStateTerminal(state db.WorkspacePtyState) bool {
+func ptyStateTerminal(state db.WorkspaceProcessState) bool {
 	switch state {
-	case db.WorkspacePtyStateClosed, db.WorkspacePtyStateLost, db.WorkspacePtyStateFailed:
+	case db.WorkspaceProcessStateExited, db.WorkspaceProcessStateLost, db.WorkspaceProcessStateFailed:
 		return true
 	default:
 		return false
 	}
 }
 
-func ptyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream db.WorkspacePtyStream) int64 {
+func ptyStreamCursor(row db.LockWorkspacePtyForStreamAppendRow, stream string) int64 {
 	switch stream {
-	case db.WorkspacePtyStreamInput:
+	case workspaceStreamInput:
 		return row.InputCursor
-	case db.WorkspacePtyStreamOutput:
+	case workspaceStreamOutput:
 		return row.OutputCursor
 	default:
 		return -1
 	}
 }
 
-func ptyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+func ptyCreateOperationRequest(row db.WorkspaceProcess) ([]byte, error) {
 	return json.Marshal(struct {
 		PtyID          string `json:"pty_id"`
 		Cwd            string `json:"cwd"`
@@ -66,14 +66,14 @@ func ptyCreateOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 	}{
 		PtyID:          pgvalue.MustUUIDValue(row.ID).String(),
 		Cwd:            row.Cwd,
-		Cols:           row.Cols,
-		Rows:           row.Rows,
+		Cols:           row.PtyCols.Int32,
+		Rows:           row.PtyRows.Int32,
 		FilesystemMode: string(row.FilesystemMode),
 	})
 }
 
-func ptyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
-	if !row.ResizeCols.Valid || !row.ResizeRows.Valid {
+func ptyResizeOperationRequest(row db.WorkspaceProcess) ([]byte, error) {
+	if !row.PendingPtyCols.Valid || !row.PendingPtyRows.Valid {
 		return nil, errors.New("workspace pty resize target is required")
 	}
 	return json.Marshal(struct {
@@ -82,12 +82,12 @@ func ptyResizeOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
 		Rows  int32  `json:"rows"`
 	}{
 		PtyID: pgvalue.MustUUIDValue(row.ID).String(),
-		Cols:  row.ResizeCols.Int32,
-		Rows:  row.ResizeRows.Int32,
+		Cols:  row.PendingPtyCols.Int32,
+		Rows:  row.PendingPtyRows.Int32,
 	})
 }
 
-func ptyCloseOperationRequest(row db.WorkspacePtySession) ([]byte, error) {
+func ptyCloseOperationRequest(row db.WorkspaceProcess) ([]byte, error) {
 	return json.Marshal(struct {
 		PtyID string `json:"pty_id"`
 	}{

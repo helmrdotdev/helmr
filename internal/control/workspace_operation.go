@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/token"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -162,7 +163,7 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 		return
 	}
 	worker := workerFromContext(r.Context())
-	var row db.WorkspaceOperation
+	var row db.WorkspaceProcessOperation
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		store := work.q
 		if len(failure) > 0 {
@@ -207,15 +208,15 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 type workspacePrimitiveFailureStore interface {
 	MarkWorkspaceExecExited(context.Context, db.MarkWorkspaceExecExitedParams) (db.MarkWorkspaceExecExitedRow, error)
 	MarkWorkspacePtyFailed(context.Context, db.MarkWorkspacePtyFailedParams) (db.MarkWorkspacePtyFailedRow, error)
-	RollbackWorkspacePtyControlOperation(context.Context, db.RollbackWorkspacePtyControlOperationParams) (db.WorkspacePtySession, error)
+	RollbackWorkspacePtyControlOperation(context.Context, db.RollbackWorkspacePtyControlOperationParams) (db.WorkspaceProcess, error)
 }
 
 type workspacePrimitiveCompletionStore interface {
-	GetWorkspacePtySession(context.Context, db.GetWorkspacePtySessionParams) (db.WorkspacePtySession, error)
-	MarkWorkspacePtyResizeApplied(context.Context, db.MarkWorkspacePtyResizeAppliedParams) (db.WorkspacePtySession, error)
+	GetWorkspacePtySession(context.Context, db.GetWorkspacePtySessionParams) (db.WorkspaceProcess, error)
+	MarkWorkspacePtyResizeApplied(context.Context, db.MarkWorkspacePtyResizeAppliedParams) (db.WorkspaceProcess, error)
 }
 
-func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceOperation) error {
+func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceProcessOperation) error {
 	switch operation.OperationKind {
 	case workspaceOperationKindResizePty:
 		return completeWorkspacePtyResizeOperation(ctx, store, operation)
@@ -224,42 +225,41 @@ func completeWorkspacePrimitiveForOperation(ctx context.Context, store workspace
 	}
 }
 
-func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveFailureStore, operation db.WorkspaceOperation, failure []byte) error {
-	if !operation.ResourceID.Valid {
+func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrimitiveFailureStore, operation db.WorkspaceProcessOperation, failure []byte) error {
+	if !operation.ProcessID.Valid {
 		return nil
 	}
 	switch operation.OperationKind {
 	case workspaceOperationKindStartExec:
-		if operation.ResourceKind != workspaceOperationResourceExec {
-			return fmt.Errorf("StartExec operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourceExec)
+		guestVerb, err := operationGuestVerbForRequest(operation.OperationKind, operation.Request)
+		if err != nil {
+			return err
 		}
-		_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
-			State:            db.WorkspaceExecStateFailed,
-			ExitCode:         pgtype.Int4{},
-			Signal:           "",
+		if guestVerb == wire.GuestVerbStartExec {
+			_, err := store.MarkWorkspaceExecExited(ctx, db.MarkWorkspaceExecExitedParams{
+				State:            db.WorkspaceProcessStateFailed,
+				ExitCode:         pgtype.Int4{},
+				Signal:           "",
+				Error:            failure,
+				OrgID:            operation.OrgID,
+				ProjectID:        operation.ProjectID,
+				EnvironmentID:    operation.EnvironmentID,
+				WorkspaceID:      operation.WorkspaceID,
+				ID:               operation.ProcessID,
+				WorkspaceMountID: operation.WorkspaceMountID,
+			})
+			if isNoRows(err) {
+				return nil
+			}
+			return err
+		}
+		_, err = store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
 			Error:            failure,
 			OrgID:            operation.OrgID,
 			ProjectID:        operation.ProjectID,
 			EnvironmentID:    operation.EnvironmentID,
 			WorkspaceID:      operation.WorkspaceID,
-			ID:               operation.ResourceID,
-			WorkspaceMountID: operation.WorkspaceMountID,
-		})
-		if isNoRows(err) {
-			return nil
-		}
-		return err
-	case workspaceOperationKindCreatePty:
-		if operation.ResourceKind != workspaceOperationResourcePty {
-			return fmt.Errorf("CreatePty operation resource_kind = %q, want %q", resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
-		}
-		_, err := store.MarkWorkspacePtyFailed(ctx, db.MarkWorkspacePtyFailedParams{
-			Error:            failure,
-			OrgID:            operation.OrgID,
-			ProjectID:        operation.ProjectID,
-			EnvironmentID:    operation.EnvironmentID,
-			WorkspaceID:      operation.WorkspaceID,
-			ID:               operation.ResourceID,
+			ID:               operation.ProcessID,
 			WorkspaceMountID: operation.WorkspaceMountID,
 		})
 		if isNoRows(err) {
@@ -267,13 +267,6 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 		}
 		return err
 	case workspaceOperationKindResizePty, workspaceOperationKindClosePty:
-		if operation.ResourceKind != workspaceOperationResourcePty {
-			operationKind, err := operationGuestVerb(operation.OperationKind)
-			if err != nil {
-				return err
-			}
-			return fmt.Errorf("%s operation resource_kind = %q, want %q", operationKind, resourceKindString(operation.ResourceKind), workspaceOperationResourcePty)
-		}
 		cols, rows, err := workspacePtyControlRollbackTarget(operation)
 		if err != nil {
 			return err
@@ -283,11 +276,11 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 			ProjectID:        operation.ProjectID,
 			EnvironmentID:    operation.EnvironmentID,
 			WorkspaceID:      operation.WorkspaceID,
-			ID:               operation.ResourceID,
+			ID:               operation.ProcessID,
 			WorkspaceMountID: operation.WorkspaceMountID,
 			OperationKind:    operation.OperationKind,
-			Cols:             cols,
-			Rows:             rows,
+			PtyCols:          cols,
+			PtyRows:          rows,
 		})
 		if isNoRows(err) {
 			return nil
@@ -298,7 +291,7 @@ func failWorkspacePrimitiveForOperation(ctx context.Context, store workspacePrim
 	}
 }
 
-func workspacePtyControlRollbackTarget(operation db.WorkspaceOperation) (pgtype.Int4, pgtype.Int4, error) {
+func workspacePtyControlRollbackTarget(operation db.WorkspaceProcessOperation) (pgtype.Int4, pgtype.Int4, error) {
 	if operation.OperationKind != workspaceOperationKindResizePty {
 		return pgtype.Int4{}, pgtype.Int4{}, nil
 	}
@@ -312,9 +305,9 @@ func workspacePtyControlRollbackTarget(operation db.WorkspaceOperation) (pgtype.
 	return pgtype.Int4{Int32: request.Cols, Valid: true}, pgtype.Int4{Int32: request.Rows, Valid: true}, nil
 }
 
-func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceOperation) error {
-	if !operation.ResourceID.Valid {
-		return errors.New("ResizePty operation resource_id is required")
+func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePrimitiveCompletionStore, operation db.WorkspaceProcessOperation) error {
+	if !operation.ProcessID.Valid {
+		return errors.New("ResizePty operation process_id is required")
 	}
 	var request struct {
 		Cols int32 `json:"cols"`
@@ -328,13 +321,13 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 		ProjectID:        operation.ProjectID,
 		EnvironmentID:    operation.EnvironmentID,
 		WorkspaceID:      operation.WorkspaceID,
-		ID:               operation.ResourceID,
+		ID:               operation.ProcessID,
 		WorkspaceMountID: operation.WorkspaceMountID,
-		Cols:             pgtype.Int4{Int32: request.Cols, Valid: true},
-		Rows:             pgtype.Int4{Int32: request.Rows, Valid: true},
+		PtyCols:          pgtype.Int4{Int32: request.Cols, Valid: true},
+		PtyRows:          pgtype.Int4{Int32: request.Rows, Valid: true},
 	})
 	if err == nil {
-		if row.Cols != request.Cols || row.Rows != request.Rows {
+		if row.PtyCols.Int32 != request.Cols || row.PtyRows.Int32 != request.Rows {
 			return conflict(errWorkspaceLifecycleEventConflict)
 		}
 		return nil
@@ -347,7 +340,7 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 		ProjectID:     operation.ProjectID,
 		EnvironmentID: operation.EnvironmentID,
 		WorkspaceID:   operation.WorkspaceID,
-		ID:            operation.ResourceID,
+		ID:            operation.ProcessID,
 	})
 	if getErr == nil && workspacePtyResizeAppliedEventMatches(existing, operation.WorkspaceMountID, request.Cols, request.Rows) {
 		return nil
@@ -358,24 +351,24 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 	return getErr
 }
 
-func startedWorkspaceOperation(row db.StartWorkspaceOperationRow) db.WorkspaceOperation {
-	return db.WorkspaceOperation(row)
+func startedWorkspaceOperation(row db.StartWorkspaceOperationRow) db.WorkspaceProcessOperation {
+	return db.WorkspaceProcessOperation(row)
 }
 
-func completedWorkspaceOperation(row db.CompleteWorkspaceOperationRow) db.WorkspaceOperation {
-	return db.WorkspaceOperation(row)
+func completedWorkspaceOperation(row db.CompleteWorkspaceOperationRow) db.WorkspaceProcessOperation {
+	return db.WorkspaceProcessOperation(row)
 }
 
-func failedWorkspaceOperation(row db.FailWorkspaceOperationRow) db.WorkspaceOperation {
-	return db.WorkspaceOperation(row)
+func failedWorkspaceOperation(row db.FailWorkspaceOperationRow) db.WorkspaceProcessOperation {
+	return db.WorkspaceProcessOperation(row)
 }
 
-func workerWorkspaceOperationResponse(row db.WorkspaceOperation) (api.WorkerWorkspaceOperation, error) {
+func workerWorkspaceOperationResponse(row db.WorkspaceProcessOperation) (api.WorkerWorkspaceOperation, error) {
 	response := api.WorkerWorkspaceOperation{
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
 		ClaimToken:                 row.ClaimToken,
 	}
-	operationKind, err := operationGuestVerb(row.OperationKind)
+	operationKind, err := operationGuestVerbForRequest(row.OperationKind, row.Request)
 	if err != nil {
 		return api.WorkerWorkspaceOperation{}, err
 	}
@@ -387,7 +380,7 @@ func workerWorkspaceOperationResponse(row db.WorkspaceOperation) (api.WorkerWork
 	return response, nil
 }
 
-func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperationResponse {
+func workspaceOperationResponse(row db.WorkspaceProcessOperation) api.WorkspaceOperationResponse {
 	response := api.WorkspaceOperationResponse{
 		ID:                 pgvalue.MustUUIDValue(row.ID).String(),
 		OrgID:              pgvalue.MustUUIDValue(row.OrgID).String(),
@@ -396,7 +389,7 @@ func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperatio
 		WorkspaceID:        pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		WorkspaceMountID:   pgvalue.MustUUIDValue(row.WorkspaceMountID).String(),
 		OperationKind:      string(row.OperationKind),
-		ResourceKind:       resourceKindString(row.ResourceKind),
+		ResourceKind:       "workspace_process",
 		RequestFingerprint: row.RequestFingerprint,
 		OperationExpiresAt: row.OperationExpiresAt.Time,
 		State:              string(row.State),
@@ -416,8 +409,8 @@ func workspaceOperationResponse(row db.WorkspaceOperation) api.WorkspaceOperatio
 	if row.InstanceLeaseID.Valid {
 		response.InstanceLeaseID = pgvalue.MustUUIDValue(row.InstanceLeaseID).String()
 	}
-	if row.ResourceID.Valid {
-		response.ResourceID = pgvalue.MustUUIDValue(row.ResourceID).String()
+	if row.ProcessID.Valid {
+		response.ResourceID = pgvalue.MustUUIDValue(row.ProcessID).String()
 	}
 	if row.WriteLeaseID.Valid {
 		response.WriteLeaseID = pgvalue.MustUUIDValue(row.WriteLeaseID).String()

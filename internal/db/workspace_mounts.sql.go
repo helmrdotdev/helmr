@@ -1041,48 +1041,50 @@ updated_workspace AS (
     RETURNING workspaces.id
 ),
 lost_operations AS (
-    UPDATE workspace_operations
+    UPDATE workspace_process_operations
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_failed'),
            completed_at = now(),
            updated_at = now()
       FROM failed
-     WHERE workspace_operations.org_id = failed.org_id
-       AND workspace_operations.workspace_mount_id = failed.id
-       AND workspace_operations.state IN ('queued', 'claimed', 'running')
-    RETURNING workspace_operations.id
+     WHERE workspace_process_operations.org_id = failed.org_id
+       AND workspace_process_operations.workspace_mount_id = failed.id
+       AND workspace_process_operations.state IN ('queued', 'claimed', 'running')
+    RETURNING workspace_process_operations.id
 ),
-lost_execs AS (
-    UPDATE workspace_execs
+lost_command_processes AS (
+    UPDATE workspace_processes
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_failed'),
-           exited_at = coalesce(workspace_execs.exited_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM failed
-     WHERE workspace_execs.org_id = failed.org_id
-       AND workspace_execs.project_id = failed.project_id
-       AND workspace_execs.environment_id = failed.environment_id
-       AND workspace_execs.workspace_id = failed.workspace_id
-       AND workspace_execs.workspace_mount_id = failed.id
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.worker_group_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.workspace_mount_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+     WHERE workspace_processes.org_id = failed.org_id
+       AND workspace_processes.project_id = failed.project_id
+       AND workspace_processes.environment_id = failed.environment_id
+       AND workspace_processes.workspace_id = failed.workspace_id
+       AND workspace_processes.workspace_mount_id = failed.id
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
-lost_ptys AS (
-    UPDATE workspace_pty_sessions
+lost_pty_processes AS (
+    UPDATE workspace_processes
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_failed'),
-           resize_cols = NULL,
-           resize_rows = NULL,
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM failed
-     WHERE workspace_pty_sessions.org_id = failed.org_id
-       AND workspace_pty_sessions.project_id = failed.project_id
-       AND workspace_pty_sessions.environment_id = failed.environment_id
-       AND workspace_pty_sessions.workspace_id = failed.workspace_id
-       AND workspace_pty_sessions.workspace_mount_id = failed.id
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.worker_group_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.workspace_mount_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+     WHERE workspace_processes.org_id = failed.org_id
+       AND workspace_processes.project_id = failed.project_id
+       AND workspace_processes.environment_id = failed.environment_id
+       AND workspace_processes.workspace_id = failed.workspace_id
+       AND workspace_processes.workspace_mount_id = failed.id
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -1099,29 +1101,29 @@ released_leases AS (
     RETURNING workspace_leases.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
-    SELECT lost_execs.org_id,
-           lost_execs.project_id,
-           lost_execs.environment_id,
-           lost_execs.workspace_id,
-           'workspace_exec'::workspace_resource_kind,
-           lost_execs.id,
-           stream_names.stream,
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
+    SELECT lost_command_processes.org_id,
+           lost_command_processes.project_id,
+           lost_command_processes.environment_id,
+           lost_command_processes.workspace_id,
+           lost_command_processes.worker_group_id,
+           lost_command_processes.id,
+           stream_names.stream_name,
            stream_names.cursor_offset,
            'terminal'::workspace_stream_notification_kind
-      FROM lost_execs
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+      FROM lost_command_processes
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
     UNION ALL
-    SELECT lost_ptys.org_id,
-           lost_ptys.project_id,
-           lost_ptys.environment_id,
-           lost_ptys.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
-           lost_ptys.id,
+    SELECT lost_pty_processes.org_id,
+           lost_pty_processes.project_id,
+           lost_pty_processes.environment_id,
+           lost_pty_processes.workspace_id,
+           lost_pty_processes.worker_group_id,
+           lost_pty_processes.id,
            'output',
-           lost_ptys.output_cursor,
+           lost_pty_processes.output_cursor,
            'terminal'::workspace_stream_notification_kind
-      FROM lost_ptys
+      FROM lost_pty_processes
     RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
@@ -1649,16 +1651,16 @@ lost_runtime_instances AS (
     RETURNING runtime_instances.id
 ),
 lost_operations AS (
-    UPDATE workspace_operations
+    UPDATE workspace_process_operations
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_lost'),
            completed_at = now(),
            updated_at = now()
       FROM lost
-     WHERE workspace_operations.org_id = lost.org_id
-       AND workspace_operations.workspace_mount_id = lost.id
-       AND workspace_operations.state IN ('queued', 'claimed', 'running')
-    RETURNING workspace_operations.id
+     WHERE workspace_process_operations.org_id = lost.org_id
+       AND workspace_process_operations.workspace_mount_id = lost.id
+       AND workspace_process_operations.state IN ('queued', 'claimed', 'running')
+    RETURNING workspace_process_operations.id
 ),
 updated_lost_dirty_workspaces AS (
     UPDATE workspaces
@@ -1676,37 +1678,39 @@ updated_lost_dirty_workspaces AS (
        AND workspaces.deleted_at IS NULL
     RETURNING workspaces.id
 ),
-lost_execs AS (
-    UPDATE workspace_execs
+lost_command_processes AS (
+    UPDATE workspace_processes
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_lost'),
-           exited_at = coalesce(workspace_execs.exited_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM lost
-     WHERE workspace_execs.org_id = lost.org_id
-       AND workspace_execs.project_id = lost.project_id
-       AND workspace_execs.environment_id = lost.environment_id
-       AND workspace_execs.workspace_id = lost.workspace_id
-       AND workspace_execs.workspace_mount_id = lost.id
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.worker_group_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.workspace_mount_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+     WHERE workspace_processes.org_id = lost.org_id
+       AND workspace_processes.project_id = lost.project_id
+       AND workspace_processes.environment_id = lost.environment_id
+       AND workspace_processes.workspace_id = lost.workspace_id
+       AND workspace_processes.workspace_mount_id = lost.id
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
-lost_ptys AS (
-    UPDATE workspace_pty_sessions
+lost_pty_processes AS (
+    UPDATE workspace_processes
        SET state = 'lost',
            error = jsonb_build_object('code', 'workspace_mount_lost'),
-           resize_cols = NULL,
-           resize_rows = NULL,
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM lost
-     WHERE workspace_pty_sessions.org_id = lost.org_id
-       AND workspace_pty_sessions.project_id = lost.project_id
-       AND workspace_pty_sessions.environment_id = lost.environment_id
-       AND workspace_pty_sessions.workspace_id = lost.workspace_id
-       AND workspace_pty_sessions.workspace_mount_id = lost.id
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.worker_group_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.workspace_mount_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+     WHERE workspace_processes.org_id = lost.org_id
+       AND workspace_processes.project_id = lost.project_id
+       AND workspace_processes.environment_id = lost.environment_id
+       AND workspace_processes.workspace_id = lost.workspace_id
+       AND workspace_processes.workspace_mount_id = lost.id
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -1723,29 +1727,29 @@ released_leases AS (
     RETURNING workspace_leases.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
-    SELECT lost_execs.org_id,
-           lost_execs.project_id,
-           lost_execs.environment_id,
-           lost_execs.workspace_id,
-           'workspace_exec'::workspace_resource_kind,
-           lost_execs.id,
-           stream_names.stream,
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
+    SELECT lost_command_processes.org_id,
+           lost_command_processes.project_id,
+           lost_command_processes.environment_id,
+           lost_command_processes.workspace_id,
+           lost_command_processes.worker_group_id,
+           lost_command_processes.id,
+           stream_names.stream_name,
            stream_names.cursor_offset,
            'terminal'::workspace_stream_notification_kind
-      FROM lost_execs
-      CROSS JOIN LATERAL (VALUES ('stdout', lost_execs.stdout_cursor), ('stderr', lost_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+      FROM lost_command_processes
+      CROSS JOIN LATERAL (VALUES ('stdout', lost_command_processes.stdout_cursor), ('stderr', lost_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
     UNION ALL
-    SELECT lost_ptys.org_id,
-           lost_ptys.project_id,
-           lost_ptys.environment_id,
-           lost_ptys.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
-           lost_ptys.id,
+    SELECT lost_pty_processes.org_id,
+           lost_pty_processes.project_id,
+           lost_pty_processes.environment_id,
+           lost_pty_processes.workspace_id,
+           lost_pty_processes.worker_group_id,
+           lost_pty_processes.id,
            'output',
-           lost_ptys.output_cursor,
+           lost_pty_processes.output_cursor,
            'terminal'::workspace_stream_notification_kind
-      FROM lost_ptys
+      FROM lost_pty_processes
     RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
@@ -2138,7 +2142,7 @@ created_version AS (
            'worker'
       FROM target
       JOIN verified_artifact ON verified_artifact.id = $8
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -2163,7 +2167,7 @@ promoted_mount AS (
        AND workspace_mounts.state = 'unmounting'
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_process_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN promoted_mount ON promoted_mount.id = created_version.source_workspace_mount_id
@@ -2198,7 +2202,7 @@ type PromoteWorkspaceMountStopCaptureRow struct {
 	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
 	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
 	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	ProducedByExecID       pgtype.UUID           `json:"produced_by_exec_id"`
+	ProducedByProcessID    pgtype.UUID           `json:"produced_by_process_id"`
 	Kind                   WorkspaceVersionKind  `json:"kind"`
 	State                  WorkspaceVersionState `json:"state"`
 	ArtifactID             pgtype.UUID           `json:"artifact_id"`
@@ -2244,7 +2248,7 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		&i.SourceWorkspaceMountID,
 		&i.SourceWriteLeaseID,
 		&i.ProducedByRunID,
-		&i.ProducedByExecID,
+		&i.ProducedByProcessID,
 		&i.Kind,
 		&i.State,
 		&i.ArtifactID,
@@ -2625,23 +2629,25 @@ victim AS MATERIALIZED (
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_execs
-            WHERE workspace_execs.org_id = workspace_mounts.org_id
-              AND workspace_execs.project_id = workspace_mounts.project_id
-              AND workspace_execs.environment_id = workspace_mounts.environment_id
-              AND workspace_execs.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_execs.workspace_mount_id = workspace_mounts.id OR workspace_execs.workspace_mount_id IS NULL)
-              AND workspace_execs.state IN ('queued', 'materializing', 'running')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.kind = 'command'
+              AND workspace_processes.state IN ('queued', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_pty_sessions
-            WHERE workspace_pty_sessions.org_id = workspace_mounts.org_id
-              AND workspace_pty_sessions.project_id = workspace_mounts.project_id
-              AND workspace_pty_sessions.environment_id = workspace_mounts.environment_id
-              AND workspace_pty_sessions.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
-              AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.kind = 'pty'
+              AND workspace_processes.state IN ('starting', 'running', 'closing')
        )
      ORDER BY workspaces.last_activity_at ASC,
               runtime_instances.waiting_at ASC NULLS LAST,
@@ -2886,51 +2892,53 @@ updated_workspace AS (
     RETURNING workspaces.id
 ),
 cancelled_requested_operations AS (
-    UPDATE workspace_operations
+    UPDATE workspace_process_operations
        SET state = 'cancelled',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
            completed_at = now(),
            updated_at = now()
       FROM requested_without_runtime
-     WHERE workspace_operations.org_id = requested_without_runtime.org_id
-       AND workspace_operations.worker_group_id = requested_without_runtime.worker_group_id
-       AND workspace_operations.workspace_mount_id = requested_without_runtime.id
-       AND workspace_operations.state IN ('queued', 'claimed', 'running')
-    RETURNING workspace_operations.id
+     WHERE workspace_process_operations.org_id = requested_without_runtime.org_id
+       AND workspace_process_operations.worker_group_id = requested_without_runtime.worker_group_id
+       AND workspace_process_operations.workspace_mount_id = requested_without_runtime.id
+       AND workspace_process_operations.state IN ('queued', 'claimed', 'running')
+    RETURNING workspace_process_operations.id
 ),
-terminated_requested_execs AS (
-    UPDATE workspace_execs
-       SET state = 'terminated',
+failed_requested_command_processes AS (
+    UPDATE workspace_processes
+       SET state = 'failed',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           exited_at = coalesce(workspace_execs.exited_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM requested_without_runtime
-     WHERE workspace_execs.org_id = requested_without_runtime.org_id
-       AND workspace_execs.worker_group_id = requested_without_runtime.worker_group_id
-       AND workspace_execs.project_id = requested_without_runtime.project_id
-       AND workspace_execs.environment_id = requested_without_runtime.environment_id
-       AND workspace_execs.workspace_id = requested_without_runtime.workspace_id
-       AND workspace_execs.workspace_mount_id = requested_without_runtime.id
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.worker_group_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.workspace_mount_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+     WHERE workspace_processes.org_id = requested_without_runtime.org_id
+       AND workspace_processes.worker_group_id = requested_without_runtime.worker_group_id
+       AND workspace_processes.project_id = requested_without_runtime.project_id
+       AND workspace_processes.environment_id = requested_without_runtime.environment_id
+       AND workspace_processes.workspace_id = requested_without_runtime.workspace_id
+       AND workspace_processes.workspace_mount_id = requested_without_runtime.id
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
-closed_requested_ptys AS (
-    UPDATE workspace_pty_sessions
-       SET state = 'closed',
+closed_requested_pty_processes AS (
+    UPDATE workspace_processes
+       SET state = 'exited',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           resize_cols = NULL,
-           resize_rows = NULL,
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM requested_without_runtime
-     WHERE workspace_pty_sessions.org_id = requested_without_runtime.org_id
-       AND workspace_pty_sessions.worker_group_id = requested_without_runtime.worker_group_id
-       AND workspace_pty_sessions.project_id = requested_without_runtime.project_id
-       AND workspace_pty_sessions.environment_id = requested_without_runtime.environment_id
-       AND workspace_pty_sessions.workspace_id = requested_without_runtime.workspace_id
-       AND workspace_pty_sessions.workspace_mount_id = requested_without_runtime.id
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.worker_group_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.workspace_mount_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+     WHERE workspace_processes.org_id = requested_without_runtime.org_id
+       AND workspace_processes.worker_group_id = requested_without_runtime.worker_group_id
+       AND workspace_processes.project_id = requested_without_runtime.project_id
+       AND workspace_processes.environment_id = requested_without_runtime.environment_id
+       AND workspace_processes.workspace_id = requested_without_runtime.workspace_id
+       AND workspace_processes.workspace_mount_id = requested_without_runtime.id
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
 released_requested_leases AS (
     UPDATE workspace_leases
@@ -2948,29 +2956,29 @@ released_requested_leases AS (
     RETURNING workspace_leases.id
 ),
 requested_stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
-    SELECT terminated_requested_execs.org_id,
-           terminated_requested_execs.project_id,
-           terminated_requested_execs.environment_id,
-           terminated_requested_execs.workspace_id,
-           'workspace_exec'::workspace_resource_kind,
-           terminated_requested_execs.id,
-           stream_names.stream,
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
+    SELECT failed_requested_command_processes.org_id,
+           failed_requested_command_processes.project_id,
+           failed_requested_command_processes.environment_id,
+           failed_requested_command_processes.workspace_id,
+           failed_requested_command_processes.worker_group_id,
+           failed_requested_command_processes.id,
+           stream_names.stream_name,
            stream_names.cursor_offset,
            'terminal'::workspace_stream_notification_kind
-      FROM terminated_requested_execs
-      CROSS JOIN LATERAL (VALUES ('stdout', terminated_requested_execs.stdout_cursor), ('stderr', terminated_requested_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+      FROM failed_requested_command_processes
+      CROSS JOIN LATERAL (VALUES ('stdout', failed_requested_command_processes.stdout_cursor), ('stderr', failed_requested_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
     UNION ALL
-    SELECT closed_requested_ptys.org_id,
-           closed_requested_ptys.project_id,
-           closed_requested_ptys.environment_id,
-           closed_requested_ptys.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
-           closed_requested_ptys.id,
+    SELECT closed_requested_pty_processes.org_id,
+           closed_requested_pty_processes.project_id,
+           closed_requested_pty_processes.environment_id,
+           closed_requested_pty_processes.workspace_id,
+           closed_requested_pty_processes.worker_group_id,
+           closed_requested_pty_processes.id,
            'output',
-           closed_requested_ptys.output_cursor,
+           closed_requested_pty_processes.output_cursor,
            'terminal'::workspace_stream_notification_kind
-      FROM closed_requested_ptys
+      FROM closed_requested_pty_processes
     RETURNING id
 ),
 requested_cleanup_counts AS (
@@ -3380,48 +3388,50 @@ replayed AS (
      WHERE target.state = 'unmounted'
 ),
 cancelled_operations AS (
-    UPDATE workspace_operations
+    UPDATE workspace_process_operations
        SET state = 'cancelled',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
            completed_at = now(),
            updated_at = now()
       FROM stopped
-     WHERE workspace_operations.org_id = stopped.org_id
-       AND workspace_operations.workspace_mount_id = stopped.id
-       AND workspace_operations.state IN ('queued', 'claimed', 'running')
-    RETURNING workspace_operations.id
+     WHERE workspace_process_operations.org_id = stopped.org_id
+       AND workspace_process_operations.workspace_mount_id = stopped.id
+       AND workspace_process_operations.state IN ('queued', 'claimed', 'running')
+    RETURNING workspace_process_operations.id
 ),
-terminated_execs AS (
-    UPDATE workspace_execs
-       SET state = 'terminated',
+failed_command_processes AS (
+    UPDATE workspace_processes
+       SET state = 'failed',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           exited_at = coalesce(workspace_execs.exited_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM stopped
-     WHERE workspace_execs.org_id = stopped.org_id
-       AND workspace_execs.project_id = stopped.project_id
-       AND workspace_execs.environment_id = stopped.environment_id
-       AND workspace_execs.workspace_id = stopped.workspace_id
-       AND workspace_execs.workspace_mount_id = stopped.id
-       AND workspace_execs.state IN ('queued', 'materializing', 'running')
-    RETURNING workspace_execs.id, workspace_execs.org_id, workspace_execs.worker_group_id, workspace_execs.project_id, workspace_execs.environment_id, workspace_execs.workspace_id, workspace_execs.workspace_mount_id, workspace_execs.instance_lease_id, workspace_execs.write_lease_id, workspace_execs.command, workspace_execs.cwd, workspace_execs.env_shape, workspace_execs.filesystem_mode, workspace_execs.state, workspace_execs.detached, workspace_execs.idempotency_key, workspace_execs.request_fingerprint, workspace_execs.process_id, workspace_execs.exit_code, workspace_execs.signal, workspace_execs.error, workspace_execs.stdout_cursor, workspace_execs.stderr_cursor, workspace_execs.stdin_cursor, workspace_execs.stdin_delivered_cursor, workspace_execs.stdin_closed_at, workspace_execs.created_by_subject_type, workspace_execs.created_by_subject_id, workspace_execs.created_at, workspace_execs.started_at, workspace_execs.exited_at, workspace_execs.updated_at
+     WHERE workspace_processes.org_id = stopped.org_id
+       AND workspace_processes.project_id = stopped.project_id
+       AND workspace_processes.environment_id = stopped.environment_id
+       AND workspace_processes.workspace_id = stopped.workspace_id
+       AND workspace_processes.workspace_mount_id = stopped.id
+       AND workspace_processes.kind = 'command'
+       AND workspace_processes.state IN ('queued', 'starting', 'running')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
-closed_ptys AS (
-    UPDATE workspace_pty_sessions
-       SET state = 'closed',
+closed_pty_processes AS (
+    UPDATE workspace_processes
+       SET state = 'exited',
            error = jsonb_build_object('code', 'workspace_mount_stopped'),
-           resize_cols = NULL,
-           resize_rows = NULL,
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
       FROM stopped
-     WHERE workspace_pty_sessions.org_id = stopped.org_id
-       AND workspace_pty_sessions.project_id = stopped.project_id
-       AND workspace_pty_sessions.environment_id = stopped.environment_id
-       AND workspace_pty_sessions.workspace_id = stopped.workspace_id
-       AND workspace_pty_sessions.workspace_mount_id = stopped.id
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
-    RETURNING workspace_pty_sessions.id, workspace_pty_sessions.org_id, workspace_pty_sessions.worker_group_id, workspace_pty_sessions.project_id, workspace_pty_sessions.environment_id, workspace_pty_sessions.workspace_id, workspace_pty_sessions.workspace_mount_id, workspace_pty_sessions.instance_lease_id, workspace_pty_sessions.write_lease_id, workspace_pty_sessions.cwd, workspace_pty_sessions.cols, workspace_pty_sessions.rows, workspace_pty_sessions.resize_cols, workspace_pty_sessions.resize_rows, workspace_pty_sessions.filesystem_mode, workspace_pty_sessions.state, workspace_pty_sessions.process_id, workspace_pty_sessions.output_cursor, workspace_pty_sessions.input_cursor, workspace_pty_sessions.input_delivered_cursor, workspace_pty_sessions.created_by_subject_type, workspace_pty_sessions.created_by_subject_id, workspace_pty_sessions.created_at, workspace_pty_sessions.started_at, workspace_pty_sessions.closed_at, workspace_pty_sessions.updated_at, workspace_pty_sessions.error
+     WHERE workspace_processes.org_id = stopped.org_id
+       AND workspace_processes.project_id = stopped.project_id
+       AND workspace_processes.environment_id = stopped.environment_id
+       AND workspace_processes.workspace_id = stopped.workspace_id
+       AND workspace_processes.workspace_mount_id = stopped.id
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
 ),
 released_leases AS (
     UPDATE workspace_leases
@@ -3469,29 +3479,29 @@ closed_runtime_instances AS (
     RETURNING runtime_instances.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
-    SELECT terminated_execs.org_id,
-           terminated_execs.project_id,
-           terminated_execs.environment_id,
-           terminated_execs.workspace_id,
-           'workspace_exec'::workspace_resource_kind,
-           terminated_execs.id,
-           stream_names.stream,
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
+    SELECT failed_command_processes.org_id,
+           failed_command_processes.project_id,
+           failed_command_processes.environment_id,
+           failed_command_processes.workspace_id,
+           failed_command_processes.worker_group_id,
+           failed_command_processes.id,
+           stream_names.stream_name,
            stream_names.cursor_offset,
            'terminal'::workspace_stream_notification_kind
-      FROM terminated_execs
-      CROSS JOIN LATERAL (VALUES ('stdout', terminated_execs.stdout_cursor), ('stderr', terminated_execs.stderr_cursor)) AS stream_names(stream, cursor_offset)
+      FROM failed_command_processes
+      CROSS JOIN LATERAL (VALUES ('stdout', failed_command_processes.stdout_cursor), ('stderr', failed_command_processes.stderr_cursor)) AS stream_names(stream_name, cursor_offset)
     UNION ALL
-    SELECT closed_ptys.org_id,
-           closed_ptys.project_id,
-           closed_ptys.environment_id,
-           closed_ptys.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
-           closed_ptys.id,
+    SELECT closed_pty_processes.org_id,
+           closed_pty_processes.project_id,
+           closed_pty_processes.environment_id,
+           closed_pty_processes.workspace_id,
+           closed_pty_processes.worker_group_id,
+           closed_pty_processes.id,
            'output',
-           closed_ptys.output_cursor,
+           closed_pty_processes.output_cursor,
            'terminal'::workspace_stream_notification_kind
-      FROM closed_ptys
+      FROM closed_pty_processes
     RETURNING id
 )
 SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
