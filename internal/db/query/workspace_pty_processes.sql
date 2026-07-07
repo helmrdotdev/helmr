@@ -12,6 +12,9 @@ INSERT INTO workspace_processes (
     pty_rows,
     filesystem_mode,
     state,
+    idempotency_key,
+    idempotency_expires_at,
+    request_fingerprint,
     created_by_subject_type,
     created_by_subject_id
 )
@@ -27,6 +30,9 @@ SELECT sqlc.arg(id),
        sqlc.arg(pty_rows),
        sqlc.arg(filesystem_mode)::workspace_filesystem_mode,
        sqlc.arg(state)::workspace_process_state,
+       coalesce(sqlc.arg(idempotency_key)::text, ''),
+       sqlc.narg(idempotency_expires_at),
+       coalesce(sqlc.arg(request_fingerprint)::text, ''),
        coalesce(sqlc.arg(created_by_subject_type)::text, ''),
        coalesce(sqlc.arg(created_by_subject_id)::text, '')
   FROM workspaces
@@ -38,6 +44,31 @@ SELECT sqlc.arg(id),
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
 RETURNING *;
+
+-- name: GetWorkspacePtySessionByIdempotency :one
+SELECT *
+  FROM workspace_processes
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND kind = 'pty'
+   AND idempotency_key = sqlc.arg(idempotency_key)
+   AND idempotency_expires_at > now();
+
+-- name: ClearExpiredWorkspacePtyIdempotency :exec
+UPDATE workspace_processes
+   SET idempotency_key = '',
+       idempotency_expires_at = NULL,
+       request_fingerprint = '',
+       updated_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND kind = 'pty'
+   AND idempotency_key = sqlc.arg(idempotency_key)
+   AND idempotency_expires_at <= now();
 
 -- name: GetWorkspacePtySession :one
 SELECT *

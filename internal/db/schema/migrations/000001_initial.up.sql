@@ -690,13 +690,6 @@ CREATE TYPE workspace_operation_kind AS ENUM (
     'close_process'
 );
 
-CREATE TYPE workspace_operation_idempotency_kind AS ENUM (
-    'workspace_create',
-    'workspace_stop',
-    'workspace_command_create',
-    'workspace_pty_create'
-);
-
 CREATE TYPE workspace_lease_kind AS ENUM (
     'instance',
     'write'
@@ -1062,6 +1055,9 @@ CREATE TABLE workspaces (
     sandbox_id TEXT NOT NULL CHECK (btrim(sandbox_id) <> ''),
     sandbox_fingerprint TEXT NOT NULL CHECK (btrim(sandbox_fingerprint) <> ''),
     external_id TEXT NOT NULL DEFAULT '' CHECK (external_id = btrim(external_id) AND octet_length(external_id) <= 512),
+    create_idempotency_key TEXT NOT NULL DEFAULT '',
+    create_idempotency_expires_at TIMESTAMPTZ,
+    create_request_fingerprint TEXT NOT NULL DEFAULT '',
     current_version_id UUID,
     state workspace_state NOT NULL DEFAULT 'active',
     desired_state workspace_desired_state NOT NULL DEFAULT 'active',
@@ -1102,6 +1098,8 @@ CREATE TABLE sessions (
     active_deployment_id UUID NOT NULL,
     external_id TEXT NOT NULL DEFAULT '' CHECK (external_id = btrim(external_id) AND octet_length(external_id) <= 512),
     start_fingerprint TEXT NOT NULL DEFAULT '',
+    start_idempotency_key TEXT NOT NULL DEFAULT '',
+    start_idempotency_expires_at TIMESTAMPTZ,
     status session_status NOT NULL DEFAULT 'open',
     current_run_id UUID,
     current_run_version BIGINT NOT NULL DEFAULT 1 CHECK (current_run_version > 0),
@@ -1315,31 +1313,6 @@ CREATE TABLE session_runs (
         ON DELETE SET NULL (previous_run_id)
 );
 
-CREATE TABLE session_start_idempotencies (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
-    request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
-    session_id UUID NOT NULL,
-    first_run_id UUID NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, project_id, environment_id, task_id, idempotency_key),
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, first_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT
-);
-
 CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -1480,6 +1453,7 @@ CREATE TABLE workspace_processes (
     state workspace_process_state NOT NULL DEFAULT 'queued',
     detached BOOLEAN NOT NULL DEFAULT false,
     idempotency_key TEXT NOT NULL DEFAULT '',
+    idempotency_expires_at TIMESTAMPTZ,
     request_fingerprint TEXT NOT NULL DEFAULT '',
     runtime_process_id TEXT NOT NULL DEFAULT '',
     exit_code INTEGER,
@@ -1662,27 +1636,6 @@ CREATE TABLE workspace_process_stream_receipts (
     UNIQUE (org_id, process_id, stream_name, offset_start),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, process_id)
         REFERENCES workspace_processes(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE CASCADE
-);
-
-CREATE TABLE workspace_operation_idempotencies (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    workspace_id UUID,
-    operation_kind workspace_operation_idempotency_kind NOT NULL,
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
-    request_fingerprint TEXT NOT NULL CHECK (btrim(request_fingerprint) <> ''),
-    result_resource_id UUID,
-    response_body JSONB NOT NULL DEFAULT '{}'::jsonb,
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    last_used_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (org_id, id),
-    UNIQUE (org_id, project_id, environment_id, id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
-        REFERENCES workspaces(org_id, project_id, environment_id, id)
         ON DELETE CASCADE
 );
 
@@ -2907,7 +2860,10 @@ CREATE UNIQUE INDEX sessions_external_id_idx ON sessions(org_id, project_id, env
     WHERE external_id <> '';
 CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, environment_id, status, updated_at DESC);
 CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
-CREATE INDEX session_start_idempotencies_expiry_idx ON session_start_idempotencies(org_id, project_id, environment_id, expires_at);
+CREATE INDEX sessions_start_idempotency_expiry_idx ON sessions(org_id, project_id, environment_id, start_idempotency_expires_at)
+    WHERE start_idempotency_key <> '';
+CREATE UNIQUE INDEX sessions_start_idempotency_idx ON sessions(org_id, project_id, environment_id, task_id, start_idempotency_key)
+    WHERE start_idempotency_key <> '';
 CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
 CREATE INDEX session_continuation_requests_pending_idx ON session_continuation_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');
@@ -2915,6 +2871,10 @@ CREATE INDEX workspaces_state_idx ON workspaces(org_id, project_id, environment_
 CREATE INDEX workspaces_tags_idx ON workspaces USING GIN (tags);
 CREATE UNIQUE INDEX workspaces_external_id_idx ON workspaces(org_id, project_id, environment_id, external_id)
     WHERE external_id <> '';
+CREATE INDEX workspaces_create_idempotency_expiry_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_expires_at)
+    WHERE create_idempotency_key <> '';
+CREATE UNIQUE INDEX workspaces_create_idempotency_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_key)
+    WHERE create_idempotency_key <> '';
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(org_id, workspace_id, created_at DESC);
 CREATE UNIQUE INDEX workspace_mounts_one_active_idx ON workspace_mounts(workspace_id)
     WHERE state IN ('mounting', 'mounted', 'unmounting');
@@ -2941,12 +2901,12 @@ ALTER TABLE workspace_process_stream_receipts
         stream_name WITH =,
         int8range(offset_start, offset_end, '[)') WITH &&
     );
-CREATE UNIQUE INDEX workspace_operation_idempotencies_workspace_idx
-    ON workspace_operation_idempotencies(org_id, project_id, environment_id, operation_kind, workspace_id, idempotency_key)
-    WHERE workspace_id IS NOT NULL;
-CREATE UNIQUE INDEX workspace_operation_idempotencies_environment_idx
-    ON workspace_operation_idempotencies(org_id, project_id, environment_id, operation_kind, idempotency_key)
-    WHERE workspace_id IS NULL;
+CREATE INDEX workspace_processes_idempotency_expiry_idx
+    ON workspace_processes(org_id, project_id, environment_id, idempotency_expires_at)
+    WHERE idempotency_key <> '';
+CREATE UNIQUE INDEX workspace_processes_idempotency_idx
+    ON workspace_processes(org_id, project_id, environment_id, workspace_id, kind, idempotency_key)
+    WHERE idempotency_key <> '';
 CREATE INDEX workspace_process_operations_claim_idx
     ON workspace_process_operations(workspace_mount_id, state, operation_expires_at, claim_expires_at, priority DESC, requested_at ASC)
     WHERE state IN ('queued', 'claimed');

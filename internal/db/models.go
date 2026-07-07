@@ -1821,50 +1821,6 @@ func (ns NullWorkspaceMountState) Value() (driver.Value, error) {
 	return string(ns.WorkspaceMountState), nil
 }
 
-type WorkspaceOperationIdempotencyKind string
-
-const (
-	WorkspaceOperationIdempotencyKindWorkspaceCreate        WorkspaceOperationIdempotencyKind = "workspace_create"
-	WorkspaceOperationIdempotencyKindWorkspaceStop          WorkspaceOperationIdempotencyKind = "workspace_stop"
-	WorkspaceOperationIdempotencyKindWorkspaceCommandCreate WorkspaceOperationIdempotencyKind = "workspace_command_create"
-	WorkspaceOperationIdempotencyKindWorkspacePtyCreate     WorkspaceOperationIdempotencyKind = "workspace_pty_create"
-)
-
-func (e *WorkspaceOperationIdempotencyKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkspaceOperationIdempotencyKind(s)
-	case string:
-		*e = WorkspaceOperationIdempotencyKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkspaceOperationIdempotencyKind: %T", src)
-	}
-	return nil
-}
-
-type NullWorkspaceOperationIdempotencyKind struct {
-	WorkspaceOperationIdempotencyKind WorkspaceOperationIdempotencyKind `json:"workspace_operation_idempotency_kind"`
-	Valid                             bool                              `json:"valid"` // Valid is true if WorkspaceOperationIdempotencyKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkspaceOperationIdempotencyKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkspaceOperationIdempotencyKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkspaceOperationIdempotencyKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkspaceOperationIdempotencyKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkspaceOperationIdempotencyKind), nil
-}
-
 type WorkspaceOperationKind string
 
 const (
@@ -2892,32 +2848,34 @@ type Secret struct {
 }
 
 type Session struct {
-	ID                  pgtype.UUID        `json:"id"`
-	PublicID            string             `json:"public_id"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	TaskID              string             `json:"task_id"`
-	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
-	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
-	ExternalID          string             `json:"external_id"`
-	StartFingerprint    string             `json:"start_fingerprint"`
-	Status              SessionStatus      `json:"status"`
-	CurrentRunID        pgtype.UUID        `json:"current_run_id"`
-	CurrentRunVersion   int64              `json:"current_run_version"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
-	Metadata            []byte             `json:"metadata"`
-	Tags                []string           `json:"tags"`
-	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
-	ClosedReason        string             `json:"closed_reason"`
-	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
-	ExpiredAt           pgtype.Timestamptz `json:"expired_at"`
-	TerminalReason      []byte             `json:"terminal_reason"`
-	Result              []byte             `json:"result"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt           pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	ID                        pgtype.UUID        `json:"id"`
+	PublicID                  string             `json:"public_id"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	WorkerGroupID             string             `json:"worker_group_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	TaskID                    string             `json:"task_id"`
+	InitialDeploymentID       pgtype.UUID        `json:"initial_deployment_id"`
+	ActiveDeploymentID        pgtype.UUID        `json:"active_deployment_id"`
+	ExternalID                string             `json:"external_id"`
+	StartFingerprint          string             `json:"start_fingerprint"`
+	StartIdempotencyKey       string             `json:"start_idempotency_key"`
+	StartIdempotencyExpiresAt pgtype.Timestamptz `json:"start_idempotency_expires_at"`
+	Status                    SessionStatus      `json:"status"`
+	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
+	CurrentRunVersion         int64              `json:"current_run_version"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	Metadata                  []byte             `json:"metadata"`
+	Tags                      []string           `json:"tags"`
+	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason              string             `json:"closed_reason"`
+	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
+	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
+	TerminalReason            []byte             `json:"terminal_reason"`
+	Result                    []byte             `json:"result"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SessionContinuationRequest struct {
@@ -2959,21 +2917,6 @@ type SessionRun struct {
 	Reason        string             `json:"reason"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	EndedAt       pgtype.Timestamptz `json:"ended_at"`
-}
-
-type SessionStartIdempotency struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	TaskID             string             `json:"task_id"`
-	IdempotencyKey     string             `json:"idempotency_key"`
-	RequestFingerprint string             `json:"request_fingerprint"`
-	SessionID          pgtype.UUID        `json:"session_id"`
-	FirstRunID         pgtype.UUID        `json:"first_run_id"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
-	LastUsedAt         pgtype.Timestamptz `json:"last_used_at"`
 }
 
 type Stream struct {
@@ -3278,28 +3221,31 @@ type WorkerInstanceCredential struct {
 }
 
 type Workspace struct {
-	ID                  pgtype.UUID           `json:"id"`
-	PublicID            string                `json:"public_id"`
-	OrgID               pgtype.UUID           `json:"org_id"`
-	WorkerGroupID       string                `json:"worker_group_id"`
-	ProjectID           pgtype.UUID           `json:"project_id"`
-	EnvironmentID       pgtype.UUID           `json:"environment_id"`
-	DeploymentSandboxID pgtype.UUID           `json:"deployment_sandbox_id"`
-	SandboxID           string                `json:"sandbox_id"`
-	SandboxFingerprint  string                `json:"sandbox_fingerprint"`
-	ExternalID          string                `json:"external_id"`
-	CurrentVersionID    pgtype.UUID           `json:"current_version_id"`
-	State               WorkspaceState        `json:"state"`
-	DesiredState        WorkspaceDesiredState `json:"desired_state"`
-	DirtyState          WorkspaceDirtyState   `json:"dirty_state"`
-	Metadata            []byte                `json:"metadata"`
-	Tags                []string              `json:"tags"`
-	RetentionPolicy     []byte                `json:"retention_policy"`
-	LastActivityAt      pgtype.Timestamptz    `json:"last_activity_at"`
-	CreatedAt           pgtype.Timestamptz    `json:"created_at"`
-	UpdatedAt           pgtype.Timestamptz    `json:"updated_at"`
-	ArchivedAt          pgtype.Timestamptz    `json:"archived_at"`
-	DeletedAt           pgtype.Timestamptz    `json:"deleted_at"`
+	ID                         pgtype.UUID           `json:"id"`
+	PublicID                   string                `json:"public_id"`
+	OrgID                      pgtype.UUID           `json:"org_id"`
+	WorkerGroupID              string                `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID           `json:"project_id"`
+	EnvironmentID              pgtype.UUID           `json:"environment_id"`
+	DeploymentSandboxID        pgtype.UUID           `json:"deployment_sandbox_id"`
+	SandboxID                  string                `json:"sandbox_id"`
+	SandboxFingerprint         string                `json:"sandbox_fingerprint"`
+	ExternalID                 string                `json:"external_id"`
+	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
+	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
+	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
+	CurrentVersionID           pgtype.UUID           `json:"current_version_id"`
+	State                      WorkspaceState        `json:"state"`
+	DesiredState               WorkspaceDesiredState `json:"desired_state"`
+	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
+	Metadata                   []byte                `json:"metadata"`
+	Tags                       []string              `json:"tags"`
+	RetentionPolicy            []byte                `json:"retention_policy"`
+	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
+	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
+	ArchivedAt                 pgtype.Timestamptz    `json:"archived_at"`
+	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
 }
 
 type WorkspaceLease struct {
@@ -3377,22 +3323,6 @@ type WorkspaceMount struct {
 	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
 }
 
-type WorkspaceOperationIdempotency struct {
-	ID                 pgtype.UUID                       `json:"id"`
-	OrgID              pgtype.UUID                       `json:"org_id"`
-	ProjectID          pgtype.UUID                       `json:"project_id"`
-	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
-	WorkspaceID        pgtype.UUID                       `json:"workspace_id"`
-	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	IdempotencyKey     string                            `json:"idempotency_key"`
-	RequestFingerprint string                            `json:"request_fingerprint"`
-	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
-	ResponseBody       []byte                            `json:"response_body"`
-	ExpiresAt          pgtype.Timestamptz                `json:"expires_at"`
-	CreatedAt          pgtype.Timestamptz                `json:"created_at"`
-	LastUsedAt         pgtype.Timestamptz                `json:"last_used_at"`
-}
-
 type WorkspaceProcess struct {
 	ID                   pgtype.UUID             `json:"id"`
 	OrgID                pgtype.UUID             `json:"org_id"`
@@ -3411,6 +3341,7 @@ type WorkspaceProcess struct {
 	State                WorkspaceProcessState   `json:"state"`
 	Detached             bool                    `json:"detached"`
 	IdempotencyKey       string                  `json:"idempotency_key"`
+	IdempotencyExpiresAt pgtype.Timestamptz      `json:"idempotency_expires_at"`
 	RequestFingerprint   string                  `json:"request_fingerprint"`
 	RuntimeProcessID     string                  `json:"runtime_process_id"`
 	ExitCode             pgtype.Int4             `json:"exit_code"`

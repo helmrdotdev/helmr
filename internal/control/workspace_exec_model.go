@@ -74,7 +74,7 @@ func execCreateFingerprint(command []string, cwd string, envShape []byte, detach
 	if err != nil {
 		return "", fmt.Errorf("encode workspace exec fingerprint payload: %w", err)
 	}
-	return wire.RequestFingerprint(string(db.WorkspaceOperationIdempotencyKindWorkspaceCommandCreate), payload)
+	return wire.RequestFingerprint("workspace_command_create", payload)
 }
 
 func execStateTerminal(state db.WorkspaceProcessState) bool {

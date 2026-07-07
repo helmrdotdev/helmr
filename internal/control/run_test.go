@@ -664,18 +664,8 @@ func TestWorkspaceCreateResolvesSandboxSelectorAndReplaysIdempotency(t *testing.
 	if store.workspace.DeploymentSandboxID != testDeploymentSandboxID() {
 		t.Fatalf("created deployment_sandbox_id = %s, want %s", pgvalue.MustUUIDValue(store.workspace.DeploymentSandboxID), pgvalue.MustUUIDValue(testDeploymentSandboxID()))
 	}
-	if len(store.createdWorkspaceOperationIdempotencies) != 1 {
-		t.Fatalf("workspace operation idempotencies = %d, want 1", len(store.createdWorkspaceOperationIdempotencies))
-	}
-	idempotency := store.createdWorkspaceOperationIdempotencies[0]
-	if idempotency.WorkspaceID.Valid {
-		t.Fatalf("workspace.create idempotency workspace_id = %s, want null", pgvalue.MustUUIDValue(idempotency.WorkspaceID))
-	}
-	if idempotency.ResultResourceID.Valid {
-		t.Fatalf("pending idempotency result_resource_id = %s, want null", pgvalue.MustUUIDValue(idempotency.ResultResourceID))
-	}
-	if store.workspaceOperationIdempotency.ResultResourceID != store.workspace.ID {
-		t.Fatalf("completed idempotency result_resource_id = %s, want workspace %s", pgvalue.MustUUIDValue(store.workspaceOperationIdempotency.ResultResourceID), pgvalue.MustUUIDValue(store.workspace.ID))
+	if store.workspace.CreateIdempotencyKey == "" || !store.workspace.CreateIdempotencyExpiresAt.Valid || store.workspace.CreateRequestFingerprint == "" {
+		t.Fatalf("workspace create idempotency columns were not stored: %+v", store.workspace)
 	}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(body))
@@ -727,93 +717,6 @@ func TestWorkspaceCreateRejectsIdempotencyFingerprintMismatch(t *testing.T) {
 	}
 	if store.createWorkspaceCalls != 1 {
 		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 1", store.createWorkspaceCalls)
-	}
-}
-
-func TestWorkspaceCreateReturnsPendingForInFlightIdempotency(t *testing.T) {
-	store := &fakeStore{}
-	fingerprint, err := workspaceCreateFingerprint(api.WorkspaceCreateRequest{SandboxID: "test-sandbox", ExternalID: "case-1"}, []byte(`{}`), []string{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.workspaceOperationIdempotency = db.WorkspaceOperationIdempotency{
-		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:              pgvalue.UUID(dbtest.DefaultOrgID),
-		ProjectID:          testProjectID(),
-		EnvironmentID:      testEnvironmentID(),
-		OperationKind:      workspaceCreateOperationKind,
-		IdempotencyKey:     "workspace-key",
-		RequestFingerprint: fingerprint,
-		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
-	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(`{"sandbox_id":"test-sandbox","external_id":"case-1","idempotency_key":"workspace-key"}`))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusAccepted {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if rec.Header().Get("Retry-After") != "1" {
-		t.Fatalf("Retry-After = %q", rec.Header().Get("Retry-After"))
-	}
-	if !strings.Contains(rec.Body.String(), "workspace_operation_pending") {
-		t.Fatalf("body = %s", rec.Body.String())
-	}
-	if store.createWorkspaceCalls != 0 {
-		t.Fatalf("CreateWorkspaceFromSandbox calls = %d, want 0", store.createWorkspaceCalls)
-	}
-}
-
-func TestWorkspaceStopIdempotencyResponseReplaysCompletedResponse(t *testing.T) {
-	fingerprint, err := workspaceStopFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	response := api.WorkspaceStopResponse{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String(), State: "no_active_mount"}
-	body, err := json.Marshal(response)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replayed, ok, err := workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
-		RequestFingerprint: fingerprint,
-		ResultResourceID:   workspaceID,
-		ResponseBody:       body,
-		Inserted:           false,
-	}, fingerprint)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok {
-		t.Fatal("replayed = false, want true")
-	}
-	if replayed.WorkspaceID != response.WorkspaceID || replayed.State != response.State {
-		t.Fatalf("replayed response = %+v, want %+v", replayed, response)
-	}
-}
-
-func TestWorkspaceStopIdempotencyResponseRejectsPendingAndMismatch(t *testing.T) {
-	fingerprint, err := workspaceStopFingerprint()
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, replayed, err := workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
-		RequestFingerprint: fingerprint,
-		Inserted:           false,
-	}, fingerprint)
-	if !errors.Is(err, errWorkspaceOperationPending) || replayed {
-		t.Fatalf("pending err = %v replayed=%v, want idempotency pending without replay", err, replayed)
-	}
-	_, replayed, err = workspaceStopIdempotencyResponse(db.EnsureWorkspaceOperationIdempotencyRow{
-		RequestFingerprint: "different",
-		ResultResourceID:   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		ResponseBody:       []byte(`{"workspace_id":"w","state":"no_active_mount"}`),
-		Inserted:           false,
-	}, fingerprint)
-	if !errors.Is(err, errWorkspaceOperationIdempotencyUsed) || replayed {
-		t.Fatalf("mismatch err = %v replayed=%v, want fingerprint mismatch without replay", err, replayed)
 	}
 }
 
@@ -1139,8 +1042,8 @@ func TestSessionStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testi
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.session.ID.Valid || store.run.ID.Valid || store.startIdempotency.ID.Valid {
-		t.Fatalf("unexpected DB side effects: session=%v run=%v idempotency=%v", store.session.ID.Valid, store.run.ID.Valid, store.startIdempotency.ID.Valid)
+	if store.session.ID.Valid || store.run.ID.Valid {
+		t.Fatalf("unexpected DB side effects: session=%v run=%v", store.session.ID.Valid, store.run.ID.Valid)
 	}
 }
 
@@ -2770,8 +2673,6 @@ type fakeStore struct {
 	setQueuedRunWorkspaceMountCalls         int
 	resolveDeploymentSandbox                db.ResolveDeploymentSandboxForWorkspaceCreateParams
 	resolveDeploymentSandboxCalls           int
-	workspaceOperationIdempotency           db.WorkspaceOperationIdempotency
-	createdWorkspaceOperationIdempotencies  []db.EnsureWorkspaceOperationIdempotencyParams
 	getSessionByExternalIDMisses            int
 	workspace                               db.Workspace
 	workspaceVersions                       []db.WorkspaceVersion
@@ -2779,7 +2680,6 @@ type fakeStore struct {
 	listWorkspaceVersionsCalls              int
 	attachedWorkspace                       db.GetWorkspaceForSessionStartRow
 	createWorkspaceCalls                    int
-	startIdempotency                        db.GetSessionStartIdempotencyRow
 	sessionRuns                             []db.SessionRun
 	streamRecord                            db.StreamRecord
 	sessionContinuationRequest              db.SessionContinuationRequest
@@ -2822,6 +2722,7 @@ type fakeControlTransaction struct {
 	store                      *fakeStore
 	session                    db.Session
 	run                        db.Run
+	workspace                  db.Workspace
 	sessionRuns                []db.SessionRun
 	sessionContinuationRequest db.SessionContinuationRequest
 	committed                  bool
@@ -2872,6 +2773,7 @@ func (tx *fakeControlTransaction) Rollback(context.Context) error {
 	}
 	tx.store.session = tx.session
 	tx.store.run = tx.run
+	tx.store.workspace = tx.workspace
 	tx.store.sessionRuns = append([]db.SessionRun(nil), tx.sessionRuns...)
 	tx.store.sessionContinuationRequest = tx.sessionContinuationRequest
 	return nil
@@ -2882,6 +2784,7 @@ func (f *fakeStore) BeginQuerier(context.Context) (db.Querier, controlTransactio
 		store:                      f,
 		session:                    f.session,
 		run:                        f.run,
+		workspace:                  f.workspace,
 		sessionRuns:                append([]db.SessionRun(nil), f.sessionRuns...),
 		sessionContinuationRequest: f.sessionContinuationRequest,
 	}, nil
@@ -3028,25 +2931,27 @@ func (f *fakeStore) CreateSession(_ context.Context, arg db.CreateSessionParams)
 	}
 	now := testTime()
 	f.session = db.Session{
-		ID:                  arg.ID,
-		OrgID:               arg.OrgID,
-		WorkerGroupID:       firstNonEmptyString(f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, dbtest.DefaultWorkerGroupID),
-		ProjectID:           arg.ProjectID,
-		EnvironmentID:       arg.EnvironmentID,
-		TaskID:              arg.TaskID,
-		InitialDeploymentID: arg.InitialDeploymentID,
-		ActiveDeploymentID:  arg.ActiveDeploymentID,
-		ExternalID:          arg.ExternalID,
-		StartFingerprint:    arg.StartFingerprint,
-		Status:              db.SessionStatusOpen,
-		CurrentRunVersion:   1,
-		WorkspaceID:         arg.WorkspaceID,
-		Metadata:            arg.Metadata,
-		Tags:                arg.Tags,
-		TerminalReason:      []byte(`{}`),
-		ExpiresAt:           arg.ExpiresAt,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		ID:                        arg.ID,
+		OrgID:                     arg.OrgID,
+		WorkerGroupID:             firstNonEmptyString(f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, dbtest.DefaultWorkerGroupID),
+		ProjectID:                 arg.ProjectID,
+		EnvironmentID:             arg.EnvironmentID,
+		TaskID:                    arg.TaskID,
+		InitialDeploymentID:       arg.InitialDeploymentID,
+		ActiveDeploymentID:        arg.ActiveDeploymentID,
+		ExternalID:                arg.ExternalID,
+		StartFingerprint:          arg.StartFingerprint,
+		StartIdempotencyKey:       arg.StartIdempotencyKey,
+		StartIdempotencyExpiresAt: arg.StartIdempotencyExpiresAt,
+		Status:                    db.SessionStatusOpen,
+		CurrentRunVersion:         1,
+		WorkspaceID:               arg.WorkspaceID,
+		Metadata:                  arg.Metadata,
+		Tags:                      arg.Tags,
+		TerminalReason:            []byte(`{}`),
+		ExpiresAt:                 arg.ExpiresAt,
+		CreatedAt:                 now,
+		UpdatedAt:                 now,
 	}
 	return f.session, nil
 }
@@ -3081,47 +2986,53 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 	f.createWorkspaceCalls++
 	now := testTime()
 	f.workspace = db.Workspace{
-		ID:                  arg.ID,
-		OrgID:               arg.OrgID,
-		ProjectID:           arg.ProjectID,
-		EnvironmentID:       arg.EnvironmentID,
-		DeploymentSandboxID: arg.DeploymentSandboxID,
-		SandboxID:           "test-sandbox",
-		SandboxFingerprint:  "test-sandbox-fingerprint",
-		ExternalID:          arg.ExternalID,
-		State:               db.WorkspaceStateActive,
-		DesiredState:        db.WorkspaceDesiredStateActive,
-		DirtyState:          db.WorkspaceDirtyStateClean,
-		CurrentVersionID:    arg.InitialVersionID,
-		Metadata:            arg.Metadata,
-		Tags:                arg.Tags,
-		RetentionPolicy:     arg.RetentionPolicy,
-		LastActivityAt:      now,
-		CreatedAt:           now,
-		UpdatedAt:           now,
+		ID:                         arg.ID,
+		OrgID:                      arg.OrgID,
+		ProjectID:                  arg.ProjectID,
+		EnvironmentID:              arg.EnvironmentID,
+		DeploymentSandboxID:        arg.DeploymentSandboxID,
+		SandboxID:                  "test-sandbox",
+		SandboxFingerprint:         "test-sandbox-fingerprint",
+		ExternalID:                 arg.ExternalID,
+		CreateIdempotencyKey:       arg.CreateIdempotencyKey,
+		CreateIdempotencyExpiresAt: arg.CreateIdempotencyExpiresAt,
+		CreateRequestFingerprint:   arg.CreateRequestFingerprint,
+		State:                      db.WorkspaceStateActive,
+		DesiredState:               db.WorkspaceDesiredStateActive,
+		DirtyState:                 db.WorkspaceDirtyStateClean,
+		CurrentVersionID:           arg.InitialVersionID,
+		Metadata:                   arg.Metadata,
+		Tags:                       arg.Tags,
+		RetentionPolicy:            arg.RetentionPolicy,
+		LastActivityAt:             now,
+		CreatedAt:                  now,
+		UpdatedAt:                  now,
 	}
 	return db.CreateWorkspaceFromSandboxRow{
-		ID:                  f.workspace.ID,
-		OrgID:               f.workspace.OrgID,
-		WorkerGroupID:       f.workspace.WorkerGroupID,
-		ProjectID:           f.workspace.ProjectID,
-		EnvironmentID:       f.workspace.EnvironmentID,
-		DeploymentSandboxID: f.workspace.DeploymentSandboxID,
-		SandboxID:           f.workspace.SandboxID,
-		SandboxFingerprint:  f.workspace.SandboxFingerprint,
-		ExternalID:          f.workspace.ExternalID,
-		CurrentVersionID:    f.workspace.CurrentVersionID,
-		State:               f.workspace.State,
-		DesiredState:        f.workspace.DesiredState,
-		DirtyState:          f.workspace.DirtyState,
-		Metadata:            f.workspace.Metadata,
-		Tags:                f.workspace.Tags,
-		RetentionPolicy:     f.workspace.RetentionPolicy,
-		LastActivityAt:      f.workspace.LastActivityAt,
-		CreatedAt:           f.workspace.CreatedAt,
-		UpdatedAt:           f.workspace.UpdatedAt,
-		ArchivedAt:          f.workspace.ArchivedAt,
-		DeletedAt:           f.workspace.DeletedAt,
+		ID:                         f.workspace.ID,
+		OrgID:                      f.workspace.OrgID,
+		WorkerGroupID:              f.workspace.WorkerGroupID,
+		ProjectID:                  f.workspace.ProjectID,
+		EnvironmentID:              f.workspace.EnvironmentID,
+		DeploymentSandboxID:        f.workspace.DeploymentSandboxID,
+		SandboxID:                  f.workspace.SandboxID,
+		SandboxFingerprint:         f.workspace.SandboxFingerprint,
+		ExternalID:                 f.workspace.ExternalID,
+		CreateIdempotencyKey:       f.workspace.CreateIdempotencyKey,
+		CreateIdempotencyExpiresAt: f.workspace.CreateIdempotencyExpiresAt,
+		CreateRequestFingerprint:   f.workspace.CreateRequestFingerprint,
+		CurrentVersionID:           f.workspace.CurrentVersionID,
+		State:                      f.workspace.State,
+		DesiredState:               f.workspace.DesiredState,
+		DirtyState:                 f.workspace.DirtyState,
+		Metadata:                   f.workspace.Metadata,
+		Tags:                       f.workspace.Tags,
+		RetentionPolicy:            f.workspace.RetentionPolicy,
+		LastActivityAt:             f.workspace.LastActivityAt,
+		CreatedAt:                  f.workspace.CreatedAt,
+		UpdatedAt:                  f.workspace.UpdatedAt,
+		ArchivedAt:                 f.workspace.ArchivedAt,
+		DeletedAt:                  f.workspace.DeletedAt,
 	}, nil
 }
 
@@ -3205,99 +3116,32 @@ func (f *fakeStore) ListWorkspaces(_ context.Context, arg db.ListWorkspacesParam
 	return []db.Workspace{}, nil
 }
 
-func (f *fakeStore) GetWorkspaceOperationIdempotency(_ context.Context, arg db.GetWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
-	row := f.workspaceOperationIdempotency
-	if row.ID.Valid &&
-		row.OrgID == arg.OrgID &&
-		row.ProjectID == arg.ProjectID &&
-		row.EnvironmentID == arg.EnvironmentID &&
-		!row.WorkspaceID.Valid &&
-		row.OperationKind == arg.OperationKind &&
-		row.IdempotencyKey == arg.IdempotencyKey {
-		return row, nil
+func (f *fakeStore) GetWorkspaceByCreateIdempotency(_ context.Context, arg db.GetWorkspaceByCreateIdempotencyParams) (db.Workspace, error) {
+	if f.workspace.ID.Valid &&
+		f.workspace.OrgID == arg.OrgID &&
+		f.workspace.ProjectID == arg.ProjectID &&
+		f.workspace.EnvironmentID == arg.EnvironmentID &&
+		f.workspace.CreateIdempotencyKey == arg.IdempotencyKey &&
+		f.workspace.CreateIdempotencyExpiresAt.Valid &&
+		f.workspace.CreateIdempotencyExpiresAt.Time.After(time.Now()) {
+		return f.workspace, nil
 	}
-	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
+	return db.Workspace{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) EnsureWorkspaceOperationIdempotency(_ context.Context, arg db.EnsureWorkspaceOperationIdempotencyParams) (db.EnsureWorkspaceOperationIdempotencyRow, error) {
-	if f.workspaceOperationIdempotency.ID.Valid &&
-		f.workspaceOperationIdempotency.OrgID == arg.OrgID &&
-		f.workspaceOperationIdempotency.ProjectID == arg.ProjectID &&
-		f.workspaceOperationIdempotency.EnvironmentID == arg.EnvironmentID &&
-		!f.workspaceOperationIdempotency.WorkspaceID.Valid &&
-		f.workspaceOperationIdempotency.OperationKind == arg.OperationKind &&
-		f.workspaceOperationIdempotency.IdempotencyKey == arg.IdempotencyKey {
-		row := f.workspaceOperationIdempotency
-		return db.EnsureWorkspaceOperationIdempotencyRow{
-			ID:                 row.ID,
-			OrgID:              row.OrgID,
-			ProjectID:          row.ProjectID,
-			EnvironmentID:      row.EnvironmentID,
-			WorkspaceID:        row.WorkspaceID,
-			OperationKind:      row.OperationKind,
-			IdempotencyKey:     row.IdempotencyKey,
-			RequestFingerprint: row.RequestFingerprint,
-			ResultResourceID:   row.ResultResourceID,
-			ResponseBody:       row.ResponseBody,
-			ExpiresAt:          row.ExpiresAt,
-			CreatedAt:          row.CreatedAt,
-			LastUsedAt:         row.LastUsedAt,
-			Inserted:           false,
-		}, nil
+func (f *fakeStore) ClearExpiredWorkspaceCreateIdempotency(_ context.Context, arg db.ClearExpiredWorkspaceCreateIdempotencyParams) error {
+	if f.workspace.ID.Valid &&
+		f.workspace.OrgID == arg.OrgID &&
+		f.workspace.ProjectID == arg.ProjectID &&
+		f.workspace.EnvironmentID == arg.EnvironmentID &&
+		f.workspace.CreateIdempotencyKey == arg.IdempotencyKey &&
+		f.workspace.CreateIdempotencyExpiresAt.Valid &&
+		!f.workspace.CreateIdempotencyExpiresAt.Time.After(time.Now()) {
+		f.workspace.CreateIdempotencyKey = ""
+		f.workspace.CreateIdempotencyExpiresAt = pgtype.Timestamptz{}
+		f.workspace.CreateRequestFingerprint = ""
 	}
-	f.createdWorkspaceOperationIdempotencies = append(f.createdWorkspaceOperationIdempotencies, arg)
-	row := db.EnsureWorkspaceOperationIdempotencyRow{
-		ID:                 arg.ID,
-		OrgID:              arg.OrgID,
-		ProjectID:          arg.ProjectID,
-		EnvironmentID:      arg.EnvironmentID,
-		WorkspaceID:        arg.WorkspaceID,
-		OperationKind:      arg.OperationKind,
-		IdempotencyKey:     arg.IdempotencyKey,
-		RequestFingerprint: arg.RequestFingerprint,
-		ResultResourceID:   arg.ResultResourceID,
-		ResponseBody:       arg.ResponseBody,
-		ExpiresAt:          arg.ExpiresAt,
-		CreatedAt:          testTime(),
-		LastUsedAt:         testTime(),
-		Inserted:           true,
-	}
-	f.workspaceOperationIdempotency = db.WorkspaceOperationIdempotency{
-		ID:                 row.ID,
-		OrgID:              row.OrgID,
-		ProjectID:          row.ProjectID,
-		EnvironmentID:      row.EnvironmentID,
-		WorkspaceID:        row.WorkspaceID,
-		OperationKind:      row.OperationKind,
-		IdempotencyKey:     row.IdempotencyKey,
-		RequestFingerprint: row.RequestFingerprint,
-		ResultResourceID:   row.ResultResourceID,
-		ResponseBody:       row.ResponseBody,
-		ExpiresAt:          row.ExpiresAt,
-		CreatedAt:          row.CreatedAt,
-		LastUsedAt:         row.LastUsedAt,
-	}
-	return row, nil
-}
-
-func (f *fakeStore) CompleteWorkspaceOperationIdempotency(_ context.Context, arg db.CompleteWorkspaceOperationIdempotencyParams) (db.WorkspaceOperationIdempotency, error) {
-	row := f.workspaceOperationIdempotency
-	if row.ID.Valid &&
-		row.OrgID == arg.OrgID &&
-		row.ProjectID == arg.ProjectID &&
-		row.EnvironmentID == arg.EnvironmentID &&
-		!row.WorkspaceID.Valid &&
-		row.OperationKind == arg.OperationKind &&
-		row.IdempotencyKey == arg.IdempotencyKey &&
-		row.RequestFingerprint == arg.RequestFingerprint &&
-		!row.ResultResourceID.Valid {
-		row.ResultResourceID = arg.ResultResourceID
-		row.ResponseBody = arg.ResponseBody
-		row.LastUsedAt = testTime()
-		f.workspaceOperationIdempotency = row
-		return row, nil
-	}
-	return db.WorkspaceOperationIdempotency{}, pgx.ErrNoRows
+	return nil
 }
 
 func (f *fakeStore) GetWorkspaceForSessionStart(_ context.Context, arg db.GetWorkspaceForSessionStartParams) (db.GetWorkspaceForSessionStartRow, error) {
@@ -3508,109 +3352,102 @@ func (f *fakeStore) MarkSessionContinuationRequestFailed(_ context.Context, arg 
 	return f.sessionContinuationRequest, nil
 }
 
-func (f *fakeStore) GetSessionStartIdempotency(_ context.Context, arg db.GetSessionStartIdempotencyParams) (db.GetSessionStartIdempotencyRow, error) {
-	if f.startIdempotency.ID.Valid &&
-		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.ProjectID == arg.ProjectID &&
-		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
-		f.startIdempotency.TaskID == arg.TaskID &&
-		f.startIdempotency.IdempotencyKey == arg.IdempotencyKey &&
-		(!f.startIdempotency.ExpiresAt.Valid || f.startIdempotency.ExpiresAt.Time.After(time.Now())) {
-		return f.startIdempotency, nil
+func (f *fakeStore) GetSessionByStartIdempotency(_ context.Context, arg db.GetSessionByStartIdempotencyParams) (db.GetSessionByStartIdempotencyRow, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.TaskID == arg.TaskID &&
+		f.session.StartIdempotencyKey == arg.IdempotencyKey &&
+		f.session.StartIdempotencyExpiresAt.Valid &&
+		f.session.StartIdempotencyExpiresAt.Time.After(time.Now()) {
+		return f.sessionStartIdempotencyRow(), nil
 	}
-	return db.GetSessionStartIdempotencyRow{}, pgx.ErrNoRows
+	return db.GetSessionByStartIdempotencyRow{}, pgx.ErrNoRows
 }
 
-func (f *fakeStore) CreateSessionStartIdempotency(_ context.Context, arg db.CreateSessionStartIdempotencyParams) (db.SessionStartIdempotency, error) {
-	f.startIdempotency = db.GetSessionStartIdempotencyRow{
-		ID:                         arg.ID,
-		OrgID:                      arg.OrgID,
-		ProjectID:                  arg.ProjectID,
-		EnvironmentID:              arg.EnvironmentID,
-		TaskID:                     arg.TaskID,
-		IdempotencyKey:             arg.IdempotencyKey,
-		RequestFingerprint:         arg.RequestFingerprint,
-		FirstRunID:                 arg.FirstRunID,
-		ExpiresAt:                  arg.ExpiresAt,
-		CreatedAt:                  testTime(),
-		LastUsedAt:                 testTime(),
-		SessionID:                  f.session.ID,
-		SessionOrgID:               f.session.OrgID,
-		SessionWorkerGroupID:       f.session.WorkerGroupID,
-		SessionProjectID:           f.session.ProjectID,
-		SessionEnvironmentID:       f.session.EnvironmentID,
-		SessionTaskID:              f.session.TaskID,
-		SessionInitialDeploymentID: f.session.InitialDeploymentID,
-		SessionActiveDeploymentID:  f.session.ActiveDeploymentID,
-		SessionExternalID:          f.session.ExternalID,
-		SessionStartFingerprint:    f.session.StartFingerprint,
-		SessionStatus:              f.session.Status,
-		SessionCurrentRunID:        f.session.CurrentRunID,
-		SessionCurrentRunVersion:   f.session.CurrentRunVersion,
-		SessionWorkspaceID:         f.session.WorkspaceID,
-		SessionMetadata:            f.session.Metadata,
-		SessionTags:                f.session.Tags,
-		SessionResult:              f.session.Result,
-		SessionTerminalReason:      f.session.TerminalReason,
-		SessionExpiresAt:           f.session.ExpiresAt,
-		SessionCancelledAt:         f.session.CancelledAt,
-		SessionCreatedAt:           f.session.CreatedAt,
-		SessionUpdatedAt:           f.session.UpdatedAt,
-		RunID:                      f.run.ID,
-		RunOrgID:                   f.run.OrgID,
-		RunWorkerGroupID:           f.run.WorkerGroupID,
-		RunProjectID:               f.run.ProjectID,
-		RunEnvironmentID:           f.run.EnvironmentID,
-		RunDeploymentID:            f.run.DeploymentID,
-		RunDeploymentTaskID:        f.run.DeploymentTaskID,
-		RunDeploymentVersion:       f.run.DeploymentVersion,
-		RunApiVersion:              f.run.ApiVersion,
-		RunSdkVersion:              f.run.SdkVersion,
-		RunCliVersion:              f.run.CliVersion,
-		RunTaskID:                  f.run.TaskID,
-		RunAttemptNumber:           f.run.CurrentAttemptNumber,
-		RunStatus:                  f.run.Status,
-		RunExecutionStatus:         f.run.ExecutionStatus,
-		RunTerminalOutcome:         f.run.TerminalOutcome,
-		RunOutput:                  f.run.Output,
-		RunMetadata:                f.run.Metadata,
-		RunTags:                    f.run.Tags,
-		RunExitCode:                f.run.ExitCode,
-		RunCreatedAt:               f.run.CreatedAt,
-		RunUpdatedAt:               f.run.UpdatedAt,
-	}
-	return db.SessionStartIdempotency{
-		ID:                 arg.ID,
-		OrgID:              arg.OrgID,
-		ProjectID:          arg.ProjectID,
-		EnvironmentID:      arg.EnvironmentID,
-		TaskID:             arg.TaskID,
-		IdempotencyKey:     arg.IdempotencyKey,
-		RequestFingerprint: arg.RequestFingerprint,
-		SessionID:          arg.SessionID,
-		FirstRunID:         arg.FirstRunID,
-		ExpiresAt:          arg.ExpiresAt,
-		CreatedAt:          testTime(),
-		LastUsedAt:         testTime(),
-	}, nil
-}
-
-func (f *fakeStore) DeleteExpiredSessionStartIdempotency(_ context.Context, arg db.DeleteExpiredSessionStartIdempotencyParams) error {
-	if f.startIdempotency.ID.Valid &&
-		f.startIdempotency.OrgID == arg.OrgID &&
-		f.startIdempotency.ProjectID == arg.ProjectID &&
-		f.startIdempotency.EnvironmentID == arg.EnvironmentID &&
-		f.startIdempotency.TaskID == arg.TaskID &&
-		f.startIdempotency.IdempotencyKey == arg.IdempotencyKey &&
-		f.startIdempotency.ExpiresAt.Valid &&
-		!f.startIdempotency.ExpiresAt.Time.After(time.Now()) {
-		f.startIdempotency = db.GetSessionStartIdempotencyRow{}
+func (f *fakeStore) ClearExpiredSessionStartIdempotency(_ context.Context, arg db.ClearExpiredSessionStartIdempotencyParams) error {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.TaskID == arg.TaskID &&
+		f.session.StartIdempotencyKey == arg.IdempotencyKey &&
+		f.session.StartIdempotencyExpiresAt.Valid &&
+		!f.session.StartIdempotencyExpiresAt.Time.After(time.Now()) {
+		f.session.StartIdempotencyKey = ""
+		f.session.StartIdempotencyExpiresAt = pgtype.Timestamptz{}
 	}
 	return nil
 }
 
-func (f *fakeStore) TouchSessionStartIdempotency(context.Context, db.TouchSessionStartIdempotencyParams) error {
-	return nil
+func (f *fakeStore) SetSessionStartIdempotency(_ context.Context, arg db.SetSessionStartIdempotencyParams) (db.Session, error) {
+	if f.session.ID.Valid &&
+		f.session.OrgID == arg.OrgID &&
+		f.session.ProjectID == arg.ProjectID &&
+		f.session.EnvironmentID == arg.EnvironmentID &&
+		f.session.ID == arg.SessionID &&
+		f.session.TaskID == arg.TaskID &&
+		f.session.StartFingerprint == arg.StartFingerprint {
+		f.session.StartIdempotencyKey = arg.IdempotencyKey
+		f.session.StartIdempotencyExpiresAt = arg.ExpiresAt
+		f.session.UpdatedAt = testTime()
+		return f.session, nil
+	}
+	return db.Session{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) sessionStartIdempotencyRow() db.GetSessionByStartIdempotencyRow {
+	return db.GetSessionByStartIdempotencyRow{
+		SessionID:                        f.session.ID,
+		SessionOrgID:                     f.session.OrgID,
+		SessionWorkerGroupID:             f.session.WorkerGroupID,
+		SessionProjectID:                 f.session.ProjectID,
+		SessionEnvironmentID:             f.session.EnvironmentID,
+		SessionTaskID:                    f.session.TaskID,
+		SessionInitialDeploymentID:       f.session.InitialDeploymentID,
+		SessionActiveDeploymentID:        f.session.ActiveDeploymentID,
+		SessionExternalID:                f.session.ExternalID,
+		SessionStartFingerprint:          f.session.StartFingerprint,
+		SessionStartIdempotencyKey:       f.session.StartIdempotencyKey,
+		SessionStartIdempotencyExpiresAt: f.session.StartIdempotencyExpiresAt,
+		SessionStatus:                    f.session.Status,
+		SessionCurrentRunID:              f.session.CurrentRunID,
+		SessionCurrentRunVersion:         f.session.CurrentRunVersion,
+		SessionWorkspaceID:               f.session.WorkspaceID,
+		SessionMetadata:                  f.session.Metadata,
+		SessionTags:                      f.session.Tags,
+		SessionResult:                    f.session.Result,
+		SessionTerminalReason:            f.session.TerminalReason,
+		SessionExpiresAt:                 f.session.ExpiresAt,
+		SessionCancelledAt:               f.session.CancelledAt,
+		SessionCreatedAt:                 f.session.CreatedAt,
+		SessionUpdatedAt:                 f.session.UpdatedAt,
+		RunID:                            f.run.ID,
+		RunOrgID:                         f.run.OrgID,
+		RunWorkerGroupID:                 f.run.WorkerGroupID,
+		RunProjectID:                     f.run.ProjectID,
+		RunEnvironmentID:                 f.run.EnvironmentID,
+		RunDeploymentID:                  f.run.DeploymentID,
+		RunDeploymentTaskID:              f.run.DeploymentTaskID,
+		RunDeploymentVersion:             f.run.DeploymentVersion,
+		RunApiVersion:                    f.run.ApiVersion,
+		RunSdkVersion:                    f.run.SdkVersion,
+		RunCliVersion:                    f.run.CliVersion,
+		RunTaskID:                        f.run.TaskID,
+		RunAttemptNumber:                 f.run.CurrentAttemptNumber,
+		RunStatus:                        f.run.Status,
+		RunExecutionStatus:               f.run.ExecutionStatus,
+		RunTerminalOutcome:               f.run.TerminalOutcome,
+		RunPayload:                       f.run.Payload,
+		RunOutput:                        f.run.Output,
+		RunMetadata:                      f.run.Metadata,
+		RunTags:                          f.run.Tags,
+		RunErrorMessage:                  f.run.ErrorMessage,
+		RunExitCode:                      f.run.ExitCode,
+		RunCreatedAt:                     f.run.CreatedAt,
+		RunUpdatedAt:                     f.run.UpdatedAt,
+	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, arg db.GetSessionParams) (db.Session, error) {

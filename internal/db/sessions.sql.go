@@ -13,7 +13,7 @@ import (
 
 const cancelSession = `-- name: CancelSession :one
 WITH target_session AS (
-    SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+    SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
      FROM sessions
      WHERE sessions.org_id = $1
        AND sessions.project_id = $2
@@ -40,7 +40,7 @@ cancelled_session AS (
        AND sessions.worker_group_id = target_session.worker_group_id
        AND sessions.id = target_session.id
        AND sessions.status = 'open'
-    RETURNING sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+    RETURNING sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.start_idempotency_key, sessions.start_idempotency_expires_at, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
 ),
 ended_session_run AS (
     UPDATE session_runs
@@ -55,7 +55,7 @@ ended_session_run AS (
        AND session_runs.run_id = target_session.current_run_id
     RETURNING session_runs.id
 )
-SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.start_idempotency_key, sessions.start_idempotency_expires_at, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
   FROM sessions
   JOIN cancelled_session ON cancelled_session.org_id = sessions.org_id
                         AND cancelled_session.id = sessions.id
@@ -90,6 +90,8 @@ func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (S
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -107,6 +109,38 @@ func (q *Queries) CancelSession(ctx context.Context, arg CancelSessionParams) (S
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const clearExpiredSessionStartIdempotency = `-- name: ClearExpiredSessionStartIdempotency :exec
+UPDATE sessions
+   SET start_idempotency_key = '',
+       start_idempotency_expires_at = NULL,
+       updated_at = now()
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND task_id = $4
+   AND start_idempotency_key = $5
+   AND start_idempotency_expires_at <= now()
+`
+
+type ClearExpiredSessionStartIdempotencyParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskID         string      `json:"task_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+func (q *Queries) ClearExpiredSessionStartIdempotency(ctx context.Context, arg ClearExpiredSessionStartIdempotencyParams) error {
+	_, err := q.db.Exec(ctx, clearExpiredSessionStartIdempotency,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+	)
+	return err
 }
 
 const closeSession = `-- name: CloseSession :one
@@ -140,7 +174,7 @@ UPDATE sessions
           AND session_continuation_requests.session_id = sessions.id
           AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CloseSessionParams struct {
@@ -172,6 +206,8 @@ func (q *Queries) CloseSession(ctx context.Context, arg CloseSessionParams) (Ses
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -205,6 +241,8 @@ INSERT INTO sessions (
     workspace_id,
     external_id,
     start_fingerprint,
+    start_idempotency_key,
+    start_idempotency_expires_at,
     metadata,
     tags,
     expires_at
@@ -222,35 +260,39 @@ SELECT
     workspaces.id,
     $6,
     $7,
-    coalesce($8::jsonb, '{}'::jsonb),
-    coalesce($9::text[], '{}'::text[]),
-    $10
+    coalesce($8::text, ''),
+    $9,
+    coalesce($10::jsonb, '{}'::jsonb),
+    coalesce($11::text[], '{}'::text[]),
+    $12
   FROM workspaces
- WHERE workspaces.org_id = $11
-   AND workspaces.project_id = $12
-   AND workspaces.environment_id = $13
-   AND workspaces.id = $14
+ WHERE workspaces.org_id = $13
+   AND workspaces.project_id = $14
+   AND workspaces.environment_id = $15
+   AND workspaces.id = $16
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type CreateSessionParams struct {
-	ID                  pgtype.UUID        `json:"id"`
-	PublicID            string             `json:"public_id"`
-	TaskID              string             `json:"task_id"`
-	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
-	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
-	ExternalID          string             `json:"external_id"`
-	StartFingerprint    string             `json:"start_fingerprint"`
-	Metadata            []byte             `json:"metadata"`
-	Tags                []string           `json:"tags"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
-	OrgID               pgtype.UUID        `json:"org_id"`
-	ProjectID           pgtype.UUID        `json:"project_id"`
-	EnvironmentID       pgtype.UUID        `json:"environment_id"`
-	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	ID                        pgtype.UUID        `json:"id"`
+	PublicID                  string             `json:"public_id"`
+	TaskID                    string             `json:"task_id"`
+	InitialDeploymentID       pgtype.UUID        `json:"initial_deployment_id"`
+	ActiveDeploymentID        pgtype.UUID        `json:"active_deployment_id"`
+	ExternalID                string             `json:"external_id"`
+	StartFingerprint          string             `json:"start_fingerprint"`
+	StartIdempotencyKey       string             `json:"start_idempotency_key"`
+	StartIdempotencyExpiresAt pgtype.Timestamptz `json:"start_idempotency_expires_at"`
+	Metadata                  []byte             `json:"metadata"`
+	Tags                      []string           `json:"tags"`
+	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
+	OrgID                     pgtype.UUID        `json:"org_id"`
+	ProjectID                 pgtype.UUID        `json:"project_id"`
+	EnvironmentID             pgtype.UUID        `json:"environment_id"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
@@ -262,6 +304,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		arg.ActiveDeploymentID,
 		arg.ExternalID,
 		arg.StartFingerprint,
+		arg.StartIdempotencyKey,
+		arg.StartIdempotencyExpiresAt,
 		arg.Metadata,
 		arg.Tags,
 		arg.ExpiresAt,
@@ -283,6 +327,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -392,85 +438,6 @@ func (q *Queries) CreateSessionRun(ctx context.Context, arg CreateSessionRunPara
 	return i, err
 }
 
-const createSessionStartIdempotency = `-- name: CreateSessionStartIdempotency :one
-INSERT INTO session_start_idempotencies (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    task_id,
-    idempotency_key,
-    request_fingerprint,
-    session_id,
-    first_run_id,
-    expires_at
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10
-)
-ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO UPDATE
-   SET request_fingerprint = EXCLUDED.request_fingerprint,
-       session_id = EXCLUDED.session_id,
-       first_run_id = EXCLUDED.first_run_id,
-       expires_at = EXCLUDED.expires_at,
-       last_used_at = now()
- WHERE session_start_idempotencies.request_fingerprint = EXCLUDED.request_fingerprint
-   AND session_start_idempotencies.expires_at <= now()
-RETURNING id, org_id, project_id, environment_id, task_id, idempotency_key, request_fingerprint, session_id, first_run_id, expires_at, created_at, last_used_at
-`
-
-type CreateSessionStartIdempotencyParams struct {
-	ID                 pgtype.UUID        `json:"id"`
-	OrgID              pgtype.UUID        `json:"org_id"`
-	ProjectID          pgtype.UUID        `json:"project_id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	TaskID             string             `json:"task_id"`
-	IdempotencyKey     string             `json:"idempotency_key"`
-	RequestFingerprint string             `json:"request_fingerprint"`
-	SessionID          pgtype.UUID        `json:"session_id"`
-	FirstRunID         pgtype.UUID        `json:"first_run_id"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) CreateSessionStartIdempotency(ctx context.Context, arg CreateSessionStartIdempotencyParams) (SessionStartIdempotency, error) {
-	row := q.db.QueryRow(ctx, createSessionStartIdempotency,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskID,
-		arg.IdempotencyKey,
-		arg.RequestFingerprint,
-		arg.SessionID,
-		arg.FirstRunID,
-		arg.ExpiresAt,
-	)
-	var i SessionStartIdempotency
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TaskID,
-		&i.IdempotencyKey,
-		&i.RequestFingerprint,
-		&i.SessionID,
-		&i.FirstRunID,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.LastUsedAt,
-	)
-	return i, err
-}
-
 const createWorkspace = `-- name: CreateWorkspace :one
 INSERT INTO workspaces (
     id,
@@ -501,7 +468,7 @@ INSERT INTO workspaces (
     coalesce($12::text[], '{}'::text[]),
     coalesce($13::jsonb, '{}'::jsonb)
 )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
 `
 
 type CreateWorkspaceParams struct {
@@ -548,6 +515,9 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.SandboxID,
 		&i.SandboxFingerprint,
 		&i.ExternalID,
+		&i.CreateIdempotencyKey,
+		&i.CreateIdempotencyExpiresAt,
+		&i.CreateRequestFingerprint,
 		&i.CurrentVersionID,
 		&i.State,
 		&i.DesiredState,
@@ -562,35 +532,6 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.DeletedAt,
 	)
 	return i, err
-}
-
-const deleteExpiredSessionStartIdempotency = `-- name: DeleteExpiredSessionStartIdempotency :exec
-DELETE FROM session_start_idempotencies
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND task_id = $4
-   AND idempotency_key = $5
-   AND expires_at <= now()
-`
-
-type DeleteExpiredSessionStartIdempotencyParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	TaskID         string      `json:"task_id"`
-	IdempotencyKey string      `json:"idempotency_key"`
-}
-
-func (q *Queries) DeleteExpiredSessionStartIdempotency(ctx context.Context, arg DeleteExpiredSessionStartIdempotencyParams) error {
-	_, err := q.db.Exec(ctx, deleteExpiredSessionStartIdempotency,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskID,
-		arg.IdempotencyKey,
-	)
-	return err
 }
 
 const expireDueSessions = `-- name: ExpireDueSessions :many
@@ -632,7 +573,7 @@ UPDATE sessions
           AND session_continuation_requests.session_id = sessions.id
           AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type ExpireDueSessionsParams struct {
@@ -661,6 +602,8 @@ func (q *Queries) ExpireDueSessions(ctx context.Context, arg ExpireDueSessionsPa
 			&i.ActiveDeploymentID,
 			&i.ExternalID,
 			&i.StartFingerprint,
+			&i.StartIdempotencyKey,
+			&i.StartIdempotencyExpiresAt,
 			&i.Status,
 			&i.CurrentRunID,
 			&i.CurrentRunVersion,
@@ -726,7 +669,7 @@ UPDATE sessions
           AND session_continuation_requests.session_id = sessions.id
           AND session_continuation_requests.status IN ('accepted', 'claimed')
    )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type ExpireSessionIfDueParams struct {
@@ -756,6 +699,8 @@ func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDue
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -776,7 +721,7 @@ func (q *Queries) ExpireSessionIfDue(ctx context.Context, arg ExpireSessionIfDue
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -811,6 +756,8 @@ func (q *Queries) GetSession(ctx context.Context, arg GetSessionParams) (Session
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -920,7 +867,7 @@ func (q *Queries) GetSessionActivity(ctx context.Context, arg GetSessionActivity
 }
 
 const getSessionByExternalID = `-- name: GetSessionByExternalID :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -956,6 +903,8 @@ func (q *Queries) GetSessionByExternalID(ctx context.Context, arg GetSessionByEx
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -976,7 +925,7 @@ func (q *Queries) GetSessionByExternalID(ctx context.Context, arg GetSessionByEx
 }
 
 const getSessionByExternalIDInWorkerGroup = `-- name: GetSessionByExternalIDInWorkerGroup :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -1012,6 +961,8 @@ func (q *Queries) GetSessionByExternalIDInWorkerGroup(ctx context.Context, arg G
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -1032,7 +983,7 @@ func (q *Queries) GetSessionByExternalIDInWorkerGroup(ctx context.Context, arg G
 }
 
 const getSessionByOrgID = `-- name: GetSessionByOrgID :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND id = $2
@@ -1058,6 +1009,8 @@ func (q *Queries) GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDPa
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -1077,8 +1030,196 @@ func (q *Queries) GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDPa
 	return i, err
 }
 
+const getSessionByStartIdempotency = `-- name: GetSessionByStartIdempotency :one
+SELECT sessions.id AS session_id,
+       sessions.org_id AS session_org_id,
+       sessions.worker_group_id AS session_worker_group_id,
+       sessions.project_id AS session_project_id,
+       sessions.environment_id AS session_environment_id,
+       sessions.task_id AS session_task_id,
+       sessions.initial_deployment_id AS session_initial_deployment_id,
+       sessions.active_deployment_id AS session_active_deployment_id,
+       sessions.external_id AS session_external_id,
+       sessions.start_fingerprint AS session_start_fingerprint,
+       sessions.start_idempotency_key AS session_start_idempotency_key,
+       sessions.start_idempotency_expires_at AS session_start_idempotency_expires_at,
+       sessions.status AS session_status,
+       sessions.current_run_id AS session_current_run_id,
+       sessions.current_run_version AS session_current_run_version,
+       sessions.workspace_id AS session_workspace_id,
+       sessions.metadata AS session_metadata,
+       sessions.tags AS session_tags,
+       sessions.result AS session_result,
+       sessions.terminal_reason AS session_terminal_reason,
+       sessions.expires_at AS session_expires_at,
+       sessions.cancelled_at AS session_cancelled_at,
+       sessions.created_at AS session_created_at,
+       sessions.updated_at AS session_updated_at,
+       runs.id AS run_id,
+       runs.org_id AS run_org_id,
+       runs.worker_group_id AS run_worker_group_id,
+       runs.project_id AS run_project_id,
+       runs.environment_id AS run_environment_id,
+       runs.deployment_id AS run_deployment_id,
+       runs.deployment_task_id AS run_deployment_task_id,
+       runs.deployment_version AS run_deployment_version,
+       runs.api_version AS run_api_version,
+       runs.sdk_version AS run_sdk_version,
+       runs.cli_version AS run_cli_version,
+       runs.task_id AS run_task_id,
+       runs.current_attempt_number AS run_attempt_number,
+       runs.status AS run_status,
+       runs.execution_status AS run_execution_status,
+       runs.terminal_outcome AS run_terminal_outcome,
+       runs.payload AS run_payload,
+       runs.output AS run_output,
+       runs.metadata AS run_metadata,
+       runs.tags AS run_tags,
+       runs.error_message AS run_error_message,
+       runs.exit_code AS run_exit_code,
+       runs.created_at AS run_created_at,
+       runs.updated_at AS run_updated_at
+  FROM sessions
+  JOIN session_runs ON session_runs.org_id = sessions.org_id
+                   AND session_runs.project_id = sessions.project_id
+                   AND session_runs.environment_id = sessions.environment_id
+                   AND session_runs.session_id = sessions.id
+                   AND session_runs.turn_index = 0
+  JOIN runs ON runs.org_id = session_runs.org_id
+           AND runs.project_id = session_runs.project_id
+           AND runs.environment_id = session_runs.environment_id
+           AND runs.id = session_runs.run_id
+ WHERE sessions.org_id = $1
+   AND sessions.project_id = $2
+   AND sessions.environment_id = $3
+   AND sessions.task_id = $4
+   AND sessions.start_idempotency_key = $5
+   AND sessions.start_idempotency_expires_at > now()
+`
+
+type GetSessionByStartIdempotencyParams struct {
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	TaskID         string      `json:"task_id"`
+	IdempotencyKey string      `json:"idempotency_key"`
+}
+
+type GetSessionByStartIdempotencyRow struct {
+	SessionID                        pgtype.UUID            `json:"session_id"`
+	SessionOrgID                     pgtype.UUID            `json:"session_org_id"`
+	SessionWorkerGroupID             string                 `json:"session_worker_group_id"`
+	SessionProjectID                 pgtype.UUID            `json:"session_project_id"`
+	SessionEnvironmentID             pgtype.UUID            `json:"session_environment_id"`
+	SessionTaskID                    string                 `json:"session_task_id"`
+	SessionInitialDeploymentID       pgtype.UUID            `json:"session_initial_deployment_id"`
+	SessionActiveDeploymentID        pgtype.UUID            `json:"session_active_deployment_id"`
+	SessionExternalID                string                 `json:"session_external_id"`
+	SessionStartFingerprint          string                 `json:"session_start_fingerprint"`
+	SessionStartIdempotencyKey       string                 `json:"session_start_idempotency_key"`
+	SessionStartIdempotencyExpiresAt pgtype.Timestamptz     `json:"session_start_idempotency_expires_at"`
+	SessionStatus                    SessionStatus          `json:"session_status"`
+	SessionCurrentRunID              pgtype.UUID            `json:"session_current_run_id"`
+	SessionCurrentRunVersion         int64                  `json:"session_current_run_version"`
+	SessionWorkspaceID               pgtype.UUID            `json:"session_workspace_id"`
+	SessionMetadata                  []byte                 `json:"session_metadata"`
+	SessionTags                      []string               `json:"session_tags"`
+	SessionResult                    []byte                 `json:"session_result"`
+	SessionTerminalReason            []byte                 `json:"session_terminal_reason"`
+	SessionExpiresAt                 pgtype.Timestamptz     `json:"session_expires_at"`
+	SessionCancelledAt               pgtype.Timestamptz     `json:"session_cancelled_at"`
+	SessionCreatedAt                 pgtype.Timestamptz     `json:"session_created_at"`
+	SessionUpdatedAt                 pgtype.Timestamptz     `json:"session_updated_at"`
+	RunID                            pgtype.UUID            `json:"run_id"`
+	RunOrgID                         pgtype.UUID            `json:"run_org_id"`
+	RunWorkerGroupID                 string                 `json:"run_worker_group_id"`
+	RunProjectID                     pgtype.UUID            `json:"run_project_id"`
+	RunEnvironmentID                 pgtype.UUID            `json:"run_environment_id"`
+	RunDeploymentID                  pgtype.UUID            `json:"run_deployment_id"`
+	RunDeploymentTaskID              pgtype.UUID            `json:"run_deployment_task_id"`
+	RunDeploymentVersion             string                 `json:"run_deployment_version"`
+	RunApiVersion                    string                 `json:"run_api_version"`
+	RunSdkVersion                    string                 `json:"run_sdk_version"`
+	RunCliVersion                    string                 `json:"run_cli_version"`
+	RunTaskID                        string                 `json:"run_task_id"`
+	RunAttemptNumber                 int32                  `json:"run_attempt_number"`
+	RunStatus                        RunStatus              `json:"run_status"`
+	RunExecutionStatus               RunExecutionStatus     `json:"run_execution_status"`
+	RunTerminalOutcome               NullRunTerminalOutcome `json:"run_terminal_outcome"`
+	RunPayload                       []byte                 `json:"run_payload"`
+	RunOutput                        []byte                 `json:"run_output"`
+	RunMetadata                      []byte                 `json:"run_metadata"`
+	RunTags                          []string               `json:"run_tags"`
+	RunErrorMessage                  pgtype.Text            `json:"run_error_message"`
+	RunExitCode                      pgtype.Int4            `json:"run_exit_code"`
+	RunCreatedAt                     pgtype.Timestamptz     `json:"run_created_at"`
+	RunUpdatedAt                     pgtype.Timestamptz     `json:"run_updated_at"`
+}
+
+func (q *Queries) GetSessionByStartIdempotency(ctx context.Context, arg GetSessionByStartIdempotencyParams) (GetSessionByStartIdempotencyRow, error) {
+	row := q.db.QueryRow(ctx, getSessionByStartIdempotency,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.TaskID,
+		arg.IdempotencyKey,
+	)
+	var i GetSessionByStartIdempotencyRow
+	err := row.Scan(
+		&i.SessionID,
+		&i.SessionOrgID,
+		&i.SessionWorkerGroupID,
+		&i.SessionProjectID,
+		&i.SessionEnvironmentID,
+		&i.SessionTaskID,
+		&i.SessionInitialDeploymentID,
+		&i.SessionActiveDeploymentID,
+		&i.SessionExternalID,
+		&i.SessionStartFingerprint,
+		&i.SessionStartIdempotencyKey,
+		&i.SessionStartIdempotencyExpiresAt,
+		&i.SessionStatus,
+		&i.SessionCurrentRunID,
+		&i.SessionCurrentRunVersion,
+		&i.SessionWorkspaceID,
+		&i.SessionMetadata,
+		&i.SessionTags,
+		&i.SessionResult,
+		&i.SessionTerminalReason,
+		&i.SessionExpiresAt,
+		&i.SessionCancelledAt,
+		&i.SessionCreatedAt,
+		&i.SessionUpdatedAt,
+		&i.RunID,
+		&i.RunOrgID,
+		&i.RunWorkerGroupID,
+		&i.RunProjectID,
+		&i.RunEnvironmentID,
+		&i.RunDeploymentID,
+		&i.RunDeploymentTaskID,
+		&i.RunDeploymentVersion,
+		&i.RunApiVersion,
+		&i.RunSdkVersion,
+		&i.RunCliVersion,
+		&i.RunTaskID,
+		&i.RunAttemptNumber,
+		&i.RunStatus,
+		&i.RunExecutionStatus,
+		&i.RunTerminalOutcome,
+		&i.RunPayload,
+		&i.RunOutput,
+		&i.RunMetadata,
+		&i.RunTags,
+		&i.RunErrorMessage,
+		&i.RunExitCode,
+		&i.RunCreatedAt,
+		&i.RunUpdatedAt,
+	)
+	return i, err
+}
+
 const getSessionInWorkerGroup = `-- name: GetSessionInWorkerGroup :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND worker_group_id = $2
@@ -1116,6 +1257,8 @@ func (q *Queries) GetSessionInWorkerGroup(ctx context.Context, arg GetSessionInW
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -1177,212 +1320,6 @@ func (q *Queries) GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByR
 		&i.Reason,
 		&i.CreatedAt,
 		&i.EndedAt,
-	)
-	return i, err
-}
-
-const getSessionStartIdempotency = `-- name: GetSessionStartIdempotency :one
-SELECT session_start_idempotencies.id, session_start_idempotencies.org_id, session_start_idempotencies.project_id, session_start_idempotencies.environment_id, session_start_idempotencies.task_id, session_start_idempotencies.idempotency_key, session_start_idempotencies.request_fingerprint, session_start_idempotencies.session_id, session_start_idempotencies.first_run_id, session_start_idempotencies.expires_at, session_start_idempotencies.created_at, session_start_idempotencies.last_used_at,
-       sessions.id AS session_id,
-       sessions.org_id AS session_org_id,
-       sessions.worker_group_id AS session_worker_group_id,
-       sessions.project_id AS session_project_id,
-       sessions.environment_id AS session_environment_id,
-       sessions.task_id AS session_task_id,
-       sessions.initial_deployment_id AS session_initial_deployment_id,
-       sessions.active_deployment_id AS session_active_deployment_id,
-       sessions.external_id AS session_external_id,
-       sessions.start_fingerprint AS session_start_fingerprint,
-       sessions.status AS session_status,
-       sessions.current_run_id AS session_current_run_id,
-       sessions.current_run_version AS session_current_run_version,
-       sessions.workspace_id AS session_workspace_id,
-       sessions.metadata AS session_metadata,
-       sessions.tags AS session_tags,
-       sessions.result AS session_result,
-       sessions.terminal_reason AS session_terminal_reason,
-       sessions.expires_at AS session_expires_at,
-       sessions.cancelled_at AS session_cancelled_at,
-       sessions.created_at AS session_created_at,
-       sessions.updated_at AS session_updated_at,
-       runs.id AS run_id,
-       runs.org_id AS run_org_id,
-       runs.worker_group_id AS run_worker_group_id,
-       runs.project_id AS run_project_id,
-       runs.environment_id AS run_environment_id,
-       runs.deployment_id AS run_deployment_id,
-       runs.deployment_task_id AS run_deployment_task_id,
-       runs.deployment_version AS run_deployment_version,
-       runs.api_version AS run_api_version,
-       runs.sdk_version AS run_sdk_version,
-       runs.cli_version AS run_cli_version,
-       runs.task_id AS run_task_id,
-       runs.current_attempt_number AS run_attempt_number,
-       runs.status AS run_status,
-       runs.execution_status AS run_execution_status,
-       runs.terminal_outcome AS run_terminal_outcome,
-       runs.payload AS run_payload,
-       runs.output AS run_output,
-       runs.metadata AS run_metadata,
-       runs.tags AS run_tags,
-       runs.error_message AS run_error_message,
-       runs.exit_code AS run_exit_code,
-       runs.created_at AS run_created_at,
-       runs.updated_at AS run_updated_at
-  FROM session_start_idempotencies
-  JOIN sessions ON sessions.org_id = session_start_idempotencies.org_id
-                    AND sessions.project_id = session_start_idempotencies.project_id
-                    AND sessions.environment_id = session_start_idempotencies.environment_id
-                    AND sessions.id = session_start_idempotencies.session_id
-  JOIN runs ON runs.org_id = session_start_idempotencies.org_id
-           AND runs.project_id = session_start_idempotencies.project_id
-           AND runs.environment_id = session_start_idempotencies.environment_id
-           AND runs.id = session_start_idempotencies.first_run_id
- WHERE session_start_idempotencies.org_id = $1
-   AND session_start_idempotencies.project_id = $2
-   AND session_start_idempotencies.environment_id = $3
-   AND session_start_idempotencies.task_id = $4
-   AND session_start_idempotencies.idempotency_key = $5
-   AND session_start_idempotencies.expires_at > now()
-`
-
-type GetSessionStartIdempotencyParams struct {
-	OrgID          pgtype.UUID `json:"org_id"`
-	ProjectID      pgtype.UUID `json:"project_id"`
-	EnvironmentID  pgtype.UUID `json:"environment_id"`
-	TaskID         string      `json:"task_id"`
-	IdempotencyKey string      `json:"idempotency_key"`
-}
-
-type GetSessionStartIdempotencyRow struct {
-	ID                         pgtype.UUID            `json:"id"`
-	OrgID                      pgtype.UUID            `json:"org_id"`
-	ProjectID                  pgtype.UUID            `json:"project_id"`
-	EnvironmentID              pgtype.UUID            `json:"environment_id"`
-	TaskID                     string                 `json:"task_id"`
-	IdempotencyKey             string                 `json:"idempotency_key"`
-	RequestFingerprint         string                 `json:"request_fingerprint"`
-	SessionID                  pgtype.UUID            `json:"session_id"`
-	FirstRunID                 pgtype.UUID            `json:"first_run_id"`
-	ExpiresAt                  pgtype.Timestamptz     `json:"expires_at"`
-	CreatedAt                  pgtype.Timestamptz     `json:"created_at"`
-	LastUsedAt                 pgtype.Timestamptz     `json:"last_used_at"`
-	SessionID_2                pgtype.UUID            `json:"session_id_2"`
-	SessionOrgID               pgtype.UUID            `json:"session_org_id"`
-	SessionWorkerGroupID       string                 `json:"session_worker_group_id"`
-	SessionProjectID           pgtype.UUID            `json:"session_project_id"`
-	SessionEnvironmentID       pgtype.UUID            `json:"session_environment_id"`
-	SessionTaskID              string                 `json:"session_task_id"`
-	SessionInitialDeploymentID pgtype.UUID            `json:"session_initial_deployment_id"`
-	SessionActiveDeploymentID  pgtype.UUID            `json:"session_active_deployment_id"`
-	SessionExternalID          string                 `json:"session_external_id"`
-	SessionStartFingerprint    string                 `json:"session_start_fingerprint"`
-	SessionStatus              SessionStatus          `json:"session_status"`
-	SessionCurrentRunID        pgtype.UUID            `json:"session_current_run_id"`
-	SessionCurrentRunVersion   int64                  `json:"session_current_run_version"`
-	SessionWorkspaceID         pgtype.UUID            `json:"session_workspace_id"`
-	SessionMetadata            []byte                 `json:"session_metadata"`
-	SessionTags                []string               `json:"session_tags"`
-	SessionResult              []byte                 `json:"session_result"`
-	SessionTerminalReason      []byte                 `json:"session_terminal_reason"`
-	SessionExpiresAt           pgtype.Timestamptz     `json:"session_expires_at"`
-	SessionCancelledAt         pgtype.Timestamptz     `json:"session_cancelled_at"`
-	SessionCreatedAt           pgtype.Timestamptz     `json:"session_created_at"`
-	SessionUpdatedAt           pgtype.Timestamptz     `json:"session_updated_at"`
-	RunID                      pgtype.UUID            `json:"run_id"`
-	RunOrgID                   pgtype.UUID            `json:"run_org_id"`
-	RunWorkerGroupID           string                 `json:"run_worker_group_id"`
-	RunProjectID               pgtype.UUID            `json:"run_project_id"`
-	RunEnvironmentID           pgtype.UUID            `json:"run_environment_id"`
-	RunDeploymentID            pgtype.UUID            `json:"run_deployment_id"`
-	RunDeploymentTaskID        pgtype.UUID            `json:"run_deployment_task_id"`
-	RunDeploymentVersion       string                 `json:"run_deployment_version"`
-	RunApiVersion              string                 `json:"run_api_version"`
-	RunSdkVersion              string                 `json:"run_sdk_version"`
-	RunCliVersion              string                 `json:"run_cli_version"`
-	RunTaskID                  string                 `json:"run_task_id"`
-	RunAttemptNumber           int32                  `json:"run_attempt_number"`
-	RunStatus                  RunStatus              `json:"run_status"`
-	RunExecutionStatus         RunExecutionStatus     `json:"run_execution_status"`
-	RunTerminalOutcome         NullRunTerminalOutcome `json:"run_terminal_outcome"`
-	RunPayload                 []byte                 `json:"run_payload"`
-	RunOutput                  []byte                 `json:"run_output"`
-	RunMetadata                []byte                 `json:"run_metadata"`
-	RunTags                    []string               `json:"run_tags"`
-	RunErrorMessage            pgtype.Text            `json:"run_error_message"`
-	RunExitCode                pgtype.Int4            `json:"run_exit_code"`
-	RunCreatedAt               pgtype.Timestamptz     `json:"run_created_at"`
-	RunUpdatedAt               pgtype.Timestamptz     `json:"run_updated_at"`
-}
-
-func (q *Queries) GetSessionStartIdempotency(ctx context.Context, arg GetSessionStartIdempotencyParams) (GetSessionStartIdempotencyRow, error) {
-	row := q.db.QueryRow(ctx, getSessionStartIdempotency,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.TaskID,
-		arg.IdempotencyKey,
-	)
-	var i GetSessionStartIdempotencyRow
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.TaskID,
-		&i.IdempotencyKey,
-		&i.RequestFingerprint,
-		&i.SessionID,
-		&i.FirstRunID,
-		&i.ExpiresAt,
-		&i.CreatedAt,
-		&i.LastUsedAt,
-		&i.SessionID_2,
-		&i.SessionOrgID,
-		&i.SessionWorkerGroupID,
-		&i.SessionProjectID,
-		&i.SessionEnvironmentID,
-		&i.SessionTaskID,
-		&i.SessionInitialDeploymentID,
-		&i.SessionActiveDeploymentID,
-		&i.SessionExternalID,
-		&i.SessionStartFingerprint,
-		&i.SessionStatus,
-		&i.SessionCurrentRunID,
-		&i.SessionCurrentRunVersion,
-		&i.SessionWorkspaceID,
-		&i.SessionMetadata,
-		&i.SessionTags,
-		&i.SessionResult,
-		&i.SessionTerminalReason,
-		&i.SessionExpiresAt,
-		&i.SessionCancelledAt,
-		&i.SessionCreatedAt,
-		&i.SessionUpdatedAt,
-		&i.RunID,
-		&i.RunOrgID,
-		&i.RunWorkerGroupID,
-		&i.RunProjectID,
-		&i.RunEnvironmentID,
-		&i.RunDeploymentID,
-		&i.RunDeploymentTaskID,
-		&i.RunDeploymentVersion,
-		&i.RunApiVersion,
-		&i.RunSdkVersion,
-		&i.RunCliVersion,
-		&i.RunTaskID,
-		&i.RunAttemptNumber,
-		&i.RunStatus,
-		&i.RunExecutionStatus,
-		&i.RunTerminalOutcome,
-		&i.RunPayload,
-		&i.RunOutput,
-		&i.RunMetadata,
-		&i.RunTags,
-		&i.RunErrorMessage,
-		&i.RunExitCode,
-		&i.RunCreatedAt,
-		&i.RunUpdatedAt,
 	)
 	return i, err
 }
@@ -1793,7 +1730,7 @@ func (q *Queries) ListSessionRuns(ctx context.Context, arg ListSessionRunsParams
 }
 
 const listSessions = `-- name: ListSessions :many
-SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
+SELECT sessions.id, sessions.public_id, sessions.org_id, sessions.worker_group_id, sessions.project_id, sessions.environment_id, sessions.task_id, sessions.initial_deployment_id, sessions.active_deployment_id, sessions.external_id, sessions.start_fingerprint, sessions.start_idempotency_key, sessions.start_idempotency_expires_at, sessions.status, sessions.current_run_id, sessions.current_run_version, sessions.workspace_id, sessions.metadata, sessions.tags, sessions.closed_at, sessions.closed_reason, sessions.cancelled_at, sessions.expired_at, sessions.terminal_reason, sessions.result, sessions.expires_at, sessions.created_at, sessions.updated_at
  FROM sessions
  WHERE sessions.org_id = $1
    AND sessions.project_id = $2
@@ -1853,6 +1790,8 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 			&i.ActiveDeploymentID,
 			&i.ExternalID,
 			&i.StartFingerprint,
+			&i.StartIdempotencyKey,
+			&i.StartIdempotencyExpiresAt,
 			&i.Status,
 			&i.CurrentRunID,
 			&i.CurrentRunVersion,
@@ -1880,7 +1819,7 @@ func (q *Queries) ListSessions(ctx context.Context, arg ListSessionsParams) ([]S
 }
 
 const lockSession = `-- name: LockSession :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
   FROM sessions
  WHERE org_id = $1
    AND project_id = $2
@@ -1916,6 +1855,8 @@ func (q *Queries) LockSession(ctx context.Context, arg LockSessionParams) (Sessi
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -1957,7 +1898,7 @@ UPDATE sessions
            AND $3::timestamptz > sessions.expires_at
        )
    )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type PatchSessionParams struct {
@@ -1993,6 +1934,8 @@ func (q *Queries) PatchSession(ctx context.Context, arg PatchSessionParams) (Ses
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -2034,7 +1977,7 @@ WHERE sessions.org_id = $2
               AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
        )
    )
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
 type SetSessionCurrentRunParams struct {
@@ -2066,6 +2009,8 @@ func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurren
 		&i.ActiveDeploymentID,
 		&i.ExternalID,
 		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
 		&i.Status,
 		&i.CurrentRunID,
 		&i.CurrentRunVersion,
@@ -2085,19 +2030,77 @@ func (q *Queries) SetSessionCurrentRun(ctx context.Context, arg SetSessionCurren
 	return i, err
 }
 
-const touchSessionStartIdempotency = `-- name: TouchSessionStartIdempotency :exec
-UPDATE session_start_idempotencies
-   SET last_used_at = now()
- WHERE org_id = $1
-   AND id = $2
+const setSessionStartIdempotency = `-- name: SetSessionStartIdempotency :one
+UPDATE sessions
+   SET start_idempotency_key = $1,
+       start_idempotency_expires_at = $2,
+       updated_at = now()
+ WHERE org_id = $3
+   AND project_id = $4
+   AND environment_id = $5
+   AND id = $6
+   AND task_id = $7
+   AND start_fingerprint = $8
+   AND (
+       start_idempotency_key = ''
+       OR start_idempotency_key = $1
+       OR start_idempotency_expires_at <= now()
+   )
+RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, external_id, start_fingerprint, start_idempotency_key, start_idempotency_expires_at, status, current_run_id, current_run_version, workspace_id, metadata, tags, closed_at, closed_reason, cancelled_at, expired_at, terminal_reason, result, expires_at, created_at, updated_at
 `
 
-type TouchSessionStartIdempotencyParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	ID    pgtype.UUID `json:"id"`
+type SetSessionStartIdempotencyParams struct {
+	IdempotencyKey   string             `json:"idempotency_key"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	SessionID        pgtype.UUID        `json:"session_id"`
+	TaskID           string             `json:"task_id"`
+	StartFingerprint string             `json:"start_fingerprint"`
 }
 
-func (q *Queries) TouchSessionStartIdempotency(ctx context.Context, arg TouchSessionStartIdempotencyParams) error {
-	_, err := q.db.Exec(ctx, touchSessionStartIdempotency, arg.OrgID, arg.ID)
-	return err
+func (q *Queries) SetSessionStartIdempotency(ctx context.Context, arg SetSessionStartIdempotencyParams) (Session, error) {
+	row := q.db.QueryRow(ctx, setSessionStartIdempotency,
+		arg.IdempotencyKey,
+		arg.ExpiresAt,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.SessionID,
+		arg.TaskID,
+		arg.StartFingerprint,
+	)
+	var i Session
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.TaskID,
+		&i.InitialDeploymentID,
+		&i.ActiveDeploymentID,
+		&i.ExternalID,
+		&i.StartFingerprint,
+		&i.StartIdempotencyKey,
+		&i.StartIdempotencyExpiresAt,
+		&i.Status,
+		&i.CurrentRunID,
+		&i.CurrentRunVersion,
+		&i.WorkspaceID,
+		&i.Metadata,
+		&i.Tags,
+		&i.ClosedAt,
+		&i.ClosedReason,
+		&i.CancelledAt,
+		&i.ExpiredAt,
+		&i.TerminalReason,
+		&i.Result,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

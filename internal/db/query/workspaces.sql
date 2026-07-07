@@ -12,6 +12,9 @@ WITH created_workspace AS (
         sandbox_fingerprint,
         current_version_id,
         external_id,
+        create_idempotency_key,
+        create_idempotency_expires_at,
+        create_request_fingerprint,
         metadata,
         tags,
         retention_policy
@@ -27,6 +30,9 @@ WITH created_workspace AS (
            deployment_sandboxes.fingerprint,
            sqlc.arg(initial_version_id),
            coalesce(sqlc.arg(external_id)::text, ''),
+           coalesce(sqlc.arg(create_idempotency_key)::text, ''),
+           sqlc.narg(create_idempotency_expires_at),
+           coalesce(sqlc.arg(create_request_fingerprint)::text, ''),
            coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
            coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
            coalesce(sqlc.arg(retention_policy)::jsonb, '{}'::jsonb)
@@ -138,6 +144,28 @@ SELECT *
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
 
+-- name: GetWorkspaceByCreateIdempotency :one
+SELECT *
+  FROM workspaces
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND create_idempotency_key = sqlc.arg(idempotency_key)
+   AND create_idempotency_expires_at > now()
+   AND deleted_at IS NULL;
+
+-- name: ClearExpiredWorkspaceCreateIdempotency :exec
+UPDATE workspaces
+   SET create_idempotency_key = '',
+       create_idempotency_expires_at = NULL,
+       create_request_fingerprint = '',
+       updated_at = now()
+ WHERE org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND create_idempotency_key = sqlc.arg(idempotency_key)
+   AND create_idempotency_expires_at <= now();
+
 -- name: ListWorkspaces :many
 SELECT workspaces.*
   FROM workspaces
@@ -196,135 +224,4 @@ UPDATE workspaces
           AND workspace_mounts.workspace_id = workspaces.id
           AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
    )
-RETURNING *;
-
--- name: GetWorkspaceOperationIdempotency :one
-UPDATE workspace_operation_idempotencies
-   SET last_used_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-   AND workspace_id IS NULL
-   AND idempotency_key = sqlc.arg(idempotency_key)
-   AND expires_at > now()
-RETURNING *;
-
--- name: GetWorkspaceScopedOperationIdempotency :one
-UPDATE workspace_operation_idempotencies
-   SET last_used_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND workspace_id = sqlc.arg(workspace_id)
-   AND operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-   AND idempotency_key = sqlc.arg(idempotency_key)
-   AND expires_at > now()
-RETURNING *;
-
--- name: EnsureWorkspaceOperationIdempotency :one
-WITH replaced AS (
-    UPDATE workspace_operation_idempotencies
-       SET request_fingerprint = sqlc.arg(request_fingerprint),
-           result_resource_id = sqlc.narg(result_resource_id),
-           response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
-           expires_at = sqlc.arg(expires_at),
-           created_at = now(),
-           last_used_at = now()
-     WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
-       AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
-       AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-       AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
-       AND (
-           (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
-           OR workspace_operation_idempotencies.workspace_id = sqlc.narg(workspace_id)::uuid
-       )
-       AND workspace_operation_idempotencies.expires_at <= now()
-    RETURNING workspace_operation_idempotencies.*, TRUE::boolean AS inserted
-),
-inserted AS (
-    INSERT INTO workspace_operation_idempotencies (
-        id,
-        org_id,
-        project_id,
-        environment_id,
-        workspace_id,
-        operation_kind,
-        idempotency_key,
-        request_fingerprint,
-        result_resource_id,
-        response_body,
-        expires_at
-    )
-    SELECT
-        sqlc.arg(id),
-        sqlc.arg(org_id),
-        sqlc.arg(project_id),
-        sqlc.arg(environment_id),
-        sqlc.narg(workspace_id),
-        sqlc.arg(operation_kind)::workspace_operation_idempotency_kind,
-        sqlc.arg(idempotency_key),
-        sqlc.arg(request_fingerprint),
-        sqlc.narg(result_resource_id),
-        coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
-        sqlc.arg(expires_at)
-     WHERE NOT EXISTS (SELECT 1 FROM replaced)
-    ON CONFLICT DO NOTHING
-    RETURNING workspace_operation_idempotencies.*, TRUE::boolean AS inserted
-),
-existing AS (
-    UPDATE workspace_operation_idempotencies
-       SET last_used_at = now()
-     WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
-       AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
-       AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-       AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-       AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
-       AND (
-           (sqlc.narg(workspace_id)::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
-           OR workspace_operation_idempotencies.workspace_id = sqlc.narg(workspace_id)::uuid
-       )
-       AND workspace_operation_idempotencies.expires_at > now()
-       AND NOT EXISTS (SELECT 1 FROM replaced)
-       AND NOT EXISTS (SELECT 1 FROM inserted)
-    RETURNING workspace_operation_idempotencies.*, FALSE::boolean AS inserted
-)
-SELECT * FROM replaced
-UNION ALL
-SELECT * FROM inserted
-UNION ALL
-SELECT * FROM existing
-LIMIT 1;
-
--- name: CompleteWorkspaceOperationIdempotency :one
-UPDATE workspace_operation_idempotencies
-   SET result_resource_id = sqlc.arg(result_resource_id),
-       response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
-       last_used_at = now()
- WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
-   AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
-   AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-   AND workspace_operation_idempotencies.workspace_id IS NULL
-   AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
-   AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND workspace_operation_idempotencies.result_resource_id IS NULL
-   AND workspace_operation_idempotencies.expires_at > now()
-RETURNING *;
-
--- name: CompleteWorkspaceScopedOperationIdempotency :one
-UPDATE workspace_operation_idempotencies
-   SET result_resource_id = sqlc.arg(result_resource_id),
-       response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
-       last_used_at = now()
- WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
-   AND workspace_operation_idempotencies.project_id = sqlc.arg(project_id)
-   AND workspace_operation_idempotencies.environment_id = sqlc.arg(environment_id)
-   AND workspace_operation_idempotencies.operation_kind = sqlc.arg(operation_kind)::workspace_operation_idempotency_kind
-   AND workspace_operation_idempotencies.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
-   AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND workspace_operation_idempotencies.result_resource_id IS NULL
-   AND workspace_operation_idempotencies.expires_at > now()
 RETURNING *;
