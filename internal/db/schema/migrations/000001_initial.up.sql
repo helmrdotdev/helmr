@@ -62,12 +62,6 @@ CREATE TYPE telemetry_outbox_state AS ENUM (
     'dead_lettered'
 );
 
-CREATE TYPE telemetry_replay_error_state AS ENUM (
-    'retryable',
-    'dead_lettered',
-    'resolved'
-);
-
 CREATE TABLE regions (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
@@ -2067,8 +2061,6 @@ CREATE TABLE telemetry_outbox (
     redaction_class TEXT NOT NULL DEFAULT 'internal',
     retention_class TEXT NOT NULL DEFAULT 'standard',
     snapshot_version BIGINT CHECK (snapshot_version IS NULL OR snapshot_version > 0),
-    object_key TEXT,
-    cas_digest TEXT,
     state telemetry_outbox_state NOT NULL DEFAULT 'pending',
     retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
     next_retry_at TIMESTAMPTZ,
@@ -2150,23 +2142,6 @@ CREATE INDEX telemetry_outbox_ingest_claim_idx
 CREATE INDEX telemetry_outbox_written_gc_idx
     ON telemetry_outbox (id)
     WHERE written_at IS NOT NULL;
-
-CREATE TABLE telemetry_replay_errors (
-    id UUID PRIMARY KEY DEFAULT uuidv7(),
-    org_id UUID NOT NULL,
-    worker_group_id TEXT NOT NULL,
-    stream_kind telemetry_stream_kind NOT NULL,
-    source_kind TEXT NOT NULL CHECK (btrim(source_kind) <> ''),
-    source_id UUID,
-    stream_name TEXT NOT NULL DEFAULT '',
-    seq BIGINT CHECK (seq IS NULL OR seq >= 0),
-    state telemetry_replay_error_state NOT NULL DEFAULT 'retryable',
-    retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
-    last_error TEXT NOT NULL DEFAULT '',
-    next_retry_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
 
 CREATE TABLE workspace_process_stream_wakeups (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

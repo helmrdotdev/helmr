@@ -114,9 +114,7 @@ type Querier interface {
 	CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWorkspaceFromSandboxParams) (CreateWorkspaceFromSandboxRow, error)
 	CreateWorkspacePtySession(ctx context.Context, arg CreateWorkspacePtySessionParams) (WorkspaceProcess, error)
 	CreateWorkspaceStreamWakeup(ctx context.Context, arg CreateWorkspaceStreamWakeupParams) (WorkspaceProcessStreamWakeup, error)
-	DeadLetterOrphanedTelemetryOutbox(ctx context.Context, rowLimit int32) ([]int64, error)
 	DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error)
-	DeadLetterTelemetryOutbox(ctx context.Context, arg DeadLetterTelemetryOutboxParams) error
 	DeferScheduleInstanceTrigger(ctx context.Context, arg DeferScheduleInstanceTriggerParams) (int64, error)
 	DeleteAPIKeyGrant(ctx context.Context, arg DeleteAPIKeyGrantParams) (int64, error)
 	DeleteAPIKeyGrantsForKey(ctx context.Context, arg DeleteAPIKeyGrantsForKeyParams) (int64, error)

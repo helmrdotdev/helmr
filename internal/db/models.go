@@ -1294,49 +1294,6 @@ func (ns NullTelemetryOutboxState) Value() (driver.Value, error) {
 	return string(ns.TelemetryOutboxState), nil
 }
 
-type TelemetryReplayErrorState string
-
-const (
-	TelemetryReplayErrorStateRetryable    TelemetryReplayErrorState = "retryable"
-	TelemetryReplayErrorStateDeadLettered TelemetryReplayErrorState = "dead_lettered"
-	TelemetryReplayErrorStateResolved     TelemetryReplayErrorState = "resolved"
-)
-
-func (e *TelemetryReplayErrorState) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = TelemetryReplayErrorState(s)
-	case string:
-		*e = TelemetryReplayErrorState(s)
-	default:
-		return fmt.Errorf("unsupported scan type for TelemetryReplayErrorState: %T", src)
-	}
-	return nil
-}
-
-type NullTelemetryReplayErrorState struct {
-	TelemetryReplayErrorState TelemetryReplayErrorState `json:"telemetry_replay_error_state"`
-	Valid                     bool                      `json:"valid"` // Valid is true if TelemetryReplayErrorState is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullTelemetryReplayErrorState) Scan(value interface{}) error {
-	if value == nil {
-		ns.TelemetryReplayErrorState, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.TelemetryReplayErrorState.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullTelemetryReplayErrorState) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.TelemetryReplayErrorState), nil
-}
-
 type TelemetryStreamKind string
 
 const (
@@ -3315,8 +3272,6 @@ type TelemetryOutbox struct {
 	RedactionClass     string               `json:"redaction_class"`
 	RetentionClass     string               `json:"retention_class"`
 	SnapshotVersion    pgtype.Int8          `json:"snapshot_version"`
-	ObjectKey          pgtype.Text          `json:"object_key"`
-	CasDigest          pgtype.Text          `json:"cas_digest"`
 	State              TelemetryOutboxState `json:"state"`
 	RetryCount         int32                `json:"retry_count"`
 	NextRetryAt        pgtype.Timestamptz   `json:"next_retry_at"`
@@ -3328,23 +3283,6 @@ type TelemetryOutbox struct {
 	ObservedAt         pgtype.Timestamptz   `json:"observed_at"`
 	CreatedAt          pgtype.Timestamptz   `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz   `json:"updated_at"`
-}
-
-type TelemetryReplayError struct {
-	ID            pgtype.UUID               `json:"id"`
-	OrgID         pgtype.UUID               `json:"org_id"`
-	WorkerGroupID string                    `json:"worker_group_id"`
-	StreamKind    TelemetryStreamKind       `json:"stream_kind"`
-	SourceKind    string                    `json:"source_kind"`
-	SourceID      pgtype.UUID               `json:"source_id"`
-	StreamName    string                    `json:"stream_name"`
-	Seq           pgtype.Int8               `json:"seq"`
-	State         TelemetryReplayErrorState `json:"state"`
-	RetryCount    int32                     `json:"retry_count"`
-	LastError     string                    `json:"last_error"`
-	NextRetryAt   pgtype.Timestamptz        `json:"next_retry_at"`
-	CreatedAt     pgtype.Timestamptz        `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz        `json:"updated_at"`
 }
 
 type Token struct {
