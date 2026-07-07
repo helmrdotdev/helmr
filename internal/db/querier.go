@@ -54,7 +54,6 @@ type Querier interface {
 	ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspaceProcessTerminalOutputIngestBatchParams) ([]ClaimWorkspaceProcessTerminalOutputIngestBatchRow, error)
 	ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRunWorkspaceReuseParams) (ClassifyRunWorkspaceReuseRow, error)
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
-	ClearExpiredSessionStartIdempotency(ctx context.Context, arg ClearExpiredSessionStartIdempotencyParams) error
 	ClearExpiredWorkspaceCreateIdempotency(ctx context.Context, arg ClearExpiredWorkspaceCreateIdempotencyParams) error
 	ClearExpiredWorkspaceExecIdempotency(ctx context.Context, arg ClearExpiredWorkspaceExecIdempotencyParams) error
 	ClearExpiredWorkspacePtyIdempotency(ctx context.Context, arg ClearExpiredWorkspacePtyIdempotencyParams) error
@@ -210,7 +209,6 @@ type Querier interface {
 	GetSessionByExternalID(ctx context.Context, arg GetSessionByExternalIDParams) (Session, error)
 	GetSessionByExternalIDInWorkerGroup(ctx context.Context, arg GetSessionByExternalIDInWorkerGroupParams) (Session, error)
 	GetSessionByOrgID(ctx context.Context, arg GetSessionByOrgIDParams) (Session, error)
-	GetSessionByStartIdempotency(ctx context.Context, arg GetSessionByStartIdempotencyParams) (GetSessionByStartIdempotencyRow, error)
 	GetSessionContinuationRequest(ctx context.Context, arg GetSessionContinuationRequestParams) (SessionContinuationRequest, error)
 	GetSessionInWorkerGroup(ctx context.Context, arg GetSessionInWorkerGroupParams) (Session, error)
 	GetSessionRunByRunID(ctx context.Context, arg GetSessionRunByRunIDParams) (SessionRun, error)
@@ -404,7 +402,6 @@ type Querier interface {
 	SetQueuedRunWorkspaceMount(ctx context.Context, arg SetQueuedRunWorkspaceMountParams) error
 	SetRunWaitWorkspaceVersion(ctx context.Context, arg SetRunWaitWorkspaceVersionParams) (RunWait, error)
 	SetSessionCurrentRun(ctx context.Context, arg SetSessionCurrentRunParams) (Session, error)
-	SetSessionStartIdempotency(ctx context.Context, arg SetSessionStartIdempotencyParams) (SessionStartKey, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
 	SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspaceDesiredStoppedParams) (Workspace, error)
 	SkipScheduleInstanceTrigger(ctx context.Context, arg SkipScheduleInstanceTriggerParams) (SkipScheduleInstanceTriggerRow, error)

@@ -264,11 +264,11 @@ const decision = await approval.wait({
     icon: "bolt",
     tone: "pink",
     title: "Start from anywhere",
-    caption: "Your product, a webhook, CI, or another task — deduplicated with idempotency keys.",
+    caption: "Your product, a webhook, CI, or another task — keyed by a durable session identity.",
     code: `const started = await sessions.start(
   reviewPr,
   { prNumber: 482 },
-  { idempotencyKey: pr.head.sha }
+  { externalId: \`github-pr:\${pr.id}:\${pr.head.sha}\` }
 )`,
     lang: "ts",
   },

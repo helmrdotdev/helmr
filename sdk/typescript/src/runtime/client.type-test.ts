@@ -1,7 +1,7 @@
 import type { PublicAccessToken, Schedule, SessionSnapshot, SessionStartResult, SessionStartAndWaitResult, HelmrClient, Token, TokenCompleteResult, Workspace, WorkspaceFileEntry, WorkspaceFileList, WorkspaceVersion } from "./client"
 import type { RunEventRecord, RunHandle, RunSnapshot } from "./run"
 import type { StreamRecord, Task } from "../internal"
-import { auth, idempotencyKeys, image, queue, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
+import { auth, image, queue, sandbox, schedules, sessions, source, streams, task, tokens, workspaces, type PayloadSchema } from "../index"
 
 declare const client: HelmrClient
 declare const handle: RunHandle
@@ -17,8 +17,6 @@ if (false) {
     { issue: 123 },
     {
       externalId: "case-123",
-      idempotencyKey: "issue-123",
-      idempotencyKeyTTL: "24h",
     },
   )
   const startAndWait: Promise<SessionStartAndWaitResult<{ issue: number }>> = client.sessions.startAndWait<typeof taskWithPayload>(
@@ -30,20 +28,18 @@ if (false) {
     "inspect",
     { issue: 123 },
     {
-      idempotencyKey: "issue-123",
-      idempotencyKeyTTL: "24h",
+      externalId: "case-123",
     },
   )
-  const helperKey = idempotencyKeys.create(["issue", "123"], { scope: "global" })
   const schemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = sessions.start(
     schemaTask,
     { issue: "123" },
-    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+    { projectId: "project-1", environmentId: "env-1", externalId: "case-123" },
   )
   const clientSchemaStartedRun: Promise<SessionStartResult<{ parsed: number }>> = client.sessions.start(
     schemaTask,
     { issue: "123" },
-    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+    { projectId: "project-1", environmentId: "env-1", externalId: "case-123" },
   )
   const schemaStartAndWait: Promise<SessionStartAndWaitResult<{ parsed: number }>> = sessions.startAndWait(
     schemaTask,
@@ -58,7 +54,7 @@ if (false) {
   const canonicalStartedRun: Promise<SessionStartResult<{ parsed: number }>> = client.sessions.start<typeof schemaTask>(
     schemaTask.id,
     { issue: "123" },
-    { projectId: "project-1", environmentId: "env-1", idempotencyKey: helperKey },
+    { projectId: "project-1", environmentId: "env-1", externalId: "case-123" },
   )
   const noPayloadTask = task({
     id: "no-payload",
@@ -335,7 +331,6 @@ if (false) {
   })
   client.sessions.start<typeof taskWithPayload>("inspect", { issue: 123 }, {
     externalId: "case-123",
-    idempotencyKey: "request-123",
   })
   client.sessions.start<typeof taskWithPayload>(
     "inspect",
@@ -399,7 +394,7 @@ if (false) {
     noPayloadTask,
     {},
     // @ts-expect-error no-payload tasks accept options as the first argument, not payload.
-    { idempotencyKey: "payload-not-options" },
+    { externalId: "payload-not-options" },
   )
   sessions.startAndWait(
     noPayloadTask,

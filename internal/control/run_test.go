@@ -1029,24 +1029,6 @@ func TestSessionStartRejectsWorkspaceResourceFloorBeforeSessionCreation(t *testi
 	}
 }
 
-func TestSessionStartIdempotencyRequiresCoordinationBeforeDBSideEffects(t *testing.T) {
-	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","idempotency_key":"retry-1"}`))
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.session.ID.Valid || store.run.ID.Valid {
-		t.Fatalf("unexpected DB side effects: session=%v run=%v", store.session.ID.Valid, store.run.ID.Valid)
-	}
-}
-
 func TestSessionStartReturnsUnavailableWhenCreateRunRouteVanishes(t *testing.T) {
 	store := &fakeStore{createRunErr: pgx.ErrNoRows}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
@@ -1125,8 +1107,7 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 
 func TestSessionStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 	store := &fakeStore{}
-	eventStream := newTestEventStream(t)
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: eventStream})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		ExternalID: "durable-1",
 		Payload:    json.RawMessage(`{"env":"prod"}`),
@@ -1142,10 +1123,6 @@ func TestSessionStartExternalIDReturnsExistingSessionOK(t *testing.T) {
 		t.Fatalf("first status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	firstRunID := pgvalue.MustUUIDValue(store.run.ID).String()
-	staleExternalKey := sessionStartClaimKey(dbtest.DefaultOrgID, testProjectID(), testEnvironmentID(), "deploy", "external", "durable-1")
-	if err := eventStream.redis.Set(context.Background(), staleExternalKey, "pending:stale-owner", time.Minute).Err(); err != nil {
-		t.Fatal(err)
-	}
 
 	store.currentDeploymentMissing = true
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
@@ -1238,7 +1215,7 @@ func TestStartAndWaitReturnsAfterInitialRunWhileSessionOpen(t *testing.T) {
 
 func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, api.SessionStartOptions{}, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1290,9 +1267,12 @@ func TestSessionStartExternalIDDifferentTaskConflicts(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_fingerprint_mismatch")
 }
 
-func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
+func TestSessionStartExternalIDRejectsMetadataTagsMismatch(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, api.SessionStartOptions{
+		Metadata: json.RawMessage(`{"origin":"first"}`),
+		Tags:     []string{"first"},
+	}, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1346,9 +1326,10 @@ func TestSessionStartExternalIDIgnoresMetadataTagsInFingerprint(t *testing.T) {
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusConflict {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
+	requireErrorCode(t, rec.Body.Bytes(), "session_fingerprint_mismatch")
 }
 
 func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
@@ -1627,7 +1608,7 @@ func TestSessionStartExternalIDRejectsExpiredOpenSession(t *testing.T) {
 
 func TestSessionStartExternalIDUniqueRaceReturnsExistingSessionOK(t *testing.T) {
 	payload := json.RawMessage(`{"env":"prod"}`)
-	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, sessionStartFingerprintTestOptions(t, api.CreateRunOptions{}), "durable-1", nil)
+	startFingerprint, err := sessionStartRequestFingerprint("deploy", payload, api.SessionStartOptions{}, "durable-1", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2663,7 +2644,6 @@ type fakeStore struct {
 	createCapacityPressureCheckpointsCalls  int
 	session                                 db.Session
 	lockSession                             db.Session
-	sessionStartKeys                        []db.SessionStartKey
 	createSessionErr                        error
 	ensureWorkspaceMount                    db.EnsureWorkspaceMountRequestedParams
 	ensureWorkspaceMountCalls               int
@@ -2812,6 +2792,9 @@ type fakeSecrets struct {
 func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunParams) (db.CreateScopedRunRow, error) {
 	if f.createRunErr != nil {
 		return db.CreateScopedRunRow{}, f.createRunErr
+	}
+	if f.scheduleTriggerNotCurrent && arg.ScheduleInstanceID.Valid {
+		return db.CreateScopedRunRow{}, pgx.ErrNoRows
 	}
 	f.createRun = arg
 	now := testTime()
@@ -3349,131 +3332,6 @@ func (f *fakeStore) MarkSessionContinuationRequestFailed(_ context.Context, arg 
 	f.sessionContinuationRequest.ClaimExpiresAt = pgtype.Timestamptz{}
 	f.sessionContinuationRequest.ClaimOwner = ""
 	return f.sessionContinuationRequest, nil
-}
-
-func (f *fakeStore) GetSessionByStartIdempotency(_ context.Context, arg db.GetSessionByStartIdempotencyParams) (db.GetSessionByStartIdempotencyRow, error) {
-	for _, key := range f.sessionStartKeys {
-		if key.OrgID == arg.OrgID &&
-			key.ProjectID == arg.ProjectID &&
-			key.EnvironmentID == arg.EnvironmentID &&
-			key.TaskID == arg.TaskID &&
-			key.IdempotencyKey == arg.IdempotencyKey &&
-			key.ExpiresAt.Valid &&
-			key.ExpiresAt.Time.After(time.Now()) {
-			return f.sessionStartIdempotencyRow(key), nil
-		}
-	}
-	return db.GetSessionByStartIdempotencyRow{}, pgx.ErrNoRows
-}
-
-func (f *fakeStore) ClearExpiredSessionStartIdempotency(_ context.Context, arg db.ClearExpiredSessionStartIdempotencyParams) error {
-	filtered := f.sessionStartKeys[:0]
-	for _, key := range f.sessionStartKeys {
-		if key.OrgID == arg.OrgID &&
-			key.ProjectID == arg.ProjectID &&
-			key.EnvironmentID == arg.EnvironmentID &&
-			key.TaskID == arg.TaskID &&
-			key.IdempotencyKey == arg.IdempotencyKey &&
-			key.ExpiresAt.Valid &&
-			!key.ExpiresAt.Time.After(time.Now()) {
-			continue
-		}
-		filtered = append(filtered, key)
-	}
-	f.sessionStartKeys = filtered
-	return nil
-}
-
-func (f *fakeStore) SetSessionStartIdempotency(_ context.Context, arg db.SetSessionStartIdempotencyParams) (db.SessionStartKey, error) {
-	if f.session.ID.Valid &&
-		f.session.OrgID == arg.OrgID &&
-		f.session.ProjectID == arg.ProjectID &&
-		f.session.EnvironmentID == arg.EnvironmentID &&
-		f.session.ID == arg.SessionID &&
-		f.session.TaskID == arg.TaskID &&
-		f.session.StartFingerprint == arg.StartFingerprint &&
-		f.run.ID == arg.RunID &&
-		f.run.OrgID == arg.OrgID &&
-		f.run.ProjectID == arg.ProjectID &&
-		f.run.EnvironmentID == arg.EnvironmentID &&
-		f.run.SessionID == arg.SessionID {
-		for _, key := range f.sessionStartKeys {
-			if key.OrgID == arg.OrgID &&
-				key.ProjectID == arg.ProjectID &&
-				key.EnvironmentID == arg.EnvironmentID &&
-				key.TaskID == arg.TaskID &&
-				key.IdempotencyKey == arg.IdempotencyKey {
-				return db.SessionStartKey{}, pgx.ErrNoRows
-			}
-		}
-		now := testTime()
-		key := db.SessionStartKey{
-			OrgID:            arg.OrgID,
-			ProjectID:        arg.ProjectID,
-			EnvironmentID:    arg.EnvironmentID,
-			TaskID:           arg.TaskID,
-			IdempotencyKey:   arg.IdempotencyKey,
-			StartFingerprint: arg.StartFingerprint,
-			SessionID:        arg.SessionID,
-			RunID:            arg.RunID,
-			ExpiresAt:        arg.ExpiresAt,
-			CreatedAt:        now,
-		}
-		f.sessionStartKeys = append(f.sessionStartKeys, key)
-		return key, nil
-	}
-	return db.SessionStartKey{}, pgx.ErrNoRows
-}
-
-func (f *fakeStore) sessionStartIdempotencyRow(key db.SessionStartKey) db.GetSessionByStartIdempotencyRow {
-	return db.GetSessionByStartIdempotencyRow{
-		SessionID:                  f.session.ID,
-		SessionOrgID:               f.session.OrgID,
-		SessionWorkerGroupID:       f.session.WorkerGroupID,
-		SessionProjectID:           f.session.ProjectID,
-		SessionEnvironmentID:       f.session.EnvironmentID,
-		SessionTaskID:              f.session.TaskID,
-		SessionInitialDeploymentID: f.session.InitialDeploymentID,
-		SessionActiveDeploymentID:  f.session.ActiveDeploymentID,
-		SessionExternalID:          f.session.ExternalID,
-		SessionStartFingerprint:    f.session.StartFingerprint,
-		SessionStatus:              f.session.Status,
-		SessionCurrentRunID:        f.session.CurrentRunID,
-		SessionCurrentRunVersion:   f.session.CurrentRunVersion,
-		SessionWorkspaceID:         f.session.WorkspaceID,
-		SessionMetadata:            f.session.Metadata,
-		SessionTags:                f.session.Tags,
-		SessionResult:              f.session.Result,
-		SessionTerminalReason:      f.session.TerminalReason,
-		SessionExpiresAt:           f.session.ExpiresAt,
-		SessionCancelledAt:         f.session.CancelledAt,
-		SessionCreatedAt:           f.session.CreatedAt,
-		SessionUpdatedAt:           f.session.UpdatedAt,
-		RunID:                      key.RunID,
-		RunOrgID:                   f.run.OrgID,
-		RunWorkerGroupID:           f.run.WorkerGroupID,
-		RunProjectID:               f.run.ProjectID,
-		RunEnvironmentID:           f.run.EnvironmentID,
-		RunDeploymentID:            f.run.DeploymentID,
-		RunDeploymentTaskID:        f.run.DeploymentTaskID,
-		RunDeploymentVersion:       f.run.DeploymentVersion,
-		RunApiVersion:              f.run.ApiVersion,
-		RunSdkVersion:              f.run.SdkVersion,
-		RunCliVersion:              f.run.CliVersion,
-		RunTaskID:                  f.run.TaskID,
-		RunAttemptNumber:           f.run.CurrentAttemptNumber,
-		RunStatus:                  f.run.Status,
-		RunExecutionStatus:         f.run.ExecutionStatus,
-		RunTerminalOutcome:         f.run.TerminalOutcome,
-		RunPayload:                 f.run.Payload,
-		RunOutput:                  f.run.Output,
-		RunMetadata:                f.run.Metadata,
-		RunTags:                    f.run.Tags,
-		RunErrorMessage:            f.run.ErrorMessage,
-		RunExitCode:                f.run.ExitCode,
-		RunCreatedAt:               f.run.CreatedAt,
-		RunUpdatedAt:               f.run.UpdatedAt,
-	}
 }
 
 func (f *fakeStore) GetSession(_ context.Context, arg db.GetSessionParams) (db.Session, error) {

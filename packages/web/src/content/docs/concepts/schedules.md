@@ -74,7 +74,7 @@ Imperative schedules can be listed, retrieved, updated, activated, deactivated, 
 
 ## Execution Model
 
-The database is the durable source of truth for schedule definitions, schedule instances, and the exact next fire timestamp. Redis/Valkey stores a replaceable one-next-fire entry per schedule instance so dispatchers can lease due entries quickly. The dispatcher repairs Redis from the database, but steady-state create, update, activation, deployment promotion, and successful fires enqueue the next fire directly. Each created run uses a schedule-derived idempotency key so the same schedule fire is not duplicated by retries or dispatcher restarts.
+The database is the durable source of truth for schedule definitions, schedule instances, and the exact next fire timestamp. Redis/Valkey stores a replaceable one-next-fire entry per schedule instance so dispatchers can lease due entries quickly. The dispatcher repairs Redis from the database, but steady-state create, update, activation, deployment promotion, and successful fires enqueue the next fire directly. A scheduled run is fenced by the schedule instance id, generation, and exact next fire timestamp so stale retries cannot create a run for an already-advanced fire.
 
 When a schedule fires, the run uses the selected environment instance snapshot:
 the task id, cron, and timezone come from the logical schedule; run options,

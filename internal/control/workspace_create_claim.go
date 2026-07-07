@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -19,6 +21,14 @@ const (
 )
 
 var errWorkspaceCreateCoordinationUnavailable = codedError{code: "coordination_unavailable"}
+
+type workspaceCreateClaimKeyStatus string
+
+const (
+	workspaceCreateClaimKeyAcquired workspaceCreateClaimKeyStatus = "acquired"
+	workspaceCreateClaimKeyResolved workspaceCreateClaimKeyStatus = "resolved"
+	workspaceCreateClaimKeyPending  workspaceCreateClaimKeyStatus = "pending"
+)
 
 type workspaceCreateClaim struct {
 	server      *Server
@@ -39,23 +49,61 @@ func (s *Server) claimWorkspaceCreate(ctx context.Context, orgID uuid.UUID, proj
 	}
 	key := workspaceCreateClaimKey(orgID, projectID, environmentID, idempotencyKey)
 	owner := uuid.Must(uuid.NewV7()).String()
-	status, err := claimSessionStartKey(ctx, s.eventStream.redis, key, owner, sessionStartClaimBoundedTTL(expiresAt, workspaceCreateClaimTTL))
+	status, err := claimWorkspaceCreateKey(ctx, s.eventStream.redis, key, owner, workspaceCreateClaimBoundedTTL(expiresAt, workspaceCreateClaimTTL))
 	if err != nil {
 		return workspaceCreateClaim{}, errWorkspaceCreateCoordinationUnavailable
 	}
-	if status == sessionStartClaimKeyResolved {
+	if status == workspaceCreateClaimKeyResolved {
 		return workspaceCreateClaim{server: s, key: key, resolved: true}, nil
 	}
-	if status != sessionStartClaimKeyAcquired {
+	if status != workspaceCreateClaimKeyAcquired {
 		return workspaceCreateClaim{}, errWorkspaceOperationPending
 	}
 	return workspaceCreateClaim{
 		server:      s,
 		key:         key,
 		owner:       owner,
-		resolvedTTL: sessionStartClaimBoundedTTL(expiresAt, workspaceCreateClaimResolvedTTL),
+		resolvedTTL: workspaceCreateClaimBoundedTTL(expiresAt, workspaceCreateClaimResolvedTTL),
 		active:      true,
 	}, nil
+}
+
+func claimWorkspaceCreateKey(ctx context.Context, redisClient redis.Cmdable, key string, owner string, ttl time.Duration) (workspaceCreateClaimKeyStatus, error) {
+	for range 2 {
+		claimed, err := redisClient.SetNX(ctx, key, "pending:"+owner, ttl).Result()
+		if err != nil {
+			return workspaceCreateClaimKeyPending, errWorkspaceCreateCoordinationUnavailable
+		}
+		if claimed {
+			return workspaceCreateClaimKeyAcquired, nil
+		}
+		value, err := redisClient.Get(ctx, key).Result()
+		if errors.Is(err, redis.Nil) {
+			continue
+		}
+		if err != nil {
+			return workspaceCreateClaimKeyPending, errWorkspaceCreateCoordinationUnavailable
+		}
+		if strings.HasPrefix(value, "resolved:") {
+			return workspaceCreateClaimKeyResolved, nil
+		}
+		return workspaceCreateClaimKeyPending, nil
+	}
+	return workspaceCreateClaimKeyPending, nil
+}
+
+func workspaceCreateClaimBoundedTTL(expiresAt pgtype.Timestamptz, limit time.Duration) time.Duration {
+	if !expiresAt.Valid {
+		return limit
+	}
+	remaining := time.Until(expiresAt.Time)
+	if remaining <= 0 {
+		return time.Millisecond
+	}
+	if remaining < limit {
+		return remaining
+	}
+	return limit
 }
 
 func workspaceCreateClaimKey(orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, idempotencyKey string) string {

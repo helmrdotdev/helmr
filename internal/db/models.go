@@ -2917,19 +2917,6 @@ type SessionRun struct {
 	EndedAt       pgtype.Timestamptz `json:"ended_at"`
 }
 
-type SessionStartKey struct {
-	OrgID            pgtype.UUID        `json:"org_id"`
-	ProjectID        pgtype.UUID        `json:"project_id"`
-	EnvironmentID    pgtype.UUID        `json:"environment_id"`
-	TaskID           string             `json:"task_id"`
-	IdempotencyKey   string             `json:"idempotency_key"`
-	StartFingerprint string             `json:"start_fingerprint"`
-	SessionID        pgtype.UUID        `json:"session_id"`
-	RunID            pgtype.UUID        `json:"run_id"`
-	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
 type Stream struct {
 	ID                 pgtype.UUID        `json:"id"`
 	PublicID           string             `json:"public_id"`

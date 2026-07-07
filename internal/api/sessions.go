@@ -24,8 +24,6 @@ type SessionStartOptions struct {
 	Retry              json.RawMessage `json:"retry,omitempty"`
 	Metadata           json.RawMessage `json:"metadata,omitempty"`
 	Tags               []string        `json:"tags,omitempty"`
-	IdempotencyKey     string          `json:"idempotency_key,omitempty"`
-	IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 	ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
 	WorkspaceID        string          `json:"workspace_id,omitempty"`
 }
@@ -64,8 +62,6 @@ func (r *SessionStartRequest) UnmarshalJSON(data []byte) error {
 		Retry              json.RawMessage `json:"retry,omitempty"`
 		Metadata           json.RawMessage `json:"metadata,omitempty"`
 		Tags               []string        `json:"tags,omitempty"`
-		IdempotencyKey     string          `json:"idempotency_key,omitempty"`
-		IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 		ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
 		WorkspaceID        string          `json:"workspace_id,omitempty"`
 	}
@@ -87,8 +83,6 @@ func (r *SessionStartRequest) UnmarshalJSON(data []byte) error {
 		Retry:              decoded.Retry,
 		Metadata:           decoded.Metadata,
 		Tags:               decoded.Tags,
-		IdempotencyKey:     decoded.IdempotencyKey,
-		IdempotencyKeyTTL:  decoded.IdempotencyKeyTTL,
 		ExpiresAt:          decoded.ExpiresAt,
 		WorkspaceID:        decoded.WorkspaceID,
 	}
@@ -110,8 +104,6 @@ func (r SessionStartRequest) MarshalJSON() ([]byte, error) {
 		Retry              json.RawMessage `json:"retry,omitempty"`
 		Metadata           json.RawMessage `json:"metadata,omitempty"`
 		Tags               []string        `json:"tags,omitempty"`
-		IdempotencyKey     string          `json:"idempotency_key,omitempty"`
-		IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 		ExpiresAt          *time.Time      `json:"expires_at,omitempty"`
 		WorkspaceID        string          `json:"workspace_id,omitempty"`
 	}
@@ -129,8 +121,6 @@ func (r SessionStartRequest) MarshalJSON() ([]byte, error) {
 		Retry:              r.Options.Retry,
 		Metadata:           r.Options.Metadata,
 		Tags:               r.Options.Tags,
-		IdempotencyKey:     r.Options.IdempotencyKey,
-		IdempotencyKeyTTL:  r.Options.IdempotencyKeyTTL,
 		ExpiresAt:          r.Options.ExpiresAt,
 		WorkspaceID:        r.Options.WorkspaceID,
 	})

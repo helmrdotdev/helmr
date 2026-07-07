@@ -15,15 +15,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
-)
-
-const (
-	sessionStartPendingMaxWait      = 10 * time.Second
-	sessionStartPendingDefaultDelay = 250 * time.Millisecond
 )
 
 func (c *Client) StartSession(ctx context.Context, taskID string, input api.SessionStartRequest) (api.SessionStartResponse, error) {
@@ -44,82 +38,24 @@ func (c *Client) StartSession(ctx context.Context, taskID string, input api.Sess
 	if err := json.NewEncoder(&body).Encode(input); err != nil {
 		return api.SessionStartResponse{}, fmt.Errorf("encode request: %w", err)
 	}
-	bodyBytes := body.Bytes()
-	startedAt := time.Now()
-	for {
-		req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes), c.bearer)
-		if err != nil {
-			return api.SessionStartResponse{}, err
-		}
-		req.Header.Set("content-type", "application/json")
-		resp, err := c.httpClient.Do(req)
-		if err != nil {
-			return api.SessionStartResponse{}, err
-		}
-		if resp.StatusCode == http.StatusAccepted {
-			body, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			if readErr != nil {
-				return api.SessionStartResponse{}, fmt.Errorf("read session start pending response: %w", readErr)
-			}
-			if !sessionStartPendingResponse(body) {
-				return api.SessionStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
-			}
-			delay := sessionStartPendingRetryDelay(resp.Header.Get("Retry-After"))
-			if time.Since(startedAt)+delay > sessionStartPendingMaxWait {
-				return api.SessionStartResponse{}, decodeErrorBody(resp.StatusCode, resp.Status, body)
-			}
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return api.SessionStartResponse{}, ctx.Err()
-			case <-timer.C:
-			}
-			continue
-		}
-		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return api.SessionStartResponse{}, decodeError(resp)
-		}
-		var response api.SessionStartResponse
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			return api.SessionStartResponse{}, fmt.Errorf("decode response: %w", err)
-		}
-		return response, nil
+	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(body.Bytes()), c.bearer)
+	if err != nil {
+		return api.SessionStartResponse{}, err
 	}
-}
-
-func sessionStartPendingResponse(body []byte) bool {
-	var payload struct {
-		Code string `json:"code"`
+	req.Header.Set("content-type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return api.SessionStartResponse{}, err
 	}
-	return json.Unmarshal(body, &payload) == nil && payload.Code == "idempotency_pending"
-}
-
-func sessionStartPendingRetryDelay(raw string) time.Duration {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return sessionStartPendingDefaultDelay
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return api.SessionStartResponse{}, decodeError(resp)
 	}
-	if seconds, err := strconv.ParseFloat(raw, 64); err == nil && seconds > 0 {
-		delay := time.Duration(seconds * float64(time.Second))
-		if delay > sessionStartPendingMaxWait {
-			return sessionStartPendingMaxWait
-		}
-		return delay
+	var response api.SessionStartResponse
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return api.SessionStartResponse{}, fmt.Errorf("decode response: %w", err)
 	}
-	if retryAt, err := http.ParseTime(raw); err == nil {
-		delay := time.Until(retryAt)
-		if delay <= 0 {
-			return sessionStartPendingDefaultDelay
-		}
-		if delay > sessionStartPendingMaxWait {
-			return sessionStartPendingMaxWait
-		}
-		return delay
-	}
-	return sessionStartPendingDefaultDelay
+	return response, nil
 }
 
 func (c *Client) ListProjects(ctx context.Context) (api.ListProjectsResponse, error) {

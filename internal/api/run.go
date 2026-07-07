@@ -29,8 +29,6 @@ type CreateRunOptions struct {
 	Retry              json.RawMessage `json:"retry,omitempty"`
 	Metadata           json.RawMessage `json:"metadata,omitempty"`
 	Tags               []string        `json:"tags,omitempty"`
-	IdempotencyKey     string          `json:"idempotency_key,omitempty"`
-	IdempotencyKeyTTL  string          `json:"idempotency_key_ttl,omitempty"`
 }
 
 type RunQueueOption struct {
@@ -127,7 +125,6 @@ type RunResponse struct {
 	CreatedAt         time.Time       `json:"created_at"`
 	UpdatedAt         time.Time       `json:"updated_at"`
 	PendingWait       *PendingWait    `json:"pending_wait,omitempty"`
-	IdempotencyHit    bool            `json:"idempotency_hit,omitempty"`
 }
 
 const (

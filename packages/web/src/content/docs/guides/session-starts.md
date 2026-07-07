@@ -21,13 +21,11 @@ const started = await sessions.start(
   reviewPayload,
   {
     externalId: "github:OWNER/REPO#42",
-    idempotencyKey: "github:delivery-id",
-    idempotencyKeyTTL: "24h",
   },
 )
 ```
 
-`sessions.start()` / `client.sessions.start()` and `sessions.startAndWait()` / `client.sessions.startAndWait()` are the canonical APIs for starting or reusing a session. Use the top-level `sessions` facade with `HELMR_API_URL` and `HELMR_API_KEY`; use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session; `idempotencyKey` identifies one retry-safe start request. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
+`sessions.start()` / `client.sessions.start()` and `sessions.startAndWait()` / `client.sessions.startAndWait()` are the canonical APIs for starting or reusing a session. Use the top-level `sessions` facade with `HELMR_API_URL` and `HELMR_API_KEY`; use `new HelmrClient(...)` when the caller needs explicit credentials or multiple control-plane targets. `task(...)` returns a definition object only; pass that task object to the sessions namespace for payload input, output, and secrets type inference plus local payload schema validation. Pass a string task id when the caller is at an external boundary or the task id is dynamic. `externalId` identifies the durable session and is the retry-safe key for starting the same session again. Use `startAndWait()` when the caller needs the first run's terminal output; use the returned run handle for compute/debug views:
 
 ```ts
 const completed = await sessions.startAndWait(

@@ -23,7 +23,6 @@ DROP INDEX IF EXISTS workspaces_tags_idx;
 DROP INDEX IF EXISTS workspaces_state_idx;
 DROP INDEX IF EXISTS session_runs_timeline_idx;
 DROP INDEX IF EXISTS session_continuation_requests_pending_idx;
-DROP INDEX IF EXISTS session_start_keys_expiry_idx;
 DROP INDEX IF EXISTS sessions_tags_idx;
 DROP INDEX IF EXISTS sessions_scope_status_updated_idx;
 DROP INDEX IF EXISTS sessions_external_id_idx;
@@ -176,7 +175,6 @@ ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_worker_group_id_project_i
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_project_id_environment_id_workspace_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_worker_group_id_project_id_environment_id_workspace_id_fkey;
 DROP TABLE IF EXISTS workspaces;
-DROP TABLE IF EXISTS session_start_keys;
 DROP TABLE IF EXISTS session_runs;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_session_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_org_id_worker_group_id_project_id_environment_id_sess_fkey;

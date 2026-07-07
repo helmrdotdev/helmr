@@ -17,8 +17,6 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-const TriggerIdempotencyKeyTTL = "30d"
-
 var ErrTriggerSuperseded = errors.New("schedule trigger was superseded")
 var ErrTriggerDeferred = errors.New("schedule trigger should retry without consuming attempts")
 
@@ -58,10 +56,6 @@ func RetryDelay(attempt int32) time.Duration {
 		return time.Hour
 	}
 	return delay
-}
-
-func TriggerIdempotencyKey(instanceID pgtype.UUID, generation int64, scheduledAt pgtype.Timestamptz) string {
-	return fmt.Sprintf("schedule:%s:%d:%s", pgvalue.MustUUIDValue(instanceID), generation, scheduledAt.Time.UTC().Format(time.RFC3339Nano))
 }
 
 func RunRequestFromTriggerCandidate(row db.GetScheduleTriggerCandidateRow) (api.CreateRunRequest, error) {

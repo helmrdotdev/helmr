@@ -1311,29 +1311,6 @@ CREATE TABLE session_runs (
         ON DELETE SET NULL (previous_run_id)
 );
 
-CREATE TABLE session_start_keys (
-    org_id UUID NOT NULL,
-    project_id UUID NOT NULL,
-    environment_id UUID NOT NULL,
-    task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
-    idempotency_key TEXT NOT NULL CHECK (btrim(idempotency_key) <> ''),
-    start_fingerprint TEXT NOT NULL CHECK (btrim(start_fingerprint) <> ''),
-    session_id UUID NOT NULL,
-    run_id UUID NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (org_id, project_id, environment_id, task_id, idempotency_key),
-    FOREIGN KEY (org_id, project_id, environment_id, task_id)
-        REFERENCES tasks(org_id, project_id, environment_id, task_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, session_id)
-        REFERENCES sessions(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT
-);
-
 CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,
@@ -2881,7 +2858,6 @@ CREATE UNIQUE INDEX sessions_external_id_idx ON sessions(org_id, project_id, env
     WHERE external_id <> '';
 CREATE INDEX sessions_scope_status_updated_idx ON sessions(org_id, project_id, environment_id, status, updated_at DESC);
 CREATE INDEX sessions_tags_idx ON sessions USING GIN (tags);
-CREATE INDEX session_start_keys_expiry_idx ON session_start_keys(org_id, project_id, environment_id, expires_at);
 CREATE INDEX session_runs_timeline_idx ON session_runs(org_id, session_id, turn_index, created_at);
 CREATE INDEX session_continuation_requests_pending_idx ON session_continuation_requests(next_attempt_at, created_at)
     WHERE status IN ('accepted', 'claimed');

@@ -40,8 +40,6 @@ func sessionStartCommand() *cobra.Command {
 	var tags []string
 	var retryFile string
 	var retryJSON string
-	var idempotencyKey string
-	var idempotencyKeyTTL string
 	var workspaceID string
 	var wait bool
 	var follow bool
@@ -99,8 +97,6 @@ func sessionStartCommand() *cobra.Command {
 				Retry:              retry,
 				Metadata:           metadata,
 				Tags:               cleanTags(tags),
-				IdempotencyKey:     strings.TrimSpace(idempotencyKey),
-				IdempotencyKeyTTL:  strings.TrimSpace(idempotencyKeyTTL),
 				WorkspaceID:        strings.TrimSpace(workspaceID),
 			}
 			if queueName = strings.TrimSpace(queueName); queueName != "" {
@@ -199,8 +195,6 @@ func sessionStartCommand() *cobra.Command {
 	cmd.Flags().StringArrayVar(&tags, "tag", nil, "Add a run tag. Repeat for multiple tags.")
 	cmd.Flags().StringVar(&retryFile, "retry-file", "", "Read retry policy JSON from a file.")
 	cmd.Flags().StringVar(&retryJSON, "retry-json", "", "Inline retry policy JSON literal.")
-	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Idempotency key for safe retries.")
-	cmd.Flags().StringVar(&idempotencyKeyTTL, "idempotency-key-ttl", "", "Duration to retain the idempotency key, for example 30d or 24h.")
 	cmd.Flags().StringVar(&workspaceID, "workspace", "", "Existing workspace ID to attach this session to.")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Wait for the initial run to finish.")
 	cmd.Flags().BoolVar(&follow, "follow", false, "Stream the initial run logs until the run finishes.")

@@ -22,7 +22,6 @@ import {
   type SessionStartPayload,
   type WaitHandle,
 } from "../internal"
-import { sessionStartIdempotencyRequestFields } from "../idempotency"
 import { readOptionalMaxDurationSeconds } from "../schema/task"
 import { AuthError, TimeoutError, UnsupportedTransportError } from "./errors"
 import { HELMR_API_VERSION, HELMR_API_VERSION_HEADER, HELMR_SDK_VERSION, HELMR_SDK_VERSION_HEADER } from "../version"
@@ -49,9 +48,6 @@ import {
 const MAX_SSE_BUFFER_CHARS = 1024 * 1024
 const RUN_EVENT_RECONNECT_DELAY_MS = 1000
 const RUN_TERMINAL_SNAPSHOT_RETRY_DELAY_MS = 100
-const TASK_START_PENDING_MAX_WAIT_MS = 10_000
-const TASK_START_PENDING_DEFAULT_RETRY_MS = 250
-
 export interface HelmrClientOptions {
   readonly url?: string
   readonly apiKey?: string
@@ -1099,28 +1095,15 @@ export class HelmrClient {
     validateRetryPolicy(opts.retry, "retry")
     const body = sessionStartBody(taskId, payload, opts, maxDurationSeconds)
     const path = sessionStartPath(opts, "start")
-    const startedAt = Date.now()
-    for (;;) {
-      const response = await this.#fetch(path, {
-        method: "POST",
-        body: JSON.stringify(body),
-        headers: { "content-type": "application/json" },
-        ...requestSignal(opts.signal),
-      })
-      if (response.status !== 202) {
-        const start = (await response.json()) as SessionStartResponse
-        return sessionStartFromResponse<TaskOutput<TTask>>(start)
-      }
-      const pendingBody = await response.text()
-      if (!sessionStartPendingResponse(pendingBody)) {
-        throw new HelmrApiError(response.status, pendingBody)
-      }
-      const retryDelay = sessionStartPendingRetryDelay(response)
-      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
-        throw new HelmrApiError(response.status, pendingBody)
-      }
-      await delay(retryDelay, opts.signal)
-    }
+    const response = await this.#fetch(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal),
+    })
+    await requireSessionStartResponseStatus(response)
+    const start = (await response.json()) as SessionStartResponse
+    return sessionStartFromResponse<TaskOutput<TTask>>(start)
   }
 
   async #startSessionAndWait<TTask extends AnyTask>(
@@ -1135,27 +1118,14 @@ export class HelmrClient {
       ...(opts.timeoutSeconds === undefined ? {} : { timeout_seconds: opts.timeoutSeconds }),
     }
     const path = sessionStartPath(opts, "start-and-wait")
-    const startedAt = Date.now()
-    for (;;) {
-      const response = await this.#fetch(path, {
-        method: "POST",
-        body: JSON.stringify(body),
-        headers: { "content-type": "application/json" },
-        ...requestSignal(opts.signal),
-      })
-      if (response.status !== 202) {
-        return sessionStartAndWaitFromResponse<TaskOutput<TTask>>((await response.json()) as SessionStartResponse)
-      }
-      const pendingBody = await response.text()
-      if (!sessionStartPendingResponse(pendingBody)) {
-        throw new HelmrApiError(response.status, pendingBody)
-      }
-      const retryDelay = sessionStartPendingRetryDelay(response)
-      if (Date.now() - startedAt + retryDelay > TASK_START_PENDING_MAX_WAIT_MS) {
-        throw new HelmrApiError(response.status, pendingBody)
-      }
-      await delay(retryDelay, opts.signal)
-    }
+    const response = await this.#fetch(path, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "content-type": "application/json" },
+      ...requestSignal(opts.signal),
+    })
+    await requireSessionStartResponseStatus(response)
+    return sessionStartAndWaitFromResponse<TaskOutput<TTask>>((await response.json()) as SessionStartResponse)
   }
 
   #openWorkspace(id: string): WorkspaceHandle {
@@ -2569,8 +2539,14 @@ function sessionStartBody(
     ...(opts.expiresAt === undefined ? {} : { expires_at: isoDateString(opts.expiresAt, "expiresAt") }),
     ...(opts.workspaceId === undefined ? {} : { workspace_id: opts.workspaceId }),
     ...(maxDurationSeconds === undefined ? {} : { max_duration_seconds: maxDurationSeconds }),
-    ...sessionStartIdempotencyRequestFields(opts.idempotencyKey, opts.idempotencyKeyTTL),
   }
+}
+
+async function requireSessionStartResponseStatus(response: Response): Promise<void> {
+  if (response.status === 200 || response.status === 201) {
+    return
+  }
+  throw new HelmrApiError(response.status, await response.text())
 }
 
 function sessionStartPath(
@@ -3342,38 +3318,6 @@ function delay(ms: number, signal: AbortSignal | undefined): Promise<void> {
     }
     signal?.addEventListener("abort", onAbort, { once: true })
   })
-}
-
-function sessionStartPendingRetryDelay(response: Response): number {
-  const retryAfter = response.headers.get("retry-after")
-  if (retryAfter === null) {
-    return TASK_START_PENDING_DEFAULT_RETRY_MS
-  }
-  const retryAfterSeconds = Number(retryAfter)
-  if (Number.isFinite(retryAfterSeconds)) {
-    if (retryAfterSeconds > 0) {
-      return Math.min(retryAfterSeconds * 1000, TASK_START_PENDING_MAX_WAIT_MS)
-    }
-    return TASK_START_PENDING_DEFAULT_RETRY_MS
-  }
-  const retryAt = Date.parse(retryAfter)
-  if (Number.isFinite(retryAt)) {
-    const delayMs = retryAt - Date.now()
-    if (delayMs <= 0) {
-      return TASK_START_PENDING_DEFAULT_RETRY_MS
-    }
-    return Math.min(delayMs, TASK_START_PENDING_MAX_WAIT_MS)
-  }
-  return TASK_START_PENDING_DEFAULT_RETRY_MS
-}
-
-function sessionStartPendingResponse(body: string): boolean {
-  try {
-    const decoded = JSON.parse(body) as { code?: unknown }
-    return decoded.code === "idempotency_pending"
-  } catch {
-    return false
-  }
 }
 
 class HelmrApiError extends Error {
