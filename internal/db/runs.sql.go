@@ -168,7 +168,7 @@ released_workspace_leases AS (
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
-invalidated_runtime_checkpoints AS (
+invalidated_run_checkpoints AS (
     UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
@@ -180,7 +180,7 @@ invalidated_runtime_checkpoints AS (
        AND run_checkpoints.state = 'creating'
     RETURNING run_checkpoints.id
 ),
-failed_runtime_checkpoint_restores AS (
+failed_run_checkpoint_restores AS (
     UPDATE run_checkpoint_restores
        SET status = 'failed',
            error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
@@ -352,8 +352,8 @@ SELECT updated.id, updated.public_id, updated.org_id, updated.worker_group_id, u
    AND (SELECT count(*) FROM terminal_sessions) >= 0
    AND (SELECT count(*) FROM cancelled_run_lease) >= 0
    AND (SELECT count(*) FROM released_workspace_leases) >= 0
-   AND (SELECT count(*) FROM invalidated_runtime_checkpoints) >= 0
-   AND (SELECT count(*) FROM failed_runtime_checkpoint_restores) >= 0
+   AND (SELECT count(*) FROM invalidated_run_checkpoints) >= 0
+   AND (SELECT count(*) FROM failed_run_checkpoint_restores) >= 0
    AND (SELECT count(*) FROM active_time_meter_event_outbox) >= 0
 UNION ALL
 SELECT target.id, target.public_id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.workspace_id, target.workspace_mount_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.session_id, target.schedule_id, target.schedule_instance_id, target.scheduled_at, target.status, target.execution_status, target.terminal_outcome, target.payload, target.output, target.metadata, target.tags, target.locked_retry_policy, target.queue_class, target.queue_name, target.queue_concurrency_limit, target.concurrency_key, target.priority, target.queue_timestamp, target.ttl, target.queued_expires_at, target.dispatch_generation, target.dispatch_attempt_count, target.last_enqueue_error, target.last_enqueued_at, target.requested_milli_cpu, target.requested_memory_mib, target.requested_disk_mib, target.requested_execution_slots, target.runtime_id, target.runtime_arch, target.runtime_abi, target.kernel_digest, target.initramfs_digest, target.rootfs_digest, target.cni_profile, target.network_policy, target.placement, target.max_active_duration_ms, target.active_elapsed_ms, target.active_started_at, target.trace_id, target.root_span_id, target.state_version, target.current_attempt_number, target.current_run_lease_id, target.latest_runtime_checkpoint_id, target.exit_code, target.error_message, target.created_at, target.updated_at, target.started_at, target.finished_at, NULL::uuid AS previous_run_lease_id

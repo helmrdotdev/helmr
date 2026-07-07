@@ -20,8 +20,6 @@ INSERT INTO sessions (
     workspace_id,
     external_id,
     start_fingerprint,
-    start_idempotency_key,
-    start_idempotency_expires_at,
     metadata,
     tags,
     expires_at
@@ -39,8 +37,6 @@ SELECT
     workspaces.id,
     sqlc.arg(external_id),
     sqlc.arg(start_fingerprint),
-    coalesce(sqlc.arg(start_idempotency_key)::text, ''),
-    sqlc.narg(start_idempotency_expires_at),
     coalesce(sqlc.arg(metadata)::jsonb, '{}'::jsonb),
     coalesce(sqlc.arg(tags)::text[], '{}'::text[]),
     sqlc.narg(expires_at)
@@ -222,8 +218,6 @@ SELECT sessions.id AS session_id,
        sessions.active_deployment_id AS session_active_deployment_id,
        sessions.external_id AS session_external_id,
        sessions.start_fingerprint AS session_start_fingerprint,
-       sessions.start_idempotency_key AS session_start_idempotency_key,
-       sessions.start_idempotency_expires_at AS session_start_idempotency_expires_at,
        sessions.status AS session_status,
        sessions.current_run_id AS session_current_run_id,
        sessions.current_run_version AS session_current_run_version,
@@ -261,50 +255,66 @@ SELECT sessions.id AS session_id,
        runs.created_at AS run_created_at,
        runs.updated_at AS run_updated_at
   FROM sessions
-  JOIN session_runs ON session_runs.org_id = sessions.org_id
-                   AND session_runs.project_id = sessions.project_id
-                   AND session_runs.environment_id = sessions.environment_id
-                   AND session_runs.session_id = sessions.id
-                   AND session_runs.turn_index = 0
-  JOIN runs ON runs.org_id = session_runs.org_id
-           AND runs.project_id = session_runs.project_id
-           AND runs.environment_id = session_runs.environment_id
-           AND runs.id = session_runs.run_id
+  JOIN session_start_keys
+    ON session_start_keys.org_id = sessions.org_id
+   AND session_start_keys.project_id = sessions.project_id
+   AND session_start_keys.environment_id = sessions.environment_id
+   AND session_start_keys.task_id = sessions.task_id
+   AND session_start_keys.session_id = sessions.id
+  JOIN runs ON runs.org_id = session_start_keys.org_id
+           AND runs.project_id = session_start_keys.project_id
+           AND runs.environment_id = session_start_keys.environment_id
+           AND runs.id = session_start_keys.run_id
  WHERE sessions.org_id = sqlc.arg(org_id)
    AND sessions.project_id = sqlc.arg(project_id)
    AND sessions.environment_id = sqlc.arg(environment_id)
    AND sessions.task_id = sqlc.arg(task_id)
-   AND sessions.start_idempotency_key = sqlc.arg(idempotency_key)
-   AND sessions.start_idempotency_expires_at > now();
+   AND session_start_keys.idempotency_key = sqlc.arg(idempotency_key)
+   AND session_start_keys.expires_at > now();
 
 -- name: ClearExpiredSessionStartIdempotency :exec
-UPDATE sessions
-   SET start_idempotency_key = '',
-       start_idempotency_expires_at = NULL,
-       updated_at = now()
+DELETE FROM session_start_keys
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND task_id = sqlc.arg(task_id)
-   AND start_idempotency_key = sqlc.arg(idempotency_key)
-   AND start_idempotency_expires_at <= now();
+   AND idempotency_key = sqlc.arg(idempotency_key)
+   AND expires_at <= now();
 
 -- name: SetSessionStartIdempotency :one
-UPDATE sessions
-   SET start_idempotency_key = sqlc.arg(idempotency_key),
-       start_idempotency_expires_at = sqlc.arg(expires_at),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND project_id = sqlc.arg(project_id)
-   AND environment_id = sqlc.arg(environment_id)
-   AND id = sqlc.arg(session_id)
-   AND task_id = sqlc.arg(task_id)
-   AND start_fingerprint = sqlc.arg(start_fingerprint)
-   AND (
-       start_idempotency_key = ''
-       OR start_idempotency_key = sqlc.arg(idempotency_key)
-       OR start_idempotency_expires_at <= now()
-   )
+INSERT INTO session_start_keys (
+    org_id,
+    project_id,
+    environment_id,
+    task_id,
+    idempotency_key,
+    start_fingerprint,
+    session_id,
+    run_id,
+    expires_at
+)
+SELECT sessions.org_id,
+       sessions.project_id,
+       sessions.environment_id,
+       sessions.task_id,
+       sqlc.arg(idempotency_key),
+       sqlc.arg(start_fingerprint),
+       sessions.id,
+       runs.id,
+       sqlc.arg(expires_at)
+  FROM sessions
+  JOIN runs ON runs.org_id = sessions.org_id
+           AND runs.project_id = sessions.project_id
+           AND runs.environment_id = sessions.environment_id
+           AND runs.session_id = sessions.id
+           AND runs.id = sqlc.arg(run_id)
+ WHERE sessions.org_id = sqlc.arg(org_id)
+   AND sessions.project_id = sqlc.arg(project_id)
+   AND sessions.environment_id = sqlc.arg(environment_id)
+   AND sessions.id = sqlc.arg(session_id)
+   AND sessions.task_id = sqlc.arg(task_id)
+   AND sessions.start_fingerprint = sqlc.arg(start_fingerprint)
+ON CONFLICT (org_id, project_id, environment_id, task_id, idempotency_key) DO NOTHING
 RETURNING *;
 
 -- name: GetSession :one

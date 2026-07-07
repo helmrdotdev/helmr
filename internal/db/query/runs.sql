@@ -742,7 +742,7 @@ released_workspace_leases AS (
        AND workspace_leases.released_at IS NULL
     RETURNING workspace_leases.id
 ),
-invalidated_runtime_checkpoints AS (
+invalidated_run_checkpoints AS (
     UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
@@ -754,7 +754,7 @@ invalidated_runtime_checkpoints AS (
        AND run_checkpoints.state = 'creating'
     RETURNING run_checkpoints.id
 ),
-failed_runtime_checkpoint_restores AS (
+failed_run_checkpoint_restores AS (
     UPDATE run_checkpoint_restores
        SET status = 'failed',
            error_message = COALESCE(NULLIF(sqlc.arg(reason)::text, ''), 'run cancelled'),
@@ -926,8 +926,8 @@ SELECT updated.*
    AND (SELECT count(*) FROM terminal_sessions) >= 0
    AND (SELECT count(*) FROM cancelled_run_lease) >= 0
    AND (SELECT count(*) FROM released_workspace_leases) >= 0
-   AND (SELECT count(*) FROM invalidated_runtime_checkpoints) >= 0
-   AND (SELECT count(*) FROM failed_runtime_checkpoint_restores) >= 0
+   AND (SELECT count(*) FROM invalidated_run_checkpoints) >= 0
+   AND (SELECT count(*) FROM failed_run_checkpoint_restores) >= 0
    AND (SELECT count(*) FROM active_time_meter_event_outbox) >= 0
 UNION ALL
 SELECT target.*, NULL::uuid AS previous_run_lease_id

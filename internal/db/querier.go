@@ -404,7 +404,7 @@ type Querier interface {
 	SetQueuedRunWorkspaceMount(ctx context.Context, arg SetQueuedRunWorkspaceMountParams) error
 	SetRunWaitWorkspaceVersion(ctx context.Context, arg SetRunWaitWorkspaceVersionParams) (RunWait, error)
 	SetSessionCurrentRun(ctx context.Context, arg SetSessionCurrentRunParams) (Session, error)
-	SetSessionStartIdempotency(ctx context.Context, arg SetSessionStartIdempotencyParams) (Session, error)
+	SetSessionStartIdempotency(ctx context.Context, arg SetSessionStartIdempotencyParams) (SessionStartKey, error)
 	SetWorkerInstanceStatus(ctx context.Context, arg SetWorkerInstanceStatusParams) (WorkerInstance, error)
 	SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspaceDesiredStoppedParams) (Workspace, error)
 	SkipScheduleInstanceTrigger(ctx context.Context, arg SkipScheduleInstanceTriggerParams) (SkipScheduleInstanceTriggerRow, error)

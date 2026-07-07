@@ -51,8 +51,8 @@ func TestCreateRunReturnsExistingRunForActiveIdempotencyKey(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &first); err != nil {
 		t.Fatal(err)
 	}
-	if len(store.session.StartIdempotencyKey) != sha256.Size*2 {
-		t.Fatalf("stored idempotency key = %q", store.session.StartIdempotencyKey)
+	if len(store.sessionStartKeys) != 1 || len(store.sessionStartKeys[0].IdempotencyKey) != sha256.Size*2 {
+		t.Fatalf("stored idempotency keys = %+v", store.sessionStartKeys)
 	}
 
 	store.currentDeploymentMissing = true
@@ -206,8 +206,8 @@ func TestCreateRunRequiresCoordinationBeforeBindingExistingExternalIDToIdempoten
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "coordination_unavailable")
-	if store.session.StartIdempotencyKey != "" {
-		t.Fatalf("start idempotency binding was written without Redis coordination: %+v", store.session)
+	if len(store.sessionStartKeys) != 0 {
+		t.Fatalf("start idempotency binding was written without Redis coordination: %+v", store.sessionStartKeys)
 	}
 }
 
@@ -598,8 +598,8 @@ func TestCreateRunBindsIdempotencyKeyWhenExternalIDReusesSession(t *testing.T) {
 	if second.Run.ID != pgvalue.MustUUIDValue(firstRunID).String() || !second.IsCached {
 		t.Fatalf("second response = %+v, want cached run %s", second, pgvalue.MustUUIDValue(firstRunID))
 	}
-	if store.session.StartIdempotencyKey == "" || store.session.CurrentRunID != firstRunID {
-		t.Fatalf("stored idempotency session = %+v want run %s", store.session, pgvalue.MustUUIDValue(firstRunID))
+	if len(store.sessionStartKeys) != 1 || store.sessionStartKeys[0].SessionID != store.session.ID || store.sessionStartKeys[0].RunID != firstRunID {
+		t.Fatalf("stored idempotency keys = %+v session=%s run=%s", store.sessionStartKeys, pgvalue.MustUUIDValue(store.session.ID), pgvalue.MustUUIDValue(firstRunID))
 	}
 
 	thirdBody, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
@@ -659,6 +659,7 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
 			DeploymentTaskID: testDeploymentTaskID(),
+			SessionID:        sessionID,
 			TaskID:           "deploy",
 			Status:           db.RunStatusQueued,
 			ExecutionStatus:  db.RunExecutionStatusQueued,
@@ -682,8 +683,8 @@ func TestCreateRunBindsIdempotencyKeyAfterExternalIDUniqueRace(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.session.StartIdempotencyKey == "" || store.session.ID != sessionID || store.session.CurrentRunID != runID {
-		t.Fatalf("idempotency binding session = %+v, want session %s run %s", store.session, pgvalue.MustUUIDValue(sessionID), pgvalue.MustUUIDValue(runID))
+	if len(store.sessionStartKeys) != 1 || store.sessionStartKeys[0].SessionID != sessionID || store.sessionStartKeys[0].RunID != runID {
+		t.Fatalf("idempotency binding = %+v, want session %s run %s", store.sessionStartKeys, pgvalue.MustUUIDValue(sessionID), pgvalue.MustUUIDValue(runID))
 	}
 }
 
@@ -712,7 +713,7 @@ func TestCreateRunReclaimsExpiredStartIdempotency(t *testing.T) {
 	}
 	firstID := store.run.ID
 	store.run.Status = db.RunStatusExpired
-	store.session.StartIdempotencyExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+	store.sessionStartKeys[0].ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -754,7 +755,7 @@ func TestCreateRunClearsExpiredRunIdempotencyKey(t *testing.T) {
 	}
 	firstID := store.run.ID
 	store.run.Status = db.RunStatusExpired
-	store.session.StartIdempotencyExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
+	store.sessionStartKeys[0].ExpiresAt = pgtype.Timestamptz{Time: time.Now().Add(-time.Second), Valid: true}
 
 	req = httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -791,7 +792,7 @@ func TestCreateRunHashesLiteralHexIdempotencyKeys(t *testing.T) {
 		t.Fatalf("create status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	digest := sha256.Sum256([]byte(rawKey))
-	if got, want := store.session.StartIdempotencyKey, hex.EncodeToString(digest[:]); got != want {
+	if got, want := store.sessionStartKeys[0].IdempotencyKey, hex.EncodeToString(digest[:]); got != want {
 		t.Fatalf("stored key = %s, want %s", got, want)
 	}
 }

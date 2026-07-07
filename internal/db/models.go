@@ -2848,34 +2848,32 @@ type Secret struct {
 }
 
 type Session struct {
-	ID                        pgtype.UUID        `json:"id"`
-	PublicID                  string             `json:"public_id"`
-	OrgID                     pgtype.UUID        `json:"org_id"`
-	WorkerGroupID             string             `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID        `json:"project_id"`
-	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	TaskID                    string             `json:"task_id"`
-	InitialDeploymentID       pgtype.UUID        `json:"initial_deployment_id"`
-	ActiveDeploymentID        pgtype.UUID        `json:"active_deployment_id"`
-	ExternalID                string             `json:"external_id"`
-	StartFingerprint          string             `json:"start_fingerprint"`
-	StartIdempotencyKey       string             `json:"start_idempotency_key"`
-	StartIdempotencyExpiresAt pgtype.Timestamptz `json:"start_idempotency_expires_at"`
-	Status                    SessionStatus      `json:"status"`
-	CurrentRunID              pgtype.UUID        `json:"current_run_id"`
-	CurrentRunVersion         int64              `json:"current_run_version"`
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	Metadata                  []byte             `json:"metadata"`
-	Tags                      []string           `json:"tags"`
-	ClosedAt                  pgtype.Timestamptz `json:"closed_at"`
-	ClosedReason              string             `json:"closed_reason"`
-	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
-	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
-	TerminalReason            []byte             `json:"terminal_reason"`
-	Result                    []byte             `json:"result"`
-	ExpiresAt                 pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
+	ID                  pgtype.UUID        `json:"id"`
+	PublicID            string             `json:"public_id"`
+	OrgID               pgtype.UUID        `json:"org_id"`
+	WorkerGroupID       string             `json:"worker_group_id"`
+	ProjectID           pgtype.UUID        `json:"project_id"`
+	EnvironmentID       pgtype.UUID        `json:"environment_id"`
+	TaskID              string             `json:"task_id"`
+	InitialDeploymentID pgtype.UUID        `json:"initial_deployment_id"`
+	ActiveDeploymentID  pgtype.UUID        `json:"active_deployment_id"`
+	ExternalID          string             `json:"external_id"`
+	StartFingerprint    string             `json:"start_fingerprint"`
+	Status              SessionStatus      `json:"status"`
+	CurrentRunID        pgtype.UUID        `json:"current_run_id"`
+	CurrentRunVersion   int64              `json:"current_run_version"`
+	WorkspaceID         pgtype.UUID        `json:"workspace_id"`
+	Metadata            []byte             `json:"metadata"`
+	Tags                []string           `json:"tags"`
+	ClosedAt            pgtype.Timestamptz `json:"closed_at"`
+	ClosedReason        string             `json:"closed_reason"`
+	CancelledAt         pgtype.Timestamptz `json:"cancelled_at"`
+	ExpiredAt           pgtype.Timestamptz `json:"expired_at"`
+	TerminalReason      []byte             `json:"terminal_reason"`
+	Result              []byte             `json:"result"`
+	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type SessionContinuationRequest struct {
@@ -2917,6 +2915,19 @@ type SessionRun struct {
 	Reason        string             `json:"reason"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	EndedAt       pgtype.Timestamptz `json:"ended_at"`
+}
+
+type SessionStartKey struct {
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	TaskID           string             `json:"task_id"`
+	IdempotencyKey   string             `json:"idempotency_key"`
+	StartFingerprint string             `json:"start_fingerprint"`
+	SessionID        pgtype.UUID        `json:"session_id"`
+	RunID            pgtype.UUID        `json:"run_id"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Stream struct {

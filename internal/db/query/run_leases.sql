@@ -444,7 +444,7 @@ acknowledged_cancelled_worker_commands AS (
        AND worker_commands.acknowledged_at IS NULL
     RETURNING worker_commands.id
 ),
-invalidated_runtime_checkpoints AS (
+invalidated_run_checkpoints AS (
     UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = 'worker lease expired while run was executing',
@@ -455,7 +455,7 @@ invalidated_runtime_checkpoints AS (
        AND run_checkpoints.state = 'creating'
     RETURNING run_checkpoints.id
 ),
-failed_runtime_checkpoint_restores AS (
+failed_run_checkpoint_restores AS (
     UPDATE run_checkpoint_restores
        SET status = 'failed',
            error_message = 'worker lease expired while run was executing',
@@ -694,8 +694,8 @@ cleanup AS (
         (SELECT count(*) FROM released_workspace_leases) AS released_workspace_leases,
         (SELECT count(*) FROM cancelled_run_waits) AS cancelled_run_waits,
         (SELECT count(*) FROM acknowledged_cancelled_worker_commands) AS acknowledged_cancelled_worker_commands,
-        (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
-        (SELECT count(*) FROM failed_runtime_checkpoint_restores) AS failed_runtime_checkpoint_restores,
+        (SELECT count(*) FROM invalidated_run_checkpoints) AS invalidated_run_checkpoints,
+        (SELECT count(*) FROM failed_run_checkpoint_restores) AS failed_run_checkpoint_restores,
         (SELECT count(*) FROM failed_snapshot) AS failed_snapshots,
         (SELECT count(*) FROM retry_snapshot) AS retry_snapshots,
         (SELECT count(*) FROM failed_events) AS failed_events,
@@ -710,7 +710,7 @@ UPDATE run_leases
   FROM failed_runs
  WHERE run_leases.org_id = failed_runs.org_id
    AND run_leases.id = failed_runs.source_run_lease_id
-   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + failed_snapshots + retry_snapshots + failed_events + telemetry_outboxes + active_time_meter_events FROM cleanup) >= 0;
+   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_run_checkpoints + failed_run_checkpoint_restores + failed_snapshots + retry_snapshots + failed_events + telemetry_outboxes + active_time_meter_events FROM cleanup) >= 0;
 
 -- name: LeaseRunLease :one
 WITH worker_scope AS MATERIALIZED (
@@ -1787,7 +1787,7 @@ acknowledged_cancelled_worker_commands AS (
        AND worker_commands.acknowledged_at IS NULL
     RETURNING worker_commands.id
 ),
-invalidated_runtime_checkpoints AS (
+invalidated_run_checkpoints AS (
     UPDATE run_checkpoints
        SET state = 'invalid',
            error_message = COALESCE(released.error_message, 'run lease released'),
@@ -1798,7 +1798,7 @@ invalidated_runtime_checkpoints AS (
        AND run_checkpoints.state = 'creating'
     RETURNING run_checkpoints.id
 ),
-completed_runtime_checkpoint_restore AS (
+completed_run_checkpoint_restore AS (
     UPDATE run_checkpoint_restores
        SET status = 'restored',
            error_message = NULL,
@@ -1815,7 +1815,7 @@ completed_runtime_checkpoint_restore AS (
        AND effective_release.run_status = 'succeeded'
     RETURNING run_checkpoint_restores.id
 ),
-failed_runtime_checkpoint_restore AS (
+failed_run_checkpoint_restore AS (
     UPDATE run_checkpoint_restores
        SET status = 'failed',
            error_message = COALESCE(effective_release.error_message, effective_release.terminal_event_kind),
@@ -2101,9 +2101,9 @@ cleanup AS (
         (SELECT count(*) FROM waiting_runtime_instance) AS waiting_runtime_instances,
         (SELECT count(*) FROM cancelled_run_waits) AS cancelled_run_waits,
         (SELECT count(*) FROM acknowledged_cancelled_worker_commands) AS acknowledged_cancelled_worker_commands,
-        (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
-        (SELECT count(*) FROM completed_runtime_checkpoint_restore) AS completed_runtime_checkpoint_restores,
-        (SELECT count(*) FROM failed_runtime_checkpoint_restore) AS failed_runtime_checkpoint_restores,
+        (SELECT count(*) FROM invalidated_run_checkpoints) AS invalidated_run_checkpoints,
+        (SELECT count(*) FROM completed_run_checkpoint_restore) AS completed_run_checkpoint_restores,
+        (SELECT count(*) FROM failed_run_checkpoint_restore) AS failed_run_checkpoint_restores,
         (SELECT count(*) FROM active_time_meter_event) AS active_time_meter_events,
         (SELECT count(*) FROM output_meter_event) AS output_meter_events,
         (SELECT count(*) FROM meter_event_outbox) AS meter_event_outboxes,
@@ -2162,7 +2162,7 @@ SELECT released.*,
   FROM released
   JOIN released_run_lease ON true
   JOIN released_snapshot ON released_snapshot.run_id = released.id
- WHERE (SELECT released_session_runs + workspace_versions + advanced_workspaces + released_workspace_leases + waiting_runtime_instances + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + completed_runtime_checkpoint_restores + failed_runtime_checkpoint_restores + active_time_meter_events + output_meter_events + meter_event_outboxes + released_snapshots + retry_snapshots + events + telemetry_outboxes FROM cleanup) >= 0
+ WHERE (SELECT released_session_runs + workspace_versions + advanced_workspaces + released_workspace_leases + waiting_runtime_instances + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_run_checkpoints + completed_run_checkpoint_restores + failed_run_checkpoint_restores + active_time_meter_events + output_meter_events + meter_event_outboxes + released_snapshots + retry_snapshots + events + telemetry_outboxes FROM cleanup) >= 0
 UNION ALL
 SELECT idempotent_released.*,
        run_leases.id AS run_lease_id,

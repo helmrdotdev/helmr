@@ -80,6 +80,7 @@ type sessionStartIdempotencyBinding struct {
 	IdempotencyKey   string
 	StartFingerprint string
 	SessionID        pgtype.UUID
+	RunID            pgtype.UUID
 	ExpiresAt        pgtype.Timestamptz
 }
 
@@ -426,6 +427,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 						IdempotencyKey:   idempotency.key.String,
 						StartFingerprint: existing.StartFingerprint,
 						SessionID:        existing.ID,
+						RunID:            existing.CurrentRunID,
 						ExpiresAt:        idempotency.expiresAt,
 					}, externalID, source)
 					if err != nil {
@@ -588,17 +590,23 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			return err
 		}
 		if idempotency.key.Valid {
-			if _, err := work.q.SetSessionStartIdempotency(ctx, db.SetSessionStartIdempotencyParams{
+			existingResult, existingHit, err := s.setSessionStartIdempotency(ctx, work.q, sessionStartIdempotencyBinding{
 				OrgID:            pgvalue.UUID(actor.OrgID),
 				ProjectID:        projectID,
 				EnvironmentID:    environmentID,
-				SessionID:        session.ID,
 				TaskID:           taskID,
-				StartFingerprint: startFingerprint.String,
 				IdempotencyKey:   idempotency.key.String,
+				StartFingerprint: startFingerprint.String,
+				SessionID:        session.ID,
+				RunID:            run.ID,
 				ExpiresAt:        idempotency.expiresAt,
-			}); err != nil {
+			}, externalID, source)
+			if err != nil {
 				return err
+			}
+			if existingHit {
+				result = existingResult
+				return errSessionStartExistingHitRollback
 			}
 		}
 		work.AfterCommit(func(postCommitCtx context.Context) {
@@ -854,6 +862,7 @@ func (s *Server) setSessionStartIdempotency(ctx context.Context, store db.Querie
 		ProjectID:        binding.ProjectID,
 		EnvironmentID:    binding.EnvironmentID,
 		SessionID:        binding.SessionID,
+		RunID:            binding.RunID,
 		TaskID:           binding.TaskID,
 		StartFingerprint: binding.StartFingerprint,
 		IdempotencyKey:   binding.IdempotencyKey,
@@ -902,8 +911,9 @@ func (s *Server) loadExistingSessionStart(ctx context.Context, store db.Querier,
 			EnvironmentID:    environmentID,
 			TaskID:           taskID,
 			IdempotencyKey:   idempotency.key.String,
-			StartFingerprint: idempotencyFingerprint,
+			StartFingerprint: startFingerprint,
 			SessionID:        existing.ID,
+			RunID:            existing.CurrentRunID,
 			ExpiresAt:        idempotency.expiresAt,
 		}, externalID, source); err != nil {
 			return sessionStartResult{}, err
