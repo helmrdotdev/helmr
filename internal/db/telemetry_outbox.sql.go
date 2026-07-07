@@ -151,6 +151,127 @@ func (q *Queries) ClaimEventIngestBatch(ctx context.Context, arg ClaimEventInges
 	return items, nil
 }
 
+const claimMeterEventIngestBatch = `-- name: ClaimMeterEventIngestBatch :many
+WITH claimed AS (
+    SELECT telemetry_outbox.id
+      FROM telemetry_outbox
+     WHERE telemetry_outbox.stream_kind = 'meter_event'
+       AND telemetry_outbox.written_at IS NULL
+       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
+       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
+     ORDER BY telemetry_outbox.id ASC
+     LIMIT $1
+     FOR UPDATE SKIP LOCKED
+),
+updated AS (
+    UPDATE telemetry_outbox
+       SET state = 'claimed',
+           retry_count = telemetry_outbox.retry_count + 1,
+           next_retry_at = now() + $2::interval,
+           updated_at = now(),
+           last_error = ''
+      FROM claimed
+     WHERE telemetry_outbox.id = claimed.id
+    RETURNING telemetry_outbox.id, telemetry_outbox.org_id, telemetry_outbox.worker_group_id, telemetry_outbox.stream_kind, telemetry_outbox.source_kind, telemetry_outbox.source_id, telemetry_outbox.stream_name, telemetry_outbox.idempotency_key, telemetry_outbox.project_id, telemetry_outbox.environment_id, telemetry_outbox.run_id, telemetry_outbox.deployment_id, telemetry_outbox.workspace_id, telemetry_outbox.resource_kind, telemetry_outbox.resource_id, telemetry_outbox.run_lease_id, telemetry_outbox.attempt_number, telemetry_outbox.trace_id, telemetry_outbox.span_id, telemetry_outbox.parent_span_id, telemetry_outbox.traceparent, telemetry_outbox.category, telemetry_outbox.severity, telemetry_outbox.source, telemetry_outbox.kind, telemetry_outbox.message, telemetry_outbox.payload, telemetry_outbox.content, telemetry_outbox.size_bytes, telemetry_outbox.observed_seq, telemetry_outbox.offset_start, telemetry_outbox.offset_end, telemetry_outbox.redaction_class, telemetry_outbox.retention_class, telemetry_outbox.snapshot_version, telemetry_outbox.object_key, telemetry_outbox.cas_digest, telemetry_outbox.state, telemetry_outbox.retry_count, telemetry_outbox.next_retry_at, telemetry_outbox.written_at, telemetry_outbox.published_at, telemetry_outbox.publish_attempts, telemetry_outbox.publish_locked_until, telemetry_outbox.last_error, telemetry_outbox.observed_at, telemetry_outbox.created_at, telemetry_outbox.updated_at
+)
+SELECT updated.id AS outbox_id,
+       updated.retry_count,
+       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
+       meter_events.org_id,
+       meter_events.worker_group_id,
+       meter_events.project_id,
+       meter_events.environment_id,
+       meter_events.source_type,
+       meter_events.source_id,
+       meter_events.run_id,
+       meter_events.attempt_number,
+       meter_events.trace_id,
+       meter_events.span_id,
+       meter_events.meter,
+       meter_events.quantity,
+       meter_events.unit,
+       meter_events.measured_to,
+       meter_events.details,
+       meter_events.occurred_at,
+       meter_events.created_at
+  FROM updated
+  JOIN meter_events ON meter_events.org_id = updated.org_id
+                   AND meter_events.source_type = updated.source_kind
+                   AND meter_events.source_id = updated.source_id
+                   AND meter_events.meter = updated.kind
+                   AND meter_events.idempotency_key = updated.idempotency_key
+ ORDER BY updated.id ASC
+`
+
+type ClaimMeterEventIngestBatchParams struct {
+	RowLimit      int32           `json:"row_limit"`
+	LeaseDuration pgtype.Interval `json:"lease_duration"`
+}
+
+type ClaimMeterEventIngestBatchRow struct {
+	OutboxID       int64              `json:"outbox_id"`
+	RetryCount     int32              `json:"retry_count"`
+	IdempotencyKey string             `json:"idempotency_key"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	WorkerGroupID  string             `json:"worker_group_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	SourceType     string             `json:"source_type"`
+	SourceID       pgtype.UUID        `json:"source_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	AttemptNumber  pgtype.Int4        `json:"attempt_number"`
+	TraceID        pgtype.Text        `json:"trace_id"`
+	SpanID         pgtype.Text        `json:"span_id"`
+	Meter          string             `json:"meter"`
+	Quantity       pgtype.Numeric     `json:"quantity"`
+	Unit           string             `json:"unit"`
+	MeasuredTo     pgtype.Timestamptz `json:"measured_to"`
+	Details        []byte             `json:"details"`
+	OccurredAt     pgtype.Timestamptz `json:"occurred_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+func (q *Queries) ClaimMeterEventIngestBatch(ctx context.Context, arg ClaimMeterEventIngestBatchParams) ([]ClaimMeterEventIngestBatchRow, error) {
+	rows, err := q.db.Query(ctx, claimMeterEventIngestBatch, arg.RowLimit, arg.LeaseDuration)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimMeterEventIngestBatchRow
+	for rows.Next() {
+		var i ClaimMeterEventIngestBatchRow
+		if err := rows.Scan(
+			&i.OutboxID,
+			&i.RetryCount,
+			&i.IdempotencyKey,
+			&i.OrgID,
+			&i.WorkerGroupID,
+			&i.ProjectID,
+			&i.EnvironmentID,
+			&i.SourceType,
+			&i.SourceID,
+			&i.RunID,
+			&i.AttemptNumber,
+			&i.TraceID,
+			&i.SpanID,
+			&i.Meter,
+			&i.Quantity,
+			&i.Unit,
+			&i.MeasuredTo,
+			&i.Details,
+			&i.OccurredAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimRunLogIngestBatch = `-- name: ClaimRunLogIngestBatch :many
 WITH claimed AS (
     SELECT telemetry_outbox.id

@@ -45,6 +45,7 @@ type Querier interface {
 	ClaimDueSessionRunRequests(ctx context.Context, arg ClaimDueSessionRunRequestsParams) ([]SessionRunRequest, error)
 	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
 	ClaimEventOutbox(ctx context.Context, arg ClaimEventOutboxParams) ([]ClaimEventOutboxRow, error)
+	ClaimMeterEventIngestBatch(ctx context.Context, arg ClaimMeterEventIngestBatchParams) ([]ClaimMeterEventIngestBatchRow, error)
 	ClaimRunLogIngestBatch(ctx context.Context, arg ClaimRunLogIngestBatchParams) ([]ClaimRunLogIngestBatchRow, error)
 	ClaimRuntimeCheckpointWait(ctx context.Context, arg ClaimRuntimeCheckpointWaitParams) (ClaimRuntimeCheckpointWaitRow, error)
 	ClaimWorkerCommands(ctx context.Context, arg ClaimWorkerCommandsParams) ([]ClaimWorkerCommandsRow, error)

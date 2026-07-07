@@ -187,9 +187,10 @@ event AS (
       FROM event_input
     RETURNING id
 ),
-usage_event AS (
-    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, details, idempotency_key)
+meter_event AS (
+    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, details, idempotency_key)
     SELECT current_run_lease.org_id,
+           current_run_lease.worker_group_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
            'run_log',
@@ -210,6 +211,31 @@ usage_event AS (
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0
     ON CONFLICT DO NOTHING
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, occurred_at, details, idempotency_key, created_at
+),
+meter_event_outbox AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
+        idempotency_key, observed_at
+    )
+    SELECT meter_event.org_id,
+           meter_event.worker_group_id,
+           'meter_event',
+           meter_event.source_type,
+           meter_event.source_id,
+           meter_event.project_id,
+           meter_event.environment_id,
+           meter_event.run_id,
+           meter_event.attempt_number,
+           meter_event.trace_id,
+           meter_event.span_id,
+           meter_event.meter,
+           meter_event.details,
+           meter_event.idempotency_key,
+           meter_event.occurred_at
+      FROM meter_event
+    ON CONFLICT DO NOTHING
     RETURNING id
 )
 SELECT selected_chunk.org_id,
@@ -222,9 +248,9 @@ SELECT selected_chunk.org_id,
        selected_chunk.content,
        selected_chunk.size_bytes,
        selected_chunk.created_at
-  FROM selected_chunk
+ FROM selected_chunk
  WHERE (SELECT count(*) FROM event) >= 0
-   AND (SELECT count(*) FROM usage_event) >= 0
+   AND (SELECT count(*) FROM meter_event_outbox) >= 0
 `
 
 type AppendRunLogChunkParams struct {

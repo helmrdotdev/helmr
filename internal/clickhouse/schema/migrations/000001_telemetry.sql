@@ -83,3 +83,29 @@ ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toYYYYMM(ingested_at)
 ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start)
 TTL ingested_at + INTERVAL 90 DAY DELETE;
+
+CREATE TABLE IF NOT EXISTS helmr_telemetry.meter_events (
+    worker_group_id String,
+    org_id UUID,
+    project_id UUID,
+    environment_id UUID,
+    source_type LowCardinality(String),
+    source_id UUID,
+    run_id UUID,
+    attempt_number Nullable(Int32),
+    trace_id String,
+    span_id String,
+    meter LowCardinality(String),
+    quantity Decimal(38, 9),
+    unit LowCardinality(String),
+    measured_to Nullable(DateTime64(3, 'UTC')),
+    details String,
+    idempotency_key String,
+    occurred_at DateTime64(3, 'UTC'),
+    created_at DateTime64(3, 'UTC'),
+    ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(ingested_at)
+PARTITION BY toYYYYMM(ingested_at)
+ORDER BY (org_id, source_type, source_id, meter, idempotency_key)
+TTL ingested_at + INTERVAL 365 DAY DELETE;

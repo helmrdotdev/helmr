@@ -612,19 +612,20 @@ active_time_delta AS (
     SELECT GREATEST(
                failed_runs.active_elapsed_ms
                - COALESCE((
-                   SELECT SUM(usage_ledger_entries.quantity)::bigint
-                     FROM usage_ledger_entries
-                    WHERE usage_ledger_entries.org_id = failed_runs.org_id
-                      AND usage_ledger_entries.run_id = failed_runs.id
-                      AND usage_ledger_entries.meter = 'active_time'
+                   SELECT SUM(meter_events.quantity)::bigint
+                     FROM meter_events
+                    WHERE meter_events.org_id = failed_runs.org_id
+                      AND meter_events.run_id = failed_runs.id
+                      AND meter_events.meter = 'active_time'
                ), 0),
                0
            )::bigint AS quantity
       FROM failed_runs
 ),
-active_time_usage_event AS (
-    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
+active_time_meter_event AS (
+    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT failed_runs.org_id,
+           failed_runs.worker_group_id,
            failed_runs.project_id,
            failed_runs.environment_id,
            'run_lease',
@@ -640,8 +641,33 @@ active_time_usage_event AS (
            jsonb_build_object('phase', 'expired'),
            'active_time:' || failed_runs.source_run_lease_id::text || ':expired'
       FROM failed_runs
-      JOIN active_time_delta ON true
-     WHERE active_time_delta.quantity > 0
+     JOIN active_time_delta ON true
+    WHERE active_time_delta.quantity > 0
+    ON CONFLICT DO NOTHING
+    RETURNING *
+),
+active_time_meter_event_outbox AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
+        idempotency_key, observed_at
+    )
+    SELECT active_time_meter_event.org_id,
+           active_time_meter_event.worker_group_id,
+           'meter_event',
+           active_time_meter_event.source_type,
+           active_time_meter_event.source_id,
+           active_time_meter_event.project_id,
+           active_time_meter_event.environment_id,
+           active_time_meter_event.run_id,
+           active_time_meter_event.attempt_number,
+           active_time_meter_event.trace_id,
+           active_time_meter_event.span_id,
+           active_time_meter_event.meter,
+           active_time_meter_event.details,
+           active_time_meter_event.idempotency_key,
+           active_time_meter_event.occurred_at
+      FROM active_time_meter_event
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
@@ -657,7 +683,7 @@ cleanup AS (
         (SELECT count(*) FROM retry_snapshot) AS retry_snapshots,
         (SELECT count(*) FROM failed_events) AS failed_events,
         (SELECT count(*) FROM failed_events) AS telemetry_outboxes,
-        (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events
+        (SELECT count(*) FROM active_time_meter_event_outbox) AS active_time_meter_events
 )
 UPDATE run_leases
    SET lost_at = COALESCE(lost_at, now()),
@@ -667,7 +693,7 @@ UPDATE run_leases
   FROM failed_runs
  WHERE run_leases.org_id = failed_runs.org_id
    AND run_leases.id = failed_runs.source_run_lease_id
-   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + failed_snapshots + retry_snapshots + failed_events + telemetry_outboxes + active_time_usage_events FROM cleanup) >= 0;
+   AND (SELECT terminal_session_runs + released_workspace_leases + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + failed_runtime_checkpoint_restores + failed_snapshots + retry_snapshots + failed_events + telemetry_outboxes + active_time_meter_events FROM cleanup) >= 0;
 
 -- name: LeaseRunLease :one
 WITH worker_scope AS MATERIALIZED (
@@ -1809,20 +1835,21 @@ active_time_delta AS (
     SELECT GREATEST(
                released_run_lease.active_duration_ms
                - COALESCE((
-                   SELECT SUM(usage_ledger_entries.quantity)::bigint
-                     FROM usage_ledger_entries
-                    WHERE usage_ledger_entries.org_id = released.org_id
-                      AND usage_ledger_entries.run_id = released.id
-                      AND usage_ledger_entries.meter = 'active_time'
+                   SELECT SUM(meter_events.quantity)::bigint
+                     FROM meter_events
+                    WHERE meter_events.org_id = released.org_id
+                      AND meter_events.run_id = released.id
+                      AND meter_events.meter = 'active_time'
                ), 0),
                0
            )::bigint AS quantity
       FROM released
       JOIN released_run_lease ON true
 ),
-active_time_usage_event AS (
-    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
+active_time_meter_event AS (
+    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT released.org_id,
+           released.worker_group_id,
            released.project_id,
            released.environment_id,
            'run_lease',
@@ -1839,14 +1866,15 @@ active_time_usage_event AS (
            'active_time:' || released_run_lease.id::text || ':final'
       FROM released
       JOIN released_run_lease ON true
-      JOIN active_time_delta ON true
-     WHERE active_time_delta.quantity > 0
+     JOIN active_time_delta ON true
+    WHERE active_time_delta.quantity > 0
     ON CONFLICT DO NOTHING
-    RETURNING id
+    RETURNING *
 ),
-output_usage_event AS (
-    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
+output_meter_event AS (
+    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT released.org_id,
+           released.worker_group_id,
            released.project_id,
            released.environment_id,
            'run_lease',
@@ -1866,6 +1894,35 @@ output_usage_event AS (
       JOIN effective_release ON effective_release.id = released.id
      WHERE effective_release.output IS NOT NULL
        AND octet_length(effective_release.output::text) > 0
+    ON CONFLICT DO NOTHING
+    RETURNING *
+),
+meter_event_outbox AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
+        idempotency_key, observed_at
+    )
+    SELECT meter_event.org_id,
+           meter_event.worker_group_id,
+           'meter_event',
+           meter_event.source_type,
+           meter_event.source_id,
+           meter_event.project_id,
+           meter_event.environment_id,
+           meter_event.run_id,
+           meter_event.attempt_number,
+           meter_event.trace_id,
+           meter_event.span_id,
+           meter_event.meter,
+           meter_event.details,
+           meter_event.idempotency_key,
+           meter_event.occurred_at
+      FROM (
+          SELECT * FROM active_time_meter_event
+          UNION ALL
+          SELECT * FROM output_meter_event
+      ) meter_event
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
@@ -2046,8 +2103,9 @@ cleanup AS (
         (SELECT count(*) FROM invalidated_runtime_checkpoints) AS invalidated_runtime_checkpoints,
         (SELECT count(*) FROM completed_runtime_checkpoint_restore) AS completed_runtime_checkpoint_restores,
         (SELECT count(*) FROM failed_runtime_checkpoint_restore) AS failed_runtime_checkpoint_restores,
-        (SELECT count(*) FROM active_time_usage_event) AS active_time_usage_events,
-        (SELECT count(*) FROM output_usage_event) AS output_usage_events,
+        (SELECT count(*) FROM active_time_meter_event) AS active_time_meter_events,
+        (SELECT count(*) FROM output_meter_event) AS output_meter_events,
+        (SELECT count(*) FROM meter_event_outbox) AS meter_event_outboxes,
         (SELECT count(*) FROM released_snapshot) AS released_snapshots,
         (SELECT count(*) FROM retry_snapshot) AS retry_snapshots,
         (SELECT count(*) FROM events) AS events,
@@ -2103,7 +2161,7 @@ SELECT released.*,
   FROM released
   JOIN released_run_lease ON true
   JOIN released_snapshot ON released_snapshot.run_id = released.id
- WHERE (SELECT released_session_runs + workspace_versions + advanced_workspaces + released_workspace_leases + waiting_runtime_instances + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + completed_runtime_checkpoint_restores + failed_runtime_checkpoint_restores + active_time_usage_events + output_usage_events + released_snapshots + retry_snapshots + events + telemetry_outboxes FROM cleanup) >= 0
+ WHERE (SELECT released_session_runs + workspace_versions + advanced_workspaces + released_workspace_leases + waiting_runtime_instances + cancelled_run_waits + acknowledged_cancelled_worker_commands + invalidated_runtime_checkpoints + completed_runtime_checkpoint_restores + failed_runtime_checkpoint_restores + active_time_meter_events + output_meter_events + meter_event_outboxes + released_snapshots + retry_snapshots + events + telemetry_outboxes FROM cleanup) >= 0
 UNION ALL
 SELECT idempotent_released.*,
        run_leases.id AS run_lease_id,

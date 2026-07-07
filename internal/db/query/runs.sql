@@ -776,11 +776,11 @@ active_time_delta AS (
     SELECT GREATEST(
                cancelled_run_lease.active_duration_ms
                - COALESCE((
-                   SELECT SUM(usage_ledger_entries.quantity)::bigint
-                     FROM usage_ledger_entries
-                    WHERE usage_ledger_entries.org_id = updated.org_id
-                      AND usage_ledger_entries.run_id = updated.id
-                      AND usage_ledger_entries.meter = 'active_time'
+                   SELECT SUM(meter_events.quantity)::bigint
+                     FROM meter_events
+                    WHERE meter_events.org_id = updated.org_id
+                      AND meter_events.run_id = updated.id
+                      AND meter_events.meter = 'active_time'
                ), 0),
                0
            )::bigint AS quantity
@@ -790,9 +790,10 @@ active_time_delta AS (
                               AND cancelled_run_lease.id = updated.previous_run_lease_id
      WHERE updated.execution_status <> 'pending_cancel' OR sqlc.arg(force)::bool
 ),
-active_time_usage_event AS (
-    INSERT INTO usage_ledger_entries (org_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
+active_time_meter_event AS (
+    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
     SELECT updated.org_id,
+           updated.worker_group_id,
            updated.project_id,
            updated.environment_id,
            'run_lease',
@@ -811,8 +812,33 @@ active_time_usage_event AS (
       JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
                               AND cancelled_run_lease.run_id = updated.id
                               AND cancelled_run_lease.id = updated.previous_run_lease_id
-      JOIN active_time_delta ON true
-     WHERE active_time_delta.quantity > 0
+     JOIN active_time_delta ON true
+    WHERE active_time_delta.quantity > 0
+    ON CONFLICT DO NOTHING
+    RETURNING *
+),
+active_time_meter_event_outbox AS (
+    INSERT INTO telemetry_outbox (
+        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
+        idempotency_key, observed_at
+    )
+    SELECT active_time_meter_event.org_id,
+           active_time_meter_event.worker_group_id,
+           'meter_event',
+           active_time_meter_event.source_type,
+           active_time_meter_event.source_id,
+           active_time_meter_event.project_id,
+           active_time_meter_event.environment_id,
+           active_time_meter_event.run_id,
+           active_time_meter_event.attempt_number,
+           active_time_meter_event.trace_id,
+           active_time_meter_event.span_id,
+           active_time_meter_event.meter,
+           active_time_meter_event.details,
+           active_time_meter_event.idempotency_key,
+           active_time_meter_event.occurred_at
+      FROM active_time_meter_event
     ON CONFLICT DO NOTHING
     RETURNING id
 ),
@@ -902,7 +928,7 @@ SELECT updated.*
    AND (SELECT count(*) FROM released_workspace_leases) >= 0
    AND (SELECT count(*) FROM invalidated_runtime_checkpoints) >= 0
    AND (SELECT count(*) FROM failed_runtime_checkpoint_restores) >= 0
-   AND (SELECT count(*) FROM active_time_usage_event) >= 0
+   AND (SELECT count(*) FROM active_time_meter_event_outbox) >= 0
 UNION ALL
 SELECT target.*, NULL::uuid AS previous_run_lease_id
   FROM target

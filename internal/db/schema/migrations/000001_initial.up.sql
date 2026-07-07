@@ -50,7 +50,8 @@ CREATE TYPE worker_group_state AS ENUM (
 CREATE TYPE telemetry_stream_kind AS ENUM (
     'run_log',
     'event',
-    'terminal_output'
+    'terminal_output',
+    'meter_event'
 );
 
 CREATE TYPE telemetry_outbox_state AS ENUM (
@@ -2234,6 +2235,20 @@ CREATE TABLE telemetry_outbox (
             AND offset_start IS NOT NULL
             AND offset_end IS NOT NULL
         )
+    ),
+    CHECK (
+        stream_kind <> 'meter_event'
+        OR (
+            source_kind IN ('run_log', 'run_lease')
+            AND run_id IS NOT NULL
+            AND idempotency_key IS NOT NULL
+            AND btrim(kind) <> ''
+            AND payload IS NOT NULL
+            AND content IS NULL
+            AND observed_seq IS NULL
+            AND offset_start IS NULL
+            AND offset_end IS NULL
+        )
     )
 );
 
@@ -2549,9 +2564,10 @@ ALTER TABLE run_leases
     REFERENCES runtime_checkpoints(org_id, worker_group_id, run_id, id)
     ON DELETE SET NULL (restore_runtime_checkpoint_id);
 
-CREATE TABLE usage_ledger_entries (
+CREATE TABLE meter_events (
     id BIGINT GENERATED ALWAYS AS IDENTITY,
     org_id UUID NOT NULL,
+    worker_group_id TEXT NOT NULL,
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     source_type TEXT NOT NULL,
@@ -2571,18 +2587,18 @@ CREATE TABLE usage_ledger_entries (
     PRIMARY KEY (id)
 );
 
-CREATE UNIQUE INDEX usage_ledger_entries_idempotency_idx
-    ON usage_ledger_entries (org_id, source_type, source_id, meter, idempotency_key);
+CREATE UNIQUE INDEX meter_events_idempotency_idx
+    ON meter_events (org_id, source_type, source_id, meter, idempotency_key);
 
-CREATE INDEX usage_ledger_entries_scope_created_idx
-    ON usage_ledger_entries (org_id, project_id, environment_id, created_at DESC);
+CREATE INDEX meter_events_scope_created_idx
+    ON meter_events (org_id, worker_group_id, project_id, environment_id, created_at DESC);
 
-CREATE INDEX usage_ledger_entries_trace_idx
-    ON usage_ledger_entries (trace_id, created_at)
+CREATE INDEX meter_events_trace_idx
+    ON meter_events (trace_id, created_at)
     WHERE trace_id IS NOT NULL;
 
-CREATE INDEX usage_ledger_entries_run_meter_idx
-    ON usage_ledger_entries (org_id, run_id, meter)
+CREATE INDEX meter_events_run_meter_idx
+    ON meter_events (org_id, run_id, meter)
     INCLUDE (quantity);
 
 CREATE TABLE waits (

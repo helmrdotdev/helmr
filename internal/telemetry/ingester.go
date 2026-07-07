@@ -86,6 +86,11 @@ func (i *Ingestor) Run(ctx context.Context) error {
 			hadError = true
 			i.log.Warn("ingest run log telemetry failed", "error", err)
 		}
+		meterEventCount, err := i.ingestMeterEvents(ctx)
+		if err != nil {
+			hadError = true
+			i.log.Warn("ingest meter event telemetry failed", "error", err)
+		}
 		terminalCount, err := i.ingestTerminalOutput(ctx)
 		if err != nil {
 			hadError = true
@@ -100,7 +105,7 @@ func (i *Ingestor) Run(ctx context.Context) error {
 			}
 			continue
 		}
-		if orphanCount == 0 && eventCount == 0 && logCount == 0 && terminalCount == 0 {
+		if orphanCount == 0 && eventCount == 0 && logCount == 0 && meterEventCount == 0 && terminalCount == 0 {
 			if err := sleep(ctx, i.idleEvery); err != nil {
 				return err
 			}
@@ -262,6 +267,41 @@ func (i *Ingestor) ingestRunLogs(ctx context.Context) (int, error) {
 	return len(rows), firstErr
 }
 
+func (i *Ingestor) ingestMeterEvents(ctx context.Context) (int, error) {
+	rows, err := i.db.ClaimMeterEventIngestBatch(ctx, db.ClaimMeterEventIngestBatchParams{
+		RowLimit:      i.batchSize,
+		LeaseDuration: pgvalue.Interval(i.leaseDuration),
+	})
+	if err != nil || len(rows) == 0 {
+		return len(rows), err
+	}
+	ids := make([]int64, 0, len(rows))
+	candidates := make([]meterEventIngestCandidate, 0, len(rows))
+	var firstErr error
+	for _, row := range rows {
+		candidates = append(candidates, meterEventIngestCandidate{
+			outboxID: row.OutboxID,
+			record:   meterEventRecord(row),
+		})
+	}
+	if len(candidates) > 0 {
+		successes, err := i.writeMeterEventCandidates(ctx, candidates)
+		if err != nil && firstErr == nil {
+			firstErr = err
+		}
+		for _, candidate := range successes {
+			ids = append(ids, candidate.outboxID)
+		}
+	}
+	if len(ids) == 0 {
+		return len(rows), firstErr
+	}
+	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
+		return len(rows), err
+	}
+	return len(rows), firstErr
+}
+
 func (i *Ingestor) writeEventCandidates(ctx context.Context, candidates []eventIngestCandidate) ([]eventIngestCandidate, error) {
 	if len(candidates) == 0 {
 		return nil, nil
@@ -303,6 +343,32 @@ func (i *Ingestor) writeRunLogCandidates(ctx context.Context, candidates []runLo
 	var firstErr error
 	for _, candidate := range candidates {
 		if err := i.writer.WriteRunLogs(ctx, []RunLogRecord{candidate.record}); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			_ = i.markFailed(ctx, []int64{candidate.outboxID}, err)
+			continue
+		}
+		successes = append(successes, candidate)
+	}
+	return successes, firstErr
+}
+
+func (i *Ingestor) writeMeterEventCandidates(ctx context.Context, candidates []meterEventIngestCandidate) ([]meterEventIngestCandidate, error) {
+	if len(candidates) == 0 {
+		return nil, nil
+	}
+	records := make([]MeterEventRecord, 0, len(candidates))
+	for _, candidate := range candidates {
+		records = append(records, candidate.record)
+	}
+	if err := i.writer.WriteMeterEvents(ctx, records); err == nil {
+		return candidates, nil
+	}
+	successes := make([]meterEventIngestCandidate, 0, len(candidates))
+	var firstErr error
+	for _, candidate := range candidates {
+		if err := i.writer.WriteMeterEvents(ctx, []MeterEventRecord{candidate.record}); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -359,6 +425,11 @@ type eventIngestCandidate struct {
 type runLogIngestCandidate struct {
 	outboxID int64
 	record   RunLogRecord
+}
+
+type meterEventIngestCandidate struct {
+	outboxID int64
+	record   MeterEventRecord
 }
 
 type terminalIngestCandidate struct {
@@ -459,6 +530,33 @@ func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 	}
 }
 
+func meterEventRecord(row db.ClaimMeterEventIngestBatchRow) MeterEventRecord {
+	details := json.RawMessage(row.Details)
+	if len(details) == 0 || !json.Valid(details) {
+		details = json.RawMessage(`{}`)
+	}
+	return MeterEventRecord{
+		WorkerGroupID:  row.WorkerGroupID,
+		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
+		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
+		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
+		SourceType:     row.SourceType,
+		SourceID:       pgvalue.MustUUIDValue(row.SourceID),
+		RunID:          pgvalue.MustUUIDValue(row.RunID),
+		AttemptNumber:  optionalInt32(row.AttemptNumber),
+		TraceID:        pgvalue.TextValue(row.TraceID),
+		SpanID:         pgvalue.TextValue(row.SpanID),
+		Meter:          row.Meter,
+		Quantity:       numericString(row.Quantity),
+		Unit:           row.Unit,
+		MeasuredTo:     optionalTime(row.MeasuredTo),
+		Details:        string(details),
+		IdempotencyKey: row.IdempotencyKey,
+		OccurredAt:     observedAt(row.OccurredAt, row.CreatedAt),
+		CreatedAt:      observedAt(row.CreatedAt, row.OccurredAt),
+	}
+}
+
 func optionalUUID(value pgtype.UUID) *uuid.UUID {
 	if !value.Valid {
 		return nil
@@ -472,6 +570,40 @@ func optionalInt32(value pgtype.Int4) *int32 {
 		return nil
 	}
 	return &value.Int32
+}
+
+func optionalTime(value pgtype.Timestamptz) *time.Time {
+	if !value.Valid {
+		return nil
+	}
+	valueTime := value.Time.UTC()
+	return &valueTime
+}
+
+func numericString(value pgtype.Numeric) string {
+	if !value.Valid || value.Int == nil || value.NaN || value.InfinityModifier != pgtype.Finite {
+		return "0"
+	}
+	digits := value.Int.String()
+	negative := strings.HasPrefix(digits, "-")
+	if negative {
+		digits = strings.TrimPrefix(digits, "-")
+	}
+	exp := int(value.Exp)
+	var out string
+	switch {
+	case exp >= 0:
+		out = digits + strings.Repeat("0", exp)
+	case len(digits)+exp > 0:
+		idx := len(digits) + exp
+		out = digits[:idx] + "." + digits[idx:]
+	default:
+		out = "0." + strings.Repeat("0", -(len(digits)+exp)) + digits
+	}
+	if negative && out != "0" {
+		out = "-" + out
+	}
+	return out
 }
 
 func int4Value(value pgtype.Int4) int32 {

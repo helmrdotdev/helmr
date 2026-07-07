@@ -419,7 +419,7 @@ func TestFailExpiredRunningRunLeasesSchedulesRetry(t *testing.T) {
 		       run_leases.status,
 		       session_runs.ended_at,
 		       (SELECT count(*)::int FROM telemetry_outbox WHERE org_id = runs.org_id AND source_kind = 'run' AND source_id = runs.id AND stream_kind = 'event'),
-		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		       (SELECT count(*)::int FROM meter_events WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
 		  FROM runs
 		  JOIN run_leases ON run_leases.org_id = runs.org_id
 		                 AND run_leases.run_id = runs.id
@@ -513,7 +513,7 @@ func TestFailExpiredRunningRunLeasesTerminalizesWithoutRetry(t *testing.T) {
 		       run_leases.status,
 		       session_runs.ended_at,
 		       (SELECT count(*)::int FROM telemetry_outbox WHERE org_id = runs.org_id AND source_kind = 'run' AND source_id = runs.id AND stream_kind = 'event'),
-		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		       (SELECT count(*)::int FROM meter_events WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
 		  FROM runs
 		  JOIN run_leases ON run_leases.org_id = runs.org_id
 		                 AND run_leases.run_id = runs.id

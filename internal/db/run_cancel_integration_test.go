@@ -205,7 +205,7 @@ func TestForceCancelRunCleansRuntimeAuthority(t *testing.T) {
 		       run_leases.status,
 		       (SELECT count(*)::int FROM workspace_leases WHERE org_id = runs.org_id AND owner_run_id = runs.id AND state = 'active'),
 		       (SELECT count(*)::int FROM workspace_leases WHERE org_id = runs.org_id AND owner_run_id = runs.id AND state = 'released'),
-		       (SELECT count(*)::int FROM usage_ledger_entries WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
+		       (SELECT count(*)::int FROM meter_events WHERE org_id = runs.org_id AND run_id = runs.id AND meter = 'active_time')
 		  FROM runs
 		  JOIN run_leases ON run_leases.org_id = runs.org_id
 		                 AND run_leases.run_id = runs.id

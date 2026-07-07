@@ -37,18 +37,20 @@ func TestAppendRunLogChunkWritesSelfContainedOutboxAndUsage(t *testing.T) {
 	}
 
 	var outboxCount int64
+	var meterOutboxCount int64
 	var usageCount int64
 	var usageBytes int64
 	if err := pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND worker_group_id = $2 AND stream_kind = 'run_log' AND source_kind = 'run' AND source_id = $3),
-			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes'),
-			(SELECT COALESCE(SUM(quantity), 0) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
-	`, ids.orgID, testWorkerGroupID, ids.runID).Scan(&outboxCount, &usageCount, &usageBytes); err != nil {
+			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND worker_group_id = $2 AND stream_kind = 'meter_event' AND run_id = $3 AND kind = 'log_bytes'),
+			(SELECT count(*) FROM meter_events WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes'),
+			(SELECT COALESCE(SUM(quantity), 0) FROM meter_events WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
+	`, ids.orgID, testWorkerGroupID, ids.runID).Scan(&outboxCount, &meterOutboxCount, &usageCount, &usageBytes); err != nil {
 		t.Fatal(err)
 	}
-	if outboxCount != 3 || usageCount != 3 || usageBytes != int64(len("alphabetagamma")) {
-		t.Fatalf("outbox=%d usageCount=%d usageBytes=%d", outboxCount, usageCount, usageBytes)
+	if outboxCount != 3 || meterOutboxCount != 3 || usageCount != 3 || usageBytes != int64(len("alphabetagamma")) {
+		t.Fatalf("outbox=%d meterOutbox=%d usageCount=%d usageBytes=%d", outboxCount, meterOutboxCount, usageCount, usageBytes)
 	}
 
 	claimed, err := queries.ClaimRunLogIngestBatch(ctx, db.ClaimRunLogIngestBatchParams{
@@ -71,9 +73,39 @@ func TestAppendRunLogChunkWritesSelfContainedOutboxAndUsage(t *testing.T) {
 	if !bytes.Equal(joined, []byte("alphabetagamma")) {
 		t.Fatalf("claimed bytes = %q", joined)
 	}
+
+	claimedMeterEvents, err := queries.ClaimMeterEventIngestBatch(ctx, db.ClaimMeterEventIngestBatchParams{
+		RowLimit:      10,
+		LeaseDuration: pgvalue.Interval(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimedMeterEvents) != 3 {
+		t.Fatalf("claimed meter event rows = %d, want 3", len(claimedMeterEvents))
+	}
+	var claimedBytes int64
+	for _, row := range claimedMeterEvents {
+		if row.WorkerGroupID != testWorkerGroupID || row.ProjectID != pgvalue.UUID(ids.projectID) || row.EnvironmentID != pgvalue.UUID(ids.environmentID) {
+			t.Fatalf("claimed meter event missing placement payload: %+v", row)
+		}
+		if row.SourceType != "run_log" || row.RunID != pgvalue.UUID(ids.runID) || row.Meter != "log_bytes" || row.Unit != "bytes" {
+			t.Fatalf("claimed meter event identity = %+v", row)
+		}
+		if string(row.Details) == "" || !bytes.Contains(row.Details, []byte(`"stream"`)) {
+			t.Fatalf("claimed meter event details = %s", row.Details)
+		}
+		if !row.Quantity.Valid || row.Quantity.Int == nil || row.Quantity.Exp != 0 {
+			t.Fatalf("claimed meter event quantity = %+v, want integer numeric", row.Quantity)
+		}
+		claimedBytes += row.Quantity.Int.Int64()
+	}
+	if claimedBytes != int64(len("alphabetagamma")) {
+		t.Fatalf("claimed meter event bytes = %d", claimedBytes)
+	}
 }
 
-func TestUsageLedgerEntriesSurviveRunDeletion(t *testing.T) {
+func TestMeterEventsSurviveRunDeletion(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -93,7 +125,7 @@ func TestUsageLedgerEntriesSurviveRunDeletion(t *testing.T) {
 	var usageBytes int64
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*), COALESCE(SUM(quantity), 0)
-		  FROM usage_ledger_entries
+		  FROM meter_events
 		 WHERE org_id = $1
 		   AND run_id = $2
 		   AND meter = 'log_bytes'
@@ -101,19 +133,20 @@ func TestUsageLedgerEntriesSurviveRunDeletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	if usageCount != 1 || usageBytes != int64(len("billable")) {
-		t.Fatalf("usage ledger entries after run deletion count=%d bytes=%d", usageCount, usageBytes)
+		t.Fatalf("meter events after run deletion count=%d bytes=%d", usageCount, usageBytes)
 	}
 }
 
-func TestUsageLedgerEntryIdempotencyRejectsDuplicateScope(t *testing.T) {
+func TestMeterEventIdempotencyRejectsDuplicateScope(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	sourceID := uuid.Must(uuid.NewV7())
 
 	insert := `
-		INSERT INTO usage_ledger_entries (
+		INSERT INTO meter_events (
 			org_id,
+			worker_group_id,
 			project_id,
 			environment_id,
 			source_type,
@@ -124,16 +157,16 @@ func TestUsageLedgerEntryIdempotencyRejectsDuplicateScope(t *testing.T) {
 			unit,
 			idempotency_key
 		)
-		VALUES ($1, $2, $3, 'run_log', $4, $5, 'log_bytes', 7, 'bytes', 'duplicate-key')
+		VALUES ($1, $2, $3, $4, 'run_log', $5, $6, 'log_bytes', 7, 'bytes', 'duplicate-key')
 	`
-	if _, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID); err != nil {
+	if _, err := pool.Exec(ctx, insert, ids.orgID, testWorkerGroupID, ids.projectID, ids.environmentID, sourceID, ids.runID); err != nil {
 		t.Fatal(err)
 	}
 
-	_, err := pool.Exec(ctx, insert, ids.orgID, ids.projectID, ids.environmentID, sourceID, ids.runID)
+	_, err := pool.Exec(ctx, insert, ids.orgID, testWorkerGroupID, ids.projectID, ids.environmentID, sourceID, ids.runID)
 	var pgErr *pgconn.PgError
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-		t.Fatalf("duplicate usage ledger entry error = %v, want unique_violation", err)
+		t.Fatalf("duplicate meter event error = %v, want unique_violation", err)
 	}
 }
 
@@ -177,7 +210,7 @@ func TestWorkerTelemetryAppendRejectsDisabledWorkerGroup(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND source_id = $2),
-			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $2)
+			(SELECT count(*) FROM meter_events WHERE org_id = $1 AND run_id = $2)
 	`, ids.orgID, ids.runID).Scan(&outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +289,7 @@ func TestAppendRunLogChunkConcurrentDuplicateDoesNotBurnSeq(t *testing.T) {
 	if err := pool.QueryRow(ctx, `
 		SELECT
 			(SELECT count(*) FROM telemetry_outbox WHERE org_id = $1 AND worker_group_id = $2 AND source_kind = 'run' AND source_id = $3 AND stream_kind = 'run_log'),
-			(SELECT count(*) FROM usage_ledger_entries WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
+			(SELECT count(*) FROM meter_events WHERE org_id = $1 AND run_id = $3 AND meter = 'log_bytes')
 	`, ids.orgID, testWorkerGroupID, ids.runID).Scan(&outboxCount, &usageCount); err != nil {
 		t.Fatal(err)
 	}

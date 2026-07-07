@@ -122,5 +122,27 @@ type TerminalOutputChunk struct {
 type IngestWriter interface {
 	WriteEvents(context.Context, []EventRecord) error
 	WriteRunLogs(context.Context, []RunLogRecord) error
+	WriteMeterEvents(context.Context, []MeterEventRecord) error
 	WriteTerminalOutput(context.Context, []TerminalOutputRecord) error
+}
+
+type MeterEventRecord struct {
+	WorkerGroupID  string     `json:"worker_group_id"`
+	OrgID          uuid.UUID  `json:"org_id"`
+	ProjectID      uuid.UUID  `json:"project_id"`
+	EnvironmentID  uuid.UUID  `json:"environment_id"`
+	SourceType     string     `json:"source_type"`
+	SourceID       uuid.UUID  `json:"source_id"`
+	RunID          uuid.UUID  `json:"run_id"`
+	AttemptNumber  *int32     `json:"attempt_number,omitempty"`
+	TraceID        string     `json:"trace_id"`
+	SpanID         string     `json:"span_id"`
+	Meter          string     `json:"meter"`
+	Quantity       string     `json:"quantity"`
+	Unit           string     `json:"unit"`
+	MeasuredTo     *time.Time `json:"measured_to,omitempty"`
+	Details        string     `json:"details"`
+	IdempotencyKey string     `json:"idempotency_key"`
+	OccurredAt     time.Time  `json:"occurred_at"`
+	CreatedAt      time.Time  `json:"created_at"`
 }
