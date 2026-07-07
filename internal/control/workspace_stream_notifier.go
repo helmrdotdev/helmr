@@ -112,9 +112,9 @@ func (n *WorkspaceStreamNotifier) publishWakeup(ctx context.Context, row db.Clai
 		ID:               row.ID,
 		OrgID:            pgvalue.MustUUIDValue(row.OrgID).String(),
 		WorkspaceID:      pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		ResourceKind:     string(row.ResourceKind),
-		ResourceID:       pgvalue.MustUUIDValue(row.ResourceID).String(),
-		Stream:           row.Stream,
+		ResourceKind:     "workspace_process",
+		ResourceID:       pgvalue.MustUUIDValue(row.ProcessID).String(),
+		Stream:           row.StreamName,
 		CursorOffset:     row.CursorOffset,
 		NotificationKind: string(row.NotificationKind),
 	})
@@ -123,7 +123,7 @@ func (n *WorkspaceStreamNotifier) publishWakeup(ctx context.Context, row db.Clai
 	}
 	id := redisEventID(row.ID)
 	err = n.redis.XAdd(ctx, &redis.XAddArgs{
-		Stream: workspaceStreamKey(row.OrgID, string(row.ResourceKind), row.ResourceID, row.Stream),
+		Stream: workspaceStreamKey(row.OrgID, "workspace_process", row.ProcessID, row.StreamName),
 		MaxLen: workspaceStreamWakeupMaxLen,
 		Approx: true,
 		ID:     id,

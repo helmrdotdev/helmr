@@ -306,11 +306,11 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 
 	execID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_execs (
+		INSERT INTO workspace_processes (
 			id, org_id, worker_group_id, project_id, environment_id, workspace_id,
-			command, state, detached, created_by_subject_type, created_by_subject_id
+			kind, command, state, detached, created_by_subject_type, created_by_subject_id
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, '["true"]'::jsonb, 'running', true, 'test', 'test')
+		VALUES ($1, $2, $3, $4, $5, $6, 'command', '["true"]'::jsonb, 'running', true, 'test', 'test')
 	`, execID, ids.orgID, testWorkerGroupID, ids.projectID, ids.environmentID, ids.workspaceID); err != nil {
 		t.Fatal(err)
 	}
@@ -320,8 +320,8 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
-		ExecID:        pgvalue.UUID(execID),
-		Stream:        db.WorkspaceExecStreamStdout,
+		ProcessID:     pgvalue.UUID(execID),
+		StreamName:    "stdout",
 		OffsetStart:   0,
 		OffsetEnd:     5,
 		Data:          []byte("alpha"),
@@ -334,8 +334,8 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 		ProjectID:     pgvalue.UUID(ids.projectID),
 		EnvironmentID: pgvalue.UUID(ids.environmentID),
 		WorkspaceID:   pgvalue.UUID(ids.workspaceID),
-		ExecID:        pgvalue.UUID(execID),
-		Stream:        db.WorkspaceExecStreamStdout,
+		ProcessID:     pgvalue.UUID(execID),
+		StreamName:    "stdout",
 		OffsetStart:   5,
 		OffsetEnd:     9,
 		Data:          []byte("beta"),
@@ -343,7 +343,7 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 		t.Fatal(err)
 	}
 
-	claimed, err := queries.ClaimWorkspaceExecTerminalOutputIngestBatch(ctx, db.ClaimWorkspaceExecTerminalOutputIngestBatchParams{
+	claimed, err := queries.ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx, db.ClaimWorkspaceProcessTerminalOutputIngestBatchParams{
 		RowLimit:      10,
 		LeaseDuration: pgvalue.Interval(time.Minute),
 	})
@@ -354,7 +354,7 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 		t.Fatalf("claimed exec terminal rows = %+v", claimed)
 	}
 	for _, row := range claimed {
-		if row.ProjectID != pgvalue.UUID(ids.projectID) || row.EnvironmentID != pgvalue.UUID(ids.environmentID) || row.ResourceKind != "workspace_exec" || row.ResourceID != pgvalue.UUID(execID) {
+		if row.ProjectID != pgvalue.UUID(ids.projectID) || row.EnvironmentID != pgvalue.UUID(ids.environmentID) || row.ResourceKind != "workspace_process" || row.ResourceID != pgvalue.UUID(execID) {
 			t.Fatalf("terminal outbox row missing payload: %+v", row)
 		}
 	}
@@ -364,8 +364,8 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 		ProjectID:         pgvalue.UUID(ids.projectID),
 		EnvironmentID:     pgvalue.UUID(ids.environmentID),
 		WorkspaceID:       pgvalue.UUID(ids.workspaceID),
-		ExecID:            pgvalue.UUID(execID),
-		Stream:            db.WorkspaceExecStreamStdout,
+		ProcessID:         pgvalue.UUID(execID),
+		StreamName:        "stdout",
 		RetainAfterOffset: 5,
 	}); err != nil {
 		t.Fatal(err)
@@ -373,9 +373,9 @@ func TestTerminalOutputWritesSelfContainedOutboxAndLiveChunksCanBeTrimmed(t *tes
 	var remaining int64
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
-		  FROM workspace_exec_stream_chunks
+		  FROM workspace_process_stream_chunks
 		 WHERE org_id = $1
-		   AND exec_id = $2
+		   AND process_id = $2
 	`, ids.orgID, execID).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}

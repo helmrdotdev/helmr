@@ -20,7 +20,7 @@ INSERT INTO workspace_leases (
     workspace_id,
     workspace_mount_id,
     lease_kind,
-    owner_exec_id,
+    owner_process_id,
     base_version_id,
     acquired_version_id,
     acquired_fencing_generation,
@@ -54,12 +54,12 @@ SELECT $1,
    AND workspace_mounts.workspace_id = $9
    AND workspace_mounts.id = $10
    AND workspace_mounts.state = 'mounted'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceInstanceLeaseParams struct {
 	ID               pgtype.UUID        `json:"id"`
-	OwnerExecID      pgtype.UUID        `json:"owner_exec_id"`
+	OwnerProcessID   pgtype.UUID        `json:"owner_process_id"`
 	FencingToken     string             `json:"fencing_token"`
 	HeartbeatToken   string             `json:"heartbeat_token"`
 	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
@@ -73,7 +73,7 @@ type AcquireWorkspaceInstanceLeaseParams struct {
 func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg AcquireWorkspaceInstanceLeaseParams) (WorkspaceLease, error) {
 	row := q.db.QueryRow(ctx, acquireWorkspaceInstanceLease,
 		arg.ID,
-		arg.OwnerExecID,
+		arg.OwnerProcessID,
 		arg.FencingToken,
 		arg.HeartbeatToken,
 		arg.ExpiresAt,
@@ -95,8 +95,7 @@ func (q *Queries) AcquireWorkspaceInstanceLease(ctx context.Context, arg Acquire
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
-		&i.OwnerExecID,
-		&i.OwnerPtySessionID,
+		&i.OwnerProcessID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -118,11 +117,11 @@ WITH fenced_mount AS (
     UPDATE workspace_mounts
        SET fencing_generation = workspace_mounts.fencing_generation + 1,
            updated_at = now()
-     WHERE workspace_mounts.org_id = $7
-       AND workspace_mounts.project_id = $8
-       AND workspace_mounts.environment_id = $9
-       AND workspace_mounts.workspace_id = $10
-       AND workspace_mounts.id = $11
+     WHERE workspace_mounts.org_id = $6
+       AND workspace_mounts.project_id = $7
+       AND workspace_mounts.environment_id = $8
+       AND workspace_mounts.workspace_id = $9
+       AND workspace_mounts.id = $10
        AND workspace_mounts.state = 'mounted'
     RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
 )
@@ -134,8 +133,7 @@ INSERT INTO workspace_leases (
     workspace_id,
     workspace_mount_id,
     lease_kind,
-    owner_exec_id,
-    owner_pty_session_id,
+    owner_process_id,
     base_version_id,
     acquired_version_id,
     acquired_fencing_generation,
@@ -151,41 +149,38 @@ SELECT $1,
        fenced_mount.id,
        'write',
        $2,
-       $3,
        fenced_mount.base_version_id,
        workspaces.current_version_id,
        fenced_mount.fencing_generation,
+       $3,
        $4,
-       $5,
-       $6
+       $5
   FROM fenced_mount
   JOIN workspaces
     ON workspaces.org_id = fenced_mount.org_id
    AND workspaces.project_id = fenced_mount.project_id
    AND workspaces.environment_id = fenced_mount.environment_id
    AND workspaces.id = fenced_mount.workspace_id
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type AcquireWorkspaceWriteLeaseParams struct {
-	ID                pgtype.UUID        `json:"id"`
-	OwnerExecID       pgtype.UUID        `json:"owner_exec_id"`
-	OwnerPtySessionID pgtype.UUID        `json:"owner_pty_session_id"`
-	FencingToken      string             `json:"fencing_token"`
-	HeartbeatToken    string             `json:"heartbeat_token"`
-	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
-	OrgID             pgtype.UUID        `json:"org_id"`
-	ProjectID         pgtype.UUID        `json:"project_id"`
-	EnvironmentID     pgtype.UUID        `json:"environment_id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	WorkspaceMountID  pgtype.UUID        `json:"workspace_mount_id"`
+	ID               pgtype.UUID        `json:"id"`
+	OwnerProcessID   pgtype.UUID        `json:"owner_process_id"`
+	FencingToken     string             `json:"fencing_token"`
+	HeartbeatToken   string             `json:"heartbeat_token"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	ProjectID        pgtype.UUID        `json:"project_id"`
+	EnvironmentID    pgtype.UUID        `json:"environment_id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	WorkspaceMountID pgtype.UUID        `json:"workspace_mount_id"`
 }
 
 func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWorkspaceWriteLeaseParams) (WorkspaceLease, error) {
 	row := q.db.QueryRow(ctx, acquireWorkspaceWriteLease,
 		arg.ID,
-		arg.OwnerExecID,
-		arg.OwnerPtySessionID,
+		arg.OwnerProcessID,
 		arg.FencingToken,
 		arg.HeartbeatToken,
 		arg.ExpiresAt,
@@ -207,8 +202,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
-		&i.OwnerExecID,
-		&i.OwnerPtySessionID,
+		&i.OwnerProcessID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -226,7 +220,7 @@ func (q *Queries) AcquireWorkspaceWriteLease(ctx context.Context, arg AcquireWor
 }
 
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
   FROM workspace_leases
  WHERE org_id = $1
    AND project_id = $2
@@ -263,8 +257,7 @@ func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeasePa
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
-		&i.OwnerExecID,
-		&i.OwnerPtySessionID,
+		&i.OwnerProcessID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,
@@ -435,7 +428,7 @@ func (q *Queries) MarkWorkspaceWriteLeaseDirty(ctx context.Context, arg MarkWork
 
 const promoteWorkspaceCapture = `-- name: PromoteWorkspaceCapture :one
 WITH active_writer AS (
-    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
+    SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
       FROM workspace_leases
      WHERE workspace_leases.org_id = $1
        AND workspace_leases.id = $2
@@ -512,7 +505,7 @@ created_version AS (
       FROM active_writer
       JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = $5
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -540,7 +533,7 @@ cleaned_mount AS (
        AND workspace_mounts.dirty_generation = $4
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_exec_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_process_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id
@@ -573,7 +566,7 @@ type PromoteWorkspaceCaptureRow struct {
 	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
 	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
 	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	ProducedByExecID       pgtype.UUID           `json:"produced_by_exec_id"`
+	ProducedByProcessID    pgtype.UUID           `json:"produced_by_process_id"`
 	Kind                   WorkspaceVersionKind  `json:"kind"`
 	State                  WorkspaceVersionState `json:"state"`
 	ArtifactID             pgtype.UUID           `json:"artifact_id"`
@@ -617,7 +610,7 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		&i.SourceWorkspaceMountID,
 		&i.SourceWriteLeaseID,
 		&i.ProducedByRunID,
-		&i.ProducedByExecID,
+		&i.ProducedByProcessID,
 		&i.Kind,
 		&i.State,
 		&i.ArtifactID,
@@ -644,7 +637,7 @@ UPDATE workspace_leases
    AND id = $2
    AND fencing_token = $3
    AND state = 'active'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_exec_id, owner_pty_session_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, lease_kind, state, owner_run_id, owner_process_id, base_version_id, acquired_version_id, acquired_fencing_generation, fencing_token, heartbeat_token, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, error
 `
 
 type ReleaseWorkspaceLeaseParams struct {
@@ -667,8 +660,7 @@ func (q *Queries) ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspac
 		&i.LeaseKind,
 		&i.State,
 		&i.OwnerRunID,
-		&i.OwnerExecID,
-		&i.OwnerPtySessionID,
+		&i.OwnerProcessID,
 		&i.BaseVersionID,
 		&i.AcquiredVersionID,
 		&i.AcquiredFencingGeneration,

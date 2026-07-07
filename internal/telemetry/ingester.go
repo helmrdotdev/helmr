@@ -119,46 +119,17 @@ func (i *Ingestor) deadLetterOrphans(ctx context.Context) (int, error) {
 }
 
 func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
-	execRows, err := i.db.ClaimWorkspaceExecTerminalOutputIngestBatch(ctx, db.ClaimWorkspaceExecTerminalOutputIngestBatchParams{
+	rows, err := i.db.ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx, db.ClaimWorkspaceProcessTerminalOutputIngestBatchParams{
 		RowLimit:      i.batchSize,
 		LeaseDuration: pgvalue.Interval(i.leaseDuration),
 	})
 	if err != nil {
 		return 0, err
 	}
-	ptyRows, err := i.db.ClaimWorkspacePtyTerminalOutputIngestBatch(ctx, db.ClaimWorkspacePtyTerminalOutputIngestBatchParams{
-		RowLimit:      i.batchSize,
-		LeaseDuration: pgvalue.Interval(i.leaseDuration),
-	})
-	if err != nil {
-		return len(execRows), err
-	}
-	total := len(execRows) + len(ptyRows)
-	ids := make([]int64, 0, len(execRows)+len(ptyRows))
-	candidates := make([]terminalIngestCandidate, 0, total)
+	ids := make([]int64, 0, len(rows))
+	candidates := make([]terminalIngestCandidate, 0, len(rows))
 	var firstErr error
-	for _, row := range execRows {
-		record := terminalOutputRecord(terminalOutputRow{
-			IdempotencyKey: row.IdempotencyKey,
-			OrgID:          row.OrgID,
-			WorkerGroupID:  row.WorkerGroupID,
-			ProjectID:      row.ProjectID,
-			EnvironmentID:  row.EnvironmentID,
-			WorkspaceID:    row.WorkspaceID,
-			ResourceKind:   row.ResourceKind,
-			ResourceID:     row.ResourceID,
-			StreamName:     row.StreamName,
-			OffsetStart:    row.OffsetStart,
-			OffsetEnd:      pgvalue.Int8Value(row.OffsetEnd),
-			Data:           row.Data,
-			ObservedAt:     row.ObservedAt,
-		})
-		candidates = append(candidates, terminalIngestCandidate{
-			outboxID: row.OutboxID,
-			record:   record,
-		})
-	}
-	for _, row := range ptyRows {
+	for _, row := range rows {
 		record := terminalOutputRecord(terminalOutputRow{
 			IdempotencyKey: row.IdempotencyKey,
 			OrgID:          row.OrgID,
@@ -189,12 +160,12 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 		}
 	}
 	if len(ids) == 0 {
-		return total, firstErr
+		return len(rows), firstErr
 	}
 	if err := i.db.MarkTelemetryOutboxWritten(ctx, ids); err != nil {
-		return total, err
+		return len(rows), err
 	}
-	return total, firstErr
+	return len(rows), firstErr
 }
 
 func (i *Ingestor) ingestEvents(ctx context.Context) (int, error) {

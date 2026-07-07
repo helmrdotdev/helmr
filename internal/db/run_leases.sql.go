@@ -343,7 +343,7 @@ invalidated_runtime_checkpoints AS (
       FROM failed_runs
      WHERE runtime_checkpoints.org_id = failed_runs.org_id
        AND runtime_checkpoints.run_id = failed_runs.id
-       AND runtime_checkpoints.state = 'creating'
+       AND runtime_checkpoints.state = 'starting'
     RETURNING runtime_checkpoints.id
 ),
 failed_runtime_checkpoint_restores AS (
@@ -983,7 +983,7 @@ workspace_write_lease AS (
      WHERE concurrency_guard.workspace_id IS NOT NULL
        AND concurrency_guard.workspace_mount_id IS NOT NULL
     ON CONFLICT DO NOTHING
-    RETURNING workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_exec_id, workspace_leases.owner_pty_session_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
+    RETURNING workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.lease_kind, workspace_leases.state, workspace_leases.owner_run_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.acquired_version_id, workspace_leases.acquired_fencing_generation, workspace_leases.fencing_token, workspace_leases.heartbeat_token, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.error
 ),
 workspace_lease_guard AS (
     SELECT 1
@@ -1586,7 +1586,7 @@ eligible AS MATERIALIZED (
                       AND sessions.project_id = runs.project_id
                       AND sessions.environment_id = runs.environment_id
                       AND sessions.id = runs.session_id
-                      AND sessions.status = 'open'
+                      AND sessions.status = 'running'
                       AND sessions.current_run_id = runs.id
                       AND workspaces.state = 'active'
                       AND workspaces.current_version_id IS NOT DISTINCT FROM $15::uuid
@@ -1937,23 +1937,23 @@ waiting_runtime_instance AS (
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_execs
-            WHERE workspace_execs.org_id = workspace_mounts.org_id
-              AND workspace_execs.project_id = workspace_mounts.project_id
-              AND workspace_execs.environment_id = workspace_mounts.environment_id
-              AND workspace_execs.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_execs.workspace_mount_id = workspace_mounts.id OR workspace_execs.workspace_mount_id IS NULL)
-              AND workspace_execs.state IN ('queued', 'materializing', 'running')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.state IN ('queued', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1
-             FROM workspace_pty_sessions
-            WHERE workspace_pty_sessions.org_id = workspace_mounts.org_id
-              AND workspace_pty_sessions.project_id = workspace_mounts.project_id
-              AND workspace_pty_sessions.environment_id = workspace_mounts.environment_id
-              AND workspace_pty_sessions.workspace_id = workspace_mounts.workspace_id
-              AND (workspace_pty_sessions.workspace_mount_id = workspace_mounts.id OR workspace_pty_sessions.workspace_mount_id IS NULL)
-              AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+             FROM workspace_processes
+            WHERE workspace_processes.org_id = workspace_mounts.org_id
+              AND workspace_processes.project_id = workspace_mounts.project_id
+              AND workspace_processes.environment_id = workspace_mounts.environment_id
+              AND workspace_processes.workspace_id = workspace_mounts.workspace_id
+              AND (workspace_processes.workspace_mount_id = workspace_mounts.id OR workspace_processes.workspace_mount_id IS NULL)
+              AND workspace_processes.state IN ('starting', 'running', 'running', 'closing')
        )
     RETURNING runtime_instances.id
 ),
@@ -1999,7 +1999,7 @@ invalidated_runtime_checkpoints AS (
       FROM released
      WHERE runtime_checkpoints.org_id = released.org_id
        AND runtime_checkpoints.run_id = released.id
-       AND runtime_checkpoints.state = 'creating'
+       AND runtime_checkpoints.state = 'starting'
     RETURNING runtime_checkpoints.id
 ),
 completed_runtime_checkpoint_restore AS (

@@ -32,7 +32,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 		return
 	}
 	row, err := s.db.MarkWorkspaceExecStarted(r.Context(), db.MarkWorkspaceExecStartedParams{
-		ProcessID:        strings.TrimSpace(request.ProcessID),
+		RuntimeProcessID: strings.TrimSpace(request.ProcessID),
 		OrgID:            mount.OrgID,
 		ProjectID:        mount.ProjectID,
 		EnvironmentID:    mount.EnvironmentID,
@@ -57,7 +57,7 @@ func (s *Server) workerMarkWorkspaceExecStarted(w http.ResponseWriter, r *http.R
 		s.writeWorkspacePrimitiveError(w, "mark workspace exec started", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceExec(row))})
+	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceProcess(row))})
 }
 
 func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.Request) {
@@ -93,8 +93,8 @@ func (s *Server) workerAppendWorkspaceExecOutput(w http.ResponseWriter, r *http.
 	}
 	out := make([]api.WorkspaceExecStreamChunkResponse, 0, len(request.Chunks))
 	for _, input := range request.Chunks {
-		stream := db.WorkspaceExecStream(strings.TrimSpace(input.Stream))
-		if stream != db.WorkspaceExecStreamStdout && stream != db.WorkspaceExecStreamStderr {
+		stream := string(strings.TrimSpace(input.Stream))
+		if stream != workspaceStreamStdout && stream != workspaceStreamStderr {
 			writeError(w, badRequest(errors.New("exec output stream must be stdout or stderr")))
 			return
 		}
@@ -128,7 +128,7 @@ func (s *Server) workerListWorkspaceExecInput(w http.ResponseWriter, r *http.Req
 		ProjectID:     mount.ProjectID,
 		EnvironmentID: mount.EnvironmentID,
 		WorkspaceID:   mount.WorkspaceID,
-		ExecID:        exec.ID,
+		ProcessID:     exec.ID,
 		LimitCount:    limit,
 	})
 	if err != nil {
@@ -159,15 +159,15 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		_ = mount
 		return
 	}
-	var row db.WorkspaceExec
+	var row db.WorkspaceProcess
 	if err := s.inTx(r.Context(), func(work *txWork) error {
 		deliveredChunk, err := work.q.GetWorkspaceExecStreamChunkAtOffset(r.Context(), db.GetWorkspaceExecStreamChunkAtOffsetParams{
 			OrgID:         mount.OrgID,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
-			ExecID:        exec.ID,
-			Stream:        db.WorkspaceExecStreamStdin,
+			ProcessID:     exec.ID,
+			StreamName:    workspaceStreamStdin,
 			OffsetStart:   request.OffsetStart,
 		})
 		if err != nil {
@@ -196,8 +196,8 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
-			ExecID:        exec.ID,
-			Stream:        db.WorkspaceExecStreamStdin,
+			ProcessID:     exec.ID,
+			StreamName:    workspaceStreamStdin,
 			OffsetStart:   deliveredChunk.OffsetStart,
 			OffsetEnd:     deliveredChunk.OffsetEnd,
 			DataSha256:    deliveredDigest,
@@ -210,8 +210,8 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 					ProjectID:     mount.ProjectID,
 					EnvironmentID: mount.EnvironmentID,
 					WorkspaceID:   mount.WorkspaceID,
-					ExecID:        exec.ID,
-					Stream:        db.WorkspaceExecStreamStdin,
+					ProcessID:     exec.ID,
+					StreamName:    workspaceStreamStdin,
 					OffsetStart:   deliveredChunk.OffsetStart,
 				})
 				if getErr == nil && receipt.OffsetEnd == deliveredChunk.OffsetEnd && receipt.DataSize == int32(len(deliveredChunk.Data)) && bytes.Equal(receipt.DataSha256, deliveredDigest) {
@@ -230,7 +230,7 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
-			ExecID:        exec.ID,
+			ProcessID:     exec.ID,
 			OffsetStart:   request.OffsetStart,
 		})
 		if err != nil {
@@ -254,8 +254,8 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 			ProjectID:         mount.ProjectID,
 			EnvironmentID:     mount.EnvironmentID,
 			WorkspaceID:       mount.WorkspaceID,
-			ExecID:            exec.ID,
-			Stream:            db.WorkspaceExecStreamStdin,
+			ProcessID:         exec.ID,
+			StreamName:        workspaceStreamStdin,
 			RetainAfterOffset: request.OffsetEnd,
 		}); err != nil {
 			return err
@@ -337,11 +337,11 @@ func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(workspaceExecFromExitedRow(row))})
 }
 
-func workspaceExecTerminalEventMatches(row db.WorkspaceExec, workspaceMountID pgtype.UUID, state db.WorkspaceExecState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
+func workspaceExecTerminalEventMatches(row db.WorkspaceProcess, workspaceMountID pgtype.UUID, state db.WorkspaceProcessState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
 	if !workerPrimitiveWorkspaceMountMatches(row.WorkspaceMountID, workspaceMountID) {
 		return false
 	}
-	if row.State == db.WorkspaceExecStateLost || row.State == db.WorkspaceExecStateTerminated {
+	if row.State == db.WorkspaceProcessStateLost {
 		return true
 	}
 	if row.State != state {
@@ -356,16 +356,16 @@ func workspaceExecTerminalEventMatches(row db.WorkspaceExec, workspaceMountID pg
 	return workerPrimitiveJSONEqual(row.Error, errorJSON)
 }
 
-func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMount, db.WorkspaceExec, bool) {
+func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMount, db.WorkspaceProcess, bool) {
 	mount, err := s.validateWorkerWorkspacePrimitiveScope(r.Context(), workerFromContext(r.Context()), scope)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "validate workspace exec scope", err)
-		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
 	}
 	execID, err := parseWorkerPrimitiveUUID("exec_id", rawExecID)
 	if err != nil {
 		writeError(w, badRequest(err))
-		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
 	}
 	exec, err := s.db.GetWorkspaceExec(r.Context(), db.GetWorkspaceExecParams{
 		OrgID:         mount.OrgID,
@@ -376,36 +376,36 @@ func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWri
 	})
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "get workspace exec", err)
-		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
 	}
 	if !exec.WorkspaceMountID.Valid || pgvalue.MustUUIDValue(exec.WorkspaceMountID) != pgvalue.MustUUIDValue(mount.ID) {
 		writeError(w, conflict(errors.New("workspace exec is not bound to this workspace mount")))
-		return db.WorkspaceMount{}, db.WorkspaceExec{}, false
+		return db.WorkspaceMount{}, db.WorkspaceProcess{}, false
 	}
 	return mount, exec, true
 }
 
-func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec db.WorkspaceExec, stream db.WorkspaceExecStream, requestedOffset *int64, data []byte) (db.WorkspaceExecStreamChunk, error) {
+func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec db.WorkspaceProcess, stream string, requestedOffset *int64, data []byte) (db.WorkspaceProcessStreamChunk, error) {
 	if requestedOffset == nil {
-		return db.WorkspaceExecStreamChunk{}, badRequest(errors.New("offset_start is required"))
+		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("offset_start is required"))
 	}
 	if *requestedOffset < 0 {
-		return db.WorkspaceExecStreamChunk{}, badRequest(errors.New("offset must be non-negative"))
+		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("offset must be non-negative"))
 	}
 	if len(data) == 0 {
-		return db.WorkspaceExecStreamChunk{}, badRequest(errors.New("data is required"))
+		return db.WorkspaceProcessStreamChunk{}, badRequest(errors.New("data is required"))
 	}
 	if len(data) > workspaceStreamChunkMaxBytes {
-		return db.WorkspaceExecStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
+		return db.WorkspaceProcessStreamChunk{}, tooLarge(fmt.Errorf("stream chunk is %d bytes, exceeds max %d", len(data), workspaceStreamChunkMaxBytes))
 	}
-	var chunk db.WorkspaceExecStreamChunk
+	var chunk db.WorkspaceProcessStreamChunk
 	err := s.inTx(ctx, func(work *txWork) error {
 		locked, err := work.q.LockWorkspaceExecForStreamAppend(ctx, db.LockWorkspaceExecForStreamAppendParams{
 			OrgID:         exec.OrgID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,
-			ExecID:        exec.ID,
+			ProcessID:     exec.ID,
 		})
 		if err != nil {
 			return err
@@ -418,8 +418,8 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 				ProjectID:     exec.ProjectID,
 				EnvironmentID: exec.EnvironmentID,
 				WorkspaceID:   exec.WorkspaceID,
-				ExecID:        exec.ID,
-				Stream:        stream,
+				ProcessID:     exec.ID,
+				StreamName:    stream,
 				OffsetStart:   offset,
 			})
 			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
@@ -434,23 +434,23 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,
-			ExecID:        exec.ID,
-			Stream:        stream,
+			ProcessID:     exec.ID,
+			StreamName:    stream,
 			OffsetStart:   offset,
 			OffsetEnd:     offset + int64(len(data)),
 			Data:          data,
 			ObservedAt:    nil,
 		})
 		err = insertErr
-		chunk = db.WorkspaceExecStreamChunk(inserted)
+		chunk = db.WorkspaceProcessStreamChunk(inserted)
 		if errors.Is(err, pgx.ErrNoRows) {
 			existing, getErr := work.q.GetWorkspaceExecStreamChunkAtOffset(ctx, db.GetWorkspaceExecStreamChunkAtOffsetParams{
 				OrgID:         exec.OrgID,
 				ProjectID:     exec.ProjectID,
 				EnvironmentID: exec.EnvironmentID,
 				WorkspaceID:   exec.WorkspaceID,
-				ExecID:        exec.ID,
-				Stream:        stream,
+				ProcessID:     exec.ID,
+				StreamName:    stream,
 				OffsetStart:   offset,
 			})
 			if getErr == nil && existing.OffsetEnd == offset+int64(len(data)) && bytes.Equal(existing.Data, data) {
@@ -466,12 +466,12 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 			return err
 		}
 		row, err := work.q.AdvanceWorkspaceExecOutputCursor(ctx, db.AdvanceWorkspaceExecOutputCursorParams{
-			Stream:        stream,
+			StreamName:    stream,
 			OrgID:         exec.OrgID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,
-			ExecID:        exec.ID,
+			ProcessID:     exec.ID,
 		})
 		if err != nil {
 			return err
@@ -483,8 +483,8 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 				ProjectID:         exec.ProjectID,
 				EnvironmentID:     exec.EnvironmentID,
 				WorkspaceID:       exec.WorkspaceID,
-				ExecID:            exec.ID,
-				Stream:            stream,
+				ProcessID:         exec.ID,
+				StreamName:        stream,
 				RetainAfterOffset: retainAfter,
 			}); err != nil {
 				return err
@@ -495,9 +495,9 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 			ProjectID:        exec.ProjectID,
 			EnvironmentID:    exec.EnvironmentID,
 			WorkspaceID:      exec.WorkspaceID,
-			ResourceKind:     db.WorkspaceResourceKindWorkspaceExec,
-			ResourceID:       exec.ID,
-			Stream:           string(stream),
+			WorkerGroupID:    exec.WorkerGroupID,
+			ProcessID:        exec.ID,
+			StreamName:       string(stream),
 			CursorOffset:     chunk.OffsetEnd,
 			NotificationKind: db.WorkspaceStreamNotificationKindChunk,
 		}); err != nil {
@@ -506,17 +506,17 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		return nil
 	})
 	if err != nil {
-		return db.WorkspaceExecStreamChunk{}, err
+		return db.WorkspaceProcessStreamChunk{}, err
 	}
 	return chunk, nil
 }
 
-func normalizeWorkerWorkspaceExecTerminalState(raw string) (db.WorkspaceExecState, error) {
-	switch db.WorkspaceExecState(strings.TrimSpace(raw)) {
-	case db.WorkspaceExecStateExited:
-		return db.WorkspaceExecStateExited, nil
-	case db.WorkspaceExecStateFailed:
-		return db.WorkspaceExecStateFailed, nil
+func normalizeWorkerWorkspaceExecTerminalState(raw string) (db.WorkspaceProcessState, error) {
+	switch db.WorkspaceProcessState(strings.TrimSpace(raw)) {
+	case db.WorkspaceProcessStateExited:
+		return db.WorkspaceProcessStateExited, nil
+	case db.WorkspaceProcessStateFailed:
+		return db.WorkspaceProcessStateFailed, nil
 	default:
 		return "", errors.New("exec terminal state must be exited or failed")
 	}

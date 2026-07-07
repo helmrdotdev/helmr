@@ -11,15 +11,17 @@ func streamDataSHA256(data []byte) []byte {
 	return sum[:]
 }
 
-func execChunkFromReceipt(receipt db.WorkspaceExecStreamChunkReceipt, data []byte) db.WorkspaceExecStreamChunk {
-	return db.WorkspaceExecStreamChunk{
+func execChunkFromReceipt(receipt db.WorkspaceProcessStreamReceipt, data []byte) db.WorkspaceProcessStreamChunk {
+	return db.WorkspaceProcessStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,
+		WorkerGroupID: receipt.WorkerGroupID,
 		ProjectID:     receipt.ProjectID,
 		EnvironmentID: receipt.EnvironmentID,
 		WorkspaceID:   receipt.WorkspaceID,
-		ExecID:        receipt.ExecID,
-		Stream:        receipt.Stream,
+		ProcessID:     receipt.ProcessID,
+		StreamName:    receipt.StreamName,
+		Direction:     receipt.Direction,
 		OffsetStart:   receipt.OffsetStart,
 		OffsetEnd:     receipt.OffsetEnd,
 		Data:          data,
@@ -28,15 +30,17 @@ func execChunkFromReceipt(receipt db.WorkspaceExecStreamChunkReceipt, data []byt
 	}
 }
 
-func ptyChunkFromReceipt(receipt db.WorkspacePtyStreamChunkReceipt, data []byte) db.WorkspacePtyStreamChunk {
-	return db.WorkspacePtyStreamChunk{
+func ptyChunkFromReceipt(receipt db.WorkspaceProcessStreamReceipt, data []byte) db.WorkspaceProcessStreamChunk {
+	return db.WorkspaceProcessStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,
+		WorkerGroupID: receipt.WorkerGroupID,
 		ProjectID:     receipt.ProjectID,
 		EnvironmentID: receipt.EnvironmentID,
 		WorkspaceID:   receipt.WorkspaceID,
-		PtySessionID:  receipt.PtySessionID,
-		Stream:        receipt.Stream,
+		ProcessID:     receipt.ProcessID,
+		StreamName:    receipt.StreamName,
+		Direction:     receipt.Direction,
 		OffsetStart:   receipt.OffsetStart,
 		OffsetEnd:     receipt.OffsetEnd,
 		Data:          data,

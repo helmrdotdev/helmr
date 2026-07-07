@@ -145,12 +145,12 @@ SELECT updated.id AS outbox_id,
                    AND meter_events.idempotency_key = updated.idempotency_key
  ORDER BY updated.id ASC;
 
--- name: ClaimWorkspaceExecTerminalOutputIngestBatch :many
+-- name: ClaimWorkspaceProcessTerminalOutputIngestBatch :many
 WITH claimed AS (
     SELECT telemetry_outbox.id
       FROM telemetry_outbox
      WHERE telemetry_outbox.stream_kind = 'terminal_output'
-       AND telemetry_outbox.source_kind = 'workspace_exec'
+       AND telemetry_outbox.source_kind = 'workspace_process'
        AND telemetry_outbox.written_at IS NULL
        AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
        AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
@@ -184,49 +184,7 @@ SELECT updated.id AS outbox_id,
        updated.offset_end,
        updated.content AS data,
        updated.observed_at
-  FROM updated
- ORDER BY updated.id ASC;
-
--- name: ClaimWorkspacePtyTerminalOutputIngestBatch :many
-WITH claimed AS (
-    SELECT telemetry_outbox.id
-      FROM telemetry_outbox
-     WHERE telemetry_outbox.stream_kind = 'terminal_output'
-       AND telemetry_outbox.source_kind = 'workspace_pty'
-       AND telemetry_outbox.written_at IS NULL
-       AND telemetry_outbox.state IN ('pending', 'claimed', 'failed')
-       AND (telemetry_outbox.next_retry_at IS NULL OR telemetry_outbox.next_retry_at <= now())
-     ORDER BY telemetry_outbox.id ASC
-     LIMIT sqlc.arg(row_limit)
-     FOR UPDATE SKIP LOCKED
-),
-updated AS (
-    UPDATE telemetry_outbox
-       SET state = 'claimed',
-           retry_count = telemetry_outbox.retry_count + 1,
-           next_retry_at = now() + sqlc.arg(lease_duration)::interval,
-           updated_at = now(),
-           last_error = ''
-      FROM claimed
-     WHERE telemetry_outbox.id = claimed.id
-    RETURNING telemetry_outbox.*
-)
-SELECT updated.id AS outbox_id,
-       updated.retry_count,
-       COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
-       updated.org_id,
-       updated.worker_group_id,
-       updated.project_id,
-       updated.environment_id,
-       updated.workspace_id,
-       updated.resource_kind,
-       updated.resource_id,
-       updated.stream_name,
-       COALESCE(updated.offset_start, 0)::bigint AS offset_start,
-       updated.offset_end,
-       updated.content AS data,
-       updated.observed_at
-  FROM updated
+ FROM updated
  ORDER BY updated.id ASC;
 
 -- name: DeadLetterOrphanedTelemetryOutbox :many

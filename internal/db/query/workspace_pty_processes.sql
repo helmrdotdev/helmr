@@ -1,14 +1,15 @@
 -- name: CreateWorkspacePtySession :one
-INSERT INTO workspace_pty_sessions (
+INSERT INTO workspace_processes (
     id,
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
+    kind,
     cwd,
-    cols,
-    rows,
+    pty_cols,
+    pty_rows,
     filesystem_mode,
     state,
     created_by_subject_type,
@@ -20,11 +21,12 @@ SELECT sqlc.arg(id),
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
+       'pty',
        coalesce(sqlc.arg(cwd)::text, ''),
-       sqlc.arg(cols),
-       sqlc.arg(rows),
+       sqlc.arg(pty_cols),
+       sqlc.arg(pty_rows),
        sqlc.arg(filesystem_mode)::workspace_filesystem_mode,
-       sqlc.arg(state)::workspace_pty_state,
+       sqlc.arg(state)::workspace_process_state,
        coalesce(sqlc.arg(created_by_subject_type)::text, ''),
        coalesce(sqlc.arg(created_by_subject_id)::text, '')
   FROM workspaces
@@ -39,91 +41,96 @@ RETURNING *;
 
 -- name: GetWorkspacePtySession :one
 SELECT *
-  FROM workspace_pty_sessions
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(id);
+   AND id = sqlc.arg(id)
+   AND kind = 'pty';
 
 -- name: ListWorkspacePtySessions :many
 SELECT *
-  FROM workspace_pty_sessions
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND (sqlc.narg(state)::workspace_pty_state IS NULL OR state = sqlc.narg(state)::workspace_pty_state)
+   AND kind = 'pty'
+   AND (sqlc.narg(state)::workspace_process_state IS NULL OR state = sqlc.narg(state)::workspace_process_state)
  ORDER BY created_at DESC, id DESC
  LIMIT sqlc.arg(limit_count);
 
 -- name: BindWorkspacePtyWorkspaceMount :one
-UPDATE workspace_pty_sessions
+UPDATE workspace_processes
    SET workspace_mount_id = sqlc.arg(workspace_mount_id),
        instance_lease_id = sqlc.narg(instance_lease_id),
        write_lease_id = sqlc.narg(write_lease_id),
-       state = sqlc.arg(state)::workspace_pty_state,
+       state = sqlc.arg(state)::workspace_process_state,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('creating')
+   AND kind = 'pty'
+   AND state IN ('starting')
 RETURNING *;
 
 -- name: ListWorkspacePtySessionsAwaitingDispatch :many
-SELECT workspace_pty_sessions.*
-  FROM workspace_pty_sessions
+SELECT workspace_processes.*
+  FROM workspace_processes
   JOIN workspace_mounts
-    ON workspace_mounts.org_id = workspace_pty_sessions.org_id
-   AND workspace_mounts.project_id = workspace_pty_sessions.project_id
-   AND workspace_mounts.environment_id = workspace_pty_sessions.environment_id
-   AND workspace_mounts.workspace_id = workspace_pty_sessions.workspace_id
-   AND workspace_mounts.id = workspace_pty_sessions.workspace_mount_id
- WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
-   AND workspace_pty_sessions.state IN ('creating')
+    ON workspace_mounts.org_id = workspace_processes.org_id
+   AND workspace_mounts.project_id = workspace_processes.project_id
+   AND workspace_mounts.environment_id = workspace_processes.environment_id
+   AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+   AND workspace_mounts.id = workspace_processes.workspace_mount_id
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND workspace_processes.kind = 'pty'
+   AND workspace_processes.state IN ('starting')
    AND workspace_mounts.state = 'mounted'
- ORDER BY workspace_pty_sessions.created_at ASC, workspace_pty_sessions.id ASC
+ ORDER BY workspace_processes.created_at ASC, workspace_processes.id ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: MarkWorkspacePtyOpen :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_pty_sessions.*
-      FROM workspace_pty_sessions
+    SELECT workspace_processes.*
+      FROM workspace_processes
       JOIN workspace_mounts
-        ON workspace_mounts.org_id = workspace_pty_sessions.org_id
-       AND workspace_mounts.project_id = workspace_pty_sessions.project_id
-       AND workspace_mounts.environment_id = workspace_pty_sessions.environment_id
-       AND workspace_mounts.workspace_id = workspace_pty_sessions.workspace_id
-       AND workspace_mounts.id = workspace_pty_sessions.workspace_mount_id
-     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
-       AND workspace_pty_sessions.state IN ('creating', 'open')
+        ON workspace_mounts.org_id = workspace_processes.org_id
+       AND workspace_mounts.project_id = workspace_processes.project_id
+       AND workspace_mounts.environment_id = workspace_processes.environment_id
+       AND workspace_mounts.workspace_id = workspace_processes.workspace_id
+       AND workspace_mounts.id = workspace_processes.workspace_mount_id
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.id = sqlc.arg(id)
+       AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running')
        AND workspace_mounts.state = 'mounted'
-     FOR UPDATE OF workspace_pty_sessions, workspace_mounts
+     FOR UPDATE OF workspace_processes, workspace_mounts
 ),
 updated_pty AS (
-    UPDATE workspace_pty_sessions
-       SET state = 'open',
-           process_id = sqlc.arg(process_id),
-           started_at = coalesce(workspace_pty_sessions.started_at, now()),
+    UPDATE workspace_processes
+       SET state = 'running',
+           runtime_process_id = sqlc.arg(runtime_process_id),
+           started_at = coalesce(workspace_processes.started_at, now()),
            updated_at = now()
       FROM target
-     WHERE workspace_pty_sessions.org_id = target.org_id
-       AND workspace_pty_sessions.project_id = target.project_id
-       AND workspace_pty_sessions.environment_id = target.environment_id
-       AND workspace_pty_sessions.workspace_id = target.workspace_id
-       AND workspace_pty_sessions.id = target.id
-    RETURNING workspace_pty_sessions.*
+     WHERE workspace_processes.org_id = target.org_id
+       AND workspace_processes.project_id = target.project_id
+       AND workspace_processes.environment_id = target.environment_id
+       AND workspace_processes.workspace_id = target.workspace_id
+       AND workspace_processes.id = target.id
+    RETURNING workspace_processes.*
 ),
 dirtied_mount AS (
     UPDATE workspace_mounts
@@ -137,10 +144,10 @@ dirtied_mount AS (
        AND workspace_leases.environment_id = updated_pty.environment_id
        AND workspace_leases.workspace_id = updated_pty.workspace_id
        AND workspace_leases.id = updated_pty.write_lease_id
-       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.owner_process_id = updated_pty.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state = 'active'
-     WHERE target.state <> 'open'
+     WHERE target.state <> 'running'
        AND updated_pty.filesystem_mode = 'write'
        AND workspace_mounts.org_id = updated_pty.org_id
        AND workspace_mounts.project_id = updated_pty.project_id
@@ -166,26 +173,25 @@ SELECT *
  WHERE (SELECT count(*) FROM updated_workspace) >= 0;
 
 -- name: ResizeWorkspacePtySession :one
-UPDATE workspace_pty_sessions
-   SET resize_cols = sqlc.arg(cols),
-       resize_rows = sqlc.arg(rows),
-       state = 'resizing',
+UPDATE workspace_processes
+   SET pending_pty_cols = sqlc.arg(pty_cols),
+       pending_pty_rows = sqlc.arg(pty_rows),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('open', 'resizing')
+   AND kind = 'pty'
+   AND state = 'running'
 RETURNING *;
 
 -- name: MarkWorkspacePtyResizeApplied :one
-UPDATE workspace_pty_sessions
-   SET cols = resize_cols,
-       rows = resize_rows,
-       resize_cols = NULL,
-       resize_rows = NULL,
-       state = CASE WHEN state = 'closing' THEN 'closing'::workspace_pty_state ELSE 'open'::workspace_pty_state END,
+UPDATE workspace_processes
+   SET pty_cols = pending_pty_cols,
+       pty_rows = pending_pty_rows,
+       pending_pty_cols = NULL,
+       pending_pty_rows = NULL,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
@@ -193,80 +199,78 @@ UPDATE workspace_pty_sessions
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
    AND workspace_mount_id = sqlc.arg(workspace_mount_id)
-   AND state IN ('resizing', 'closing')
-   AND resize_cols = sqlc.arg(cols)
-   AND resize_rows = sqlc.arg(rows)
+   AND kind = 'pty'
+   AND state IN ('running', 'closing')
+   AND pending_pty_cols = sqlc.arg(pty_cols)
+   AND pending_pty_rows = sqlc.arg(pty_rows)
 RETURNING *;
 
 -- name: RequestWorkspacePtyClose :one
-UPDATE workspace_pty_sessions
+UPDATE workspace_processes
    SET state = 'closing',
-       resize_cols = CASE WHEN state IN ('resizing', 'closing') THEN resize_cols ELSE NULL END,
-       resize_rows = CASE WHEN state IN ('resizing', 'closing') THEN resize_rows ELSE NULL END,
+       pending_pty_cols = CASE WHEN state IN ('running', 'closing') THEN pending_pty_cols ELSE NULL END,
+       pending_pty_rows = CASE WHEN state IN ('running', 'closing') THEN pending_pty_rows ELSE NULL END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
    AND id = sqlc.arg(id)
-   AND state IN ('open', 'resizing', 'closing')
+   AND kind = 'pty'
+   AND state IN ('running', 'closing')
 RETURNING *;
 
 -- name: RollbackWorkspacePtyControlOperation :one
-UPDATE workspace_pty_sessions
-   SET state = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
-                AND resize_cols IS NOT NULL
-                AND resize_rows IS NOT NULL
-               THEN 'resizing'::workspace_pty_state
-           ELSE 'open'::workspace_pty_state
-       END,
-       resize_cols = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
-               THEN resize_cols
+UPDATE workspace_processes
+   SET state = 'running',
+       pending_pty_cols = CASE
+           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_process'
+               THEN pending_pty_cols
            ELSE NULL
        END,
-       resize_rows = CASE
-           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
-               THEN resize_rows
+       pending_pty_rows = CASE
+           WHEN sqlc.arg(operation_kind)::workspace_operation_kind = 'close_process'
+               THEN pending_pty_rows
            ELSE NULL
        END,
        updated_at = now()
- WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.id = sqlc.arg(id)
-   AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(id)
+   AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND workspace_processes.kind = 'pty'
    AND (
        (
-           sqlc.arg(operation_kind)::workspace_operation_kind = 'resize_pty'
-           AND workspace_pty_sessions.state = 'resizing'
-           AND workspace_pty_sessions.resize_cols = sqlc.narg(cols)
-           AND workspace_pty_sessions.resize_rows = sqlc.narg(rows)
+           sqlc.arg(operation_kind)::workspace_operation_kind = 'resize_process'
+           AND workspace_processes.state = 'running'
+           AND workspace_processes.pending_pty_cols = sqlc.narg(pty_cols)
+           AND workspace_processes.pending_pty_rows = sqlc.narg(pty_rows)
        )
        OR (
-           sqlc.arg(operation_kind)::workspace_operation_kind = 'close_pty'
-           AND workspace_pty_sessions.state = 'closing'
+           sqlc.arg(operation_kind)::workspace_operation_kind = 'close_process'
+           AND workspace_processes.state = 'closing'
        )
    )
 RETURNING *;
 
 -- name: MarkWorkspacePtyClosed :one
 WITH updated_pty AS (
-    UPDATE workspace_pty_sessions
-       SET state = 'closed',
-           resize_cols = NULL,
-           resize_rows = NULL,
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+    UPDATE workspace_processes
+       SET state = 'exited',
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
-     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.id = sqlc.arg(id)
+       AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
     RETURNING *
 ),
 released_write_lease AS (
@@ -280,18 +284,18 @@ released_write_lease AS (
        AND workspace_leases.environment_id = updated_pty.environment_id
        AND workspace_leases.workspace_id = updated_pty.workspace_id
        AND workspace_leases.id = updated_pty.write_lease_id
-       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.owner_process_id = updated_pty.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
     SELECT updated_pty.org_id,
            updated_pty.project_id,
            updated_pty.environment_id,
            updated_pty.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
+           updated_pty.worker_group_id,
            updated_pty.id,
            'output',
            updated_pty.output_cursor,
@@ -305,20 +309,21 @@ SELECT *
 
 -- name: MarkWorkspacePtyFailed :one
 WITH updated_pty AS (
-    UPDATE workspace_pty_sessions
+    UPDATE workspace_processes
        SET state = 'failed',
-           resize_cols = NULL,
-           resize_rows = NULL,
+           pending_pty_cols = NULL,
+           pending_pty_rows = NULL,
            error = coalesce(sqlc.arg(error)::jsonb, '{}'::jsonb),
-           closed_at = coalesce(workspace_pty_sessions.closed_at, now()),
+           exited_at = coalesce(workspace_processes.exited_at, now()),
            updated_at = now()
-     WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-       AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-       AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-       AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-       AND workspace_pty_sessions.id = sqlc.arg(id)
-       AND workspace_pty_sessions.workspace_mount_id = sqlc.arg(workspace_mount_id)
-       AND workspace_pty_sessions.state IN ('creating', 'open', 'resizing', 'closing')
+     WHERE workspace_processes.org_id = sqlc.arg(org_id)
+       AND workspace_processes.project_id = sqlc.arg(project_id)
+       AND workspace_processes.environment_id = sqlc.arg(environment_id)
+       AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+       AND workspace_processes.id = sqlc.arg(id)
+       AND workspace_processes.workspace_mount_id = sqlc.arg(workspace_mount_id)
+       AND workspace_processes.kind = 'pty'
+       AND workspace_processes.state IN ('starting', 'running', 'closing')
     RETURNING *
 ),
 released_write_lease AS (
@@ -332,18 +337,18 @@ released_write_lease AS (
        AND workspace_leases.environment_id = updated_pty.environment_id
        AND workspace_leases.workspace_id = updated_pty.workspace_id
        AND workspace_leases.id = updated_pty.write_lease_id
-       AND workspace_leases.owner_pty_session_id = updated_pty.id
+       AND workspace_leases.owner_process_id = updated_pty.id
        AND workspace_leases.lease_kind = 'write'
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 ),
 stream_wakeups AS (
-    INSERT INTO workspace_stream_wakeups (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream, cursor_offset, notification_kind)
+    INSERT INTO workspace_process_stream_wakeups (org_id, project_id, environment_id, workspace_id, worker_group_id, process_id, stream_name, cursor_offset, notification_kind)
     SELECT updated_pty.org_id,
            updated_pty.project_id,
            updated_pty.environment_id,
            updated_pty.workspace_id,
-           'workspace_pty'::workspace_resource_kind,
+           updated_pty.worker_group_id,
            updated_pty.id,
            'output',
            updated_pty.output_cursor,
@@ -364,23 +369,25 @@ SELECT id,
        input_cursor,
        output_cursor,
        state
-  FROM workspace_pty_sessions
+  FROM workspace_processes
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(pty_session_id)
+   AND id = sqlc.arg(process_id)
+   AND kind = 'pty'
  FOR UPDATE;
 
 -- name: InsertWorkspacePtyStreamChunk :one
-INSERT INTO workspace_pty_stream_chunks (
+INSERT INTO workspace_process_stream_chunks (
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
-    pty_session_id,
-    stream,
+    process_id,
+    stream_name,
+    direction,
     offset_start,
     offset_end,
     data,
@@ -391,8 +398,9 @@ INSERT INTO workspace_pty_stream_chunks (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
-    sqlc.arg(pty_session_id),
-    sqlc.arg(stream)::workspace_pty_stream,
+    sqlc.arg(process_id),
+    sqlc.arg(stream_name)::text,
+    CASE WHEN sqlc.arg(stream_name)::text = 'input' THEN 'input' ELSE 'output' END,
     sqlc.arg(offset_start),
     sqlc.arg(offset_end),
     sqlc.arg(data),
@@ -402,14 +410,15 @@ RETURNING *;
 
 -- name: InsertWorkspacePtyOutputStreamChunk :one
 WITH inserted AS (
-    INSERT INTO workspace_pty_stream_chunks (
+    INSERT INTO workspace_process_stream_chunks (
         org_id,
         worker_group_id,
         project_id,
         environment_id,
         workspace_id,
-        pty_session_id,
-        stream,
+        process_id,
+        stream_name,
+        direction,
         offset_start,
         offset_end,
         data,
@@ -420,8 +429,9 @@ WITH inserted AS (
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(workspace_id),
-        sqlc.arg(pty_session_id),
-        sqlc.arg(stream)::workspace_pty_stream,
+        sqlc.arg(process_id),
+        sqlc.arg(stream_name)::text,
+        CASE WHEN sqlc.arg(stream_name)::text = 'input' THEN 'input' ELSE 'output' END,
         sqlc.arg(offset_start),
         sqlc.arg(offset_end),
         sqlc.arg(data),
@@ -458,16 +468,16 @@ terminal_telemetry_outbox AS (
     SELECT inserted.org_id,
            inserted.worker_group_id,
            'terminal_output',
-           'workspace_pty',
-           inserted.pty_session_id,
-           inserted.stream::text,
+           'workspace_process',
+           inserted.process_id,
+           inserted.stream_name::text,
            inserted.offset_start,
-           'terminal_output:workspace_pty:' || inserted.pty_session_id::text || ':' || inserted.stream::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text,
+           'terminal_output:workspace_process:' || inserted.process_id::text || ':' || inserted.stream_name::text || ':' || inserted.offset_start::text || ':' || inserted.offset_end::text,
            inserted.project_id,
            inserted.environment_id,
            inserted.workspace_id,
-           'workspace_pty',
-           inserted.pty_session_id,
+           'workspace_process',
+           inserted.process_id,
            inserted.data,
            octet_length(inserted.data)::bigint,
            inserted.offset_end,
@@ -486,16 +496,16 @@ SELECT *
  WHERE (SELECT count(*) FROM terminal_telemetry_outbox) >= 0;
 
 -- name: AdvanceWorkspacePtyStreamCursor :one
-UPDATE workspace_pty_sessions
-   SET input_cursor = CASE WHEN sqlc.arg(stream)::workspace_pty_stream = 'input' THEN sqlc.arg(offset_end) ELSE input_cursor END,
-       output_cursor = CASE WHEN sqlc.arg(stream)::workspace_pty_stream = 'output' THEN sqlc.arg(offset_end) ELSE output_cursor END,
+UPDATE workspace_processes
+   SET input_cursor = CASE WHEN sqlc.arg(stream_name) = 'input' THEN sqlc.arg(offset_end) ELSE input_cursor END,
+       output_cursor = CASE WHEN sqlc.arg(stream_name) = 'output' THEN sqlc.arg(offset_end) ELSE output_cursor END,
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND id = sqlc.arg(pty_session_id)
-   AND sqlc.arg(offset_start) = CASE sqlc.arg(stream)::workspace_pty_stream
+   AND id = sqlc.arg(process_id)
+   AND sqlc.arg(offset_start) = CASE sqlc.arg(stream_name)
          WHEN 'input' THEN input_cursor
          WHEN 'output' THEN output_cursor
        END
@@ -503,16 +513,16 @@ RETURNING *;
 
 -- name: AdvanceWorkspacePtyOutputCursor :one
 WITH RECURSIVE current_cursor AS (
-    SELECT CASE sqlc.arg(stream)::workspace_pty_stream
+    SELECT CASE sqlc.arg(stream_name)
              WHEN 'output' THEN output_cursor
              ELSE -1
            END AS cursor
-      FROM workspace_pty_sessions
+      FROM workspace_processes
      WHERE org_id = sqlc.arg(org_id)
        AND project_id = sqlc.arg(project_id)
        AND environment_id = sqlc.arg(environment_id)
        AND workspace_id = sqlc.arg(workspace_id)
-       AND id = sqlc.arg(pty_session_id)
+       AND id = sqlc.arg(process_id)
      FOR UPDATE
 ),
 contiguous(end_offset) AS (
@@ -520,60 +530,61 @@ contiguous(end_offset) AS (
     UNION
     SELECT chunks.offset_end
       FROM contiguous
-      JOIN workspace_pty_stream_chunks AS chunks
+      JOIN workspace_process_stream_chunks AS chunks
         ON chunks.org_id = sqlc.arg(org_id)
        AND chunks.project_id = sqlc.arg(project_id)
        AND chunks.environment_id = sqlc.arg(environment_id)
        AND chunks.workspace_id = sqlc.arg(workspace_id)
-       AND chunks.pty_session_id = sqlc.arg(pty_session_id)
-       AND chunks.stream = sqlc.arg(stream)::workspace_pty_stream
+       AND chunks.process_id = sqlc.arg(process_id)
+       AND chunks.stream_name = sqlc.arg(stream_name)
        AND chunks.offset_start = contiguous.end_offset
 ),
 advanced AS (
     SELECT max(end_offset)::bigint AS cursor FROM contiguous
 )
-UPDATE workspace_pty_sessions
-   SET output_cursor = CASE WHEN sqlc.arg(stream)::workspace_pty_stream = 'output' THEN advanced.cursor ELSE output_cursor END,
+UPDATE workspace_processes
+   SET output_cursor = CASE WHEN sqlc.arg(stream_name) = 'output' THEN advanced.cursor ELSE output_cursor END,
        updated_at = now()
   FROM advanced
- WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
-   AND sqlc.arg(stream)::workspace_pty_stream = 'output'
-RETURNING workspace_pty_sessions.*;
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND sqlc.arg(stream_name) = 'output'
+RETURNING workspace_processes.*;
 
 -- name: DeleteWorkspacePtyStreamChunksBefore :exec
-DELETE FROM workspace_pty_stream_chunks
- WHERE workspace_pty_stream_chunks.org_id = sqlc.arg(org_id)
-   AND workspace_pty_stream_chunks.project_id = sqlc.arg(project_id)
-   AND workspace_pty_stream_chunks.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_stream_chunks.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_stream_chunks.pty_session_id = sqlc.arg(pty_session_id)
-   AND workspace_pty_stream_chunks.stream = sqlc.arg(stream)::workspace_pty_stream
-   AND workspace_pty_stream_chunks.offset_end <= sqlc.arg(retain_after_offset);
+DELETE FROM workspace_process_stream_chunks
+ WHERE workspace_process_stream_chunks.org_id = sqlc.arg(org_id)
+   AND workspace_process_stream_chunks.project_id = sqlc.arg(project_id)
+   AND workspace_process_stream_chunks.environment_id = sqlc.arg(environment_id)
+   AND workspace_process_stream_chunks.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_process_stream_chunks.process_id = sqlc.arg(process_id)
+   AND workspace_process_stream_chunks.stream_name = sqlc.arg(stream_name)
+   AND workspace_process_stream_chunks.offset_end <= sqlc.arg(retain_after_offset);
 
 -- name: GetWorkspacePtyStreamChunkAtOffset :one
 SELECT *
-  FROM workspace_pty_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND pty_session_id = sqlc.arg(pty_session_id)
-   AND stream = sqlc.arg(stream)::workspace_pty_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_start = sqlc.arg(offset_start);
 
 -- name: InsertWorkspacePtyStreamChunkReceipt :one
-INSERT INTO workspace_pty_stream_chunk_receipts (
+INSERT INTO workspace_process_stream_receipts (
     org_id,
     worker_group_id,
     project_id,
     environment_id,
     workspace_id,
-    pty_session_id,
-    stream,
+    process_id,
+    stream_name,
+    direction,
     offset_start,
     offset_end,
     data_sha256,
@@ -585,8 +596,9 @@ INSERT INTO workspace_pty_stream_chunk_receipts (
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
-    sqlc.arg(pty_session_id),
-    sqlc.arg(stream)::workspace_pty_stream,
+    sqlc.arg(process_id),
+    sqlc.arg(stream_name)::text,
+    CASE WHEN sqlc.arg(stream_name)::text = 'input' THEN 'input' ELSE 'output' END,
     sqlc.arg(offset_start),
     sqlc.arg(offset_end),
     sqlc.arg(data_sha256),
@@ -598,24 +610,24 @@ RETURNING *;
 
 -- name: GetWorkspacePtyStreamChunkReceiptAtOffset :one
 SELECT *
-  FROM workspace_pty_stream_chunk_receipts
+  FROM workspace_process_stream_receipts
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND pty_session_id = sqlc.arg(pty_session_id)
-   AND stream = sqlc.arg(stream)::workspace_pty_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_start = sqlc.arg(offset_start);
 
 -- name: ListWorkspacePtyStreamChunksAfter :many
 SELECT *
-  FROM workspace_pty_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND pty_session_id = sqlc.arg(pty_session_id)
-   AND stream = sqlc.arg(stream)::workspace_pty_stream
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name)
    AND offset_end > sqlc.arg(cursor_offset)
  ORDER BY offset_start ASC
  LIMIT sqlc.arg(limit_count);
@@ -623,53 +635,53 @@ SELECT *
 -- name: GetWorkspacePtyStreamBounds :one
 SELECT coalesce(min(offset_start), 0)::bigint AS earliest_offset,
        coalesce(max(offset_end), 0)::bigint AS latest_offset
-  FROM workspace_pty_stream_chunks
+  FROM workspace_process_stream_chunks
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
-   AND pty_session_id = sqlc.arg(pty_session_id)
-   AND stream = sqlc.arg(stream)::workspace_pty_stream;
+   AND process_id = sqlc.arg(process_id)
+   AND stream_name = sqlc.arg(stream_name);
 
 -- name: ListWorkspacePtyInputChunksAfterDelivered :many
 SELECT chunks.*
-  FROM workspace_pty_sessions
-  JOIN workspace_pty_stream_chunks AS chunks
-    ON chunks.org_id = workspace_pty_sessions.org_id
-   AND chunks.project_id = workspace_pty_sessions.project_id
-   AND chunks.environment_id = workspace_pty_sessions.environment_id
-   AND chunks.workspace_id = workspace_pty_sessions.workspace_id
-   AND chunks.pty_session_id = workspace_pty_sessions.id
-   AND chunks.stream = 'input'
- WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
-   AND chunks.offset_end > workspace_pty_sessions.input_delivered_cursor
+  FROM workspace_processes
+  JOIN workspace_process_stream_chunks AS chunks
+    ON chunks.org_id = workspace_processes.org_id
+   AND chunks.project_id = workspace_processes.project_id
+   AND chunks.environment_id = workspace_processes.environment_id
+   AND chunks.workspace_id = workspace_processes.workspace_id
+   AND chunks.process_id = workspace_processes.id
+   AND chunks.stream_name = 'input'
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND chunks.offset_end > workspace_processes.input_delivered_cursor
  ORDER BY chunks.offset_start ASC
  LIMIT sqlc.arg(limit_count);
 
 -- name: AdvanceWorkspacePtyInputDeliveredCursor :one
-UPDATE workspace_pty_sessions
+UPDATE workspace_processes
    SET input_delivered_cursor = sqlc.arg(offset_end),
        updated_at = now()
- WHERE workspace_pty_sessions.org_id = sqlc.arg(org_id)
-   AND workspace_pty_sessions.project_id = sqlc.arg(project_id)
-   AND workspace_pty_sessions.environment_id = sqlc.arg(environment_id)
-   AND workspace_pty_sessions.workspace_id = sqlc.arg(workspace_id)
-   AND workspace_pty_sessions.id = sqlc.arg(pty_session_id)
-   AND sqlc.arg(offset_start) = workspace_pty_sessions.input_delivered_cursor
-   AND sqlc.arg(offset_end) <= workspace_pty_sessions.input_cursor
+ WHERE workspace_processes.org_id = sqlc.arg(org_id)
+   AND workspace_processes.project_id = sqlc.arg(project_id)
+   AND workspace_processes.environment_id = sqlc.arg(environment_id)
+   AND workspace_processes.workspace_id = sqlc.arg(workspace_id)
+   AND workspace_processes.id = sqlc.arg(process_id)
+   AND sqlc.arg(offset_start) = workspace_processes.input_delivered_cursor
+   AND sqlc.arg(offset_end) <= workspace_processes.input_cursor
    AND EXISTS (
        SELECT 1
-         FROM workspace_pty_stream_chunks AS chunks
-        WHERE chunks.org_id = workspace_pty_sessions.org_id
-          AND chunks.project_id = workspace_pty_sessions.project_id
-          AND chunks.environment_id = workspace_pty_sessions.environment_id
-          AND chunks.workspace_id = workspace_pty_sessions.workspace_id
-          AND chunks.pty_session_id = workspace_pty_sessions.id
-          AND chunks.stream = 'input'
+         FROM workspace_process_stream_chunks AS chunks
+        WHERE chunks.org_id = workspace_processes.org_id
+          AND chunks.project_id = workspace_processes.project_id
+          AND chunks.environment_id = workspace_processes.environment_id
+          AND chunks.workspace_id = workspace_processes.workspace_id
+          AND chunks.process_id = workspace_processes.id
+          AND chunks.stream_name = 'input'
           AND chunks.offset_start = sqlc.arg(offset_start)
           AND chunks.offset_end = sqlc.arg(offset_end)
    )

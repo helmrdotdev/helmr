@@ -129,7 +129,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
 		WorkspaceID:    uuid.Must(uuid.NewV7()),
-		ResourceKind:   "workspace_pty",
+		ResourceKind:   "workspace_process",
 		ResourceID:     uuid.Must(uuid.NewV7()),
 		StreamName:     "output",
 		OffsetStart:    10,

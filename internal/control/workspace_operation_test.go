@@ -24,15 +24,15 @@ func (s *primitiveFailureStore) MarkWorkspacePtyFailed(_ context.Context, params
 	return db.MarkWorkspacePtyFailedRow{}, nil
 }
 
-func (s *primitiveFailureStore) RollbackWorkspacePtyControlOperation(_ context.Context, params db.RollbackWorkspacePtyControlOperationParams) (db.WorkspacePtySession, error) {
+func (s *primitiveFailureStore) RollbackWorkspacePtyControlOperation(_ context.Context, params db.RollbackWorkspacePtyControlOperationParams) (db.WorkspaceProcess, error) {
 	s.ptyControlRollbacks = append(s.ptyControlRollbacks, params)
-	return db.WorkspacePtySession{}, nil
+	return db.WorkspaceProcess{}, nil
 }
 
 func TestFailWorkspacePrimitiveForOperationMarksStartExecFailed(t *testing.T) {
 	store := &primitiveFailureStore{}
 	failure := []byte(`{"code":"workspace_operation_dispatch_failed"}`)
-	operation := testWorkspaceOperation(workspaceOperationKindStartExec, workspaceOperationResourceExec)
+	operation := testWorkspaceOperation(workspaceOperationKindStartExec, []byte(`{"exec_id":"exec-1"}`))
 
 	if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, failure); err != nil {
 		t.Fatal(err)
@@ -41,14 +41,14 @@ func TestFailWorkspacePrimitiveForOperationMarksStartExecFailed(t *testing.T) {
 		t.Fatalf("exec failures = %d, want 1", len(store.execExited))
 	}
 	got := store.execExited[0]
-	if got.State != db.WorkspaceExecStateFailed {
+	if got.State != db.WorkspaceProcessStateFailed {
 		t.Fatalf("exec state = %s, want failed", got.State)
 	}
 	if got.Error == nil || string(got.Error) != string(failure) {
 		t.Fatalf("exec error = %s, want %s", got.Error, failure)
 	}
-	if got.ID != operation.ResourceID || got.WorkspaceMountID != operation.WorkspaceMountID {
-		t.Fatalf("exec scope = %+v, want resource %v mount %v", got, operation.ResourceID, operation.WorkspaceMountID)
+	if got.ID != operation.ProcessID || got.WorkspaceMountID != operation.WorkspaceMountID {
+		t.Fatalf("exec scope = %+v, want process %v mount %v", got, operation.ProcessID, operation.WorkspaceMountID)
 	}
 	if got.ExitCode.Valid {
 		t.Fatalf("exec exit_code valid = true, want false")
@@ -61,7 +61,7 @@ func TestFailWorkspacePrimitiveForOperationMarksStartExecFailed(t *testing.T) {
 func TestFailWorkspacePrimitiveForOperationMarksCreatePtyFailed(t *testing.T) {
 	store := &primitiveFailureStore{}
 	failure := []byte(`{"code":"workspace_operation_dispatch_failed"}`)
-	operation := testWorkspaceOperation(workspaceOperationKindCreatePty, workspaceOperationResourcePty)
+	operation := testWorkspaceOperation(workspaceOperationKindCreatePty, []byte(`{"pty_id":"pty-1"}`))
 
 	if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, failure); err != nil {
 		t.Fatal(err)
@@ -73,8 +73,8 @@ func TestFailWorkspacePrimitiveForOperationMarksCreatePtyFailed(t *testing.T) {
 	if got.Error == nil || string(got.Error) != string(failure) {
 		t.Fatalf("pty error = %s, want %s", got.Error, failure)
 	}
-	if got.ID != operation.ResourceID || got.WorkspaceMountID != operation.WorkspaceMountID {
-		t.Fatalf("pty scope = %+v, want resource %v mount %v", got, operation.ResourceID, operation.WorkspaceMountID)
+	if got.ID != operation.ProcessID || got.WorkspaceMountID != operation.WorkspaceMountID {
+		t.Fatalf("pty scope = %+v, want process %v mount %v", got, operation.ProcessID, operation.WorkspaceMountID)
 	}
 	if len(store.execExited) != 0 {
 		t.Fatalf("exec failures = %d, want 0", len(store.execExited))
@@ -91,8 +91,7 @@ func TestFailWorkspacePrimitiveForOperationRollsBackPtyControlOperations(t *test
 		{kind: workspaceOperationKindResizePty, request: []byte(`{"pty_id":"pty-1","cols":120,"rows":40}`)},
 		{kind: workspaceOperationKindClosePty, request: []byte(`{"pty_id":"pty-1"}`)},
 	} {
-		operation := testWorkspaceOperation(tc.kind, workspaceOperationResourcePty)
-		operation.Request = tc.request
+		operation := testWorkspaceOperation(tc.kind, tc.request)
 		if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, []byte(`{"code":"control_failed"}`)); err != nil {
 			t.Fatal(err)
 		}
@@ -106,12 +105,12 @@ func TestFailWorkspacePrimitiveForOperationRollsBackPtyControlOperations(t *test
 		}
 	}
 	if store.ptyControlRollbacks[0].OperationKind != workspaceOperationKindResizePty ||
-		!store.ptyControlRollbacks[0].Cols.Valid || store.ptyControlRollbacks[0].Cols.Int32 != 120 ||
-		!store.ptyControlRollbacks[0].Rows.Valid || store.ptyControlRollbacks[0].Rows.Int32 != 40 {
+		!store.ptyControlRollbacks[0].PtyCols.Valid || store.ptyControlRollbacks[0].PtyCols.Int32 != 120 ||
+		!store.ptyControlRollbacks[0].PtyRows.Valid || store.ptyControlRollbacks[0].PtyRows.Int32 != 40 {
 		t.Fatalf("resize rollback target = %+v", store.ptyControlRollbacks[0])
 	}
 	if store.ptyControlRollbacks[1].OperationKind != workspaceOperationKindClosePty ||
-		store.ptyControlRollbacks[1].Cols.Valid || store.ptyControlRollbacks[1].Rows.Valid {
+		store.ptyControlRollbacks[1].PtyCols.Valid || store.ptyControlRollbacks[1].PtyRows.Valid {
 		t.Fatalf("close rollback target = %+v", store.ptyControlRollbacks[1])
 	}
 	if len(store.execExited) != 0 || len(store.ptyFailed) != 0 {
@@ -119,28 +118,16 @@ func TestFailWorkspacePrimitiveForOperationRollsBackPtyControlOperations(t *test
 	}
 }
 
-func TestFailWorkspacePrimitiveForOperationRejectsLifecycleResourceMismatch(t *testing.T) {
-	store := &primitiveFailureStore{}
-	operation := testWorkspaceOperation(workspaceOperationKindStartExec, workspaceOperationResourcePty)
-
-	if err := failWorkspacePrimitiveForOperation(context.Background(), store, operation, []byte(`{"code":"dispatch_failed"}`)); err == nil {
-		t.Fatal("expected resource mismatch error")
-	}
-	if len(store.execExited) != 0 || len(store.ptyFailed) != 0 {
-		t.Fatalf("primitive failures = exec %d pty %d, want none", len(store.execExited), len(store.ptyFailed))
-	}
-}
-
-func testWorkspaceOperation(kind db.WorkspaceOperationKind, resourceKind db.WorkspaceResourceKind) db.WorkspaceOperation {
-	return db.WorkspaceOperation{
+func testWorkspaceOperation(kind db.WorkspaceOperationKind, request []byte) db.WorkspaceProcessOperation {
+	return db.WorkspaceProcessOperation{
 		OrgID:            testControlUUID(1),
 		ProjectID:        testControlUUID(2),
 		EnvironmentID:    testControlUUID(3),
 		WorkspaceID:      testControlUUID(4),
 		WorkspaceMountID: testControlUUID(5),
 		OperationKind:    kind,
-		ResourceKind:     resourceKind,
-		ResourceID:       testControlUUID(6),
+		ProcessID:        testControlUUID(6),
+		Request:          request,
 	}
 }
 

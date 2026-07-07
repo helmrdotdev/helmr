@@ -12,7 +12,7 @@ import (
 )
 
 const getWorkspaceVersion = `-- name: GetWorkspaceVersion :one
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
   FROM workspace_versions
  WHERE org_id = $1
    AND project_id = $2
@@ -50,7 +50,7 @@ func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersi
 		&i.SourceWorkspaceMountID,
 		&i.SourceWriteLeaseID,
 		&i.ProducedByRunID,
-		&i.ProducedByExecID,
+		&i.ProducedByProcessID,
 		&i.Kind,
 		&i.State,
 		&i.ArtifactID,
@@ -69,7 +69,7 @@ func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersi
 }
 
 const listWorkspaceVersions = `-- name: ListWorkspaceVersions :many
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_exec_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
   FROM workspace_versions
  WHERE org_id = $1
    AND project_id = $2
@@ -117,7 +117,7 @@ func (q *Queries) ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVe
 			&i.SourceWorkspaceMountID,
 			&i.SourceWriteLeaseID,
 			&i.ProducedByRunID,
-			&i.ProducedByExecID,
+			&i.ProducedByProcessID,
 			&i.Kind,
 			&i.State,
 			&i.ArtifactID,

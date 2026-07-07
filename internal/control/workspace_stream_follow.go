@@ -37,16 +37,16 @@ func parseNonNegativeWorkspaceStreamCursor(raw string) (int64, error) {
 	return cursor, nil
 }
 
-func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Request, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) {
+func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Request, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) {
 	if s.workspaceStreams == nil {
 		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
 		return
 	}
-	if stream != db.WorkspaceExecStreamStdout && stream != db.WorkspaceExecStreamStderr {
+	if stream != workspaceStreamStdout && stream != workspaceStreamStderr {
 		writeError(w, badRequest(errors.New("workspace exec follow is only available for output streams")))
 		return
 	}
-	streamKey := workspaceStreamKey(exec.OrgID, "workspace_exec", exec.ID, string(stream))
+	streamKey := workspaceStreamKey(exec.OrgID, "workspace_process", exec.ID, stream)
 	wakeCursor, err := s.workspaceStreams.LatestID(r.Context(), streamKey)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "read workspace stream wake cursor", err)
@@ -107,7 +107,7 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-func (s *Server) drainWorkspaceExecTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) error {
+func (s *Server) drainWorkspaceExecTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) error {
 	for {
 		next, count, err := s.writeWorkspaceExecStreamChunksAfter(ctx, w, flusher, encoder, exec, stream, cursor, limit)
 		if err != nil {
@@ -120,21 +120,21 @@ func (s *Server) drainWorkspaceExecTerminal(ctx context.Context, w http.Response
 		}
 	}
 	eventName := "workspace_stream_terminal"
-	if exec.State == db.WorkspaceExecStateLost {
+	if exec.State == db.WorkspaceProcessStateLost {
 		eventName = "workspace_stream_lost"
 	}
 	return writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
 		ResourceKind: "workspace_exec",
 		ResourceID:   pgvalue.MustUUIDValue(exec.ID).String(),
-		Stream:       string(stream),
+		Stream:       stream,
 		State:        string(exec.State),
 		Cursor:       cursor,
 		Error:        json.RawMessage(exec.Error),
 	})
 }
 
-func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) (int64, int, error) {
-	if stream == db.WorkspaceExecStreamStdout || stream == db.WorkspaceExecStreamStderr {
+func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) (int64, int, error) {
+	if stream == workspaceStreamStdout || stream == workspaceStreamStderr {
 		chunks, next, err := s.listWorkspaceExecTerminalOutput(ctx, exec, stream, cursor, limit)
 		if err != nil {
 			return cursor, 0, err
@@ -155,8 +155,8 @@ func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http
 		ProjectID:     exec.ProjectID,
 		EnvironmentID: exec.EnvironmentID,
 		WorkspaceID:   exec.WorkspaceID,
-		ExecID:        exec.ID,
-		Stream:        stream,
+		ProcessID:     exec.ID,
+		StreamName:    stream,
 		CursorOffset:  cursor,
 		LimitCount:    limit,
 	})
@@ -173,12 +173,12 @@ func (s *Server) writeWorkspaceExecStreamChunksAfter(ctx context.Context, w http
 	return cursor, len(rows), nil
 }
 
-func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request, pty db.WorkspacePtySession, cursor int64, limit int32) {
+func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request, pty db.WorkspaceProcess, cursor int64, limit int32) {
 	if s.workspaceStreams == nil {
 		writeError(w, unavailable(errors.New("workspace stream notifier is not configured")))
 		return
 	}
-	streamKey := workspaceStreamKey(pty.OrgID, "workspace_pty", pty.ID, "output")
+	streamKey := workspaceStreamKey(pty.OrgID, "workspace_process", pty.ID, workspaceStreamOutput)
 	wakeCursor, err := s.workspaceStreams.LatestID(r.Context(), streamKey)
 	if err != nil {
 		s.writeWorkspacePrimitiveError(w, "read workspace stream wake cursor", err)
@@ -239,7 +239,7 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 	}
 }
 
-func (s *Server) drainWorkspacePtyTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspacePtySession, cursor int64, limit int32) error {
+func (s *Server) drainWorkspacePtyTerminal(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspaceProcess, cursor int64, limit int32) error {
 	for {
 		next, count, err := s.writeWorkspacePtyOutputChunksAfter(ctx, w, flusher, encoder, pty, cursor, limit)
 		if err != nil {
@@ -252,20 +252,20 @@ func (s *Server) drainWorkspacePtyTerminal(ctx context.Context, w http.ResponseW
 		}
 	}
 	eventName := "workspace_stream_terminal"
-	if pty.State == db.WorkspacePtyStateLost {
+	if pty.State == db.WorkspaceProcessStateLost {
 		eventName = "workspace_stream_lost"
 	}
 	return writeWorkspaceStreamSSE(w, flusher, encoder, strconv.FormatInt(cursor, 10), eventName, api.WorkspaceStreamTerminalResponse{
 		ResourceKind: "workspace_pty",
 		ResourceID:   pgvalue.MustUUIDValue(pty.ID).String(),
-		Stream:       "output",
+		Stream:       workspaceStreamOutput,
 		State:        string(pty.State),
 		Cursor:       cursor,
 		Error:        json.RawMessage(pty.Error),
 	})
 }
 
-func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspacePtySession, cursor int64, limit int32) (int64, int, error) {
+func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, encoder *json.Encoder, pty db.WorkspaceProcess, cursor int64, limit int32) (int64, int, error) {
 	chunks, next, err := s.listWorkspacePtyTerminalOutput(ctx, pty, cursor, limit)
 	if err != nil {
 		return cursor, 0, err
@@ -279,16 +279,16 @@ func (s *Server) writeWorkspacePtyOutputChunksAfter(ctx context.Context, w http.
 	return next, len(chunks), nil
 }
 
-func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceExec, stream db.WorkspaceExecStream, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {
+func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
 		WorkerGroupID: exec.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
-		ResourceKind:  "workspace_exec",
+		ResourceKind:  "workspace_process",
 		ResourceID:    pgvalue.MustUUIDValue(exec.ID),
-		StreamName:    string(stream),
+		StreamName:    stream,
 		AfterOffset:   cursor,
 		Limit:         limit,
 	})
@@ -302,16 +302,16 @@ func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.Wo
 	return out, page.LastOffset, nil
 }
 
-func (s *Server) listWorkspacePtyTerminalOutput(ctx context.Context, pty db.WorkspacePtySession, cursor int64, limit int32) ([]api.WorkspacePtyStreamChunkResponse, int64, error) {
+func (s *Server) listWorkspacePtyTerminalOutput(ctx context.Context, pty db.WorkspaceProcess, cursor int64, limit int32) ([]api.WorkspacePtyStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
 		WorkerGroupID: pty.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),
-		ResourceKind:  "workspace_pty",
+		ResourceKind:  "workspace_process",
 		ResourceID:    pgvalue.MustUUIDValue(pty.ID),
-		StreamName:    string(db.WorkspacePtyStreamOutput),
+		StreamName:    string(workspaceStreamOutput),
 		AfterOffset:   cursor,
 		Limit:         limit,
 	})

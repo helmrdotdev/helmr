@@ -233,15 +233,15 @@ func (r fakeTelemetryReader) ListRunLogChunks(ctx context.Context, query telemet
 
 func (r fakeTelemetryReader) ListTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery) (telemetry.TerminalOutputPage, error) {
 	page := telemetry.TerminalOutputPage{LastOffset: query.AfterOffset}
-	switch query.ResourceKind {
-	case "workspace_exec":
+	switch {
+	case query.ResourceKind == "workspace_process" && (query.StreamName == workspaceStreamStdout || query.StreamName == workspaceStreamStderr):
 		rows, err := r.store.ListWorkspaceExecStreamChunksAfter(ctx, db.ListWorkspaceExecStreamChunksAfterParams{
 			OrgID:         pgvalue.UUID(query.OrgID),
 			ProjectID:     pgvalue.UUID(query.ProjectID),
 			EnvironmentID: pgvalue.UUID(query.EnvironmentID),
 			WorkspaceID:   pgvalue.UUID(query.WorkspaceID),
-			ExecID:        pgvalue.UUID(query.ResourceID),
-			Stream:        db.WorkspaceExecStream(query.StreamName),
+			ProcessID:     pgvalue.UUID(query.ResourceID),
+			StreamName:    string(query.StreamName),
 			CursorOffset:  query.AfterOffset,
 			LimitCount:    query.Limit,
 		})
@@ -261,14 +261,14 @@ func (r fakeTelemetryReader) ListTerminalOutput(ctx context.Context, query telem
 			})
 			page.LastOffset = row.OffsetEnd
 		}
-	case "workspace_pty":
+	case query.ResourceKind == "workspace_process" && query.StreamName == workspaceStreamOutput:
 		rows, err := r.store.ListWorkspacePtyStreamChunksAfter(ctx, db.ListWorkspacePtyStreamChunksAfterParams{
 			OrgID:         pgvalue.UUID(query.OrgID),
 			ProjectID:     pgvalue.UUID(query.ProjectID),
 			EnvironmentID: pgvalue.UUID(query.EnvironmentID),
 			WorkspaceID:   pgvalue.UUID(query.WorkspaceID),
-			PtySessionID:  pgvalue.UUID(query.ResourceID),
-			Stream:        db.WorkspacePtyStream(query.StreamName),
+			ProcessID:     pgvalue.UUID(query.ResourceID),
+			StreamName:    string(query.StreamName),
 			CursorOffset:  query.AfterOffset,
 			LimitCount:    query.Limit,
 		})
