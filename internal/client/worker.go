@@ -199,18 +199,18 @@ func (c *Client) MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerW
 	return response, nil
 }
 
-func (c *Client) RegisterRuntimeSubstrateArtifact(ctx context.Context, request api.WorkerRuntimeSubstrateArtifactRegisterRequest) (api.WorkerRuntimeSubstrateArtifactRegisterResponse, error) {
-	var response api.WorkerRuntimeSubstrateArtifactRegisterResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrate-artifacts/register", request, &response); err != nil {
-		return api.WorkerRuntimeSubstrateArtifactRegisterResponse{}, err
+func (c *Client) RegisterRuntimeSubstrate(ctx context.Context, request api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
+	var response api.WorkerRuntimeSubstrateRegisterResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrates/register", request, &response); err != nil {
+		return api.WorkerRuntimeSubstrateRegisterResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) LookupRuntimeSubstrateArtifact(ctx context.Context, request api.WorkerRuntimeSubstrateArtifactLookupRequest) (api.WorkerRuntimeSubstrateArtifactLookupResponse, error) {
-	var response api.WorkerRuntimeSubstrateArtifactLookupResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrate-artifacts/lookup", request, &response); err != nil {
-		return api.WorkerRuntimeSubstrateArtifactLookupResponse{}, err
+func (c *Client) LookupRuntimeSubstrate(ctx context.Context, request api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error) {
+	var response api.WorkerRuntimeSubstrateLookupResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-substrates/lookup", request, &response); err != nil {
+		return api.WorkerRuntimeSubstrateLookupResponse{}, err
 	}
 	return response, nil
 }

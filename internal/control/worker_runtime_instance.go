@@ -217,20 +217,20 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("expires_at is required")))
 			return
 		}
-		runtimeSubstrateArtifactID := pgtype.UUID{}
-		if strings.TrimSpace(request.RuntimeSubstrateArtifactID) != "" {
-			runtimeSubstrateArtifactID, err = parseWorkspaceUUID("runtime_substrate_artifact_id", request.RuntimeSubstrateArtifactID)
+		runtimeSubstrateID := pgtype.UUID{}
+		if strings.TrimSpace(request.RuntimeSubstrateID) != "" {
+			runtimeSubstrateID, err = parseWorkspaceUUID("runtime_substrate_id", request.RuntimeSubstrateID)
 			if err != nil {
 				writeError(w, badRequest(err))
 				return
 			}
 		}
 		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
-			ID:                         id,
-			WorkerInstanceID:           pgvalue.UUID(worker.WorkerInstanceID),
-			InstanceToken:              strings.TrimSpace(request.InstanceToken),
-			RuntimeSubstrateArtifactID: runtimeSubstrateArtifactID,
-			ExpiresAt:                  pgvalue.Timestamptz(request.ExpiresAt),
+			ID:                 id,
+			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
+			InstanceToken:      strings.TrimSpace(request.InstanceToken),
+			RuntimeSubstrateID: runtimeSubstrateID,
+			ExpiresAt:          pgvalue.Timestamptz(request.ExpiresAt),
 		})
 	case "closed":
 		closed, closedErr := s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
@@ -317,7 +317,7 @@ func runtimeInstanceFromDeploymentSandboxRow(row db.CreateRuntimeInstanceForDepl
 		WorkerInstanceID:           row.WorkerInstanceID,
 		RuntimeIdentityID:          row.RuntimeIdentityID,
 		DeploymentSandboxID:        row.DeploymentSandboxID,
-		RuntimeSubstrateArtifactID: row.RuntimeSubstrateArtifactID,
+		RuntimeSubstrateID:         row.RuntimeSubstrateID,
 		RuntimeEpoch:               row.RuntimeEpoch,
 		RuntimeKeyHash:             row.RuntimeKeyHash,
 		RuntimeKey:                 row.RuntimeKey,

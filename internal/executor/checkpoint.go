@@ -126,18 +126,18 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 		if strings.TrimSpace(runtimeInfo.Substrate.LayoutABI) == "" {
 			return errors.New("restore checkpoint recovery_point.runtime.substrate.layout_abi is required")
 		}
-		if checkpoint.RuntimeState.RuntimeSubstrateArtifact == nil {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact is required")
+		if checkpoint.RuntimeState.RuntimeSubstrate == nil {
+			return errors.New("restore checkpoint runtime_state.runtime_substrate is required")
 		}
-		substrateArtifact := checkpoint.RuntimeState.RuntimeSubstrateArtifact
+		substrateArtifact := checkpoint.RuntimeState.RuntimeSubstrate
 		if strings.TrimSpace(substrateArtifact.ID) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.id is required")
+			return errors.New("restore checkpoint runtime_state.runtime_substrate.id is required")
 		}
 		if strings.TrimSpace(substrateArtifact.Artifact.Digest) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.artifact.digest is required")
+			return errors.New("restore checkpoint runtime_state.runtime_substrate.artifact.digest is required")
 		}
 		if strings.TrimSpace(substrateArtifact.Artifact.MediaType) == "" {
-			return errors.New("restore checkpoint runtime_state.runtime_substrate_artifact.artifact.media_type is required")
+			return errors.New("restore checkpoint runtime_state.runtime_substrate.artifact.media_type is required")
 		}
 	}
 	return requireCheckpointArtifact(checkpoint.RuntimeState.ConfigArtifact, "runtime_state.config_artifact")
@@ -168,7 +168,7 @@ type runtimeCheckpointer struct {
 	stream            io.ReadWriteCloser
 	workspace         api.WorkerCheckpointWorkspaceBase
 	substrateSource   *api.WorkerRuntimeSubstrateSource
-	runtimeSubstrates RuntimeSubstrateArtifactRegistrar
+	runtimeSubstrates RuntimeSubstrateRegistrar
 	runEvent          func(context.Context, *runv0.RunEvent) error
 }
 
@@ -348,7 +348,7 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	var manifest storedCheckpointArtifact
 	var state storedCheckpointArtifact
 	var scratchDisk storedCheckpointArtifact
-	var substrate *api.WorkerRuntimeSubstrateArtifact
+	var substrate *api.WorkerRuntimeSubstrate
 	memory := make([]api.WorkerCheckpointArtifact, len(artifact.Memory))
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(4)
@@ -378,9 +378,9 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	})
 	if artifact.Substrate != nil {
 		group.Go(func() error {
-			stored, err := c.ensureRuntimeSubstrateArtifact(groupCtx, artifact.Substrate)
+			stored, err := c.ensureRuntimeSubstrate(groupCtx, artifact.Substrate)
 			if err != nil {
-				return fmt.Errorf("ensure runtime substrate artifact: %w", err)
+				return fmt.Errorf("ensure runtime substrate: %w", err)
 			}
 			substrate = stored
 			return nil
@@ -422,12 +422,12 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 			},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
-			ConfigArtifact:           manifest.artifact,
-			VMStateArtifact:          state.artifact,
-			ScratchDiskArtifact:      scratchDisk.artifact,
-			RuntimeSubstrateArtifact: substrate,
-			MemoryArtifacts:          memory,
-			Config:                   artifact.Manifest,
+			ConfigArtifact:      manifest.artifact,
+			VMStateArtifact:     state.artifact,
+			ScratchDiskArtifact: scratchDisk.artifact,
+			RuntimeSubstrate:    substrate,
+			MemoryArtifacts:     memory,
+			Config:              artifact.Manifest,
 		},
 		WorkspaceState: api.WorkerCheckpointWorkspaceState{
 			Base: c.workspace,
@@ -447,21 +447,21 @@ func checkpointRuntimeSubstrate(substrate *vm.RuntimeSubstrate) *api.WorkerCheck
 	}
 }
 
-func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context, substrate *vm.RuntimeSubstrate) (*api.WorkerRuntimeSubstrateArtifact, error) {
+func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substrate *vm.RuntimeSubstrate) (*api.WorkerRuntimeSubstrate, error) {
 	if substrate == nil {
 		return nil, nil
 	}
-	if c.substrateSource != nil && runtimeSubstrateArtifactMatches(c.substrateSource.RuntimeSubstrateArtifact, substrate) {
-		return c.substrateSource.RuntimeSubstrateArtifact, nil
+	if c.substrateSource != nil && runtimeSubstrateMatches(c.substrateSource.RuntimeSubstrate, substrate) {
+		return c.substrateSource.RuntimeSubstrate, nil
 	}
 	if c.runtimeSubstrates == nil {
-		return nil, errors.New("runtime substrate artifact registrar is required")
+		return nil, errors.New("runtime substrate registrar is required")
 	}
 	if c.substrateSource == nil || strings.TrimSpace(c.substrateSource.DeploymentSandboxID) == "" {
 		return nil, errors.New("runtime substrate source deployment_sandbox_id is required")
 	}
-	if lookup, ok := c.runtimeSubstrates.(RuntimeSubstrateArtifactLookup); ok {
-		response, err := lookup.LookupRuntimeSubstrateArtifact(ctx, api.WorkerRuntimeSubstrateArtifactLookupRequest{
+	if lookup, ok := c.runtimeSubstrates.(RuntimeSubstrateLookup); ok {
+		response, err := lookup.LookupRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateLookupRequest{
 			DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
 			SubstrateDigest:     strings.TrimSpace(substrate.Digest),
 			Format:              strings.TrimSpace(substrate.Format),
@@ -469,11 +469,11 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context,
 			LayoutABI:           strings.TrimSpace(substrate.LayoutABI),
 		})
 		if err == nil {
-			artifact := response.RuntimeSubstrateArtifact
+			artifact := response.RuntimeSubstrate
 			return &artifact, nil
 		}
 		if !isHTTPStatus(err, 404) {
-			return nil, fmt.Errorf("lookup runtime substrate artifact: %w", err)
+			return nil, fmt.Errorf("lookup runtime substrate: %w", err)
 		}
 	}
 	if strings.TrimSpace(substrate.Path) == "" {
@@ -504,7 +504,7 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context,
 		_ = stage.Abort(context.Background())
 		return nil, err
 	}
-	source, err := runtimeSubstrateArtifactSource(c.substrateSource, map[string]any{
+	source, err := runtimeSubstrateSource(c.substrateSource, map[string]any{
 		"producer":            "checkpoint",
 		"encrypt_duration_ms": durationMilliseconds(encryptDuration),
 		"store_duration_ms":   durationMilliseconds(time.Since(storeStarted)),
@@ -512,7 +512,7 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	response, err := c.runtimeSubstrates.RegisterRuntimeSubstrateArtifact(ctx, api.WorkerRuntimeSubstrateArtifactRegisterRequest{
+	response, err := c.runtimeSubstrates.RegisterRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateRegisterRequest{
 		DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
 		Artifact: api.CASObject{
 			Digest:    object.Digest,
@@ -529,11 +529,11 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrateArtifact(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
-	artifact := response.RuntimeSubstrateArtifact
+	artifact := response.RuntimeSubstrate
 	return &artifact, nil
 }
 
-func runtimeSubstrateArtifactSource(source *api.WorkerRuntimeSubstrateSource, metadata map[string]any) ([]byte, error) {
+func runtimeSubstrateSource(source *api.WorkerRuntimeSubstrateSource, metadata map[string]any) ([]byte, error) {
 	body := map[string]any{}
 	maps.Copy(body, metadata)
 	if source != nil {
@@ -560,7 +560,7 @@ func isHTTPStatus(err error, statusCode int) bool {
 	return errors.As(err, &statusErr) && statusErr.HTTPStatusCode() == statusCode
 }
 
-func runtimeSubstrateArtifactMatches(artifact *api.WorkerRuntimeSubstrateArtifact, substrate *vm.RuntimeSubstrate) bool {
+func runtimeSubstrateMatches(artifact *api.WorkerRuntimeSubstrate, substrate *vm.RuntimeSubstrate) bool {
 	if artifact == nil || substrate == nil {
 		return false
 	}

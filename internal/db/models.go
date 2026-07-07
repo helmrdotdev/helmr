@@ -2548,47 +2548,47 @@ type Run struct {
 }
 
 type RunCheckpoint struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	SourceWorkspaceLeaseID     pgtype.UUID        `json:"source_workspace_lease_id"`
-	WorkspaceMountID           pgtype.UUID        `json:"workspace_mount_id"`
-	BaseWorkspaceVersionID     pgtype.UUID        `json:"base_workspace_version_id"`
-	State                      RunCheckpointState `json:"state"`
-	RuntimeBackend             string             `json:"runtime_backend"`
-	RuntimeIdentityID          string             `json:"runtime_identity_id"`
-	RuntimeArch                string             `json:"runtime_arch"`
-	RuntimeABI                 string             `json:"runtime_abi"`
-	KernelDigest               string             `json:"kernel_digest"`
-	InitramfsDigest            string             `json:"initramfs_digest"`
-	RootfsDigest               string             `json:"rootfs_digest"`
-	RuntimeConfigDigest        string             `json:"runtime_config_digest"`
-	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
-	OwnerRunWaitID             pgtype.UUID        `json:"owner_run_wait_id"`
-	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
-	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
-	SourceWorkerInstanceID     pgtype.UUID        `json:"source_worker_instance_id"`
-	SubstrateDigest            pgtype.Text        `json:"substrate_digest"`
-	RuntimeSubstrateArtifactID pgtype.UUID        `json:"runtime_substrate_artifact_id"`
-	RuntimeVcpus               pgtype.Int4        `json:"runtime_vcpus"`
-	RuntimeMemoryMib           pgtype.Int4        `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib      pgtype.Int4        `json:"runtime_scratch_disk_mib"`
-	CniProfile                 string             `json:"cni_profile"`
-	ImageKey                   pgtype.Text        `json:"image_key"`
-	Manifest                   []byte             `json:"manifest"`
-	ErrorMessage               pgtype.Text        `json:"error_message"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	CreationStartedAt          pgtype.Timestamptz `json:"creation_started_at"`
-	CreationExpiresAt          pgtype.Timestamptz `json:"creation_expires_at"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	ReadyAt                    pgtype.Timestamptz `json:"ready_at"`
-	InvalidatedAt              pgtype.Timestamptz `json:"invalidated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
+	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
+	State                  RunCheckpointState `json:"state"`
+	RuntimeBackend         string             `json:"runtime_backend"`
+	RuntimeIdentityID      string             `json:"runtime_identity_id"`
+	RuntimeArch            string             `json:"runtime_arch"`
+	RuntimeABI             string             `json:"runtime_abi"`
+	KernelDigest           string             `json:"kernel_digest"`
+	InitramfsDigest        string             `json:"initramfs_digest"`
+	RootfsDigest           string             `json:"rootfs_digest"`
+	RuntimeConfigDigest    string             `json:"runtime_config_digest"`
+	OwnerRuntimeInstanceID pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch      pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunWaitID         pgtype.UUID        `json:"owner_run_wait_id"`
+	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerWorkerInstanceID  pgtype.UUID        `json:"owner_worker_instance_id"`
+	SourceWorkerInstanceID pgtype.UUID        `json:"source_worker_instance_id"`
+	SubstrateDigest        pgtype.Text        `json:"substrate_digest"`
+	RuntimeSubstrateID     pgtype.UUID        `json:"runtime_substrate_id"`
+	RuntimeVcpus           pgtype.Int4        `json:"runtime_vcpus"`
+	RuntimeMemoryMib       pgtype.Int4        `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib  pgtype.Int4        `json:"runtime_scratch_disk_mib"`
+	CniProfile             string             `json:"cni_profile"`
+	ImageKey               pgtype.Text        `json:"image_key"`
+	Manifest               []byte             `json:"manifest"`
+	ErrorMessage           pgtype.Text        `json:"error_message"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+	CreationStartedAt      pgtype.Timestamptz `json:"creation_started_at"`
+	CreationExpiresAt      pgtype.Timestamptz `json:"creation_expires_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ReadyAt                pgtype.Timestamptz `json:"ready_at"`
+	InvalidatedAt          pgtype.Timestamptz `json:"invalidated_at"`
 }
 
 type RunCheckpointArtifact struct {
@@ -2755,7 +2755,7 @@ type RuntimeInstance struct {
 	WorkerInstanceID           pgtype.UUID          `json:"worker_instance_id"`
 	RuntimeIdentityID          string               `json:"runtime_identity_id"`
 	DeploymentSandboxID        pgtype.UUID          `json:"deployment_sandbox_id"`
-	RuntimeSubstrateArtifactID pgtype.UUID          `json:"runtime_substrate_artifact_id"`
+	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
 	RuntimeEpoch               int64                `json:"runtime_epoch"`
 	RuntimeKeyHash             string               `json:"runtime_key_hash"`
 	RuntimeKey                 []byte               `json:"runtime_key"`

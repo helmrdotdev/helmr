@@ -190,22 +190,22 @@ type WorkerRuntimeSubstratePrepareCommand struct {
 }
 
 type WorkerPreparedRuntimeSource struct {
-	DeploymentSandboxID        string                          `json:"deployment_sandbox_id"`
-	RuntimeID                  string                          `json:"runtime_id"`
-	SandboxImageArtifact       CASObject                       `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                          `json:"sandbox_image_artifact_format"`
-	RootfsDigest               string                          `json:"rootfs_digest"`
-	ImageDigest                string                          `json:"image_digest"`
-	ImageFormat                string                          `json:"image_format"`
-	WorkspaceMountPath         string                          `json:"workspace_mount_path"`
-	ReservedCpuMillis          int32                           `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB          int32                           `json:"reserved_memory_mib"`
-	ReservedDiskMiB            int64                           `json:"reserved_disk_mib"`
-	ReservedExecutionSlots     int32                           `json:"reserved_execution_slots"`
-	RuntimeABI                 string                          `json:"runtime_abi"`
-	GuestdABI                  string                          `json:"guestd_abi"`
-	AdapterABI                 string                          `json:"adapter_abi"`
-	RuntimeSubstrateArtifact   *WorkerRuntimeSubstrateArtifact `json:"runtime_substrate_artifact,omitempty"`
+	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
+	RuntimeID                  string                  `json:"runtime_id"`
+	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
+	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
+	RootfsDigest               string                  `json:"rootfs_digest"`
+	ImageDigest                string                  `json:"image_digest"`
+	ImageFormat                string                  `json:"image_format"`
+	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
+	ReservedCpuMillis          int32                   `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB          int32                   `json:"reserved_memory_mib"`
+	ReservedDiskMiB            int64                   `json:"reserved_disk_mib"`
+	ReservedExecutionSlots     int32                   `json:"reserved_execution_slots"`
+	RuntimeABI                 string                  `json:"runtime_abi"`
+	GuestdABI                  string                  `json:"guestd_abi"`
+	AdapterABI                 string                  `json:"adapter_abi"`
+	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
 type WorkerRuntimePrepareInstanceCreateRequest struct {
@@ -232,11 +232,11 @@ type WorkerRuntimeInstanceRenewRequest struct {
 }
 
 type WorkerRuntimeInstanceStateRequest struct {
-	ID                         string          `json:"id"`
-	InstanceToken              string          `json:"instance_token"`
-	ExpiresAt                  time.Time       `json:"expires_at"`
-	RuntimeSubstrateArtifactID string          `json:"runtime_substrate_artifact_id,omitempty"`
-	Error                      json.RawMessage `json:"error,omitempty"`
+	ID                 string          `json:"id"`
+	InstanceToken      string          `json:"instance_token"`
+	ExpiresAt          time.Time       `json:"expires_at"`
+	RuntimeSubstrateID string          `json:"runtime_substrate_id,omitempty"`
+	Error              json.RawMessage `json:"error,omitempty"`
 }
 
 type WorkerRunLease struct {
@@ -326,20 +326,20 @@ type WorkerWorkspace struct {
 }
 
 type WorkerRuntimeSubstrateSource struct {
-	DeploymentSandboxID        string                          `json:"deployment_sandbox_id"`
-	SandboxImageArtifact       CASObject                       `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                          `json:"sandbox_image_artifact_format"`
-	RootfsDigest               string                          `json:"rootfs_digest"`
-	ImageDigest                string                          `json:"image_digest"`
-	ImageFormat                string                          `json:"image_format"`
-	WorkspaceMountPath         string                          `json:"workspace_mount_path"`
-	RuntimeABI                 string                          `json:"runtime_abi"`
-	GuestdABI                  string                          `json:"guestd_abi"`
-	AdapterABI                 string                          `json:"adapter_abi"`
-	RuntimeSubstrateArtifact   *WorkerRuntimeSubstrateArtifact `json:"runtime_substrate_artifact,omitempty"`
+	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
+	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
+	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
+	RootfsDigest               string                  `json:"rootfs_digest"`
+	ImageDigest                string                  `json:"image_digest"`
+	ImageFormat                string                  `json:"image_format"`
+	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
+	RuntimeABI                 string                  `json:"runtime_abi"`
+	GuestdABI                  string                  `json:"guestd_abi"`
+	AdapterABI                 string                  `json:"adapter_abi"`
+	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
-type WorkerRuntimeSubstrateArtifact struct {
+type WorkerRuntimeSubstrate struct {
 	ID                  string    `json:"id,omitempty"`
 	DeploymentSandboxID string    `json:"deployment_sandbox_id"`
 	Artifact            CASObject `json:"artifact"`
@@ -350,7 +350,7 @@ type WorkerRuntimeSubstrateArtifact struct {
 	SizeBytes           int64     `json:"size_bytes"`
 }
 
-type WorkerRuntimeSubstrateArtifactRegisterRequest struct {
+type WorkerRuntimeSubstrateRegisterRequest struct {
 	ID                  string          `json:"id,omitempty"`
 	DeploymentSandboxID string          `json:"deployment_sandbox_id"`
 	Artifact            CASObject       `json:"artifact"`
@@ -362,11 +362,11 @@ type WorkerRuntimeSubstrateArtifactRegisterRequest struct {
 	Source              json.RawMessage `json:"source,omitempty"`
 }
 
-type WorkerRuntimeSubstrateArtifactRegisterResponse struct {
-	RuntimeSubstrateArtifact WorkerRuntimeSubstrateArtifact `json:"runtime_substrate_artifact"`
+type WorkerRuntimeSubstrateRegisterResponse struct {
+	RuntimeSubstrate WorkerRuntimeSubstrate `json:"runtime_substrate"`
 }
 
-type WorkerRuntimeSubstrateArtifactLookupRequest struct {
+type WorkerRuntimeSubstrateLookupRequest struct {
 	DeploymentSandboxID string `json:"deployment_sandbox_id"`
 	SubstrateDigest     string `json:"substrate_digest"`
 	Format              string `json:"format"`
@@ -374,8 +374,8 @@ type WorkerRuntimeSubstrateArtifactLookupRequest struct {
 	LayoutABI           string `json:"layout_abi"`
 }
 
-type WorkerRuntimeSubstrateArtifactLookupResponse struct {
-	RuntimeSubstrateArtifact WorkerRuntimeSubstrateArtifact `json:"runtime_substrate_artifact"`
+type WorkerRuntimeSubstrateLookupResponse struct {
+	RuntimeSubstrate WorkerRuntimeSubstrate `json:"runtime_substrate"`
 }
 
 type WorkerWorkspaceArtifact struct {
@@ -674,12 +674,12 @@ type WorkerCheckpointRuntimeSubstrate struct {
 }
 
 type WorkerCheckpointRuntimeState struct {
-	ConfigArtifact           WorkerCheckpointArtifact        `json:"config_artifact"`
-	VMStateArtifact          WorkerCheckpointArtifact        `json:"vm_state_artifact"`
-	ScratchDiskArtifact      WorkerCheckpointArtifact        `json:"scratch_disk_artifact"`
-	RuntimeSubstrateArtifact *WorkerRuntimeSubstrateArtifact `json:"runtime_substrate_artifact,omitempty"`
-	MemoryArtifacts          []WorkerCheckpointArtifact      `json:"memory_artifacts,omitempty"`
-	Config                   json.RawMessage                 `json:"config,omitempty"`
+	ConfigArtifact      WorkerCheckpointArtifact   `json:"config_artifact"`
+	VMStateArtifact     WorkerCheckpointArtifact   `json:"vm_state_artifact"`
+	ScratchDiskArtifact WorkerCheckpointArtifact   `json:"scratch_disk_artifact"`
+	RuntimeSubstrate    *WorkerRuntimeSubstrate    `json:"runtime_substrate,omitempty"`
+	MemoryArtifacts     []WorkerCheckpointArtifact `json:"memory_artifacts,omitempty"`
+	Config              json.RawMessage            `json:"config,omitempty"`
 }
 
 type WorkerCheckpointWorkspaceState struct {

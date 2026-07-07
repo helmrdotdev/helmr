@@ -261,8 +261,8 @@ POST /api/worker/runtime-instances/prepared-runtime
 POST /api/worker/runtime-instances/prepared-runtime-warm
 POST /api/worker/runtime-instances/ready
 POST /api/worker/runtime-instances/renew
-POST /api/worker/runtime-substrate-artifacts/lookup
-POST /api/worker/runtime-substrate-artifacts/register
+POST /api/worker/runtime-substrates/lookup
+POST /api/worker/runtime-substrates/register
 POST /api/worker/workspaces/execs/exited
 POST /api/worker/workspaces/execs/input
 POST /api/worker/workspaces/execs/input-delivered

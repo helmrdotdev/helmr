@@ -258,11 +258,11 @@ func TestRuntimeInstanceWorkerMutationsContinueOnDrainingWorkerGroup(t *testing.
 		t.Fatalf("RenewRuntimeInstance on draining route: %v", err)
 	}
 	if _, err := queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		RuntimeSubstrateArtifactID: pgtype.UUID{},
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		RuntimeSubstrateID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatalf("MarkRuntimeInstanceReady on draining route: %v", err)
 	}
@@ -308,11 +308,11 @@ func TestClaimWorkspaceMountAdvancesPreparedRuntimeEpoch(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		RuntimeSubstrateArtifactID: pgtype.UUID{},
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		RuntimeSubstrateID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -734,11 +734,11 @@ func TestExpiredReadyRuntimeAdoptionReturnsRuntimeToReadyPool(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
-		RuntimeSubstrateArtifactID: pgtype.UUID{},
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		RuntimeSubstrateID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1089,7 +1089,7 @@ func TestGetWorkspaceMountForWorkerPrimitiveScopeRequiresRuntimeOwnerAndToken(t 
 	}
 }
 
-func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
+func TestUpsertRuntimeSubstrateBlobReusesDigestRow(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -1103,7 +1103,7 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+	first, err := queries.UpsertRuntimeSubstrateBlob(ctx, db.UpsertRuntimeSubstrateBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
@@ -1115,7 +1115,7 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+	second, err := queries.UpsertRuntimeSubstrateBlob(ctx, db.UpsertRuntimeSubstrateBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
@@ -1132,12 +1132,12 @@ func TestUpsertRuntimeSubstrateArtifactBlobReusesDigestRow(t *testing.T) {
 	}
 }
 
-func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *testing.T) {
+func TestUpsertRuntimeSubstrateIsAtomicForConcurrentIdenticalReports(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-concurrent")
+	artifact := seedRuntimeSubstrateBlob(t, ctx, queries, ids, "runtime-substrate-concurrent")
 	const workers = 8
 	var wg sync.WaitGroup
 	results := make(chan db.RuntimeSubstrate, workers)
@@ -1146,7 +1146,7 @@ func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			row, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+			row, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				OrgID:                     pgvalue.UUID(ids.orgID),
 				WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1183,7 +1183,7 @@ func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *
 			first = id
 		}
 		if id != first {
-			t.Fatalf("runtime substrate artifact id = %s, want %s", id, first)
+			t.Fatalf("runtime substrate id = %s, want %s", id, first)
 		}
 		count++
 	}
@@ -1192,7 +1192,7 @@ func TestUpsertRuntimeSubstrateArtifactIsAtomicForConcurrentIdenticalReports(t *
 	}
 }
 
-func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSandbox(t *testing.T) {
+func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateFromDifferentSandbox(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -1216,8 +1216,8 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 		t.Fatal(err)
 	}
 	otherSandboxID := seedSiblingDeploymentSandbox(t, ctx, pool, ids)
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-other-sandbox")
-	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	artifact := seedRuntimeSubstrateBlob(t, ctx, queries, ids, "runtime-substrate-other-sandbox")
+	substrate, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1237,18 +1237,18 @@ func TestMarkRuntimeInstanceReadyRejectsRuntimeSubstrateArtifactFromDifferentSan
 		t.Fatal(err)
 	}
 	_, err = queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		RuntimeSubstrateArtifactID: substrate.ID,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		RuntimeSubstrateID: substrate.ID,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("MarkRuntimeInstanceReady error = %v, want pgx.ErrNoRows", err)
 	}
 }
 
-func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(t *testing.T) {
+func TestRuntimeInstanceRejectsRuntimeSubstrateFromDifferentWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -1281,7 +1281,7 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 	}); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+	artifact, err := queries.UpsertRuntimeSubstrateBlob(ctx, db.UpsertRuntimeSubstrateBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
@@ -1293,7 +1293,7 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 	if err != nil {
 		t.Fatal(err)
 	}
-	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	substrate, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             otherWorkerGroupID,
@@ -1313,21 +1313,21 @@ func TestRuntimeInstanceRejectsRuntimeSubstrateArtifactFromDifferentWorkerGroup(
 		t.Fatal(err)
 	}
 	_, err = queries.MarkRuntimeInstanceReady(ctx, db.MarkRuntimeInstanceReadyParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		RuntimeSubstrateArtifactID: substrate.ID,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		RuntimeSubstrateID: substrate.ID,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("MarkRuntimeInstanceReady wrong-worker-group substrate error = %v, want pgx.ErrNoRows", err)
 	}
 	_, err = queries.RenewRuntimeInstance(ctx, db.RenewRuntimeInstanceParams{
-		ID:                         instance.ID,
-		WorkerInstanceID:           pgvalue.UUID(workerID),
-		InstanceToken:              instanceToken,
-		RuntimeSubstrateArtifactID: substrate.ID,
-		ExpiresAt:                  pgvalue.Timestamptz(time.Now().Add(time.Hour)),
+		ID:                 instance.ID,
+		WorkerInstanceID:   pgvalue.UUID(workerID),
+		InstanceToken:      instanceToken,
+		RuntimeSubstrateID: substrate.ID,
+		ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(time.Hour)),
 	})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("RenewRuntimeInstance wrong-worker-group substrate error = %v, want pgx.ErrNoRows", err)
@@ -1355,13 +1355,13 @@ func TestGetDeploymentSandboxForWorkerGroupRejectsDisabledWorkerGroup(t *testing
 	}
 }
 
-func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongWorkerGroupScope(t *testing.T) {
+func TestGetRuntimeSubstrateForSandboxRejectsWrongWorkerGroupScope(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-worker-group-mismatch")
-	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	artifact := seedRuntimeSubstrateBlob(t, ctx, queries, ids, "runtime-substrate-worker-group-mismatch")
+	substrate, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1380,7 +1380,7 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongWorkerGroupScope(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+	if _, err := queries.GetRuntimeSubstrateForSandbox(ctx, db.GetRuntimeSubstrateForSandboxParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
 		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
@@ -1393,7 +1393,7 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongWorkerGroupScope(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+	_, err = queries.GetRuntimeSubstrateForSandbox(ctx, db.GetRuntimeSubstrateForSandboxParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
 		WorkerGroupID:       dbtest.DefaultWorkerGroupID + "-other",
 		ProjectID:           pgvalue.UUID(ids.projectID),
@@ -1409,13 +1409,13 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsWrongWorkerGroupScope(t *te
 	}
 }
 
-func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledWorkerGroup(t *testing.T) {
+func TestGetRuntimeSubstrateForSandboxRejectsDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-disabled-worker-group")
-	substrate, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	artifact := seedRuntimeSubstrateBlob(t, ctx, queries, ids, "runtime-substrate-disabled-worker-group")
+	substrate, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1436,7 +1436,7 @@ func TestGetRuntimeSubstrateArtifactForSandboxRejectsDisabledWorkerGroup(t *test
 	}
 	disableDefaultWorkerGroupPlacement(t, ctx, pool, ids)
 
-	_, err = queries.GetRuntimeSubstrateArtifactForSandbox(ctx, db.GetRuntimeSubstrateArtifactForSandboxParams{
+	_, err = queries.GetRuntimeSubstrateForSandbox(ctx, db.GetRuntimeSubstrateForSandboxParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
 		WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 		ProjectID:           pgvalue.UUID(ids.projectID),
@@ -1496,7 +1496,7 @@ func setCurrentDeploymentForRuntimeInstanceTest(t *testing.T, ctx context.Contex
 	}
 }
 
-func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, label string) db.Artifact {
+func seedRuntimeSubstrateBlob(t *testing.T, ctx context.Context, queries *db.Queries, ids integrationIDs, label string) db.Artifact {
 	t.Helper()
 	digest := testDigest(label)
 	if _, err := queries.UpsertCasObject(ctx, db.UpsertCasObjectParams{
@@ -1507,7 +1507,7 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 	}); err != nil {
 		t.Fatal(err)
 	}
-	artifact, err := queries.UpsertRuntimeSubstrateArtifactBlob(ctx, db.UpsertRuntimeSubstrateArtifactBlobParams{
+	artifact, err := queries.UpsertRuntimeSubstrateBlob(ctx, db.UpsertRuntimeSubstrateBlobParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
@@ -1522,7 +1522,7 @@ func seedRuntimeSubstrateArtifactBlob(t *testing.T, ctx context.Context, queries
 	return artifact
 }
 
-func runtimeSubstrateArtifactSourceForTarget(t *testing.T, target db.ListRuntimeSubstratePrepareTargetsRow, overrides map[string]string) []byte {
+func runtimeSubstrateSourceForTarget(t *testing.T, target db.ListRuntimeSubstratePrepareTargetsRow, overrides map[string]string) []byte {
 	t.Helper()
 	source := map[string]string{
 		"sandbox_artifact_digest": target.SandboxImageArtifactDigest,
@@ -1617,11 +1617,11 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		t.Fatal(err)
 	}
 	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
-		t.Fatalf("targets before substrate artifact = %+v, want one current sandbox target", targets)
+		t.Fatalf("targets before substrate = %+v, want one current sandbox target", targets)
 	}
 	target := targets[0]
-	artifact := seedRuntimeSubstrateArtifactBlob(t, ctx, queries, ids, "runtime-substrate-existing")
-	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	artifact := seedRuntimeSubstrateBlob(t, ctx, queries, ids, "runtime-substrate-existing")
+	if _, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1634,7 +1634,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		BuilderAbi:                substrate.BuilderABI,
 		LayoutAbi:                 "old-layout-abi",
 		SubstrateSizeBytes:        1024,
-		Source:                    runtimeSubstrateArtifactSourceForTarget(t, target, nil),
+		Source:                    runtimeSubstrateSourceForTarget(t, target, nil),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
@@ -1649,9 +1649,9 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		t.Fatal(err)
 	}
 	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
-		t.Fatalf("targets after stale substrate artifact = %+v, want current sandbox target", targets)
+		t.Fatalf("targets after stale substrate = %+v, want current sandbox target", targets)
 	}
-	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	if _, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1664,7 +1664,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		BuilderAbi:                substrate.BuilderABI,
 		LayoutAbi:                 substrate.LayoutABI,
 		SubstrateSizeBytes:        1024,
-		Source:                    runtimeSubstrateArtifactSourceForTarget(t, target, map[string]string{"rootfs_digest": "sha256:old-rootfs"}),
+		Source:                    runtimeSubstrateSourceForTarget(t, target, map[string]string{"rootfs_digest": "sha256:old-rootfs"}),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
@@ -1713,7 +1713,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	`, otherWorkerGroupID, dbtest.DefaultRegionID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	if _, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             otherWorkerGroupID,
@@ -1726,7 +1726,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		BuilderAbi:                substrate.BuilderABI,
 		LayoutAbi:                 substrate.LayoutABI,
 		SubstrateSizeBytes:        1024,
-		Source:                    runtimeSubstrateArtifactSourceForTarget(t, target, nil),
+		Source:                    runtimeSubstrateSourceForTarget(t, target, nil),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
@@ -1741,7 +1741,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		t.Fatal(err)
 	}
 	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
-		t.Fatalf("targets after other worker group substrate artifact = %+v, want current worker group target", targets)
+		t.Fatalf("targets after other worker group substrate = %+v, want current worker group target", targets)
 	}
 	exactCommand, err := queries.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
 		OrgID:               pgvalue.UUID(ids.orgID),
@@ -1789,7 +1789,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 	if len(targets) != 1 || targets[0].DeploymentSandboxID != pgvalue.UUID(ids.deploymentSandboxID) {
 		t.Fatalf("targets after acknowledged exact substrate command = %+v, want current sandbox target", targets)
 	}
-	if _, err := queries.UpsertRuntimeSubstrateArtifact(ctx, db.UpsertRuntimeSubstrateArtifactParams{
+	if _, err := queries.UpsertRuntimeSubstrate(ctx, db.UpsertRuntimeSubstrateParams{
 		ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		OrgID:                     pgvalue.UUID(ids.orgID),
 		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
@@ -1802,7 +1802,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		BuilderAbi:                substrate.BuilderABI,
 		LayoutAbi:                 substrate.LayoutABI,
 		SubstrateSizeBytes:        1024,
-		Source:                    runtimeSubstrateArtifactSourceForTarget(t, target, nil),
+		Source:                    runtimeSubstrateSourceForTarget(t, target, nil),
 		CreatedByWorkerInstanceID: pgtype.UUID{},
 	}); err != nil {
 		t.Fatal(err)
@@ -1817,7 +1817,7 @@ func TestListRuntimeSubstratePrepareTargetsSuppressesExistingArtifact(t *testing
 		t.Fatal(err)
 	}
 	if len(targets) != 0 {
-		t.Fatalf("targets after substrate artifact = %+v, want none", targets)
+		t.Fatalf("targets after substrate = %+v, want none", targets)
 	}
 }
 

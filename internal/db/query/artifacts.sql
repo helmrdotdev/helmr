@@ -22,7 +22,7 @@ INSERT INTO artifacts (
 )
 RETURNING *;
 
--- name: UpsertRuntimeSubstrateArtifactBlob :one
+-- name: UpsertRuntimeSubstrateBlob :one
 INSERT INTO artifacts (
     id,
     org_id,

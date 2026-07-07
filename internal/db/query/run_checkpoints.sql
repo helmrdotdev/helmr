@@ -252,7 +252,7 @@ created_checkpoint AS (
            owner_run_lease_id = wait_scope.owner_run_lease_id,
            owner_worker_instance_id = sqlc.arg(worker_instance_id),
            source_worker_instance_id = sqlc.arg(worker_instance_id),
-           runtime_substrate_artifact_id = sqlc.narg(runtime_substrate_artifact_id)::uuid,
+           runtime_substrate_id = sqlc.narg(runtime_substrate_id)::uuid,
            runtime_vcpus = sqlc.narg(runtime_vcpus)::int,
            runtime_memory_mib = sqlc.narg(runtime_memory_mib)::int,
            runtime_scratch_disk_mib = sqlc.narg(runtime_scratch_disk_mib)::int,
@@ -279,7 +279,7 @@ created_checkpoint AS (
        AND run_checkpoints.owner_worker_instance_id = sqlc.arg(worker_instance_id)
        AND run_checkpoints.source_worker_instance_id = sqlc.arg(worker_instance_id)
        AND (
-           sqlc.narg(runtime_substrate_artifact_id)::uuid IS NULL
+           sqlc.narg(runtime_substrate_id)::uuid IS NULL
            OR EXISTS (
                SELECT 1
                  FROM runtime_substrates
@@ -287,7 +287,7 @@ created_checkpoint AS (
                   AND runtime_substrates.worker_group_id = run_checkpoints.worker_group_id
                   AND runtime_substrates.project_id = run_checkpoints.project_id
                   AND runtime_substrates.environment_id = run_checkpoints.environment_id
-                  AND runtime_substrates.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
+                  AND runtime_substrates.id = sqlc.narg(runtime_substrate_id)::uuid
                   AND runtime_substrates.retired_at IS NULL
            )
        )

@@ -16,12 +16,12 @@ type RuntimeSubstrateDigestLookup interface {
 	LookupDigest(context.Context, string) (substrate.Result, error)
 }
 
-type RuntimeSubstrateArtifactRegistrar interface {
-	RegisterRuntimeSubstrateArtifact(context.Context, api.WorkerRuntimeSubstrateArtifactRegisterRequest) (api.WorkerRuntimeSubstrateArtifactRegisterResponse, error)
+type RuntimeSubstrateRegistrar interface {
+	RegisterRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error)
 }
 
-type RuntimeSubstrateArtifactLookup interface {
-	LookupRuntimeSubstrateArtifact(context.Context, api.WorkerRuntimeSubstrateArtifactLookupRequest) (api.WorkerRuntimeSubstrateArtifactLookupResponse, error)
+type RuntimeSubstrateLookup interface {
+	LookupRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error)
 }
 
 func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
@@ -51,7 +51,7 @@ func runtimeSubstrateSourceFromPreparedSource(source api.WorkerPreparedRuntimeSo
 		RuntimeABI:                 source.RuntimeABI,
 		GuestdABI:                  source.GuestdABI,
 		AdapterABI:                 source.AdapterABI,
-		RuntimeSubstrateArtifact:   source.RuntimeSubstrateArtifact,
+		RuntimeSubstrate:           source.RuntimeSubstrate,
 	}
 }
 
@@ -103,7 +103,7 @@ func runtimeSubstrateDigest(topology vm.RuntimeTopology) string {
 	return topology.Substrate.Digest
 }
 
-func runtimeSubstrateArtifactID(artifact *api.WorkerRuntimeSubstrateArtifact) string {
+func runtimeSubstrateID(artifact *api.WorkerRuntimeSubstrate) string {
 	if artifact == nil {
 		return ""
 	}

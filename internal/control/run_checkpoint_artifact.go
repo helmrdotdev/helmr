@@ -21,21 +21,21 @@ func checkpointSubstrateDigest(manifest api.WorkerCheckpointManifest) pgtype.Tex
 	return pgvalue.Text(strings.TrimSpace(manifest.RecoveryPoint.Runtime.Substrate.Digest))
 }
 
-func checkpointRuntimeSubstrateArtifactID(manifest api.WorkerCheckpointManifest) (pgtype.UUID, error) {
+func checkpointRuntimeSubstrateID(manifest api.WorkerCheckpointManifest) (pgtype.UUID, error) {
 	if manifest.RecoveryPoint.Runtime.Substrate == nil {
 		return pgtype.UUID{}, nil
 	}
-	if manifest.RuntimeState.RuntimeSubstrateArtifact == nil {
-		return pgtype.UUID{}, errors.New("runtime_state.runtime_substrate_artifact is required")
+	if manifest.RuntimeState.RuntimeSubstrate == nil {
+		return pgtype.UUID{}, errors.New("runtime_state.runtime_substrate is required")
 	}
-	id, err := uuid.Parse(strings.TrimSpace(manifest.RuntimeState.RuntimeSubstrateArtifact.ID))
+	id, err := uuid.Parse(strings.TrimSpace(manifest.RuntimeState.RuntimeSubstrate.ID))
 	if err != nil {
-		return pgtype.UUID{}, errors.New("runtime_state.runtime_substrate_artifact.id must be a UUID")
+		return pgtype.UUID{}, errors.New("runtime_state.runtime_substrate.id must be a UUID")
 	}
 	return pgvalue.UUID(id), nil
 }
 
-func validateWorkerRuntimeSubstrateArtifact(label string, artifact api.WorkerRuntimeSubstrateArtifact, substrate api.WorkerCheckpointRuntimeSubstrate) error {
+func validateWorkerRuntimeSubstrate(label string, artifact api.WorkerRuntimeSubstrate, substrate api.WorkerCheckpointRuntimeSubstrate) error {
 	required := map[string]string{
 		label + ".id":                    artifact.ID,
 		label + ".deployment_sandbox_id": artifact.DeploymentSandboxID,

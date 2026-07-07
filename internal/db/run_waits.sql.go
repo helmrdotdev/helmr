@@ -266,7 +266,7 @@ claimed_checkpoint AS (
      WHERE scope.state = 'hot_waiting'
        AND COALESCE(scope.workspace_version_id, scope.current_workspace_version_id) IS NOT NULL
     ON CONFLICT (id) DO NOTHING
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id, source_workspace_lease_id, workspace_mount_id, base_workspace_version_id, state, runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id, owner_worker_instance_id, source_worker_instance_id, substrate_digest, runtime_substrate_artifact_id, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, manifest, error_message, expires_at, creation_started_at, creation_expires_at, created_at, ready_at, invalidated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, run_id, source_workspace_lease_id, workspace_mount_id, base_workspace_version_id, state, runtime_backend, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, runtime_config_digest, owner_runtime_instance_id, owner_runtime_epoch, owner_run_id, owner_run_wait_id, owner_run_lease_id, owner_worker_instance_id, source_worker_instance_id, substrate_digest, runtime_substrate_id, runtime_vcpus, runtime_memory_mib, runtime_scratch_disk_mib, cni_profile, image_key, manifest, error_message, expires_at, creation_started_at, creation_expires_at, created_at, ready_at, invalidated_at
 ),
 claimed_wait AS (
     UPDATE run_waits

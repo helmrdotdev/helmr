@@ -338,7 +338,7 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	runtimeSubstrateArtifactID, err := checkpointRuntimeSubstrateArtifactID(request.Manifest)
+	runtimeSubstrateID, err := checkpointRuntimeSubstrateID(request.Manifest)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -368,27 +368,27 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			return errors.New("encode run checkpoint manifest")
 		}
 		created, err := work.q.CreateReadyRunCheckpointForRunWait(r.Context(), db.CreateReadyRunCheckpointForRunWaitParams{
-			WorkerCommandID:            request.WorkerCommandID,
-			OrgID:                      scope.OrgID,
-			ProjectID:                  scope.ProjectID,
-			EnvironmentID:              scope.EnvironmentID,
-			RunWaitID:                  pgvalue.UUID(runWaitID),
-			RunID:                      pgvalue.UUID(runID),
-			RunLeaseID:                 pgvalue.UUID(runLeaseID),
-			WorkerInstanceID:           pgvalue.UUID(worker.WorkerInstanceID),
-			RunCheckpointID:            pgvalue.UUID(runCheckpointID),
-			RuntimeBackend:             request.Manifest.RecoveryPoint.Runtime.Backend,
-			RuntimeID:                  request.Manifest.RecoveryPoint.Runtime.ID,
-			RuntimeArch:                request.Manifest.RecoveryPoint.Runtime.Arch,
-			RuntimeABI:                 request.Manifest.RecoveryPoint.Runtime.ABI,
-			KernelDigest:               request.Manifest.RecoveryPoint.Runtime.KernelDigest,
-			InitramfsDigest:            request.Manifest.RecoveryPoint.Runtime.InitramfsDigest,
-			RootfsDigest:               request.Manifest.RecoveryPoint.Runtime.RootfsDigest,
-			RuntimeConfigDigest:        request.Manifest.RecoveryPoint.Runtime.ConfigDigest,
-			RuntimeSubstrateArtifactID: runtimeSubstrateArtifactID,
-			CniProfile:                 scope.WorkerCniProfile,
-			SubstrateDigest:            checkpointSubstrateDigest(request.Manifest),
-			Manifest:                   manifest,
+			WorkerCommandID:     request.WorkerCommandID,
+			OrgID:               scope.OrgID,
+			ProjectID:           scope.ProjectID,
+			EnvironmentID:       scope.EnvironmentID,
+			RunWaitID:           pgvalue.UUID(runWaitID),
+			RunID:               pgvalue.UUID(runID),
+			RunLeaseID:          pgvalue.UUID(runLeaseID),
+			WorkerInstanceID:    pgvalue.UUID(worker.WorkerInstanceID),
+			RunCheckpointID:     pgvalue.UUID(runCheckpointID),
+			RuntimeBackend:      request.Manifest.RecoveryPoint.Runtime.Backend,
+			RuntimeID:           request.Manifest.RecoveryPoint.Runtime.ID,
+			RuntimeArch:         request.Manifest.RecoveryPoint.Runtime.Arch,
+			RuntimeABI:          request.Manifest.RecoveryPoint.Runtime.ABI,
+			KernelDigest:        request.Manifest.RecoveryPoint.Runtime.KernelDigest,
+			InitramfsDigest:     request.Manifest.RecoveryPoint.Runtime.InitramfsDigest,
+			RootfsDigest:        request.Manifest.RecoveryPoint.Runtime.RootfsDigest,
+			RuntimeConfigDigest: request.Manifest.RecoveryPoint.Runtime.ConfigDigest,
+			RuntimeSubstrateID:  runtimeSubstrateID,
+			CniProfile:          scope.WorkerCniProfile,
+			SubstrateDigest:     checkpointSubstrateDigest(request.Manifest),
+			Manifest:            manifest,
 		})
 		if isNoRows(err) {
 			return errReadyCheckpointReplay
@@ -673,10 +673,10 @@ func validateWorkerCheckpointManifest(manifest api.WorkerCheckpointManifest) err
 				return fmt.Errorf("%s is required", label)
 			}
 		}
-		if manifest.RuntimeState.RuntimeSubstrateArtifact == nil {
-			return errors.New("runtime_state.runtime_substrate_artifact is required")
+		if manifest.RuntimeState.RuntimeSubstrate == nil {
+			return errors.New("runtime_state.runtime_substrate is required")
 		}
-		if err := validateWorkerRuntimeSubstrateArtifact("runtime_state.runtime_substrate_artifact", *manifest.RuntimeState.RuntimeSubstrateArtifact, *runtime.Substrate); err != nil {
+		if err := validateWorkerRuntimeSubstrate("runtime_state.runtime_substrate", *manifest.RuntimeState.RuntimeSubstrate, *runtime.Substrate); err != nil {
 			return err
 		}
 	}

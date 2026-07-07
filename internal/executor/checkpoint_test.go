@@ -92,8 +92,8 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	if manifest.RuntimeState.ScratchDiskArtifact.Digest != scratchPut.object.Digest {
 		t.Fatalf("scratch disk artifact = %+v puts=%+v", manifest.RuntimeState.ScratchDiskArtifact, store.puts)
 	}
-	if manifest.RuntimeState.RuntimeSubstrateArtifact == nil || manifest.RuntimeState.RuntimeSubstrateArtifact.ID != registrar.id || manifest.RuntimeState.RuntimeSubstrateArtifact.Artifact.Digest != substratePut.object.Digest {
-		t.Fatalf("runtime substrate artifact = %+v puts=%+v", manifest.RuntimeState.RuntimeSubstrateArtifact, store.puts)
+	if manifest.RuntimeState.RuntimeSubstrate == nil || manifest.RuntimeState.RuntimeSubstrate.ID != registrar.id || manifest.RuntimeState.RuntimeSubstrate.Artifact.Digest != substratePut.object.Digest {
+		t.Fatalf("runtime substrate = %+v puts=%+v", manifest.RuntimeState.RuntimeSubstrate, store.puts)
 	}
 	if len(registrar.requests) != 1 || registrar.requests[0].SubstrateDigest != manifest.RecoveryPoint.Runtime.Substrate.Digest {
 		t.Fatalf("runtime substrate register requests = %+v", registrar.requests)
@@ -596,13 +596,13 @@ func checkpointPutByMediaType(t *testing.T, store *checkpointCAS, mediaType stri
 
 type checkpointRuntimeSubstrateRegistrar struct {
 	id       string
-	requests []api.WorkerRuntimeSubstrateArtifactRegisterRequest
+	requests []api.WorkerRuntimeSubstrateRegisterRequest
 }
 
-func (r *checkpointRuntimeSubstrateRegistrar) RegisterRuntimeSubstrateArtifact(_ context.Context, request api.WorkerRuntimeSubstrateArtifactRegisterRequest) (api.WorkerRuntimeSubstrateArtifactRegisterResponse, error) {
+func (r *checkpointRuntimeSubstrateRegistrar) RegisterRuntimeSubstrate(_ context.Context, request api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
 	r.requests = append(r.requests, request)
-	return api.WorkerRuntimeSubstrateArtifactRegisterResponse{
-		RuntimeSubstrateArtifact: api.WorkerRuntimeSubstrateArtifact{
+	return api.WorkerRuntimeSubstrateRegisterResponse{
+		RuntimeSubstrate: api.WorkerRuntimeSubstrate{
 			ID:                  r.id,
 			DeploymentSandboxID: request.DeploymentSandboxID,
 			Artifact:            request.Artifact,

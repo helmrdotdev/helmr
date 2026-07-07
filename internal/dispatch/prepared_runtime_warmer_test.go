@@ -166,6 +166,61 @@ func TestRuntimePreparerCreatesSubstratePrepareCommand(t *testing.T) {
 	}
 }
 
+func TestValidateRuntimePreparerWorkerCommand(t *testing.T) {
+	id := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	tests := []struct {
+		name    string
+		params  db.CreateWorkerCommandParams
+		wantErr bool
+	}{
+		{
+			name: "runtime prepare",
+			params: db.CreateWorkerCommandParams{
+				Kind:              db.WorkerCommandKindRuntimePrepare,
+				RuntimeInstanceID: id,
+				RuntimeEpoch:      pgtype.Int8{Int64: 1, Valid: true},
+			},
+		},
+		{
+			name: "runtime prepare rejects deployment sandbox",
+			params: db.CreateWorkerCommandParams{
+				Kind:                db.WorkerCommandKindRuntimePrepare,
+				RuntimeInstanceID:   id,
+				RuntimeEpoch:        pgtype.Int8{Int64: 1, Valid: true},
+				DeploymentSandboxID: id,
+			},
+			wantErr: true,
+		},
+		{
+			name: "runtime substrate prepare",
+			params: db.CreateWorkerCommandParams{
+				Kind:                db.WorkerCommandKindRuntimeSubstratePrepare,
+				DeploymentSandboxID: id,
+			},
+		},
+		{
+			name: "runtime substrate prepare rejects runtime instance",
+			params: db.CreateWorkerCommandParams{
+				Kind:                db.WorkerCommandKindRuntimeSubstratePrepare,
+				DeploymentSandboxID: id,
+				RuntimeInstanceID:   id,
+			},
+			wantErr: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateRuntimePreparerWorkerCommand(tt.params)
+			if tt.wantErr && err == nil {
+				t.Fatal("expected error")
+			}
+			if !tt.wantErr && err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
 func TestRuntimePreparerMarksSupersededInstancesBeforeTargetSelection(t *testing.T) {
 	store := &fakeRuntimePreparerStore{
 		superseded: []db.WorkerCommand{{ID: 1, Kind: db.WorkerCommandKindRuntimeStop}},

@@ -15,13 +15,13 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimeSubstrateArtifactRegisterRequest
+func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerRuntimeSubstrateRegisterRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker runtime substrate artifact register request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker runtime substrate register request JSON: %w", err)))
 		return
 	}
-	if err := validateRuntimeSubstrateArtifactRegisterRequest(request); err != nil {
+	if err := validateRuntimeSubstrateRegisterRequest(request); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -34,9 +34,9 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		writeError(w, badRequest(err))
 		return
 	}
-	runtimeSubstrateArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	runtimeSubstrateID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	if strings.TrimSpace(request.ID) != "" {
-		runtimeSubstrateArtifactID, err = parseWorkspaceUUID("id", request.ID)
+		runtimeSubstrateID, err = parseWorkspaceUUID("id", request.ID)
 		if err != nil {
 			writeError(w, badRequest(err))
 			return
@@ -55,19 +55,19 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 	}
 	stat, err := s.cas.Stat(r.Context(), strings.TrimSpace(request.Artifact.Digest))
 	if err != nil {
-		writeError(w, badRequest(fmt.Errorf("runtime substrate artifact is missing from CAS: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("runtime substrate is missing from CAS: %w", err)))
 		return
 	}
 	if stat.SizeBytes != request.Artifact.SizeBytes {
-		writeError(w, badRequest(errors.New("runtime substrate artifact size_bytes mismatch")))
+		writeError(w, badRequest(errors.New("runtime substrate size_bytes mismatch")))
 		return
 	}
 	if strings.TrimSpace(stat.MediaType) != strings.TrimSpace(request.Artifact.MediaType) {
-		writeError(w, badRequest(errors.New("runtime substrate artifact media_type mismatch")))
+		writeError(w, badRequest(errors.New("runtime substrate media_type mismatch")))
 		return
 	}
 	if strings.TrimSpace(request.Artifact.MediaType) != cas.RuntimeSubstrateMediaType {
-		writeError(w, badRequest(fmt.Errorf("runtime substrate artifact media_type must be %s", cas.RuntimeSubstrateMediaType)))
+		writeError(w, badRequest(fmt.Errorf("runtime substrate media_type must be %s", cas.RuntimeSubstrateMediaType)))
 		return
 	}
 	var row db.RuntimeSubstrate
@@ -90,7 +90,7 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 		}); err != nil {
 			return errors.New("record runtime substrate CAS object")
 		}
-		artifact, err := work.q.UpsertRuntimeSubstrateArtifactBlob(r.Context(), db.UpsertRuntimeSubstrateArtifactBlobParams{
+		artifact, err := work.q.UpsertRuntimeSubstrateBlob(r.Context(), db.UpsertRuntimeSubstrateBlobParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:                     sandbox.OrgID,
 			ProjectID:                 sandbox.ProjectID,
@@ -101,10 +101,10 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 			CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		})
 		if err != nil {
-			return errors.New("record runtime substrate artifact")
+			return errors.New("record runtime substrate")
 		}
-		row, err = work.q.UpsertRuntimeSubstrateArtifact(r.Context(), db.UpsertRuntimeSubstrateArtifactParams{
-			ID:                        runtimeSubstrateArtifactID,
+		row, err = work.q.UpsertRuntimeSubstrate(r.Context(), db.UpsertRuntimeSubstrateParams{
+			ID:                        runtimeSubstrateID,
 			OrgID:                     sandbox.OrgID,
 			WorkerGroupID:             worker.WorkerGroupID,
 			ProjectID:                 sandbox.ProjectID,
@@ -123,24 +123,24 @@ func (s *Server) workerRegisterRuntimeSubstrateArtifact(w http.ResponseWriter, r
 	})
 	if err != nil {
 		if errorStatus(err) == http.StatusInternalServerError {
-			writeError(w, errors.New("upsert runtime substrate artifact"))
+			writeError(w, errors.New("upsert runtime substrate"))
 			return
 		}
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateArtifactRegisterResponse{
-		RuntimeSubstrateArtifact: runtimeSubstrateArtifactResponse(row, request.Artifact),
+	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateRegisterResponse{
+		RuntimeSubstrate: runtimeSubstrateResponse(row, request.Artifact),
 	})
 }
 
-func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimeSubstrateArtifactLookupRequest
+func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerRuntimeSubstrateLookupRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker runtime substrate artifact lookup request JSON: %w", err)))
+		writeError(w, badRequest(fmt.Errorf("invalid worker runtime substrate lookup request JSON: %w", err)))
 		return
 	}
-	if err := validateRuntimeSubstrateArtifactLookupRequest(request); err != nil {
+	if err := validateRuntimeSubstrateLookupRequest(request); err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
@@ -163,7 +163,7 @@ func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *
 		writeError(w, errors.New("lookup runtime substrate sandbox"))
 		return
 	}
-	row, err := s.db.GetRuntimeSubstrateArtifactForSandbox(r.Context(), db.GetRuntimeSubstrateArtifactForSandboxParams{
+	row, err := s.db.GetRuntimeSubstrateForSandbox(r.Context(), db.GetRuntimeSubstrateForSandboxParams{
 		OrgID:               sandbox.OrgID,
 		WorkerGroupID:       worker.WorkerGroupID,
 		ProjectID:           sandbox.ProjectID,
@@ -175,20 +175,20 @@ func (s *Server) workerLookupRuntimeSubstrateArtifact(w http.ResponseWriter, r *
 		LayoutAbi:           strings.TrimSpace(request.LayoutABI),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("runtime substrate artifact not found")))
+		writeError(w, notFound(errors.New("runtime substrate not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("lookup runtime substrate artifact failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_sandbox_id", request.DeploymentSandboxID, "error", err)
-		writeError(w, errors.New("lookup runtime substrate artifact"))
+		s.log.Error("lookup runtime substrate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_sandbox_id", request.DeploymentSandboxID, "error", err)
+		writeError(w, errors.New("lookup runtime substrate"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateArtifactLookupResponse{
-		RuntimeSubstrateArtifact: runtimeSubstrateArtifactResponseFromLookup(row),
+	writeJSON(w, http.StatusOK, api.WorkerRuntimeSubstrateLookupResponse{
+		RuntimeSubstrate: runtimeSubstrateResponseFromLookup(row),
 	})
 }
 
-func validateRuntimeSubstrateArtifactRegisterRequest(request api.WorkerRuntimeSubstrateArtifactRegisterRequest) error {
+func validateRuntimeSubstrateRegisterRequest(request api.WorkerRuntimeSubstrateRegisterRequest) error {
 	required := map[string]string{
 		"deployment_sandbox_id": request.DeploymentSandboxID,
 		"artifact.digest":       request.Artifact.Digest,
@@ -215,7 +215,7 @@ func validateRuntimeSubstrateArtifactRegisterRequest(request api.WorkerRuntimeSu
 	return nil
 }
 
-func validateRuntimeSubstrateArtifactLookupRequest(request api.WorkerRuntimeSubstrateArtifactLookupRequest) error {
+func validateRuntimeSubstrateLookupRequest(request api.WorkerRuntimeSubstrateLookupRequest) error {
 	required := map[string]string{
 		"deployment_sandbox_id": request.DeploymentSandboxID,
 		"substrate_digest":      request.SubstrateDigest,
@@ -231,8 +231,8 @@ func validateRuntimeSubstrateArtifactLookupRequest(request api.WorkerRuntimeSubs
 	return nil
 }
 
-func runtimeSubstrateArtifactResponse(row db.RuntimeSubstrate, artifact api.CASObject) api.WorkerRuntimeSubstrateArtifact {
-	return api.WorkerRuntimeSubstrateArtifact{
+func runtimeSubstrateResponse(row db.RuntimeSubstrate, artifact api.CASObject) api.WorkerRuntimeSubstrate {
+	return api.WorkerRuntimeSubstrate{
 		ID:                  pgvalue.UUIDString(row.ID),
 		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
 		Artifact:            artifact,
@@ -244,8 +244,8 @@ func runtimeSubstrateArtifactResponse(row db.RuntimeSubstrate, artifact api.CASO
 	}
 }
 
-func runtimeSubstrateArtifactResponseFromLookup(row db.GetRuntimeSubstrateArtifactForSandboxRow) api.WorkerRuntimeSubstrateArtifact {
-	return api.WorkerRuntimeSubstrateArtifact{
+func runtimeSubstrateResponseFromLookup(row db.GetRuntimeSubstrateForSandboxRow) api.WorkerRuntimeSubstrate {
+	return api.WorkerRuntimeSubstrate{
 		ID:                  pgvalue.UUIDString(row.ID),
 		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
 		Artifact: api.CASObject{

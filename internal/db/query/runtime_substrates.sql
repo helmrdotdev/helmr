@@ -1,4 +1,4 @@
--- name: UpsertRuntimeSubstrateArtifact :one
+-- name: UpsertRuntimeSubstrate :one
 INSERT INTO runtime_substrates (
     id,
     org_id,
@@ -39,7 +39,7 @@ DO UPDATE
        updated_at = now()
 RETURNING *;
 
--- name: GetRuntimeSubstrateArtifactForSandbox :one
+-- name: GetRuntimeSubstrateForSandbox :one
 SELECT runtime_substrates.*,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
