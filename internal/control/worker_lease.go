@@ -602,14 +602,14 @@ func workerWorkspaceFromLease(row db.LeaseRunLeaseRow) api.WorkerWorkspace {
 			GuestdABI:                  row.WorkspaceGuestdAbi.String,
 			AdapterABI:                 row.WorkspaceAdapterAbi.String,
 		}
-		if row.WorkspaceRuntimeSubstrateArtifactID.Valid {
-			workspace.SubstrateSource.RuntimeSubstrateArtifact = &api.WorkerRuntimeSubstrateArtifact{
-				ID:                  pgvalue.MustUUIDValue(row.WorkspaceRuntimeSubstrateArtifactID).String(),
+		if row.WorkspaceRuntimeSubstrateID.Valid {
+			workspace.SubstrateSource.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
+				ID:                  pgvalue.MustUUIDValue(row.WorkspaceRuntimeSubstrateID).String(),
 				DeploymentSandboxID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentSandboxID).String(),
 				Artifact: api.CASObject{
-					Digest:    row.WorkspaceRuntimeSubstrateArtifactDigest,
-					SizeBytes: row.WorkspaceRuntimeSubstrateArtifactSizeBytes,
-					MediaType: row.WorkspaceRuntimeSubstrateArtifactMediaType,
+					Digest:    row.WorkspaceRuntimeSubstrateBlobDigest,
+					SizeBytes: row.WorkspaceRuntimeSubstrateBlobSizeBytes,
+					MediaType: row.WorkspaceRuntimeSubstrateBlobMediaType,
 				},
 				SubstrateDigest: row.WorkspaceRuntimeSubstrateDigest,
 				Format:          row.WorkspaceRuntimeSubstrateFormat,

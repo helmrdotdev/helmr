@@ -155,7 +155,7 @@ created_checkpoint AS (
            owner_run_lease_id = wait_scope.owner_run_lease_id,
            owner_worker_instance_id = $9,
            source_worker_instance_id = $9,
-           runtime_substrate_artifact_id = $18::uuid,
+           runtime_substrate_id = $18::uuid,
            runtime_vcpus = $19::int,
            runtime_memory_mib = $20::int,
            runtime_scratch_disk_mib = $21::int,
@@ -194,7 +194,7 @@ created_checkpoint AS (
                   AND runtime_substrates.retired_at IS NULL
            )
        )
-    RETURNING run_checkpoints.id, run_checkpoints.org_id, run_checkpoints.worker_group_id, run_checkpoints.project_id, run_checkpoints.environment_id, run_checkpoints.workspace_id, run_checkpoints.run_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_mount_id, run_checkpoints.base_workspace_version_id, run_checkpoints.state, run_checkpoints.runtime_backend, run_checkpoints.runtime_identity_id, run_checkpoints.runtime_arch, run_checkpoints.runtime_abi, run_checkpoints.kernel_digest, run_checkpoints.initramfs_digest, run_checkpoints.rootfs_digest, run_checkpoints.runtime_config_digest, run_checkpoints.owner_runtime_instance_id, run_checkpoints.owner_runtime_epoch, run_checkpoints.owner_run_id, run_checkpoints.owner_run_wait_id, run_checkpoints.owner_run_lease_id, run_checkpoints.owner_worker_instance_id, run_checkpoints.source_worker_instance_id, run_checkpoints.substrate_digest, run_checkpoints.runtime_substrate_artifact_id, run_checkpoints.runtime_vcpus, run_checkpoints.runtime_memory_mib, run_checkpoints.runtime_scratch_disk_mib, run_checkpoints.cni_profile, run_checkpoints.image_key, run_checkpoints.manifest, run_checkpoints.error_message, run_checkpoints.expires_at, run_checkpoints.creation_started_at, run_checkpoints.creation_expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at
+    RETURNING run_checkpoints.id, run_checkpoints.org_id, run_checkpoints.worker_group_id, run_checkpoints.project_id, run_checkpoints.environment_id, run_checkpoints.workspace_id, run_checkpoints.run_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_mount_id, run_checkpoints.base_workspace_version_id, run_checkpoints.state, run_checkpoints.runtime_backend, run_checkpoints.runtime_identity_id, run_checkpoints.runtime_arch, run_checkpoints.runtime_abi, run_checkpoints.kernel_digest, run_checkpoints.initramfs_digest, run_checkpoints.rootfs_digest, run_checkpoints.runtime_config_digest, run_checkpoints.owner_runtime_instance_id, run_checkpoints.owner_runtime_epoch, run_checkpoints.owner_run_id, run_checkpoints.owner_run_wait_id, run_checkpoints.owner_run_lease_id, run_checkpoints.owner_worker_instance_id, run_checkpoints.source_worker_instance_id, run_checkpoints.substrate_digest, run_checkpoints.runtime_substrate_id, run_checkpoints.runtime_vcpus, run_checkpoints.runtime_memory_mib, run_checkpoints.runtime_scratch_disk_mib, run_checkpoints.cni_profile, run_checkpoints.image_key, run_checkpoints.manifest, run_checkpoints.error_message, run_checkpoints.expires_at, run_checkpoints.creation_started_at, run_checkpoints.creation_expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at
 ),
 updated_wait AS (
     UPDATE run_waits
@@ -356,7 +356,7 @@ parked_event AS (
 	    SELECT parked_run.id
 	      FROM parked_run
 	)
-SELECT created_checkpoint.id, created_checkpoint.org_id, created_checkpoint.worker_group_id, created_checkpoint.project_id, created_checkpoint.environment_id, created_checkpoint.workspace_id, created_checkpoint.run_id, created_checkpoint.source_workspace_lease_id, created_checkpoint.workspace_mount_id, created_checkpoint.base_workspace_version_id, created_checkpoint.state, created_checkpoint.runtime_backend, created_checkpoint.runtime_identity_id, created_checkpoint.runtime_arch, created_checkpoint.runtime_abi, created_checkpoint.kernel_digest, created_checkpoint.initramfs_digest, created_checkpoint.rootfs_digest, created_checkpoint.runtime_config_digest, created_checkpoint.owner_runtime_instance_id, created_checkpoint.owner_runtime_epoch, created_checkpoint.owner_run_id, created_checkpoint.owner_run_wait_id, created_checkpoint.owner_run_lease_id, created_checkpoint.owner_worker_instance_id, created_checkpoint.source_worker_instance_id, created_checkpoint.substrate_digest, created_checkpoint.runtime_substrate_artifact_id, created_checkpoint.runtime_vcpus, created_checkpoint.runtime_memory_mib, created_checkpoint.runtime_scratch_disk_mib, created_checkpoint.cni_profile, created_checkpoint.image_key, created_checkpoint.manifest, created_checkpoint.error_message, created_checkpoint.expires_at, created_checkpoint.creation_started_at, created_checkpoint.creation_expires_at, created_checkpoint.created_at, created_checkpoint.ready_at, created_checkpoint.invalidated_at
+SELECT created_checkpoint.id, created_checkpoint.org_id, created_checkpoint.worker_group_id, created_checkpoint.project_id, created_checkpoint.environment_id, created_checkpoint.workspace_id, created_checkpoint.run_id, created_checkpoint.source_workspace_lease_id, created_checkpoint.workspace_mount_id, created_checkpoint.base_workspace_version_id, created_checkpoint.state, created_checkpoint.runtime_backend, created_checkpoint.runtime_identity_id, created_checkpoint.runtime_arch, created_checkpoint.runtime_abi, created_checkpoint.kernel_digest, created_checkpoint.initramfs_digest, created_checkpoint.rootfs_digest, created_checkpoint.runtime_config_digest, created_checkpoint.owner_runtime_instance_id, created_checkpoint.owner_runtime_epoch, created_checkpoint.owner_run_id, created_checkpoint.owner_run_wait_id, created_checkpoint.owner_run_lease_id, created_checkpoint.owner_worker_instance_id, created_checkpoint.source_worker_instance_id, created_checkpoint.substrate_digest, created_checkpoint.runtime_substrate_id, created_checkpoint.runtime_vcpus, created_checkpoint.runtime_memory_mib, created_checkpoint.runtime_scratch_disk_mib, created_checkpoint.cni_profile, created_checkpoint.image_key, created_checkpoint.manifest, created_checkpoint.error_message, created_checkpoint.expires_at, created_checkpoint.creation_started_at, created_checkpoint.creation_expires_at, created_checkpoint.created_at, created_checkpoint.ready_at, created_checkpoint.invalidated_at
   FROM created_checkpoint
   JOIN updated_wait ON true
   JOIN released_workspace_lease ON true
@@ -369,74 +369,74 @@ SELECT created_checkpoint.id, created_checkpoint.org_id, created_checkpoint.work
 `
 
 type CreateReadyRunCheckpointForRunWaitParams struct {
-	WorkerCommandID            int64       `json:"worker_command_id"`
-	OrgID                      pgtype.UUID `json:"org_id"`
-	ProjectID                  pgtype.UUID `json:"project_id"`
-	EnvironmentID              pgtype.UUID `json:"environment_id"`
-	RunWaitID                  pgtype.UUID `json:"run_wait_id"`
-	RunID                      pgtype.UUID `json:"run_id"`
-	RunCheckpointID            pgtype.UUID `json:"run_checkpoint_id"`
-	RunLeaseID                 pgtype.UUID `json:"run_lease_id"`
-	WorkerInstanceID           pgtype.UUID `json:"worker_instance_id"`
-	RuntimeBackend             string      `json:"runtime_backend"`
-	RuntimeID                  string      `json:"runtime_id"`
-	RuntimeArch                string      `json:"runtime_arch"`
-	RuntimeABI                 string      `json:"runtime_abi"`
-	KernelDigest               string      `json:"kernel_digest"`
-	InitramfsDigest            string      `json:"initramfs_digest"`
-	RootfsDigest               string      `json:"rootfs_digest"`
-	RuntimeConfigDigest        string      `json:"runtime_config_digest"`
-	RuntimeSubstrateArtifactID pgtype.UUID `json:"runtime_substrate_artifact_id"`
-	RuntimeVcpus               pgtype.Int4 `json:"runtime_vcpus"`
-	RuntimeMemoryMib           pgtype.Int4 `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib      pgtype.Int4 `json:"runtime_scratch_disk_mib"`
-	CniProfile                 string      `json:"cni_profile"`
-	SubstrateDigest            pgtype.Text `json:"substrate_digest"`
-	Manifest                   []byte      `json:"manifest"`
+	WorkerCommandID       int64       `json:"worker_command_id"`
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RunWaitID             pgtype.UUID `json:"run_wait_id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	RunCheckpointID       pgtype.UUID `json:"run_checkpoint_id"`
+	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	RuntimeBackend        string      `json:"runtime_backend"`
+	RuntimeID             string      `json:"runtime_id"`
+	RuntimeArch           string      `json:"runtime_arch"`
+	RuntimeABI            string      `json:"runtime_abi"`
+	KernelDigest          string      `json:"kernel_digest"`
+	InitramfsDigest       string      `json:"initramfs_digest"`
+	RootfsDigest          string      `json:"rootfs_digest"`
+	RuntimeConfigDigest   string      `json:"runtime_config_digest"`
+	RuntimeSubstrateID    pgtype.UUID `json:"runtime_substrate_id"`
+	RuntimeVcpus          pgtype.Int4 `json:"runtime_vcpus"`
+	RuntimeMemoryMib      pgtype.Int4 `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib pgtype.Int4 `json:"runtime_scratch_disk_mib"`
+	CniProfile            string      `json:"cni_profile"`
+	SubstrateDigest       pgtype.Text `json:"substrate_digest"`
+	Manifest              []byte      `json:"manifest"`
 }
 
 type CreateReadyRunCheckpointForRunWaitRow struct {
-	ID                         pgtype.UUID        `json:"id"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID              string             `json:"worker_group_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	WorkspaceID                pgtype.UUID        `json:"workspace_id"`
-	RunID                      pgtype.UUID        `json:"run_id"`
-	SourceWorkspaceLeaseID     pgtype.UUID        `json:"source_workspace_lease_id"`
-	WorkspaceMountID           pgtype.UUID        `json:"workspace_mount_id"`
-	BaseWorkspaceVersionID     pgtype.UUID        `json:"base_workspace_version_id"`
-	State                      RunCheckpointState `json:"state"`
-	RuntimeBackend             string             `json:"runtime_backend"`
-	RuntimeIdentityID          string             `json:"runtime_identity_id"`
-	RuntimeArch                string             `json:"runtime_arch"`
-	RuntimeABI                 string             `json:"runtime_abi"`
-	KernelDigest               string             `json:"kernel_digest"`
-	InitramfsDigest            string             `json:"initramfs_digest"`
-	RootfsDigest               string             `json:"rootfs_digest"`
-	RuntimeConfigDigest        string             `json:"runtime_config_digest"`
-	OwnerRuntimeInstanceID     pgtype.UUID        `json:"owner_runtime_instance_id"`
-	OwnerRuntimeEpoch          pgtype.Int8        `json:"owner_runtime_epoch"`
-	OwnerRunID                 pgtype.UUID        `json:"owner_run_id"`
-	OwnerRunWaitID             pgtype.UUID        `json:"owner_run_wait_id"`
-	OwnerRunLeaseID            pgtype.UUID        `json:"owner_run_lease_id"`
-	OwnerWorkerInstanceID      pgtype.UUID        `json:"owner_worker_instance_id"`
-	SourceWorkerInstanceID     pgtype.UUID        `json:"source_worker_instance_id"`
-	SubstrateDigest            pgtype.Text        `json:"substrate_digest"`
-	RuntimeSubstrateArtifactID pgtype.UUID        `json:"runtime_substrate_artifact_id"`
-	RuntimeVcpus               pgtype.Int4        `json:"runtime_vcpus"`
-	RuntimeMemoryMib           pgtype.Int4        `json:"runtime_memory_mib"`
-	RuntimeScratchDiskMib      pgtype.Int4        `json:"runtime_scratch_disk_mib"`
-	CniProfile                 string             `json:"cni_profile"`
-	ImageKey                   pgtype.Text        `json:"image_key"`
-	Manifest                   []byte             `json:"manifest"`
-	ErrorMessage               pgtype.Text        `json:"error_message"`
-	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
-	CreationStartedAt          pgtype.Timestamptz `json:"creation_started_at"`
-	CreationExpiresAt          pgtype.Timestamptz `json:"creation_expires_at"`
-	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
-	ReadyAt                    pgtype.Timestamptz `json:"ready_at"`
-	InvalidatedAt              pgtype.Timestamptz `json:"invalidated_at"`
+	ID                     pgtype.UUID        `json:"id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID          string             `json:"worker_group_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	RunID                  pgtype.UUID        `json:"run_id"`
+	SourceWorkspaceLeaseID pgtype.UUID        `json:"source_workspace_lease_id"`
+	WorkspaceMountID       pgtype.UUID        `json:"workspace_mount_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
+	State                  RunCheckpointState `json:"state"`
+	RuntimeBackend         string             `json:"runtime_backend"`
+	RuntimeIdentityID      string             `json:"runtime_identity_id"`
+	RuntimeArch            string             `json:"runtime_arch"`
+	RuntimeABI             string             `json:"runtime_abi"`
+	KernelDigest           string             `json:"kernel_digest"`
+	InitramfsDigest        string             `json:"initramfs_digest"`
+	RootfsDigest           string             `json:"rootfs_digest"`
+	RuntimeConfigDigest    string             `json:"runtime_config_digest"`
+	OwnerRuntimeInstanceID pgtype.UUID        `json:"owner_runtime_instance_id"`
+	OwnerRuntimeEpoch      pgtype.Int8        `json:"owner_runtime_epoch"`
+	OwnerRunID             pgtype.UUID        `json:"owner_run_id"`
+	OwnerRunWaitID         pgtype.UUID        `json:"owner_run_wait_id"`
+	OwnerRunLeaseID        pgtype.UUID        `json:"owner_run_lease_id"`
+	OwnerWorkerInstanceID  pgtype.UUID        `json:"owner_worker_instance_id"`
+	SourceWorkerInstanceID pgtype.UUID        `json:"source_worker_instance_id"`
+	SubstrateDigest        pgtype.Text        `json:"substrate_digest"`
+	RuntimeSubstrateID     pgtype.UUID        `json:"runtime_substrate_id"`
+	RuntimeVcpus           pgtype.Int4        `json:"runtime_vcpus"`
+	RuntimeMemoryMib       pgtype.Int4        `json:"runtime_memory_mib"`
+	RuntimeScratchDiskMib  pgtype.Int4        `json:"runtime_scratch_disk_mib"`
+	CniProfile             string             `json:"cni_profile"`
+	ImageKey               pgtype.Text        `json:"image_key"`
+	Manifest               []byte             `json:"manifest"`
+	ErrorMessage           pgtype.Text        `json:"error_message"`
+	ExpiresAt              pgtype.Timestamptz `json:"expires_at"`
+	CreationStartedAt      pgtype.Timestamptz `json:"creation_started_at"`
+	CreationExpiresAt      pgtype.Timestamptz `json:"creation_expires_at"`
+	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ReadyAt                pgtype.Timestamptz `json:"ready_at"`
+	InvalidatedAt          pgtype.Timestamptz `json:"invalidated_at"`
 }
 
 func (q *Queries) CreateReadyRunCheckpointForRunWait(ctx context.Context, arg CreateReadyRunCheckpointForRunWaitParams) (CreateReadyRunCheckpointForRunWaitRow, error) {
@@ -458,7 +458,7 @@ func (q *Queries) CreateReadyRunCheckpointForRunWait(ctx context.Context, arg Cr
 		arg.InitramfsDigest,
 		arg.RootfsDigest,
 		arg.RuntimeConfigDigest,
-		arg.RuntimeSubstrateArtifactID,
+		arg.RuntimeSubstrateID,
 		arg.RuntimeVcpus,
 		arg.RuntimeMemoryMib,
 		arg.RuntimeScratchDiskMib,
@@ -495,7 +495,7 @@ func (q *Queries) CreateReadyRunCheckpointForRunWait(ctx context.Context, arg Cr
 		&i.OwnerWorkerInstanceID,
 		&i.SourceWorkerInstanceID,
 		&i.SubstrateDigest,
-		&i.RuntimeSubstrateArtifactID,
+		&i.RuntimeSubstrateID,
 		&i.RuntimeVcpus,
 		&i.RuntimeMemoryMib,
 		&i.RuntimeScratchDiskMib,

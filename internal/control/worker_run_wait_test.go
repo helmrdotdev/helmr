@@ -307,14 +307,14 @@ func TestWorkerMarkCheckpointReadyUsesWorkerCNIProfile(t *testing.T) {
 	}
 }
 
-func TestWorkerMarkCheckpointReadyStoresRuntimeSubstrateArtifact(t *testing.T) {
+func TestWorkerMarkCheckpointReadyStoresRuntimeSubstrate(t *testing.T) {
 	store := newRunWaitControlStore()
 	workerID := pgvalue.MustUUIDValue(store.scope.WorkerInstanceID)
 	runID := pgvalue.MustUUIDValue(store.scope.RunID)
 	runLeaseID := pgvalue.MustUUIDValue(store.scope.CurrentRunLeaseID)
 	runWaitID := uuid.Must(uuid.NewV7())
 	checkpointID := uuid.Must(uuid.NewV7())
-	runtimeSubstrateArtifactID := uuid.Must(uuid.NewV7())
+	runtimeSubstrateID := uuid.Must(uuid.NewV7())
 	manifest := checkpointManifest()
 	manifest.RecoveryPoint.Runtime.Substrate = &api.WorkerCheckpointRuntimeSubstrate{
 		Digest:     "sha256:substrate-raw",
@@ -322,8 +322,8 @@ func TestWorkerMarkCheckpointReadyStoresRuntimeSubstrateArtifact(t *testing.T) {
 		BuilderABI: "helmr.runtime-substrate.builder.v0",
 		LayoutABI:  "helmr.runtime-substrate.layout.v0",
 	}
-	manifest.RuntimeState.RuntimeSubstrateArtifact = &api.WorkerRuntimeSubstrateArtifact{
-		ID:                  runtimeSubstrateArtifactID.String(),
+	manifest.RuntimeState.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
+		ID:                  runtimeSubstrateID.String(),
 		DeploymentSandboxID: uuid.Must(uuid.NewV7()).String(),
 		Artifact: api.CASObject{
 			Digest:    "sha256:substrate-encrypted",
@@ -365,10 +365,10 @@ func TestWorkerMarkCheckpointReadyStoresRuntimeSubstrateArtifact(t *testing.T) {
 		t.Fatalf("status = %d body = %s, want 200", rec.Code, rec.Body.String())
 	}
 	if createArtifactKindSeen(store.createArtifactParams, db.ArtifactKindRuntimeSubstrate) {
-		t.Fatalf("create artifact params = %+v, did not expect runtime substrate artifact during checkpoint ready", store.createArtifactParams)
+		t.Fatalf("create artifact params = %+v, did not expect runtime substrate during checkpoint ready", store.createArtifactParams)
 	}
-	if got := pgvalue.MustUUIDValue(store.createReadyCheckpointParams.RuntimeSubstrateArtifactID); got != runtimeSubstrateArtifactID {
-		t.Fatalf("runtime substrate artifact id = %s, want %s", got, runtimeSubstrateArtifactID)
+	if got := pgvalue.MustUUIDValue(store.createReadyCheckpointParams.RuntimeSubstrateID); got != runtimeSubstrateID {
+		t.Fatalf("runtime substrate id = %s, want %s", got, runtimeSubstrateID)
 	}
 }
 

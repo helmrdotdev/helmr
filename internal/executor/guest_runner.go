@@ -51,7 +51,7 @@ type GuestRunner struct {
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
 	Substrates            RuntimeSubstrateResolver
-	RuntimeSubstrates     RuntimeSubstrateArtifactRegistrar
+	RuntimeSubstrates     RuntimeSubstrateRegistrar
 	Log                   *slog.Logger
 	Stdout                io.Writer
 	Stderr                io.Writer
@@ -286,9 +286,9 @@ func (r GuestRunner) restoreRuntimeTopology(ctx context.Context, request Request
 		return vm.RuntimeTopology{}, cleanup, nil
 	}
 	substrateInfo := restore.Checkpoint.RecoveryPoint.Runtime.Substrate
-	substrateArtifact := restore.Checkpoint.RuntimeState.RuntimeSubstrateArtifact
+	substrateArtifact := restore.Checkpoint.RuntimeState.RuntimeSubstrate
 	if substrateArtifact == nil {
-		return vm.RuntimeTopology{}, cleanup, errors.New("checkpoint runtime substrate artifact is required for restore")
+		return vm.RuntimeTopology{}, cleanup, errors.New("checkpoint runtime substrate is required for restore")
 	}
 	if strings.TrimSpace(substrateArtifact.Artifact.MediaType) != cas.RuntimeSubstrateMediaType {
 		return vm.RuntimeTopology{}, cleanup, fmt.Errorf("checkpoint runtime substrate media type %q is not supported", substrateArtifact.Artifact.MediaType)
@@ -353,7 +353,7 @@ func (r GuestRunner) restoreRuntimeTopology(ctx context.Context, request Request
 	}
 	if actualDigest != strings.TrimSpace(substrateInfo.Digest) {
 		cleanup()
-		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("checkpoint runtime substrate artifact digest mismatch: manifest %s, artifact %s", substrateInfo.Digest, actualDigest)
+		return vm.RuntimeTopology{}, func() {}, fmt.Errorf("checkpoint runtime substrate digest mismatch: manifest %s, artifact %s", substrateInfo.Digest, actualDigest)
 	}
 	topology, stagedCleanup, err := renameCheckpointRuntimeSubstrate(path, substrateInfo, r.tempDir())
 	if err != nil {

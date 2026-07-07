@@ -254,7 +254,7 @@ func (w *RuntimePreparer) reconcile(ctx context.Context, deploymentSandboxID pgt
 			problems = append(problems, fmt.Errorf("encode prepared runtime warm command: %w", err))
 			continue
 		}
-		_, err = store.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
+		err = createRuntimePreparerWorkerCommand(ctx, store, db.CreateWorkerCommandParams{
 			OrgID:             row.OrgID,
 			WorkerGroupID:     row.WorkerGroupID,
 			ProjectID:         row.ProjectID,
@@ -374,7 +374,7 @@ func (w *RuntimePreparer) prepareSubstrates(ctx context.Context, store RuntimePr
 			problems = append(problems, fmt.Errorf("encode runtime substrate prepare command: %w", err))
 			continue
 		}
-		_, err = store.CreateWorkerCommand(ctx, db.CreateWorkerCommandParams{
+		err = createRuntimePreparerWorkerCommand(ctx, store, db.CreateWorkerCommandParams{
 			OrgID:               row.OrgID,
 			WorkerGroupID:       row.WorkerGroupID,
 			ProjectID:           row.ProjectID,
@@ -399,6 +399,36 @@ func (w *RuntimePreparer) prepareSubstrates(ctx context.Context, store RuntimePr
 		created++
 	}
 	return created, errors.Join(problems...)
+}
+
+func createRuntimePreparerWorkerCommand(ctx context.Context, store RuntimePreparerStore, params db.CreateWorkerCommandParams) error {
+	if err := validateRuntimePreparerWorkerCommand(params); err != nil {
+		return err
+	}
+	_, err := store.CreateWorkerCommand(ctx, params)
+	return err
+}
+
+func validateRuntimePreparerWorkerCommand(params db.CreateWorkerCommandParams) error {
+	switch params.Kind {
+	case db.WorkerCommandKindRuntimePrepare:
+		if params.RunID.Valid || params.RunWaitID.Valid || params.RunLeaseID.Valid || params.DeploymentSandboxID.Valid || params.RunStateVersion.Valid {
+			return errors.New("runtime_prepare worker command must not target a run, wait, lease, deployment sandbox, or run state version")
+		}
+		if !params.RuntimeInstanceID.Valid || !params.RuntimeEpoch.Valid {
+			return errors.New("runtime_prepare worker command requires runtime instance and epoch")
+		}
+	case db.WorkerCommandKindRuntimeSubstratePrepare:
+		if params.RunID.Valid || params.RunWaitID.Valid || params.RunLeaseID.Valid || params.RuntimeInstanceID.Valid || params.RuntimeEpoch.Valid || params.RunStateVersion.Valid {
+			return errors.New("runtime_substrate_prepare worker command must not target a run, wait, lease, runtime instance, runtime epoch, or run state version")
+		}
+		if !params.DeploymentSandboxID.Valid {
+			return errors.New("runtime_substrate_prepare worker command requires deployment sandbox")
+		}
+	default:
+		return fmt.Errorf("runtime preparer worker command kind %q is not supported", params.Kind)
+	}
+	return nil
 }
 
 func preparedRuntimeSourceFromWarmTarget(row db.ListRuntimeInstanceWarmTargetsRow) api.WorkerPreparedRuntimeSource {

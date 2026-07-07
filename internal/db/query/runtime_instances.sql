@@ -316,7 +316,7 @@ UPDATE runtime_instances
        OR runtime_instances.expires_at > now()
    )
    AND (
-       sqlc.narg(runtime_substrate_artifact_id)::uuid IS NULL
+       sqlc.narg(runtime_substrate_id)::uuid IS NULL
        OR EXISTS (
            SELECT 1
              FROM runtime_substrates
@@ -335,7 +335,7 @@ UPDATE runtime_instances
               AND runtime_substrates.project_id = runtime_instances.project_id
               AND runtime_substrates.environment_id = runtime_instances.environment_id
               AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrates.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
+              AND runtime_substrates.id = sqlc.narg(runtime_substrate_id)::uuid
        )
    )
 RETURNING runtime_instances.*;
@@ -344,7 +344,7 @@ RETURNING runtime_instances.*;
 UPDATE runtime_instances
    SET state = 'ready',
        prepared_at = coalesce(prepared_at, now()),
-       runtime_substrate_artifact_id = COALESCE(sqlc.narg(runtime_substrate_artifact_id), runtime_instances.runtime_substrate_artifact_id),
+       runtime_substrate_id = COALESCE(sqlc.narg(runtime_substrate_id), runtime_instances.runtime_substrate_id),
        last_heartbeat_at = now(),
        expires_at = sqlc.arg(expires_at),
        updated_at = now()
@@ -363,7 +363,7 @@ UPDATE runtime_instances
        OR runtime_instances.expires_at > now()
    )
    AND (
-       sqlc.narg(runtime_substrate_artifact_id)::uuid IS NULL
+       sqlc.narg(runtime_substrate_id)::uuid IS NULL
        OR EXISTS (
            SELECT 1
              FROM runtime_substrates
@@ -382,7 +382,7 @@ UPDATE runtime_instances
               AND runtime_substrates.project_id = runtime_instances.project_id
               AND runtime_substrates.environment_id = runtime_instances.environment_id
               AND runtime_substrates.deployment_sandbox_id = runtime_instances.deployment_sandbox_id
-              AND runtime_substrates.id = sqlc.narg(runtime_substrate_artifact_id)::uuid
+              AND runtime_substrates.id = sqlc.narg(runtime_substrate_id)::uuid
        )
    )
 RETURNING runtime_instances.*;

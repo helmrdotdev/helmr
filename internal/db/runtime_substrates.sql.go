@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getRuntimeSubstrateArtifactForSandbox = `-- name: GetRuntimeSubstrateArtifactForSandbox :one
+const getRuntimeSubstrateForSandbox = `-- name: GetRuntimeSubstrateForSandbox :one
 SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.worker_group_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_sandbox_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
@@ -48,7 +48,7 @@ SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.work
  LIMIT 1
 `
 
-type GetRuntimeSubstrateArtifactForSandboxParams struct {
+type GetRuntimeSubstrateForSandboxParams struct {
 	OrgID               pgtype.UUID `json:"org_id"`
 	WorkerGroupID       string      `json:"worker_group_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
@@ -60,7 +60,7 @@ type GetRuntimeSubstrateArtifactForSandboxParams struct {
 	LayoutAbi           string      `json:"layout_abi"`
 }
 
-type GetRuntimeSubstrateArtifactForSandboxRow struct {
+type GetRuntimeSubstrateForSandboxRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	WorkerGroupID             string             `json:"worker_group_id"`
@@ -84,8 +84,8 @@ type GetRuntimeSubstrateArtifactForSandboxRow struct {
 	ArtifactMediaType         string             `json:"artifact_media_type"`
 }
 
-func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg GetRuntimeSubstrateArtifactForSandboxParams) (GetRuntimeSubstrateArtifactForSandboxRow, error) {
-	row := q.db.QueryRow(ctx, getRuntimeSubstrateArtifactForSandbox,
+func (q *Queries) GetRuntimeSubstrateForSandbox(ctx context.Context, arg GetRuntimeSubstrateForSandboxParams) (GetRuntimeSubstrateForSandboxRow, error) {
+	row := q.db.QueryRow(ctx, getRuntimeSubstrateForSandbox,
 		arg.OrgID,
 		arg.WorkerGroupID,
 		arg.ProjectID,
@@ -96,7 +96,7 @@ func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg
 		arg.BuilderAbi,
 		arg.LayoutAbi,
 	)
-	var i GetRuntimeSubstrateArtifactForSandboxRow
+	var i GetRuntimeSubstrateForSandboxRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -123,7 +123,7 @@ func (q *Queries) GetRuntimeSubstrateArtifactForSandbox(ctx context.Context, arg
 	return i, err
 }
 
-const upsertRuntimeSubstrateArtifact = `-- name: UpsertRuntimeSubstrateArtifact :one
+const upsertRuntimeSubstrate = `-- name: UpsertRuntimeSubstrate :one
 INSERT INTO runtime_substrates (
     id,
     org_id,
@@ -165,7 +165,7 @@ DO UPDATE
 RETURNING id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
 `
 
-type UpsertRuntimeSubstrateArtifactParams struct {
+type UpsertRuntimeSubstrateParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
 	WorkerGroupID             string      `json:"worker_group_id"`
@@ -182,8 +182,8 @@ type UpsertRuntimeSubstrateArtifactParams struct {
 	CreatedByWorkerInstanceID pgtype.UUID `json:"created_by_worker_instance_id"`
 }
 
-func (q *Queries) UpsertRuntimeSubstrateArtifact(ctx context.Context, arg UpsertRuntimeSubstrateArtifactParams) (RuntimeSubstrate, error) {
-	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifact,
+func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeSubstrateParams) (RuntimeSubstrate, error) {
+	row := q.db.QueryRow(ctx, upsertRuntimeSubstrate,
 		arg.ID,
 		arg.OrgID,
 		arg.WorkerGroupID,

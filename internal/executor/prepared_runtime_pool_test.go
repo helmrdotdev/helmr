@@ -472,7 +472,7 @@ func TestPreparedRuntimePoolPublishesLocalEntryBeforeMarkingReady(t *testing.T) 
 		object: cas.Object{Digest: digest, SizeBytes: int64(len(body)), MediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar"},
 		body:   body,
 	}, 1, nil)
-	const runtimeSubstrateArtifactID = "019f180a-0000-7000-8000-000000000001"
+	const runtimeSubstrateID = "019f180a-0000-7000-8000-000000000001"
 	substrateDigest := sha256sum.DigestBytes([]byte("runtime-substrate"))
 	pool.Substrates = fakePreparedRuntimeSubstrateResolver{
 		result: substrate.Result{
@@ -484,8 +484,8 @@ func TestPreparedRuntimePoolPublishesLocalEntryBeforeMarkingReady(t *testing.T) 
 		},
 	}
 	pool.RuntimeSubstrates = fakePreparedRuntimeSubstrateCatalog{
-		artifact: api.WorkerRuntimeSubstrateArtifact{
-			ID:                  runtimeSubstrateArtifactID,
+		artifact: api.WorkerRuntimeSubstrate{
+			ID:                  runtimeSubstrateID,
 			DeploymentSandboxID: source.DeploymentSandboxID,
 			Artifact:            api.CASObject{Digest: sha256sum.DigestBytes([]byte("encrypted-substrate")), SizeBytes: 10, MediaType: cas.RuntimeSubstrateMediaType},
 			SubstrateDigest:     substrateDigest,
@@ -502,8 +502,8 @@ func TestPreparedRuntimePoolPublishesLocalEntryBeforeMarkingReady(t *testing.T) 
 	readyHookCalled := false
 	instances.onReady = func(request api.WorkerRuntimeInstanceStateRequest) {
 		readyHookCalled = true
-		if request.RuntimeSubstrateArtifactID != runtimeSubstrateArtifactID {
-			t.Fatalf("runtime_substrate_artifact_id = %q, want %q", request.RuntimeSubstrateArtifactID, runtimeSubstrateArtifactID)
+		if request.RuntimeSubstrateID != runtimeSubstrateID {
+			t.Fatalf("runtime_substrate_id = %q, want %q", request.RuntimeSubstrateID, runtimeSubstrateID)
 		}
 		if entries := pool.entries[key]; len(entries) != 1 || entries[0].runtimeInstanceID != "instance-1" || entries[0].instanceToken != "token-1" {
 			t.Fatalf("local entries at ready transition = %+v, want instance-1 published before DB ready is visible", entries)
@@ -1483,15 +1483,15 @@ func (r fakePreparedRuntimeSubstrateResolver) Resolve(context.Context, string, s
 }
 
 type fakePreparedRuntimeSubstrateCatalog struct {
-	artifact api.WorkerRuntimeSubstrateArtifact
+	artifact api.WorkerRuntimeSubstrate
 }
 
-func (c fakePreparedRuntimeSubstrateCatalog) LookupRuntimeSubstrateArtifact(context.Context, api.WorkerRuntimeSubstrateArtifactLookupRequest) (api.WorkerRuntimeSubstrateArtifactLookupResponse, error) {
-	return api.WorkerRuntimeSubstrateArtifactLookupResponse{RuntimeSubstrateArtifact: c.artifact}, nil
+func (c fakePreparedRuntimeSubstrateCatalog) LookupRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateLookupRequest) (api.WorkerRuntimeSubstrateLookupResponse, error) {
+	return api.WorkerRuntimeSubstrateLookupResponse{RuntimeSubstrate: c.artifact}, nil
 }
 
-func (c fakePreparedRuntimeSubstrateCatalog) RegisterRuntimeSubstrateArtifact(context.Context, api.WorkerRuntimeSubstrateArtifactRegisterRequest) (api.WorkerRuntimeSubstrateArtifactRegisterResponse, error) {
-	return api.WorkerRuntimeSubstrateArtifactRegisterResponse{RuntimeSubstrateArtifact: c.artifact}, nil
+func (c fakePreparedRuntimeSubstrateCatalog) RegisterRuntimeSubstrate(context.Context, api.WorkerRuntimeSubstrateRegisterRequest) (api.WorkerRuntimeSubstrateRegisterResponse, error) {
+	return api.WorkerRuntimeSubstrateRegisterResponse{RuntimeSubstrate: c.artifact}, nil
 }
 
 type blockingMaterializingConnector struct {

@@ -167,7 +167,7 @@ func (q *Queries) ListArtifactsByIDs(ctx context.Context, arg ListArtifactsByIDs
 	return items, nil
 }
 
-const upsertRuntimeSubstrateArtifactBlob = `-- name: UpsertRuntimeSubstrateArtifactBlob :one
+const upsertRuntimeSubstrateBlob = `-- name: UpsertRuntimeSubstrateBlob :one
 INSERT INTO artifacts (
     id,
     org_id,
@@ -196,7 +196,7 @@ DO UPDATE
 RETURNING id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type, created_by_worker_instance_id, created_at
 `
 
-type UpsertRuntimeSubstrateArtifactBlobParams struct {
+type UpsertRuntimeSubstrateBlobParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
@@ -207,8 +207,8 @@ type UpsertRuntimeSubstrateArtifactBlobParams struct {
 	CreatedByWorkerInstanceID pgtype.UUID `json:"created_by_worker_instance_id"`
 }
 
-func (q *Queries) UpsertRuntimeSubstrateArtifactBlob(ctx context.Context, arg UpsertRuntimeSubstrateArtifactBlobParams) (Artifact, error) {
-	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateArtifactBlob,
+func (q *Queries) UpsertRuntimeSubstrateBlob(ctx context.Context, arg UpsertRuntimeSubstrateBlobParams) (Artifact, error) {
+	row := q.db.QueryRow(ctx, upsertRuntimeSubstrateBlob,
 		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,

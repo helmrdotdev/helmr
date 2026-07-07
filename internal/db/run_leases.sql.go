@@ -1188,15 +1188,15 @@ SELECT
     workspace_artifacts.media_type AS workspace_artifact_media_type,
     workspace_versions.artifact_encoding AS workspace_artifact_encoding,
     workspace_versions.artifact_entry_count AS workspace_artifact_entry_count,
-    NULL::uuid AS workspace_runtime_substrate_artifact_id,
+    NULL::uuid AS workspace_runtime_substrate_id,
     ''::text AS workspace_runtime_substrate_digest,
     ''::text AS workspace_runtime_substrate_format,
     ''::text AS workspace_runtime_substrate_builder_abi,
     ''::text AS workspace_runtime_substrate_layout_abi,
     0::bigint AS workspace_runtime_substrate_size_bytes,
-    ''::text AS workspace_runtime_substrate_artifact_digest,
-    0::bigint AS workspace_runtime_substrate_artifact_size_bytes,
-    ''::text AS workspace_runtime_substrate_artifact_media_type
+    ''::text AS workspace_runtime_substrate_blob_digest,
+    0::bigint AS workspace_runtime_substrate_blob_size_bytes,
+    ''::text AS workspace_runtime_substrate_blob_media_type
 FROM updated
 JOIN leased_run_lease ON true
 JOIN workspace_lease_guard ON true
@@ -1261,99 +1261,99 @@ type LeaseRunLeaseParams struct {
 }
 
 type LeaseRunLeaseRow struct {
-	ID                                         pgtype.UUID        `json:"id"`
-	OrgID                                      pgtype.UUID        `json:"org_id"`
-	WorkerGroupID                              string             `json:"worker_group_id"`
-	ProjectID                                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID                              pgtype.UUID        `json:"environment_id"`
-	SessionID                                  pgtype.UUID        `json:"session_id"`
-	TaskID                                     string             `json:"task_id"`
-	RunDeploymentVersion                       string             `json:"run_deployment_version"`
-	RunApiVersion                              string             `json:"run_api_version"`
-	RunSdkVersion                              string             `json:"run_sdk_version"`
-	RunCliVersion                              string             `json:"run_cli_version"`
-	Status                                     RunStatus          `json:"status"`
-	Payload                                    []byte             `json:"payload"`
-	CurrentAttemptNumber                       int32              `json:"current_attempt_number"`
-	StateVersion                               int64              `json:"state_version"`
-	DeploymentTaskID                           pgtype.UUID        `json:"deployment_task_id"`
-	DeploymentTaskFilePath                     string             `json:"deployment_task_file_path"`
-	DeploymentTaskExportName                   string             `json:"deployment_task_export_name"`
-	DeploymentTaskHandlerEntrypoint            string             `json:"deployment_task_handler_entrypoint"`
-	DeploymentTaskBundleDigest                 string             `json:"deployment_task_bundle_digest"`
-	DeploymentTaskBundleFormatVersion          int32              `json:"deployment_task_bundle_format_version"`
-	DeploymentTaskSecretDeclarations           []byte             `json:"deployment_task_secret_declarations"`
-	DeploymentVersion                          string             `json:"deployment_version"`
-	DeploymentApiVersion                       string             `json:"deployment_api_version"`
-	DeploymentSdkVersion                       string             `json:"deployment_sdk_version"`
-	DeploymentCliVersion                       string             `json:"deployment_cli_version"`
-	DeploymentWorkerProtocolVersion            string             `json:"deployment_worker_protocol_version"`
-	DeploymentSourceDigest                     string             `json:"deployment_source_digest"`
-	MaxActiveDurationMs                        int64              `json:"max_active_duration_ms"`
-	ExitCode                                   pgtype.Int4        `json:"exit_code"`
-	ErrorMessage                               pgtype.Text        `json:"error_message"`
-	CreatedAt                                  pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                                  pgtype.Timestamptz `json:"updated_at"`
-	StartedAt                                  pgtype.Timestamptz `json:"started_at"`
-	FinishedAt                                 pgtype.Timestamptz `json:"finished_at"`
-	RequestedMilliCpu                          int64              `json:"requested_milli_cpu"`
-	RequestedMemoryMib                         int64              `json:"requested_memory_mib"`
-	RequestedDiskMib                           int64              `json:"requested_disk_mib"`
-	RequestedExecutionSlots                    int32              `json:"requested_execution_slots"`
-	RequirementsRuntimeID                      string             `json:"requirements_runtime_id"`
-	RequirementsRuntimeArch                    string             `json:"requirements_runtime_arch"`
-	RequirementsRuntimeAbi                     string             `json:"requirements_runtime_abi"`
-	RequirementsKernelDigest                   string             `json:"requirements_kernel_digest"`
-	RequirementsInitramfsDigest                string             `json:"requirements_initramfs_digest"`
-	RequirementsRootfsDigest                   string             `json:"requirements_rootfs_digest"`
-	RequirementsCniProfile                     string             `json:"requirements_cni_profile"`
-	RequirementsNetworkPolicy                  []byte             `json:"requirements_network_policy"`
-	RequirementsPlacement                      []byte             `json:"requirements_placement"`
-	RunLeaseID                                 pgtype.UUID        `json:"run_lease_id"`
-	RunLeaseWorkerInstanceID                   pgtype.UUID        `json:"run_lease_worker_instance_id"`
-	RunLeaseDispatchMessageID                  string             `json:"run_lease_dispatch_message_id"`
-	RunLeaseDispatchLeaseID                    string             `json:"run_lease_dispatch_lease_id"`
-	RunLeaseDispatchAttempt                    int32              `json:"run_lease_dispatch_attempt"`
-	RunLeaseAttemptNumber                      int32              `json:"run_lease_attempt_number"`
-	RunLeaseExpiresAt                          pgtype.Timestamptz `json:"run_lease_expires_at"`
-	RunLeaseWorkerProtocolVersion              string             `json:"run_lease_worker_protocol_version"`
-	RunLeaseTraceID                            string             `json:"run_lease_trace_id"`
-	RunLeaseSpanID                             string             `json:"run_lease_span_id"`
-	RunLeaseTraceparent                        string             `json:"run_lease_traceparent"`
-	RunLeaseRestoreRunCheckpointID             pgtype.UUID        `json:"run_lease_restore_run_checkpoint_id"`
-	ActiveDurationMs                           int64              `json:"active_duration_ms"`
-	WorkspaceID                                pgtype.UUID        `json:"workspace_id"`
-	WorkspaceLeaseID                           pgtype.UUID        `json:"workspace_lease_id"`
-	WorkspaceMountID                           pgtype.UUID        `json:"workspace_mount_id"`
-	WorkspaceMountFencingGeneration            int64              `json:"workspace_mount_fencing_generation"`
-	WorkspaceFencingToken                      string             `json:"workspace_fencing_token"`
-	WorkspaceDeploymentSandboxID               pgtype.UUID        `json:"workspace_deployment_sandbox_id"`
-	WorkspaceSandboxImageArtifactFormat        pgtype.Text        `json:"workspace_sandbox_image_artifact_format"`
-	WorkspaceSandboxImageArtifactDigest        pgtype.Text        `json:"workspace_sandbox_image_artifact_digest"`
-	WorkspaceSandboxImageArtifactSizeBytes     pgtype.Int8        `json:"workspace_sandbox_image_artifact_size_bytes"`
-	WorkspaceSandboxImageArtifactMediaType     pgtype.Text        `json:"workspace_sandbox_image_artifact_media_type"`
-	WorkspaceSandboxImageDigest                pgtype.Text        `json:"workspace_sandbox_image_digest"`
-	WorkspaceSandboxImageFormat                pgtype.Text        `json:"workspace_sandbox_image_format"`
-	WorkspaceSandboxRootfsDigest               pgtype.Text        `json:"workspace_sandbox_rootfs_digest"`
-	WorkspaceRuntimeAbi                        pgtype.Text        `json:"workspace_runtime_abi"`
-	WorkspaceGuestdAbi                         pgtype.Text        `json:"workspace_guestd_abi"`
-	WorkspaceAdapterAbi                        pgtype.Text        `json:"workspace_adapter_abi"`
-	WorkspaceBaseVersionID                     pgtype.UUID        `json:"workspace_base_version_id"`
-	WorkspaceMountPath                         pgtype.Text        `json:"workspace_mount_path"`
-	WorkspaceArtifactDigest                    pgtype.Text        `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes                 pgtype.Int8        `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType                 pgtype.Text        `json:"workspace_artifact_media_type"`
-	WorkspaceArtifactEncoding                  pgtype.Text        `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount                pgtype.Int4        `json:"workspace_artifact_entry_count"`
-	WorkspaceRuntimeSubstrateArtifactID        pgtype.UUID        `json:"workspace_runtime_substrate_artifact_id"`
-	WorkspaceRuntimeSubstrateDigest            string             `json:"workspace_runtime_substrate_digest"`
-	WorkspaceRuntimeSubstrateFormat            string             `json:"workspace_runtime_substrate_format"`
-	WorkspaceRuntimeSubstrateBuilderAbi        string             `json:"workspace_runtime_substrate_builder_abi"`
-	WorkspaceRuntimeSubstrateLayoutAbi         string             `json:"workspace_runtime_substrate_layout_abi"`
-	WorkspaceRuntimeSubstrateSizeBytes         int64              `json:"workspace_runtime_substrate_size_bytes"`
-	WorkspaceRuntimeSubstrateArtifactDigest    string             `json:"workspace_runtime_substrate_artifact_digest"`
-	WorkspaceRuntimeSubstrateArtifactSizeBytes int64              `json:"workspace_runtime_substrate_artifact_size_bytes"`
-	WorkspaceRuntimeSubstrateArtifactMediaType string             `json:"workspace_runtime_substrate_artifact_media_type"`
+	ID                                     pgtype.UUID        `json:"id"`
+	OrgID                                  pgtype.UUID        `json:"org_id"`
+	WorkerGroupID                          string             `json:"worker_group_id"`
+	ProjectID                              pgtype.UUID        `json:"project_id"`
+	EnvironmentID                          pgtype.UUID        `json:"environment_id"`
+	SessionID                              pgtype.UUID        `json:"session_id"`
+	TaskID                                 string             `json:"task_id"`
+	RunDeploymentVersion                   string             `json:"run_deployment_version"`
+	RunApiVersion                          string             `json:"run_api_version"`
+	RunSdkVersion                          string             `json:"run_sdk_version"`
+	RunCliVersion                          string             `json:"run_cli_version"`
+	Status                                 RunStatus          `json:"status"`
+	Payload                                []byte             `json:"payload"`
+	CurrentAttemptNumber                   int32              `json:"current_attempt_number"`
+	StateVersion                           int64              `json:"state_version"`
+	DeploymentTaskID                       pgtype.UUID        `json:"deployment_task_id"`
+	DeploymentTaskFilePath                 string             `json:"deployment_task_file_path"`
+	DeploymentTaskExportName               string             `json:"deployment_task_export_name"`
+	DeploymentTaskHandlerEntrypoint        string             `json:"deployment_task_handler_entrypoint"`
+	DeploymentTaskBundleDigest             string             `json:"deployment_task_bundle_digest"`
+	DeploymentTaskBundleFormatVersion      int32              `json:"deployment_task_bundle_format_version"`
+	DeploymentTaskSecretDeclarations       []byte             `json:"deployment_task_secret_declarations"`
+	DeploymentVersion                      string             `json:"deployment_version"`
+	DeploymentApiVersion                   string             `json:"deployment_api_version"`
+	DeploymentSdkVersion                   string             `json:"deployment_sdk_version"`
+	DeploymentCliVersion                   string             `json:"deployment_cli_version"`
+	DeploymentWorkerProtocolVersion        string             `json:"deployment_worker_protocol_version"`
+	DeploymentSourceDigest                 string             `json:"deployment_source_digest"`
+	MaxActiveDurationMs                    int64              `json:"max_active_duration_ms"`
+	ExitCode                               pgtype.Int4        `json:"exit_code"`
+	ErrorMessage                           pgtype.Text        `json:"error_message"`
+	CreatedAt                              pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                              pgtype.Timestamptz `json:"updated_at"`
+	StartedAt                              pgtype.Timestamptz `json:"started_at"`
+	FinishedAt                             pgtype.Timestamptz `json:"finished_at"`
+	RequestedMilliCpu                      int64              `json:"requested_milli_cpu"`
+	RequestedMemoryMib                     int64              `json:"requested_memory_mib"`
+	RequestedDiskMib                       int64              `json:"requested_disk_mib"`
+	RequestedExecutionSlots                int32              `json:"requested_execution_slots"`
+	RequirementsRuntimeID                  string             `json:"requirements_runtime_id"`
+	RequirementsRuntimeArch                string             `json:"requirements_runtime_arch"`
+	RequirementsRuntimeAbi                 string             `json:"requirements_runtime_abi"`
+	RequirementsKernelDigest               string             `json:"requirements_kernel_digest"`
+	RequirementsInitramfsDigest            string             `json:"requirements_initramfs_digest"`
+	RequirementsRootfsDigest               string             `json:"requirements_rootfs_digest"`
+	RequirementsCniProfile                 string             `json:"requirements_cni_profile"`
+	RequirementsNetworkPolicy              []byte             `json:"requirements_network_policy"`
+	RequirementsPlacement                  []byte             `json:"requirements_placement"`
+	RunLeaseID                             pgtype.UUID        `json:"run_lease_id"`
+	RunLeaseWorkerInstanceID               pgtype.UUID        `json:"run_lease_worker_instance_id"`
+	RunLeaseDispatchMessageID              string             `json:"run_lease_dispatch_message_id"`
+	RunLeaseDispatchLeaseID                string             `json:"run_lease_dispatch_lease_id"`
+	RunLeaseDispatchAttempt                int32              `json:"run_lease_dispatch_attempt"`
+	RunLeaseAttemptNumber                  int32              `json:"run_lease_attempt_number"`
+	RunLeaseExpiresAt                      pgtype.Timestamptz `json:"run_lease_expires_at"`
+	RunLeaseWorkerProtocolVersion          string             `json:"run_lease_worker_protocol_version"`
+	RunLeaseTraceID                        string             `json:"run_lease_trace_id"`
+	RunLeaseSpanID                         string             `json:"run_lease_span_id"`
+	RunLeaseTraceparent                    string             `json:"run_lease_traceparent"`
+	RunLeaseRestoreRunCheckpointID         pgtype.UUID        `json:"run_lease_restore_run_checkpoint_id"`
+	ActiveDurationMs                       int64              `json:"active_duration_ms"`
+	WorkspaceID                            pgtype.UUID        `json:"workspace_id"`
+	WorkspaceLeaseID                       pgtype.UUID        `json:"workspace_lease_id"`
+	WorkspaceMountID                       pgtype.UUID        `json:"workspace_mount_id"`
+	WorkspaceMountFencingGeneration        int64              `json:"workspace_mount_fencing_generation"`
+	WorkspaceFencingToken                  string             `json:"workspace_fencing_token"`
+	WorkspaceDeploymentSandboxID           pgtype.UUID        `json:"workspace_deployment_sandbox_id"`
+	WorkspaceSandboxImageArtifactFormat    pgtype.Text        `json:"workspace_sandbox_image_artifact_format"`
+	WorkspaceSandboxImageArtifactDigest    pgtype.Text        `json:"workspace_sandbox_image_artifact_digest"`
+	WorkspaceSandboxImageArtifactSizeBytes pgtype.Int8        `json:"workspace_sandbox_image_artifact_size_bytes"`
+	WorkspaceSandboxImageArtifactMediaType pgtype.Text        `json:"workspace_sandbox_image_artifact_media_type"`
+	WorkspaceSandboxImageDigest            pgtype.Text        `json:"workspace_sandbox_image_digest"`
+	WorkspaceSandboxImageFormat            pgtype.Text        `json:"workspace_sandbox_image_format"`
+	WorkspaceSandboxRootfsDigest           pgtype.Text        `json:"workspace_sandbox_rootfs_digest"`
+	WorkspaceRuntimeAbi                    pgtype.Text        `json:"workspace_runtime_abi"`
+	WorkspaceGuestdAbi                     pgtype.Text        `json:"workspace_guestd_abi"`
+	WorkspaceAdapterAbi                    pgtype.Text        `json:"workspace_adapter_abi"`
+	WorkspaceBaseVersionID                 pgtype.UUID        `json:"workspace_base_version_id"`
+	WorkspaceMountPath                     pgtype.Text        `json:"workspace_mount_path"`
+	WorkspaceArtifactDigest                pgtype.Text        `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes             pgtype.Int8        `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType             pgtype.Text        `json:"workspace_artifact_media_type"`
+	WorkspaceArtifactEncoding              pgtype.Text        `json:"workspace_artifact_encoding"`
+	WorkspaceArtifactEntryCount            pgtype.Int4        `json:"workspace_artifact_entry_count"`
+	WorkspaceRuntimeSubstrateID            pgtype.UUID        `json:"workspace_runtime_substrate_id"`
+	WorkspaceRuntimeSubstrateDigest        string             `json:"workspace_runtime_substrate_digest"`
+	WorkspaceRuntimeSubstrateFormat        string             `json:"workspace_runtime_substrate_format"`
+	WorkspaceRuntimeSubstrateBuilderAbi    string             `json:"workspace_runtime_substrate_builder_abi"`
+	WorkspaceRuntimeSubstrateLayoutAbi     string             `json:"workspace_runtime_substrate_layout_abi"`
+	WorkspaceRuntimeSubstrateSizeBytes     int64              `json:"workspace_runtime_substrate_size_bytes"`
+	WorkspaceRuntimeSubstrateBlobDigest    string             `json:"workspace_runtime_substrate_blob_digest"`
+	WorkspaceRuntimeSubstrateBlobSizeBytes int64              `json:"workspace_runtime_substrate_blob_size_bytes"`
+	WorkspaceRuntimeSubstrateBlobMediaType string             `json:"workspace_runtime_substrate_blob_media_type"`
 }
 
 func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (LeaseRunLeaseRow, error) {
@@ -1455,15 +1455,15 @@ func (q *Queries) LeaseRunLease(ctx context.Context, arg LeaseRunLeaseParams) (L
 		&i.WorkspaceArtifactMediaType,
 		&i.WorkspaceArtifactEncoding,
 		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceRuntimeSubstrateArtifactID,
+		&i.WorkspaceRuntimeSubstrateID,
 		&i.WorkspaceRuntimeSubstrateDigest,
 		&i.WorkspaceRuntimeSubstrateFormat,
 		&i.WorkspaceRuntimeSubstrateBuilderAbi,
 		&i.WorkspaceRuntimeSubstrateLayoutAbi,
 		&i.WorkspaceRuntimeSubstrateSizeBytes,
-		&i.WorkspaceRuntimeSubstrateArtifactDigest,
-		&i.WorkspaceRuntimeSubstrateArtifactSizeBytes,
-		&i.WorkspaceRuntimeSubstrateArtifactMediaType,
+		&i.WorkspaceRuntimeSubstrateBlobDigest,
+		&i.WorkspaceRuntimeSubstrateBlobSizeBytes,
+		&i.WorkspaceRuntimeSubstrateBlobMediaType,
 	)
 	return i, err
 }

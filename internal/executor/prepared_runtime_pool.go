@@ -54,7 +54,7 @@ type PreparedRuntimePool struct {
 	ArtifactCacheDir      string
 	ArtifactCacheMaxBytes int64
 	Substrates            RuntimeSubstrateResolver
-	RuntimeSubstrates     RuntimeSubstrateArtifactRegistrar
+	RuntimeSubstrates     RuntimeSubstrateRegistrar
 	CheckpointEncryptor   *checkpoint.Encryptor
 	Network               compute.NetworkPolicy
 	Size                  int
@@ -444,8 +444,8 @@ func (p *PreparedRuntimePool) PrepareRuntimeSubstrateFromCommand(ctx context.Con
 		encryptor:         p.CheckpointEncryptor,
 		substrateSource:   runtimeSubstrateSourceFromPreparedSource(directive.Source),
 		runtimeSubstrates: p.RuntimeSubstrates,
-	}.ensureRuntimeSubstrateArtifact(backgroundCtx, topology.Substrate)
-	p.logInfo("runtime substrate artifact registered", "deployment_sandbox_id", mount.DeploymentSandboxID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_artifact_id", runtimeSubstrateArtifactID(registered), "error", errorString(err))
+	}.ensureRuntimeSubstrate(backgroundCtx, topology.Substrate)
+	p.logInfo("runtime substrate registered", "deployment_sandbox_id", mount.DeploymentSandboxID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
 	return err
 }
 
@@ -641,7 +641,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return failInstance(err)
 	}
 	defer cleanupSandboxImage()
-	var runtimeSubstrateArtifactIDValue string
+	var runtimeSubstrateIDValue string
 	if topology.Substrate != nil {
 		started := time.Now()
 		registered, err := runtimeCheckpointer{
@@ -649,12 +649,12 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			encryptor:         p.CheckpointEncryptor,
 			substrateSource:   runtimeSubstrateSourceFromWorkspaceMount(mount),
 			runtimeSubstrates: p.RuntimeSubstrates,
-		}.ensureRuntimeSubstrateArtifact(ctx, topology.Substrate)
-		p.logInfo("prepared runtime pool substrate artifact resolved", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_artifact_id", runtimeSubstrateArtifactID(registered), "error", errorString(err))
+		}.ensureRuntimeSubstrate(ctx, topology.Substrate)
+		p.logInfo("prepared runtime pool substrate resolved", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
 		if err != nil {
 			return failInstance(err)
 		}
-		runtimeSubstrateArtifactIDValue = runtimeSubstrateArtifactID(registered)
+		runtimeSubstrateIDValue = runtimeSubstrateID(registered)
 	}
 	connector, ok := p.Connector.(vm.MaterializingConnector)
 	if !ok {
@@ -722,10 +722,10 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return nil
 	}
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, api.WorkerRuntimeInstanceStateRequest{
-		ID:                         runtimeInstanceID,
-		InstanceToken:              instanceToken,
-		ExpiresAt:                  time.Now().Add(p.reservationTTL()),
-		RuntimeSubstrateArtifactID: runtimeSubstrateArtifactIDValue,
+		ID:                 runtimeInstanceID,
+		InstanceToken:      instanceToken,
+		ExpiresAt:          time.Now().Add(p.reservationTTL()),
+		RuntimeSubstrateID: runtimeSubstrateIDValue,
 	}); err != nil {
 		entry.ready.finish(err)
 		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", err.Error())

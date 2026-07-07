@@ -1042,15 +1042,15 @@ SELECT
     workspace_artifacts.media_type AS workspace_artifact_media_type,
     workspace_versions.artifact_encoding AS workspace_artifact_encoding,
     workspace_versions.artifact_entry_count AS workspace_artifact_entry_count,
-    NULL::uuid AS workspace_runtime_substrate_artifact_id,
+    NULL::uuid AS workspace_runtime_substrate_id,
     ''::text AS workspace_runtime_substrate_digest,
     ''::text AS workspace_runtime_substrate_format,
     ''::text AS workspace_runtime_substrate_builder_abi,
     ''::text AS workspace_runtime_substrate_layout_abi,
     0::bigint AS workspace_runtime_substrate_size_bytes,
-    ''::text AS workspace_runtime_substrate_artifact_digest,
-    0::bigint AS workspace_runtime_substrate_artifact_size_bytes,
-    ''::text AS workspace_runtime_substrate_artifact_media_type
+    ''::text AS workspace_runtime_substrate_blob_digest,
+    0::bigint AS workspace_runtime_substrate_blob_size_bytes,
+    ''::text AS workspace_runtime_substrate_blob_media_type
 FROM updated
 JOIN leased_run_lease ON true
 JOIN workspace_lease_guard ON true

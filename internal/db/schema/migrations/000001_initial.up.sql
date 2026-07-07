@@ -1933,16 +1933,7 @@ CREATE TABLE telemetry_outbox (
     trace_id TEXT CHECK (trace_id IS NULL OR (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000')),
     span_id TEXT CHECK (span_id IS NULL OR (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000')),
     parent_span_id TEXT CHECK (parent_span_id IS NULL OR (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000')),
-    traceparent TEXT CHECK (
-        traceparent IS NULL
-        OR (
-            trace_id IS NOT NULL
-            AND span_id IS NOT NULL
-            AND traceparent ~ '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
-            AND substring(traceparent from 4 for 32) = trace_id
-            AND substring(traceparent from 37 for 16) = span_id
-        )
-    ),
+    traceparent TEXT,
     category TEXT NOT NULL DEFAULT 'system',
     severity TEXT NOT NULL DEFAULT 'info',
     source TEXT NOT NULL DEFAULT 'control',
@@ -1971,12 +1962,20 @@ CREATE TABLE telemetry_outbox (
     CHECK (
         stream_kind <> 'event'
         OR (
-            source_kind IN ('run', 'deployment')
-            AND source_id = COALESCE(run_id, deployment_id)
-            AND btrim(kind) <> ''
+            btrim(kind) <> ''
             AND (
-                (run_id IS NOT NULL AND deployment_id IS NULL)
-                OR (deployment_id IS NOT NULL AND run_id IS NULL)
+                (
+                    run_id IS NOT NULL
+                    AND deployment_id IS NULL
+                    AND source_kind = 'run'
+                    AND source_id = run_id
+                )
+                OR (
+                    deployment_id IS NOT NULL
+                    AND run_id IS NULL
+                    AND source_kind = 'deployment'
+                    AND source_id = deployment_id
+                )
             )
         )
     ),
@@ -2011,8 +2010,8 @@ CREATE TABLE telemetry_outbox (
     CHECK (
         stream_kind <> 'meter_event'
         OR (
-            source_kind IN ('run_log', 'run_lease')
-            AND run_id IS NOT NULL
+            run_id IS NOT NULL
+            AND source_kind <> ''
             AND idempotency_key IS NOT NULL
             AND btrim(kind) <> ''
             AND payload IS NOT NULL
@@ -2065,11 +2064,7 @@ CREATE TABLE run_leases (
     trace_id TEXT NOT NULL CHECK (trace_id ~ '^[0-9a-f]{32}$' AND trace_id <> '00000000000000000000000000000000'),
     span_id TEXT NOT NULL CHECK (span_id ~ '^[0-9a-f]{16}$' AND span_id <> '0000000000000000'),
     parent_span_id TEXT NOT NULL CHECK (parent_span_id ~ '^[0-9a-f]{16}$' AND parent_span_id <> '0000000000000000'),
-    traceparent TEXT NOT NULL CHECK (
-        traceparent ~ '^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$'
-        AND substring(traceparent from 4 for 32) = trace_id
-        AND substring(traceparent from 37 for 16) = span_id
-    ),
+    traceparent TEXT NOT NULL,
     restore_run_checkpoint_id UUID,
     leased_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     started_at TIMESTAMPTZ,
@@ -2169,7 +2164,7 @@ CREATE TABLE run_checkpoints (
     owner_worker_instance_id UUID,
     source_worker_instance_id UUID,
     substrate_digest TEXT CHECK (substrate_digest IS NULL OR btrim(substrate_digest) <> ''),
-    runtime_substrate_artifact_id UUID,
+    runtime_substrate_id UUID,
     runtime_vcpus INTEGER CHECK (runtime_vcpus IS NULL OR runtime_vcpus > 0),
     runtime_memory_mib INTEGER CHECK (runtime_memory_mib IS NULL OR runtime_memory_mib > 0),
     runtime_scratch_disk_mib INTEGER CHECK (runtime_scratch_disk_mib IS NULL OR runtime_scratch_disk_mib > 0),
@@ -2211,7 +2206,7 @@ CREATE TABLE run_checkpoints (
     FOREIGN KEY (owner_worker_instance_id)
         REFERENCES worker_instances(id)
         ON DELETE SET NULL (owner_worker_instance_id),
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, runtime_substrate_artifact_id)
+    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, runtime_substrate_id)
         REFERENCES runtime_substrates(org_id, worker_group_id, project_id, environment_id, id)
         ON DELETE RESTRICT
 );
@@ -2452,37 +2447,6 @@ CREATE TABLE worker_commands (
     last_delivery_error TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    CONSTRAINT worker_commands_target_shape_chk CHECK (
-        (
-            kind IN ('run_resume_wait', 'run_checkpoint_wait')
-            AND run_id IS NOT NULL
-            AND run_wait_id IS NOT NULL
-            AND run_lease_id IS NOT NULL
-            AND deployment_sandbox_id IS NULL
-            AND runtime_instance_id IS NOT NULL
-            AND runtime_epoch IS NOT NULL
-        )
-        OR (
-            kind IN ('runtime_prepare', 'runtime_stop')
-            AND run_id IS NULL
-            AND run_wait_id IS NULL
-            AND run_lease_id IS NULL
-            AND deployment_sandbox_id IS NULL
-            AND run_state_version IS NULL
-            AND runtime_instance_id IS NOT NULL
-            AND runtime_epoch IS NOT NULL
-        )
-        OR (
-            kind = 'runtime_substrate_prepare'
-            AND run_id IS NULL
-            AND run_wait_id IS NULL
-            AND run_lease_id IS NULL
-            AND deployment_sandbox_id IS NOT NULL
-            AND runtime_instance_id IS NULL
-            AND runtime_epoch IS NULL
-            AND run_state_version IS NULL
-        )
-    ),
     FOREIGN KEY (org_id, project_id, environment_id, run_id)
         REFERENCES runs(org_id, project_id, environment_id, id)
         ON DELETE CASCADE,
@@ -2551,7 +2515,7 @@ CREATE TABLE runtime_instances (
     worker_instance_id UUID NOT NULL REFERENCES worker_instances(id) ON DELETE CASCADE,
     runtime_identity_id TEXT NOT NULL REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     deployment_sandbox_id UUID NOT NULL,
-    runtime_substrate_artifact_id UUID,
+    runtime_substrate_id UUID,
     runtime_epoch BIGINT NOT NULL DEFAULT 1 CHECK (runtime_epoch > 0),
     runtime_key_hash TEXT NOT NULL CHECK (btrim(runtime_key_hash) <> ''),
     runtime_key JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -2612,7 +2576,7 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id, sandbox_image_artifact_digest)
         REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, runtime_substrate_artifact_id)
+    FOREIGN KEY (org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, runtime_substrate_id)
         REFERENCES runtime_substrates(org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, id)
         ON DELETE RESTRICT,
     CONSTRAINT runtime_instances_workspace_mount_id_fkey FOREIGN KEY (org_id, workspace_mount_id)
