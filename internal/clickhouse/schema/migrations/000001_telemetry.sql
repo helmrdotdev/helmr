@@ -23,9 +23,10 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY toYYYYMM(ingested_at)
-ORDER BY (org_id, project_id, environment_id, run_id, stream_name, seq)
-TTL ingested_at + INTERVAL 90 DAY DELETE;
+PARTITION BY toDate(ingested_at)
+ORDER BY (org_id, worker_group_id, run_id, seq)
+TTL ingested_at + INTERVAL 90 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
     worker_group_id String,
@@ -56,9 +57,10 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY toYYYYMM(ingested_at)
-ORDER BY (org_id, project_id, environment_id, subject_kind, subject_id, seq)
-TTL ingested_at + INTERVAL 90 DAY DELETE;
+PARTITION BY toDate(ingested_at)
+ORDER BY (org_id, worker_group_id, subject_kind, subject_id, seq)
+TTL ingested_at + INTERVAL 90 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     worker_group_id String,
@@ -80,9 +82,10 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY toYYYYMM(ingested_at)
+PARTITION BY toDate(ingested_at)
 ORDER BY (org_id, project_id, environment_id, workspace_id, resource_kind, resource_id, stream_name, offset_start)
-TTL ingested_at + INTERVAL 90 DAY DELETE;
+TTL ingested_at + INTERVAL 90 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.meter_events (
     worker_group_id String,
@@ -106,6 +109,7 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.meter_events (
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)
 )
 ENGINE = ReplacingMergeTree(ingested_at)
-PARTITION BY toYYYYMM(ingested_at)
-ORDER BY (org_id, source_type, source_id, meter, idempotency_key)
-TTL ingested_at + INTERVAL 365 DAY DELETE;
+PARTITION BY toDate(ingested_at)
+ORDER BY (org_id, project_id, environment_id, meter, occurred_at, source_type, source_id, idempotency_key)
+TTL ingested_at + INTERVAL 365 DAY DELETE
+SETTINGS ttl_only_drop_parts = 1;
