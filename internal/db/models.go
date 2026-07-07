@@ -1386,51 +1386,6 @@ func (ns NullWaitState) Value() (driver.Value, error) {
 	return string(ns.WaitState), nil
 }
 
-type WorkerCommandKind string
-
-const (
-	WorkerCommandKindRuntimePrepare          WorkerCommandKind = "runtime_prepare"
-	WorkerCommandKindRuntimeResumeWait       WorkerCommandKind = "runtime_resume_wait"
-	WorkerCommandKindRuntimeCheckpointWait   WorkerCommandKind = "runtime_checkpoint_wait"
-	WorkerCommandKindRuntimeStop             WorkerCommandKind = "runtime_stop"
-	WorkerCommandKindRuntimeSubstratePrepare WorkerCommandKind = "runtime_substrate_prepare"
-)
-
-func (e *WorkerCommandKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = WorkerCommandKind(s)
-	case string:
-		*e = WorkerCommandKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for WorkerCommandKind: %T", src)
-	}
-	return nil
-}
-
-type NullWorkerCommandKind struct {
-	WorkerCommandKind WorkerCommandKind `json:"worker_command_kind"`
-	Valid             bool              `json:"valid"` // Valid is true if WorkerCommandKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullWorkerCommandKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.WorkerCommandKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.WorkerCommandKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullWorkerCommandKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.WorkerCommandKind), nil
-}
-
 type WorkerGroupHealthState string
 
 const (
@@ -3247,7 +3202,7 @@ type WorkerCommand struct {
 	RuntimeInstanceID   pgtype.UUID        `json:"runtime_instance_id"`
 	RuntimeEpoch        pgtype.Int8        `json:"runtime_epoch"`
 	RunStateVersion     pgtype.Int8        `json:"run_state_version"`
-	Kind                WorkerCommandKind  `json:"kind"`
+	Kind                string             `json:"kind"`
 	Payload             []byte             `json:"payload"`
 	DeliveredAt         pgtype.Timestamptz `json:"delivered_at"`
 	AcceptedAt          pgtype.Timestamptz `json:"accepted_at"`
@@ -3262,11 +3217,9 @@ type WorkerCommand struct {
 
 type WorkerGroup struct {
 	ID                string                 `json:"id"`
-	OwnerOrgID        pgtype.UUID            `json:"owner_org_id"`
 	RegionID          string                 `json:"region_id"`
 	Name              string                 `json:"name"`
 	Description       string                 `json:"description"`
-	Provider          string                 `json:"provider"`
 	State             WorkerGroupState       `json:"state"`
 	HealthState       WorkerGroupHealthState `json:"health_state"`
 	HealthCheckedAt   pgtype.Timestamptz     `json:"health_checked_at"`
@@ -3274,8 +3227,6 @@ type WorkerGroup struct {
 	HealthDetails     []byte                 `json:"health_details"`
 	TrustTier         WorkerTrustTier        `json:"trust_tier"`
 	ClaimVersion      int64                  `json:"claim_version"`
-	CreatedBy         pgtype.UUID            `json:"created_by"`
-	DeletedAt         pgtype.Timestamptz     `json:"deleted_at"`
 	CreatedAt         pgtype.Timestamptz     `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz     `json:"updated_at"`
 }
@@ -3427,20 +3378,19 @@ type WorkspaceMount struct {
 }
 
 type WorkspaceOperationIdempotency struct {
-	ID                   pgtype.UUID                       `json:"id"`
-	OrgID                pgtype.UUID                       `json:"org_id"`
-	ProjectID            pgtype.UUID                       `json:"project_id"`
-	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
-	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
-	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	IdempotencyKey       string                            `json:"idempotency_key"`
-	RequestFingerprint   string                            `json:"request_fingerprint"`
-	ResponseResourceType string                            `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
-	ResponseBody         []byte                            `json:"response_body"`
-	ExpiresAt            pgtype.Timestamptz                `json:"expires_at"`
-	CreatedAt            pgtype.Timestamptz                `json:"created_at"`
-	LastUsedAt           pgtype.Timestamptz                `json:"last_used_at"`
+	ID                 pgtype.UUID                       `json:"id"`
+	OrgID              pgtype.UUID                       `json:"org_id"`
+	ProjectID          pgtype.UUID                       `json:"project_id"`
+	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
+	WorkspaceID        pgtype.UUID                       `json:"workspace_id"`
+	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	IdempotencyKey     string                            `json:"idempotency_key"`
+	RequestFingerprint string                            `json:"request_fingerprint"`
+	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
+	ResponseBody       []byte                            `json:"response_body"`
+	ExpiresAt          pgtype.Timestamptz                `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz                `json:"created_at"`
+	LastUsedAt         pgtype.Timestamptz                `json:"last_used_at"`
 }
 
 type WorkspaceProcess struct {
@@ -3564,7 +3514,6 @@ type WorkspaceVersion struct {
 	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
 	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
 	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	ProducedByProcessID    pgtype.UUID           `json:"produced_by_process_id"`
 	Kind                   WorkspaceVersionKind  `json:"kind"`
 	State                  WorkspaceVersionState `json:"state"`
 	ArtifactID             pgtype.UUID           `json:"artifact_id"`
@@ -3575,7 +3524,5 @@ type WorkspaceVersion struct {
 	Message                string                `json:"message"`
 	Error                  []byte                `json:"error"`
 	PromotedAt             pgtype.Timestamptz    `json:"promoted_at"`
-	CreatedBySubjectType   string                `json:"created_by_subject_type"`
-	CreatedBySubjectID     string                `json:"created_by_subject_id"`
 	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
 }

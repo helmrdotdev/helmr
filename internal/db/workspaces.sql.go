@@ -78,38 +78,35 @@ func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspacePara
 
 const completeWorkspaceOperationIdempotency = `-- name: CompleteWorkspaceOperationIdempotency :one
 UPDATE workspace_operation_idempotencies
-   SET response_resource_type = $1,
-       response_resource_id = $2,
-       response_body = coalesce($3::jsonb, '{}'::jsonb),
+   SET result_resource_id = $1,
+       response_body = coalesce($2::jsonb, '{}'::jsonb),
        last_used_at = now()
- WHERE workspace_operation_idempotencies.org_id = $4
-   AND workspace_operation_idempotencies.project_id = $5
-   AND workspace_operation_idempotencies.environment_id = $6
-   AND workspace_operation_idempotencies.operation_kind = $7::workspace_operation_idempotency_kind
+ WHERE workspace_operation_idempotencies.org_id = $3
+   AND workspace_operation_idempotencies.project_id = $4
+   AND workspace_operation_idempotencies.environment_id = $5
+   AND workspace_operation_idempotencies.operation_kind = $6::workspace_operation_idempotency_kind
    AND workspace_operation_idempotencies.workspace_id IS NULL
-   AND workspace_operation_idempotencies.idempotency_key = $8
-   AND workspace_operation_idempotencies.request_fingerprint = $9
-   AND workspace_operation_idempotencies.response_resource_id IS NULL
+   AND workspace_operation_idempotencies.idempotency_key = $7
+   AND workspace_operation_idempotencies.request_fingerprint = $8
+   AND workspace_operation_idempotencies.result_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type CompleteWorkspaceOperationIdempotencyParams struct {
-	ResponseResourceType string                            `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
-	ResponseBody         []byte                            `json:"response_body"`
-	OrgID                pgtype.UUID                       `json:"org_id"`
-	ProjectID            pgtype.UUID                       `json:"project_id"`
-	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
-	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	IdempotencyKey       string                            `json:"idempotency_key"`
-	RequestFingerprint   string                            `json:"request_fingerprint"`
+	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
+	ResponseBody       []byte                            `json:"response_body"`
+	OrgID              pgtype.UUID                       `json:"org_id"`
+	ProjectID          pgtype.UUID                       `json:"project_id"`
+	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
+	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	IdempotencyKey     string                            `json:"idempotency_key"`
+	RequestFingerprint string                            `json:"request_fingerprint"`
 }
 
 func (q *Queries) CompleteWorkspaceOperationIdempotency(ctx context.Context, arg CompleteWorkspaceOperationIdempotencyParams) (WorkspaceOperationIdempotency, error) {
 	row := q.db.QueryRow(ctx, completeWorkspaceOperationIdempotency,
-		arg.ResponseResourceType,
-		arg.ResponseResourceID,
+		arg.ResultResourceID,
 		arg.ResponseBody,
 		arg.OrgID,
 		arg.ProjectID,
@@ -128,8 +125,7 @@ func (q *Queries) CompleteWorkspaceOperationIdempotency(ctx context.Context, arg
 		&i.OperationKind,
 		&i.IdempotencyKey,
 		&i.RequestFingerprint,
-		&i.ResponseResourceType,
-		&i.ResponseResourceID,
+		&i.ResultResourceID,
 		&i.ResponseBody,
 		&i.ExpiresAt,
 		&i.CreatedAt,
@@ -140,39 +136,36 @@ func (q *Queries) CompleteWorkspaceOperationIdempotency(ctx context.Context, arg
 
 const completeWorkspaceScopedOperationIdempotency = `-- name: CompleteWorkspaceScopedOperationIdempotency :one
 UPDATE workspace_operation_idempotencies
-   SET response_resource_type = $1,
-       response_resource_id = $2,
-       response_body = coalesce($3::jsonb, '{}'::jsonb),
+   SET result_resource_id = $1,
+       response_body = coalesce($2::jsonb, '{}'::jsonb),
        last_used_at = now()
- WHERE workspace_operation_idempotencies.org_id = $4
-   AND workspace_operation_idempotencies.project_id = $5
-   AND workspace_operation_idempotencies.environment_id = $6
-   AND workspace_operation_idempotencies.operation_kind = $7::workspace_operation_idempotency_kind
-   AND workspace_operation_idempotencies.workspace_id = $8
-   AND workspace_operation_idempotencies.idempotency_key = $9
-   AND workspace_operation_idempotencies.request_fingerprint = $10
-   AND workspace_operation_idempotencies.response_resource_id IS NULL
+ WHERE workspace_operation_idempotencies.org_id = $3
+   AND workspace_operation_idempotencies.project_id = $4
+   AND workspace_operation_idempotencies.environment_id = $5
+   AND workspace_operation_idempotencies.operation_kind = $6::workspace_operation_idempotency_kind
+   AND workspace_operation_idempotencies.workspace_id = $7
+   AND workspace_operation_idempotencies.idempotency_key = $8
+   AND workspace_operation_idempotencies.request_fingerprint = $9
+   AND workspace_operation_idempotencies.result_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type CompleteWorkspaceScopedOperationIdempotencyParams struct {
-	ResponseResourceType string                            `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
-	ResponseBody         []byte                            `json:"response_body"`
-	OrgID                pgtype.UUID                       `json:"org_id"`
-	ProjectID            pgtype.UUID                       `json:"project_id"`
-	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
-	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
-	IdempotencyKey       string                            `json:"idempotency_key"`
-	RequestFingerprint   string                            `json:"request_fingerprint"`
+	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
+	ResponseBody       []byte                            `json:"response_body"`
+	OrgID              pgtype.UUID                       `json:"org_id"`
+	ProjectID          pgtype.UUID                       `json:"project_id"`
+	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
+	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	WorkspaceID        pgtype.UUID                       `json:"workspace_id"`
+	IdempotencyKey     string                            `json:"idempotency_key"`
+	RequestFingerprint string                            `json:"request_fingerprint"`
 }
 
 func (q *Queries) CompleteWorkspaceScopedOperationIdempotency(ctx context.Context, arg CompleteWorkspaceScopedOperationIdempotencyParams) (WorkspaceOperationIdempotency, error) {
 	row := q.db.QueryRow(ctx, completeWorkspaceScopedOperationIdempotency,
-		arg.ResponseResourceType,
-		arg.ResponseResourceID,
+		arg.ResultResourceID,
 		arg.ResponseBody,
 		arg.OrgID,
 		arg.ProjectID,
@@ -192,8 +185,7 @@ func (q *Queries) CompleteWorkspaceScopedOperationIdempotency(ctx context.Contex
 		&i.OperationKind,
 		&i.IdempotencyKey,
 		&i.RequestFingerprint,
-		&i.ResponseResourceType,
-		&i.ResponseResourceID,
+		&i.ResultResourceID,
 		&i.ResponseBody,
 		&i.ExpiresAt,
 		&i.CreatedAt,
@@ -272,8 +264,7 @@ created_version AS (
         content_digest,
         size_bytes,
         message,
-        promoted_at,
-        created_by_subject_type
+        promoted_at
     )
     SELECT $4,
            $13,
@@ -289,10 +280,9 @@ created_version AS (
            $17,
            $18,
            'initial empty workspace',
-           now(),
-           'system'
+           now()
       FROM created_workspace
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
 )
 SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.worker_group_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.current_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
   FROM created_workspace
@@ -402,23 +392,22 @@ const ensureWorkspaceOperationIdempotency = `-- name: EnsureWorkspaceOperationId
 WITH replaced AS (
     UPDATE workspace_operation_idempotencies
        SET request_fingerprint = $1,
-           response_resource_type = $2,
-           response_resource_id = $3,
-           response_body = coalesce($4::jsonb, '{}'::jsonb),
-           expires_at = $5,
+           result_resource_id = $2,
+           response_body = coalesce($3::jsonb, '{}'::jsonb),
+           expires_at = $4,
            created_at = now(),
            last_used_at = now()
-     WHERE workspace_operation_idempotencies.org_id = $6
-       AND workspace_operation_idempotencies.project_id = $7
-       AND workspace_operation_idempotencies.environment_id = $8
-       AND workspace_operation_idempotencies.operation_kind = $9::workspace_operation_idempotency_kind
-       AND workspace_operation_idempotencies.idempotency_key = $10
+     WHERE workspace_operation_idempotencies.org_id = $5
+       AND workspace_operation_idempotencies.project_id = $6
+       AND workspace_operation_idempotencies.environment_id = $7
+       AND workspace_operation_idempotencies.operation_kind = $8::workspace_operation_idempotency_kind
+       AND workspace_operation_idempotencies.idempotency_key = $9
        AND (
-           ($11::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
-           OR workspace_operation_idempotencies.workspace_id = $11::uuid
+           ($10::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
+           OR workspace_operation_idempotencies.workspace_id = $10::uuid
        )
        AND workspace_operation_idempotencies.expires_at <= now()
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.result_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
 ),
 inserted AS (
     INSERT INTO workspace_operation_idempotencies (
@@ -430,91 +419,86 @@ inserted AS (
         operation_kind,
         idempotency_key,
         request_fingerprint,
-        response_resource_type,
-        response_resource_id,
+        result_resource_id,
         response_body,
         expires_at
     )
     SELECT
-        $12,
+        $11,
+        $5,
         $6,
         $7,
-        $8,
-        $11,
-        $9::workspace_operation_idempotency_kind,
         $10,
+        $8::workspace_operation_idempotency_kind,
+        $9,
         $1,
         $2,
-        $3,
-        coalesce($4::jsonb, '{}'::jsonb),
-        $5
+        coalesce($3::jsonb, '{}'::jsonb),
+        $4
      WHERE NOT EXISTS (SELECT 1 FROM replaced)
     ON CONFLICT DO NOTHING
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.result_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, TRUE::boolean AS inserted
 ),
 existing AS (
     UPDATE workspace_operation_idempotencies
        SET last_used_at = now()
-     WHERE workspace_operation_idempotencies.org_id = $6
-       AND workspace_operation_idempotencies.project_id = $7
-       AND workspace_operation_idempotencies.environment_id = $8
-       AND workspace_operation_idempotencies.operation_kind = $9::workspace_operation_idempotency_kind
-       AND workspace_operation_idempotencies.idempotency_key = $10
+     WHERE workspace_operation_idempotencies.org_id = $5
+       AND workspace_operation_idempotencies.project_id = $6
+       AND workspace_operation_idempotencies.environment_id = $7
+       AND workspace_operation_idempotencies.operation_kind = $8::workspace_operation_idempotency_kind
+       AND workspace_operation_idempotencies.idempotency_key = $9
        AND (
-           ($11::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
-           OR workspace_operation_idempotencies.workspace_id = $11::uuid
+           ($10::uuid IS NULL AND workspace_operation_idempotencies.workspace_id IS NULL)
+           OR workspace_operation_idempotencies.workspace_id = $10::uuid
        )
        AND workspace_operation_idempotencies.expires_at > now()
        AND NOT EXISTS (SELECT 1 FROM replaced)
        AND NOT EXISTS (SELECT 1 FROM inserted)
-    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.response_resource_type, workspace_operation_idempotencies.response_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, FALSE::boolean AS inserted
+    RETURNING workspace_operation_idempotencies.id, workspace_operation_idempotencies.org_id, workspace_operation_idempotencies.project_id, workspace_operation_idempotencies.environment_id, workspace_operation_idempotencies.workspace_id, workspace_operation_idempotencies.operation_kind, workspace_operation_idempotencies.idempotency_key, workspace_operation_idempotencies.request_fingerprint, workspace_operation_idempotencies.result_resource_id, workspace_operation_idempotencies.response_body, workspace_operation_idempotencies.expires_at, workspace_operation_idempotencies.created_at, workspace_operation_idempotencies.last_used_at, FALSE::boolean AS inserted
 )
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM replaced
+SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM replaced
 UNION ALL
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM inserted
+SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM inserted
 UNION ALL
-SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM existing
+SELECT id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at, inserted FROM existing
 LIMIT 1
 `
 
 type EnsureWorkspaceOperationIdempotencyParams struct {
-	RequestFingerprint   string                            `json:"request_fingerprint"`
-	ResponseResourceType string                            `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
-	ResponseBody         []byte                            `json:"response_body"`
-	ExpiresAt            pgtype.Timestamptz                `json:"expires_at"`
-	OrgID                pgtype.UUID                       `json:"org_id"`
-	ProjectID            pgtype.UUID                       `json:"project_id"`
-	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
-	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	IdempotencyKey       string                            `json:"idempotency_key"`
-	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
-	ID                   pgtype.UUID                       `json:"id"`
+	RequestFingerprint string                            `json:"request_fingerprint"`
+	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
+	ResponseBody       []byte                            `json:"response_body"`
+	ExpiresAt          pgtype.Timestamptz                `json:"expires_at"`
+	OrgID              pgtype.UUID                       `json:"org_id"`
+	ProjectID          pgtype.UUID                       `json:"project_id"`
+	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
+	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	IdempotencyKey     string                            `json:"idempotency_key"`
+	WorkspaceID        pgtype.UUID                       `json:"workspace_id"`
+	ID                 pgtype.UUID                       `json:"id"`
 }
 
 type EnsureWorkspaceOperationIdempotencyRow struct {
-	ID                   pgtype.UUID                       `json:"id"`
-	OrgID                pgtype.UUID                       `json:"org_id"`
-	ProjectID            pgtype.UUID                       `json:"project_id"`
-	EnvironmentID        pgtype.UUID                       `json:"environment_id"`
-	WorkspaceID          pgtype.UUID                       `json:"workspace_id"`
-	OperationKind        WorkspaceOperationIdempotencyKind `json:"operation_kind"`
-	IdempotencyKey       string                            `json:"idempotency_key"`
-	RequestFingerprint   string                            `json:"request_fingerprint"`
-	ResponseResourceType string                            `json:"response_resource_type"`
-	ResponseResourceID   pgtype.UUID                       `json:"response_resource_id"`
-	ResponseBody         []byte                            `json:"response_body"`
-	ExpiresAt            pgtype.Timestamptz                `json:"expires_at"`
-	CreatedAt            pgtype.Timestamptz                `json:"created_at"`
-	LastUsedAt           pgtype.Timestamptz                `json:"last_used_at"`
-	Inserted             bool                              `json:"inserted"`
+	ID                 pgtype.UUID                       `json:"id"`
+	OrgID              pgtype.UUID                       `json:"org_id"`
+	ProjectID          pgtype.UUID                       `json:"project_id"`
+	EnvironmentID      pgtype.UUID                       `json:"environment_id"`
+	WorkspaceID        pgtype.UUID                       `json:"workspace_id"`
+	OperationKind      WorkspaceOperationIdempotencyKind `json:"operation_kind"`
+	IdempotencyKey     string                            `json:"idempotency_key"`
+	RequestFingerprint string                            `json:"request_fingerprint"`
+	ResultResourceID   pgtype.UUID                       `json:"result_resource_id"`
+	ResponseBody       []byte                            `json:"response_body"`
+	ExpiresAt          pgtype.Timestamptz                `json:"expires_at"`
+	CreatedAt          pgtype.Timestamptz                `json:"created_at"`
+	LastUsedAt         pgtype.Timestamptz                `json:"last_used_at"`
+	Inserted           bool                              `json:"inserted"`
 }
 
 func (q *Queries) EnsureWorkspaceOperationIdempotency(ctx context.Context, arg EnsureWorkspaceOperationIdempotencyParams) (EnsureWorkspaceOperationIdempotencyRow, error) {
 	row := q.db.QueryRow(ctx, ensureWorkspaceOperationIdempotency,
 		arg.RequestFingerprint,
-		arg.ResponseResourceType,
-		arg.ResponseResourceID,
+		arg.ResultResourceID,
 		arg.ResponseBody,
 		arg.ExpiresAt,
 		arg.OrgID,
@@ -535,8 +519,7 @@ func (q *Queries) EnsureWorkspaceOperationIdempotency(ctx context.Context, arg E
 		&i.OperationKind,
 		&i.IdempotencyKey,
 		&i.RequestFingerprint,
-		&i.ResponseResourceType,
-		&i.ResponseResourceID,
+		&i.ResultResourceID,
 		&i.ResponseBody,
 		&i.ExpiresAt,
 		&i.CreatedAt,
@@ -608,7 +591,7 @@ UPDATE workspace_operation_idempotencies
    AND workspace_id IS NULL
    AND idempotency_key = $5
    AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type GetWorkspaceOperationIdempotencyParams struct {
@@ -637,8 +620,7 @@ func (q *Queries) GetWorkspaceOperationIdempotency(ctx context.Context, arg GetW
 		&i.OperationKind,
 		&i.IdempotencyKey,
 		&i.RequestFingerprint,
-		&i.ResponseResourceType,
-		&i.ResponseResourceID,
+		&i.ResultResourceID,
 		&i.ResponseBody,
 		&i.ExpiresAt,
 		&i.CreatedAt,
@@ -657,7 +639,7 @@ UPDATE workspace_operation_idempotencies
    AND operation_kind = $5::workspace_operation_idempotency_kind
    AND idempotency_key = $6
    AND expires_at > now()
-RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, response_resource_type, response_resource_id, response_body, expires_at, created_at, last_used_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, operation_kind, idempotency_key, request_fingerprint, result_resource_id, response_body, expires_at, created_at, last_used_at
 `
 
 type GetWorkspaceScopedOperationIdempotencyParams struct {
@@ -688,8 +670,7 @@ func (q *Queries) GetWorkspaceScopedOperationIdempotency(ctx context.Context, ar
 		&i.OperationKind,
 		&i.IdempotencyKey,
 		&i.RequestFingerprint,
-		&i.ResponseResourceType,
-		&i.ResponseResourceID,
+		&i.ResultResourceID,
 		&i.ResponseBody,
 		&i.ExpiresAt,
 		&i.CreatedAt,

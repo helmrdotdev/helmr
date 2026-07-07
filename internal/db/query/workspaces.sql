@@ -68,8 +68,7 @@ created_version AS (
         content_digest,
         size_bytes,
         message,
-        promoted_at,
-        created_by_subject_type
+        promoted_at
     )
     SELECT sqlc.arg(initial_version_id),
            sqlc.arg(initial_version_public_id),
@@ -85,8 +84,7 @@ created_version AS (
            sqlc.arg(initial_content_digest),
            sqlc.arg(initial_size_bytes),
            'initial empty workspace',
-           now(),
-           'system'
+           now()
       FROM created_workspace
     RETURNING *
 )
@@ -228,8 +226,7 @@ RETURNING *;
 WITH replaced AS (
     UPDATE workspace_operation_idempotencies
        SET request_fingerprint = sqlc.arg(request_fingerprint),
-           response_resource_type = sqlc.arg(response_resource_type),
-           response_resource_id = sqlc.narg(response_resource_id),
+           result_resource_id = sqlc.narg(result_resource_id),
            response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
            expires_at = sqlc.arg(expires_at),
            created_at = now(),
@@ -256,8 +253,7 @@ inserted AS (
         operation_kind,
         idempotency_key,
         request_fingerprint,
-        response_resource_type,
-        response_resource_id,
+        result_resource_id,
         response_body,
         expires_at
     )
@@ -270,8 +266,7 @@ inserted AS (
         sqlc.arg(operation_kind)::workspace_operation_idempotency_kind,
         sqlc.arg(idempotency_key),
         sqlc.arg(request_fingerprint),
-        sqlc.arg(response_resource_type),
-        sqlc.narg(response_resource_id),
+        sqlc.narg(result_resource_id),
         coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
         sqlc.arg(expires_at)
      WHERE NOT EXISTS (SELECT 1 FROM replaced)
@@ -304,8 +299,7 @@ LIMIT 1;
 
 -- name: CompleteWorkspaceOperationIdempotency :one
 UPDATE workspace_operation_idempotencies
-   SET response_resource_type = sqlc.arg(response_resource_type),
-       response_resource_id = sqlc.arg(response_resource_id),
+   SET result_resource_id = sqlc.arg(result_resource_id),
        response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
        last_used_at = now()
  WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
@@ -315,14 +309,13 @@ UPDATE workspace_operation_idempotencies
    AND workspace_operation_idempotencies.workspace_id IS NULL
    AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
    AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND workspace_operation_idempotencies.response_resource_id IS NULL
+   AND workspace_operation_idempotencies.result_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
 RETURNING *;
 
 -- name: CompleteWorkspaceScopedOperationIdempotency :one
 UPDATE workspace_operation_idempotencies
-   SET response_resource_type = sqlc.arg(response_resource_type),
-       response_resource_id = sqlc.arg(response_resource_id),
+   SET result_resource_id = sqlc.arg(result_resource_id),
        response_body = coalesce(sqlc.arg(response_body)::jsonb, '{}'::jsonb),
        last_used_at = now()
  WHERE workspace_operation_idempotencies.org_id = sqlc.arg(org_id)
@@ -332,6 +325,6 @@ UPDATE workspace_operation_idempotencies
    AND workspace_operation_idempotencies.workspace_id = sqlc.arg(workspace_id)
    AND workspace_operation_idempotencies.idempotency_key = sqlc.arg(idempotency_key)
    AND workspace_operation_idempotencies.request_fingerprint = sqlc.arg(request_fingerprint)
-   AND workspace_operation_idempotencies.response_resource_id IS NULL
+   AND workspace_operation_idempotencies.result_resource_id IS NULL
    AND workspace_operation_idempotencies.expires_at > now()
 RETURNING *;

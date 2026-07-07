@@ -505,7 +505,7 @@ created_version AS (
       FROM active_writer
       JOIN active_mount ON active_mount.id = active_writer.workspace_mount_id
       JOIN verified_artifact ON verified_artifact.id = $5
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, produced_by_process_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_by_subject_type, created_by_subject_id, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
 ),
 promoted_workspace AS (
     UPDATE workspaces
@@ -533,7 +533,7 @@ cleaned_mount AS (
        AND workspace_mounts.dirty_generation = $4
     RETURNING workspace_mounts.id
 )
-SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.produced_by_process_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_by_subject_type, created_version.created_by_subject_id, created_version.created_at
+SELECT created_version.id, created_version.public_id, created_version.org_id, created_version.project_id, created_version.environment_id, created_version.workspace_id, created_version.parent_version_id, created_version.source_workspace_mount_id, created_version.source_write_lease_id, created_version.produced_by_run_id, created_version.kind, created_version.state, created_version.artifact_id, created_version.artifact_encoding, created_version.artifact_entry_count, created_version.content_digest, created_version.size_bytes, created_version.message, created_version.error, created_version.promoted_at, created_version.created_at
   FROM created_version
   JOIN promoted_workspace ON promoted_workspace.id = created_version.workspace_id
   JOIN cleaned_mount ON cleaned_mount.id = created_version.source_workspace_mount_id
@@ -566,7 +566,6 @@ type PromoteWorkspaceCaptureRow struct {
 	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
 	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
 	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	ProducedByProcessID    pgtype.UUID           `json:"produced_by_process_id"`
 	Kind                   WorkspaceVersionKind  `json:"kind"`
 	State                  WorkspaceVersionState `json:"state"`
 	ArtifactID             pgtype.UUID           `json:"artifact_id"`
@@ -577,8 +576,6 @@ type PromoteWorkspaceCaptureRow struct {
 	Message                string                `json:"message"`
 	Error                  []byte                `json:"error"`
 	PromotedAt             pgtype.Timestamptz    `json:"promoted_at"`
-	CreatedBySubjectType   string                `json:"created_by_subject_type"`
-	CreatedBySubjectID     string                `json:"created_by_subject_id"`
 	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
 }
 
@@ -610,7 +607,6 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		&i.SourceWorkspaceMountID,
 		&i.SourceWriteLeaseID,
 		&i.ProducedByRunID,
-		&i.ProducedByProcessID,
 		&i.Kind,
 		&i.State,
 		&i.ArtifactID,
@@ -621,8 +617,6 @@ func (q *Queries) PromoteWorkspaceCapture(ctx context.Context, arg PromoteWorksp
 		&i.Message,
 		&i.Error,
 		&i.PromotedAt,
-		&i.CreatedBySubjectType,
-		&i.CreatedBySubjectID,
 		&i.CreatedAt,
 	)
 	return i, err

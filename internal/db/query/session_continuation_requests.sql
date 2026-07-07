@@ -253,8 +253,8 @@ RETURNING session_continuation_requests.*;
 UPDATE session_continuation_requests
    SET status = 'failed',
        status_reason = sqlc.arg(reason),
-       last_error_code = sqlc.arg(reason),
-       last_error_message = sqlc.arg(reason),
+       last_error_code = '',
+       last_error_message = '',
        claimed_at = NULL,
        claim_expires_at = NULL,
        claim_owner = '',

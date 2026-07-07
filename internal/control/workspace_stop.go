@@ -76,18 +76,17 @@ func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.
 				return err
 			}
 			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, work.q, db.EnsureWorkspaceOperationIdempotencyParams{
-				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:                pgvalue.UUID(actor.OrgID),
-				ProjectID:            projectID,
-				EnvironmentID:        environmentID,
-				WorkspaceID:          workspaceID,
-				OperationKind:        workspaceStopOperationKind,
-				IdempotencyKey:       idempotencyKey,
-				RequestFingerprint:   fingerprint,
-				ResponseResourceType: "",
-				ResponseResourceID:   pgtype.UUID{},
-				ResponseBody:         []byte(`{}`),
-				ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
+				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:              pgvalue.UUID(actor.OrgID),
+				ProjectID:          projectID,
+				EnvironmentID:      environmentID,
+				WorkspaceID:        workspaceID,
+				OperationKind:      workspaceStopOperationKind,
+				IdempotencyKey:     idempotencyKey,
+				RequestFingerprint: fingerprint,
+				ResultResourceID:   pgtype.UUID{},
+				ResponseBody:       []byte(`{}`),
+				ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(idempotencyTTL)),
 			})
 			if err != nil {
 				return err
@@ -130,16 +129,15 @@ func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.
 		}
 		if createdIdempotency {
 			_, err = work.q.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
-				OrgID:                pgvalue.UUID(actor.OrgID),
-				ProjectID:            projectID,
-				EnvironmentID:        environmentID,
-				OperationKind:        workspaceStopOperationKind,
-				WorkspaceID:          workspaceID,
-				IdempotencyKey:       idempotencyKey,
-				RequestFingerprint:   fingerprint,
-				ResponseResourceType: "workspace",
-				ResponseResourceID:   workspaceID,
-				ResponseBody:         responseBody,
+				OrgID:              pgvalue.UUID(actor.OrgID),
+				ProjectID:          projectID,
+				EnvironmentID:      environmentID,
+				OperationKind:      workspaceStopOperationKind,
+				WorkspaceID:        workspaceID,
+				IdempotencyKey:     idempotencyKey,
+				RequestFingerprint: fingerprint,
+				ResultResourceID:   workspaceID,
+				ResponseBody:       responseBody,
 			})
 			if err != nil {
 				return err
@@ -160,7 +158,7 @@ func workspaceStopIdempotencyResponse(idempotency db.EnsureWorkspaceOperationIde
 	if idempotency.RequestFingerprint != fingerprint {
 		return api.WorkspaceStopResponse{}, false, errWorkspaceOperationIdempotencyUsed
 	}
-	if !idempotency.ResponseResourceID.Valid {
+	if !idempotency.ResultResourceID.Valid {
 		return api.WorkspaceStopResponse{}, false, errWorkspaceOperationPending
 	}
 	var response api.WorkspaceStopResponse

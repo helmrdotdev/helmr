@@ -286,18 +286,17 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 	err := s.inTx(ctx, func(work *txWork) error {
 		if idempotencyKey != "" {
 			idempotency, err := ensureWorkspaceOperationIdempotency(ctx, work.q, db.EnsureWorkspaceOperationIdempotencyParams{
-				ID:                   pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				OrgID:                pgvalue.UUID(actor.OrgID),
-				ProjectID:            ws.ProjectID,
-				EnvironmentID:        ws.EnvironmentID,
-				WorkspaceID:          ws.ID,
-				OperationKind:        workspacePtyCreateOperationKind,
-				IdempotencyKey:       idempotencyKey,
-				RequestFingerprint:   fingerprint,
-				ResponseResourceType: "",
-				ResponseResourceID:   pgtype.UUID{},
-				ResponseBody:         []byte(`{}`),
-				ExpiresAt:            pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
+				ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+				OrgID:              pgvalue.UUID(actor.OrgID),
+				ProjectID:          ws.ProjectID,
+				EnvironmentID:      ws.EnvironmentID,
+				WorkspaceID:        ws.ID,
+				OperationKind:      workspacePtyCreateOperationKind,
+				IdempotencyKey:     idempotencyKey,
+				RequestFingerprint: fingerprint,
+				ResultResourceID:   pgtype.UUID{},
+				ResponseBody:       []byte(`{}`),
+				ExpiresAt:          pgvalue.Timestamptz(time.Now().Add(workspaceExecIdempotencyTTL)),
 			})
 			if err != nil {
 				return err
@@ -306,7 +305,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 				if idempotency.RequestFingerprint != fingerprint {
 					return errWorkspaceOperationIdempotencyUsed
 				}
-				if !idempotency.ResponseResourceID.Valid {
+				if !idempotency.ResultResourceID.Valid {
 					return errWorkspaceOperationPending
 				}
 				row, err = work.q.GetWorkspacePtySession(ctx, db.GetWorkspacePtySessionParams{
@@ -314,7 +313,7 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 					ProjectID:     ws.ProjectID,
 					EnvironmentID: ws.EnvironmentID,
 					WorkspaceID:   ws.ID,
-					ID:            idempotency.ResponseResourceID,
+					ID:            idempotency.ResultResourceID,
 				})
 				existing = true
 				return err
@@ -383,16 +382,15 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 		}
 		if idempotencyKey != "" {
 			_, err = work.q.CompleteWorkspaceScopedOperationIdempotency(ctx, db.CompleteWorkspaceScopedOperationIdempotencyParams{
-				OrgID:                pgvalue.UUID(actor.OrgID),
-				ProjectID:            ws.ProjectID,
-				EnvironmentID:        ws.EnvironmentID,
-				OperationKind:        workspacePtyCreateOperationKind,
-				WorkspaceID:          ws.ID,
-				IdempotencyKey:       idempotencyKey,
-				RequestFingerprint:   fingerprint,
-				ResponseResourceType: "workspace_pty",
-				ResponseResourceID:   row.ID,
-				ResponseBody:         []byte(`{}`),
+				OrgID:              pgvalue.UUID(actor.OrgID),
+				ProjectID:          ws.ProjectID,
+				EnvironmentID:      ws.EnvironmentID,
+				OperationKind:      workspacePtyCreateOperationKind,
+				WorkspaceID:        ws.ID,
+				IdempotencyKey:     idempotencyKey,
+				RequestFingerprint: fingerprint,
+				ResultResourceID:   row.ID,
+				ResponseBody:       []byte(`{}`),
 			})
 			if err != nil {
 				return err

@@ -1205,8 +1205,7 @@ created_version AS (
         content_digest,
         size_bytes,
         message,
-        promoted_at,
-        created_by_subject_type
+        promoted_at
     )
     SELECT sqlc.arg(version_id),
            sqlc.arg(version_public_id)::text,
@@ -1224,8 +1223,7 @@ created_version AS (
            sqlc.arg(content_digest),
            sqlc.arg(size_bytes),
            sqlc.arg(message),
-           now(),
-           'worker'
+           now()
       FROM target
       JOIN verified_artifact ON verified_artifact.id = sqlc.arg(artifact_id)
     RETURNING *
