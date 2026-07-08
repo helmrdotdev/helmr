@@ -5,6 +5,10 @@ aws_region  = "us-east-1"
 name        = "helmr-smoke"
 public_url  = "https://helmr-smoke.example.com"
 
+worker_group_id   = "us-east-1-worker-group-1"
+region_id         = "us-east-1"
+default_region_id = "us-east-1"
+
 enable_nat_gateway = true
 
 control_image        = "<account>.dkr.ecr.us-east-1.amazonaws.com/helmr-smoke/control@sha256:<digest>"

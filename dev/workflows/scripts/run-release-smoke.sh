@@ -235,9 +235,22 @@ start_capture_ids() {
 
 inspect_run() {
   local run_id=$1
-  run_helmr run get "${run_id}"
-  run_helmr run events "${run_id}"
-  run_helmr run logs "${run_id}"
+  shift
+  local scope_args=()
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  run_helmr run get "${run_id}" "${scope_args[@]}"
+  run_helmr run events "${run_id}" "${scope_args[@]}"
+  run_helmr run logs "${run_id}" "${scope_args[@]}"
 }
 
 stop_session_workspace() {
@@ -267,8 +280,21 @@ stop_session_workspace() {
 
 wait_status() {
   local run_id=$1
+  shift
+  local scope_args=()
   local output
-  output="$(run_helmr run wait "${run_id}" --json)"
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --project|-p|--env|-e)
+        scope_args+=("$1" "$2")
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  output="$(run_helmr run wait "${run_id}" "${scope_args[@]}" --json)"
   printf '%s\n' "${output}" >&2
   printf '%s\n' "${output}" | jq -er '.status'
 }
@@ -285,13 +311,13 @@ expect_run_success() {
   run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${run_id}")
-  status="$(wait_status "${run_id}")"
+  status="$(wait_status "${run_id}" "$@")"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}"
+  inspect_run "${run_id}" "$@"
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
 }
@@ -385,18 +411,18 @@ expect_run_failure() {
   run_id="${ids##* }"
   session_ids+=("${session_id}")
   run_ids+=("${run_id}")
-  status="$(wait_status "${run_id}")"
+  status="$(wait_status "${run_id}" "$@")"
   if [ "${status}" = "succeeded" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: run unexpectedly succeeded: %s\n' "${name}" "${run_id}" >&2
     return 1
   fi
   if [ "${status}" != "failed" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected failed, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}"
+  inspect_run "${run_id}" "$@"
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s failed as expected run_id=%s\n' "${name}" "${run_id}"
 }
@@ -425,7 +451,7 @@ wait_for_token_checkpoint_token() {
     fi
     sleep 1
   done
-  inspect_run "$(session_run_id "${session_id}" "$@")" >&2 || true
+  inspect_run "$(session_run_id "${session_id}" "$@")" "$@" >&2 || true
   printf 'FAIL token-checkpoint: timed out waiting for %s token output in session %s\n' "${step}" "${session_id}" >&2
   return 1
 }
@@ -450,7 +476,7 @@ wait_for_stream_phase() {
     fi
     sleep 1
   done
-  inspect_run "$(session_run_id "${session_id}" "$@")" >&2 || true
+  inspect_run "$(session_run_id "${session_id}" "$@")" "$@" >&2 || true
   printf 'FAIL stream phase: timed out waiting for %s on %s in session %s\n' "${phase}" "${stream}" "${session_id}" >&2
   return 1
 }
@@ -478,7 +504,7 @@ wait_for_continuation_run() {
     fi
     sleep 1
   done
-  inspect_run "${initial_run_id}" >&2 || true
+  inspect_run "${initial_run_id}" "$@" >&2 || true
   printf 'FAIL session-continuation: timed out waiting for continuation run in session %s\n' "${session_id}" >&2
   return 1
 }
@@ -528,10 +554,10 @@ expect_session_continuation_success() {
   run_ids+=("${initial_run_id}")
   ux_timing "${name}" "start_returned" "${session_id}" "${initial_run_id}" "task=session-continuation-smoke"
 
-  status="$(wait_status "${initial_run_id}")"
+  status="$(wait_status "${initial_run_id}" "$@")"
   ux_timing "${name}" "initial_terminal_observed" "${session_id}" "${initial_run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${initial_run_id}" >&2
+    inspect_run "${initial_run_id}" "$@" >&2
     printf 'FAIL %s: expected initial run succeeded, got %s: %s\n' "${name}" "${status}" "${initial_run_id}" >&2
     return 1
   fi
@@ -550,18 +576,18 @@ expect_session_continuation_success() {
   continuation_run_id="$(wait_for_continuation_run "${session_id}" "${initial_run_id}" "$@")"
   run_ids+=("${continuation_run_id}")
   ux_timing "${name}" "continuation_run_visible" "${session_id}" "${continuation_run_id}" "initial_run_id=${initial_run_id}"
-  status="$(wait_status "${continuation_run_id}")"
+  status="$(wait_status "${continuation_run_id}" "$@")"
   ux_timing "${name}" "continuation_terminal_observed" "${session_id}" "${continuation_run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${continuation_run_id}" >&2
+    inspect_run "${continuation_run_id}" "$@" >&2
     printf 'FAIL %s: expected continuation run succeeded, got %s: %s\n' "${name}" "${status}" "${continuation_run_id}" >&2
     return 1
   fi
   ux_timing "${name}" "continuation_wait_requested" "${session_id}" "${continuation_run_id}" "phase=continuation"
   wait_for_stream_phase "${session_id}" session-continuation-smoke.report "${marker}" continuation "$@"
   ux_timing "${name}" "continuation_visible" "${session_id}" "${continuation_run_id}" "phase=continuation"
-  inspect_run "${initial_run_id}"
-  inspect_run "${continuation_run_id}"
+  inspect_run "${initial_run_id}" "$@"
+  inspect_run "${continuation_run_id}" "$@"
   run_helmr session stream output list "${session_id}" session-continuation-smoke.report "$@" --json
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s session_id=%s initial_run_id=%s continuation_run_id=%s\n' "${name}" "${session_id}" "${initial_run_id}" "${continuation_run_id}"
@@ -616,14 +642,14 @@ expect_active_stream_success() {
     --data-json "$(jq -nc --arg value "on-two" '{step:"on-two",value:$value}')"
   ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=on-two"
 
-  status="$(wait_status "${run_id}")"
+  status="$(wait_status "${run_id}" "$@")"
   ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}"
+  inspect_run "${run_id}" "$@"
   run_helmr session stream output list "${session_id}" active-stream-smoke.report "$@" --json
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
@@ -661,14 +687,14 @@ expect_stream_input_success() {
     --idempotency-key "${marker}:message" \
     --data-json "$(jq -nc --arg text "hello ${marker}" '{step:"message",text:$text}')"
   ux_timing "${name}" "input_send_accepted" "${session_id}" "${run_id}" "step=message"
-  status="$(wait_status "${run_id}")"
+  status="$(wait_status "${run_id}" "$@")"
   ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}"
+  inspect_run "${run_id}" "$@"
   run_helmr session stream output list "${session_id}" stream-input-smoke.report "$@" --json
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
@@ -707,14 +733,14 @@ expect_token_checkpoint_success() {
   run_helmr token complete "${token_id}" "$@" --data-json "$(jq -nc --arg text "checkpoint ${marker}" '{text:$text}')"
   ux_timing "${name}" "token_complete_accepted" "${session_id}" "${run_id}" "step=reply"
 
-  status="$(wait_status "${run_id}")"
+  status="$(wait_status "${run_id}" "$@")"
   ux_timing "${name}" "terminal_observed" "${session_id}" "${run_id}" "status=${status}"
   if [ "${status}" != "succeeded" ]; then
-    inspect_run "${run_id}" >&2
+    inspect_run "${run_id}" "$@" >&2
     printf 'FAIL %s: expected succeeded, got %s: %s\n' "${name}" "${status}" "${run_id}" >&2
     return 1
   fi
-  inspect_run "${run_id}"
+  inspect_run "${run_id}" "$@"
   stop_session_workspace "${session_id}" "$@"
   printf 'PASS %s session_id=%s run_id=%s\n' "${name}" "${session_id}" "${run_id}"
 }

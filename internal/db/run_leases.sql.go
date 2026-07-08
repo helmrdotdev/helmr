@@ -966,6 +966,17 @@ workspace_write_lease AS (
                           AND workspace_mounts.environment_id = concurrency_guard.environment_id
                           AND workspace_mounts.workspace_id = concurrency_guard.workspace_id
                           AND workspace_mounts.id = concurrency_guard.workspace_mount_id
+                          AND workspace_mounts.state = 'mounted'
+      JOIN runtime_instances ON runtime_instances.org_id = workspace_mounts.org_id
+                            AND runtime_instances.worker_group_id = workspace_mounts.worker_group_id
+                            AND runtime_instances.id = workspace_mounts.runtime_instance_id
+                            AND runtime_instances.worker_instance_id = $1
+                            AND runtime_instances.workspace_mount_id = workspace_mounts.id
+                            AND runtime_instances.state IN ('running', 'waiting_hot')
+                            AND (
+                                runtime_instances.expires_at IS NULL
+                                OR runtime_instances.expires_at > now()
+                            )
      WHERE concurrency_guard.workspace_id IS NOT NULL
        AND concurrency_guard.workspace_mount_id IS NOT NULL
     ON CONFLICT DO NOTHING

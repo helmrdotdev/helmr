@@ -320,6 +320,18 @@ tf_bool() {
   esac
 }
 
+dev_region_id() {
+  printf '%s\n' "${DEV_REGION_ID:-${AWS_REGION}}"
+}
+
+dev_default_region_id() {
+  printf '%s\n' "${DEV_DEFAULT_REGION_ID:-$(dev_region_id)}"
+}
+
+dev_worker_group_id() {
+  printf '%s\n' "${DEV_WORKER_GROUP_ID:-$(dev_region_id)-worker-group-1}"
+}
+
 source_bundle_object_arn() {
   uri=$1
   case "${uri}" in
@@ -680,6 +692,10 @@ dev_base_tfvars() {
   cat >"${DEV_TFVARS}" <<EOF
 aws_region = "${AWS_REGION}"
 name       = "${DEV_NAME:-helmr-smoke}"
+
+worker_group_id  = "$(dev_worker_group_id)"
+region_id        = "$(dev_region_id)"
+default_region_id = "$(dev_default_region_id)"
 
 public_url                    = "${DEV_PUBLIC_URL:-http://localhost}"
 enable_nat_gateway            = ${DEV_ENABLE_NAT_GATEWAY:-false}
@@ -1045,6 +1061,9 @@ EOF
 
   set_tfvar "${DEV_TFVARS}" "aws_region" "$(tf_quote "${AWS_REGION}")"
   set_tfvar "${DEV_TFVARS}" "name" "$(tf_quote "${DEV_NAME:-helmr-smoke}")"
+  set_tfvar "${DEV_TFVARS}" "worker_group_id" "$(tf_quote "$(dev_worker_group_id)")"
+  set_tfvar "${DEV_TFVARS}" "region_id" "$(tf_quote "$(dev_region_id)")"
+  set_tfvar "${DEV_TFVARS}" "default_region_id" "$(tf_quote "$(dev_default_region_id)")"
   set_tfvar "${DEV_TFVARS}" "public_url" "$(tf_quote "${DEV_PUBLIC_URL:-http://localhost}")"
   unset_tfvar "${DEV_TFVARS}" "control_url"
   unset_tfvar "${DEV_TFVARS}" "worker_control_url"
@@ -1117,6 +1136,11 @@ dev_secrets() {
 dev_secret_arn() {
   key=$1
   "${TF_BIN}" -chdir="${DEV_STACK}" output -json secret_arns | jq -r --arg key "${key}" '.[$key]'
+}
+
+dev_secret_arn_optional() {
+  key=$1
+  "${TF_BIN}" -chdir="${DEV_STACK}" output -json secret_arns | jq -r --arg key "${key}" '.[$key] // empty'
 }
 
 put_secret_value() {
@@ -1196,6 +1220,26 @@ dev_database_url() {
   info "database_url secret populated: ${database_secret_arn}"
 }
 
+dev_resend_api_key_secret() {
+  secret_arn="$(dev_secret_arn_optional resend_api_key)"
+  [ -n "${secret_arn}" ] && [ "${secret_arn}" != "null" ] || return 0
+
+  api_key="${RESEND_API_KEY:-}"
+  if [ -z "${api_key}" ] && [ -f "${STATE_DIR}/resend-api-key" ]; then
+    api_key="$(cat "${STATE_DIR}/resend-api-key")"
+  fi
+  if [ -z "${api_key}" ]; then
+    status="$(secret_value_status "${secret_arn}")"
+    if [ "${status}" = "missing" ]; then
+      info "resend_api_key secret is unpopulated; set RESEND_API_KEY or ${STATE_DIR}/resend-api-key before starting control service"
+    fi
+    return 0
+  fi
+
+  put_secret_value_if_missing "${secret_arn}" "${api_key}"
+  info "resend_api_key secret populated: ${secret_arn}"
+}
+
 dev_generated_secrets() {
   dev_database_url
   put_secret_value_if_missing "$(dev_secret_arn worker_token_signing_key)" "$(random_base64)"
@@ -1204,6 +1248,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn worker_bootstrap_token)" "$(random_hex)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
+  dev_resend_api_key_secret
   info "generated secrets populated"
 }
 

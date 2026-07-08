@@ -252,6 +252,45 @@ func TestLeaseRunLeaseRejectsStaleDispatchGeneration(t *testing.T) {
 	}
 }
 
+func TestLeaseRunLeaseWaitsForMountedWorkspaceMountOnSameWorker(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	queries := db.New(pool)
+	workerID := seedDefaultPlacementWorker(t, ctx, pool, ids)
+	mountID := seedWorkspaceMountForRunLeaseTest(t, ctx, pool, ids)
+
+	if _, err := pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'queued',
+		       execution_status = 'queued',
+		       current_run_lease_id = NULL,
+		       workspace_mount_id = $3,
+		       dispatch_generation = 1,
+		       queue_timestamp = now(),
+		       queued_expires_at = NULL
+		 WHERE org_id = $1
+		   AND id = $2
+	`, ids.orgID, ids.runID, mountID); err != nil {
+		t.Fatal(err)
+	}
+
+	mountingParams := leaseRunLeaseParams(ids.orgID, ids.runID, workerID, "mounting")
+	if _, err := queries.LeaseRunLease(ctx, mountingParams); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("lease mounting workspace mount error = %v, want pgx.ErrNoRows", err)
+	}
+
+	markWorkspaceMountMountedForRunLeaseTest(t, ctx, pool, ids, mountID, workerID)
+	mountedParams := leaseRunLeaseParams(ids.orgID, ids.runID, workerID, "mounted")
+	leased, err := queries.LeaseRunLease(ctx, mountedParams)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := pgvalue.UUIDString(leased.WorkspaceMountID); got != mountID.String() {
+		t.Fatalf("leased workspace_mount_id = %s, want %s", got, mountID)
+	}
+}
+
 func TestRequeueRunDispatchRejectsStaleDispatchGeneration(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
@@ -1037,5 +1076,108 @@ func leaseRunLeaseParamsWithGeneration(orgID, runID, workerID uuid.UUID, label s
 		DispatchLeaseID:    "lease-" + label,
 		DispatchAttempt:    1,
 		RunLeaseSpanID:     "3333333333333333",
+	}
+}
+
+func seedWorkspaceMountForRunLeaseTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
+	t.Helper()
+	mountID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO workspace_mounts (
+			id, org_id, worker_group_id, project_id, environment_id, workspace_id,
+			deployment_sandbox_id, sandbox_fingerprint, base_version_id,
+			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
+			workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count,
+			workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type,
+			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, state, requested_at
+		)
+		SELECT $1, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
+		       deployment_sandboxes.id, workspaces.sandbox_fingerprint, workspaces.current_version_id,
+		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
+		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
+		       workspace_artifact.id, workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
+		       workspace_artifact.digest, workspace_artifact.size_bytes, workspace_artifact.media_type,
+		       deployment_sandboxes.workspace_mount_path, deployment_sandboxes.runtime_abi,
+		       deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, 'mounting', now()
+		  FROM workspaces
+		  JOIN deployment_sandboxes
+		    ON deployment_sandboxes.org_id = workspaces.org_id
+		   AND deployment_sandboxes.project_id = workspaces.project_id
+		   AND deployment_sandboxes.environment_id = workspaces.environment_id
+		   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
+		  JOIN artifacts AS image_artifact
+		    ON image_artifact.org_id = deployment_sandboxes.org_id
+		   AND image_artifact.project_id = deployment_sandboxes.project_id
+		   AND image_artifact.environment_id = deployment_sandboxes.environment_id
+		   AND image_artifact.id = deployment_sandboxes.image_artifact_id
+		  JOIN workspace_versions
+		    ON workspace_versions.org_id = workspaces.org_id
+		   AND workspace_versions.project_id = workspaces.project_id
+		   AND workspace_versions.environment_id = workspaces.environment_id
+		   AND workspace_versions.workspace_id = workspaces.id
+		   AND workspace_versions.id = workspaces.current_version_id
+		  JOIN artifacts AS workspace_artifact
+		    ON workspace_artifact.org_id = workspace_versions.org_id
+		   AND workspace_artifact.project_id = workspace_versions.project_id
+		   AND workspace_artifact.environment_id = workspace_versions.environment_id
+		   AND workspace_artifact.id = workspace_versions.artifact_id
+		 WHERE workspaces.org_id = $2
+		   AND workspaces.id = $3
+	`, mountID, ids.orgID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	return mountID
+}
+
+func markWorkspaceMountMountedForRunLeaseTest(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, mountID uuid.UUID, workerID uuid.UUID) {
+	t.Helper()
+	runtimeInstanceID := uuid.Must(uuid.NewV7())
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_instances (
+			id, org_id, worker_group_id, project_id, environment_id, worker_instance_id,
+			runtime_identity_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
+			sandbox_fingerprint, rootfs_digest, image_digest, image_format,
+			sandbox_image_artifact_id, sandbox_image_artifact_digest,
+			sandbox_image_artifact_format, workspace_mount_path, runtime_abi,
+			guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
+			reserved_memory_mib, reserved_disk_mib, reserved_execution_slots,
+			workspace_mount_id, state, instance_token, last_heartbeat_at, running_at
+		)
+		SELECT $1, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id,
+		       workspace_mounts.environment_id, $2, worker_instances.runtime_id,
+		       workspace_mounts.deployment_sandbox_id, $3, '{}'::jsonb,
+		       workspace_mounts.sandbox_fingerprint, workspace_mounts.rootfs_digest,
+		       workspace_mounts.image_digest, workspace_mounts.image_format,
+		       workspace_mounts.image_artifact_id, image_artifact.digest,
+		       workspace_mounts.image_artifact_format, workspace_mounts.workspace_mount_path,
+		       workspace_mounts.runtime_abi, workspace_mounts.guestd_abi,
+		       workspace_mounts.adapter_abi, '{}'::jsonb,
+		       1000, 1024, 4096, 1,
+		       workspace_mounts.id, 'running', 'runtime-instance-token-' || $4, now(), now()
+		  FROM workspace_mounts
+		  JOIN worker_instances
+		    ON worker_instances.id = $2
+		   AND worker_instances.worker_group_id = workspace_mounts.worker_group_id
+		  JOIN artifacts AS image_artifact
+		    ON image_artifact.org_id = workspace_mounts.org_id
+		   AND image_artifact.project_id = workspace_mounts.project_id
+		   AND image_artifact.environment_id = workspace_mounts.environment_id
+		   AND image_artifact.id = workspace_mounts.image_artifact_id
+		 WHERE workspace_mounts.org_id = $5
+		   AND workspace_mounts.id = $6
+	`, runtimeInstanceID, workerID, "runtime-key-"+shortUUID(runtimeInstanceID), shortUUID(runtimeInstanceID), ids.orgID, mountID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		UPDATE workspace_mounts
+		   SET state = 'mounted',
+		       runtime_instance_id = $1,
+		       mounted_at = now(),
+		       last_heartbeat_at = now(),
+		       updated_at = now()
+		 WHERE org_id = $2
+		   AND id = $3
+	`, runtimeInstanceID, ids.orgID, mountID); err != nil {
+		t.Fatal(err)
 	}
 }
