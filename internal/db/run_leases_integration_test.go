@@ -652,6 +652,7 @@ func TestReleaseRunLeaseRetryFailsPendingCheckpointRestore(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	markWorkspaceMountMountedForRunLeaseTest(t, ctx, pool, ids, pgvalue.MustUUIDValue(mount.ID), workerID)
 	if _, err := pool.Exec(ctx, `
 		UPDATE runs
 		   SET locked_retry_policy = '{"enabled":true,"maxAttempts":2,"backoff":{"minMs":0,"maxMs":0,"factor":1,"jitter":"none"}}'::jsonb

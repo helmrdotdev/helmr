@@ -155,6 +155,7 @@ func TestForceCancelRunCleansRuntimeAuthority(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	markWorkspaceMountMountedForRunLeaseTest(t, ctx, pool, ids, pgvalue.MustUUIDValue(mount.ID), workerID)
 
 	dispatchGeneration := currentRunDispatchGeneration(t, ctx, pool, ids.orgID, ids.runID)
 	leased, err := queries.LeaseRunLease(ctx, leaseRunLeaseParamsWithGeneration(ids.orgID, ids.runID, workerID, "force-cancel-restore", dispatchGeneration))
