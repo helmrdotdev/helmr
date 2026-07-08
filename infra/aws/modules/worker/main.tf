@@ -281,7 +281,7 @@ resource "aws_autoscaling_group" "worker" {
 
   launch_template {
     id      = aws_launch_template.worker.id
-    version = "$Latest"
+    version = aws_launch_template.worker.latest_version
   }
 
   dynamic "initial_lifecycle_hook" {
@@ -310,6 +310,7 @@ resource "aws_autoscaling_group" "worker" {
     strategy = "Rolling"
 
     preferences {
+      instance_warmup        = var.enable_lifecycle_hooks ? 0 : var.health_check_grace_period_seconds
       min_healthy_percentage = 50
       skip_matching          = true
     }
