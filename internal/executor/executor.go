@@ -79,6 +79,7 @@ type WaitRequest struct {
 	TimeoutSeconds     *int32
 	IdleTimeoutSeconds *int32
 	ActiveDuration     time.Duration
+	Workspace          api.WorkerWorkspace
 	Checkpointer       Checkpointer
 	Resume             func(context.Context, WaitResumeDecision) error
 }
@@ -194,7 +195,7 @@ func (e Executor) runRuntime(ctx context.Context, leases api.WorkerRunLeaseProvi
 	if result.Detached {
 		return api.WorkerReleaseResult{Kind: "detached"}
 	}
-	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode}
+	release := api.WorkerReleaseResult{Kind: "completed", ExitCode: &result.ExitCode, ActiveDurationMs: result.ActiveDuration.Milliseconds()}
 	if result.ExitCode == 0 && len(result.Output) > 0 {
 		release.Output = append(json.RawMessage(nil), result.Output...)
 	}
@@ -227,6 +228,8 @@ func workerWorkspaceCommit(base api.WorkerWorkspace, artifact *workspace.Workspa
 	}
 	return &api.WorkerWorkspace{
 		ID:                strings.TrimSpace(base.ID),
+		WorkspaceMountID:  strings.TrimSpace(base.WorkspaceMountID),
+		FencingGeneration: base.FencingGeneration,
 		WriteLeaseID:      strings.TrimSpace(base.WriteLeaseID),
 		WriteFencingToken: strings.TrimSpace(base.WriteFencingToken),
 		BaseVersionID:     strings.TrimSpace(base.BaseVersionID),

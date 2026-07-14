@@ -106,7 +106,6 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		row, err = work.q.UpsertRuntimeSubstrate(r.Context(), db.UpsertRuntimeSubstrateParams{
 			ID:                        runtimeSubstrateID,
 			OrgID:                     sandbox.OrgID,
-			WorkerGroupID:             worker.WorkerGroupID,
 			ProjectID:                 sandbox.ProjectID,
 			EnvironmentID:             sandbox.EnvironmentID,
 			DeploymentSandboxID:       sandbox.ID,
@@ -165,7 +164,6 @@ func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Req
 	}
 	row, err := s.db.GetRuntimeSubstrateForSandbox(r.Context(), db.GetRuntimeSubstrateForSandboxParams{
 		OrgID:               sandbox.OrgID,
-		WorkerGroupID:       worker.WorkerGroupID,
 		ProjectID:           sandbox.ProjectID,
 		EnvironmentID:       sandbox.EnvironmentID,
 		DeploymentSandboxID: sandbox.ID,

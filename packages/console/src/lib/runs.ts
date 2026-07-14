@@ -1,4 +1,4 @@
-import { request } from "./api";
+import { postJson, request } from "./api";
 
 export type RunStatus =
   | "queued"
@@ -78,6 +78,10 @@ export type ListRunEventsOptions = {
   limit?: number;
 };
 
+export type CompletePendingTokenResponse = {
+  status: "completed" | "already_completed";
+};
+
 export type ListRunsOptions = {
   filter?: RunFilter;
   limit?: number;
@@ -110,6 +114,18 @@ export async function getRunEvents(id: string, projectID: string, environmentID:
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   const query = params.toString();
   return request<RunEventPage>(`${environmentPath(projectID, environmentID)}/runs/${encodeURIComponent(id)}/events${query ? `?${query}` : ""}`);
+}
+
+export async function completePendingToken(
+  tokenID: string,
+  data: unknown,
+  projectID: string,
+  environmentID: string,
+): Promise<CompletePendingTokenResponse> {
+  return postJson<{ data: unknown }, CompletePendingTokenResponse>(
+    `${environmentPath(projectID, environmentID)}/tokens/${encodeURIComponent(tokenID)}/complete`,
+    { data },
+  );
 }
 
 function environmentPath(projectID: string | undefined, environmentID: string | undefined): string {

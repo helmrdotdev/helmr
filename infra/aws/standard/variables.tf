@@ -57,7 +57,7 @@ variable "deployment_mode" {
 }
 
 variable "worker_group_id" {
-  description = "Worker group ID bootstrapped by this stack."
+  description = "Default run-worker group ID for this stack."
   type        = string
 
   validation {
@@ -308,10 +308,44 @@ variable "worker_ami_id" {
   nullable    = true
 }
 
+variable "worker_allowed_ami_ids" {
+  description = "Additional worker AMIs accepted during a rolling worker replacement. Remove superseded AMIs after the refresh completes."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for ami_id in var.worker_allowed_ami_ids : can(regex("^ami-[0-9a-fA-F]+$", ami_id))])
+    error_message = "worker_allowed_ami_ids must contain AWS AMI IDs."
+  }
+}
+
 variable "create_worker" {
   description = "Create worker EC2 Auto Scaling resources."
   type        = bool
   default     = false
+}
+
+variable "worker_fleet_controller" {
+  description = "Run/build fleet-controller policy used whenever worker groups are created."
+  type = object({
+    run_warm_workers             = optional(number, 0)
+    build_warm_workers           = optional(number, 0)
+    run_max_workers              = optional(number)
+    build_max_workers            = optional(number)
+    max_scale_out_per_cycle      = optional(number, 1)
+    max_pending_workers          = optional(number, 1)
+    max_packing_items            = optional(number, 10000)
+    controller_interval_seconds  = optional(number, 15)
+    scale_out_cooldown_seconds   = optional(number, 30)
+    scale_in_cooldown_seconds    = optional(number, 300)
+    scale_in_hysteresis_seconds  = optional(number, 300)
+    stale_worker_timeout_seconds = optional(number, 120)
+    readiness_timeout_seconds    = optional(number, 900)
+    drain_timeout_seconds        = optional(number, 1800)
+    emergency_stop               = optional(bool, false)
+    metric_interval_seconds      = optional(number, 60)
+  })
+  default = {}
 }
 
 variable "worker_instance_type" {
@@ -332,12 +366,6 @@ variable "worker_enable_ssm" {
   default     = true
 }
 
-variable "worker_desired_capacity" {
-  description = "Desired worker instance count."
-  type        = number
-  default     = 0
-}
-
 variable "worker_min_size" {
   description = "Minimum worker instance count."
   type        = number
@@ -348,6 +376,126 @@ variable "worker_max_size" {
   description = "Maximum worker instance count."
   type        = number
   default     = 3
+}
+
+variable "build_worker_min_size" {
+  description = "Minimum build-worker instance count."
+  type        = number
+  default     = 0
+}
+
+variable "build_worker_max_size" {
+  description = "Maximum build-worker instance count."
+  type        = number
+  default     = 3
+}
+
+variable "build_worker_instance_type" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "worker_capacity_vcpus" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_capacity_memory_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_execution_slots" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_substrate_cache_max_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "worker_artifact_cache_max_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_enable_nested_virtualization" {
+  type     = bool
+  default  = null
+  nullable = true
+}
+variable "build_worker_root_volume_size_gb" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_root_volume_iops" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_root_volume_throughput" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_disk_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+
+variable "build_worker_disk_reserve_mib" {
+  description = "Build-worker filesystem reserve in MiB. Defaults to worker_disk_reserve_mib."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.build_worker_disk_reserve_mib == null || var.build_worker_disk_reserve_mib > 0
+    error_message = "build_worker_disk_reserve_mib must be null or positive."
+  }
+}
+variable "build_worker_vm_vcpus" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_vm_memory_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_vm_scratch_disk_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_capacity_vcpus" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_capacity_memory_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_execution_slots" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_substrate_cache_max_mib" {
+  type     = number
+  default  = null
+  nullable = true
+}
+variable "build_worker_artifact_cache_max_mib" {
+  type     = number
+  default  = null
+  nullable = true
 }
 
 variable "worker_root_volume_size_gb" {
@@ -369,10 +517,21 @@ variable "worker_root_volume_throughput" {
 }
 
 variable "worker_disk_mib" {
-  description = "Optional filesystem capacity advertised by workers in MiB. Leave null to auto-detect."
+  description = "Optional filesystem capacity ceiling in MiB before the worker reserve is withheld. Leave null to auto-detect."
   type        = number
   default     = null
   nullable    = true
+}
+
+variable "worker_disk_reserve_mib" {
+  description = "Filesystem capacity in MiB withheld from advertised worker capacity."
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.worker_disk_reserve_mib > 0
+    error_message = "worker_disk_reserve_mib must be positive."
+  }
 }
 
 variable "worker_vm_vcpus" {

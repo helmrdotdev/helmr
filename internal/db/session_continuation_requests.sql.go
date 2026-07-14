@@ -16,7 +16,6 @@ WITH eligible AS (
     SELECT id
      FROM session_continuation_requests
      WHERE status IN ('accepted', 'claimed')
-       AND worker_group_id = $3
        AND (
            status = 'accepted'
            OR claim_expires_at IS NULL
@@ -24,23 +23,23 @@ WITH eligible AS (
        )
        AND next_attempt_at <= now()
        AND (
+           $3::uuid IS NULL
+           OR org_id = $3
+       )
+       AND (
            $4::uuid IS NULL
-           OR org_id = $4
+           OR project_id = $4
        )
        AND (
            $5::uuid IS NULL
-           OR project_id = $5
+           OR environment_id = $5
        )
        AND (
            $6::uuid IS NULL
-           OR environment_id = $6
-       )
-       AND (
-           $7::uuid IS NULL
-           OR session_id = $7
+           OR session_id = $6
        )
      ORDER BY next_attempt_at ASC, created_at ASC, id ASC
-     LIMIT $8
+     LIMIT $7
      FOR UPDATE SKIP LOCKED
 )
 UPDATE session_continuation_requests
@@ -52,14 +51,12 @@ UPDATE session_continuation_requests
        updated_at = now()
  FROM eligible
  WHERE session_continuation_requests.id = eligible.id
-   AND session_continuation_requests.worker_group_id = $3
-RETURNING session_continuation_requests.id, session_continuation_requests.org_id, session_continuation_requests.worker_group_id, session_continuation_requests.project_id, session_continuation_requests.environment_id, session_continuation_requests.session_id, session_continuation_requests.stream_record_id, session_continuation_requests.stream_id, session_continuation_requests.status, session_continuation_requests.status_reason, session_continuation_requests.attempts, session_continuation_requests.next_attempt_at, session_continuation_requests.last_error_code, session_continuation_requests.last_error_message, session_continuation_requests.claimed_at, session_continuation_requests.claim_expires_at, session_continuation_requests.claim_owner, session_continuation_requests.created_run_id, session_continuation_requests.consumed_by_run_id, session_continuation_requests.created_at, session_continuation_requests.updated_at
+RETURNING session_continuation_requests.id, session_continuation_requests.org_id, session_continuation_requests.project_id, session_continuation_requests.environment_id, session_continuation_requests.session_id, session_continuation_requests.stream_record_id, session_continuation_requests.stream_id, session_continuation_requests.status, session_continuation_requests.status_reason, session_continuation_requests.attempts, session_continuation_requests.next_attempt_at, session_continuation_requests.last_error_code, session_continuation_requests.last_error_message, session_continuation_requests.claimed_at, session_continuation_requests.claim_expires_at, session_continuation_requests.claim_owner, session_continuation_requests.created_run_id, session_continuation_requests.consumed_by_run_id, session_continuation_requests.created_at, session_continuation_requests.updated_at
 `
 
 type ClaimDueSessionContinuationRequestsParams struct {
 	ClaimTtl      pgtype.Interval `json:"claim_ttl"`
 	ClaimOwner    string          `json:"claim_owner"`
-	WorkerGroupID string          `json:"worker_group_id"`
 	OrgID         pgtype.UUID     `json:"org_id"`
 	ProjectID     pgtype.UUID     `json:"project_id"`
 	EnvironmentID pgtype.UUID     `json:"environment_id"`
@@ -71,7 +68,6 @@ func (q *Queries) ClaimDueSessionContinuationRequests(ctx context.Context, arg C
 	rows, err := q.db.Query(ctx, claimDueSessionContinuationRequests,
 		arg.ClaimTtl,
 		arg.ClaimOwner,
-		arg.WorkerGroupID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -88,7 +84,6 @@ func (q *Queries) ClaimDueSessionContinuationRequests(ctx context.Context, arg C
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.SessionID,
@@ -122,7 +117,6 @@ const ensureSessionContinuationRequestForStreamRecord = `-- name: EnsureSessionC
 INSERT INTO session_continuation_requests (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     session_id,
@@ -132,7 +126,6 @@ INSERT INTO session_continuation_requests (
 SELECT
     $1,
     stream_records.org_id,
-    stream_records.worker_group_id,
     stream_records.project_id,
     stream_records.environment_id,
     stream_records.session_id,
@@ -144,14 +137,12 @@ SELECT
    AND streams.project_id = stream_records.project_id
    AND streams.environment_id = stream_records.environment_id
    AND streams.id = stream_records.stream_id
-   AND streams.worker_group_id = stream_records.worker_group_id
    AND streams.session_id = stream_records.session_id
   JOIN sessions
     ON sessions.org_id = stream_records.org_id
    AND sessions.project_id = stream_records.project_id
    AND sessions.environment_id = stream_records.environment_id
    AND sessions.id = stream_records.session_id
-   AND sessions.worker_group_id = stream_records.worker_group_id
  WHERE stream_records.org_id = $2
    AND stream_records.project_id = $3
    AND stream_records.environment_id = $4
@@ -160,7 +151,7 @@ SELECT
    AND stream_records.id = $7
 ON CONFLICT (org_id, project_id, environment_id, stream_record_id)
 DO UPDATE SET updated_at = session_continuation_requests.updated_at
-RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
 `
 
 type EnsureSessionContinuationRequestForStreamRecordParams struct {
@@ -187,7 +178,6 @@ func (q *Queries) EnsureSessionContinuationRequestForStreamRecord(ctx context.Co
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -211,7 +201,7 @@ func (q *Queries) EnsureSessionContinuationRequestForStreamRecord(ctx context.Co
 }
 
 const getSessionContinuationRequest = `-- name: GetSessionContinuationRequest :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
  FROM session_continuation_requests
  WHERE org_id = $1
    AND project_id = $2
@@ -237,7 +227,6 @@ func (q *Queries) GetSessionContinuationRequest(ctx context.Context, arg GetSess
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -262,13 +251,12 @@ func (q *Queries) GetSessionContinuationRequest(ctx context.Context, arg GetSess
 
 const markSessionContinuationRequestConsumedByActiveRun = `-- name: MarkSessionContinuationRequestConsumedByActiveRun :one
 WITH target AS MATERIALIZED (
-    SELECT id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+    SELECT id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
      FROM session_continuation_requests
      WHERE session_continuation_requests.org_id = $2
-       AND session_continuation_requests.worker_group_id = $3
-       AND session_continuation_requests.project_id = $4
-       AND session_continuation_requests.environment_id = $5
-       AND session_continuation_requests.stream_record_id = $6
+       AND session_continuation_requests.project_id = $3
+       AND session_continuation_requests.environment_id = $4
+       AND session_continuation_requests.stream_record_id = $5
        AND session_continuation_requests.status IN ('accepted', 'claimed', 'created')
        AND (
            session_continuation_requests.status <> 'created'
@@ -289,10 +277,6 @@ cancelled_runs AS (
              ELSE NULL
 	           END,
 	           error_message = 'stream record consumed by active run',
-	           dispatch_generation = CASE
-	             WHEN runs.execution_status = 'executing' THEN runs.dispatch_generation
-	             ELSE runs.dispatch_generation + 1
-	           END,
 	           state_version = runs.state_version + 1,
            finished_at = CASE
              WHEN runs.execution_status = 'executing' THEN runs.finished_at
@@ -303,19 +287,29 @@ cancelled_runs AS (
      WHERE target.status = 'created'
        AND target.created_run_id IS NOT NULL
        AND runs.org_id = target.org_id
-       AND runs.worker_group_id = target.worker_group_id
        AND runs.project_id = target.project_id
        AND runs.environment_id = target.environment_id
        AND runs.id = target.created_run_id
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
-    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+    RETURNING runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+),
+cancelled_snapshots AS (
+    INSERT INTO run_state_snapshots
+        (org_id, run_id, version, status, execution_status, terminal_outcome,
+         attempt_number, run_lease_id, previous_version, transition, reason)
+    SELECT org_id, id, state_version, status, execution_status, terminal_outcome,
+           current_attempt_number, current_run_lease_id, state_version - 1,
+           'run.cancelled_superseded',
+           jsonb_build_object('message','stream record consumed by active run')
+      FROM cancelled_runs
+    RETURNING run_id
 ),
 ended_session_runs AS (
     UPDATE session_runs
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs
+      JOIN cancelled_snapshots ON cancelled_snapshots.run_id = cancelled_runs.id
      WHERE session_runs.org_id = cancelled_runs.org_id
-       AND session_runs.worker_group_id = cancelled_runs.worker_group_id
        AND session_runs.project_id = cancelled_runs.project_id
        AND session_runs.environment_id = cancelled_runs.environment_id
        AND session_runs.session_id = cancelled_runs.session_id
@@ -329,7 +323,6 @@ restored_session_current AS (
            updated_at = now()
       FROM target
      WHERE sessions.org_id = target.org_id
-       AND sessions.worker_group_id = target.worker_group_id
        AND sessions.project_id = target.project_id
        AND sessions.environment_id = target.environment_id
        AND sessions.id = target.session_id
@@ -349,17 +342,15 @@ UPDATE session_continuation_requests
        updated_at = now()
   FROM target
  WHERE session_continuation_requests.org_id = target.org_id
-   AND session_continuation_requests.worker_group_id = target.worker_group_id
    AND session_continuation_requests.project_id = target.project_id
    AND session_continuation_requests.environment_id = target.environment_id
    AND session_continuation_requests.id = target.id
-RETURNING session_continuation_requests.id, session_continuation_requests.org_id, session_continuation_requests.worker_group_id, session_continuation_requests.project_id, session_continuation_requests.environment_id, session_continuation_requests.session_id, session_continuation_requests.stream_record_id, session_continuation_requests.stream_id, session_continuation_requests.status, session_continuation_requests.status_reason, session_continuation_requests.attempts, session_continuation_requests.next_attempt_at, session_continuation_requests.last_error_code, session_continuation_requests.last_error_message, session_continuation_requests.claimed_at, session_continuation_requests.claim_expires_at, session_continuation_requests.claim_owner, session_continuation_requests.created_run_id, session_continuation_requests.consumed_by_run_id, session_continuation_requests.created_at, session_continuation_requests.updated_at
+RETURNING session_continuation_requests.id, session_continuation_requests.org_id, session_continuation_requests.project_id, session_continuation_requests.environment_id, session_continuation_requests.session_id, session_continuation_requests.stream_record_id, session_continuation_requests.stream_id, session_continuation_requests.status, session_continuation_requests.status_reason, session_continuation_requests.attempts, session_continuation_requests.next_attempt_at, session_continuation_requests.last_error_code, session_continuation_requests.last_error_message, session_continuation_requests.claimed_at, session_continuation_requests.claim_expires_at, session_continuation_requests.claim_owner, session_continuation_requests.created_run_id, session_continuation_requests.consumed_by_run_id, session_continuation_requests.created_at, session_continuation_requests.updated_at
 `
 
 type MarkSessionContinuationRequestConsumedByActiveRunParams struct {
 	ActiveRunID    pgtype.UUID `json:"active_run_id"`
 	OrgID          pgtype.UUID `json:"org_id"`
-	WorkerGroupID  string      `json:"worker_group_id"`
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	StreamRecordID pgtype.UUID `json:"stream_record_id"`
@@ -369,7 +360,6 @@ func (q *Queries) MarkSessionContinuationRequestConsumedByActiveRun(ctx context.
 	row := q.db.QueryRow(ctx, markSessionContinuationRequestConsumedByActiveRun,
 		arg.ActiveRunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.StreamRecordID,
@@ -378,7 +368,6 @@ func (q *Queries) MarkSessionContinuationRequestConsumedByActiveRun(ctx context.
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -414,19 +403,17 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = $2
-	   AND worker_group_id = $3
-	   AND project_id = $4
-	   AND environment_id = $5
-	   AND id = $6
+	   AND project_id = $3
+	   AND environment_id = $4
+	   AND id = $5
 	   AND status = 'claimed'
-	   AND claim_owner = $7
-	RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+	   AND claim_owner = $6
+	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
 `
 
 type MarkSessionContinuationRequestCreatedParams struct {
 	CreatedRunID  pgtype.UUID `json:"created_run_id"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -437,7 +424,6 @@ func (q *Queries) MarkSessionContinuationRequestCreated(ctx context.Context, arg
 	row := q.db.QueryRow(ctx, markSessionContinuationRequestCreated,
 		arg.CreatedRunID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -447,7 +433,6 @@ func (q *Queries) MarkSessionContinuationRequestCreated(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -481,19 +466,17 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = $2
-	   AND worker_group_id = $3
-	   AND project_id = $4
-	   AND environment_id = $5
-	   AND id = $6
+	   AND project_id = $3
+	   AND environment_id = $4
+	   AND id = $5
 	   AND status = 'claimed'
-	   AND claim_owner = $7
-	RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+	   AND claim_owner = $6
+	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
 `
 
 type MarkSessionContinuationRequestFailedParams struct {
 	Reason        string      `json:"reason"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -504,7 +487,6 @@ func (q *Queries) MarkSessionContinuationRequestFailed(ctx context.Context, arg 
 	row := q.db.QueryRow(ctx, markSessionContinuationRequestFailed,
 		arg.Reason,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -514,7 +496,6 @@ func (q *Queries) MarkSessionContinuationRequestFailed(ctx context.Context, arg 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -548,19 +529,17 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = $2
-	   AND worker_group_id = $3
-	   AND project_id = $4
-	   AND environment_id = $5
-	   AND id = $6
+	   AND project_id = $3
+	   AND environment_id = $4
+	   AND id = $5
 	   AND status = 'claimed'
-	   AND claim_owner = $7
-	RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+	   AND claim_owner = $6
+	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
 `
 
 type MarkSessionContinuationRequestSkippedParams struct {
 	Reason        string      `json:"reason"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	ID            pgtype.UUID `json:"id"`
@@ -571,7 +550,6 @@ func (q *Queries) MarkSessionContinuationRequestSkipped(ctx context.Context, arg
 	row := q.db.QueryRow(ctx, markSessionContinuationRequestSkipped,
 		arg.Reason,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -581,7 +559,6 @@ func (q *Queries) MarkSessionContinuationRequestSkipped(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,
@@ -616,13 +593,12 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = $4
-	   AND worker_group_id = $5
-	   AND project_id = $6
-	   AND environment_id = $7
-	   AND id = $8
+	   AND project_id = $5
+	   AND environment_id = $6
+	   AND id = $7
 	   AND status = 'claimed'
-	   AND claim_owner = $9
-	RETURNING id, org_id, worker_group_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
+	   AND claim_owner = $8
+	RETURNING id, org_id, project_id, environment_id, session_id, stream_record_id, stream_id, status, status_reason, attempts, next_attempt_at, last_error_code, last_error_message, claimed_at, claim_expires_at, claim_owner, created_run_id, consumed_by_run_id, created_at, updated_at
 `
 
 type ReleaseSessionContinuationRequestForRetryParams struct {
@@ -630,7 +606,6 @@ type ReleaseSessionContinuationRequestForRetryParams struct {
 	LastErrorCode    string          `json:"last_error_code"`
 	LastErrorMessage string          `json:"last_error_message"`
 	OrgID            pgtype.UUID     `json:"org_id"`
-	WorkerGroupID    string          `json:"worker_group_id"`
 	ProjectID        pgtype.UUID     `json:"project_id"`
 	EnvironmentID    pgtype.UUID     `json:"environment_id"`
 	ID               pgtype.UUID     `json:"id"`
@@ -643,7 +618,6 @@ func (q *Queries) ReleaseSessionContinuationRequestForRetry(ctx context.Context,
 		arg.LastErrorCode,
 		arg.LastErrorMessage,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.ID,
@@ -653,7 +627,6 @@ func (q *Queries) ReleaseSessionContinuationRequestForRetry(ctx context.Context,
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.SessionID,

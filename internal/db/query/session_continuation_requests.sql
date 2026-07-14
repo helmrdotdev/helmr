@@ -2,7 +2,6 @@
 INSERT INTO session_continuation_requests (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     session_id,
@@ -12,7 +11,6 @@ INSERT INTO session_continuation_requests (
 SELECT
     sqlc.arg(id),
     stream_records.org_id,
-    stream_records.worker_group_id,
     stream_records.project_id,
     stream_records.environment_id,
     stream_records.session_id,
@@ -24,14 +22,12 @@ SELECT
    AND streams.project_id = stream_records.project_id
    AND streams.environment_id = stream_records.environment_id
    AND streams.id = stream_records.stream_id
-   AND streams.worker_group_id = stream_records.worker_group_id
    AND streams.session_id = stream_records.session_id
   JOIN sessions
     ON sessions.org_id = stream_records.org_id
    AND sessions.project_id = stream_records.project_id
    AND sessions.environment_id = stream_records.environment_id
    AND sessions.id = stream_records.session_id
-   AND sessions.worker_group_id = stream_records.worker_group_id
  WHERE stream_records.org_id = sqlc.arg(org_id)
    AND stream_records.project_id = sqlc.arg(project_id)
    AND stream_records.environment_id = sqlc.arg(environment_id)
@@ -55,7 +51,6 @@ WITH eligible AS (
     SELECT id
      FROM session_continuation_requests
      WHERE status IN ('accepted', 'claimed')
-       AND worker_group_id = sqlc.arg(worker_group_id)
        AND (
            status = 'accepted'
            OR claim_expires_at IS NULL
@@ -91,7 +86,6 @@ UPDATE session_continuation_requests
        updated_at = now()
  FROM eligible
  WHERE session_continuation_requests.id = eligible.id
-   AND session_continuation_requests.worker_group_id = sqlc.arg(worker_group_id)
 RETURNING session_continuation_requests.*;
 
 -- name: ReleaseSessionContinuationRequestForRetry :one
@@ -106,7 +100,6 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -127,7 +120,6 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -146,7 +138,6 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)
@@ -159,7 +150,6 @@ WITH target AS MATERIALIZED (
     SELECT *
      FROM session_continuation_requests
      WHERE session_continuation_requests.org_id = sqlc.arg(org_id)
-       AND session_continuation_requests.worker_group_id = sqlc.arg(worker_group_id)
        AND session_continuation_requests.project_id = sqlc.arg(project_id)
        AND session_continuation_requests.environment_id = sqlc.arg(environment_id)
        AND session_continuation_requests.stream_record_id = sqlc.arg(stream_record_id)
@@ -183,10 +173,6 @@ cancelled_runs AS (
              ELSE NULL
 	           END,
 	           error_message = 'stream record consumed by active run',
-	           dispatch_generation = CASE
-	             WHEN runs.execution_status = 'executing' THEN runs.dispatch_generation
-	             ELSE runs.dispatch_generation + 1
-	           END,
 	           state_version = runs.state_version + 1,
            finished_at = CASE
              WHEN runs.execution_status = 'executing' THEN runs.finished_at
@@ -197,19 +183,29 @@ cancelled_runs AS (
      WHERE target.status = 'created'
        AND target.created_run_id IS NOT NULL
        AND runs.org_id = target.org_id
-       AND runs.worker_group_id = target.worker_group_id
        AND runs.project_id = target.project_id
        AND runs.environment_id = target.environment_id
        AND runs.id = target.created_run_id
        AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
     RETURNING runs.*
 ),
+cancelled_snapshots AS (
+    INSERT INTO run_state_snapshots
+        (org_id, run_id, version, status, execution_status, terminal_outcome,
+         attempt_number, run_lease_id, previous_version, transition, reason)
+    SELECT org_id, id, state_version, status, execution_status, terminal_outcome,
+           current_attempt_number, current_run_lease_id, state_version - 1,
+           'run.cancelled_superseded',
+           jsonb_build_object('message','stream record consumed by active run')
+      FROM cancelled_runs
+    RETURNING run_id
+),
 ended_session_runs AS (
     UPDATE session_runs
        SET ended_at = COALESCE(session_runs.ended_at, now())
       FROM cancelled_runs
+      JOIN cancelled_snapshots ON cancelled_snapshots.run_id = cancelled_runs.id
      WHERE session_runs.org_id = cancelled_runs.org_id
-       AND session_runs.worker_group_id = cancelled_runs.worker_group_id
        AND session_runs.project_id = cancelled_runs.project_id
        AND session_runs.environment_id = cancelled_runs.environment_id
        AND session_runs.session_id = cancelled_runs.session_id
@@ -223,7 +219,6 @@ restored_session_current AS (
            updated_at = now()
       FROM target
      WHERE sessions.org_id = target.org_id
-       AND sessions.worker_group_id = target.worker_group_id
        AND sessions.project_id = target.project_id
        AND sessions.environment_id = target.environment_id
        AND sessions.id = target.session_id
@@ -243,7 +238,6 @@ UPDATE session_continuation_requests
        updated_at = now()
   FROM target
  WHERE session_continuation_requests.org_id = target.org_id
-   AND session_continuation_requests.worker_group_id = target.worker_group_id
    AND session_continuation_requests.project_id = target.project_id
    AND session_continuation_requests.environment_id = target.environment_id
    AND session_continuation_requests.id = target.id
@@ -260,7 +254,6 @@ UPDATE session_continuation_requests
        claim_owner = '',
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id)
-	   AND worker_group_id = sqlc.arg(worker_group_id)
 	   AND project_id = sqlc.arg(project_id)
 	   AND environment_id = sqlc.arg(environment_id)
 	   AND id = sqlc.arg(id)

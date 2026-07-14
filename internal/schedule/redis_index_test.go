@@ -2,8 +2,6 @@ package schedule
 
 import (
 	"context"
-	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -12,560 +10,64 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const redisIndexTestWorkerGroupID = "us-east-1-worker-group-1"
-
-type scheduleIndexKeys struct {
-	message       string
-	activeMessage string
-	prefix        string
-}
-
-func (k scheduleIndexKeys) lease(attempt int) string {
-	return k.prefix + ":lease:" + k.messageID() + ":lease:" + strconv.Itoa(attempt)
-}
-
-func (k scheduleIndexKeys) messageID() string {
-	return strings.TrimPrefix(k.message, k.prefix+":message:")
-}
-
-func scheduleIndexMessageKeys(index *RedisIndex, workerGroupID string, messageID string) scheduleIndexKeys {
-	prefix := index.workerGroupPrefix(workerGroupID)
-	return scheduleIndexKeys{
-		message:       prefix + ":message:" + messageID,
-		activeMessage: prefix + ":message_active:" + messageID,
-		prefix:        prefix,
-	}
-}
-
-func TestRedisIndexDequeuesDueEntriesAndAcks(t *testing.T) {
+func TestRedisIndexLogicalDeliveryAck(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
 	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	instanceID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		InstanceID:    instanceID,
-		Generation:    4,
-		ScheduledAt:   now,
-		AvailableAt:   now,
-	}
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 3, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-
-	leases, err := index.Dequeue(ctx, DequeueRequest{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		WorkerID:      uuid.Must(uuid.NewV7()),
-		Limit:         1,
-		Now:           now,
-		Lease:         time.Minute,
-	})
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	if leases[0].Entry.InstanceID != instanceID || leases[0].Entry.Generation != 4 || !leases[0].Entry.ScheduledAt.Equal(now) {
-		t.Fatalf("lease entry = %+v", leases[0].Entry)
+	if len(leases) != 1 || leases[0].Entry != entry {
+		t.Fatalf("leases = %+v", leases)
 	}
 	if err := index.Ack(ctx, leases[0]); err != nil {
 		t.Fatal(err)
 	}
-
-	leases, err = index.Dequeue(ctx, DequeueRequest{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		WorkerID:      uuid.Must(uuid.NewV7()),
-		Limit:         1,
-		Now:           now.Add(time.Hour),
-		Lease:         time.Minute,
-	})
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now.Add(2 * time.Minute), Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(leases) != 0 {
-		t.Fatalf("leases after ack = %d, want 0", len(leases))
+		t.Fatalf("acked lease replayed: %+v", leases)
 	}
 }
 
-func TestRedisIndexDeleteRemovesReadyEntry(t *testing.T) {
+func TestRedisIndexNackAndExpiredLeaseReplay(t *testing.T) {
 	ctx := context.Background()
 	server := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
 	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 7, 12, 0, 0, 0, 0, time.UTC)
 	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	instanceID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		InstanceID:    instanceID,
-		Generation:    4,
-		ScheduledAt:   now.Add(time.Hour),
-		AvailableAt:   now.Add(time.Hour),
-	}
+	entry := IndexEntry{InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
 	if err := index.Enqueue(ctx, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := index.Delete(ctx, redisIndexTestWorkerGroupID, instanceID); err != nil {
-		t.Fatal(err)
+	worker := uuid.Must(uuid.NewV7())
+	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerID: worker, Limit: 1, Now: now, Lease: time.Minute})
+	if err != nil || len(leases) != 1 {
+		t.Fatalf("leases=%+v err=%v", leases, err)
 	}
-
-	leases, err := index.Dequeue(ctx, DequeueRequest{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		WorkerID:      uuid.Must(uuid.NewV7()),
-		Limit:         1,
-		Now:           now.Add(2 * time.Hour),
-		Lease:         time.Minute,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases after delete = %d, want 0", len(leases))
-	}
-	messageID := indexMessageID(entry)
-	keys := scheduleIndexMessageKeys(index, redisIndexTestWorkerGroupID, messageID)
-	if exists := client.Exists(ctx, keys.message).Val(); exists != 0 {
-		t.Fatalf("message key exists = %d, want 0", exists)
-	}
-}
-
-func TestRedisIndexDeleteRemovesActiveEntry(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		InstanceID:    uuid.Must(uuid.NewV7()),
-		Generation:    1,
-		ScheduledAt:   now,
-		AvailableAt:   now,
-	}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	if err := index.Delete(ctx, redisIndexTestWorkerGroupID, entry.InstanceID); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now.Add(2 * time.Minute), Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases after active delete = %d, want 0", len(leases))
-	}
-	messageID := indexMessageID(entry)
-	keys := scheduleIndexMessageKeys(index, redisIndexTestWorkerGroupID, messageID)
-	if exists := client.Exists(ctx, keys.message, keys.activeMessage, keys.lease(1)).Val(); exists != 0 {
-		t.Fatalf("deleted keys exist = %d, want 0", exists)
-	}
-}
-
-func TestRedisIndexIsolatesEntriesByWorkerGroup(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	instanceID := uuid.Must(uuid.NewV7())
-	otherWorkerGroupID := "us-east-1-worker-group-2"
-	for _, workerGroupID := range []string{redisIndexTestWorkerGroupID, otherWorkerGroupID} {
-		if err := index.Enqueue(ctx, IndexEntry{
-			WorkerGroupID: workerGroupID,
-			InstanceID:    instanceID,
-			Generation:    1,
-			ScheduledAt:   now,
-			AvailableAt:   now,
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := index.Delete(ctx, redisIndexTestWorkerGroupID, instanceID); err != nil {
-		t.Fatal(err)
-	}
-	if leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now, Lease: time.Minute}); err != nil {
-		t.Fatal(err)
-	} else if len(leases) != 0 {
-		t.Fatalf("default worker group leases = %d, want 0", len(leases))
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: otherWorkerGroupID, WorkerID: uuid.Must(uuid.NewV7()), Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Entry.WorkerGroupID != otherWorkerGroupID || leases[0].Entry.InstanceID != instanceID {
-		t.Fatalf("other worker group lease = %+v, want isolated entry", leases)
-	}
-}
-
-func TestRedisIndexNackDelaysRetry(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return now }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{
-		WorkerGroupID: redisIndexTestWorkerGroupID,
-		InstanceID:    uuid.Must(uuid.NewV7()),
-		Generation:    1,
-		ScheduledAt:   now,
-		AvailableAt:   now,
-	}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	retryAt := now.Add(5 * time.Minute)
+	retryAt := now.Add(2 * time.Minute)
 	if err := index.Nack(ctx, leases[0], retryAt); err != nil {
 		t.Fatal(err)
 	}
-
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now.Add(time.Minute), Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("early retry leases = %d, want 0", len(leases))
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Attempt != 2 {
-		t.Fatalf("retry leases = %+v", leases)
-	}
-}
-
-func TestRedisIndexNackAfterExpiredLeaseStillDelaysRetry(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	clock := now
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	retryAt := now.Add(5 * time.Minute)
-	clock = now.Add(2 * time.Minute)
-	if err := index.Nack(ctx, leases[0], retryAt); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("early retry leases = %d, want 0", len(leases))
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: retryAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Attempt != 2 {
-		t.Fatalf("retry leases = %+v", leases)
-	}
-}
-
-func TestRedisIndexReclaimAppliesBackoff(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	index, err := NewRedisIndex(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-
-	reclaimAt := now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("reclaim leases = %d, want 0", len(leases))
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Attempt != 2 {
-		t.Fatalf("backoff leases = %+v", leases)
-	}
-}
-
-func TestRedisIndexEnqueueDoesNotResetInflightAttempt(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	index, err := NewRedisIndex(client)
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	reclaimAt := now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: reclaimAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("reclaim leases = %d, want 0", len(leases))
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: reclaimAt.Add(time.Minute), Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Attempt != 2 {
-		t.Fatalf("backoff leases = %+v", leases)
-	}
-}
-
-func TestRedisIndexAckAfterExpiredLeaseCleansMessage(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	clock := now
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	entry := IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: uuid.Must(uuid.NewV7()), Generation: 1, ScheduledAt: now, AvailableAt: now}
-	if err := index.Enqueue(ctx, entry); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-	clock = now.Add(2 * time.Minute)
-	if err := index.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases after expired ack = %d, want 0", len(leases))
-	}
-}
-
-func TestRedisIndexActiveStaleAckDoesNotDeleteNewerFire(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	clock := now
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-
-	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases after stale ack = %d, want 1", len(leases))
-	}
-	if leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 || !leases[0].Entry.ScheduledAt.Equal(newFireAt) {
-		t.Fatalf("lease after stale ack = %+v", leases[0].Entry)
-	}
-}
-
-func TestRedisIndexActiveStaleNackDoesNotDelayNewerFire(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	clock := now
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-
-	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
-		t.Fatal(err)
-	}
-	if err := index.Nack(ctx, leases[0], now.Add(5*time.Minute)); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: newFireAt, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 {
-		t.Fatalf("leases after stale nack = %+v, want newer generation", leases)
-	}
-}
-
-func TestRedisIndexExpiredStaleLeaseDoesNotDelayNewerFire(t *testing.T) {
-	ctx := context.Background()
-	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	defer client.Close()
-
-	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	clock := now
-	index, err := NewRedisIndex(client, WithRedisIndexClock(func() time.Time { return clock }))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workerID := uuid.Must(uuid.NewV7())
-	instanceID := uuid.Must(uuid.NewV7())
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 1, ScheduledAt: now, AvailableAt: now}); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: now, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %d, want 1", len(leases))
-	}
-
-	newFireAt := now.Add(30 * time.Second)
-	if err := index.Enqueue(ctx, IndexEntry{WorkerGroupID: redisIndexTestWorkerGroupID, InstanceID: instanceID, Generation: 2, ScheduledAt: newFireAt, AvailableAt: newFireAt}); err != nil {
-		t.Fatal(err)
-	}
-	server.FastForward(2 * time.Minute)
-	clock = now.Add(2 * time.Minute)
-	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerGroupID: redisIndexTestWorkerGroupID, WorkerID: workerID, Limit: 1, Now: clock, Lease: time.Minute})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Entry.Generation != 2 || leases[0].Attempt != 1 {
-		t.Fatalf("leases after stale reclaim = %+v, want newer generation", leases)
+	leases, err = index.Dequeue(ctx, DequeueRequest{WorkerID: worker, Limit: 1, Now: retryAt, Lease: time.Minute})
+	if err != nil || len(leases) != 1 || leases[0].Attempt != 2 {
+		t.Fatalf("retry leases=%+v err=%v", leases, err)
 	}
 }

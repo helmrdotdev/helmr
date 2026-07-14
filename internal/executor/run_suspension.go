@@ -2,7 +2,6 @@ package executor
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,10 +12,8 @@ import (
 
 type RunWaitClient interface {
 	CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error)
-	FollowWorkerCommands(context.Context, int64, func(api.WorkerCommand) error) error
-	AcceptWorkerCommand(context.Context, int64) (api.WorkerCommandAcceptResponse, error)
-	AcknowledgeWorkerCommand(context.Context, int64) (api.WorkerCommandAckResponse, error)
-	ClaimRunCheckpointWait(context.Context, api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error)
+	PollRunWait(context.Context, api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error)
+	AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error)
 	CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error)
 	AcknowledgeRestore(context.Context, api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error)
 	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error)
@@ -27,15 +24,14 @@ type ControlRunWaits struct {
 	Client RunWaitClient
 }
 
-var errWorkerCommandHandled = errors.New("worker command handled")
-var errStaleWorkerCommand = errors.New("stale worker command")
 var errCheckpointAttemptRecorded = errors.New("checkpoint attempt failure recorded")
 
 type RestoreAcknowledgement struct {
-	Lease        api.WorkerRunLease
-	RunWaitID    string
-	CheckpointID string
-	Phases       []api.WorkerCheckpointPhase
+	Lease                api.WorkerRunLease
+	RunWaitID            string
+	CheckpointID         string
+	ResumeRequestVersion int64
+	Phases               []api.WorkerCheckpointPhase
 }
 
 type RestoreAcknowledger interface {
@@ -47,10 +43,11 @@ func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request Restore
 		return errors.New("run wait control client is required")
 	}
 	_, err := w.Client.AcknowledgeRestore(ctx, api.WorkerAcknowledgeRestoreRequest{
-		Lease:        request.Lease,
-		RunWaitID:    request.RunWaitID,
-		CheckpointID: request.CheckpointID,
-		Phases:       request.Phases,
+		Lease:                request.Lease,
+		RunWaitID:            request.RunWaitID,
+		CheckpointID:         request.CheckpointID,
+		ResumeRequestVersion: request.ResumeRequestVersion,
+		Phases:               request.Phases,
 	})
 	return err
 }
@@ -75,145 +72,74 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if opened.RunWaitID == "" {
 		return errors.New("run wait id is required")
 	}
-	var afterID int64
-	reconnectDelay := 100 * time.Millisecond
+	pollDelay := 100 * time.Millisecond
 	for {
-		var handled error
-		err = w.Client.FollowWorkerCommands(ctx, afterID, func(command api.WorkerCommand) error {
-			if command.ID > afterID {
-				afterID = command.ID
-			}
-			if command.RunWaitID != opened.RunWaitID {
-				return nil
-			}
-			if err := validateRunWaitWorkerCommandFence(request.currentLease(), opened, command); err != nil {
-				handled = err
-				if errors.Is(err, errStaleWorkerCommand) {
-					if _, ackErr := w.Client.AcknowledgeWorkerCommand(ctx, command.ID); ackErr != nil {
-						handled = fmt.Errorf("acknowledge stale worker command: %w", ackErr)
-						return errWorkerCommandHandled
-					}
-					handled = nil
-					return nil
-				}
-				return errWorkerCommandHandled
-			}
-			switch command.Kind {
-			case string(api.WorkerCommandKindRunResumeWait):
-				if _, err := w.Client.AcceptWorkerCommand(ctx, command.ID); err != nil {
-					handled = fmt.Errorf("accept worker command: %w", err)
-					return errWorkerCommandHandled
-				}
-				handled = w.handleResumeDecision(ctx, request, command)
-			case string(api.WorkerCommandKindRunCheckpointWait):
-				if _, err := w.Client.AcceptWorkerCommand(ctx, command.ID); err != nil {
-					handled = fmt.Errorf("accept worker command: %w", err)
-					return errWorkerCommandHandled
-				}
-				handled = w.handleCheckpointDecision(ctx, request, opened, command)
-				if errors.Is(handled, errStaleWorkerCommand) {
-					if _, ackErr := w.Client.AcknowledgeWorkerCommand(ctx, command.ID); ackErr != nil {
-						handled = fmt.Errorf("acknowledge stale worker command: %w", ackErr)
-						return errWorkerCommandHandled
-					}
-					handled = nil
-					return nil
-				}
-			default:
-				return nil
-			}
-			if handled == nil || errors.Is(handled, ErrDetached) || errors.Is(handled, errCheckpointAttemptRecorded) {
-				if _, ackErr := w.Client.AcknowledgeWorkerCommand(ctx, command.ID); ackErr != nil && !errors.Is(handled, ErrDetached) {
-					if command.Kind != string(api.WorkerCommandKindRunResumeWait) {
-						handled = fmt.Errorf("acknowledge worker command: %w", ackErr)
-					}
-				}
-			}
-			if errors.Is(handled, errCheckpointAttemptRecorded) {
-				handled = nil
-				return nil
-			}
-			return errWorkerCommandHandled
+		intent, pollErr := w.Client.PollRunWait(ctx, api.WorkerRunWaitPollRequest{
+			Lease:     request.currentLease(),
+			RunWaitID: opened.RunWaitID,
 		})
-		if errors.Is(err, errWorkerCommandHandled) {
-			return handled
-		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		if err != nil {
-			return fmt.Errorf("follow worker commands: %w", err)
+		if pollErr != nil {
+			return fmt.Errorf("poll run wait: %w", pollErr)
 		}
-		if err := sleepWithContext(ctx, reconnectDelay); err != nil {
+		if intent.RunID != opened.RunID || intent.RunWaitID != opened.RunWaitID {
+			return errors.New("run wait poll returned a mismatched fence")
+		}
+		switch intent.Status {
+		case api.WorkerRunWaitPollStatusWaiting:
+		case api.WorkerRunWaitPollStatusResumeRequested:
+			if intent.RequestVersion <= 0 || intent.ResumeKind == "" {
+				return errors.New("run wait resume request version and kind are required")
+			}
+			if request.Resume == nil {
+				return errors.New("runtime resume support is required")
+			}
+			payload := intent.ResumePayload
+			if len(payload) == 0 {
+				payload = []byte("null")
+			}
+			if err := request.Resume(ctx, WaitResumeDecision{Kind: intent.ResumeKind, Data: payload}); err != nil {
+				return err
+			}
+			if _, err := w.Client.AcknowledgeRunWaitResume(ctx, api.WorkerRunWaitResumeAckRequest{
+				Lease:                request.currentLease(),
+				RunWaitID:            opened.RunWaitID,
+				ResumeRequestVersion: intent.RequestVersion,
+			}); err != nil {
+				return fmt.Errorf("acknowledge run wait resume: %w", err)
+			}
+			return nil
+		case api.WorkerRunWaitPollStatusCheckpointRequested:
+			handled := w.handleCheckpointDecision(ctx, request, intent)
+			if errors.Is(handled, errCheckpointAttemptRecorded) {
+				return nil
+			}
+			return handled
+		case api.WorkerRunWaitPollStatusTerminal:
+			return errors.New("run wait became terminal before resume")
+		default:
+			return fmt.Errorf("unsupported run wait poll status %q", intent.Status)
+		}
+		if err := sleepWithContext(ctx, pollDelay); err != nil {
 			return err
 		}
-		if reconnectDelay < time.Second {
-			reconnectDelay *= 2
+		if pollDelay < time.Second {
+			pollDelay *= 2
 		}
 	}
 }
 
-func validateRunWaitWorkerCommandFence(lease api.WorkerRunLease, opened api.WorkerCreateRunWaitResponse, command api.WorkerCommand) error {
-	if command.RunID != opened.RunID ||
-		command.RunWaitID != opened.RunWaitID ||
-		command.RunLeaseID != lease.ID ||
-		command.WorkerInstanceID != lease.WorkerInstanceID ||
-		command.RuntimeInstanceID != opened.RuntimeInstanceID ||
-		command.RuntimeEpoch != opened.RuntimeEpoch {
-		return errStaleWorkerCommand
-	}
-	return nil
-}
-
-type workerResumeDecisionPayload struct {
-	ResumeKind    string          `json:"resume_kind"`
-	ResumePayload json.RawMessage `json:"resume_payload"`
-}
-
-func (w ControlRunWaits) handleResumeDecision(ctx context.Context, request WaitRequest, command api.WorkerCommand) error {
-	if request.Resume == nil {
-		return errors.New("runtime resume support is required")
-	}
-	var payload workerResumeDecisionPayload
-	if err := json.Unmarshal(command.Payload, &payload); err != nil {
-		return fmt.Errorf("decode resume decision: %w", err)
-	}
-	if payload.ResumeKind == "" {
-		return errors.New("resume decision kind is required")
-	}
-	if len(payload.ResumePayload) == 0 {
-		payload.ResumePayload = json.RawMessage(`null`)
-	}
-	return request.Resume(ctx, WaitResumeDecision{
-		Kind: payload.ResumeKind,
-		Data: payload.ResumePayload,
-	})
-}
-
-func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, opened api.WorkerCreateRunWaitResponse, command api.WorkerCommand) error {
-	claim, err := w.Client.ClaimRunCheckpointWait(ctx, api.WorkerCheckpointClaimRequest{
-		Lease:     request.currentLease(),
-		RunWaitID: opened.RunWaitID,
-	})
-	if err != nil {
-		return fmt.Errorf("claim run wait checkpoint: %w", err)
-	}
-	if claim.Status == "stale" {
-		return errStaleWorkerCommand
-	}
-	if claim.Status != "" && claim.Status != "claimed" {
-		return fmt.Errorf("unsupported checkpoint claim status %q", claim.Status)
-	}
-	if claim.CheckpointID == "" {
-		return errors.New("checkpoint claim id is required")
+func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request WaitRequest, intent api.WorkerRunWaitPollResponse) error {
+	if intent.CheckpointID == "" || intent.RequestVersion <= 0 {
+		return errors.New("checkpoint request id and version are required")
 	}
 	failCheckpoint := func(err error) error {
 		_, failErr := w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Lease:           request.currentLease(),
-			WorkerCommandID: command.ID,
-			RunWaitID:       claim.RunWaitID,
-			CheckpointID:    claim.CheckpointID,
-			Error:           err.Error(),
+			Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
+			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
+			ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
 		})
 		if failErr != nil {
 			return failErr
@@ -229,9 +155,9 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 	}
 	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{
 		RunID:            request.currentLease().RunID,
-		RunWaitID:        claim.RunWaitID,
-		CheckpointID:     claim.CheckpointID,
-		CaptureWorkspace: claim.CaptureWorkspace,
+		RunWaitID:        intent.RunWaitID,
+		CheckpointID:     intent.CheckpointID,
+		CaptureWorkspace: intent.CaptureWorkspace,
 	})
 	if err != nil {
 		if failErr := failCheckpoint(err); failErr != nil {
@@ -239,7 +165,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		}
 		return errCheckpointAttemptRecorded
 	}
-	if claim.CaptureWorkspace {
+	if intent.CaptureWorkspace {
 		if checkpoint.WorkspaceCapture == nil {
 			err := errors.New("workspace capture is required before parking")
 			if failErr := failCheckpoint(err); failErr != nil {
@@ -247,23 +173,23 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 			}
 			return errCheckpointAttemptRecorded
 		}
-		if _, err := w.Client.CaptureRunWaitWorkspace(ctx, api.WorkerRunWaitWorkspaceCaptureRequest{
-			Lease:            request.currentLease(),
-			RunWaitID:        claim.RunWaitID,
-			CheckpointID:     claim.CheckpointID,
+		capture, err := w.Client.CaptureRunWaitWorkspace(ctx, api.WorkerRunWaitWorkspaceCaptureRequest{
+			Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
+			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Workspace: request.Workspace,
 			WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
-		}); err != nil {
+		})
+		if err != nil {
 			if failErr := failCheckpoint(err); failErr != nil {
 				return fmt.Errorf("mark checkpoint failed after workspace capture error: %w", failErr)
 			}
 			return errCheckpointAttemptRecorded
 		}
+		request.Workspace.BaseVersionID = capture.WorkspaceVersionID
 	}
 	if _, err := w.Client.MarkCheckpointReady(ctx, api.WorkerCheckpointReadyRequest{
-		Lease:            request.currentLease(),
-		WorkerCommandID:  command.ID,
-		RunWaitID:        claim.RunWaitID,
-		CheckpointID:     claim.CheckpointID,
+		Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
+		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
+		Workspace: request.Workspace, WorkspaceVersionID: request.Workspace.BaseVersionID,
 		ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
 		Manifest:         checkpoint.Manifest,
 	}); err != nil {

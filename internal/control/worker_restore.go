@@ -10,18 +10,24 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
-func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseRow) (*api.WorkerRestore, error) {
-	payload, err := s.db.GetRunRestorePayload(ctx, db.GetRunRestorePayloadParams{
-		OrgID:            row.OrgID,
-		RunID:            row.ID,
-		RunLeaseID:       row.RunLeaseID,
-		WorkerInstanceID: row.RunLeaseWorkerInstanceID,
+func (s *Server) workerRestorePayload(ctx context.Context, row db.ClaimAssignedRunLeaseRow) (*api.WorkerRestore, error) {
+	if !row.RunLeaseRestoreRunCheckpointID.Valid {
+		return nil, nil
+	}
+	if !row.RunLeaseRestoreResumeRequestVersion.Valid || row.RunLeaseRestoreResumeRequestVersion.Int64 <= 0 {
+		return nil, fmt.Errorf("restore run checkpoint %s has no resume request", pgvalue.MustUUIDValue(row.RunLeaseRestoreRunCheckpointID).String())
+	}
+	payload, err := s.db.GetClaimedRunRestorePayload(ctx, db.GetClaimedRunRestorePayloadParams{
+		OrgID:                row.OrgID,
+		RunID:                row.ID,
+		RunLeaseID:           row.RunLeaseID,
+		WorkerInstanceID:     row.RunLeaseWorkerInstanceID,
+		WorkerEpoch:          row.RunLeaseWorkerEpoch,
+		RunCheckpointID:      row.RunLeaseRestoreRunCheckpointID,
+		ResumeRequestVersion: row.RunLeaseRestoreResumeRequestVersion.Int64,
 	})
 	if isNoRows(err) {
-		if row.RunLeaseRestoreRunCheckpointID.Valid {
-			return nil, fmt.Errorf("restore run checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreRunCheckpointID).String())
-		}
-		return nil, nil
+		return nil, fmt.Errorf("restore run checkpoint %s is unavailable", pgvalue.MustUUIDValue(row.RunLeaseRestoreRunCheckpointID).String())
 	}
 	if err != nil {
 		return nil, err
@@ -41,20 +47,21 @@ func (s *Server) workerRestorePayload(ctx context.Context, row db.LeaseRunLeaseR
 	}, nil
 }
 
-func workerRestoreRunWait(payload db.GetRunRestorePayloadRow) (api.WorkerRestoreRunWait, error) {
+func workerRestoreRunWait(payload db.GetClaimedRunRestorePayloadRow) (api.WorkerRestoreRunWait, error) {
 	resumeKind, resumePayload, err := workerRestoreRunWaitDecision(payload)
 	if err != nil {
 		return api.WorkerRestoreRunWait{}, err
 	}
 	return api.WorkerRestoreRunWait{
-		ID:                pgvalue.UUIDString(payload.RunWaitID),
-		Kind:              string(payload.RunWaitKind),
-		ResumeKind:        resumeKind,
-		ResumePayloadJSON: resumePayload,
+		ID:                   pgvalue.UUIDString(payload.RunWaitID),
+		ResumeRequestVersion: payload.ResumeRequestVersion,
+		Kind:                 string(payload.RunWaitKind),
+		ResumeKind:           resumeKind,
+		ResumePayloadJSON:    resumePayload,
 	}, nil
 }
 
-func workerRestoreRunWaitDecision(payload db.GetRunRestorePayloadRow) (string, json.RawMessage, error) {
+func workerRestoreRunWaitDecision(payload db.GetClaimedRunRestorePayloadRow) (string, json.RawMessage, error) {
 	switch payload.RunWaitKind {
 	case db.WaitKindStream:
 		if len(payload.WaitResult) > 0 {

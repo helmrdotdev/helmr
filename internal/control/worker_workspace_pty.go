@@ -186,7 +186,6 @@ func (s *Server) workerAdvanceWorkspacePtyInputDelivered(w http.ResponseWriter, 
 		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspacePtyStreamChunkReceipt(r.Context(), db.InsertWorkspacePtyStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
-			WorkerGroupID: mount.WorkerGroupID,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
@@ -374,7 +373,7 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 			WorkspaceMountID: mount.ID,
 		})
 		err = markErr
-		row = workspacePtyFromFailedRow(failed)
+		row = db.WorkspaceProcess(failed)
 	} else {
 		closed, markErr := s.db.MarkWorkspacePtyClosed(r.Context(), db.MarkWorkspacePtyClosedParams{
 			OrgID:            mount.OrgID,
@@ -385,7 +384,7 @@ func (s *Server) workerMarkWorkspacePtyClosed(w http.ResponseWriter, r *http.Req
 			WorkspaceMountID: mount.ID,
 		})
 		err = markErr
-		row = workspacePtyFromClosedRow(closed)
+		row = db.WorkspaceProcess(closed)
 	}
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -426,7 +425,7 @@ func workspacePtyTerminalEventMatches(row db.WorkspaceProcess, workspaceMountID 
 		return true
 	}
 	if failed {
-		return row.State == db.WorkspaceProcessStateFailed && workerPrimitiveJSONEqual(row.Error, errorJSON)
+		return row.State == db.WorkspaceProcessStateFailed && workerPrimitiveJSONEqual(row.TerminalError, errorJSON)
 	}
 	return row.State == db.WorkspaceProcessStateExited
 }
@@ -476,7 +475,6 @@ func (s *Server) appendWorkspacePtyOutputStreamChunk(ctx context.Context, pty db
 		}
 		inserted, insertErr := work.q.InsertWorkspacePtyOutputStreamChunk(ctx, db.InsertWorkspacePtyOutputStreamChunkParams{
 			OrgID:         pty.OrgID,
-			WorkerGroupID: pty.WorkerGroupID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,

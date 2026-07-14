@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -16,15 +17,28 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestWorkerEnrollmentConfigurationAlwaysLoadsAWS(t *testing.T) {
+	original := loadAWSWorkerEnrollmentVerifier
+	loadAWSWorkerEnrollmentVerifier = func(context.Context, []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
+		return nil, errors.New("aws unavailable")
+	}
+	t.Cleanup(func() { loadAWSWorkerEnrollmentVerifier = original })
+	if _, err := loadAWSWorkerEnrollmentVerifier(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "aws unavailable") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	store := &emptyStore{}
@@ -38,6 +52,7 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		DB:                 store,
 		TX:                 panicTxBeginner{},
 		Auth:               auth.NewDBAuthenticator(store),
+		WorkerEnrollment:   controltestWorkerEnrollmentVerifier{},
 		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
 		PublicURL:          publicURL,
 		WorkerGroupID:      "us-east-1-worker-group-1",
@@ -80,7 +95,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_PROVIDER", "aws")
 	t.Setenv("HELMR_PROVIDER_REGION", "us-east-1")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
-	t.Setenv("HELMR_WORKER_BOOTSTRAP_TOKEN", "worker-bootstrap-token")
+	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"us-east-1-worker-group-1","name":"run","region":"us-east-1","account_id":"123456789012","autoscaling_group":"test-run","instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/test-run","launch_ami_id":"ami-test","ami_ids":["ami-test"],"allows_run":true,"allows_build":false,"instance_capacity":{"milli_cpu":1000,"memory_bytes":1024,"workload_disk_bytes":1024,"scratch_bytes":1024,"vm_slots":1}}]`)
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
@@ -121,6 +136,12 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 
 type emptyStore struct {
 	db.Querier
+}
+
+type controltestWorkerEnrollmentVerifier struct{}
+
+func (controltestWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
+	return control.VerifiedWorkerEnrollment{}, nil
 }
 
 type controltestTelemetryReader struct {

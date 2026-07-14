@@ -129,11 +129,41 @@ output "nat_gateway_id" {
 }
 
 output "worker_autoscaling_group_name" {
-  description = "Worker Auto Scaling group name when create_worker is true."
-  value       = try(module.worker[0].autoscaling_group_name, null)
+  description = "Run-worker Auto Scaling group name when create_worker is true."
+  value       = try(module.worker_group["run"].autoscaling_group_name, null)
+}
+
+output "worker_autoscaling_group_arn" {
+  description = "Exact run-worker Auto Scaling group ARN."
+  value       = try(module.worker_group["run"].autoscaling_group_arn, null)
+}
+
+output "worker_protect_from_scale_in" {
+  description = "Whether new run-worker instances start protected from scale in."
+  value       = try(module.worker_group["run"].protect_from_scale_in, null)
 }
 
 output "worker_iam_role_name" {
-  description = "Worker IAM role name when create_worker is true."
-  value       = try(module.worker[0].iam_role_name, null)
+  description = "Run-worker IAM role name when create_worker is true."
+  value       = try(module.worker_group["run"].iam_role_name, null)
+}
+
+output "build_worker_autoscaling_group_name" {
+  description = "Build-worker Auto Scaling group name when create_worker is true."
+  value       = try(module.worker_group["build"].autoscaling_group_name, null)
+}
+
+output "build_worker_autoscaling_group_arn" {
+  description = "Exact build-worker Auto Scaling group ARN."
+  value       = try(module.worker_group["build"].autoscaling_group_arn, null)
+}
+
+output "build_worker_protect_from_scale_in" {
+  description = "Whether new build-worker instances start protected from scale in."
+  value       = try(module.worker_group["build"].protect_from_scale_in, null)
+}
+
+output "build_worker_iam_role_name" {
+  description = "Build-worker IAM role name when create_worker is true."
+  value       = try(module.worker_group["build"].iam_role_name, null)
 }

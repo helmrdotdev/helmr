@@ -66,7 +66,10 @@ export const handoff = task({
     const decisionToken = await tokens.create({ timeout: "15m" })
     const decision = await tokens.wait(decisionToken, {
       schema: approvalDecision,
-      metadata: { prompt: "Continue and ask for a handoff note?" },
+      metadata: {
+        prompt: "Continue and ask for a handoff note?",
+        form: { version: 1, type: "approval" },
+      },
     }).unwrap()
     if (!decision.approved) {
       return { approved: false }
@@ -75,7 +78,10 @@ export const handoff = task({
     const replyToken = await tokens.create({ timeout: "15m" })
     const reply = await tokens.wait(replyToken, {
       schema: handoffMessage,
-      metadata: { prompt: "What should this run write to handoff.txt?" },
+      metadata: {
+        prompt: "What should this run write to handoff.txt?",
+        form: { version: 1, type: "message" },
+      },
     }).unwrap()
     await writeFile("handoff.txt", `${reply.text}\n`)
     return {

@@ -95,51 +95,31 @@ func enqueuePendingWorkspacePrimitiveOperations(ctx context.Context, store db.Qu
 
 func workspaceMountFromEnsureRow(row db.EnsureWorkspaceMountRequestedRow) db.WorkspaceMount {
 	return db.WorkspaceMount{
-		ID:                          row.ID,
-		OrgID:                       row.OrgID,
-		ProjectID:                   row.ProjectID,
-		EnvironmentID:               row.EnvironmentID,
-		WorkspaceID:                 row.WorkspaceID,
-		DeploymentSandboxID:         row.DeploymentSandboxID,
-		SandboxFingerprint:          row.SandboxFingerprint,
-		BaseVersionID:               row.BaseVersionID,
-		ClaimAttempt:                row.ClaimAttempt,
-		Priority:                    row.Priority,
-		RuntimeInstanceID:           row.RuntimeInstanceID,
+		ID: row.ID, OrgID: row.OrgID, WorkerGroupID: row.WorkerGroupID,
+		ProjectID: row.ProjectID, EnvironmentID: row.EnvironmentID, RegionID: row.RegionID,
+		WorkerInstanceID: row.WorkerInstanceID, WorkerEpoch: row.WorkerEpoch,
+		WorkspaceID: row.WorkspaceID, DeploymentSandboxID: row.DeploymentSandboxID,
+		SandboxFingerprint: row.SandboxFingerprint, BaseVersionID: row.BaseVersionID,
+		RuntimeInstanceID: row.RuntimeInstanceID, ClaimAttempt: row.ClaimAttempt, Priority: row.Priority,
 		GuestdChannelTokenHash:      row.GuestdChannelTokenHash,
 		GuestdChannelTokenExpiresAt: row.GuestdChannelTokenExpiresAt,
-		State:                       row.State,
-		Request:                     row.Request,
-		LeaseGeneration:             row.LeaseGeneration,
-		DirtyGeneration:             row.DirtyGeneration,
-		FencingGeneration:           row.FencingGeneration,
-		NetworkNamespace:            row.NetworkNamespace,
-		PortNamespace:               row.PortNamespace,
-		ImageArtifactID:             row.ImageArtifactID,
-		ImageArtifactFormat:         row.ImageArtifactFormat,
-		RootfsDigest:                row.RootfsDigest,
-		ImageDigest:                 row.ImageDigest,
-		ImageFormat:                 row.ImageFormat,
+		State:                       row.State, Request: row.Request, DirtyGeneration: row.DirtyGeneration,
+		FencingGeneration: row.FencingGeneration, NetworkNamespace: row.NetworkNamespace,
+		PortNamespace: row.PortNamespace, ImageArtifactID: row.ImageArtifactID,
+		ImageArtifactFormat: row.ImageArtifactFormat, RootfsDigest: row.RootfsDigest,
+		ImageDigest: row.ImageDigest, ImageFormat: row.ImageFormat,
 		WorkspaceArtifactID:         row.WorkspaceArtifactID,
 		WorkspaceArtifactEncoding:   row.WorkspaceArtifactEncoding,
 		WorkspaceArtifactEntryCount: row.WorkspaceArtifactEntryCount,
 		WorkspaceArtifactDigest:     row.WorkspaceArtifactDigest,
 		WorkspaceArtifactSizeBytes:  row.WorkspaceArtifactSizeBytes,
 		WorkspaceArtifactMediaType:  row.WorkspaceArtifactMediaType,
-		WorkspaceMountPath:          row.WorkspaceMountPath,
-		RuntimeABI:                  row.RuntimeABI,
-		GuestdAbi:                   row.GuestdAbi,
-		AdapterAbi:                  row.AdapterAbi,
-		LastHeartbeatAt:             row.LastHeartbeatAt,
-		RequestedAt:                 row.RequestedAt,
-		MountedAt:                   row.MountedAt,
-		UnmountedAt:                 row.UnmountedAt,
-		StoppedAt:                   row.StoppedAt,
-		LostAt:                      row.LostAt,
-		FailedAt:                    row.FailedAt,
-		Error:                       row.Error,
-		CreatedAt:                   row.CreatedAt,
-		UpdatedAt:                   row.UpdatedAt,
+		WorkspaceMountPath:          row.WorkspaceMountPath, RuntimeABI: row.RuntimeABI,
+		GuestdAbi: row.GuestdAbi, AdapterAbi: row.AdapterAbi,
+		RequestedAt: row.RequestedAt, MountedAt: row.MountedAt, UnmountedAt: row.UnmountedAt,
+		StoppedAt: row.StoppedAt, LostAt: row.LostAt, FailedAt: row.FailedAt,
+		TerminalAt: row.TerminalAt, TerminalReasonCode: row.TerminalReasonCode,
+		TerminalError: row.TerminalError, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }
 
@@ -157,11 +137,9 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 		Priority:           0,
 		InstanceLeaseID:    pgtype.UUID{},
 		WriteLeaseID:       lease.writeLeaseID,
-		FencingToken:       lease.fencingToken,
+		FencingToken:       pgtype.Text{String: lease.fencingToken, Valid: lease.fencingToken != ""},
 		Request:            request,
 		OrgID:              mount.OrgID,
-		ProjectID:          mount.ProjectID,
-		EnvironmentID:      mount.EnvironmentID,
 		WorkspaceID:        mount.WorkspaceID,
 		WorkspaceMountID:   mount.ID,
 	})
@@ -173,9 +151,6 @@ func requestWorkspacePrimitiveOperation(ctx context.Context, store db.Querier, m
 	}
 	existing, getErr := store.GetActiveWorkspaceOperationByResource(ctx, db.GetActiveWorkspaceOperationByResourceParams{
 		OrgID:            mount.OrgID,
-		ProjectID:        mount.ProjectID,
-		EnvironmentID:    mount.EnvironmentID,
-		WorkspaceID:      mount.WorkspaceID,
 		WorkspaceMountID: mount.ID,
 		OperationKind:    operationKind,
 		ProcessID:        processID,
@@ -236,11 +211,7 @@ func workspacePrimitiveScopeForPty(row db.WorkspaceProcess) workspacePrimitiveRe
 
 func getWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, scope workspacePrimitiveResourceScope, writeLeaseID pgtype.UUID) (workspacePrimitiveOperationLease, error) {
 	lease, err := store.GetWorkspaceLease(ctx, db.GetWorkspaceLeaseParams{
-		OrgID:         scope.orgID,
-		ProjectID:     scope.projectID,
-		EnvironmentID: scope.environmentID,
-		WorkspaceID:   scope.workspaceID,
-		ID:            writeLeaseID,
+		OrgID: scope.orgID, WorkspaceID: scope.workspaceID, ID: writeLeaseID,
 	})
 	if err != nil {
 		return workspacePrimitiveOperationLease{}, err
@@ -250,16 +221,10 @@ func getWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, scop
 
 func acquireWorkspacePrimitiveWriteLease(ctx context.Context, store db.Querier, mount db.WorkspaceMount, scope workspacePrimitiveResourceScope, ownerProcessID pgtype.UUID) (workspacePrimitiveOperationLease, error) {
 	lease, err := store.AcquireWorkspaceWriteLease(ctx, db.AcquireWorkspaceWriteLeaseParams{
-		ID:               pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OwnerProcessID:   ownerProcessID,
-		FencingToken:     uuid.Must(uuid.NewV7()).String(),
-		HeartbeatToken:   uuid.Must(uuid.NewV7()).String(),
-		ExpiresAt:        pgvalue.Timestamptz(time.Now().Add(workspacePrimitiveWriteLeaseTTL)),
-		OrgID:            scope.orgID,
-		ProjectID:        scope.projectID,
-		EnvironmentID:    scope.environmentID,
-		WorkspaceID:      scope.workspaceID,
-		WorkspaceMountID: mount.ID,
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OwnerRunID: pgtype.UUID{}, OwnerProcessID: ownerProcessID,
+		AcquiredVersionID: mount.BaseVersionID, FencingToken: uuid.Must(uuid.NewV7()).String(),
+		ExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspacePrimitiveWriteLeaseTTL)),
+		OrgID:     scope.orgID, WorkspaceID: scope.workspaceID, WorkspaceMountID: mount.ID,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -335,11 +300,7 @@ func requestWorkspacePrimitiveControlOperation(ctx context.Context, store db.Que
 		return conflict(codedError{code: "workspace_mount_not_runnable", message: target.name + " is not bound to a runnable mount"})
 	}
 	mount, err := store.GetWorkspaceMount(ctx, db.GetWorkspaceMountParams{
-		OrgID:         target.scope.orgID,
-		ProjectID:     target.scope.projectID,
-		EnvironmentID: target.scope.environmentID,
-		WorkspaceID:   target.scope.workspaceID,
-		ID:            target.workspaceMountID,
+		OrgID: target.scope.orgID, WorkspaceID: target.scope.workspaceID, ID: target.workspaceMountID,
 	})
 	if err != nil {
 		return err

@@ -5,7 +5,6 @@ WITH event_args AS (
 ),
 current_run_lease AS (
     SELECT runs.id,
-           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
@@ -14,32 +13,27 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.attempt_number
+           run_leases.task_attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id
                      AND run_leases.run_id = runs.id
-      JOIN worker_groups ON worker_groups.id = runs.worker_group_id
-                        AND worker_groups.state IN ('active', 'draining')
      WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.worker_group_id = sqlc.arg(worker_group_id)
        AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'running'
-       AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND run_leases.id = sqlc.arg(run_lease_id)
        AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
+       AND run_leases.state IN ('starting', 'running')
+       AND run_leases.expires_at > now()
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
         parent_span_id, traceparent, category, severity, source, kind, message,
         payload, redaction_class, snapshot_version, observed_at
     )
     SELECT sqlc.arg(org_id)::uuid,
-           current_run_lease.worker_group_id,
            'event',
            'run',
            current_run_lease.id,
@@ -64,7 +58,6 @@ appended AS (
       FROM current_run_lease
       CROSS JOIN event_args
     RETURNING telemetry_outbox.run_id AS id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id,
               telemetry_outbox.trace_id,
@@ -87,7 +80,6 @@ WITH event_args AS (
 ),
 target_run AS (
     SELECT runs.id,
-           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.current_attempt_number,
@@ -100,13 +92,12 @@ target_run AS (
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, run_id, attempt_number, trace_id, span_id, traceparent,
         category, severity, source, kind, message, payload, redaction_class,
         snapshot_version, observed_at
     )
     SELECT sqlc.arg(org_id)::uuid,
-           target_run.worker_group_id,
            'event',
            'run',
            target_run.id,
@@ -129,7 +120,6 @@ appended AS (
       FROM target_run
       CROSS JOIN event_args
     RETURNING telemetry_outbox.run_id AS id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id,
               COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
@@ -146,7 +136,6 @@ SELECT *
 WITH target_deployment AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_worker_group_id AS worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -157,12 +146,11 @@ WITH target_deployment AS (
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, deployment_id, category, severity, source, kind, message,
         payload, redaction_class, observed_at
     )
     SELECT target_deployment.org_id,
-           target_deployment.worker_group_id,
            'event',
            'deployment',
            target_deployment.id,
@@ -180,7 +168,6 @@ appended AS (
       FROM target_deployment
     RETURNING telemetry_outbox.deployment_id AS id,
               telemetry_outbox.org_id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id
 )

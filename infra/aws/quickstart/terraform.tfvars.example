@@ -40,13 +40,13 @@ redis_node_count = 1
 # Optional custom builds. Leave null to use the official release artifacts.
 control_image = null
 worker_ami_id = null
+worker_allowed_ami_ids = []
 
 # Optional smoke worker. The official worker AMI is resolved from helmr_version
 # and aws_region. NAT Gateway is required because workers run in private subnets.
 create_worker                       = false
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
-worker_desired_capacity             = 1
 worker_min_size                     = 1
 worker_max_size                     = 1
 worker_root_volume_size_gb          = 120

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -22,7 +24,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
-	workergrouppkg "github.com/helmrdotdev/helmr/internal/workergroup"
+	workergrouppkg "github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -467,6 +469,158 @@ func TestWorkerActiveInputReadDoesNotRequireWakeupTransportForBufferedRecord(t *
 	}
 }
 
+func TestAppendRunLogChunkReplayRequiresIdenticalContent(t *testing.T) {
+	ctx := context.Background()
+	pool := newControlIntegrationDB(t, ctx)
+	ids := seedControlStreamTokenFixture(t, ctx, pool)
+	worker, leaseIDs := seedControlRunningRunLease(t, ctx, pool, ids)
+	queries := db.New(pool)
+	appendChunk := func(content string) db.AppendRunLogChunkRow {
+		t.Helper()
+		row, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+			OrgID:            pgvalue.UUID(leaseIDs.orgID),
+			RunID:            pgvalue.UUID(leaseIDs.runID),
+			RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
+			WorkerInstanceID: pgvalue.UUID(leaseIDs.workerInstanceID),
+			Stream:           string(api.WorkerLogStreamStdout),
+			ObservedSeq:      1,
+			Content:          []byte(content),
+			Kind:             "log.stdout",
+			Payload:          []byte(`{"run_id":"test","stream":"stdout","observed_seq":1,"bytes":5}`),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row
+	}
+
+	first := appendChunk("alpha")
+	identical := appendChunk("alpha")
+	if !first.ReplayMatches || !identical.ReplayMatches {
+		t.Fatalf("identical append/replay was not accepted: first=%+v replay=%+v", first, identical)
+	}
+	if first.Seq != identical.Seq || string(identical.Content) != "alpha" {
+		t.Fatalf("identical replay authority changed: first=%+v identical=%+v", first, identical)
+	}
+	_, err := queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID),
+		RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID), WorkerInstanceID: pgvalue.UUID(leaseIDs.workerInstanceID),
+		Stream: string(api.WorkerLogStreamStdout), ObservedSeq: 1, Content: []byte("bravo"),
+		Kind: "log.stdout", Payload: []byte(`{"run_id":"test","stream":"stdout","observed_seq":1,"bytes":5}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("changed replay error=%v, want conflict/no rows", err)
+	}
+	_, err = queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID),
+		RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID), WorkerInstanceID: pgvalue.UUID(leaseIDs.workerInstanceID),
+		Stream: string(api.WorkerLogStreamStdout), ObservedSeq: 1, Content: []byte("alpha"),
+		Kind: "log.stdout", Payload: []byte(`{"run_id":"different","stream":"stdout","observed_seq":1,"bytes":5}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("changed replay fingerprint error=%v, want conflict/no rows", err)
+	}
+	var logRows, meterRows int
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM telemetry_outbox
+		    WHERE stream_kind = 'run_log' AND run_lease_id = $1),
+		  (SELECT count(*) FROM meter_events
+		    WHERE run_lease_id = $1 AND meter = 'log_bytes')
+	`, leaseIDs.runLeaseID).Scan(&logRows, &meterRows); err != nil {
+		t.Fatal(err)
+	}
+	if logRows != 1 || meterRows != 1 {
+		t.Fatalf("replay duplicated durable usage: logs=%d meters=%d", logRows, meterRows)
+	}
+
+	// Exercise the HTTP qualification path against the same real running lease;
+	// this proves replay checking is not limited to direct SQL callers.
+	server := newControlIntegrationServer(pool)
+	lease := api.WorkerRunLease{
+		ID: pgvalue.UUIDString(pgvalue.UUID(leaseIDs.runLeaseID)), OrgID: leaseIDs.orgID.String(),
+		RunID: leaseIDs.runID.String(), WorkerGroupID: leaseIDs.workerGroupID,
+		WorkerInstanceID: leaseIDs.workerInstanceID.String(), WorkerEpoch: leaseIDs.workerEpoch,
+		LeaseSequence: leaseIDs.leaseSequence, SnapshotVersion: leaseIDs.snapshotVersion,
+		RuntimeInstanceID: leaseIDs.runtimeInstanceID.String(), NetworkSlotID: leaseIDs.networkSlotID.String(),
+		NetworkSlotGeneration: leaseIDs.networkSlotGeneration, ProtocolVersion: leaseIDs.protocolVersion,
+		AttemptNumber: leaseIDs.attemptNumber,
+	}
+	appendHTTP := func(contentBase64 string) *httptest.ResponseRecorder {
+		t.Helper()
+		body, err := json.Marshal(api.WorkerAppendLogRequest{
+			Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 2,
+			ContentBase64: contentBase64,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(body))
+		request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, worker))
+		recorder := httptest.NewRecorder()
+		server.workerAppendLogs(recorder, request)
+		return recorder
+	}
+	if recorder := appendHTTP("YWxwaGE="); recorder.Code != http.StatusOK {
+		t.Fatalf("initial HTTP append status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := appendHTTP("YWxwaGE="); recorder.Code != http.StatusOK {
+		t.Fatalf("identical HTTP replay status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if recorder := appendHTTP("YnJhdm8="); recorder.Code != http.StatusConflict {
+		t.Fatalf("changed HTTP replay status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	const concurrentReplays = 8
+	start := make(chan struct{})
+	results := make(chan db.AppendRunLogChunkRow, concurrentReplays)
+	errs := make(chan error, concurrentReplays)
+	var wg sync.WaitGroup
+	for range concurrentReplays {
+		wg.Go(func() {
+			<-start
+			row, err := db.New(pool).AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+				OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID),
+				RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID), WorkerInstanceID: pgvalue.UUID(leaseIDs.workerInstanceID),
+				Stream: string(api.WorkerLogStreamStderr), ObservedSeq: 3, Content: []byte("concurrent"),
+				Kind: "log.stderr", Payload: []byte(`{"run_id":"test","stream":"stderr","observed_seq":3,"bytes":10}`),
+			})
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- row
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent identical replay failed: %v", err)
+	}
+	var concurrentSeq int64
+	for row := range results {
+		if !row.ReplayMatches || string(row.Content) != "concurrent" {
+			t.Fatalf("concurrent replay row=%+v", row)
+		}
+		if concurrentSeq == 0 {
+			concurrentSeq = row.Seq
+		} else if row.Seq != concurrentSeq {
+			t.Fatalf("concurrent replays returned different rows: %d != %d", row.Seq, concurrentSeq)
+		}
+	}
+	_, err = queries.AppendRunLogChunk(ctx, db.AppendRunLogChunkParams{
+		OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID),
+		RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID), WorkerInstanceID: pgvalue.UUID(leaseIDs.workerInstanceID),
+		Stream: string(api.WorkerLogStreamStderr), ObservedSeq: 3, Content: []byte("DIFFERENT"),
+		Kind: "log.stderr", Payload: []byte(`{"run_id":"test","stream":"stderr","observed_seq":3,"bytes":9}`),
+	})
+	if !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("changed content after concurrent replay error=%v, want conflict/no rows", err)
+	}
+}
+
 func TestWorkerActiveInputReadSkipsAcceptedSessionContinuationRequest(t *testing.T) {
 	ctx := context.Background()
 	pool := newControlIntegrationDB(t, ctx)
@@ -567,23 +721,23 @@ func TestWorkerActiveInputReadCancelsCreatedSessionContinuationRequest(t *testin
 	continuationRunID := uuid.Must(uuid.NewV7())
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name,
 			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
 			runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
 			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'queued', 'queued', '{}', 'default',
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'queued', 'queued', '{}', 'default',
 			1000, 1024, 4096, 1,
 			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
 			300000, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
-	`, continuationRunID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
+	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO session_runs (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9, 1, 'input')
-	`, uuid.Must(uuid.NewV7()), ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.sessionID, continuationRunID, ids.deploymentID, leaseIDs.runID, streamTestPublicID(t, publicid.SessionRun)); err != nil {
+		INSERT INTO session_runs (id, public_id, org_id, project_id, environment_id, session_id, run_id, deployment_id, previous_run_id, turn_index, reason)
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 1, 'input')
+	`, uuid.Must(uuid.NewV7()), ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, continuationRunID, ids.deploymentID, leaseIDs.runID, streamTestPublicID(t, publicid.SessionRun)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -950,20 +1104,21 @@ func newControlIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := workergrouppkg.Bootstrap(ctx, db.New(pool), workergrouppkg.BootstrapConfig{
+	queries := db.New(pool)
+	if err := workergrouppkg.Ensure(ctx, queries, workergrouppkg.BootstrapConfig{
 		RegionID:          dbtest.DefaultRegionID,
 		DefaultRegionID:   dbtest.DefaultRegionID,
 		Provider:          dbtest.DefaultProvider,
 		ProviderRegion:    dbtest.DefaultProviderRegion,
 		RegionDisplayName: dbtest.DefaultRegionDisplay,
-		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := workergrouppkg.ReportHealth(ctx, db.New(pool), workergrouppkg.HealthConfig{
-		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
-		Component:          workergrouppkg.ComponentDispatcher,
-		RequiredComponents: workergrouppkg.RoutingRequiredComponents(),
+	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
+		ID: dbtest.DefaultWorkerGroupID, RegionID: dbtest.DefaultRegionID, Name: dbtest.DefaultWorkerGroupID,
+		EnrollmentPolicyFingerprint: "sha256:test-worker-group", AllowsRun: true, AllowsBuild: true,
+		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
+		ProtocolVersion: auth.WorkerProtocolVersion, AllowedAttestationFingerprints: []string{"sha256:test-attestation"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1030,8 +1185,8 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
-		t.Fatal(err)
+	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, project_id, environment_id, build_region_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
+		t.Fatalf("insert deployment fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
 		t.Fatal(err)
@@ -1043,33 +1198,19 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_instances (
-			org_id, worker_group_id, resource_id, status, protocol_version,
-			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
-			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
-			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-		)
-		VALUES ($1, $2, 'stream-test-worker', 'active', $3,
-			4000, 8192, 65536, 4, 4000, 8192, 65536, 4,
-			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-		ON CONFLICT (worker_group_id, resource_id) DO NOTHING
-	`, ids.orgID, dbtest.DefaultWorkerGroupID, api.CurrentWorkerProtocolVersion); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := pool.Exec(ctx, `INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id) VALUES ($5, $1, $2, $3, $4)`, ids.orgID, ids.projectID, ids.environmentID, taskID, streamTestPublicID(t, publicid.Task)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_sandboxes (id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format, contract_version, fingerprint) VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', $7, $7, 'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1, 'sandbox-fingerprint')`, sandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, taskBundleID, rootfsDigest, streamTestPublicID(t, publicid.Sandbox)); err != nil {
-		t.Fatal(err)
+		t.Fatalf("insert deployment sandbox fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_tasks (id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id, queue_name, max_active_duration_ms) VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 'default', 300000)`, ids.deploymentTaskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, sandboxID, taskID, artifactID, streamTestPublicID(t, publicid.DeploymentTask)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sandboxID, streamTestPublicID(t, publicid.Workspace)); err != nil {
-		t.Fatal(err)
+	if _, err := pool.Exec(ctx, `INSERT INTO workspaces (id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint) VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')`, ids.workspaceID, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID, sandboxID, streamTestPublicID(t, publicid.Workspace)); err != nil {
+		t.Fatalf("insert workspace fixture: %v", err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $7, $8, 'slack:T123:C456')`, ids.sessionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID, streamTestPublicID(t, publicid.Session)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO sessions (id, public_id, org_id, project_id, environment_id, task_id, initial_deployment_id, active_deployment_id, workspace_id, external_id) VALUES ($1, $8, $2, $3, $4, $5, $6, $6, $7, 'slack:T123:C456')`, ids.sessionID, ids.orgID, ids.projectID, ids.environmentID, taskID, ids.deploymentID, ids.workspaceID, streamTestPublicID(t, publicid.Session)); err != nil {
 		t.Fatal(err)
 	}
 	seedControlStream(t, ctx, pool, ids, ids.deploymentID, ids.inputStreamID, "approval", "input")
@@ -1082,9 +1223,10 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	runID := uuid.Must(uuid.NewV7())
 	runLeaseID := uuid.Must(uuid.NewV7())
 	workerID := uuid.Must(uuid.NewV7())
+	serviceID := uuid.Must(uuid.NewV7())
+	runtimeInstanceID := uuid.Must(uuid.NewV7())
+	networkSlotID := uuid.Must(uuid.NewV7())
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	dispatchMessageID := "dispatch-" + runLeaseID.String()[:8]
-	dispatchLeaseID := "lease-" + runLeaseID.String()[:8]
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
 		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
@@ -1093,44 +1235,90 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
-			protocol_version, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
-			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile
+			id, worker_group_id, resource_id, attestation_fingerprint, state, current_epoch, current_service_id,
+			protocol_version, supports_run, runtime_identity_id,
+			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
+			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
+			per_vm_workload_disk_bytes, per_vm_scratch_bytes,
+			max_vm_slots, max_run_consumers, max_runtime_starts,
+			certification_profile, certification_fingerprint,
+			epoch_started_at, certified_at, activated_at
 		)
-		VALUES ($1, $2, $3, $4, 1000, 1024, 4096, $5, 1, 1000, 1024, 4096, 1,
-			$6, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+		VALUES ($1, $2, $3, 'sha256:test-attestation', 'active', 1, $4, $5, true, $6,
+			1000, 1073741824, 4294967296,
+			1073741824, 1000, 1073741824, 4294967296, 1073741824,
+			1, 1, 1,
+			'stream-test', 'stream-test-cert', now(), now(), now())
+	`, workerID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], serviceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO runtime_instances (
+			id, org_id, worker_group_id, project_id, environment_id, region_id,
+			worker_instance_id, runtime_identity_id, deployment_sandbox_id, worker_epoch,
+			runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest, image_digest, image_format,
+			runtime_abi, guestd_abi, adapter_abi, network_policy,
+			reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes,
+			reserved_scratch_bytes, reserved_execution_slots, desired_reason,
+			observed_state, observed_version, observed_desired_version, preparing_at, ready_at
+		)
+		SELECT $1, $2, $3, $4, $5, workspaces.region_id,
+			$6, $7, workspaces.deployment_sandbox_id, 1,
+			'stream-test-runtime', '{}'::jsonb, workspaces.sandbox_fingerprint,
+			'sha256:rootfs', 'sha256:image', 'oci-tar',
+			'test', 'guestd-test', 'adapter-test', '{}'::jsonb,
+			1000, 1073741824, 4294967296, 0, 1, 'stream_test',
+			'ready', 1, 1, now(), now()
+		  FROM workspaces WHERE workspaces.org_id = $2 AND workspaces.id = $8
+	`, runtimeInstanceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, workerID, runtimeID, ids.workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO worker_network_slots (
+			id, worker_group_id, worker_instance_id, worker_epoch, slot_name, generation,
+			state, runtime_instance_id, host_interface_name, guest_address, gateway_address, subnet,
+			tap_name, netns_name, guest_mac, assigned_at
+		)
+		VALUES ($1, $2, $3, 1, 'slot-1', 1, 'bound', $4,
+			'eth-stream-test', '10.42.0.2', '10.42.0.1', '10.42.0.0/24',
+			'tap-stream', 'netns-stream', '02:00:00:00:00:02', now())
+	`, networkSlotID, dbtest.DefaultWorkerGroupID, workerID, runtimeInstanceID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runs (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
+			id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
 			session_id, status, execution_status, payload, queue_name,
 			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
 			runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
 			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'running', 'executing', '{}', 'default',
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'running', 'executing', '{}', 'default',
 			1000, 1024, 4096, 1,
-			$11, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			$10, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
 			300000, '11111111111111111111111111111111', '2222222222222222')
-	`, runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run), runtimeID); err != nil {
+	`, runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run), runtimeID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO run_leases (
-			id, org_id, worker_group_id, project_id, environment_id, queue_class, queue_name,
-			run_id, worker_instance_id, dispatch_message_id, dispatch_generation,
-			dispatch_lease_id, dispatch_attempt, attempt_number, status, lease_expires_at, runtime_identity_id,
-			worker_protocol_version, trace_id,
-			span_id, parent_span_id, traceparent
+			id, org_id, project_id, environment_id, run_id, workspace_id, region_id,
+			lease_sequence, task_attempt_number, worker_group_id, worker_instance_id, worker_epoch,
+			runtime_instance_id, network_slot_id, network_slot_generation,
+			queue_name, queue_class, runtime_identity_id, worker_protocol_version,
+			requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes,
+			requested_scratch_bytes, requested_execution_slots,
+			trace_id, span_id, parent_span_id, traceparent,
+			state, claimed_at, started_at, expires_at, start_deadline_at
 		)
-		VALUES ($1, $2, $3, $4, $5, 'default', 'default',
-			$6, $7, $8, 1, $9, 1, 1, 'running', now() + interval '1 hour', $10, $11,
+		VALUES ($1, $2, $3, $4, $5, $6, $7,
+			1, 1, $8, $9, 1, $10, $11, 1,
+			'default', 'default', $12, $13,
+			1000, 1073741824, 4294967296, 0, 1,
 			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
-			'00-11111111111111111111111111111111-3333333333333333-01')
-	`, runLeaseID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, runID, workerID, dispatchMessageID, dispatchLeaseID, runtimeID, api.CurrentWorkerProtocolVersion); err != nil {
+			'00-11111111111111111111111111111111-3333333333333333-01',
+			'running', now(), now(), now() + interval '1 hour', now() + interval '5 minutes')
+	`, runLeaseID, ids.orgID, ids.projectID, ids.environmentID, runID, ids.workspaceID, dbtest.DefaultRegionID, dbtest.DefaultWorkerGroupID, workerID, runtimeInstanceID, networkSlotID, runtimeID, api.CurrentWorkerProtocolVersion); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
@@ -1165,15 +1353,15 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	return workerActor{
 			WorkerInstanceID: workerID,
 			WorkerGroupID:    dbtest.DefaultWorkerGroupID,
+			WorkerEpoch:      1,
+			ProtocolVersion:  api.CurrentWorkerProtocolVersion,
 			ResourceID:       "worker-" + workerID.String()[:8],
 		}, workerRunLeaseIDs{
-			orgID:           ids.orgID,
-			runLeaseID:      runLeaseID,
-			runID:           runID,
-			protocolVersion: api.CurrentWorkerProtocolVersion,
-			attemptNumber:   1,
-			queueMessageID:  dispatchMessageID,
-			queueLeaseID:    dispatchLeaseID,
+			orgID: ids.orgID, runLeaseID: runLeaseID, runID: runID,
+			workerGroupID: dbtest.DefaultWorkerGroupID, workerInstanceID: workerID, workerEpoch: 1,
+			leaseSequence: 1, snapshotVersion: 1, runtimeInstanceID: runtimeInstanceID,
+			networkSlotID: networkSlotID, networkSlotGeneration: 1,
+			protocolVersion: api.CurrentWorkerProtocolVersion, attemptNumber: 1,
 		}
 }
 
@@ -1183,7 +1371,7 @@ func seedControlStream(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_streams (id, org_id, project_id, environment_id, deployment_id, name, direction, schema_fingerprint, schema_json) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '{}')`, deploymentStreamID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, name, direction, "schema-"+name); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name, streamTestPublicID(t, publicid.Stream)); err != nil {
+	if _, err := pool.Exec(ctx, `INSERT INTO streams (id, public_id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint) VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9)`, streamID, ids.orgID, ids.projectID, ids.environmentID, ids.sessionID, deploymentStreamID, name, direction, "schema-"+name, streamTestPublicID(t, publicid.Stream)); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1207,20 +1395,20 @@ func seedControlStreamSession(t *testing.T, ctx context.Context, pool *pgxpool.P
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO sessions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, task_id,
+			id, public_id, org_id, project_id, environment_id, task_id,
 			initial_deployment_id, active_deployment_id, workspace_id, external_id
 		)
-		VALUES ($1, $9, $2, $3, $4, $5, 'approval-task', $6, $6, $7, $8)
-	`, sessionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, externalID, streamTestPublicID(t, publicid.Session)); err != nil {
+		VALUES ($1, $8, $2, $3, $4, 'approval-task', $5, $5, $6, $7)
+	`, sessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, externalID, streamTestPublicID(t, publicid.Session)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO streams (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, session_id,
+			id, public_id, org_id, project_id, environment_id, session_id,
 			deployment_stream_id, name, direction, schema_fingerprint
 		)
-		VALUES ($1, $11, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-	`, streamID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, streamName, direction, "schema-"+streamName, streamTestPublicID(t, publicid.Stream)); err != nil {
+		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, $9)
+	`, streamID, ids.orgID, ids.projectID, ids.environmentID, sessionID, deploymentStreamID, streamName, direction, "schema-"+streamName, streamTestPublicID(t, publicid.Stream)); err != nil {
 		t.Fatal(err)
 	}
 	return sessionID, streamID

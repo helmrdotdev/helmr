@@ -27,7 +27,7 @@ func LoadControl() (Control, error) {
 		ClickHousePassword:      envString("HELMR_CLICKHOUSE_PASSWORD"),
 		CASURI:                  envString("HELMR_CAS_URI"),
 		WorkerTokenSigningKey:   envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerBootstrapToken:    envString("HELMR_WORKER_BOOTSTRAP_TOKEN"),
+		WorkerGroupsJSON:        envString("HELMR_WORKER_GROUPS"),
 		SetupToken:              envString("HELMR_SETUP_TOKEN"),
 		AuthSecret:              envString("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:     envString("HELMR_SECRET_ENCRYPTION_KEY"),
@@ -69,6 +69,9 @@ func LoadControl() (Control, error) {
 	}
 	if cfg.WorkerGroupID == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
+	}
+	if cfg.WorkerGroupsJSON == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUPS is required")
 	}
 	if cfg.RegionID == "" {
 		return cfg, errors.New("HELMR_REGION_ID is required")

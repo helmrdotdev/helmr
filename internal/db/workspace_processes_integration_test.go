@@ -20,7 +20,7 @@ func TestCloseWorkspaceExecStdinSetsClosedAt(t *testing.T) {
 		Command:        []byte(`["cat"]`),
 		EnvShape:       []byte(`{}`),
 		FilesystemMode: db.WorkspaceFilesystemModeWrite,
-		State:          db.WorkspaceProcessStateRunning,
+		State:          db.WorkspaceProcessStateQueued,
 		Detached:       false,
 		OrgID:          pgvalue.UUID(ids.orgID),
 		ProjectID:      pgvalue.UUID(ids.projectID),

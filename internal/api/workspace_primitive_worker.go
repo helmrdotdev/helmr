@@ -7,12 +7,13 @@ import (
 )
 
 type WorkerWorkspacePrimitiveScope struct {
-	OrgID                string `json:"org_id"`
-	ProjectID            string `json:"project_id"`
-	EnvironmentID        string `json:"environment_id"`
-	WorkspaceID          string `json:"workspace_id"`
-	WorkspaceMountID     string `json:"workspace_mount_id"`
-	RuntimeInstanceToken string `json:"runtime_instance_token"`
+	OrgID             string `json:"org_id"`
+	ProjectID         string `json:"project_id"`
+	EnvironmentID     string `json:"environment_id"`
+	WorkspaceID       string `json:"workspace_id"`
+	WorkspaceMountID  string `json:"workspace_mount_id"`
+	RuntimeInstanceID string `json:"runtime_instance_id"`
+	WorkerEpoch       int64  `json:"worker_epoch"`
 }
 
 type WorkerWorkspaceExecStartedRequest struct {

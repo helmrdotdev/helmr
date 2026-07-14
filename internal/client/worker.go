@@ -4,39 +4,68 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 )
 
-func (c *Client) RegisterWorker(ctx context.Context, bootstrapToken string, resourceID string) (api.WorkerRegisterResponse, error) {
-	var response api.WorkerRegisterResponse
-	if err := c.postJSON(ctx, "/api/worker/register", api.WorkerRegisterRequest{
-		BootstrapToken: bootstrapToken,
-		ResourceID:     resourceID,
-	}, &response); err != nil {
-		return api.WorkerRegisterResponse{}, err
+func (c *Client) CreateWorkerEnrollmentChallenge(ctx context.Context, workerGroupID string) (api.WorkerEnrollmentChallengeResponse, error) {
+	var response api.WorkerEnrollmentChallengeResponse
+	if err := c.postJSON(ctx, "/api/worker/enrollment/challenge", api.WorkerEnrollmentChallengeRequest{WorkerGroupID: workerGroupID}, &response); err != nil {
+		return api.WorkerEnrollmentChallengeResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) LeaseRun(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerRunLeaseResponse, error) {
+func (c *Client) EnrollWorker(ctx context.Context, request api.WorkerEnrollmentRequest) (api.WorkerEnrollmentResponse, error) {
+	var response api.WorkerEnrollmentResponse
+	if err := c.postJSON(ctx, "/api/worker/enrollment", request, &response); err != nil {
+		return api.WorkerEnrollmentResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error) {
 	var response api.WorkerRunLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", api.WorkerRunLeaseRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", api.WorkerRunLeaseRequest{}, &response); err != nil {
 		return api.WorkerRunLeaseResponse{}, err
 	}
 	return response, nil
 }
 
-func (c *Client) LeaseDeploymentBuild(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerDeploymentBuildLeaseResponse, error) {
+func (c *Client) RejectRun(ctx context.Context, request api.WorkerRejectRunRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/reject", request, nil)
+}
+
+func (c *Client) LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error) {
 	var response api.WorkerDeploymentBuildLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{Capabilities: capabilities}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/lease", api.WorkerDeploymentBuildLeaseRequest{}, &response); err != nil {
 		return api.WorkerDeploymentBuildLeaseResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error) {
+	var response api.WorkerDeploymentBuildStartResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/start", api.WorkerDeploymentBuildStartRequest{Lease: lease}, &response); err != nil {
+		return api.WorkerDeploymentBuildStartResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error) {
+	var response api.WorkerDeploymentBuildRenewResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/renew", api.WorkerDeploymentBuildRenewRequest{Lease: lease}, &response); err != nil {
+		return api.WorkerDeploymentBuildRenewResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/deployments/reject", request, nil)
 }
 
 func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error) {
@@ -223,12 +252,77 @@ func (c *Client) ActivateWorker(ctx context.Context, capabilities api.WorkerCapa
 	return response, nil
 }
 
+func (c *Client) ReportWorkerStartupRecovery(ctx context.Context, request api.WorkerStartupRecoveryRequest) error {
+	return c.postWorkerJSON(ctx, "/api/worker/startup-recovery", request, nil)
+}
+
+func (c *Client) ObserveWorker(ctx context.Context, observation api.WorkerObservation) (api.WorkerStatusResponse, error) {
+	var response api.WorkerStatusResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/observe", api.WorkerObserveRequest{Observation: observation}, &response); err != nil {
+		return api.WorkerStatusResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) RenewWorkerCertification(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerStatusResponse, error) {
+	var response api.WorkerStatusResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/certification/renew", api.WorkerCertificationRenewRequest{Capabilities: capabilities}, &response); err != nil {
+		return api.WorkerStatusResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) DrainWorker(ctx context.Context) (api.WorkerStatusResponse, error) {
 	var response api.WorkerStatusResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/drain", struct{}{}, &response); err != nil {
 		return api.WorkerStatusResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) CompleteWorkerDrain(ctx context.Context, request api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error) {
+	const attempts = 3
+	var lastErr error
+	for attempt := range attempts {
+		var response api.WorkerStatusResponse
+		lastErr = c.postWorkerJSON(ctx, "/api/worker/drain/complete", request, &response)
+		if lastErr == nil {
+			return response, nil
+		}
+		if !ambiguousWorkerDrainCompletion(lastErr) || attempt == attempts-1 {
+			break
+		}
+		delay := time.Duration(attempt+1) * 100 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return api.WorkerStatusResponse{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return api.WorkerStatusResponse{}, fmt.Errorf("worker drain completion was not confirmed after %d identical attempts: %w", attempts, lastErr)
+}
+
+func ambiguousWorkerDrainCompletion(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) {
+		return true
+	}
+	switch httpErr.StatusCode {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+func (c *Client) FenceWorker(ctx context.Context, reasonCode string) error {
+	return c.postWorkerJSON(ctx, "/api/worker/fence", api.WorkerFenceRequest{ReasonCode: reasonCode}, nil)
 }
 
 func (c *Client) GetWorkerStatus(ctx context.Context) (api.WorkerStatusResponse, error) {
@@ -239,96 +333,10 @@ func (c *Client) GetWorkerStatus(ctx context.Context) (api.WorkerStatusResponse,
 	return response, nil
 }
 
-func (c *Client) FollowWorkerCommands(ctx context.Context, afterID int64, handle func(api.WorkerCommand) error) error {
-	if afterID < 0 {
-		return fmt.Errorf("after id must be non-negative")
-	}
-	token, err := c.workerToken(ctx)
-	if err != nil {
-		return err
-	}
-	values := url.Values{}
-	if afterID > 0 {
-		values.Set("after_id", strconv.FormatInt(afterID, 10))
-	}
-	path := "/api/worker/commands"
-	if encoded := values.Encode(); encoded != "" {
-		path += "?" + encoded
-	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodGet, path, nil, token)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("accept", "text/event-stream")
-	res, err := c.httpClient.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return decodeError(res)
-	}
-	return readSSE(res.Body, func(eventName string, _ string, data []byte) error {
-		switch eventName {
-		case "worker_command":
-			var command api.WorkerCommand
-			if err := json.Unmarshal(data, &command); err != nil {
-				return err
-			}
-			return handle(command)
-		case "error":
-			var body struct {
-				Error string `json:"error"`
-			}
-			if err := json.Unmarshal(data, &body); err != nil {
-				return err
-			}
-			if body.Error == "" {
-				body.Error = "worker command stream error"
-			}
-			return fmt.Errorf("%s", body.Error)
-		default:
-			return nil
-		}
-	})
-}
-
-func (c *Client) AcknowledgeWorkerCommand(ctx context.Context, id int64) (api.WorkerCommandAckResponse, error) {
-	var response api.WorkerCommandAckResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/commands/ack", api.WorkerCommandAckRequest{ID: id}, &response); err != nil {
-		return api.WorkerCommandAckResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) AcceptWorkerCommand(ctx context.Context, id int64) (api.WorkerCommandAcceptResponse, error) {
-	var response api.WorkerCommandAcceptResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/commands/accept", api.WorkerCommandAcceptRequest{ID: id}, &response); err != nil {
-		return api.WorkerCommandAcceptResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CreatePreparedRuntimeInstance(ctx context.Context, request api.WorkerPreparedRuntimeInstanceCreateRequest) (api.WorkerPreparedRuntimeInstanceCreateResponse, error) {
-	var response api.WorkerPreparedRuntimeInstanceCreateResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-instances/prepared-runtime", request, &response); err != nil {
-		return api.WorkerPreparedRuntimeInstanceCreateResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) CreateRuntimePrepareInstance(ctx context.Context, request api.WorkerRuntimePrepareInstanceCreateRequest) (api.WorkerRuntimePrepareInstanceCreateResponse, error) {
-	var response api.WorkerRuntimePrepareInstanceCreateResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-instances/prepared-runtime-warm", request, &response); err != nil {
-		return api.WorkerRuntimePrepareInstanceCreateResponse{}, err
-	}
-	return response, nil
-}
-
-func (c *Client) RenewRuntimeInstance(ctx context.Context, request api.WorkerRuntimeInstanceRenewRequest) (api.WorkerRuntimeInstance, error) {
-	var response api.WorkerRuntimeInstance
-	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-instances/renew", request, &response); err != nil {
-		return api.WorkerRuntimeInstance{}, err
+func (c *Client) NextRuntimeReconcileTarget(ctx context.Context) (api.WorkerRuntimeReconcileResponse, error) {
+	var response api.WorkerRuntimeReconcileResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/runtime-instances/reconcile", api.WorkerRuntimeReconcileRequest{}, &response); err != nil {
+		return api.WorkerRuntimeReconcileResponse{}, err
 	}
 	return response, nil
 }
@@ -464,10 +472,18 @@ func (c *Client) CreateRunWait(ctx context.Context, request api.WorkerCreateRunW
 	return response, nil
 }
 
-func (c *Client) ClaimRunCheckpointWait(ctx context.Context, request api.WorkerCheckpointClaimRequest) (api.WorkerCheckpointClaimResponse, error) {
-	var response api.WorkerCheckpointClaimResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/claim", request, &response); err != nil {
-		return api.WorkerCheckpointClaimResponse{}, err
+func (c *Client) PollRunWait(ctx context.Context, request api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error) {
+	var response api.WorkerRunWaitPollResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/poll", request, &response); err != nil {
+		return api.WorkerRunWaitPollResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error) {
+	var response api.WorkerRunWaitResumeAckResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/resume-ack", request, &response); err != nil {
+		return api.WorkerRunWaitResumeAckResponse{}, err
 	}
 	return response, nil
 }

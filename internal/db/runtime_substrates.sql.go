@@ -12,7 +12,7 @@ import (
 )
 
 const getRuntimeSubstrateForSandbox = `-- name: GetRuntimeSubstrateForSandbox :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.worker_group_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_sandbox_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
+SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_sandbox_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
@@ -32,25 +32,20 @@ SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.work
    AND deployments.project_id = deployment_sandboxes.project_id
    AND deployments.environment_id = deployment_sandboxes.environment_id
    AND deployments.id = deployment_sandboxes.deployment_id
-  JOIN worker_groups
-    ON worker_groups.id = runtime_substrates.worker_group_id
-   AND worker_groups.state IN ('active', 'draining')
  WHERE runtime_substrates.org_id = $1
-   AND runtime_substrates.worker_group_id = $2
-   AND runtime_substrates.project_id = $3
-   AND runtime_substrates.environment_id = $4
-   AND runtime_substrates.deployment_sandbox_id = $5
-   AND runtime_substrates.substrate_digest = $6
-   AND runtime_substrates.substrate_format = $7
-   AND runtime_substrates.builder_abi = $8
-   AND runtime_substrates.layout_abi = $9
+   AND runtime_substrates.project_id = $2
+   AND runtime_substrates.environment_id = $3
+   AND runtime_substrates.deployment_sandbox_id = $4
+   AND runtime_substrates.substrate_digest = $5
+   AND runtime_substrates.substrate_format = $6
+   AND runtime_substrates.builder_abi = $7
+   AND runtime_substrates.layout_abi = $8
    AND runtime_substrates.retired_at IS NULL
  LIMIT 1
 `
 
 type GetRuntimeSubstrateForSandboxParams struct {
 	OrgID               pgtype.UUID `json:"org_id"`
-	WorkerGroupID       string      `json:"worker_group_id"`
 	ProjectID           pgtype.UUID `json:"project_id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
@@ -63,7 +58,6 @@ type GetRuntimeSubstrateForSandboxParams struct {
 type GetRuntimeSubstrateForSandboxRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
-	WorkerGroupID             string             `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID        `json:"deployment_sandbox_id"`
@@ -87,7 +81,6 @@ type GetRuntimeSubstrateForSandboxRow struct {
 func (q *Queries) GetRuntimeSubstrateForSandbox(ctx context.Context, arg GetRuntimeSubstrateForSandboxParams) (GetRuntimeSubstrateForSandboxRow, error) {
 	row := q.db.QueryRow(ctx, getRuntimeSubstrateForSandbox,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -100,7 +93,6 @@ func (q *Queries) GetRuntimeSubstrateForSandbox(ctx context.Context, arg GetRunt
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,
@@ -127,7 +119,6 @@ const upsertRuntimeSubstrate = `-- name: UpsertRuntimeSubstrate :one
 INSERT INTO runtime_substrates (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -152,23 +143,21 @@ INSERT INTO runtime_substrates (
     $9,
     $10,
     $11,
-    $12,
-    COALESCE($13::jsonb, '{}'::jsonb),
-    $14,
+    COALESCE($12::jsonb, '{}'::jsonb),
+    $13,
     now()
 )
-ON CONFLICT (org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
+ON CONFLICT (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
 DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),
        updated_at = now()
-RETURNING id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
 `
 
 type UpsertRuntimeSubstrateParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
-	WorkerGroupID             string      `json:"worker_group_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
 	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
@@ -186,7 +175,6 @@ func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeS
 	row := q.db.QueryRow(ctx, upsertRuntimeSubstrate,
 		arg.ID,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.DeploymentSandboxID,
@@ -203,7 +191,6 @@ func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeS
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentSandboxID,

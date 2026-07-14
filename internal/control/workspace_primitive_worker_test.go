@@ -49,7 +49,7 @@ func TestWorkspaceExecTerminalEventMatchesOnlySamePayload(t *testing.T) {
 		State:            db.WorkspaceProcessStateExited,
 		ExitCode:         pgtype.Int4{Int32: 7, Valid: true},
 		Signal:           "",
-		Error:            []byte(`{"message":"done"}`),
+		TerminalError:    []byte(`{"message":"done"}`),
 	}
 	if !workspaceExecTerminalEventMatches(row, workspaceMountID, db.WorkspaceProcessStateExited, pgtype.Int4{Int32: 7, Valid: true}, "", []byte(`{"message":"done"}`)) {
 		t.Fatal("same exec terminal event did not match")
@@ -89,7 +89,7 @@ func TestWorkspacePtyLifecycleEventMatchesOnlySamePayload(t *testing.T) {
 	failed := db.WorkspaceProcess{
 		WorkspaceMountID: workspaceMountID,
 		State:            db.WorkspaceProcessStateFailed,
-		Error:            []byte(`{"message":"closed"}`),
+		TerminalError:    []byte(`{"message":"closed"}`),
 	}
 	if !workspacePtyTerminalEventMatches(failed, workspaceMountID, true, []byte(`{"message":"closed"}`)) {
 		t.Fatal("same failed pty event did not match")

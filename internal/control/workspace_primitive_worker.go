@@ -36,22 +36,23 @@ func (s *Server) validateWorkerWorkspacePrimitiveScope(ctx context.Context, work
 	if err != nil {
 		return db.WorkspaceMount{}, badRequest(err)
 	}
-	runtimeInstanceToken := strings.TrimSpace(scope.RuntimeInstanceToken)
-	if runtimeInstanceToken == "" {
-		return db.WorkspaceMount{}, badRequest(errors.New("runtime_instance_token is required"))
+	runtimeInstanceID, err := parseRequiredWorkspaceUUID("runtime_instance_id", scope.RuntimeInstanceID)
+	if err != nil {
+		return db.WorkspaceMount{}, badRequest(err)
+	}
+	if scope.WorkerEpoch <= 0 || scope.WorkerEpoch != worker.WorkerEpoch {
+		return db.WorkspaceMount{}, badRequest(errors.New("worker_epoch must match the authenticated worker epoch"))
 	}
 	mount, err := s.db.GetWorkspaceMountForWorkerPrimitiveScope(ctx, db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
-		OrgID:                orgID,
-		WorkerGroupID:        worker.WorkerGroupID,
-		ProjectID:            projectID,
-		EnvironmentID:        environmentID,
-		WorkspaceID:          workspaceID,
-		ID:                   workspaceMountID,
-		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeInstanceToken: runtimeInstanceToken,
+		OrgID: orgID, WorkspaceID: workspaceID, ID: workspaceMountID,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: scope.WorkerEpoch,
+		RuntimeInstanceID: runtimeInstanceID,
 	})
 	if err != nil {
 		return db.WorkspaceMount{}, err
+	}
+	if mount.ProjectID != projectID || mount.EnvironmentID != environmentID {
+		return db.WorkspaceMount{}, forbidden(errors.New("workspace primitive scope does not match the mount"))
 	}
 	return mount, nil
 }

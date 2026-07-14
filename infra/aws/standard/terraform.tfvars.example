@@ -43,9 +43,9 @@ database_skip_final_snapshot   = false
 # Optional custom builds. Leave null to use the official release artifacts.
 control_image = null
 worker_ami_id = null
+worker_allowed_ami_ids = []
 
 create_worker           = false
-worker_desired_capacity = 0
 worker_min_size         = 0
 worker_root_volume_size_gb    = 500
 worker_root_volume_iops       = 12000

@@ -61,15 +61,14 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, badRequest(err))
 			return
 		}
-		s.followRunLogs(w, r, actor.OrgID, summary.WorkerGroupID, runID, cursor)
+		s.followRunLogs(w, r, actor.OrgID, runID, cursor)
 		return
 	}
 	logs, err := s.telemetryReader.GetRunLogSnapshot(r.Context(), telemetry.RunLogSnapshotQuery{
-		StdoutLimit:   maxRunLogSnapshotBytes,
-		StderrLimit:   maxRunLogSnapshotBytes,
-		OrgID:         actor.OrgID,
-		WorkerGroupID: summary.WorkerGroupID,
-		RunID:         runID,
+		StdoutLimit: maxRunLogSnapshotBytes,
+		StderrLimit: maxRunLogSnapshotBytes,
+		OrgID:       actor.OrgID,
+		RunID:       runID,
 	})
 	if err != nil {
 		s.log.Error("get run logs failed", "run_id", runID.String(), "error", err)
@@ -86,7 +85,7 @@ func (s *Server) getRunLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) {
+func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
 		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
@@ -98,7 +97,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runLogStreamFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadRunLogs(ctx, orgID, workerGroupID, runID, cursor, func(chunk api.RunLogChunk) error {
+	err := s.eventStream.ReadRunLogs(ctx, orgID, runID, cursor, func(chunk api.RunLogChunk) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", chunk.ID)
 		_, _ = fmt.Fprint(w, "event: run_log\n")
 		_, _ = fmt.Fprint(w, "data: ")
@@ -118,7 +117,7 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	}, func() error {
 		run, err := s.db.GetRunSummary(ctx, db.GetRunSummaryParams{OrgID: pgvalue.UUID(orgID), ID: pgvalue.UUID(runID)})
 		if isNoRows(err) || (err == nil && api.RunStatusIsTerminal(string(run.Status))) {
-			pending, pendingErr := s.hasUnpublishedRunLogs(ctx, orgID, workerGroupID, runID)
+			pending, pendingErr := s.hasUnpublishedRunLogs(ctx, orgID, runID)
 			if pendingErr != nil {
 				return pendingErr
 			}
@@ -140,15 +139,14 @@ func (s *Server) followRunLogs(w http.ResponseWriter, r *http.Request, orgID uui
 	}
 }
 
-func (s *Server) hasUnpublishedRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID) (bool, error) {
+func (s *Server) hasUnpublishedRunLogs(ctx context.Context, orgID uuid.UUID, runID uuid.UUID) (bool, error) {
 	for _, stream := range []api.WorkerLogStream{api.WorkerLogStreamStdout, api.WorkerLogStreamStderr} {
 		pending, err := s.db.HasUnpublishedLiveTelemetryOutbox(ctx, db.HasUnpublishedLiveTelemetryOutboxParams{
-			OrgID:         pgvalue.UUID(orgID),
-			WorkerGroupID: workerGroupID,
-			StreamKind:    db.TelemetryStreamKindRunLog,
-			SourceKind:    "run",
-			SourceID:      pgvalue.UUID(runID),
-			StreamName:    string(stream),
+			OrgID:      pgvalue.UUID(orgID),
+			StreamKind: db.TelemetryStreamKindRunLog,
+			SourceKind: "run",
+			SourceID:   pgvalue.UUID(runID),
+			StreamName: string(stream),
 		})
 		if err != nil {
 			return false, err
@@ -160,14 +158,13 @@ func (s *Server) hasUnpublishedRunLogs(ctx context.Context, orgID uuid.UUID, wor
 	return false, nil
 }
 
-func (s *Server) hasUnpublishedTerminalOutput(ctx context.Context, orgID uuid.UUID, workerGroupID string, resourceKind string, resourceID uuid.UUID, streamName string) (bool, error) {
+func (s *Server) hasUnpublishedTerminalOutput(ctx context.Context, orgID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) (bool, error) {
 	return s.db.HasUnpublishedLiveTelemetryOutbox(ctx, db.HasUnpublishedLiveTelemetryOutboxParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
-		StreamKind:    db.TelemetryStreamKindTerminalOutput,
-		SourceKind:    resourceKind,
-		SourceID:      pgvalue.UUID(resourceID),
-		StreamName:    streamName,
+		OrgID:      pgvalue.UUID(orgID),
+		StreamKind: db.TelemetryStreamKindTerminalOutput,
+		SourceKind: resourceKind,
+		SourceID:   pgvalue.UUID(resourceID),
+		StreamName: streamName,
 	})
 }
 

@@ -58,7 +58,6 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 	defer cancel()
 	query := telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
-		WorkerGroupID: exec.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
@@ -82,7 +81,7 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 			ID:            exec.ID,
 		})
 		if err == nil && execStateTerminal(current.State) {
-			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(exec.OrgID), exec.WorkerGroupID, "workspace_process", pgvalue.MustUUIDValue(exec.ID), stream)
+			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(exec.OrgID), "workspace_process", pgvalue.MustUUIDValue(exec.ID), stream)
 			if pendingErr != nil {
 				return pendingErr
 			}
@@ -97,7 +96,7 @@ func (s *Server) followWorkspaceExecStream(w http.ResponseWriter, r *http.Reques
 					Stream:       stream,
 					State:        string(current.State),
 					Cursor:       cursor,
-					Error:        json.RawMessage(current.Error),
+					Error:        json.RawMessage(current.TerminalError),
 				}); err != nil {
 					return err
 				}
@@ -136,7 +135,6 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 	defer cancel()
 	query := telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
-		WorkerGroupID: pty.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),
@@ -160,7 +158,7 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 			ID:            pty.ID,
 		})
 		if err == nil && ptyStateTerminal(current.State) {
-			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(pty.OrgID), pty.WorkerGroupID, "workspace_process", pgvalue.MustUUIDValue(pty.ID), workspaceStreamOutput)
+			pending, pendingErr := s.hasUnpublishedTerminalOutput(ctx, pgvalue.MustUUIDValue(pty.OrgID), "workspace_process", pgvalue.MustUUIDValue(pty.ID), workspaceStreamOutput)
 			if pendingErr != nil {
 				return pendingErr
 			}
@@ -175,7 +173,7 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 					Stream:       workspaceStreamOutput,
 					State:        string(current.State),
 					Cursor:       cursor,
-					Error:        json.RawMessage(current.Error),
+					Error:        json.RawMessage(current.TerminalError),
 				}); err != nil {
 					return err
 				}
@@ -203,7 +201,6 @@ func (s *Server) followWorkspacePtyOutput(w http.ResponseWriter, r *http.Request
 func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.WorkspaceProcess, stream string, cursor int64, limit int32) ([]api.WorkspaceExecStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(exec.OrgID),
-		WorkerGroupID: exec.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(exec.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(exec.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(exec.WorkspaceID),
@@ -226,7 +223,6 @@ func (s *Server) listWorkspaceExecTerminalOutput(ctx context.Context, exec db.Wo
 func (s *Server) listWorkspacePtyTerminalOutput(ctx context.Context, pty db.WorkspaceProcess, cursor int64, limit int32) ([]api.WorkspacePtyStreamChunkResponse, int64, error) {
 	page, err := s.telemetryReader.ListTerminalOutput(ctx, telemetry.TerminalOutputQuery{
 		OrgID:         pgvalue.MustUUIDValue(pty.OrgID),
-		WorkerGroupID: pty.WorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(pty.ProjectID),
 		EnvironmentID: pgvalue.MustUUIDValue(pty.EnvironmentID),
 		WorkspaceID:   pgvalue.MustUUIDValue(pty.WorkspaceID),

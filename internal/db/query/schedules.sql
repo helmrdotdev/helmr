@@ -689,7 +689,7 @@ WITH index_entries AS (
     SELECT task_schedules.id AS schedule_id,
            task_schedule_instances.id AS instance_id,
            task_schedules.org_id,
-           worker_groups.id AS worker_group_id,
+           projects.default_region_id AS region_id,
            task_schedules.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.generation,
@@ -703,11 +703,6 @@ WITH index_entries AS (
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                      AND worker_groups.health_state IN ('healthy', 'degraded')
-                      AND worker_groups.routing_fresh_until > now()
      WHERE task_schedules.enabled
        AND task_schedule_instances.enabled
        AND task_schedule_instances.next_fire_at IS NOT NULL
@@ -716,7 +711,7 @@ WITH index_entries AS (
 SELECT schedule_id,
        instance_id,
        org_id,
-       worker_group_id,
+       region_id,
        project_id,
        environment_id,
        generation,
@@ -738,7 +733,7 @@ SELECT schedule_id,
 -- name: ListScheduleInstancesForRegistration :many
 SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.id AS instance_id,
-       worker_groups.id AS worker_group_id,
+       projects.default_region_id AS region_id,
        task_schedules.enabled AS schedule_active,
        task_schedule_instances.enabled AS instance_active,
        task_schedule_instances.generation,
@@ -751,11 +746,6 @@ SELECT task_schedules.id AS schedule_id,
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
  WHERE task_schedules.org_id = sqlc.arg(org_id)
    AND task_schedules.project_id = sqlc.arg(project_id)
    AND task_schedules.id = sqlc.arg(schedule_id)
@@ -770,11 +760,6 @@ SELECT task_schedule_instances.retry_after
                    AND environments.id = task_schedule_instances.environment_id
   JOIN projects ON projects.org_id = task_schedule_instances.org_id
                AND projects.id = task_schedule_instances.project_id
-  JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                  AND worker_groups.region_id = projects.default_region_id
-                  AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
  WHERE task_schedule_instances.id = sqlc.arg(instance_id)
    AND task_schedule_instances.generation = sqlc.arg(generation)
    AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
@@ -786,7 +771,7 @@ SELECT task_schedule_instances.retry_after
 SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.id AS instance_id,
        task_schedules.org_id,
-       worker_groups.id AS worker_group_id,
+       projects.default_region_id AS region_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
        task_schedules.schedule_type,
@@ -810,11 +795,6 @@ SELECT task_schedules.id AS schedule_id,
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
  WHERE task_schedule_instances.id = sqlc.arg(instance_id)
    AND task_schedule_instances.generation = sqlc.arg(generation)
    AND task_schedule_instances.next_fire_at = sqlc.arg(scheduled_at)
@@ -869,11 +849,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
         WHERE task_schedules.id = task_schedule_instances.schedule_id
           AND task_schedules.enabled
    )
@@ -902,11 +877,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        )
@@ -931,11 +901,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        );
@@ -956,11 +921,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        );
@@ -984,11 +944,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = sqlc.arg(worker_group_id)
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        );

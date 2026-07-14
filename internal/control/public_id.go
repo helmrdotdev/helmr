@@ -27,7 +27,7 @@ func newPublicID(prefix publicid.Prefix) (string, error) {
 
 func createWithPublicID[T any](ctx context.Context, slots []publicIDSlot, create func() (T, error)) (T, error) {
 	var zero T
-	for attempt := 0; attempt < publicIDCreateAttempts; attempt++ {
+	for range publicIDCreateAttempts {
 		for _, slot := range slots {
 			if slot.value == nil {
 				return zero, errors.New("public id slot value is nil")

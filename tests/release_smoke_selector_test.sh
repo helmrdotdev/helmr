@@ -38,12 +38,16 @@ run_expect_status() {
 	assert_equal "$expected_status" "$status" "$* status"
 }
 
-run_expect_status 2 env SMOKE_CASES=unknown SKIP_DEPLOY=1 bash "$script"
+result_json="$tmp/result.json"
+run_expect_status 2 env HELMR_SMOKE_RESULT_FILE="$result_json" SMOKE_CASES=unknown SKIP_DEPLOY=1 bash "$script"
 assert_contains "$stderr" "unknown SMOKE_CASES entry: unknown" "unknown selector error"
 assert_contains "$stderr" "known SMOKE_CASES entries:" "unknown selector should print known entries"
+assert_equal "helmrdotdev.release-smoke-result.v1" "$(jq -r '.schema' "$result_json")" "structured smoke result schema"
+assert_equal "failed" "$(jq -r '.status' "$result_json")" "structured smoke terminal status"
+assert_equal "2" "$(jq -r '.exit_code' "$result_json")" "structured smoke exit code"
 
-run_expect_status 2 env SMOKE_CASES=phase9-start-and-wait SKIP_DEPLOY=1 bash "$script"
-assert_contains "$stderr" "SMOKE_CASES=phase9-start-and-wait requires HELMR_API_KEY" "phase9 precondition"
+run_expect_status 2 env SMOKE_CASES=root-api-start-and-wait SKIP_DEPLOY=1 bash "$script"
+assert_contains "$stderr" "SMOKE_CASES=root-api-start-and-wait requires HELMR_API_KEY" "root API precondition"
 
 run_expect_status 2 env SMOKE_CASES=production-secrets SKIP_PRODUCTION=1 SKIP_DEPLOY=1 bash "$script"
 assert_contains "$stderr" "SMOKE_CASES=production-secrets cannot run while SKIP_PRODUCTION=1" "production precondition"

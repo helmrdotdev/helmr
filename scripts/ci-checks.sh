@@ -21,8 +21,14 @@ bash tests/surface_attestation_test.sh
 bash tests/measurement_report_summary_test.sh
 bash tests/release_smoke_selector_test.sh
 bash tests/measurement_preflight_guard_test.sh
+bash tests/auth_readiness_test.sh
+bash tests/validation_campaign_test.sh
+bash tests/validation_evidence_guard_test.sh
 bash tests/release_worker_ami_cleanup_test.sh
 bash tests/release_worker_image_identity_test.sh
+bash tests/aws_dev_smoke_test.sh
+bash tests/aws_dev_debug_test.sh
+bash tests/aws_db_reset_test.sh
 bun run typecheck
 bun run test:ts
 make verify

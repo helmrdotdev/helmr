@@ -1,7 +1,6 @@
 CREATE DATABASE IF NOT EXISTS helmr_telemetry;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
-    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -22,12 +21,11 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.run_logs (
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toDate(ingested_at)
-ORDER BY (org_id, worker_group_id, run_id, seq)
+ORDER BY (org_id, run_id, seq)
 TTL ingested_at + INTERVAL 90 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
-    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -56,12 +54,11 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.events (
 )
 ENGINE = ReplacingMergeTree(ingested_at)
 PARTITION BY toDate(ingested_at)
-ORDER BY (org_id, worker_group_id, subject_kind, subject_id, seq)
+ORDER BY (org_id, subject_kind, subject_id, seq)
 TTL ingested_at + INTERVAL 90 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.terminal_outputs (
-    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
@@ -86,22 +83,24 @@ TTL ingested_at + INTERVAL 90 DAY DELETE
 SETTINGS ttl_only_drop_parts = 1;
 
 CREATE TABLE IF NOT EXISTS helmr_telemetry.meter_events (
-    worker_group_id String,
     org_id UUID,
     project_id UUID,
     environment_id UUID,
     source_type LowCardinality(String),
     source_id UUID,
-    run_id UUID,
-    attempt_number Nullable(Int32),
+    run_id Nullable(UUID),
+    deployment_id Nullable(UUID),
+    attempt_number Int32,
     trace_id String,
     span_id String,
     meter LowCardinality(String),
     quantity Decimal(38, 9),
     unit LowCardinality(String),
+    measured_from Nullable(DateTime64(3, 'UTC')),
     measured_to Nullable(DateTime64(3, 'UTC')),
     details String,
     idempotency_key String,
+    idempotency_fingerprint String,
     occurred_at DateTime64(3, 'UTC'),
     created_at DateTime64(3, 'UTC'),
     ingested_at DateTime64(3, 'UTC') DEFAULT now64(3)

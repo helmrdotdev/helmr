@@ -7,7 +7,6 @@ import (
 )
 
 const (
-	WorkerBootstrapTokenPrefix = "helmr_bootstrap_"
 	WorkerInstanceSecretPrefix = "helmr_worker_instance_"
 	workerSecretBytes          = 32
 )
@@ -19,43 +18,26 @@ type GeneratedWorkerToken struct {
 }
 
 func GenerateWorkerInstanceSecret(hashSecret []byte) (GeneratedWorkerToken, error) {
-	return generatePrefixedWorkerToken(hashSecret, WorkerInstanceSecretPrefix)
-}
-
-func WorkerKeyPrefix(key string) string {
-	key = strings.TrimSpace(key)
-	prefix, ok := workerTokenPrefix(key)
-	if !ok || len(key) <= len(prefix)+8 {
-		return key
-	}
-	return key[:len(prefix)+8]
-}
-
-func generatePrefixedWorkerToken(hashSecret []byte, prefix string) (GeneratedWorkerToken, error) {
 	raw, err := token.GenerateOpaque(workerSecretBytes)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
 	}
-	token := prefix + raw
-	hash, err := HashToken(hashSecret, token)
+	workerToken := WorkerInstanceSecretPrefix + raw
+	hash, err := HashToken(hashSecret, workerToken)
 	if err != nil {
 		return GeneratedWorkerToken{}, err
 	}
 	return GeneratedWorkerToken{
-		Raw:       token,
-		KeyPrefix: WorkerKeyPrefix(token),
+		Raw:       workerToken,
+		KeyPrefix: WorkerKeyPrefix(workerToken),
 		TokenHash: hash,
 	}, nil
 }
 
-func workerTokenPrefix(key string) (string, bool) {
+func WorkerKeyPrefix(key string) string {
 	key = strings.TrimSpace(key)
-	switch {
-	case strings.HasPrefix(key, WorkerBootstrapTokenPrefix):
-		return WorkerBootstrapTokenPrefix, true
-	case strings.HasPrefix(key, WorkerInstanceSecretPrefix):
-		return WorkerInstanceSecretPrefix, true
-	default:
-		return "", false
+	if !strings.HasPrefix(key, WorkerInstanceSecretPrefix) || len(key) <= len(WorkerInstanceSecretPrefix)+8 {
+		return key
 	}
+	return key[:len(WorkerInstanceSecretPrefix)+8]
 }

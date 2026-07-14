@@ -24,11 +24,35 @@ type MaterializingConnector interface {
 	Materialize(context.Context, MaterializeRequest) (Session, error)
 }
 
+// RuntimeCleanupConnector removes physical state for one exact durable runtime
+// owner. A nil result is proof that process, network namespace, and owned
+// filesystem roots for the ID are absent.
+type RuntimeCleanupConnector interface {
+	CleanupRuntime(context.Context, string) error
+}
+
 type Session interface {
 	Stream() io.ReadWriteCloser
 	OpenStream(context.Context) (io.ReadWriteCloser, error)
 	Wait(context.Context) error
 	Close(context.Context) error
+}
+
+// NetworkFacts are CNI-assigned facts observed after runtime materialization.
+// Placement authority must not synthesize them.
+type NetworkFacts struct {
+	HostInterfaceName string
+	GuestAddress      string
+	GatewayAddress    string
+	Subnet            string
+	TapName           string
+	NetNSName         string
+	GuestMAC          string
+}
+
+type NetworkFactSession interface {
+	Session
+	NetworkFacts() (NetworkFacts, error)
 }
 
 type CheckpointableSession interface {
@@ -38,8 +62,10 @@ type CheckpointableSession interface {
 }
 
 type ConnectRequest struct {
-	Network  compute.NetworkPolicy
-	Topology RuntimeTopology
+	ID        string
+	OwnerKind string
+	Network   compute.NetworkPolicy
+	Topology  RuntimeTopology
 }
 
 type RuntimeTopology struct {
@@ -83,6 +109,8 @@ type SnapshotFile struct {
 
 type RestoreRequest struct {
 	ID                   string
+	RuntimeInstanceID    string
+	OwnerKind            string
 	VMState              string
 	VMStateMediaType     string
 	ScratchDisk          string
@@ -98,6 +126,7 @@ type RestoreRequest struct {
 
 type MaterializeRequest struct {
 	ID                 string
+	OwnerKind          string
 	RootfsDigest       string
 	ImageDigest        string
 	ImageFormat        string
@@ -107,6 +136,11 @@ type MaterializeRequest struct {
 	Network            compute.NetworkPolicy
 	Topology           RuntimeTopology
 }
+
+const (
+	RuntimeOwnerRuntime = "runtime"
+	RuntimeOwnerBuild   = "build"
+)
 
 type CheckpointIdentity struct {
 	RuntimeBackend      string

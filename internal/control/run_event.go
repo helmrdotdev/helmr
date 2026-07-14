@@ -66,10 +66,10 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("follow") == "1" || strings.Contains(r.Header.Get("accept"), "text/event-stream") {
-		s.followRunEvents(w, r, actor.OrgID, summary.WorkerGroupID, runID, cursor)
+		s.followRunEvents(w, r, actor.OrgID, runID, cursor)
 		return
 	}
-	page, err := s.listRunEvents(r, actor.OrgID, summary.WorkerGroupID, runID, cursor, limit)
+	page, err := s.listRunEvents(r, actor.OrgID, "", runID, cursor, limit)
 	if err != nil {
 		s.log.Error("list run events failed", "run_id", runID.String(), "error", err)
 		writeRunTelemetryError(w, err)
@@ -89,13 +89,13 @@ func (s *Server) getRunEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) listRunEvents(r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, limit int32) (telemetry.EventPage, error) {
+	_ = workerGroupID
 	return s.telemetryReader.ListEvents(r.Context(), telemetry.EventQuery{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		SubjectType:   eventSubjectTypeRun,
-		SubjectID:     runID,
-		AfterSeq:      cursor,
-		Limit:         limit + 1,
+		OrgID:       orgID,
+		SubjectType: eventSubjectTypeRun,
+		SubjectID:   runID,
+		AfterSeq:    cursor,
+		Limit:       limit + 1,
 	})
 }
 
@@ -122,7 +122,7 @@ func eventLimit(r *http.Request) (int32, error) {
 	return int32(parsed), nil
 }
 
-func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64) {
+func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID uuid.UUID, runID uuid.UUID, cursor int64) {
 	if s.eventStream == nil {
 		writeError(w, unavailable(errors.New("event stream is not configured")))
 		return
@@ -134,7 +134,7 @@ func (s *Server) followRunEvents(w http.ResponseWriter, r *http.Request, orgID u
 	encoder := json.NewEncoder(w)
 	ctx, cancel := context.WithTimeout(r.Context(), runEventsFollowMaxDuration)
 	defer cancel()
-	err := s.eventStream.ReadSubject(ctx, orgID, workerGroupID, eventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
+	err := s.eventStream.ReadSubject(ctx, orgID, eventSubjectTypeRun, runID, cursor, func(event api.RunEvent) error {
 		_, _ = fmt.Fprintf(w, "id: %s\n", event.ID)
 		_, _ = fmt.Fprint(w, "event: run_event\n")
 		_, _ = fmt.Fprint(w, "data: ")

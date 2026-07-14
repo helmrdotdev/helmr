@@ -1,6 +1,9 @@
 package compute
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestRunRuntimeRequirementsFromFields(t *testing.T) {
 	requirements, err := RunRuntimeRequirementsFromFields(RunRuntimeRequirementFields{
@@ -59,5 +62,25 @@ func TestRunRuntimeRequirementsFromFieldsLabelsJSONErrors(t *testing.T) {
 	}
 	if got, want := err.Error(), "worker run network policy:"; len(got) < len(want) || got[:len(want)] != want {
 		t.Fatalf("error = %q, want prefix %q", got, want)
+	}
+}
+
+func TestRunRuntimeRequirementsFromFieldsRejectsPhysicalPlacementAuthority(t *testing.T) {
+	_, err := RunRuntimeRequirementsFromFields(RunRuntimeRequirementFields{
+		RequestedMilliCPU:       100,
+		RequestedMemoryMiB:      128,
+		RequestedDiskMiB:        64,
+		RequestedExecutionSlots: 1,
+		RuntimeID:               "runtime",
+		RuntimeArch:             "amd64",
+		RuntimeABI:              "v1",
+		KernelDigest:            "sha256:kernel",
+		InitramfsDigest:         "sha256:initramfs",
+		RootfsDigest:            "sha256:rootfs",
+		CNIProfile:              "default",
+		PlacementJSON:           []byte(`{"worker_group_id":"hidden-authority"}`),
+	})
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("RunRuntimeRequirementsFromFields() error = %v, want unknown field", err)
 	}
 }

@@ -67,6 +67,9 @@ hotpatch a locally built `guestd`, create a hello-world run, and print run detai
 generated URLs, instance IDs, and S3 presigned URLs out of source; pass overrides through environment
 variables when needed.
 
+Before public DNS is cut over, set `CONTROL_URL_OVERRIDE` to an HTTPS endpoint or to loopback HTTP
+backed by a local TLS forwarder. Remote plaintext overrides are rejected.
+
 ## Dev environment modes
 
 Local development is the default for product code that does not need external
@@ -75,30 +78,39 @@ shells for build, unit, CLI, console, and control-plane checks.
 
 AWS control mode is for changes that need managed callbacks, OAuth login,
 CloudFront/ALB behavior, RDS, Redis/Valkey, S3, or ECS. `dev-control-tfvars`
-enables one control ECS task and one dispatcher ECS task by default and scales
-any existing worker capacity to zero. It also disables NAT Gateway by default
-and runs control/dispatcher/migration tasks with public IPs, while security
-groups still only allow inbound traffic from the ALB.
-Set `DEV_CONTROL_KEEP_WORKER=1` only when intentionally keeping run capacity up.
+enables one control ECS task and one dispatcher ECS task by default. A
+control-only stack disables NAT Gateway and runs control/dispatcher/migration
+tasks with public IPs, while security groups still only allow inbound traffic
+from the ALB. A stack that already owns worker fleets cannot be
+converted back to control-only mode in place: use `DEV_CONTROL_KEEP_WORKER=1`
+to preserve the worker topology or destroy the ephemeral stack.
 
 AWS run mode is for end-to-end run execution through an isolated worker. Use
 `dev-worker-tfvars` plus `dev-apply` to make the worker capacity durable in
 OpenTofu state; it enables NAT Gateway because private worker instances need
-outbound access to AWS APIs and GitHub. Use `dev-worker-down-tfvars` plus
-`dev-apply` to keep worker resources while stopping worker instances after the
-run check. If worker capacity was running, apply the down state first so drain
-can use NAT, then run `dev-control-tfvars` plus `dev-apply` to remove NAT.
+outbound access to AWS APIs and GitHub. Build and run demand, not an operator or
+OpenTofu, controls the desired capacity. Finish or cancel demand and let the
+application drain both fleets to zero before `dev-destroy` removes worker
+resources and NAT.
 
-`aws-dev-debug.sh control-up [CONTROL_COUNT] [DISPATCHER_COUNT]`,
-`aws-dev-debug.sh worker-up`, and `aws-dev-debug.sh worker-down` are faster
-temporary controls for already-created ECS services or a worker Auto Scaling
-group. Follow them with the matching smoke tfvars apply when the desired cost
-state should be kept as infrastructure state.
+`aws-dev-debug.sh control-up [CONTROL_COUNT] [DISPATCHER_COUNT]` is a temporary
+start control for already-created ECS services. `control-down` and
+`database-down` are limited to control-only stacks. Worker fleets
+intentionally expose no manual service shutdown or ASG scaling command because
+doing so would bypass demand accounting, protected drain, and the application
+controller.
 
-For short idle periods, `aws-dev-debug.sh dev-off` scales worker, control, and
-dispatcher capacity to zero and stops the RDS instance. `aws-dev-debug.sh
-dev-on` starts the database and restores the control and dispatcher services.
+For short idle periods on a control-only stack, `aws-dev-debug.sh dev-off`
+scales control and dispatcher capacity to zero and stops the RDS instance.
+Worker stacks must use the application drain path followed by
+`dev-destroy`; `dev-off` refuses to bypass it. `aws-dev-debug.sh dev-on` starts
+the database and restores the control and dispatcher services.
 `aws-dev-debug.sh status` includes ECS, Redis/Valkey, RDS, and worker state.
+
+Formal AWS worker validation uses
+`dev/aws/run-validation-campaign.sh`; see `dev/aws/README.md`. It adds a
+resumable manifest/evidence gate around these scripts and keeps cleanup
+available even when source or manifest drift invalidates a campaign.
 Stopped RDS instances can restart automatically after seven days, and Redis,
 load balancers, endpoints, logs, and ClickHouse Cloud can still carry cost. For
 longer idle periods or throwaway smoke stacks, use `aws-dev-debug.sh

@@ -28,7 +28,6 @@ WITH target AS MATERIALIZED (
                  AND tokens.environment_id = waits.environment_id
                  AND tokens.id = waits.token_id
      WHERE waits.org_id = sqlc.arg(org_id)
-       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND waits.project_id = sqlc.arg(project_id)
        AND waits.environment_id = sqlc.arg(environment_id)
        AND run_waits.id = sqlc.arg(run_wait_id)::uuid
@@ -65,20 +64,16 @@ updated_wait AS (
        AND waits.id = target.wait_id
     RETURNING waits.*
 ),
-updated_run_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+resolved_run_wait AS (
+    SELECT run_waits.*
       FROM target
       JOIN updated_wait ON updated_wait.id = target.wait_id
-     WHERE run_waits.org_id = target.org_id
-       AND run_waits.id = target.run_wait_id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.*
+      JOIN run_waits ON run_waits.org_id = target.org_id
+                    AND run_waits.id = target.run_wait_id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
-SELECT updated_run_wait.*
-  FROM updated_run_wait;
+SELECT resolved_run_wait.*
+  FROM resolved_run_wait;
 
 -- name: ResolveDueTimerWaits :many
 WITH due_waits AS MATERIALIZED (
@@ -89,7 +84,6 @@ WITH due_waits AS MATERIALIZED (
       JOIN run_waits ON run_waits.org_id = waits.org_id
                     AND run_waits.wait_id = waits.id
      WHERE waits.org_id = sqlc.arg(org_id)
-       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND waits.kind = 'timer'
        AND waits.state = 'pending'
        AND waits.completed_after <= now()
@@ -109,21 +103,17 @@ completed_waits AS (
        AND waits.id = due_waits.wait_id
     RETURNING waits.id, waits.org_id
 ),
-updated_run_waits AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+resolved_run_waits AS (
+    SELECT run_waits.*
       FROM due_waits
       JOIN completed_waits ON completed_waits.org_id = due_waits.org_id
                           AND completed_waits.id = due_waits.wait_id
-     WHERE run_waits.org_id = due_waits.org_id
-       AND run_waits.id = due_waits.run_wait_id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.*
+      JOIN run_waits ON run_waits.org_id = due_waits.org_id
+                    AND run_waits.id = due_waits.run_wait_id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT *
-  FROM updated_run_waits;
+  FROM resolved_run_waits;
 
 -- name: ResolveDueTimerWaitForRunWait :one
 WITH due_wait AS MATERIALIZED (
@@ -154,18 +144,14 @@ completed_wait AS (
        AND waits.id = due_wait.wait_id
     RETURNING waits.id, waits.org_id
 ),
-updated_run_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+resolved_run_wait AS (
+    SELECT run_waits.*
       FROM due_wait
       JOIN completed_wait ON completed_wait.org_id = due_wait.org_id
                          AND completed_wait.id = due_wait.wait_id
-     WHERE run_waits.org_id = due_wait.org_id
-       AND run_waits.id = due_wait.run_wait_id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.*
+      JOIN run_waits ON run_waits.org_id = due_wait.org_id
+                    AND run_waits.id = due_wait.run_wait_id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT *
-  FROM updated_run_wait;
+  FROM resolved_run_wait;

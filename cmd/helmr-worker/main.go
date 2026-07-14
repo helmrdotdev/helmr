@@ -15,6 +15,12 @@ func main() {
 				os.Exit(1)
 			}
 			return
+		case "fence":
+			if err := runFence(); err != nil {
+				log.Error("fence worker", "error", err)
+				os.Exit(1)
+			}
+			return
 		case "status":
 			if err := runStatus(log); err != nil {
 				log.Error("get worker status", "error", err)
@@ -30,4 +36,17 @@ func main() {
 		log.Error("worker stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func identityRoles(roles []string) (bool, bool) {
+	var run, build bool
+	for _, role := range roles {
+		switch role {
+		case "run":
+			run = true
+		case "build":
+			build = true
+		}
+	}
+	return run, build
 }

@@ -76,6 +76,53 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	}
 }
 
+func TestCleanupRuntimeRequiresCanonicalExactOwnership(t *testing.T) {
+	stateDir := t.TempDir()
+	jailerDir := t.TempDir()
+	id := "00000000-0000-0000-0000-000000000701"
+	statePath := filepath.Join(stateDir, id)
+	if err := os.MkdirAll(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(vm.RuntimeOwnerBuild+"\n"+id+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
+	if err := connector.CleanupRuntime(context.Background(), id); err == nil || !strings.Contains(err.Error(), "ownership evidence") {
+		t.Fatalf("CleanupRuntime() error = %v, want exact ownership rejection", err)
+	}
+	if _, err := os.Stat(statePath); err != nil {
+		t.Fatalf("mismatched owner state was removed: %v", err)
+	}
+	if err := connector.CleanupRuntime(context.Background(), strings.ToUpper(id)); err == nil {
+		t.Fatal("non-canonical owner id was accepted")
+	}
+}
+
+func TestGuestSessionExposesActualCNINetworkFacts(t *testing.T) {
+	cfg := (Config{}).WithDefaults()
+	session := &guestSession{cfg: cfg, machine: &firecracker.Machine{Cfg: firecracker.Config{
+		NetNS: "/var/run/netns/0190f9c2-aaaa-7bbb-8ccc-0123456789ab",
+		NetworkInterfaces: firecracker.NetworkInterfaces{{StaticConfiguration: &firecracker.StaticNetworkConfiguration{
+			HostDevName: "tap7f3a", MacAddress: "06:00:ac:10:00:02",
+			IPConfiguration: &firecracker.IPConfiguration{
+				IPAddr:  net.IPNet{IP: net.IPv4(172, 16, 0, 2), Mask: net.CIDRMask(24, 32)},
+				Gateway: net.IPv4(172, 16, 0, 1),
+			},
+		}}},
+	}}}
+	facts, err := session.NetworkFacts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if facts.HostInterfaceName != "tap7f3a" || facts.TapName != "tap7f3a" ||
+		facts.NetNSName != "0190f9c2-aaaa-7bbb-8ccc-0123456789ab" ||
+		facts.GuestAddress != "172.16.0.2" || facts.GatewayAddress != "172.16.0.1" ||
+		facts.Subnet != "172.16.0.0/24" || facts.GuestMAC != "06:00:ac:10:00:02" {
+		t.Fatalf("network facts = %+v", facts)
+	}
+}
+
 func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
 	machine := &firecracker.Machine{
@@ -308,7 +355,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	connector := &Connector{cfg: cfg}
+	connector := testConnector(t, cfg)
 
 	validManifest := snapshotManifest{
 		RecoveryPoint: snapshotRecoveryPointManifest{
@@ -437,7 +484,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 
 func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 	cfg := testRestoreConfig(t)
-	connector := &Connector{cfg: cfg}
+	connector := testConnector(t, cfg)
 	manifestBytes, identity := testRestoreManifestAndIdentity(t, cfg, "checkpoint-1")
 	var manifest snapshotManifest
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
@@ -470,7 +517,7 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 	cfg := testRestoreConfig(t)
 	cfg.StateDir = t.TempDir()
-	connector := &Connector{cfg: cfg}
+	connector := testConnector(t, cfg)
 	dir := t.TempDir()
 	scratchRaw := filepath.Join(dir, "scratch.ext4")
 	scratchPack := filepath.Join(dir, "scratch.filepack")
@@ -526,7 +573,7 @@ func TestRestoreRecordsUnpackPhasesOnFilepackFailure(t *testing.T) {
 func TestUnpackRestoreArtifactReturnsFilepackStats(t *testing.T) {
 	cfg := testRestoreConfig(t)
 	cfg.StateDir = t.TempDir()
-	connector := &Connector{cfg: cfg}
+	connector := testConnector(t, cfg)
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "scratch.ext4")
 	pack := filepath.Join(dir, "scratch.filepack")
@@ -1193,7 +1240,31 @@ func testRestoreConfig(t *testing.T) Config {
 		VCPUCount:     2,
 		MemoryMiB:     256,
 	}).WithDefaults()
+	manifest := runtimeArtifacts{
+		Schema:     runtimeArtifactsSchema,
+		Arch:       runtime.GOARCH,
+		RuntimeABI: runtimeABI,
+		Kernel:     runtimeArtifact{Path: filepath.Base(kernelPath), Digest: testDigest([]byte("kernel")), SizeBytes: int64(len("kernel"))},
+		Initramfs:  runtimeArtifact{Path: filepath.Base(initramfsPath), Digest: testDigest([]byte("initramfs")), SizeBytes: int64(len("initramfs"))},
+		Rootfs:     runtimeArtifact{Path: filepath.Base(rootfsPath), Digest: testDigest([]byte("rootfs")), SizeBytes: int64(len("rootfs"))},
+	}
+	body, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfg.RuntimeArtifactsPath, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	return cfg
+}
+
+func testConnector(t *testing.T, cfg Config) *Connector {
+	t.Helper()
+	artifacts, err := loadRuntimeArtifacts(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Connector{cfg: cfg, artifacts: artifacts}
 }
 
 func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID string) ([]byte, vm.CheckpointIdentity) {

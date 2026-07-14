@@ -3,6 +3,27 @@ variable "name" {
   type        = string
 }
 
+variable "worker_group_id" {
+  description = "Worker group used for identity enrollment and scheduling policy."
+  type        = string
+
+  validation {
+    condition     = trimspace(var.worker_group_id) != ""
+    error_message = "worker_group_id must be non-empty."
+  }
+}
+
+variable "worker_roles" {
+  description = "Roles this worker group is permitted to advertise."
+  type        = set(string)
+  default     = ["run", "build"]
+
+  validation {
+    condition     = length(var.worker_roles) > 0 && length(setsubtract(var.worker_roles, ["run", "build"])) == 0
+    error_message = "worker_roles must contain run, build, or both."
+  }
+}
+
 variable "vpc_id" {
   description = "VPC ID."
   type        = string
@@ -36,12 +57,6 @@ variable "enable_ssm" {
   default     = true
 }
 
-variable "desired_capacity" {
-  description = "Desired worker instance count."
-  type        = number
-  default     = 0
-}
-
 variable "min_size" {
   description = "Minimum worker instance count."
   type        = number
@@ -70,12 +85,22 @@ variable "launch_lifecycle_heartbeat_timeout_seconds" {
   description = "Seconds to wait for worker instance bootstrap before the launch lifecycle hook times out."
   type        = number
   default     = 900
+
+  validation {
+    condition     = var.launch_lifecycle_heartbeat_timeout_seconds > var.lifecycle_heartbeat_interval_seconds
+    error_message = "launch lifecycle timeout must exceed the heartbeat interval."
+  }
 }
 
 variable "termination_lifecycle_heartbeat_timeout_seconds" {
   description = "Seconds to wait for worker drain before the termination lifecycle hook times out."
   type        = number
-  default     = 3600
+  default     = 120
+
+  validation {
+    condition     = var.termination_lifecycle_heartbeat_timeout_seconds > var.lifecycle_heartbeat_interval_seconds
+    error_message = "termination lifecycle timeout must exceed the heartbeat interval."
+  }
 }
 
 variable "termination_drain_timeout_seconds" {
@@ -132,10 +157,21 @@ variable "root_volume_throughput" {
 }
 
 variable "worker_disk_mib" {
-  description = "Optional filesystem capacity advertised by helmr-worker in MiB. When null, helmr-worker detects local filesystem capacity."
+  description = "Optional filesystem capacity ceiling in MiB before worker_disk_reserve_mib is withheld. When null, helmr-worker detects local filesystem capacity."
   type        = number
   default     = null
   nullable    = true
+}
+
+variable "worker_disk_reserve_mib" {
+  description = "Filesystem capacity in MiB withheld from advertised workload, scratch, and cache capacity."
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.worker_disk_reserve_mib > 0
+    error_message = "worker_disk_reserve_mib must be positive."
+  }
 }
 
 variable "vm_vcpus" {
@@ -207,6 +243,30 @@ variable "worker_execution_slots" {
   }
 }
 
+variable "substrate_cache_max_mib" {
+  description = "Optional maximum substrate cache size in MiB. Set explicitly when the VM disk shape and host volume leave less room than the derived cache budget."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.substrate_cache_max_mib == null || var.substrate_cache_max_mib > 0
+    error_message = "substrate_cache_max_mib must be null or positive."
+  }
+}
+
+variable "artifact_cache_max_mib" {
+  description = "Optional maximum artifact cache size in MiB. Set explicitly when the VM disk shape and host volume leave less room than the derived cache budget."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.artifact_cache_max_mib == null || var.artifact_cache_max_mib > 0
+    error_message = "artifact_cache_max_mib must be null or positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
@@ -230,7 +290,6 @@ variable "kms_key_arn" {
 variable "secret_arns" {
   description = "Secret ARNs required by the worker."
   type = object({
-    worker_bootstrap_token    = string
     checkpoint_encryption_key = string
   })
 }

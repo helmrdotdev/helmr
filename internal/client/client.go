@@ -56,6 +56,10 @@ type Client struct {
 type workerAuth struct {
 	workerInstanceID string
 	secret           string
+	serviceID        string
+	protocolVersion  string
+	supportsRun      bool
+	supportsBuild    bool
 	token            string
 	expiresAt        time.Time
 	refreshDone      chan struct{}
@@ -86,6 +90,15 @@ func WithWorkerAuth(workerInstanceID string, secret string) Option {
 	return func(client *Client) {
 		client.worker.workerInstanceID = workerInstanceID
 		client.worker.secret = secret
+	}
+}
+
+func WithWorkerService(serviceID string, protocolVersion string, supportsRun bool, supportsBuild bool) Option {
+	return func(client *Client) {
+		client.worker.serviceID = strings.TrimSpace(serviceID)
+		client.worker.protocolVersion = strings.TrimSpace(protocolVersion)
+		client.worker.supportsRun = supportsRun
+		client.worker.supportsBuild = supportsBuild
 	}
 }
 
@@ -170,32 +183,57 @@ func isLoopbackHost(host string) bool {
 }
 
 func (c *Client) postWorkerJSON(ctx context.Context, path string, in any, out any) error {
-	token, err := c.workerToken(ctx)
+	payload, err := json.Marshal(in)
 	if err != nil {
-		return err
-	}
-	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(in); err != nil {
 		return fmt.Errorf("encode request: %w", err)
 	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, &body, token)
-	if err != nil {
+	for attempt := range 2 {
+		token, err := c.workerToken(ctx)
+		if err != nil {
+			return err
+		}
+		req, err := c.newRequestWithBearer(ctx, http.MethodPost, path, bytes.NewReader(payload), token)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("content-type", "application/json")
+		err = c.doJSON(req, out)
+		if attempt == 0 && IsStatus(err, http.StatusUnauthorized) {
+			c.invalidateWorkerToken(token)
+			continue
+		}
 		return err
 	}
-	req.Header.Set("content-type", "application/json")
-	return c.doJSON(req, out)
+	return errors.New("worker request retry exhausted")
 }
 
 func (c *Client) getWorkerJSON(ctx context.Context, path string, out any) error {
-	token, err := c.workerToken(ctx)
-	if err != nil {
+	for attempt := range 2 {
+		token, err := c.workerToken(ctx)
+		if err != nil {
+			return err
+		}
+		req, err := c.newRequestWithBearer(ctx, http.MethodGet, path, nil, token)
+		if err != nil {
+			return err
+		}
+		err = c.doJSON(req, out)
+		if attempt == 0 && IsStatus(err, http.StatusUnauthorized) {
+			c.invalidateWorkerToken(token)
+			continue
+		}
 		return err
 	}
-	req, err := c.newRequestWithBearer(ctx, http.MethodGet, path, nil, token)
-	if err != nil {
-		return err
+	return errors.New("worker request retry exhausted")
+}
+
+func (c *Client) invalidateWorkerToken(token string) {
+	c.worker.mu.Lock()
+	defer c.worker.mu.Unlock()
+	if c.worker.token == token {
+		c.worker.token = ""
+		c.worker.expiresAt = time.Time{}
 	}
-	return c.doJSON(req, out)
 }
 
 func (c *Client) workerToken(ctx context.Context) (string, error) {
@@ -242,7 +280,14 @@ func (c *Client) workerToken(ctx context.Context) (string, error) {
 
 func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, error) {
 	var body bytes.Buffer
-	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{WorkerInstanceID: c.worker.workerInstanceID, WorkerInstanceSecret: c.worker.secret}); err != nil {
+	if c.worker.serviceID == "" || c.worker.protocolVersion == "" || !c.worker.supportsRun && !c.worker.supportsBuild {
+		return "", time.Time{}, errors.New("worker service id, protocol version, and at least one role are required")
+	}
+	if err := json.NewEncoder(&body).Encode(api.WorkerTokenRequest{
+		WorkerInstanceID: c.worker.workerInstanceID, WorkerInstanceSecret: c.worker.secret,
+		ServiceID: c.worker.serviceID, ProtocolVersion: c.worker.protocolVersion,
+		SupportsRun: c.worker.supportsRun, SupportsBuild: c.worker.supportsBuild,
+	}); err != nil {
 		return "", time.Time{}, fmt.Errorf("encode worker token request: %w", err)
 	}
 	tokenCtx, cancel := context.WithTimeout(ctx, workerTokenRequestTimeout)
@@ -263,6 +308,11 @@ func (c *Client) requestWorkerToken(ctx context.Context) (string, time.Time, err
 		return "", time.Time{}, fmt.Errorf("worker auth response expires_in_seconds must be positive")
 	}
 	return response.Token, time.Now().Add(time.Duration(response.ExpiresInSeconds) * time.Second), nil
+}
+
+func (c *Client) AuthenticateWorker(ctx context.Context) error {
+	_, err := c.workerToken(ctx)
+	return err
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, in any, out any) error {

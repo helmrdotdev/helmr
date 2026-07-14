@@ -61,7 +61,11 @@ export const reviewPullRequest = task({
     const approvalToken = await tokens.create({ timeout: "10m" })
     const decision = await approvalToken.wait({
       schema: z.object({ approved: z.boolean() }),
-      metadata: { prompt: "Post this review summary?", summary },
+      metadata: {
+        prompt: "Post this review summary?",
+        summary,
+        form: { version: 1, type: "approval" },
+      },
     }).unwrap()
     if (!decision.approved) {
       return { status: "skipped" }

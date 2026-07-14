@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 
-import { getRunEvents, listRuns } from "./runs";
+import { completePendingToken, getRunEvents, listRuns } from "./runs";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
@@ -41,4 +41,20 @@ test("gets run events without empty params and escapes ids", async () => {
   await getRunEvents("run/1", "project-1", "env-1");
 
   expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/runs/run%2F1/events");
+});
+
+test("completes a pending token through the authenticated scoped endpoint", async () => {
+  let requestedUrl: string | undefined;
+  let requestedBody: unknown;
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    requestedUrl = String(input);
+    requestedBody = JSON.parse(String(init?.body));
+    return Response.json({ status: "already_completed", token: { id: "token/1" } });
+  }) as typeof fetch;
+
+  const response = await completePendingToken("token/1", { approved: false }, "project-1", "env-1");
+
+  expect(requestedUrl).toBe("/api/projects/project-1/environments/env-1/tokens/token%2F1/complete");
+  expect(requestedBody).toEqual({ data: { approved: false } });
+  expect(response.status).toBe("already_completed");
 });

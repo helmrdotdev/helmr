@@ -1,7 +1,6 @@
 package control
 
 import (
-	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
@@ -11,7 +10,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
@@ -118,34 +116,6 @@ func (s *Server) initialSetupTokenMatches(token string) bool {
 	expectedHash := sha256.Sum256([]byte(expected))
 	providedHash := sha256.Sum256([]byte(provided))
 	return subtle.ConstantTimeCompare(expectedHash[:], providedHash[:]) == 1
-}
-
-type workerBootstrapTokenStore interface {
-	EnsureDefaultWorkerGroup(context.Context, db.EnsureDefaultWorkerGroupParams) (db.WorkerGroup, error)
-	UpsertWorkerBootstrapToken(context.Context, db.UpsertWorkerBootstrapTokenParams) (db.WorkerBootstrapToken, error)
-}
-
-func (s *Server) ensureWorkerBootstrapToken(ctx context.Context, queries workerBootstrapTokenStore) error {
-	if s.workerRegisterToken == "" {
-		return nil
-	}
-	tokenHash, err := auth.HashToken(s.authSecret, s.workerRegisterToken)
-	if err != nil {
-		return err
-	}
-	workerGroup, err := queries.EnsureDefaultWorkerGroup(ctx, db.EnsureDefaultWorkerGroupParams{
-		ID:       s.workerGroupID,
-		RegionID: s.defaultRegionID,
-	})
-	if err != nil {
-		return fmt.Errorf("get default worker group: %w", err)
-	}
-	_, err = queries.UpsertWorkerBootstrapToken(ctx, db.UpsertWorkerBootstrapTokenParams{
-		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		TokenHash:     tokenHash,
-		WorkerGroupID: workerGroup.ID,
-	})
-	return err
 }
 
 func (s *Server) selfHostedMode() bool {

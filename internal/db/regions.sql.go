@@ -18,7 +18,7 @@ VALUES (
     $4,
     $5::region_state,
     $6::region_visibility,
-    $7,
+    $7::text,
     $8::text[]
 )
 ON CONFLICT (id) DO UPDATE

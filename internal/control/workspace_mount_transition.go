@@ -12,8 +12,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (s *Server) workerRenewWorkspaceMountTransition(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (db.WorkspaceMount, error) {
-	params, err := workerRenewWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID, reservationToken)
+func (s *Server) workerRenewWorkspaceMountTransition(ctx context.Context, orgID string, workspaceMountID string) (db.WorkspaceMount, error) {
+	params, err := s.workerRenewWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID)
 	if err != nil {
 		return db.WorkspaceMount{}, err
 	}
@@ -24,8 +24,8 @@ func (s *Server) workerRenewWorkspaceMountTransition(ctx context.Context, orgID 
 	return db.WorkspaceMount(row), nil
 }
 
-func (s *Server) workerMarkWorkspaceMountMountedTransition(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (db.WorkspaceMount, error) {
-	params, err := workerMountedWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID, reservationToken)
+func (s *Server) workerMarkWorkspaceMountMountedTransition(ctx context.Context, orgID string, workspaceMountID string) (db.WorkspaceMount, error) {
+	params, err := s.workerMountedWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID)
 	if err != nil {
 		return db.WorkspaceMount{}, err
 	}
@@ -44,60 +44,66 @@ func (s *Server) workerMarkWorkspaceMountMountedTransition(ctx context.Context, 
 	return mount, nil
 }
 
-func (s *Server) workerStopWorkspaceMountTransition(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (db.WorkspaceMount, error) {
-	params, err := workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID, reservationToken)
+func (s *Server) workerStopWorkspaceMountTransition(ctx context.Context, orgID string, workspaceMountID string) (db.WorkspaceMount, error) {
+	params, err := s.workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID)
 	if err != nil {
 		return db.WorkspaceMount{}, err
 	}
 	row, err := s.db.StopWorkspaceMount(ctx, db.StopWorkspaceMountParams{
-		OrgID:                params.OrgID,
-		ID:                   params.ID,
-		WorkerInstanceID:     params.WorkerInstanceID,
-		RuntimeInstanceToken: params.RuntimeInstanceToken,
+		ReasonCode:        pgtype.Text{String: "worker_unmounted", Valid: true},
+		OrgID:             params.OrgID,
+		ID:                params.ID,
+		WorkerInstanceID:  params.WorkerInstanceID,
+		WorkerEpoch:       params.WorkerEpoch,
+		RuntimeInstanceID: params.RuntimeInstanceID,
+		FencingGeneration: params.FencingGeneration,
 	})
 	if err != nil {
 		return db.WorkspaceMount{}, err
 	}
-	return stoppedWorkspaceMount(row), nil
+	return db.WorkspaceMount(row), nil
 }
 
 type workerWorkspaceMountTransitionIDs struct {
-	OrgID                pgtype.UUID
-	WorkerGroupID        string
-	ID                   pgtype.UUID
-	WorkerInstanceID     pgtype.UUID
-	RuntimeInstanceToken string
+	OrgID             pgtype.UUID
+	ID                pgtype.UUID
+	WorkerInstanceID  pgtype.UUID
+	WorkerEpoch       int64
+	RuntimeInstanceID pgtype.UUID
+	FencingGeneration int64
 }
 
-func workerRenewWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (db.RenewWorkspaceMountParams, error) {
-	params, err := workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID, reservationToken)
+func (s *Server) workerRenewWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string) (db.RenewWorkspaceMountParams, error) {
+	params, err := s.workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID)
 	if err != nil {
 		return db.RenewWorkspaceMountParams{}, err
 	}
 	return db.RenewWorkspaceMountParams{
+		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
 		OrgID:                       params.OrgID,
 		ID:                          params.ID,
 		WorkerInstanceID:            params.WorkerInstanceID,
-		RuntimeInstanceToken:        params.RuntimeInstanceToken,
-		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
+		WorkerEpoch:                 params.WorkerEpoch,
+		RuntimeInstanceID:           params.RuntimeInstanceID,
 	}, nil
 }
 
-func workerMountedWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (db.MarkWorkspaceMountMountedParams, error) {
-	params, err := workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID, reservationToken)
+func (s *Server) workerMountedWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string) (db.MarkWorkspaceMountMountedParams, error) {
+	params, err := s.workerWorkspaceMountTransitionParams(ctx, orgID, workspaceMountID)
 	if err != nil {
 		return db.MarkWorkspaceMountMountedParams{}, err
 	}
 	return db.MarkWorkspaceMountMountedParams{
-		OrgID:                       params.OrgID,
-		ID:                          params.ID,
-		WorkerInstanceID:            params.WorkerInstanceID,
-		RuntimeInstanceToken:        params.RuntimeInstanceToken,
-		GuestdChannelTokenExpiresAt: pgvalue.Timestamptz(time.Now().Add(workspaceMountReservationDuration)),
+		OrgID:             params.OrgID,
+		ID:                params.ID,
+		WorkerInstanceID:  params.WorkerInstanceID,
+		WorkerEpoch:       params.WorkerEpoch,
+		RuntimeInstanceID: params.RuntimeInstanceID,
+		FencingGeneration: params.FencingGeneration,
 	}, nil
 }
 
-func workerWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string, reservationToken string) (workerWorkspaceMountTransitionIDs, error) {
+func (s *Server) workerWorkspaceMountTransitionParams(ctx context.Context, orgID string, workspaceMountID string) (workerWorkspaceMountTransitionIDs, error) {
 	orgUUID, err := uuid.Parse(strings.TrimSpace(orgID))
 	if err != nil {
 		return workerWorkspaceMountTransitionIDs{}, badRequest(errors.New("org_id must be a UUID"))
@@ -106,16 +112,17 @@ func workerWorkspaceMountTransitionParams(ctx context.Context, orgID string, wor
 	if err != nil {
 		return workerWorkspaceMountTransitionIDs{}, badRequest(errors.New("workspace_mount_id must be a UUID"))
 	}
-	token := strings.TrimSpace(reservationToken)
-	if token == "" {
-		return workerWorkspaceMountTransitionIDs{}, badRequest(errors.New("runtime_instance_token is required"))
-	}
 	worker := workerFromContext(ctx)
+	mount, err := s.db.GetWorkspaceMountForWorkerTransition(ctx, db.GetWorkspaceMountForWorkerTransitionParams{
+		OrgID: pgvalue.UUID(orgUUID), ID: pgvalue.UUID(id),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+	})
+	if err != nil {
+		return workerWorkspaceMountTransitionIDs{}, err
+	}
 	return workerWorkspaceMountTransitionIDs{
-		OrgID:                pgvalue.UUID(orgUUID),
-		WorkerGroupID:        worker.WorkerGroupID,
-		ID:                   pgvalue.UUID(id),
-		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeInstanceToken: token,
+		OrgID: pgvalue.UUID(orgUUID), ID: pgvalue.UUID(id),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		RuntimeInstanceID: mount.RuntimeInstanceID, FencingGeneration: mount.FencingGeneration,
 	}, nil
 }

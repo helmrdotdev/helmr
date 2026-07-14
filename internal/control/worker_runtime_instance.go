@@ -4,7 +4,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -15,181 +17,64 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (s *Server) workerCreatePreparedRuntimeInstance(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerPreparedRuntimeInstanceCreateRequest
+func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerRuntimeReconcileRequest
 	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker prepared runtime instance request JSON: %w", err)))
-		return
-	}
-	id, err := parseWorkspaceUUID("id", request.ID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	workspaceMountID, err := parseWorkspaceUUID("workspace_mount_id", request.WorkspaceMountID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if strings.TrimSpace(request.RuntimeKeyHash) == "" {
-		writeError(w, badRequest(errors.New("runtime_key_hash is required")))
-		return
-	}
-	if strings.TrimSpace(request.InstanceToken) == "" {
-		writeError(w, badRequest(errors.New("instance_token is required")))
-		return
-	}
-	if request.ExpiresAt.IsZero() {
-		writeError(w, badRequest(errors.New("expires_at is required")))
-		return
-	}
-	if strings.TrimSpace(request.GuestdChannelToken) == "" {
-		writeError(w, badRequest(errors.New("guestd_channel_token is required")))
+		writeError(w, badRequest(fmt.Errorf("invalid runtime reconcile request JSON: %w", err)))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	runtimeIdentityID, ok := s.workerRuntimeIdentityID(w, r, worker)
-	if !ok {
-		return
-	}
-	row, err := s.db.CreatePreparedRuntimeInstanceForWorkspaceMountSource(r.Context(), db.CreatePreparedRuntimeInstanceForWorkspaceMountSourceParams{
-		ID:                     id,
-		WorkspaceMountID:       workspaceMountID,
-		WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeIdentityID:      runtimeIdentityID,
-		GuestdChannelTokenHash: guestdChannelTokenHash(request.GuestdChannelToken),
-		RuntimeKeyHash:         strings.TrimSpace(request.RuntimeKeyHash),
-		RuntimeKey:             normalizedJSONRawMessage(request.RuntimeKey),
-		NetworkPolicy:          normalizedJSONRawMessage(request.NetworkPolicy),
-		InstanceToken:          strings.TrimSpace(request.InstanceToken),
-		ExpiresAt:              pgvalue.Timestamptz(request.ExpiresAt),
+	row, err := s.db.GetNextRuntimeReconcileTarget(r.Context(), db.GetNextRuntimeReconcileTargetParams{
+		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(codedError{code: "capacity_unavailable", message: "worker capacity is not available for a prepared runtime instance"}))
+		writeJSON(w, http.StatusOK, api.WorkerRuntimeReconcileResponse{})
 		return
 	}
 	if err != nil {
-		s.log.Error("create prepared runtime instance failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("create prepared runtime instance"))
+		writeError(w, errors.New("get runtime reconcile target"))
 		return
 	}
-	writeJSON(w, http.StatusCreated, api.WorkerPreparedRuntimeInstanceCreateResponse{Instance: runtimeInstanceResponse(row)})
-}
-
-func (s *Server) workerCreateRuntimePrepareInstance(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimePrepareInstanceCreateRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker prepared runtime warm instance request JSON: %w", err)))
-		return
+	source := api.WorkerPreparedRuntimeSource{
+		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID), RuntimeID: row.RuntimeIdentityID,
+		SandboxImageArtifact:       api.CASObject{Digest: row.SandboxImageArtifactDigestValue, SizeBytes: row.SandboxImageArtifactSizeBytes, MediaType: row.SandboxImageArtifactMediaType},
+		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat.String, RootfsDigest: row.RootfsDigest,
+		ImageDigest: row.ImageDigest, ImageFormat: row.ImageFormat, WorkspaceMountPath: row.WorkspaceMountPath,
+		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
+		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
+		RuntimeABI: row.RuntimeABI, GuestdABI: row.GuestdAbi, AdapterABI: row.AdapterAbi,
 	}
-	id, err := parseWorkspaceUUID("id", request.ID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
+	if row.RuntimeSubstrateID.Valid {
+		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
+			ID: pgvalue.UUIDString(row.RuntimeSubstrateID), DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
+			Artifact:        api.CASObject{Digest: row.RuntimeSubstrateBlobDigest, SizeBytes: row.RuntimeSubstrateBlobSizeBytes, MediaType: row.RuntimeSubstrateBlobMediaType},
+			SubstrateDigest: row.SubstrateDigest.String, Format: row.SubstrateFormat.String,
+			BuilderABI: row.BuilderAbi.String, LayoutABI: row.LayoutAbi.String, SizeBytes: row.SubstrateSizeBytes.Int64,
+		}
 	}
-	deploymentSandboxID, err := parseWorkspaceUUID("deployment_sandbox_id", request.DeploymentSandboxID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
+	target := api.WorkerRuntimeReconcileTarget{
+		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch, NetworkSlotID: pgvalue.UUIDString(row.NetworkSlotID),
+		NetworkSlotGeneration: row.NetworkSlotGeneration, DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
+		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
+		RuntimeKeyHash: row.RuntimeKeyHash, RuntimeKey: json.RawMessage(row.RuntimeKey), Source: source,
 	}
-	if strings.TrimSpace(request.RuntimeID) == "" {
-		writeError(w, badRequest(errors.New("runtime_id is required")))
-		return
+	switch {
+	case row.ObservedState == db.RuntimeObservedStateFailed:
+		target.Action = api.WorkerRuntimeReconcileReclaim
+	case row.DesiredState == db.RuntimeDesiredStateClosed:
+		target.Action = api.WorkerRuntimeReconcileClose
+	default:
+		target.Action = api.WorkerRuntimeReconcilePrepare
 	}
-	if strings.TrimSpace(request.RootfsDigest) == "" {
-		writeError(w, badRequest(errors.New("rootfs_digest is required")))
-		return
-	}
-	if strings.TrimSpace(request.RuntimeABI) == "" {
-		writeError(w, badRequest(errors.New("runtime_abi is required")))
-		return
-	}
-	if strings.TrimSpace(request.RuntimeKeyHash) == "" {
-		writeError(w, badRequest(errors.New("runtime_key_hash is required")))
-		return
-	}
-	if strings.TrimSpace(request.InstanceToken) == "" {
-		writeError(w, badRequest(errors.New("instance_token is required")))
-		return
-	}
-	if request.ExpiresAt.IsZero() {
-		writeError(w, badRequest(errors.New("expires_at is required")))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	runtimeIdentityID := strings.TrimSpace(request.RuntimeID)
-	row, err := s.db.CreateRuntimeInstanceForDeploymentSandbox(r.Context(), db.CreateRuntimeInstanceForDeploymentSandboxParams{
-		ID:                  id,
-		DeploymentSandboxID: deploymentSandboxID,
-		WorkerInstanceID:    pgvalue.UUID(worker.WorkerInstanceID),
-		RuntimeIdentityID:   runtimeIdentityID,
-		RootfsDigest:        strings.TrimSpace(request.RootfsDigest),
-		RuntimeABI:          strings.TrimSpace(request.RuntimeABI),
-		RuntimeKeyHash:      strings.TrimSpace(request.RuntimeKeyHash),
-		RuntimeKey:          normalizedJSONRawMessage(request.RuntimeKey),
-		InstanceToken:       strings.TrimSpace(request.InstanceToken),
-		ExpiresAt:           pgvalue.Timestamptz(request.ExpiresAt),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, conflict(codedError{code: "capacity_unavailable", message: "worker capacity is not available for a prepared runtime warm instance"}))
-		return
-	}
-	if err != nil {
-		s.log.Error("create prepared runtime warm instance failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_sandbox_id", request.DeploymentSandboxID, "error", err)
-		writeError(w, errors.New("create prepared runtime warm instance"))
-		return
-	}
-	writeJSON(w, http.StatusCreated, api.WorkerRuntimePrepareInstanceCreateResponse{
-		Instance: runtimeInstanceResponse(runtimeInstanceFromDeploymentSandboxRow(row)),
-		Source:   preparedRuntimeSourceResponse(row),
-	})
-}
-
-func (s *Server) workerRenewRuntimeInstance(w http.ResponseWriter, r *http.Request) {
-	var request api.WorkerRuntimeInstanceRenewRequest
-	if err := decodeJSON(r, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid worker runtime instance renew request JSON: %w", err)))
-		return
-	}
-	id, err := parseWorkspaceUUID("id", request.ID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if strings.TrimSpace(request.InstanceToken) == "" {
-		writeError(w, badRequest(errors.New("instance_token is required")))
-		return
-	}
-	if request.ExpiresAt.IsZero() {
-		writeError(w, badRequest(errors.New("expires_at is required")))
-		return
-	}
-	worker := workerFromContext(r.Context())
-	row, err := s.db.RenewRuntimeInstance(r.Context(), db.RenewRuntimeInstanceParams{
-		ID:               id,
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		InstanceToken:    strings.TrimSpace(request.InstanceToken),
-		ExpiresAt:        pgvalue.Timestamptz(request.ExpiresAt),
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("runtime instance not found")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("renew runtime instance"))
-		return
-	}
-	writeJSON(w, http.StatusOK, runtimeInstanceResponse(row))
+	writeJSON(w, http.StatusOK, api.WorkerRuntimeReconcileResponse{Target: &target})
 }
 
 func (s *Server) workerMarkRuntimeInstanceReady(w http.ResponseWriter, r *http.Request) {
 	s.workerMarkRuntimeInstance(w, r, "ready")
 }
-
 func (s *Server) workerMarkRuntimeInstanceClosed(w http.ResponseWriter, r *http.Request) {
 	s.workerMarkRuntimeInstance(w, r, "closed")
 }
-
 func (s *Server) workerMarkRuntimeInstanceFailed(w http.ResponseWriter, r *http.Request) {
 	s.workerMarkRuntimeInstance(w, r, "failed")
 }
@@ -205,54 +90,122 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(err))
 		return
 	}
-	if strings.TrimSpace(request.InstanceToken) == "" {
-		writeError(w, badRequest(errors.New("instance_token is required")))
+	slotID, err := parseWorkspaceUUID("network_slot_id", request.NetworkSlotID)
+	if err != nil || request.WorkerEpoch <= 0 || request.NetworkSlotGeneration <= 0 || request.DesiredVersion <= 0 || request.ExpectedObservedVersion < 0 {
+		writeError(w, badRequest(errors.New("runtime epoch, slot generation, desired version, and observed version fences are required")))
 		return
 	}
 	worker := workerFromContext(r.Context())
+	if request.WorkerEpoch != worker.WorkerEpoch {
+		writeError(w, forbidden(errors.New("runtime instance belongs to another worker epoch")))
+		return
+	}
 	var row db.RuntimeInstance
 	switch state {
 	case "ready":
-		if request.ExpiresAt.IsZero() {
-			writeError(w, badRequest(errors.New("expires_at is required")))
+		if request.NetworkFacts == nil {
+			writeError(w, badRequest(errors.New("network_facts are required when marking a runtime ready")))
 			return
 		}
-		runtimeSubstrateID := pgtype.UUID{}
-		if strings.TrimSpace(request.RuntimeSubstrateID) != "" {
-			runtimeSubstrateID, err = parseWorkspaceUUID("runtime_substrate_id", request.RuntimeSubstrateID)
-			if err != nil {
-				writeError(w, badRequest(err))
+		facts := request.NetworkFacts
+		guestAddress, guestErr := netip.ParseAddr(strings.TrimSpace(facts.GuestAddress))
+		gatewayAddress, gatewayErr := netip.ParseAddr(strings.TrimSpace(facts.GatewayAddress))
+		subnet, subnetErr := netip.ParsePrefix(strings.TrimSpace(facts.Subnet))
+		guestMAC, macErr := net.ParseMAC(strings.TrimSpace(facts.GuestMAC))
+		if guestErr != nil || gatewayErr != nil || subnetErr != nil || macErr != nil ||
+			strings.TrimSpace(facts.HostInterfaceName) == "" || strings.TrimSpace(facts.TapName) == "" || strings.TrimSpace(facts.NetNSName) == "" ||
+			!subnet.Contains(guestAddress) || !subnet.Contains(gatewayAddress) {
+			writeError(w, badRequest(errors.New("complete, internally consistent CNI network_facts are required")))
+			return
+		}
+		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
+			DesiredVersion: request.DesiredVersion, ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch: worker.WorkerEpoch, NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
+			ExpectedObservedVersion: request.ExpectedObservedVersion,
+			HostInterfaceName:       pgtype.Text{String: strings.TrimSpace(facts.HostInterfaceName), Valid: true}, GuestAddress: &guestAddress,
+			GatewayAddress: &gatewayAddress, Subnet: &subnet, TapName: pgtype.Text{String: strings.TrimSpace(facts.TapName), Valid: true},
+			NetnsName: pgtype.Text{String: strings.TrimSpace(facts.NetNSName), Valid: true}, GuestMac: guestMAC,
+		})
+	case "closed":
+		if request.CleanupProof == nil {
+			writeError(w, badRequest(errors.New("runtime cleanup proof is required when marking a runtime closed")))
+			return
+		}
+		if proofErr := validateRuntimeClosedCleanupProof(*request.CleanupProof, time.Now()); proofErr != nil {
+			writeError(w, badRequest(proofErr))
+			return
+		}
+		proof, proofErr := json.Marshal(request.CleanupProof)
+		if proofErr != nil {
+			writeError(w, badRequest(errors.New("encode runtime cleanup proof")))
+			return
+		}
+		reason := strings.TrimSpace(request.ReasonCode)
+		if reason == "" {
+			reason = "desired_state_reconciled"
+		}
+		var closed db.MarkRuntimeInstanceClosedRow
+		closed, err = s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
+			ReasonCode: pgtype.Text{String: reason, Valid: true}, ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			DesiredVersion: request.DesiredVersion, NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
+			ExpectedObservedVersion: request.ExpectedObservedVersion,
+			CleanupProof:            proof,
+		})
+		row = db.RuntimeInstance(closed)
+	case "failed":
+		reason := strings.TrimSpace(request.ReasonCode)
+		if reason == "" {
+			reason = "runtime_reconcile_failed"
+		}
+		if request.CleanupProof != nil {
+			if proofErr := validateRuntimeCleanupProof(*request.CleanupProof, time.Now()); proofErr != nil {
+				writeError(w, badRequest(proofErr))
+				return
+			}
+			proof, proofErr := json.Marshal(request.CleanupProof)
+			if proofErr != nil {
+				writeError(w, badRequest(errors.New("encode runtime cleanup proof")))
+				return
+			}
+			reclaimed, reclaimErr := s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
+				ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: request.ExpectedObservedVersion,
+				NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+			})
+			if reclaimErr == nil {
+				writeJSON(w, http.StatusOK, runtimeInstanceResponse(db.RuntimeInstance(reclaimed)))
+				return
+			}
+			if !errors.Is(reclaimErr, pgx.ErrNoRows) {
+				writeError(w, errors.New("reclaim failed runtime instance"))
 				return
 			}
 		}
-		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
-			ID:                 id,
-			WorkerInstanceID:   pgvalue.UUID(worker.WorkerInstanceID),
-			InstanceToken:      strings.TrimSpace(request.InstanceToken),
-			RuntimeSubstrateID: runtimeSubstrateID,
-			ExpiresAt:          pgvalue.Timestamptz(request.ExpiresAt),
+		var failed db.MarkRuntimeInstanceFailedRow
+		failed, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
+			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: normalizedJSONRawMessage(request.Error),
+			ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
+			DesiredVersion:          request.DesiredVersion,
+			ExpectedObservedVersion: request.ExpectedObservedVersion,
 		})
-	case "closed":
-		closed, closedErr := s.db.MarkRuntimeInstanceClosed(r.Context(), db.MarkRuntimeInstanceClosedParams{
-			ID:               id,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			InstanceToken:    strings.TrimSpace(request.InstanceToken),
-		})
-		err = closedErr
-		row = db.RuntimeInstance(closed)
-	case "failed":
-		row, err = s.db.MarkRuntimeInstanceFailed(r.Context(), db.MarkRuntimeInstanceFailedParams{
-			ID:               id,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			InstanceToken:    strings.TrimSpace(request.InstanceToken),
-			Error:            normalizedJSONRawMessage(request.Error),
-		})
+		row = db.RuntimeInstance(failed)
+		if err == nil && request.CleanupProof != nil {
+			proof, _ := json.Marshal(request.CleanupProof)
+			var reclaimed db.ReclaimFailedRuntimeInstanceRow
+			reclaimed, err = s.db.ReclaimFailedRuntimeInstance(r.Context(), db.ReclaimFailedRuntimeInstanceParams{
+				ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+				DesiredVersion: request.DesiredVersion, ExpectedObservedVersion: row.ObservedVersion,
+				NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration, CleanupProof: proof,
+			})
+			row = db.RuntimeInstance(reclaimed)
+		}
 	default:
 		writeError(w, errors.New("unsupported runtime instance state"))
 		return
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("runtime instance not found")))
+		writeError(w, conflict(errors.New("runtime instance fence is stale")))
 		return
 	}
 	if err != nil {
@@ -262,6 +215,25 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, runtimeInstanceResponse(row))
 }
 
+func validateRuntimeCleanupProof(proof api.WorkerRuntimeCleanupProof, now time.Time) error {
+	switch proof.Method {
+	case api.WorkerRuntimeCleanupSessionClosed, api.WorkerRuntimeCleanupHostReconciled, api.WorkerRuntimeCleanupNotMaterialized:
+	default:
+		return errors.New("runtime cleanup proof method is unsupported")
+	}
+	if proof.CompletedAt.IsZero() || proof.CompletedAt.After(now.Add(time.Minute)) {
+		return errors.New("runtime cleanup proof completed_at is required and cannot be in the future")
+	}
+	return nil
+}
+
+func validateRuntimeClosedCleanupProof(proof api.WorkerRuntimeCleanupProof, now time.Time) error {
+	if proof.Method != api.WorkerRuntimeCleanupSessionClosed && proof.Method != api.WorkerRuntimeCleanupHostReconciled {
+		return errors.New("closed runtime cleanup proof must confirm a closed session or exact host reconciliation")
+	}
+	return validateRuntimeCleanupProof(proof, now)
+}
+
 func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 	if strings.TrimSpace(string(raw)) == "" {
 		return []byte(`{}`)
@@ -269,114 +241,13 @@ func normalizedJSONRawMessage(raw json.RawMessage) []byte {
 	return []byte(raw)
 }
 
-func (s *Server) workerRuntimeIdentityID(w http.ResponseWriter, r *http.Request, worker workerActor) (string, bool) {
-	state, err := s.db.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, notFound(errors.New("worker instance not found")))
-		return "", false
-	}
-	if err != nil {
-		writeError(w, errors.New("load worker runtime identity"))
-		return "", false
-	}
-	return state.RuntimeID, true
-}
-
 func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 	return api.WorkerRuntimeInstance{
-		ID:                     pgvalue.UUIDString(row.ID),
-		OrgID:                  pgvalue.UUIDString(row.OrgID),
-		ProjectID:              pgvalue.UUIDString(row.ProjectID),
-		EnvironmentID:          pgvalue.UUIDString(row.EnvironmentID),
-		WorkerInstanceID:       pgvalue.UUIDString(row.WorkerInstanceID),
-		RuntimeEpoch:           row.RuntimeEpoch,
-		RuntimeKeyHash:         row.RuntimeKeyHash,
-		RuntimeKey:             json.RawMessage(row.RuntimeKey),
-		RuntimeID:              row.RuntimeIdentityID,
-		DeploymentSandboxID:    pgvalue.UUIDString(row.DeploymentSandboxID),
-		State:                  string(row.State),
-		InstanceToken:          row.InstanceToken,
-		ReservedCpuMillis:      row.ReservedCpuMillis,
-		ReservedMemoryMiB:      row.ReservedMemoryMib,
-		ReservedDiskMiB:        row.ReservedDiskMib,
-		ReservedExecutionSlots: row.ReservedExecutionSlots,
-		WorkspaceMountID:       pgvalue.UUIDString(row.WorkspaceMountID),
-		ExpiresAt:              controlOptionalTimestamptz(row.ExpiresAt),
+		ID: pgvalue.UUIDString(row.ID), OrgID: pgvalue.UUIDString(row.OrgID), ProjectID: pgvalue.UUIDString(row.ProjectID),
+		EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), WorkerInstanceID: pgvalue.UUIDString(row.WorkerInstanceID),
+		RuntimeEpoch: row.WorkerEpoch, RuntimeKeyHash: row.RuntimeKeyHash, RuntimeKey: json.RawMessage(row.RuntimeKey),
+		RuntimeID: row.RuntimeIdentityID, DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID), State: string(row.ObservedState),
+		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
+		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 	}
-}
-
-func runtimeInstanceFromDeploymentSandboxRow(row db.CreateRuntimeInstanceForDeploymentSandboxRow) db.RuntimeInstance {
-	return db.RuntimeInstance{
-		ID:                         row.ID,
-		OrgID:                      row.OrgID,
-		ProjectID:                  row.ProjectID,
-		EnvironmentID:              row.EnvironmentID,
-		WorkerInstanceID:           row.WorkerInstanceID,
-		RuntimeIdentityID:          row.RuntimeIdentityID,
-		DeploymentSandboxID:        row.DeploymentSandboxID,
-		RuntimeSubstrateID:         row.RuntimeSubstrateID,
-		RuntimeEpoch:               row.RuntimeEpoch,
-		RuntimeKeyHash:             row.RuntimeKeyHash,
-		RuntimeKey:                 row.RuntimeKey,
-		SandboxFingerprint:         row.SandboxFingerprint,
-		RootfsDigest:               row.RootfsDigest,
-		ImageDigest:                row.ImageDigest,
-		ImageFormat:                row.ImageFormat,
-		SandboxImageArtifactID:     row.SandboxImageArtifactID,
-		SandboxImageArtifactDigest: row.SandboxImageArtifactDigest,
-		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat,
-		WorkspaceMountPath:         row.WorkspaceMountPath,
-		RuntimeABI:                 row.RuntimeABI,
-		GuestdAbi:                  row.GuestdAbi,
-		AdapterAbi:                 row.AdapterAbi,
-		NetworkPolicy:              row.NetworkPolicy,
-		ReservedCpuMillis:          row.ReservedCpuMillis,
-		ReservedMemoryMib:          row.ReservedMemoryMib,
-		ReservedDiskMib:            row.ReservedDiskMib,
-		ReservedExecutionSlots:     row.ReservedExecutionSlots,
-		WorkspaceMountID:           row.WorkspaceMountID,
-		State:                      row.State,
-		InstanceToken:              row.InstanceToken,
-		LastHeartbeatAt:            row.LastHeartbeatAt,
-		ExpiresAt:                  row.ExpiresAt,
-		PreparedAt:                 row.PreparedAt,
-		BoundAt:                    row.BoundAt,
-		RunningAt:                  row.RunningAt,
-		ClosedAt:                   row.ClosedAt,
-		LostAt:                     row.LostAt,
-		FailedAt:                   row.FailedAt,
-		Error:                      row.Error,
-		CreatedAt:                  row.CreatedAt,
-		UpdatedAt:                  row.UpdatedAt,
-	}
-}
-
-func preparedRuntimeSourceResponse(row db.CreateRuntimeInstanceForDeploymentSandboxRow) api.WorkerPreparedRuntimeSource {
-	return api.WorkerPreparedRuntimeSource{
-		DeploymentSandboxID:        pgvalue.UUIDString(row.DeploymentSandboxID),
-		RuntimeID:                  row.RuntimeIdentityID,
-		SandboxImageArtifact:       api.CASObject{Digest: row.SandboxImageArtifactDigest, SizeBytes: row.SandboxImageArtifactSizeBytes, MediaType: row.SandboxImageArtifactMediaType},
-		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat,
-		RootfsDigest:               row.RootfsDigest,
-		ImageDigest:                row.ImageDigest,
-		ImageFormat:                row.ImageFormat,
-		WorkspaceMountPath:         row.WorkspaceMountPath,
-		ReservedCpuMillis:          row.ReservedCpuMillis,
-		ReservedMemoryMiB:          row.ReservedMemoryMib,
-		ReservedDiskMiB:            row.ReservedDiskMib,
-		ReservedExecutionSlots:     row.ReservedExecutionSlots,
-		RuntimeABI:                 row.RuntimeABI,
-		GuestdABI:                  row.GuestdAbi,
-		AdapterABI:                 row.AdapterAbi,
-	}
-}
-
-func controlOptionalTimestamptz(value pgtype.Timestamptz) *time.Time {
-	if !value.Valid {
-		return nil
-	}
-	return &value.Time
 }

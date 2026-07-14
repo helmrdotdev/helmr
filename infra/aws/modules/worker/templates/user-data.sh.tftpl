@@ -1,6 +1,7 @@
 #!/bin/sh
 set -eu
 umask 077
+date +%s >/run/helmr-launch-started-at
 
 install -d -m 0750 -o root -g root /etc/helmr
 cat >/etc/helmr/guest-resolv.conf <<'EOF'
@@ -20,7 +21,6 @@ metadata_get() {
   curl -fsS -H "X-aws-ec2-metadata-token: $token" "$metadata_url/$path"
 }
 aws_region='${aws_region}'
-instance_id="$(metadata_get meta-data/instance-id)"
 export AWS_REGION="$aws_region"
 export AWS_DEFAULT_REGION="$aws_region"
 
@@ -32,12 +32,10 @@ ${key}=${value}
 EOF
 
 checkpoint_key="$(aws secretsmanager get-secret-value --secret-id '${checkpoint_key_secret_arn}' --query SecretString --output text)"
-worker_bootstrap_token="$(aws secretsmanager get-secret-value --secret-id '${worker_bootstrap_token_secret_arn}' --query SecretString --output text)"
 
 {
   printf 'AWS_REGION=%s\n' "$aws_region"
   printf 'AWS_DEFAULT_REGION=%s\n' "$aws_region"
-  printf 'HELMR_WORKER_RESOURCE_ID=%s\n' "$instance_id"
   printf 'HELMR_CHECKPOINT_ENCRYPTION_KEY=%s\n' "$checkpoint_key"
 } >>"$env_tmp"
 
@@ -45,22 +43,21 @@ chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
 
-printf '%s\n' "$worker_bootstrap_token" >/etc/helmr/worker-bootstrap-token
-chown root:root /etc/helmr/worker-bootstrap-token
-chmod 0600 /etc/helmr/worker-bootstrap-token
-
 cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'
 #!/bin/sh
 set -eu
 
 asg_name='${autoscaling_group_name}'
 launch_hook='${launch_lifecycle_hook_name}'
+launch_timeout='${launch_readiness_timeout_seconds}'
 termination_hook='${termination_lifecycle_hook_name}'
 drain_timeout='${termination_drain_timeout_seconds}s'
 heartbeat_interval='${lifecycle_heartbeat_interval_seconds}'
 worker_binary='${worker_binary_path}'
 env_file=/etc/helmr/worker.env
+drain_marker='${worker_work_dir}/drain-complete'
 metadata_url=http://169.254.169.254/latest
+launch_started_at="$(cat /run/helmr-launch-started-at 2>/dev/null || date +%s)"
 
 metadata_token() {
   curl -fsS -X PUT "$metadata_url/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600"
@@ -123,7 +120,9 @@ complete_launch() {
   if [ -z "$launch_hook" ]; then
     return 0
   fi
+%{ if worker_supports_build ~}
   systemctl is-active --quiet '${buildkit_service_name}'
+%{ endif ~}
   systemctl is-active --quiet '${worker_service_name}'
   load_worker_env
   "$worker_binary" status >/dev/null
@@ -131,6 +130,10 @@ complete_launch() {
 }
 
 drain_and_complete_termination() {
+	if [ -f "$drain_marker" ]; then
+		complete_lifecycle_action "$termination_hook" CONTINUE
+		return 0
+	fi
   load_worker_env
   "$worker_binary" drain --timeout "$drain_timeout" >/var/log/helmr-worker-drain.log 2>&1 &
   drain_pid="$!"
@@ -141,8 +144,12 @@ drain_and_complete_termination() {
   if wait "$drain_pid"; then
     complete_lifecycle_action "$termination_hook" CONTINUE
   else
-    complete_lifecycle_action "$termination_hook" CONTINUE || true
-    exit 1
+    if "$worker_binary" fence >>/var/log/helmr-worker-drain.log 2>&1; then
+      complete_lifecycle_action "$termination_hook" CONTINUE
+    else
+      echo "worker drain failed and durable fence could not be persisted" >>/var/log/helmr-worker-drain.log
+      exit 1
+    fi
   fi
 }
 
@@ -157,6 +164,11 @@ case "$${1:-watch}" in
         if complete_launch; then
           launch_completed=1
         else
+          now="$(date +%s)"
+          if [ $((now - launch_started_at)) -ge "$launch_timeout" ]; then
+            complete_lifecycle_action "$launch_hook" ABANDON || true
+            exit 1
+          fi
           record_heartbeat "$launch_hook" || true
         fi
       fi
@@ -195,7 +207,7 @@ EOF
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
 Description=Helmr Auto Scaling lifecycle integration
-After=network-online.target ${buildkit_service_name}.service ${worker_service_name}.service
+After=network-online.target%{ if worker_supports_build } ${buildkit_service_name}.service%{ endif } ${worker_service_name}.service
 Wants=network-online.target
 
 [Service]
@@ -209,6 +221,10 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
+%{ if worker_supports_build ~}
 systemctl enable --now '${buildkit_service_name}'
+%{ else ~}
+systemctl disable --now '${buildkit_service_name}' || true
+%{ endif ~}
 systemctl enable --now '${worker_service_name}'
 systemctl enable --now helmr-asg-lifecycle.service

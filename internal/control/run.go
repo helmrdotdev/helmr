@@ -108,7 +108,7 @@ func (s *Server) CreateScheduleRun(ctx context.Context, row db.GetScheduleTrigge
 		scheduleInstanceID:    row.InstanceID,
 		scheduleGeneration:    row.Generation,
 		scheduleOrgID:         row.OrgID,
-		scheduleWorkerGroupID: row.WorkerGroupID,
+		scheduleWorkerGroupID: "",
 		scheduleProjectID:     row.ProjectID,
 		scheduleEnvironmentID: row.EnvironmentID,
 		scheduledAt:           row.NextFireAt,
@@ -170,7 +170,7 @@ func runDeploymentSelectionErrorf(format string, args ...any) error {
 	return runDeploymentSelectionError{err: fmt.Errorf(format, args...)}
 }
 
-func (s *Server) deploymentTaskForRunRequest(ctx context.Context, workerGroupID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, selection runDeploymentSelection) (db.GetDeploymentTaskRow, error) {
+func (s *Server) deploymentTaskForRunRequest(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, taskID string, selection runDeploymentSelection) (db.GetDeploymentTaskRow, error) {
 	deploymentID := selection.deploymentID
 	if deploymentID.Valid {
 		deployment, err := s.db.GetDeployment(ctx, db.GetDeploymentParams{
@@ -188,7 +188,7 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, workerGroupID 
 		if deployment.Status != db.DeploymentStatusDeployed {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment_id %s is not deployed", pgvalue.MustUUIDValue(deploymentID).String())
 		}
-		return s.deploymentTask(ctx, workerGroupID, orgID, projectID, environmentID, deployment.ID, taskID)
+		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
 	if selection.version != "" {
 		deployment, err := s.db.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
@@ -206,28 +206,21 @@ func (s *Server) deploymentTaskForRunRequest(ctx context.Context, workerGroupID 
 		if deployment.Status != db.DeploymentStatusDeployed {
 			return db.GetDeploymentTaskRow{}, runDeploymentSelectionErrorf("deployment version %q is not deployed", selection.version)
 		}
-		return s.deploymentTask(ctx, workerGroupID, orgID, projectID, environmentID, deployment.ID, taskID)
+		return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 	}
 	deployment, err := s.db.GetCurrentDeploymentForRoute(ctx, db.GetCurrentDeploymentForRouteParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
+		OrgID: pgvalue.UUID(orgID), ProjectID: projectID, EnvironmentID: environmentID,
 	})
 	if err != nil {
 		return db.GetDeploymentTaskRow{}, err
 	}
-	return s.deploymentTask(ctx, workerGroupID, orgID, projectID, environmentID, deployment.ID, taskID)
+	return s.deploymentTask(ctx, orgID, projectID, environmentID, deployment.ID, taskID)
 }
 
-func (s *Server) deploymentTask(ctx context.Context, workerGroupID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
+func (s *Server) deploymentTask(ctx context.Context, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentID pgtype.UUID, taskID string) (db.GetDeploymentTaskRow, error) {
 	return s.db.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
-		OrgID:         pgvalue.UUID(orgID),
-		WorkerGroupID: workerGroupID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		DeploymentID:  deploymentID,
-		TaskID:        taskID,
+		OrgID: pgvalue.UUID(orgID), ProjectID: projectID, EnvironmentID: environmentID,
+		DeploymentID: deploymentID, TaskID: taskID,
 	})
 }
 
@@ -298,7 +291,7 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	run, err := s.db.GetRunSummary(r.Context(), db.GetRunSummaryParams{
+	run, err := s.db.GetRun(r.Context(), db.GetRunParams{
 		OrgID: pgvalue.UUID(actorFromContext(r.Context()).OrgID),
 		ID:    pgvalue.UUID(runID),
 	})
@@ -328,10 +321,6 @@ func (s *Server) getRun(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionRunsRead, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, summary.WorkerGroupID); err != nil {
-		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, runResponse(summary))
@@ -644,8 +633,4 @@ func (s *Server) validateRunQueueOverride(ctx context.Context, orgID uuid.UUID, 
 	}
 	scheduling.queueConcurrencyLimit = queueConfig.QueueConcurrencyLimit
 	return scheduling, nil
-}
-
-func publicRunStatus(status db.RunStatus) string {
-	return string(status)
 }

@@ -28,12 +28,11 @@ type Reader interface {
 }
 
 type EventQuery struct {
-	OrgID         uuid.UUID
-	WorkerGroupID string
-	SubjectType   string
-	SubjectID     uuid.UUID
-	AfterSeq      int64
-	Limit         int32
+	OrgID       uuid.UUID
+	SubjectType string
+	SubjectID   uuid.UUID
+	AfterSeq    int64
+	Limit       int32
 }
 
 type EventPage struct {
@@ -45,11 +44,10 @@ type EventPage struct {
 }
 
 type RunLogChunkQuery struct {
-	OrgID         uuid.UUID
-	WorkerGroupID string
-	RunID         uuid.UUID
-	AfterSeq      int64
-	Limit         int32
+	OrgID    uuid.UUID
+	RunID    uuid.UUID
+	AfterSeq int64
+	Limit    int32
 }
 
 type RunLogChunkPage struct {
@@ -61,11 +59,10 @@ type RunLogChunkPage struct {
 }
 
 type RunLogSnapshotQuery struct {
-	OrgID         uuid.UUID
-	WorkerGroupID string
-	RunID         uuid.UUID
-	StdoutLimit   int64
-	StderrLimit   int64
+	OrgID       uuid.UUID
+	RunID       uuid.UUID
+	StdoutLimit int64
+	StderrLimit int64
 }
 
 type RunLogSnapshot struct {
@@ -79,18 +76,16 @@ type RunLogSnapshot struct {
 }
 
 type DeadLetteredTelemetryQuery struct {
-	OrgID         uuid.UUID
-	WorkerGroupID string
-	StreamKind    string
-	SourceKind    string
-	SourceID      uuid.UUID
-	AfterSeq      int64
-	Watermark     int64
+	OrgID      uuid.UUID
+	StreamKind string
+	SourceKind string
+	SourceID   uuid.UUID
+	AfterSeq   int64
+	Watermark  int64
 }
 
 type TerminalOutputQuery struct {
 	OrgID         uuid.UUID
-	WorkerGroupID string
 	ProjectID     uuid.UUID
 	EnvironmentID uuid.UUID
 	WorkspaceID   uuid.UUID
@@ -127,22 +122,24 @@ type IngestWriter interface {
 }
 
 type MeterEventRecord struct {
-	WorkerGroupID  string     `json:"worker_group_id"`
 	OrgID          uuid.UUID  `json:"org_id"`
 	ProjectID      uuid.UUID  `json:"project_id"`
 	EnvironmentID  uuid.UUID  `json:"environment_id"`
 	SourceType     string     `json:"source_type"`
 	SourceID       uuid.UUID  `json:"source_id"`
-	RunID          uuid.UUID  `json:"run_id"`
-	AttemptNumber  *int32     `json:"attempt_number,omitempty"`
+	RunID          *uuid.UUID `json:"run_id,omitempty"`
+	DeploymentID   *uuid.UUID `json:"deployment_id,omitempty"`
+	AttemptNumber  int32      `json:"attempt_number"`
 	TraceID        string     `json:"trace_id"`
 	SpanID         string     `json:"span_id"`
 	Meter          string     `json:"meter"`
 	Quantity       string     `json:"quantity"`
 	Unit           string     `json:"unit"`
+	MeasuredFrom   *time.Time `json:"measured_from,omitempty"`
 	MeasuredTo     *time.Time `json:"measured_to,omitempty"`
 	Details        string     `json:"details"`
 	IdempotencyKey string     `json:"idempotency_key"`
+	Fingerprint    string     `json:"idempotency_fingerprint"`
 	OccurredAt     time.Time  `json:"occurred_at"`
 	CreatedAt      time.Time  `json:"created_at"`
 }

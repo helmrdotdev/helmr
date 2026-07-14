@@ -32,8 +32,6 @@ func TestScopedSecretQueriesRemainEnvironmentOwnedAcrossRouteMove(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
-
 	record, err := queries.GetScopedSecretByName(ctx, db.GetScopedSecretByNameParams{
 		OrgID:         pgvalue.UUID(ids.orgID),
 		ProjectID:     pgvalue.UUID(ids.projectID),
@@ -66,7 +64,6 @@ func TestScopedSecretQueriesDoNotDuplicateWhenWorkerGroupHasActiveAndDrainingRou
 	ids := seedIntegration(t, ctx, pool)
 	queries := db.New(pool)
 
-	placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
 	secretID := uuid.Must(uuid.NewV7())
 	if _, err := queries.UpsertScopedSecret(ctx, db.UpsertScopedSecretParams{
 		ID:              pgvalue.UUID(secretID),
@@ -97,7 +94,7 @@ func TestScopedSecretQueriesDoNotDuplicateWhenWorkerGroupHasActiveAndDrainingRou
 	}
 }
 
-func TestScopedSecretListAndDeleteContinueOnStaleWorkerGroupHealth(t *testing.T) {
+func TestScopedSecretListAndDeleteIgnoreDisabledWorkerGroup(t *testing.T) {
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	ids := seedIntegration(t, ctx, pool)
@@ -119,8 +116,7 @@ func TestScopedSecretListAndDeleteContinueOnStaleWorkerGroupHealth(t *testing.T)
 	}
 	if _, err := pool.Exec(ctx, `
 		UPDATE worker_groups
-		   SET health_state = 'unavailable',
-		       routing_fresh_until = now() - interval '1 minute'
+		   SET state = 'disabled'
 		 WHERE id = $1
 	`, dbtest.DefaultWorkerGroupID); err != nil {
 		t.Fatal(err)
@@ -136,7 +132,7 @@ func TestScopedSecretListAndDeleteContinueOnStaleWorkerGroupHealth(t *testing.T)
 		t.Fatal(err)
 	}
 	if got := secretNames(rows); len(got) != 1 || got[0] != "STALE_HEALTH" {
-		t.Fatalf("secret names = %+v, want stale-health secret", got)
+		t.Fatalf("secret names = %+v, want environment-owned secret", got)
 	}
 	if affected, err := queries.DeleteScopedSecret(ctx, db.DeleteScopedSecretParams{
 		OrgID:         pgvalue.UUID(ids.orgID),

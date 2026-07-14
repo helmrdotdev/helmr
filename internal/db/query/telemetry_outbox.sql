@@ -28,7 +28,6 @@ SELECT updated.id AS outbox_id,
        updated.source_id AS subject_id,
        updated.id AS seq,
        updated.org_id,
-       updated.worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.run_id,
@@ -79,7 +78,6 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
        updated.org_id,
-       updated.worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.run_id,
@@ -121,28 +119,26 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
        meter_events.org_id,
-       meter_events.worker_group_id,
        meter_events.project_id,
        meter_events.environment_id,
        meter_events.source_type,
        meter_events.source_id,
        meter_events.run_id,
+       meter_events.deployment_id,
        meter_events.attempt_number,
        meter_events.trace_id,
        meter_events.span_id,
        meter_events.meter,
        meter_events.quantity,
        meter_events.unit,
+       meter_events.measured_from,
        meter_events.measured_to,
        meter_events.details,
+       meter_events.idempotency_fingerprint,
        meter_events.occurred_at,
        meter_events.created_at
   FROM updated
-  JOIN meter_events ON meter_events.org_id = updated.org_id
-                   AND meter_events.source_type = updated.source_kind
-                   AND meter_events.source_id = updated.source_id
-                   AND meter_events.meter = updated.kind
-                   AND meter_events.idempotency_key = updated.idempotency_key
+  JOIN meter_events ON meter_events.id = updated.meter_event_id
  ORDER BY updated.id ASC;
 
 -- name: ClaimWorkspaceProcessTerminalOutputIngestBatch :many
@@ -173,7 +169,6 @@ SELECT updated.id AS outbox_id,
        updated.retry_count,
        COALESCE(updated.idempotency_key, '')::text AS idempotency_key,
        updated.org_id,
-       updated.worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.workspace_id,
@@ -202,7 +197,6 @@ WITH claimed AS (
                AND earlier_outbox.published_at IS NULL
                AND earlier_outbox.state <> 'dead_lettered'
                AND earlier_outbox.org_id = telemetry_outbox.org_id
-               AND earlier_outbox.worker_group_id = telemetry_outbox.worker_group_id
                AND earlier_outbox.source_kind = telemetry_outbox.source_kind
                AND earlier_outbox.source_id = telemetry_outbox.source_id
                AND earlier_outbox.stream_name = telemetry_outbox.stream_name
@@ -226,17 +220,16 @@ SELECT updated.id AS outbox_id,
        updated.stream_kind,
        CASE updated.stream_kind
            WHEN 'event' THEN
-               ('helmr:events:' || updated.org_id::text || ':' || updated.worker_group_id || ':' || updated.source_kind || ':' || updated.source_id::text)::text
+               ('helmr:events:' || updated.org_id::text || ':' || updated.source_kind || ':' || updated.source_id::text)::text
            WHEN 'run_log' THEN
-               ('helmr:run_logs:' || updated.org_id::text || ':' || updated.worker_group_id || ':' || updated.run_id::text)::text
+               ('helmr:run_logs:' || updated.org_id::text || ':' || updated.run_id::text)::text
            WHEN 'terminal_output' THEN
-               ('helmr:terminal_outputs:' || updated.org_id::text || ':' || updated.worker_group_id || ':' || updated.workspace_id::text || ':' || updated.resource_kind || ':' || updated.resource_id::text || ':' || updated.stream_name)::text
+               ('helmr:terminal_outputs:' || updated.org_id::text || ':' || updated.workspace_id::text || ':' || updated.resource_kind || ':' || updated.resource_id::text || ':' || updated.stream_name)::text
            ELSE ''
        END AS stream_key,
        updated.publish_attempts AS attempts,
        updated.id AS seq,
        updated.org_id,
-       updated.worker_group_id,
        updated.project_id,
        updated.environment_id,
        updated.source_kind,
@@ -292,7 +285,6 @@ SELECT EXISTS (
     SELECT 1
       FROM telemetry_outbox
      WHERE telemetry_outbox.org_id = sqlc.arg(org_id)
-       AND telemetry_outbox.worker_group_id = sqlc.arg(worker_group_id)
        AND telemetry_outbox.stream_kind = sqlc.arg(stream_kind)
        AND telemetry_outbox.source_kind = sqlc.arg(source_kind)
        AND telemetry_outbox.source_id = sqlc.arg(source_id)

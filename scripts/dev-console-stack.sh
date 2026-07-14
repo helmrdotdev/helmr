@@ -71,6 +71,7 @@ export HELMR_PROVIDER="${HELMR_PROVIDER:-"local"}"
 export HELMR_PROVIDER_REGION="${HELMR_PROVIDER_REGION:-"${HELMR_REGION_ID}"}"
 export HELMR_REGION_DISPLAY_NAME="${HELMR_REGION_DISPLAY_NAME:-"Local"}"
 export HELMR_WORKER_GROUP_ID="${HELMR_WORKER_GROUP_ID:-"${HELMR_REGION_ID}-worker-group-1"}"
+export HELMR_WORKER_GROUPS="${HELMR_WORKER_GROUPS:-"[{\"id\":\"${HELMR_WORKER_GROUP_ID}\",\"name\":\"local\",\"region\":\"${HELMR_PROVIDER_REGION}\",\"account_id\":\"000000000000\",\"autoscaling_group\":\"helmr-local\",\"instance_profile_arn\":\"arn:aws:iam::000000000000:instance-profile/helmr-local\",\"ami_ids\":[\"ami-local\"],\"allows_run\":true,\"allows_build\":true}]}"
 case "${HELMR_CONTROL_ADDR}" in
   http://*|https://*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"${HELMR_CONTROL_ADDR}"}" ;;
   :*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://127.0.0.1${HELMR_CONTROL_ADDR}"}" ;;

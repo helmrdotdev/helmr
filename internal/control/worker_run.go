@@ -2,6 +2,8 @@ package control
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,56 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func (s *Server) logRunWorkspaceReuseDiagnostics(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID, workerInstanceID pgtype.UUID, trigger string) {
-	if s.log == nil || s.db == nil {
-		return
-	}
-	diagnostics, err := s.db.ClassifyRunWorkspaceReuse(ctx, db.ClassifyRunWorkspaceReuseParams{
-		OrgID:            orgID,
-		RunID:            runID,
-		WorkerInstanceID: workerInstanceID,
-	})
-	if isNoRows(err) {
-		s.log.Info("worker run workspace reuse diagnostic unavailable",
-			"trigger", trigger,
-			"org_id", pgvalue.UUIDString(orgID),
-			"run_id", pgvalue.UUIDString(runID),
-			"worker_instance_id", pgvalue.UUIDString(workerInstanceID),
-			"outcome", "run_workspace_scope_missing",
-		)
-		return
-	}
-	if err != nil {
-		s.log.Warn("worker run workspace reuse diagnostic failed",
-			"trigger", trigger,
-			"org_id", pgvalue.UUIDString(orgID),
-			"run_id", pgvalue.UUIDString(runID),
-			"worker_instance_id", pgvalue.UUIDString(workerInstanceID),
-			"error", err,
-		)
-		return
-	}
-	s.log.Info("worker run workspace reuse diagnostic",
-		"trigger", trigger,
-		"org_id", pgvalue.UUIDString(orgID),
-		"run_id", pgvalue.UUIDString(runID),
-		"workspace_id", pgvalue.UUIDString(diagnostics.WorkspaceID),
-		"queued_workspace_mount_id", pgvalue.UUIDString(diagnostics.QueuedWorkspaceMountID),
-		"resident_workspace_mount_id", pgvalue.UUIDString(diagnostics.ResidentWorkspaceMountID),
-		"resident_workspace_mount_state", diagnostics.ResidentWorkspaceMountState.WorkspaceMountState,
-		"resident_worker_instance_id", pgvalue.UUIDString(diagnostics.ResidentWorkerInstanceID),
-		"dispatched_worker_instance_id", pgvalue.UUIDString(diagnostics.DispatchedWorkerInstanceID),
-		"active_mount_count", diagnostics.ActiveMountCount,
-		"mounted_mount_count", diagnostics.MountedMountCount,
-		"mounting_mount_count", diagnostics.MountingMountCount,
-		"active_write_lease_count", diagnostics.ActiveWriteLeaseCount,
-		"worker_group_matches", diagnostics.WorkerGroupMatches,
-		"worker_runtime_matches", diagnostics.WorkerRuntimeMatches,
-		"worker_capacity_fits", diagnostics.WorkerCapacityFits,
-		"outcome", diagnostics.Outcome,
-	)
-}
 
 func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
@@ -89,21 +41,42 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	if _, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); isNoRows(err) {
+	started, err := s.db.GetStartedRunLease(r.Context(), db.GetStartedRunLeaseParams{
+		OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID), RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID),
+		LeaseSequence: leaseIDs.leaseSequence, TaskAttemptNumber: leaseIDs.attemptNumber,
+		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUID(leaseIDs.runtimeInstanceID), NetworkSlotID: pgvalue.UUID(leaseIDs.networkSlotID),
+		NetworkSlotGeneration: leaseIDs.networkSlotGeneration, WorkerProtocolVersion: leaseIDs.protocolVersion,
+		ExpectedRunStateVersion: leaseIDs.snapshotVersion,
+	})
+	if err == nil {
+		startedLease := request.Lease
+		startedLease.SnapshotVersion++
+		startedLease.ExpiresAt = pgvalue.Time(started.ExpiresAt)
+		writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(started.State), Lease: startedLease})
+		return
+	}
+	if !isNoRows(err) {
+		s.log.Error("worker started run lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, errors.New("get started run lease"))
+		return
+	}
+	if _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs); isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	} else if err != nil {
-		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, errors.New("get queue lease"))
+		s.log.Error("worker run lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, errors.New("get run lease"))
 		return
 	}
+	expiresAt := time.Now().Add(workerLeaseDuration)
 	status, err := s.db.StartRunLease(r.Context(), db.StartRunLeaseParams{
-		OrgID:             pgvalue.UUID(leaseIDs.orgID),
-		RunID:             pgvalue.UUID(leaseIDs.runID),
-		RunLeaseID:        pgvalue.UUID(leaseIDs.runLeaseID),
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		DispatchMessageID: leaseIDs.queueMessageID,
-		DispatchLeaseID:   leaseIDs.queueLeaseID,
+		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: pgvalue.UUID(leaseIDs.orgID),
+		RunID: pgvalue.UUID(leaseIDs.runID), RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID),
+		LeaseSequence: leaseIDs.leaseSequence, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: leaseIDs.workerEpoch, RuntimeInstanceID: pgvalue.UUID(leaseIDs.runtimeInstanceID),
+		NetworkSlotID: pgvalue.UUID(leaseIDs.networkSlotID), NetworkSlotGeneration: leaseIDs.networkSlotGeneration,
+		ExpectedRunStateVersion: leaseIDs.snapshotVersion,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
@@ -114,16 +87,15 @@ func (s *Server) workerStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("start run"))
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(status.Status)})
+	startedLease := request.Lease
+	startedLease.SnapshotVersion++
+	startedLease.ExpiresAt = pgvalue.Time(status.ExpiresAt)
+	writeJSON(w, http.StatusOK, api.WorkerStartResponse{RunID: request.Lease.RunID, Status: string(status.State), Lease: startedLease})
 }
 
 func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
-	if s.dispatchQueue == nil {
-		writeError(w, unavailable(errors.New("run dispatch queue is not configured")))
 		return
 	}
 	var request api.WorkerRenewRequest
@@ -143,25 +115,23 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	leaseRow, queueLease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
+	err = s.workerCurrentRunningLease(r.Context(), worker, leaseIDs)
 	if err != nil {
 		if isNoRows(err) {
 			writeError(w, conflict(errors.New("worker run lease is stale")))
 			return
 		}
-		s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-		writeError(w, errors.New("get queue lease"))
+		s.log.Error("worker run lease lookup failed", "run_id", request.Lease.RunID, "error", err)
+		writeError(w, errors.New("get run lease"))
 		return
 	}
 	expiresAt := time.Now().Add(workerLeaseDuration)
 	renewed, err := s.db.RenewRunLease(r.Context(), db.RenewRunLeaseParams{
-		OrgID:             pgvalue.UUID(leaseIDs.orgID),
-		RunID:             pgvalue.UUID(leaseIDs.runID),
-		RunLeaseID:        pgvalue.UUID(leaseIDs.runLeaseID),
-		WorkerInstanceID:  pgvalue.UUID(worker.WorkerInstanceID),
-		DispatchMessageID: leaseRow.DispatchMessageID,
-		DispatchLeaseID:   leaseRow.DispatchLeaseID,
-		LeaseExpiresAt:    pgtype.Timestamptz{Time: expiresAt, Valid: true},
+		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: pgvalue.UUID(leaseIDs.orgID),
+		RunID: pgvalue.UUID(leaseIDs.runID), RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID),
+		LeaseSequence: leaseIDs.leaseSequence, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: leaseIDs.workerEpoch, RuntimeInstanceID: pgvalue.UUID(leaseIDs.runtimeInstanceID),
+		NetworkSlotID: pgvalue.UUID(leaseIDs.networkSlotID), NetworkSlotGeneration: leaseIDs.networkSlotGeneration,
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is stale")))
@@ -172,35 +142,14 @@ func (s *Server) workerRenew(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("renew run lease"))
 		return
 	}
-	if _, err := s.dispatchQueue.Renew(r.Context(), queueLease, expiresAt); err != nil {
-		s.log.Warn("worker dispatch renew repair failed", "run_id", request.Lease.RunID, "error", err)
-	}
-	lease := api.WorkerRunLease{
-		ID:                request.Lease.ID,
-		OrgID:             request.Lease.OrgID,
-		RunID:             request.Lease.RunID,
-		WorkerInstanceID:  pgvalue.MustUUIDValue(renewed.WorkerInstanceID).String(),
-		ProtocolVersion:   renewed.WorkerProtocolVersion,
-		AttemptNumber:     renewed.AttemptNumber,
-		DispatchMessageID: renewed.DispatchMessageID,
-		DispatchLeaseID:   renewed.DispatchLeaseID,
-		Trace: api.TraceContext{
-			TraceID:     renewed.TraceID,
-			SpanID:      renewed.SpanID,
-			Traceparent: renewed.Traceparent,
-		},
-		ExpiresAt: pgvalue.Time(renewed.LeaseExpiresAt),
-	}
+	lease := request.Lease
+	lease.ExpiresAt = pgvalue.Time(renewed.ExpiresAt)
 	writeJSON(w, http.StatusOK, api.WorkerRenewResponse{Lease: lease})
 }
 
 func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 	if s.db == nil {
 		writeError(w, unavailable(errors.New("run storage is not configured")))
-		return
-	}
-	if s.dispatchQueue == nil {
-		writeError(w, unavailable(errors.New("run dispatch queue is not configured")))
 		return
 	}
 	var request api.WorkerReleaseRequest
@@ -220,14 +169,38 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("worker run lease belongs to another worker")))
 		return
 	}
-	_, lease, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
-	activeQueueLeaseFound := err == nil
+	fingerprint, err := terminalRequestFingerprint("run.release", request.Result)
 	if err != nil {
-		if !isNoRows(err) {
-			s.log.Error("worker queue lease lookup failed", "run_id", request.Lease.RunID, "error", err)
-			writeError(w, errors.New("get queue lease"))
+		writeError(w, errors.New("fingerprint worker release"))
+		return
+	}
+	terminal, err := s.db.GetRunLeaseTerminalResult(r.Context(), db.GetRunLeaseTerminalResultParams{
+		OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID), RunLeaseID: pgvalue.UUID(leaseIDs.runLeaseID),
+		LeaseSequence: leaseIDs.leaseSequence, TaskAttemptNumber: leaseIDs.attemptNumber,
+		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+		RuntimeInstanceID: pgvalue.UUID(leaseIDs.runtimeInstanceID), NetworkSlotID: pgvalue.UUID(leaseIDs.networkSlotID),
+		NetworkSlotGeneration: leaseIDs.networkSlotGeneration, WorkerProtocolVersion: leaseIDs.protocolVersion,
+	})
+	if err == nil {
+		if !terminal.TerminalRequestFingerprint.Valid || terminal.TerminalRequestFingerprint.String != fingerprint {
+			writeError(w, conflict(errors.New("worker run lease already has a different terminal result")))
 			return
 		}
+		writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(terminal.RunStatus)})
+		return
+	}
+	if !isNoRows(err) {
+		writeError(w, errors.New("get terminal run lease"))
+		return
+	}
+	err = s.workerCurrentRunningLease(r.Context(), worker, leaseIDs)
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("worker run lease is stale")))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("get running run lease"))
+		return
 	}
 	status, exitCode, errorMessage, err := releaseFields(request.Result)
 	if err != nil {
@@ -235,6 +208,10 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	output := releaseOutput(request.Result, status, exitCode)
+	if request.Result.ActiveDurationMs < 0 {
+		writeError(w, badRequest(errors.New("result.active_duration_ms must be non-negative")))
+		return
+	}
 	workspaceFields, err := releaseWorkspaceFields(request.Result.Workspace)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -244,23 +221,37 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, conflict(err))
 		return
 	}
-	_, terminalEventPayload, err := terminalRunEventForFields(status, exitCode, errorMessage, request.Result)
+	currentRun, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: pgvalue.UUID(leaseIDs.orgID), ID: pgvalue.UUID(leaseIDs.runID)})
 	if err != nil {
-		writeError(w, errors.New("encode terminal run event"))
+		writeError(w, conflict(errors.New("run state changed before release")))
 		return
+	}
+	leaseState := db.RunLeaseStateCompleted
+	reasonCode := "completed"
+	terminalOutcome := db.RunTerminalOutcomeSucceeded
+	var terminalError []byte
+	if status == db.RunStatusFailed {
+		leaseState, reasonCode, terminalOutcome = db.RunLeaseStateFailed, "failed", db.RunTerminalOutcomeFailed
+	} else if status == db.RunStatusCancelled {
+		leaseState, reasonCode, terminalOutcome = db.RunLeaseStateCancelled, "cancelled", db.RunTerminalOutcomeCancelled
+	}
+	if errorMessage.Valid {
+		terminalError, _ = json.Marshal(map[string]string{"message": errorMessage.String})
 	}
 	var workspaceVersionPublicID string
 	release := func() (db.ReleaseRunLeaseRow, error) {
 		return s.db.ReleaseRunLease(r.Context(), db.ReleaseRunLeaseParams{
-			OrgID:                       pgvalue.UUID(leaseIDs.orgID),
-			RunID:                       pgvalue.UUID(leaseIDs.runID),
-			RunLeaseID:                  pgvalue.UUID(leaseIDs.runLeaseID),
-			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-			DispatchMessageID:           leaseIDs.queueMessageID,
-			DispatchLeaseID:             leaseIDs.queueLeaseID,
-			RunStatus:                   status,
-			WorkspaceLeaseID:            workspaceFields.leaseID,
-			WorkspaceFencingToken:       workspaceFields.fencingToken,
+			OrgID: pgvalue.UUID(leaseIDs.orgID), RunID: pgvalue.UUID(leaseIDs.runID),
+			WorkspaceLeaseID: workspaceFields.leaseID, WorkspaceFencingToken: workspaceFields.fencingToken,
+			WorkspaceFencingGeneration: workspaceFields.fencingGeneration,
+			State:                      leaseState, ReasonCode: pgvalue.Text(reasonCode), Error: terminalError,
+			TerminalRequestFingerprint: fingerprint,
+			RunLeaseID:                 pgvalue.UUID(leaseIDs.runLeaseID), LeaseSequence: leaseIDs.leaseSequence,
+			WorkerGroupID:    request.Lease.WorkerGroupID,
+			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: leaseIDs.workerEpoch,
+			WorkerProtocolVersion: request.Lease.ProtocolVersion,
+			RuntimeInstanceID:     pgvalue.UUID(leaseIDs.runtimeInstanceID), NetworkSlotID: pgvalue.UUID(leaseIDs.networkSlotID),
+			NetworkSlotGeneration: leaseIDs.networkSlotGeneration, RunStatus: status,
 			WorkspaceArtifactDigest:     workspaceFields.artifactDigest,
 			WorkspaceArtifactSizeBytes:  workspaceFields.artifactSizeBytes,
 			WorkspaceArtifactMediaType:  workspaceFields.artifactMediaType,
@@ -270,8 +261,10 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 			ExitCode:                    exitCode,
 			Output:                      output,
 			ErrorMessage:                errorMessage,
-			TerminalEventPayload:        terminalEventPayload,
 			WorkspaceVersionPublicID:    pgvalue.Text(workspaceVersionPublicID),
+			TerminalOutcome:             db.NullRunTerminalOutcome{RunTerminalOutcome: terminalOutcome, Valid: true},
+			ExpectedRunStateVersion:     currentRun.StateVersion,
+			ActiveDurationMs:            request.Result.ActiveDurationMs,
 		})
 	}
 	var run db.ReleaseRunLeaseRow
@@ -289,13 +282,26 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("release run"))
 		return
 	}
-	if activeQueueLeaseFound {
-		s.ackWorkerQueueLease(r.Context(), pgvalue.UUID(leaseIDs.runID), lease)
-	}
 	if run.SessionID.Valid && runStatusTerminal(run.Status) {
 		s.sessionContinuationRequestWorkflow().reconcileAccepted(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
 	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
+}
+
+func terminalRequestFingerprint(scope string, payload any) (string, error) {
+	body, err := json.Marshal(struct {
+		Scope   string `json:"scope"`
+		Payload any    `json:"payload"`
+	}{Scope: scope, Payload: payload})
+	if err != nil {
+		return "", err
+	}
+	canonical, err := canonicalJSON(body)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(canonical)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (s *Server) verifyWorkerWorkspaceCommit(ctx context.Context, workspace *api.WorkerWorkspace) error {
@@ -326,7 +332,6 @@ func (s *Server) appendWorkerEvent(w http.ResponseWriter, r *http.Request, lease
 	}
 	_, err := s.db.AppendRunEventForExecution(r.Context(), db.AppendRunEventForExecutionParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),

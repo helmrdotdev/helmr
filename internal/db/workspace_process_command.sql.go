@@ -54,7 +54,7 @@ UPDATE workspace_processes
    AND workspace_processes.workspace_id = $5
    AND workspace_processes.id = $6
    AND $1 IN ('stdout', 'stderr')
-RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
+RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.terminal_error, workspace_processes.updated_at
 `
 
 type AdvanceWorkspaceExecOutputCursorParams struct {
@@ -79,10 +79,14 @@ func (q *Queries) AdvanceWorkspaceExecOutputCursor(ctx context.Context, arg Adva
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -99,7 +103,6 @@ func (q *Queries) AdvanceWorkspaceExecOutputCursor(ctx context.Context, arg Adva
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -117,6 +120,9 @@ func (q *Queries) AdvanceWorkspaceExecOutputCursor(ctx context.Context, arg Adva
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -145,7 +151,7 @@ UPDATE workspace_processes
           AND chunks.offset_start = $7
           AND chunks.offset_end = $1
    )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type AdvanceWorkspaceExecStdinDeliveredCursorParams struct {
@@ -172,10 +178,14 @@ func (q *Queries) AdvanceWorkspaceExecStdinDeliveredCursor(ctx context.Context, 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -192,7 +202,6 @@ func (q *Queries) AdvanceWorkspaceExecStdinDeliveredCursor(ctx context.Context, 
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -210,6 +219,9 @@ func (q *Queries) AdvanceWorkspaceExecStdinDeliveredCursor(ctx context.Context, 
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -231,7 +243,7 @@ UPDATE workspace_processes
          WHEN 'stdout' THEN stdout_cursor
          WHEN 'stderr' THEN stderr_cursor
        END
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type AdvanceWorkspaceExecStreamCursorParams struct {
@@ -260,10 +272,14 @@ func (q *Queries) AdvanceWorkspaceExecStreamCursor(ctx context.Context, arg Adva
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -280,7 +296,6 @@ func (q *Queries) AdvanceWorkspaceExecStreamCursor(ctx context.Context, arg Adva
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -298,6 +313,9 @@ func (q *Queries) AdvanceWorkspaceExecStreamCursor(ctx context.Context, arg Adva
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -317,7 +335,7 @@ UPDATE workspace_processes
    AND id = $9
    AND kind = 'command'
    AND state IN ('queued', 'starting')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type BindWorkspaceExecWorkspaceMountParams struct {
@@ -348,10 +366,14 @@ func (q *Queries) BindWorkspaceExecWorkspaceMount(ctx context.Context, arg BindW
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -368,7 +390,6 @@ func (q *Queries) BindWorkspaceExecWorkspaceMount(ctx context.Context, arg BindW
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -386,6 +407,9 @@ func (q *Queries) BindWorkspaceExecWorkspaceMount(ctx context.Context, arg BindW
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -436,7 +460,7 @@ UPDATE workspace_processes
    AND id = $5
    AND kind = 'command'
    AND state IN ('queued', 'starting', 'running')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type CloseWorkspaceExecStdinParams struct {
@@ -459,10 +483,14 @@ func (q *Queries) CloseWorkspaceExecStdin(ctx context.Context, arg CloseWorkspac
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -479,7 +507,6 @@ func (q *Queries) CloseWorkspaceExecStdin(ctx context.Context, arg CloseWorkspac
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -497,6 +524,9 @@ func (q *Queries) CloseWorkspaceExecStdin(ctx context.Context, arg CloseWorkspac
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -506,7 +536,6 @@ const createWorkspaceExec = `-- name: CreateWorkspaceExec :one
 INSERT INTO workspace_processes (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -525,7 +554,6 @@ INSERT INTO workspace_processes (
 )
 SELECT $1,
        workspaces.org_id,
-       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
@@ -549,7 +577,7 @@ SELECT $1,
    AND workspaces.state = 'active'
    AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type CreateWorkspaceExecParams struct {
@@ -594,10 +622,14 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -614,7 +646,6 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -632,6 +663,9 @@ func (q *Queries) CreateWorkspaceExec(ctx context.Context, arg CreateWorkspaceEx
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -672,7 +706,7 @@ func (q *Queries) DeleteWorkspaceExecStreamChunksBefore(ctx context.Context, arg
 }
 
 const getWorkspaceExec = `-- name: GetWorkspaceExec :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
   FROM workspace_processes
  WHERE org_id = $1
    AND project_id = $2
@@ -702,10 +736,14 @@ func (q *Queries) GetWorkspaceExec(ctx context.Context, arg GetWorkspaceExecPara
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -722,7 +760,6 @@ func (q *Queries) GetWorkspaceExec(ctx context.Context, arg GetWorkspaceExecPara
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -740,13 +777,16 @@ func (q *Queries) GetWorkspaceExec(ctx context.Context, arg GetWorkspaceExecPara
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getWorkspaceExecByIdempotency = `-- name: GetWorkspaceExecByIdempotency :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
   FROM workspace_processes
  WHERE org_id = $1
    AND project_id = $2
@@ -777,10 +817,14 @@ func (q *Queries) GetWorkspaceExecByIdempotency(ctx context.Context, arg GetWork
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -797,7 +841,6 @@ func (q *Queries) GetWorkspaceExecByIdempotency(ctx context.Context, arg GetWork
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -815,6 +858,9 @@ func (q *Queries) GetWorkspaceExecByIdempotency(ctx context.Context, arg GetWork
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -861,7 +907,7 @@ func (q *Queries) GetWorkspaceExecStreamBounds(ctx context.Context, arg GetWorks
 }
 
 const getWorkspaceExecStreamChunkAtOffset = `-- name: GetWorkspaceExecStreamChunkAtOffset :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
+SELECT id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
   FROM workspace_process_stream_chunks
  WHERE org_id = $1
    AND project_id = $2
@@ -896,7 +942,6 @@ func (q *Queries) GetWorkspaceExecStreamChunkAtOffset(ctx context.Context, arg G
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -914,7 +959,7 @@ func (q *Queries) GetWorkspaceExecStreamChunkAtOffset(ctx context.Context, arg G
 }
 
 const getWorkspaceExecStreamChunkReceiptAtOffset = `-- name: GetWorkspaceExecStreamChunkReceiptAtOffset :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data_sha256, data_size, observed_at, created_at
+SELECT id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data_sha256, data_size, observed_at, created_at
   FROM workspace_process_stream_receipts
  WHERE org_id = $1
    AND project_id = $2
@@ -949,7 +994,6 @@ func (q *Queries) GetWorkspaceExecStreamChunkReceiptAtOffset(ctx context.Context
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -970,7 +1014,6 @@ const insertWorkspaceExecOutputStreamChunk = `-- name: InsertWorkspaceExecOutput
 WITH inserted AS (
     INSERT INTO workspace_process_stream_chunks (
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -987,21 +1030,19 @@ WITH inserted AS (
         $3,
         $4,
         $5,
-        $6,
-        $7::text,
-        CASE WHEN $7::text = 'stdin' THEN 'input' ELSE 'output' END,
+        $6::text,
+        CASE WHEN $6::text = 'stdin' THEN 'input' ELSE 'output' END,
+        $7,
         $8,
         $9,
-        $10,
-        coalesce($11, now())
+        coalesce($10, now())
     )
     ON CONFLICT DO NOTHING
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
+    RETURNING id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
 ),
 terminal_telemetry_outbox AS (
     INSERT INTO telemetry_outbox (
         org_id,
-        worker_group_id,
         stream_kind,
         source_kind,
         source_id,
@@ -1024,7 +1065,6 @@ terminal_telemetry_outbox AS (
         observed_at
     )
     SELECT inserted.org_id,
-           inserted.worker_group_id,
            'terminal_output',
            'workspace_process',
            inserted.process_id,
@@ -1049,14 +1089,13 @@ terminal_telemetry_outbox AS (
     ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key) DO NOTHING
     RETURNING id
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
+SELECT id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
   FROM inserted
  WHERE (SELECT count(*) FROM terminal_telemetry_outbox) >= 0
 `
 
 type InsertWorkspaceExecOutputStreamChunkParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
@@ -1071,7 +1110,6 @@ type InsertWorkspaceExecOutputStreamChunkParams struct {
 type InsertWorkspaceExecOutputStreamChunkRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
@@ -1089,7 +1127,6 @@ type InsertWorkspaceExecOutputStreamChunkRow struct {
 func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg InsertWorkspaceExecOutputStreamChunkParams) (InsertWorkspaceExecOutputStreamChunkRow, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecOutputStreamChunk,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -1104,7 +1141,6 @@ func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg 
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1124,7 +1160,6 @@ func (q *Queries) InsertWorkspaceExecOutputStreamChunk(ctx context.Context, arg 
 const insertWorkspaceExecStreamChunk = `-- name: InsertWorkspaceExecStreamChunk :one
 INSERT INTO workspace_process_stream_chunks (
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -1141,20 +1176,18 @@ INSERT INTO workspace_process_stream_chunks (
     $3,
     $4,
     $5,
-    $6,
-    $7::text,
-    CASE WHEN $7::text = 'stdin' THEN 'input' ELSE 'output' END,
+    $6::text,
+    CASE WHEN $6::text = 'stdin' THEN 'input' ELSE 'output' END,
+    $7,
     $8,
     $9,
-    $10,
-    coalesce($11, now())
+    coalesce($10, now())
 )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
 `
 
 type InsertWorkspaceExecStreamChunkParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
@@ -1169,7 +1202,6 @@ type InsertWorkspaceExecStreamChunkParams struct {
 func (q *Queries) InsertWorkspaceExecStreamChunk(ctx context.Context, arg InsertWorkspaceExecStreamChunkParams) (WorkspaceProcessStreamChunk, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecStreamChunk,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -1184,7 +1216,6 @@ func (q *Queries) InsertWorkspaceExecStreamChunk(ctx context.Context, arg Insert
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1204,7 +1235,6 @@ func (q *Queries) InsertWorkspaceExecStreamChunk(ctx context.Context, arg Insert
 const insertWorkspaceExecStreamChunkReceipt = `-- name: InsertWorkspaceExecStreamChunkReceipt :one
 INSERT INTO workspace_process_stream_receipts (
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -1222,22 +1252,20 @@ INSERT INTO workspace_process_stream_receipts (
     $3,
     $4,
     $5,
-    $6,
-    $7::text,
-    CASE WHEN $7::text = 'stdin' THEN 'input' ELSE 'output' END,
+    $6::text,
+    CASE WHEN $6::text = 'stdin' THEN 'input' ELSE 'output' END,
+    $7,
     $8,
     $9,
     $10,
-    $11,
-    coalesce($12, now())
+    coalesce($11, now())
 )
 ON CONFLICT DO NOTHING
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data_sha256, data_size, observed_at, created_at
+RETURNING id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data_sha256, data_size, observed_at, created_at
 `
 
 type InsertWorkspaceExecStreamChunkReceiptParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
@@ -1253,7 +1281,6 @@ type InsertWorkspaceExecStreamChunkReceiptParams struct {
 func (q *Queries) InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg InsertWorkspaceExecStreamChunkReceiptParams) (WorkspaceProcessStreamReceipt, error) {
 	row := q.db.QueryRow(ctx, insertWorkspaceExecStreamChunkReceipt,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.WorkspaceID,
@@ -1269,7 +1296,6 @@ func (q *Queries) InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -1287,7 +1313,7 @@ func (q *Queries) InsertWorkspaceExecStreamChunkReceipt(ctx context.Context, arg
 }
 
 const listWorkspaceExecStdinChunksAfterDelivered = `-- name: ListWorkspaceExecStdinChunksAfterDelivered :many
-SELECT chunks.id, chunks.org_id, chunks.worker_group_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.process_id, chunks.stream_name, chunks.direction, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
+SELECT chunks.id, chunks.org_id, chunks.project_id, chunks.environment_id, chunks.workspace_id, chunks.process_id, chunks.stream_name, chunks.direction, chunks.offset_start, chunks.offset_end, chunks.data, chunks.observed_at, chunks.expires_at, chunks.created_at
   FROM workspace_processes
   JOIN workspace_process_stream_chunks AS chunks
     ON chunks.org_id = workspace_processes.org_id
@@ -1334,7 +1360,6 @@ func (q *Queries) ListWorkspaceExecStdinChunksAfterDelivered(ctx context.Context
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -1359,7 +1384,7 @@ func (q *Queries) ListWorkspaceExecStdinChunksAfterDelivered(ctx context.Context
 }
 
 const listWorkspaceExecStreamChunksAfter = `-- name: ListWorkspaceExecStreamChunksAfter :many
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
+SELECT id, org_id, project_id, environment_id, workspace_id, process_id, stream_name, direction, offset_start, offset_end, data, observed_at, expires_at, created_at
   FROM workspace_process_stream_chunks
  WHERE org_id = $1
    AND project_id = $2
@@ -1404,7 +1429,6 @@ func (q *Queries) ListWorkspaceExecStreamChunksAfter(ctx context.Context, arg Li
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
@@ -1429,7 +1453,7 @@ func (q *Queries) ListWorkspaceExecStreamChunksAfter(ctx context.Context, arg Li
 }
 
 const listWorkspaceExecs = `-- name: ListWorkspaceExecs :many
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
   FROM workspace_processes
  WHERE org_id = $1
    AND project_id = $2
@@ -1469,10 +1493,14 @@ func (q *Queries) ListWorkspaceExecs(ctx context.Context, arg ListWorkspaceExecs
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
+			&i.RegionID,
+			&i.WorkerGroupID,
+			&i.WorkerInstanceID,
+			&i.WorkerEpoch,
+			&i.RuntimeInstanceID,
 			&i.WorkspaceMountID,
 			&i.InstanceLeaseID,
 			&i.WriteLeaseID,
@@ -1489,7 +1517,6 @@ func (q *Queries) ListWorkspaceExecs(ctx context.Context, arg ListWorkspaceExecs
 			&i.RuntimeProcessID,
 			&i.ExitCode,
 			&i.Signal,
-			&i.Error,
 			&i.PtyCols,
 			&i.PtyRows,
 			&i.PendingPtyCols,
@@ -1507,6 +1534,9 @@ func (q *Queries) ListWorkspaceExecs(ctx context.Context, arg ListWorkspaceExecs
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.ExitedAt,
+			&i.TerminalAt,
+			&i.TerminalReasonCode,
+			&i.TerminalError,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -1520,7 +1550,7 @@ func (q *Queries) ListWorkspaceExecs(ctx context.Context, arg ListWorkspaceExecs
 }
 
 const listWorkspaceExecsAwaitingDispatch = `-- name: ListWorkspaceExecsAwaitingDispatch :many
-SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
+SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.terminal_error, workspace_processes.updated_at
   FROM workspace_processes
   JOIN workspace_mounts
     ON workspace_mounts.org_id = workspace_processes.org_id
@@ -1568,10 +1598,14 @@ func (q *Queries) ListWorkspaceExecsAwaitingDispatch(ctx context.Context, arg Li
 		if err := rows.Scan(
 			&i.ID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.WorkspaceID,
+			&i.RegionID,
+			&i.WorkerGroupID,
+			&i.WorkerInstanceID,
+			&i.WorkerEpoch,
+			&i.RuntimeInstanceID,
 			&i.WorkspaceMountID,
 			&i.InstanceLeaseID,
 			&i.WriteLeaseID,
@@ -1588,7 +1622,6 @@ func (q *Queries) ListWorkspaceExecsAwaitingDispatch(ctx context.Context, arg Li
 			&i.RuntimeProcessID,
 			&i.ExitCode,
 			&i.Signal,
-			&i.Error,
 			&i.PtyCols,
 			&i.PtyRows,
 			&i.PendingPtyCols,
@@ -1606,6 +1639,9 @@ func (q *Queries) ListWorkspaceExecsAwaitingDispatch(ctx context.Context, arg Li
 			&i.CreatedAt,
 			&i.StartedAt,
 			&i.ExitedAt,
+			&i.TerminalAt,
+			&i.TerminalReasonCode,
+			&i.TerminalError,
 			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
@@ -1733,7 +1769,7 @@ WITH updated_exec AS (
        AND workspace_processes.workspace_mount_id = $10
        AND workspace_processes.kind = 'command'
        AND workspace_processes.state IN ('queued', 'starting', 'running')
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+    RETURNING id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 ),
 released_write_lease AS (
     UPDATE workspace_leases
@@ -1751,7 +1787,7 @@ released_write_lease AS (
        AND workspace_leases.state IN ('active', 'releasing')
     RETURNING workspace_leases.id
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
   FROM updated_exec
 `
 
@@ -1771,10 +1807,14 @@ type MarkWorkspaceExecExitedParams struct {
 type MarkWorkspaceExecExitedRow struct {
 	ID                   pgtype.UUID             `json:"id"`
 	OrgID                pgtype.UUID             `json:"org_id"`
-	WorkerGroupID        string                  `json:"worker_group_id"`
 	ProjectID            pgtype.UUID             `json:"project_id"`
 	EnvironmentID        pgtype.UUID             `json:"environment_id"`
 	WorkspaceID          pgtype.UUID             `json:"workspace_id"`
+	RegionID             pgtype.Text             `json:"region_id"`
+	WorkerGroupID        pgtype.Text             `json:"worker_group_id"`
+	WorkerInstanceID     pgtype.UUID             `json:"worker_instance_id"`
+	WorkerEpoch          pgtype.Int8             `json:"worker_epoch"`
+	RuntimeInstanceID    pgtype.UUID             `json:"runtime_instance_id"`
 	WorkspaceMountID     pgtype.UUID             `json:"workspace_mount_id"`
 	InstanceLeaseID      pgtype.UUID             `json:"instance_lease_id"`
 	WriteLeaseID         pgtype.UUID             `json:"write_lease_id"`
@@ -1791,7 +1831,6 @@ type MarkWorkspaceExecExitedRow struct {
 	RuntimeProcessID     string                  `json:"runtime_process_id"`
 	ExitCode             pgtype.Int4             `json:"exit_code"`
 	Signal               string                  `json:"signal"`
-	Error                []byte                  `json:"error"`
 	PtyCols              pgtype.Int4             `json:"pty_cols"`
 	PtyRows              pgtype.Int4             `json:"pty_rows"`
 	PendingPtyCols       pgtype.Int4             `json:"pending_pty_cols"`
@@ -1809,6 +1848,9 @@ type MarkWorkspaceExecExitedRow struct {
 	CreatedAt            pgtype.Timestamptz      `json:"created_at"`
 	StartedAt            pgtype.Timestamptz      `json:"started_at"`
 	ExitedAt             pgtype.Timestamptz      `json:"exited_at"`
+	TerminalAt           pgtype.Timestamptz      `json:"terminal_at"`
+	TerminalReasonCode   pgtype.Text             `json:"terminal_reason_code"`
+	TerminalError        []byte                  `json:"terminal_error"`
 	UpdatedAt            pgtype.Timestamptz      `json:"updated_at"`
 }
 
@@ -1829,10 +1871,14 @@ func (q *Queries) MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspace
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -1849,7 +1895,6 @@ func (q *Queries) MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspace
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -1867,6 +1912,9 @@ func (q *Queries) MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspace
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
@@ -1874,7 +1922,7 @@ func (q *Queries) MarkWorkspaceExecExited(ctx context.Context, arg MarkWorkspace
 
 const markWorkspaceExecStarted = `-- name: MarkWorkspaceExecStarted :one
 WITH target AS MATERIALIZED (
-    SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
+    SELECT workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.terminal_error, workspace_processes.updated_at
       FROM workspace_processes
       JOIN workspace_mounts
         ON workspace_mounts.org_id = workspace_processes.org_id
@@ -1905,7 +1953,7 @@ updated_exec AS (
        AND workspace_processes.environment_id = target.environment_id
        AND workspace_processes.workspace_id = target.workspace_id
        AND workspace_processes.id = target.id
-    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
+    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.region_id, workspace_processes.worker_group_id, workspace_processes.worker_instance_id, workspace_processes.worker_epoch, workspace_processes.runtime_instance_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.terminal_at, workspace_processes.terminal_reason_code, workspace_processes.terminal_error, workspace_processes.updated_at
 ),
 dirtied_mount AS (
     UPDATE workspace_mounts
@@ -1930,7 +1978,7 @@ dirtied_mount AS (
        AND workspace_mounts.workspace_id = updated_exec.workspace_id
        AND workspace_mounts.id = updated_exec.workspace_mount_id
        AND workspace_mounts.fencing_generation = workspace_leases.acquired_fencing_generation
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.lease_generation, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.last_heartbeat_at, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 ),
 updated_workspace AS (
     UPDATE workspaces
@@ -1943,7 +1991,7 @@ updated_workspace AS (
        AND workspaces.id = dirtied_mount.workspace_id
     RETURNING workspaces.id
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, error, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, updated_at
+SELECT id, org_id, project_id, environment_id, workspace_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id, instance_lease_id, write_lease_id, kind, command, cwd, env_shape, filesystem_mode, state, detached, idempotency_key, idempotency_expires_at, request_fingerprint, runtime_process_id, exit_code, signal, pty_cols, pty_rows, pending_pty_cols, pending_pty_rows, stdout_cursor, stderr_cursor, stdin_cursor, stdin_delivered_cursor, stdin_closed_at, input_cursor, input_delivered_cursor, output_cursor, created_by_subject_type, created_by_subject_id, created_at, started_at, exited_at, terminal_at, terminal_reason_code, terminal_error, updated_at
   FROM updated_exec
  WHERE (SELECT count(*) FROM updated_workspace) >= 0
 `
@@ -1961,10 +2009,14 @@ type MarkWorkspaceExecStartedParams struct {
 type MarkWorkspaceExecStartedRow struct {
 	ID                   pgtype.UUID             `json:"id"`
 	OrgID                pgtype.UUID             `json:"org_id"`
-	WorkerGroupID        string                  `json:"worker_group_id"`
 	ProjectID            pgtype.UUID             `json:"project_id"`
 	EnvironmentID        pgtype.UUID             `json:"environment_id"`
 	WorkspaceID          pgtype.UUID             `json:"workspace_id"`
+	RegionID             pgtype.Text             `json:"region_id"`
+	WorkerGroupID        pgtype.Text             `json:"worker_group_id"`
+	WorkerInstanceID     pgtype.UUID             `json:"worker_instance_id"`
+	WorkerEpoch          pgtype.Int8             `json:"worker_epoch"`
+	RuntimeInstanceID    pgtype.UUID             `json:"runtime_instance_id"`
 	WorkspaceMountID     pgtype.UUID             `json:"workspace_mount_id"`
 	InstanceLeaseID      pgtype.UUID             `json:"instance_lease_id"`
 	WriteLeaseID         pgtype.UUID             `json:"write_lease_id"`
@@ -1981,7 +2033,6 @@ type MarkWorkspaceExecStartedRow struct {
 	RuntimeProcessID     string                  `json:"runtime_process_id"`
 	ExitCode             pgtype.Int4             `json:"exit_code"`
 	Signal               string                  `json:"signal"`
-	Error                []byte                  `json:"error"`
 	PtyCols              pgtype.Int4             `json:"pty_cols"`
 	PtyRows              pgtype.Int4             `json:"pty_rows"`
 	PendingPtyCols       pgtype.Int4             `json:"pending_pty_cols"`
@@ -1999,6 +2050,9 @@ type MarkWorkspaceExecStartedRow struct {
 	CreatedAt            pgtype.Timestamptz      `json:"created_at"`
 	StartedAt            pgtype.Timestamptz      `json:"started_at"`
 	ExitedAt             pgtype.Timestamptz      `json:"exited_at"`
+	TerminalAt           pgtype.Timestamptz      `json:"terminal_at"`
+	TerminalReasonCode   pgtype.Text             `json:"terminal_reason_code"`
+	TerminalError        []byte                  `json:"terminal_error"`
 	UpdatedAt            pgtype.Timestamptz      `json:"updated_at"`
 }
 
@@ -2016,10 +2070,14 @@ func (q *Queries) MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspac
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
+		&i.RegionID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
 		&i.WorkspaceMountID,
 		&i.InstanceLeaseID,
 		&i.WriteLeaseID,
@@ -2036,7 +2094,6 @@ func (q *Queries) MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspac
 		&i.RuntimeProcessID,
 		&i.ExitCode,
 		&i.Signal,
-		&i.Error,
 		&i.PtyCols,
 		&i.PtyRows,
 		&i.PendingPtyCols,
@@ -2054,6 +2111,9 @@ func (q *Queries) MarkWorkspaceExecStarted(ctx context.Context, arg MarkWorkspac
 		&i.CreatedAt,
 		&i.StartedAt,
 		&i.ExitedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err

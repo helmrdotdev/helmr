@@ -33,11 +33,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = $6
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
         WHERE task_schedules.id = task_schedule_instances.schedule_id
           AND task_schedules.enabled
    )
@@ -52,7 +47,6 @@ type AdvanceScheduleInstanceParams struct {
 	LastTriggerRunID pgtype.UUID        `json:"last_trigger_run_id"`
 	InstanceID       pgtype.UUID        `json:"instance_id"`
 	Generation       int64              `json:"generation"`
-	WorkerGroupID    string             `json:"worker_group_id"`
 }
 
 type AdvanceScheduleInstanceRow struct {
@@ -68,7 +62,6 @@ func (q *Queries) AdvanceScheduleInstance(ctx context.Context, arg AdvanceSchedu
 		arg.LastTriggerRunID,
 		arg.InstanceID,
 		arg.Generation,
-		arg.WorkerGroupID,
 	)
 	var i AdvanceScheduleInstanceRow
 	err := row.Scan(&i.InstanceID, &i.Generation, &i.NextFireAt)
@@ -638,22 +631,16 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = $5
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        )
 `
 
 type DeferScheduleInstanceTriggerParams struct {
-	RetryAfter    pgtype.Timestamptz `json:"retry_after"`
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	RetryAfter  pgtype.Timestamptz `json:"retry_after"`
+	InstanceID  pgtype.UUID        `json:"instance_id"`
+	Generation  int64              `json:"generation"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) DeferScheduleInstanceTrigger(ctx context.Context, arg DeferScheduleInstanceTriggerParams) (int64, error) {
@@ -662,7 +649,6 @@ func (q *Queries) DeferScheduleInstanceTrigger(ctx context.Context, arg DeferSch
 		arg.InstanceID,
 		arg.Generation,
 		arg.ScheduledAt,
-		arg.WorkerGroupID,
 	)
 	if err != nil {
 		return 0, err
@@ -743,33 +729,22 @@ SELECT task_schedule_instances.retry_after
                    AND environments.id = task_schedule_instances.environment_id
   JOIN projects ON projects.org_id = task_schedule_instances.org_id
                AND projects.id = task_schedule_instances.project_id
-  JOIN worker_groups ON worker_groups.id = $1
-                  AND worker_groups.region_id = projects.default_region_id
-                  AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
- WHERE task_schedule_instances.id = $2
-   AND task_schedule_instances.generation = $3
-   AND task_schedule_instances.next_fire_at = $4
+ WHERE task_schedule_instances.id = $1
+   AND task_schedule_instances.generation = $2
+   AND task_schedule_instances.next_fire_at = $3
    AND task_schedule_instances.enabled
    AND task_schedule_instances.retry_after > now()
    AND task_schedules.enabled
 `
 
 type GetScheduleRetryAfterParams struct {
-	WorkerGroupID string             `json:"worker_group_id"`
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
+	InstanceID  pgtype.UUID        `json:"instance_id"`
+	Generation  int64              `json:"generation"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) GetScheduleRetryAfter(ctx context.Context, arg GetScheduleRetryAfterParams) (pgtype.Timestamptz, error) {
-	row := q.db.QueryRow(ctx, getScheduleRetryAfter,
-		arg.WorkerGroupID,
-		arg.InstanceID,
-		arg.Generation,
-		arg.ScheduledAt,
-	)
+	row := q.db.QueryRow(ctx, getScheduleRetryAfter, arg.InstanceID, arg.Generation, arg.ScheduledAt)
 	var retry_after pgtype.Timestamptz
 	err := row.Scan(&retry_after)
 	return retry_after, err
@@ -886,7 +861,7 @@ const getScheduleTriggerCandidate = `-- name: GetScheduleTriggerCandidate :one
 SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.id AS instance_id,
        task_schedules.org_id,
-       worker_groups.id AS worker_group_id,
+       projects.default_region_id AS region_id,
        task_schedules.project_id,
        task_schedule_instances.environment_id,
        task_schedules.schedule_type,
@@ -910,14 +885,9 @@ SELECT task_schedules.id AS schedule_id,
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = $1
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
- WHERE task_schedule_instances.id = $2
-   AND task_schedule_instances.generation = $3
-   AND task_schedule_instances.next_fire_at = $4
+ WHERE task_schedule_instances.id = $1
+   AND task_schedule_instances.generation = $2
+   AND task_schedule_instances.next_fire_at = $3
    AND task_schedule_instances.enabled
    AND (
        task_schedule_instances.retry_after IS NULL
@@ -927,17 +897,16 @@ SELECT task_schedules.id AS schedule_id,
 `
 
 type GetScheduleTriggerCandidateParams struct {
-	WorkerGroupID string             `json:"worker_group_id"`
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
+	InstanceID  pgtype.UUID        `json:"instance_id"`
+	Generation  int64              `json:"generation"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 type GetScheduleTriggerCandidateRow struct {
 	ScheduleID          pgtype.UUID        `json:"schedule_id"`
 	InstanceID          pgtype.UUID        `json:"instance_id"`
 	OrgID               pgtype.UUID        `json:"org_id"`
-	WorkerGroupID       string             `json:"worker_group_id"`
+	RegionID            string             `json:"region_id"`
 	ProjectID           pgtype.UUID        `json:"project_id"`
 	EnvironmentID       pgtype.UUID        `json:"environment_id"`
 	ScheduleType        TaskScheduleType   `json:"schedule_type"`
@@ -957,18 +926,13 @@ type GetScheduleTriggerCandidateRow struct {
 }
 
 func (q *Queries) GetScheduleTriggerCandidate(ctx context.Context, arg GetScheduleTriggerCandidateParams) (GetScheduleTriggerCandidateRow, error) {
-	row := q.db.QueryRow(ctx, getScheduleTriggerCandidate,
-		arg.WorkerGroupID,
-		arg.InstanceID,
-		arg.Generation,
-		arg.ScheduledAt,
-	)
+	row := q.db.QueryRow(ctx, getScheduleTriggerCandidate, arg.InstanceID, arg.Generation, arg.ScheduledAt)
 	var i GetScheduleTriggerCandidateRow
 	err := row.Scan(
 		&i.ScheduleID,
 		&i.InstanceID,
 		&i.OrgID,
-		&i.WorkerGroupID,
+		&i.RegionID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.ScheduleType,
@@ -1107,7 +1071,7 @@ func (q *Queries) ListDeclarativeScheduleSummariesForEnvironment(ctx context.Con
 const listScheduleInstancesForRegistration = `-- name: ListScheduleInstancesForRegistration :many
 SELECT task_schedules.id AS schedule_id,
        task_schedule_instances.id AS instance_id,
-       worker_groups.id AS worker_group_id,
+       projects.default_region_id AS region_id,
        task_schedules.enabled AS schedule_active,
        task_schedule_instances.enabled AS instance_active,
        task_schedule_instances.generation,
@@ -1120,28 +1084,22 @@ SELECT task_schedules.id AS schedule_id,
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = $1
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                  AND worker_groups.health_state IN ('healthy', 'degraded')
-                  AND worker_groups.routing_fresh_until > now()
- WHERE task_schedules.org_id = $2
-   AND task_schedules.project_id = $3
-   AND task_schedules.id = $4
+ WHERE task_schedules.org_id = $1
+   AND task_schedules.project_id = $2
+   AND task_schedules.id = $3
  ORDER BY task_schedule_instances.environment_id
 `
 
 type ListScheduleInstancesForRegistrationParams struct {
-	WorkerGroupID string      `json:"worker_group_id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	ScheduleID    pgtype.UUID `json:"schedule_id"`
+	OrgID      pgtype.UUID `json:"org_id"`
+	ProjectID  pgtype.UUID `json:"project_id"`
+	ScheduleID pgtype.UUID `json:"schedule_id"`
 }
 
 type ListScheduleInstancesForRegistrationRow struct {
 	ScheduleID     pgtype.UUID        `json:"schedule_id"`
 	InstanceID     pgtype.UUID        `json:"instance_id"`
-	WorkerGroupID  string             `json:"worker_group_id"`
+	RegionID       string             `json:"region_id"`
 	ScheduleActive bool               `json:"schedule_active"`
 	InstanceActive bool               `json:"instance_active"`
 	Generation     int64              `json:"generation"`
@@ -1150,12 +1108,7 @@ type ListScheduleInstancesForRegistrationRow struct {
 }
 
 func (q *Queries) ListScheduleInstancesForRegistration(ctx context.Context, arg ListScheduleInstancesForRegistrationParams) ([]ListScheduleInstancesForRegistrationRow, error) {
-	rows, err := q.db.Query(ctx, listScheduleInstancesForRegistration,
-		arg.WorkerGroupID,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.ScheduleID,
-	)
+	rows, err := q.db.Query(ctx, listScheduleInstancesForRegistration, arg.OrgID, arg.ProjectID, arg.ScheduleID)
 	if err != nil {
 		return nil, err
 	}
@@ -1166,7 +1119,7 @@ func (q *Queries) ListScheduleInstancesForRegistration(ctx context.Context, arg 
 		if err := rows.Scan(
 			&i.ScheduleID,
 			&i.InstanceID,
-			&i.WorkerGroupID,
+			&i.RegionID,
 			&i.ScheduleActive,
 			&i.InstanceActive,
 			&i.Generation,
@@ -1188,7 +1141,7 @@ WITH index_entries AS (
     SELECT task_schedules.id AS schedule_id,
            task_schedule_instances.id AS instance_id,
            task_schedules.org_id,
-           worker_groups.id AS worker_group_id,
+           projects.default_region_id AS region_id,
            task_schedules.project_id,
            task_schedule_instances.environment_id,
            task_schedule_instances.generation,
@@ -1202,20 +1155,15 @@ WITH index_entries AS (
                        AND environments.id = task_schedule_instances.environment_id
       JOIN projects ON projects.org_id = task_schedule_instances.org_id
                    AND projects.id = task_schedule_instances.project_id
-      JOIN worker_groups ON worker_groups.id = $4
-                      AND worker_groups.region_id = projects.default_region_id
-                      AND worker_groups.state = 'active'
-                      AND worker_groups.health_state IN ('healthy', 'degraded')
-                      AND worker_groups.routing_fresh_until > now()
      WHERE task_schedules.enabled
        AND task_schedule_instances.enabled
        AND task_schedule_instances.next_fire_at IS NOT NULL
-       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_fire_at) <= $5
+       AND coalesce(task_schedule_instances.retry_after, task_schedule_instances.next_fire_at) <= $4
 )
 SELECT schedule_id,
        instance_id,
        org_id,
-       worker_group_id,
+       region_id,
        project_id,
        environment_id,
        generation,
@@ -1239,7 +1187,6 @@ type ListScheduleRepairEntriesParams struct {
 	AfterAvailableAt pgtype.Timestamptz `json:"after_available_at"`
 	AfterInstanceID  pgtype.UUID        `json:"after_instance_id"`
 	RowLimit         int32              `json:"row_limit"`
-	WorkerGroupID    string             `json:"worker_group_id"`
 	AvailableBefore  pgtype.Timestamptz `json:"available_before"`
 }
 
@@ -1247,7 +1194,7 @@ type ListScheduleRepairEntriesRow struct {
 	ScheduleID    pgtype.UUID        `json:"schedule_id"`
 	InstanceID    pgtype.UUID        `json:"instance_id"`
 	OrgID         pgtype.UUID        `json:"org_id"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	RegionID      string             `json:"region_id"`
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	Generation    int64              `json:"generation"`
@@ -1261,7 +1208,6 @@ func (q *Queries) ListScheduleRepairEntries(ctx context.Context, arg ListSchedul
 		arg.AfterAvailableAt,
 		arg.AfterInstanceID,
 		arg.RowLimit,
-		arg.WorkerGroupID,
 		arg.AvailableBefore,
 	)
 	if err != nil {
@@ -1275,7 +1221,7 @@ func (q *Queries) ListScheduleRepairEntries(ctx context.Context, arg ListSchedul
 			&i.ScheduleID,
 			&i.InstanceID,
 			&i.OrgID,
-			&i.WorkerGroupID,
+			&i.RegionID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.Generation,
@@ -1433,24 +1379,18 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = $7
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        )
 `
 
 type MarkScheduleInstanceTriggerFailedParams struct {
-	ErrorKind     string             `json:"error_kind"`
-	ErrorMessage  string             `json:"error_message"`
-	RetryAfter    pgtype.Timestamptz `json:"retry_after"`
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	ErrorKind    string             `json:"error_kind"`
+	ErrorMessage string             `json:"error_message"`
+	RetryAfter   pgtype.Timestamptz `json:"retry_after"`
+	InstanceID   pgtype.UUID        `json:"instance_id"`
+	Generation   int64              `json:"generation"`
+	ScheduledAt  pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) MarkScheduleInstanceTriggerFailed(ctx context.Context, arg MarkScheduleInstanceTriggerFailedParams) (int64, error) {
@@ -1461,7 +1401,6 @@ func (q *Queries) MarkScheduleInstanceTriggerFailed(ctx context.Context, arg Mar
 		arg.InstanceID,
 		arg.Generation,
 		arg.ScheduledAt,
-		arg.WorkerGroupID,
 	)
 	if err != nil {
 		return 0, err
@@ -1538,11 +1477,6 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = $5
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        )
@@ -1552,11 +1486,10 @@ UPDATE task_schedule_instances
 `
 
 type SkipScheduleInstanceTriggerParams struct {
-	NextFireAt    pgtype.Timestamptz `json:"next_fire_at"`
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	LastFireAt    pgtype.Timestamptz `json:"last_fire_at"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	NextFireAt pgtype.Timestamptz `json:"next_fire_at"`
+	InstanceID pgtype.UUID        `json:"instance_id"`
+	Generation int64              `json:"generation"`
+	LastFireAt pgtype.Timestamptz `json:"last_fire_at"`
 }
 
 type SkipScheduleInstanceTriggerRow struct {
@@ -1571,7 +1504,6 @@ func (q *Queries) SkipScheduleInstanceTrigger(ctx context.Context, arg SkipSched
 		arg.InstanceID,
 		arg.Generation,
 		arg.LastFireAt,
-		arg.WorkerGroupID,
 	)
 	var i SkipScheduleInstanceTriggerRow
 	err := row.Scan(&i.InstanceID, &i.Generation, &i.NextFireAt)
@@ -1595,30 +1527,19 @@ UPDATE task_schedule_instances
                               AND environments.id = task_schedule_instances.environment_id
              JOIN projects ON projects.org_id = task_schedules.org_id
                           AND projects.id = task_schedules.project_id
-             JOIN worker_groups ON worker_groups.id = $4
-                         AND worker_groups.region_id = projects.default_region_id
-                         AND worker_groups.state = 'active'
-                         AND worker_groups.health_state IN ('healthy', 'degraded')
-                         AND worker_groups.routing_fresh_until > now()
             WHERE task_schedules.id = task_schedule_instances.schedule_id
               AND task_schedules.enabled
        )
 `
 
 type StopScheduleInstanceTriggerParams struct {
-	InstanceID    pgtype.UUID        `json:"instance_id"`
-	Generation    int64              `json:"generation"`
-	ScheduledAt   pgtype.Timestamptz `json:"scheduled_at"`
-	WorkerGroupID string             `json:"worker_group_id"`
+	InstanceID  pgtype.UUID        `json:"instance_id"`
+	Generation  int64              `json:"generation"`
+	ScheduledAt pgtype.Timestamptz `json:"scheduled_at"`
 }
 
 func (q *Queries) StopScheduleInstanceTrigger(ctx context.Context, arg StopScheduleInstanceTriggerParams) (int64, error) {
-	result, err := q.db.Exec(ctx, stopScheduleInstanceTrigger,
-		arg.InstanceID,
-		arg.Generation,
-		arg.ScheduledAt,
-		arg.WorkerGroupID,
-	)
+	result, err := q.db.Exec(ctx, stopScheduleInstanceTrigger, arg.InstanceID, arg.Generation, arg.ScheduledAt)
 	if err != nil {
 		return 0, err
 	}

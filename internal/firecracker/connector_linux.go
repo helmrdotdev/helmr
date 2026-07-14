@@ -5,7 +5,6 @@ package firecracker
 import (
 	"bufio"
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -38,7 +38,6 @@ import (
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
 const stopTimeout = 10 * time.Second
-const runtimeABI = "helmr.firecracker.snapshot.v0"
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
@@ -48,7 +47,8 @@ var nextGuestCID atomic.Uint32
 var dialVsock = vsock.DialContext
 
 type Connector struct {
-	cfg Config
+	cfg       Config
+	artifacts runtimeArtifacts
 }
 
 func NewConnector(cfg Config) (*Connector, error) {
@@ -56,22 +56,17 @@ func NewConnector(cfg Config) (*Connector, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-	return &Connector{cfg: cfg}, nil
+	artifacts, err := loadRuntimeArtifacts(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &Connector{cfg: cfg, artifacts: artifacts}, nil
 }
 
 func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
-	kernelDigest, err := digestFile(c.cfg.KernelPath)
-	if err != nil {
-		return RuntimeCapabilities{}, fmt.Errorf("digest guest kernel: %w", err)
-	}
-	initramfsDigest, err := digestFile(c.cfg.InitramfsPath)
-	if err != nil {
-		return RuntimeCapabilities{}, fmt.Errorf("digest guest initramfs: %w", err)
-	}
-	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
-	if err != nil {
-		return RuntimeCapabilities{}, fmt.Errorf("digest guest rootfs: %w", err)
-	}
+	kernelDigest := c.artifacts.Kernel.Digest
+	initramfsDigest := c.artifacts.Initramfs.Digest
+	rootfsDigest := c.artifacts.Rootfs.Digest
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
 		Arch:            runtime.GOARCH,
 		ABI:             runtimeABI,
@@ -97,7 +92,7 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 }
 
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
-	return c.start(ctx, "", "", "", nil, request.Network, request.Topology, nil)
+	return c.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -110,17 +105,153 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 	}
 	child := *c
 	child.cfg = cfg
-	return child.start(ctx, "", "", "", nil, request.Network, request.Topology, nil)
+	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
+}
+
+// CleanupRuntime reconciles one exact durable runtime owner. It deliberately
+// refuses fuzzy IDs and ambiguous ownership so a failed cleanup can only keep
+// capacity quarantined, never delete another runtime.
+func (c *Connector) CleanupRuntime(ctx context.Context, runtimeID string) error {
+	runtimeID = strings.TrimSpace(runtimeID)
+	id, err := uuid.Parse(runtimeID)
+	if err != nil || id.String() != runtimeID {
+		return errors.New("firecracker cleanup owner id must be a canonical UUID")
+	}
+	statePath := filepath.Join(c.cfg.StateDir, runtimeID)
+	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", runtimeID)
+	if info, statErr := os.Stat(statePath); statErr == nil {
+		if !info.IsDir() {
+			return errors.New("firecracker cleanup state owner path is not a directory")
+		}
+		owner, readErr := os.ReadFile(filepath.Join(statePath, "owner"))
+		if readErr != nil {
+			return fmt.Errorf("read firecracker cleanup ownership evidence: %w", readErr)
+		}
+		if string(owner) != vm.RuntimeOwnerRuntime+"\n"+runtimeID+"\n" {
+			return errors.New("firecracker cleanup ownership evidence does not match exact runtime owner")
+		}
+	} else if !os.IsNotExist(statErr) {
+		return fmt.Errorf("inspect firecracker cleanup state: %w", statErr)
+	}
+	pids, err := exactRuntimePIDs(runtimeID)
+	if err != nil {
+		return fmt.Errorf("inventory firecracker cleanup processes: %w", err)
+	}
+	for _, pid := range pids {
+		if err := stopExactRuntimePID(ctx, pid); err != nil {
+			return fmt.Errorf("stop firecracker cleanup process %d: %w", pid, err)
+		}
+	}
+	netns, err := c.runtimeNetNSExists(ctx, runtimeID)
+	if err != nil {
+		return err
+	}
+	if netns {
+		if err := c.cleanupNetworkPolicy(ctx, runtimeID); err != nil {
+			return err
+		}
+		if err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", runtimeID).Run(); err != nil {
+			return fmt.Errorf("delete firecracker cleanup netns: %w", err)
+		}
+	}
+	if err := os.RemoveAll(statePath); err != nil {
+		return fmt.Errorf("remove firecracker cleanup state: %w", err)
+	}
+	if err := os.RemoveAll(jailerPath); err != nil {
+		return fmt.Errorf("remove firecracker cleanup jailer state: %w", err)
+	}
+	remaining, err := exactRuntimePIDs(runtimeID)
+	if err != nil || len(remaining) != 0 {
+		return fmt.Errorf("verify firecracker cleanup processes absent: pids=%v: %w", remaining, err)
+	}
+	if exists, verifyErr := c.runtimeNetNSExists(ctx, runtimeID); verifyErr != nil || exists {
+		return fmt.Errorf("verify firecracker cleanup netns absent: exists=%t: %w", exists, verifyErr)
+	}
+	for _, path := range []string{statePath, jailerPath} {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			return fmt.Errorf("verify firecracker cleanup path absent %s: %w", path, statErr)
+		}
+	}
+	return nil
+}
+
+func (c *Connector) runtimeNetNSExists(ctx context.Context, runtimeID string) (bool, error) {
+	output, err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "list").Output()
+	if err != nil {
+		return false, fmt.Errorf("inventory firecracker cleanup netns: %w", err)
+	}
+	for line := range strings.SplitSeq(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 0 && fields[0] == runtimeID {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func exactRuntimePIDs(runtimeID string) ([]int, error) {
+	entries, err := os.ReadDir("/proc")
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var pids []int
+	for _, entry := range entries {
+		pid, parseErr := strconv.Atoi(entry.Name())
+		if parseErr != nil {
+			continue
+		}
+		cmdline, readErr := os.ReadFile(filepath.Join("/proc", entry.Name(), "cmdline"))
+		if readErr != nil {
+			continue
+		}
+		args := strings.Split(strings.TrimSuffix(string(cmdline), "\x00"), "\x00")
+		if len(args) == 0 || (filepath.Base(args[0]) != "firecracker" && filepath.Base(args[0]) != "jailer") {
+			continue
+		}
+		for _, arg := range args[1:] {
+			if arg == runtimeID {
+				pids = append(pids, pid)
+				break
+			}
+		}
+	}
+	return pids, nil
+}
+
+func stopExactRuntimePID(ctx context.Context, pid int) error {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := process.Signal(syscall.SIGTERM); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for {
+		if err := process.Signal(syscall.Signal(0)); errors.Is(err, os.ErrProcessDone) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return process.Kill()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
 	if strings.TrimSpace(request.ImageFormat) != "oci-tar" {
 		return fmt.Errorf("firecracker materialize image format %q is not supported", request.ImageFormat)
 	}
-	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
-	if err != nil {
-		return fmt.Errorf("digest workspaceMount rootfs: %w", err)
-	}
+	rootfsDigest := c.artifacts.Rootfs.Digest
 	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
 		return fmt.Errorf("workspaceMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
 	}
@@ -216,7 +347,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	cleanup := []string{rawScratch, rawMemory}
 	child := *c
 	child.cfg = restoreCfg
-	session, err := child.start(ctx, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, recordPhase)
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, recordPhase)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -244,24 +375,15 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if manifest.RecoveryPoint.ID != checkpointID {
 		return manifest, Config{}, fmt.Errorf("checkpoint manifest recovery point id %q does not match restore id %q", manifest.RecoveryPoint.ID, checkpointID)
 	}
-	kernelDigest, err := digestFile(c.cfg.KernelPath)
-	if err != nil {
-		return manifest, Config{}, fmt.Errorf("digest guest kernel: %w", err)
-	}
+	kernelDigest := c.artifacts.Kernel.Digest
 	if identity.KernelDigest != kernelDigest {
 		return manifest, Config{}, fmt.Errorf("checkpoint kernel digest %s does not match worker kernel digest %s", identity.KernelDigest, kernelDigest)
 	}
-	initramfsDigest, err := digestFile(c.cfg.InitramfsPath)
-	if err != nil {
-		return manifest, Config{}, fmt.Errorf("digest guest initramfs: %w", err)
-	}
+	initramfsDigest := c.artifacts.Initramfs.Digest
 	if identity.InitramfsDigest != initramfsDigest {
 		return manifest, Config{}, fmt.Errorf("checkpoint initramfs digest %s does not match worker initramfs digest %s", identity.InitramfsDigest, initramfsDigest)
 	}
-	rootfsDigest, err := digestFile(c.cfg.RootfsPath)
-	if err != nil {
-		return manifest, Config{}, fmt.Errorf("digest guest rootfs: %w", err)
-	}
+	rootfsDigest := c.artifacts.Rootfs.Digest
 	if identity.RootfsDigest != rootfsDigest {
 		return manifest, Config{}, fmt.Errorf("checkpoint rootfs digest %s does not match worker rootfs digest %s", identity.RootfsDigest, rootfsDigest)
 	}
@@ -393,11 +515,24 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
-	instanceID := uuid.NewString()
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind string, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
+	instanceID = strings.TrimSpace(instanceID)
+	if ownerKind != vm.RuntimeOwnerRuntime && ownerKind != vm.RuntimeOwnerBuild {
+		return nil, errors.New("firecracker owner kind must be runtime or build")
+	}
+	if ownerKind == vm.RuntimeOwnerBuild && instanceID == "" {
+		instanceID = uuid.NewString()
+	}
+	if _, err := uuid.Parse(instanceID); err != nil {
+		return nil, errors.New("firecracker owner id must be a UUID")
+	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create firecracker instance dir: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(instanceDir, "owner"), []byte(ownerKind+"\n"+instanceID+"\n"), 0o600); err != nil {
+		_ = os.RemoveAll(instanceDir)
+		return nil, fmt.Errorf("write firecracker ownership evidence: %w", err)
 	}
 	cleanupInstanceDir := func() { _ = os.RemoveAll(instanceDir) }
 	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
@@ -540,6 +675,7 @@ func (c *Connector) start(ctx context.Context, snapshotMemoryPath string, snapsh
 		machineCancel: machineCancel,
 		machineExit:   machineExit,
 		cfg:           c.cfg,
+		artifacts:     c.artifacts,
 		vsockHostPath: vsockHostPath,
 		instanceDir:   instanceDir,
 		jailRoot:      jailRoot,
@@ -1040,6 +1176,7 @@ type guestSession struct {
 	machineCancel        context.CancelFunc
 	machineExit          *machineExit
 	cfg                  Config
+	artifacts            runtimeArtifacts
 	vsockHostPath        string
 	instanceDir          string
 	jailRoot             string
@@ -1058,6 +1195,33 @@ func (s *guestSession) Stream() io.ReadWriteCloser {
 
 func (s *guestSession) OpenStream(ctx context.Context) (io.ReadWriteCloser, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
+}
+
+func (s *guestSession) NetworkFacts() (vm.NetworkFacts, error) {
+	if s.machine == nil || len(s.machine.Cfg.NetworkInterfaces) != 1 {
+		return vm.NetworkFacts{}, errors.New("firecracker session has no unique CNI interface")
+	}
+	static := s.machine.Cfg.NetworkInterfaces[0].StaticConfiguration
+	if static == nil || static.IPConfiguration == nil {
+		return vm.NetworkFacts{}, errors.New("firecracker CNI facts are unavailable")
+	}
+	ip := static.IPConfiguration.IPAddr
+	if static.HostDevName == "" || static.MacAddress == "" || ip.IP == nil || ip.Mask == nil || static.IPConfiguration.Gateway == nil {
+		return vm.NetworkFacts{}, errors.New("firecracker CNI facts are incomplete")
+	}
+	ones, bits := ip.Mask.Size()
+	if ones < 0 || bits <= 0 {
+		return vm.NetworkFacts{}, errors.New("firecracker CNI subnet is invalid")
+	}
+	return vm.NetworkFacts{
+		HostInterfaceName: static.HostDevName,
+		GuestAddress:      ip.IP.String(),
+		GatewayAddress:    static.IPConfiguration.Gateway.String(),
+		Subnet:            (&net.IPNet{IP: ip.IP.Mask(ip.Mask), Mask: ip.Mask}).String(),
+		TapName:           static.HostDevName,
+		NetNSName:         filepath.Base(s.machine.Cfg.NetNS),
+		GuestMAC:          static.MacAddress,
+	}, nil
 }
 
 func (s *guestSession) Wait(ctx context.Context) error {
@@ -1139,27 +1303,9 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 			_ = os.Remove(statePath)
 		}
 	}()
-	started = time.Now()
-	kernelDigest, err := digestFile(s.cfg.KernelPath)
-	if err != nil {
-		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest kernel: %w", err)
-	}
-	recordPhase("digest_kernel", started)
-	started = time.Now()
-	initramfsDigest, err := digestFile(s.cfg.InitramfsPath)
-	if err != nil {
-		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest initramfs: %w", err)
-	}
-	recordPhase("digest_initramfs", started)
-	started = time.Now()
-	rootfsDigest, err := digestFile(s.cfg.RootfsPath)
-	if err != nil {
-		_ = s.Resume(context.Background())
-		return vm.SnapshotArtifact{}, fmt.Errorf("digest guest rootfs: %w", err)
-	}
-	recordPhase("digest_rootfs", started)
+	kernelDigest := s.artifacts.Kernel.Digest
+	initramfsDigest := s.artifacts.Initramfs.Digest
+	rootfsDigest := s.artifacts.Rootfs.Digest
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
 		Arch:            runtime.GOARCH,
 		ABI:             runtimeABI,
@@ -1404,19 +1550,6 @@ func safeSnapshotID(id string) string {
 		return uuid.NewString()
 	}
 	return string(out)
-}
-
-func digestFile(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", err
-	}
-	return sha256sum.DigestHash(hash), nil
 }
 
 type snapshotManifest struct {

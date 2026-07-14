@@ -192,7 +192,6 @@ func (s *Server) workerAdvanceWorkspaceExecInputDelivered(w http.ResponseWriter,
 		deliveredDigest := streamDataSHA256(deliveredChunk.Data)
 		if _, err := work.q.InsertWorkspaceExecStreamChunkReceipt(r.Context(), db.InsertWorkspaceExecStreamChunkReceiptParams{
 			OrgID:         mount.OrgID,
-			WorkerGroupID: mount.WorkerGroupID,
 			ProjectID:     mount.ProjectID,
 			EnvironmentID: mount.EnvironmentID,
 			WorkspaceID:   mount.WorkspaceID,
@@ -334,7 +333,7 @@ func (s *Server) workerMarkWorkspaceExecExited(w http.ResponseWriter, r *http.Re
 		s.writeWorkspacePrimitiveError(w, "mark workspace exec terminal", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(workspaceExecFromExitedRow(row))})
+	writeJSON(w, http.StatusOK, api.WorkspaceExecEnvelope{Exec: workspaceExecResponse(db.WorkspaceProcess(row))})
 }
 
 func workspaceExecTerminalEventMatches(row db.WorkspaceProcess, workspaceMountID pgtype.UUID, state db.WorkspaceProcessState, exitCode pgtype.Int4, signal string, errorJSON []byte) bool {
@@ -353,7 +352,7 @@ func workspaceExecTerminalEventMatches(row db.WorkspaceProcess, workspaceMountID
 	if row.Signal != signal {
 		return false
 	}
-	return workerPrimitiveJSONEqual(row.Error, errorJSON)
+	return workerPrimitiveJSONEqual(row.TerminalError, errorJSON)
 }
 
 func (s *Server) loadWorkerWorkspaceExecBoundToWorkspaceMount(w http.ResponseWriter, r *http.Request, scope api.WorkerWorkspacePrimitiveScope, rawExecID string) (db.WorkspaceMount, db.WorkspaceProcess, bool) {
@@ -430,7 +429,6 @@ func (s *Server) appendWorkspaceExecOutputStreamChunk(ctx context.Context, exec 
 		}
 		inserted, insertErr := work.q.InsertWorkspaceExecOutputStreamChunk(ctx, db.InsertWorkspaceExecOutputStreamChunkParams{
 			OrgID:         exec.OrgID,
-			WorkerGroupID: exec.WorkerGroupID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,

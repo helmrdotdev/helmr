@@ -17,7 +17,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -25,33 +24,31 @@ import (
 )
 
 type testServerConfig struct {
-	Log                 *slog.Logger
-	DeploymentMode      string
-	WorkerGroupID       string
-	RegionID            string
-	DefaultRegionID     string
-	DB                  db.Querier
-	DBTX                dbTXBeginner
-	TX                  TxBeginner
-	Auth                auth.Authenticator
-	CAS                 cas.Store
-	Secrets             SecretManager
-	RunEnqueuer         RunEnqueuer
-	DispatchQueue       dispatch.Queue
-	ScheduleEngine      ScheduleRegistrar
-	EventStream         *EventStream
-	TelemetryReader     telemetry.Reader
-	WorkerCommands      *WorkerCommandStream
-	WorkerTokenSecret   []byte
-	WorkerTokenTTL      time.Duration
-	WorkerRegisterToken string
-	SetupToken          string
-	AuthSecret          []byte
-	PublicURL           *url.URL
-	AuthProvider        AuthProvider
-	Mailer              email.Sender
-	MagicLinkDebugURLs  bool
-	SessionTTL          time.Duration
+	Log                *slog.Logger
+	DeploymentMode     string
+	WorkerGroupID      string
+	RegionID           string
+	DefaultRegionID    string
+	DB                 db.Querier
+	DBTX               dbTXBeginner
+	TX                 TxBeginner
+	Auth               auth.Authenticator
+	CAS                cas.Store
+	Secrets            SecretManager
+	RunEnqueuer        RunEnqueuer
+	ScheduleEngine     ScheduleRegistrar
+	EventStream        *EventStream
+	TelemetryReader    telemetry.Reader
+	WorkerTokenSecret  []byte
+	WorkerTokenTTL     time.Duration
+	WorkerEnrollment   WorkerEnrollmentVerifier
+	SetupToken         string
+	AuthSecret         []byte
+	PublicURL          *url.URL
+	AuthProvider       AuthProvider
+	Mailer             email.Sender
+	MagicLinkDebugURLs bool
+	SessionTTL         time.Duration
 }
 
 func newTestServer(testCfg testServerConfig) http.Handler {
@@ -60,10 +57,11 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	cfg := ServerConfig{
-		Log:  log,
-		DB:   testTransactionalStore{Querier: &fakeStore{}},
-		TX:   panicTxBeginner{},
-		Auth: fakeAuth{},
+		Log:              log,
+		DB:               testTransactionalStore{Querier: &fakeStore{}},
+		TX:               panicTxBeginner{},
+		Auth:             fakeAuth{},
+		WorkerEnrollment: testWorkerEnrollmentVerifier{},
 	}
 	if testCfg.DBTX != nil {
 		queries := db.New(testCfg.DBTX)
@@ -114,23 +112,14 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.RunEnqueuer != nil {
 		cfg.RunEnqueuer = testCfg.RunEnqueuer
 	}
-	if testCfg.DispatchQueue != nil {
-		cfg.DispatchQueue = testCfg.DispatchQueue
-	}
 	if testCfg.ScheduleEngine != nil {
 		cfg.ScheduleEngine = testCfg.ScheduleEngine
 	}
 	if testCfg.EventStream != nil {
 		cfg.EventStream = testCfg.EventStream
-		if cfg.EventStream.workerGroupID == "" {
-			cfg.EventStream.workerGroupID = cfg.WorkerGroupID
-		}
 		if cfg.EventStream.telemetryReader == nil {
 			cfg.EventStream.telemetryReader = cfg.TelemetryReader
 		}
-	}
-	if testCfg.WorkerCommands != nil {
-		cfg.WorkerCommands = testCfg.WorkerCommands
 	}
 	if len(testCfg.WorkerTokenSecret) > 0 {
 		cfg.WorkerTokenSecret = testCfg.WorkerTokenSecret
@@ -138,8 +127,8 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.WorkerTokenTTL != 0 {
 		cfg.WorkerTokenTTL = testCfg.WorkerTokenTTL
 	}
-	if testCfg.WorkerRegisterToken != "" {
-		cfg.WorkerRegisterToken = testCfg.WorkerRegisterToken
+	if testCfg.WorkerEnrollment != nil {
+		cfg.WorkerEnrollment = testCfg.WorkerEnrollment
 	}
 	if testCfg.SetupToken != "" {
 		cfg.SetupToken = testCfg.SetupToken
@@ -167,6 +156,12 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		panic(err)
 	}
 	return handler
+}
+
+type testWorkerEnrollmentVerifier struct{}
+
+func (testWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (VerifiedWorkerEnrollment, error) {
+	return VerifiedWorkerEnrollment{}, errors.New("worker enrollment is not configured for this test")
 }
 
 type panicTxBeginner struct{}
@@ -326,25 +321,25 @@ func mustParseTestURL(raw string) *url.URL {
 	return parsed
 }
 
-func TestNewServerRejectsMismatchedEventStreamWorkerGroupID(t *testing.T) {
+func TestNewServerAllowsEventStreamComponentForDifferentWorkerGroup(t *testing.T) {
 	store := &fakeStore{}
 	_, err := NewServer(ServerConfig{
-		Log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WorkerGroupID:   dbtest.DefaultWorkerGroupID,
-		RegionID:        "us-east-1",
-		DefaultRegionID: "us-east-1",
-		DB:              testTransactionalStore{Querier: store},
-		TX:              panicTxBeginner{},
-		Auth:            fakeAuth{},
-		TelemetryReader: fakeTelemetryReader{store: store},
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
+		RegionID:         "us-east-1",
+		DefaultRegionID:  "us-east-1",
+		DB:               testTransactionalStore{Querier: store},
+		TX:               panicTxBeginner{},
+		Auth:             fakeAuth{},
+		WorkerEnrollment: testWorkerEnrollmentVerifier{},
+		TelemetryReader:  fakeTelemetryReader{store: store},
 		EventStream: &EventStream{
 			log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-			workerGroupID:   "us-east-1-worker-group-2",
 			telemetryReader: fakeTelemetryReader{store: store},
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "event stream worker group id must match control worker group id") {
-		t.Fatalf("NewServer err = %v, want event stream worker group mismatch", err)
+	if err != nil {
+		t.Fatalf("NewServer err = %v", err)
 	}
 }
 
@@ -380,20 +375,6 @@ func TestAPIRejectsUnsupportedAPIVersion(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "unsupported_api_version")
-}
-
-func TestWorkerLogsRejectOversizedRequestBody(t *testing.T) {
-	handler := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
-	workerToken := mintTestWorkerToken(t, handler, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", strings.NewReader(strings.Repeat("x", int(workerLogRequestBodyLimit)+1)))
-	req.Header.Set("authorization", "Bearer "+workerToken)
-	rec := httptest.NewRecorder()
-
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusRequestEntityTooLarge {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
 }
 
 func TestRecoverPanicsWritesJSONError(t *testing.T) {

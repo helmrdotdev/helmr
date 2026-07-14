@@ -14,6 +14,12 @@ locals {
   default_region_id   = trimspace(coalesce(var.default_region_id, local.region_id))
   region_display_name = trimspace(coalesce(var.region_display_name, local.region_id))
   worker_group_id     = trimspace(var.worker_group_id)
+  worker_groups_by_id = {
+    for group in var.worker_groups : group.id => group
+  }
+  worker_fleets_by_group = {
+    for fleet in var.worker_fleets : fleet.group_id => fleet
+  }
   secret_kms_key_arns = distinct(concat(
     [aws_kms_key.helmr.arn],
     var.secret_encryption_key_old_kms_key_arns,
@@ -48,6 +54,8 @@ locals {
     HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
   }, local.telemetry_secrets)
 
+  migration_environment = local.telemetry_environment
+
   email_environment = merge(
     var.email_provider == "none" ? {} : {
       HELMR_EMAIL_PROVIDER = var.email_provider
@@ -73,7 +81,7 @@ locals {
     } : {}
   )
 
-  managed_control_environment = merge({
+  control_environment_defaults = merge({
     HELMR_CONTROL_ADDR           = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE        = var.deployment_mode
     HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
@@ -81,12 +89,12 @@ locals {
     HELMR_REDIS_URL              = local.redis_url
     HELMR_SCHEDULE_JITTER        = var.schedule_jitter
     HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
+    HELMR_WORKER_GROUPS          = jsonencode(var.worker_groups)
   }, local.telemetry_environment, local.email_environment)
 
-  managed_control_secrets = merge({
+  control_secret_defaults = merge({
     HELMR_DATABASE_URL               = aws_secretsmanager_secret.database_url.arn
     HELMR_WORKER_TOKEN_SIGNING_KEY   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    HELMR_WORKER_BOOTSTRAP_TOKEN     = aws_secretsmanager_secret.worker_bootstrap_token.arn
     HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
@@ -116,16 +124,20 @@ locals {
     "HELMR_CLICKHOUSE_USER",
     "HELMR_CLICKHOUSE_PASSWORD",
   ])
-  reserved_control_environment_keys = toset(keys(local.managed_control_environment))
-  reserved_control_secret_keys      = toset(keys(local.managed_control_secrets))
+  reserved_control_environment_keys = toset(keys(local.control_environment_defaults))
+  reserved_control_secret_keys      = toset(keys(local.control_secret_defaults))
   reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
   reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
-  control_environment_conflicts     = setintersection(keys(var.control_environment), local.reserved_control_keys)
-  dispatcher_environment_conflicts  = setintersection(keys(var.dispatcher_environment), local.reserved_control_keys)
-  control_environment               = merge(var.control_environment, local.managed_control_environment)
-  control_secrets                   = local.managed_control_secrets
+  reserved_dispatcher_keys = setunion(local.reserved_control_keys, toset(keys(local.dispatcher_environment_defaults)), toset([
+    "HELMR_WORKER_FLEETS",
+    "HELMR_FLEET_METRICS_NAMESPACE",
+  ]))
+  control_environment_conflicts    = setintersection(keys(var.control_environment), local.reserved_control_keys)
+  dispatcher_environment_conflicts = setintersection(keys(var.dispatcher_environment), local.reserved_dispatcher_keys)
+  control_environment              = merge(var.control_environment, local.control_environment_defaults)
+  control_secrets                  = local.control_secret_defaults
 
-  managed_dispatcher_environment = merge({
+  dispatcher_environment_defaults = merge({
     HELMR_PUBLIC_URL                   = local.control_url
     HELMR_REDIS_URL                    = local.redis_url
     HELMR_SCHEDULE_REPAIR_EVERY        = var.schedule_repair_every
@@ -135,8 +147,11 @@ locals {
     HELMR_SCHEDULE_LEASE               = var.schedule_lease
     HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
     HELMR_SCHEDULE_JITTER              = var.schedule_jitter
-  }, local.telemetry_environment, local.email_environment)
-  dispatcher_environment = merge(var.dispatcher_environment, local.managed_dispatcher_environment)
+    }, length(var.worker_fleets) > 0 ? {
+    HELMR_WORKER_FLEETS           = jsonencode(var.worker_fleets)
+    HELMR_FLEET_METRICS_NAMESPACE = var.fleet_metrics_namespace
+  } : {}, local.telemetry_environment, local.email_environment)
+  dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
     HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
@@ -167,6 +182,7 @@ resource "terraform_data" "bootstrap_preconditions" {
     reserved_env_conflicts            = local.control_environment_conflicts
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
     email_provider                    = var.email_provider
+    worker_fleets                     = var.worker_fleets
   }
 
   lifecycle {
@@ -178,6 +194,80 @@ resource "terraform_data" "bootstrap_preconditions" {
     precondition {
       condition     = length(local.dispatcher_environment_conflicts) == 0
       error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
+    }
+
+    precondition {
+      condition     = length(local.worker_fleets_by_group) == length(var.worker_fleets)
+      error_message = "worker_fleets group_id values must be unique."
+    }
+
+    precondition {
+      condition     = length(var.worker_fleets) == 0 || toset(keys(local.worker_groups_by_id)) == toset(keys(local.worker_fleets_by_group))
+      error_message = "worker_groups and worker_fleets must cover the same group IDs when fleet control is configured."
+    }
+
+    precondition {
+      condition = alltrue([
+        for fleet in var.worker_fleets :
+        contains(keys(local.worker_groups_by_id), fleet.group_id) &&
+        local.worker_groups_by_id[fleet.group_id].autoscaling_group == fleet.autoscaling_group &&
+        local.worker_groups_by_id[fleet.group_id].instance_capacity == fleet.instance_capacity
+      ])
+      error_message = "each worker fleet must project the Auto Scaling group and capacity declared by its worker group."
+    }
+
+    precondition {
+      condition = alltrue([
+        for group in var.worker_groups :
+        trimspace(group.id) != "" && trimspace(group.region) != "" && trimspace(group.account_id) != "" &&
+        trimspace(group.autoscaling_group) != "" && trimspace(group.instance_profile_arn) != "" &&
+        trimspace(group.launch_ami_id) != "" && contains(group.ami_ids, group.launch_ami_id) &&
+        (group.allows_run || group.allows_build) &&
+        group.instance_capacity.milli_cpu > 0 && group.instance_capacity.memory_bytes > 0 &&
+        group.instance_capacity.workload_disk_bytes > 0 && group.instance_capacity.scratch_bytes > 0 &&
+        group.instance_capacity.build_cache_bytes >= 0 && group.instance_capacity.artifact_cache_bytes >= 0 &&
+        group.instance_capacity.vm_slots >= 0 && group.instance_capacity.build_executors >= 0 &&
+        (!group.allows_run || group.instance_capacity.vm_slots > 0) &&
+        (!group.allows_build || group.instance_capacity.build_executors > 0)
+      ])
+      error_message = "worker_groups must define a complete AWS identity boundary and a positive role-compatible capacity floor."
+    }
+
+    precondition {
+      condition     = length(distinct([for fleet in var.worker_fleets : fleet.autoscaling_group])) == length(var.worker_fleets)
+      error_message = "each worker fleet must own a distinct Auto Scaling group."
+    }
+
+    precondition {
+      condition = alltrue([
+        for fleet in var.worker_fleets :
+        contains(["run", "build"], fleet.role) && trimspace(fleet.autoscaling_group) != "" &&
+        length(fleet.compatibility_keys) > 0 && length(distinct(fleet.compatibility_keys)) == length(fleet.compatibility_keys) &&
+        fleet.min_workers >= 0 && fleet.warm_workers >= 0 &&
+        fleet.max_workers >= fleet.min_workers && fleet.max_workers >= fleet.warm_workers && fleet.max_workers <= 10000 &&
+        fleet.max_scale_out_per_cycle > 0 && fleet.max_scale_out_per_cycle <= fleet.max_workers &&
+        fleet.max_pending_workers >= 0 && fleet.max_pending_workers <= fleet.max_workers && fleet.max_packing_items > 0 && fleet.max_packing_items <= 1000000 &&
+        fleet.instance_capacity.milli_cpu > 0 && fleet.instance_capacity.memory_bytes > 0 &&
+        fleet.instance_capacity.workload_disk_bytes > 0 && fleet.instance_capacity.scratch_bytes > 0 &&
+        fleet.instance_capacity.build_cache_bytes >= 0 && fleet.instance_capacity.artifact_cache_bytes >= 0 &&
+        (fleet.role == "run" ? (fleet.instance_capacity.vm_slots > 0 && fleet.instance_capacity.build_executors == 0) : (fleet.instance_capacity.vm_slots == 0 && fleet.instance_capacity.build_executors > 0 && fleet.instance_capacity.build_cache_bytes > 0 && fleet.instance_capacity.artifact_cache_bytes > 0)) &&
+        (fleet.role == "run" ? (fleet.queued_run_scratch_bytes > 0 && fleet.queued_run_scratch_bytes <= fleet.instance_capacity.scratch_bytes) : fleet.queued_run_scratch_bytes == 0) &&
+        fleet.controller_interval_seconds > 0 && fleet.controller_interval_seconds <= 2592000 &&
+        fleet.scale_out_cooldown_seconds > 0 && fleet.scale_out_cooldown_seconds <= 2592000 &&
+        fleet.scale_in_cooldown_seconds > 0 && fleet.scale_in_cooldown_seconds <= 2592000 &&
+        fleet.scale_in_hysteresis_seconds > 0 && fleet.scale_in_hysteresis_seconds <= 2592000 &&
+        fleet.stale_worker_timeout_seconds > 0 && fleet.stale_worker_timeout_seconds <= 2592000 &&
+        fleet.readiness_timeout_seconds > 0 && fleet.readiness_timeout_seconds <= 2592000 &&
+        fleet.drain_timeout_seconds > 0 && fleet.drain_timeout_seconds <= 2592000 &&
+        fleet.metric_interval_seconds > 0 && fleet.metric_interval_seconds <= 2592000 &&
+        fleet.controller_interval_seconds <= fleet.readiness_timeout_seconds && fleet.metric_interval_seconds <= fleet.readiness_timeout_seconds
+      ])
+      error_message = "worker fleet shape, bounds, timeouts, and role-specific capacity must be valid."
+    }
+
+    precondition {
+      condition     = length([for fleet in var.worker_fleets : fleet if fleet.role == "run"]) <= 1 && length([for fleet in var.worker_fleets : fleet if fleet.role == "build"]) <= 1
+      error_message = "run and build roles must be non-overlapping and assigned to at most one fleet each."
     }
 
     precondition {
@@ -914,7 +1004,7 @@ resource "aws_iam_role_policy" "control_task" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect = "Allow"
         Action = [
@@ -944,7 +1034,21 @@ resource "aws_iam_role_policy" "control_task" {
           }
         }
       }
-    ]
+      ], [for statement in [
+        {
+          Effect = "Allow"
+          Action = [
+            "ec2:DescribeInstances",
+            "autoscaling:DescribeAutoScalingInstances"
+          ]
+          Resource = "*"
+        },
+        {
+          Effect   = "Allow"
+          Action   = ["iam:GetInstanceProfile"]
+          Resource = [for group in var.worker_groups : group.instance_profile_arn]
+        }
+    ] : statement])
   })
 }
 
@@ -962,6 +1066,123 @@ resource "aws_iam_role" "dispatcher_task" {
       Action = "sts:AssumeRole"
     }]
   })
+}
+
+resource "aws_iam_role_policy" "dispatcher_fleet_controller" {
+  count = length(var.worker_fleets) > 0 ? 1 : 0
+
+  name = "${local.name}-dispatcher-fleet-controller"
+  role = aws_iam_role.dispatcher_task.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "DescribeConfiguredFleets"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:DescribeAutoScalingGroups"
+        ]
+        Resource = "*"
+      },
+      {
+        Sid    = "MutateConfiguredFleets"
+        Effect = "Allow"
+        Action = [
+          "autoscaling:SetDesiredCapacity",
+          "autoscaling:SetInstanceProtection",
+          "autoscaling:TerminateInstanceInAutoScalingGroup"
+        ]
+        Resource = [for fleet in var.worker_fleets : "arn:${data.aws_partition.current.partition}:autoscaling:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:autoScalingGroup:*:autoScalingGroupName/${fleet.autoscaling_group}"]
+      },
+      {
+        Sid      = "ProjectFleetMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "cloudwatch:namespace" = var.fleet_metrics_namespace
+          }
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_cloudwatch_metric_alarm" "fleet_pending_readiness" {
+  for_each = local.worker_fleets_by_group
+
+  alarm_name          = "${local.name}-${each.value.role}-worker-pending-readiness"
+  alarm_description   = "Worker pending readiness exceeded its configured timeout. This alarm never writes desired capacity."
+  namespace           = var.fleet_metrics_namespace
+  metric_name         = "PendingWorkers"
+  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
+  datapoints_to_alarm = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
+  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "fleet_run_identity_bootstrap" {
+  for_each = length(var.worker_fleets) > 0 ? {
+    for group_id, fleet in local.worker_fleets_by_group : group_id => fleet
+    if fleet.role == "run"
+  } : {}
+
+  alarm_name          = "${local.name}-${each.value.role}-identity-bootstrap"
+  alarm_description   = "A run worker attestation has not produced a certified runtime identity within the readiness window. This alarm never writes desired capacity."
+  namespace           = var.fleet_metrics_namespace
+  metric_name         = "BootstrapPending"
+  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
+  datapoints_to_alarm = max(1, ceil(each.value.readiness_timeout_seconds / max(60, ceil(each.value.metric_interval_seconds / 60) * 60)))
+  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "fleet_drain" {
+  for_each = local.worker_fleets_by_group
+
+  alarm_name          = "${local.name}-${each.value.role}-worker-drain"
+  alarm_description   = "Worker drain exceeded its configured timeout. This alarm never writes desired capacity."
+  namespace           = var.fleet_metrics_namespace
+  metric_name         = "DrainAgeSeconds"
+  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  threshold           = each.value.drain_timeout_seconds
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "fleet_deficit" {
+  for_each = local.worker_fleets_by_group
+
+  alarm_name          = "${local.name}-${each.value.role}-worker-deficit"
+  alarm_description   = "Worker demand remains above its configured maximum capacity. This alarm never writes desired capacity."
+  namespace           = var.fleet_metrics_namespace
+  metric_name         = "UnmetCapacity"
+  dimensions          = { WorkerGroupID = each.key, Role = each.value.role }
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  period              = max(60, ceil(each.value.metric_interval_seconds / 60) * 60)
+  statistic           = "Maximum"
+  treat_missing_data  = "notBreaching"
+  tags                = var.tags
 }
 
 resource "aws_ecs_task_definition" "control" {
@@ -1077,7 +1298,7 @@ resource "aws_ecs_task_definition" "migration" {
     entryPoint = var.control_entrypoint
     command    = ["migrate", "up"]
     environment = [
-      for key, value in local.telemetry_environment : {
+      for key, value in local.migration_environment : {
         name  = key
         value = value
       }
@@ -1236,13 +1457,6 @@ resource "aws_secretsmanager_secret" "smtp_password" {
 
 resource "aws_secretsmanager_secret" "checkpoint_encryption_key" {
   name                    = "${local.name}/worker/checkpoint-encryption-key"
-  kms_key_id              = aws_kms_key.helmr.arn
-  recovery_window_in_days = var.secret_recovery_window_in_days
-  tags                    = var.tags
-}
-
-resource "aws_secretsmanager_secret" "worker_bootstrap_token" {
-  name                    = "${local.name}/worker-bootstrap-token"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

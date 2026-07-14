@@ -14,8 +14,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const workerTestWorkerGroupID = "us-east-1-worker-group-1"
-
 func TestEngineRepairRegistersEveryPage(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
@@ -35,7 +33,6 @@ func TestEngineRepairRegistersEveryPage(t *testing.T) {
 	}
 	index := &fakeScheduleIndex{}
 	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{
-		WorkerGroupID: workerTestWorkerGroupID,
 		RepairLimit:   2,
 		ReconcileLock: &fakeReconcileLock{store: store, locked: true},
 		Now:           func() time.Time { return now },
@@ -65,7 +62,7 @@ func TestEngineRepairSkipsWhenLockIsHeld(t *testing.T) {
 	ctx := context.Background()
 	index := &fakeScheduleIndex{}
 	lock := &fakeReconcileLock{store: &fakeRepairStore{}, locked: false}
-	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{WorkerGroupID: workerTestWorkerGroupID, ReconcileLock: lock})
+	engine, err := NewEngine(nil, fakeDBTX{}, index, fakeRunCreator{}, EngineConfig{ReconcileLock: lock})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,22 +82,20 @@ func TestEngineDeferTriggerNacksWithoutConsumingAttempts(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	instanceID := uuid.Must(uuid.NewV7())
 	index := &fakeScheduleIndex{}
-	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 1")}, index, fakeRunCreator{}, EngineConfig{WorkerGroupID: workerTestWorkerGroupID, Now: func() time.Time { return now }})
+	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 1")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease := IndexLease{
 		Entry: IndexEntry{
-			WorkerGroupID: workerTestWorkerGroupID,
-			InstanceID:    instanceID,
-			Generation:    7,
-			ScheduledAt:   now.Add(-time.Minute),
-			AvailableAt:   now,
+			InstanceID:  instanceID,
+			Generation:  7,
+			ScheduledAt: now.Add(-time.Minute),
+			AvailableAt: now,
 		},
 		Attempt: 2,
 	}
 	row := db.GetScheduleTriggerCandidateRow{
-		WorkerGroupID:       workerTestWorkerGroupID,
 		InstanceID:          pgvalue.UUID(instanceID),
 		Generation:          7,
 		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
@@ -127,22 +122,20 @@ func TestEngineDeferTriggerAcksStaleScheduleRow(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	instanceID := uuid.Must(uuid.NewV7())
 	index := &fakeScheduleIndex{}
-	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 0")}, index, fakeRunCreator{}, EngineConfig{WorkerGroupID: workerTestWorkerGroupID, Now: func() time.Time { return now }})
+	engine, err := NewEngine(nil, fakeDBTX{allowExec: true, execTag: pgconn.NewCommandTag("UPDATE 0")}, index, fakeRunCreator{}, EngineConfig{Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
 	lease := IndexLease{
 		Entry: IndexEntry{
-			WorkerGroupID: workerTestWorkerGroupID,
-			InstanceID:    instanceID,
-			Generation:    7,
-			ScheduledAt:   now.Add(-time.Minute),
-			AvailableAt:   now,
+			InstanceID:  instanceID,
+			Generation:  7,
+			ScheduledAt: now.Add(-time.Minute),
+			AvailableAt: now,
 		},
 		Attempt: 1,
 	}
 	row := db.GetScheduleTriggerCandidateRow{
-		WorkerGroupID:       workerTestWorkerGroupID,
 		InstanceID:          pgvalue.UUID(instanceID),
 		Generation:          7,
 		NextFireAt:          pgtype.Timestamptz{Time: now.Add(-time.Minute), Valid: true},
@@ -169,7 +162,6 @@ func scheduleRepairRow(instanceID uuid.UUID, generation int64, scheduledAt time.
 		ScheduleID:    pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		InstanceID:    pgvalue.UUID(instanceID),
 		OrgID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		WorkerGroupID: workerTestWorkerGroupID,
 		ProjectID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		EnvironmentID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		Generation:    generation,
@@ -236,7 +228,7 @@ func (f *fakeScheduleIndex) Enqueue(_ context.Context, entry IndexEntry) error {
 	return nil
 }
 
-func (f *fakeScheduleIndex) Delete(context.Context, string, uuid.UUID) error {
+func (f *fakeScheduleIndex) Delete(context.Context, uuid.UUID) error {
 	return nil
 }
 

@@ -157,15 +157,11 @@ matched_wait AS (
     RETURNING waits.id, waits.org_id
 ),
 resolved_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-     FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
+    SELECT run_waits.id
+      FROM matched_wait
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.wait_id = matched_wait.id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT selected_token.*,
        (
@@ -209,15 +205,11 @@ matched_wait AS (
     RETURNING waits.id, waits.org_id
 ),
 resolved_cancelled_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-     FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
+    SELECT run_waits.id
+      FROM matched_wait
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.wait_id = matched_wait.id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT cancelled.*, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
   FROM cancelled;
@@ -246,17 +238,6 @@ matched_wait AS (
        AND waits.kind = 'token'
        AND waits.state = 'pending'
     RETURNING waits.id, waits.org_id
-),
-expired_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-      FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
 )
 SELECT *
   FROM expired

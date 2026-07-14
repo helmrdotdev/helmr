@@ -4,9 +4,9 @@ WITH created_workspace AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
+        region_id,
         deployment_sandbox_id,
         sandbox_id,
         sandbox_fingerprint,
@@ -22,9 +22,9 @@ WITH created_workspace AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            deployment_sandboxes.org_id,
-           sqlc.arg(worker_group_id),
            deployment_sandboxes.project_id,
            deployment_sandboxes.environment_id,
+           projects.default_region_id,
            deployment_sandboxes.id,
            deployment_sandboxes.sandbox_id,
            deployment_sandboxes.fingerprint,
@@ -46,12 +46,6 @@ WITH created_workspace AS (
       JOIN projects
         ON projects.org_id = deployment_sandboxes.org_id
        AND projects.id = deployment_sandboxes.project_id
-      JOIN worker_groups
-        ON worker_groups.id = sqlc.arg(worker_group_id)
-       AND worker_groups.region_id = projects.default_region_id
-       AND worker_groups.state = 'active'
-       AND worker_groups.health_state IN ('healthy', 'degraded')
-       AND worker_groups.routing_fresh_until > now()
      WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
        AND deployment_sandboxes.project_id = sqlc.arg(project_id)
        AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
@@ -117,12 +111,6 @@ SELECT deployment_sandboxes.*
     ON environments.org_id = deployment_sandboxes.org_id
    AND environments.project_id = deployment_sandboxes.project_id
    AND environments.id = deployment_sandboxes.environment_id
-  JOIN worker_groups
-    ON worker_groups.id = sqlc.arg(worker_group_id)
-   AND worker_groups.region_id = projects.default_region_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.health_state IN ('healthy', 'degraded')
-   AND worker_groups.routing_fresh_until > now()
  WHERE deployment_sandboxes.org_id = sqlc.arg(org_id)
    AND deployment_sandboxes.project_id = sqlc.arg(project_id)
    AND deployment_sandboxes.environment_id = sqlc.arg(environment_id)
@@ -141,6 +129,13 @@ SELECT *
  WHERE org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND deleted_at IS NULL;
+
+-- name: GetWorkspaceByOrgAndID :one
+SELECT *
+  FROM workspaces
+ WHERE org_id = sqlc.arg(org_id)
    AND id = sqlc.arg(id)
    AND deleted_at IS NULL;
 

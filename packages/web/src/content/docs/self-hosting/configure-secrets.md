@@ -25,7 +25,6 @@ Populate these secrets after the first apply:
 | `auth_secret` | High-entropy auth secret. |
 | `secret_encryption_key` | Base64-encoded 32-byte key. |
 | `checkpoint_encryption_key` | Base64-encoded 32-byte key. |
-| `worker_bootstrap_token` | High-entropy worker bootstrap token. |
 | `setup_token` | High-entropy token for first organization setup. |
 | `github_oauth_client_secret` | GitHub OAuth client secret. |
 

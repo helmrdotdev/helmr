@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	sweeperLockName           = "helmr.dispatcher.sweeper"
-	runQueueReconcileLockName = "helmr.dispatcher.run_queue_reconciler"
-	preparedRuntimeWarmName   = "helmr.dispatcher.runtime_preparer"
+	sweeperLockName             = "helmr.dispatcher.sweeper"
+	runQueueReconcileLockName   = "helmr.dispatcher.run_queue_reconciler"
+	buildQueueReconcileLockName = "helmr.dispatcher.build_queue_reconciler"
+	preparedRuntimeWarmName     = "helmr.dispatcher.runtime_preparer"
 )
 
 type ExpirySweepAdvisoryLock struct {
@@ -36,13 +37,21 @@ type QueueReconcileAdvisoryLock struct {
 }
 
 func NewQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*QueueReconcileAdvisoryLock, error) {
+	return newQueueReconcileAdvisoryLock(pool, runQueueReconcileLockName)
+}
+
+func NewBuildQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*QueueReconcileAdvisoryLock, error) {
+	return newQueueReconcileAdvisoryLock(pool, buildQueueReconcileLockName)
+}
+
+func newQueueReconcileAdvisoryLock(pool *pgxpool.Pool, name string) (*QueueReconcileAdvisoryLock, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("database pool is required")
 	}
 	return &QueueReconcileAdvisoryLock{
 		lock: &ExpirySweepAdvisoryLock{
 			pool: pool,
-			key:  advisoryLockKey(runQueueReconcileLockName),
+			key:  advisoryLockKey(name),
 		},
 	}, nil
 }
@@ -123,10 +132,6 @@ func (g queueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
 
 type preparedRuntimeWarmAdvisoryLockGuard struct {
 	guard advisoryLockGuard
-}
-
-func (g preparedRuntimeWarmAdvisoryLockGuard) Store(RuntimePreparerStore) RuntimePreparerStore {
-	return db.New(g.guard.conn)
 }
 
 func (g preparedRuntimeWarmAdvisoryLockGuard) Unlock(ctx context.Context) error {

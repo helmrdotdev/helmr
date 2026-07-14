@@ -7,16 +7,24 @@ import (
 )
 
 func seedDevData(ctx context.Context, pool *pgxpool.Pool, cfg devConfig) error {
-	_, err := pool.Exec(ctx, devSeedSQL, cfg.workerGroupID, cfg.defaultRegionID)
-	return err
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `SET CONSTRAINTS ALL DEFERRED`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT set_config('helmr.seed_region_id', $1, true)`, cfg.defaultRegionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, devSeedSQL); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 const devSeedSQL = `
-BEGIN;
-SET CONSTRAINTS ALL DEFERRED;
-SELECT set_config('helmr.seed_worker_group_id', $1, true),
-       set_config('helmr.seed_region_id', $2, true);
-
 INSERT INTO users (id, public_id, display_name, primary_email)
 VALUES ('00000000-0000-0000-0000-000000000101', 'usr_aaaaaaaaaaaaaaaaaaaaaaaaaa', 'Local Developer', 'dev@helmr.local')
 ON CONFLICT (id) DO UPDATE
@@ -63,10 +71,10 @@ ON CONFLICT (id) DO UPDATE
 INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 VALUES
     ('00000000-0000-0000-0000-000000000201', 'sha256:dev-deployment-source', 128, 'application/vnd.helmr.dev-source'),
-    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-deployment-manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
-    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-task-bundle', 512, 'application/vnd.helmr.task-bundle'),
-    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-sandbox-rootfs', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
-    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-workspace-version', 1024, 'application/vnd.helmr.workspace-version')
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-deployment-manifest', 256, 'application/vnd.helmr.deployment-manifest.v0+json'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-task-bundle', 512, 'application/vnd.helmr.task-bundle.v0+proto'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-sandbox-rootfs', 1048576, 'application/vnd.helmr.sandbox-image.v0.oci-tar'),
+    ('00000000-0000-0000-0000-000000000201', 'sha256:dev-workspace-version', 1024, 'application/vnd.helmr.workspace.v0.tar')
 ON CONFLICT (org_id, digest) DO UPDATE
    SET size_bytes = EXCLUDED.size_bytes,
        media_type = EXCLUDED.media_type;
@@ -74,10 +82,10 @@ ON CONFLICT (org_id, digest) DO UPDATE
 INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 VALUES
     ('00000000-0000-0000-0000-000000000501', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-source', 'deployment_source', 128, 'application/vnd.helmr.dev-source'),
-    ('00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-manifest', 'deployment_manifest', 256, 'application/vnd.helmr.deployment-manifest+json'),
-    ('00000000-0000-0000-0000-000000000503', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-task-bundle', 'task_bundle', 512, 'application/vnd.helmr.task-bundle'),
-    ('00000000-0000-0000-0000-000000000504', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-sandbox-rootfs', 'sandbox_image', 1048576, 'application/vnd.helmr.sandbox-rootfs'),
-    ('00000000-0000-0000-0000-000000000505', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-workspace-version', 'workspace_version', 1024, 'application/vnd.helmr.workspace-version')
+    ('00000000-0000-0000-0000-000000000502', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-deployment-manifest', 'deployment_manifest', 256, 'application/vnd.helmr.deployment-manifest.v0+json'),
+    ('00000000-0000-0000-0000-000000000503', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-task-bundle', 'task_bundle', 512, 'application/vnd.helmr.task-bundle.v0+proto'),
+    ('00000000-0000-0000-0000-000000000504', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-sandbox-rootfs', 'sandbox_image', 1048576, 'application/vnd.helmr.sandbox-image.v0.oci-tar'),
+    ('00000000-0000-0000-0000-000000000505', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'sha256:dev-workspace-version', 'workspace_version', 1024, 'application/vnd.helmr.workspace.v0.tar')
 ON CONFLICT (id) DO UPDATE
    SET digest = EXCLUDED.digest,
        kind = EXCLUDED.kind,
@@ -85,13 +93,13 @@ ON CONFLICT (id) DO UPDATE
        media_type = EXCLUDED.media_type;
 
 INSERT INTO deployments (
-    id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash,
+    id, public_id, org_id, build_region_id, project_id, environment_id, version, content_hash,
     deployment_source_artifact_id, deployment_manifest_artifact_id, status, built_at, deployed_at
 )
 SELECT '00000000-0000-0000-0000-000000000601',
        'dep_aaaaaaaaaaaaaaaaaaaaaaaaaa',
        '00000000-0000-0000-0000-000000000201',
-       current_setting('helmr.seed_worker_group_id'),
+       current_setting('helmr.seed_region_id'),
        '00000000-0000-0000-0000-000000000301',
        '00000000-0000-0000-0000-000000000401',
        'dev-2026-06-22',
@@ -102,7 +110,7 @@ SELECT '00000000-0000-0000-0000-000000000601',
        now() - interval '3 hours',
        now() - interval '3 hours'
 ON CONFLICT (id) DO UPDATE
-   SET build_worker_group_id = EXCLUDED.build_worker_group_id,
+   SET build_region_id = EXCLUDED.build_region_id,
        version = EXCLUDED.version,
        content_hash = EXCLUDED.content_hash,
        status = EXCLUDED.status,
@@ -135,9 +143,9 @@ VALUES (
     'sha256:dev-sandbox-rootfs',
     'rootfs',
     '/workspace',
-    'helmr.runtime.v1',
-    'helmr.guestd.v1',
-    'helmr.adapter.v1',
+    'helmr.firecracker.snapshot.v0',
+    'helmr.guestd.v0',
+    'helmr.adapter.v0',
     'tar',
     1000,
     1000,
@@ -186,14 +194,14 @@ ON CONFLICT (id) DO UPDATE
        queue_name = EXCLUDED.queue_name,
        max_active_duration_ms = EXCLUDED.max_active_duration_ms;
 
-INSERT INTO workspaces (id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, metadata, tags)
+INSERT INTO workspaces (id, public_id, org_id, region_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, metadata, tags)
 VALUES
-    ('00000000-0000-0000-0000-000000000901', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/code-review', '{"purpose":"active review"}', ARRAY['demo']),
-    ('00000000-0000-0000-0000-000000000902', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/approval', '{"purpose":"waiting approval"}', ARRAY['demo']),
-    ('00000000-0000-0000-0000-000000000903', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/failure', '{"purpose":"failed run"}', ARRAY['demo']),
-    ('00000000-0000-0000-0000-000000000904', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/release-summary', '{"purpose":"completed summary"}', ARRAY['demo'])
+    ('00000000-0000-0000-0000-000000000901', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_region_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/code-review', '{"purpose":"active review"}', ARRAY['demo']),
+    ('00000000-0000-0000-0000-000000000902', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_region_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/approval', '{"purpose":"waiting approval"}', ARRAY['demo']),
+    ('00000000-0000-0000-0000-000000000903', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_region_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/failure', '{"purpose":"failed run"}', ARRAY['demo']),
+    ('00000000-0000-0000-0000-000000000904', 'wsp_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_region_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000701', 'node-22', 'sha256:dev-sandbox-contract', 'dev/release-summary', '{"purpose":"completed summary"}', ARRAY['demo'])
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
+   SET region_id = EXCLUDED.region_id,
        metadata = EXCLUDED.metadata,
        tags = EXCLUDED.tags,
        updated_at = now();
@@ -227,19 +235,34 @@ UPDATE workspaces
     '00000000-0000-0000-0000-000000000904'
  );
 
+INSERT INTO runtime_identities (
+    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+)
+VALUES (
+    'dev-node-22', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:dev-kernel',
+    'sha256:dev-initramfs', 'sha256:dev-sandbox-rootfs', 'dev'
+)
+ON CONFLICT (id) DO UPDATE
+   SET runtime_arch = EXCLUDED.runtime_arch,
+       runtime_abi = EXCLUDED.runtime_abi,
+       kernel_digest = EXCLUDED.kernel_digest,
+       initramfs_digest = EXCLUDED.initramfs_digest,
+       rootfs_digest = EXCLUDED.rootfs_digest,
+       cni_profile = EXCLUDED.cni_profile,
+       last_seen_at = now();
+
 INSERT INTO sessions (
-    id, public_id, org_id, worker_group_id, project_id, environment_id, task_id, initial_deployment_id,
+    id, public_id, org_id, project_id, environment_id, task_id, initial_deployment_id,
     active_deployment_id, status, current_run_id, workspace_id, metadata, tags,
     closed_at, closed_reason, terminal_reason, result, created_at, updated_at
 )
 VALUES
-    ('00000000-0000-0000-0000-000000001001', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'code-review', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'open', '00000000-0000-0000-0000-000000001101', '00000000-0000-0000-0000-000000000901', '{"branch":"feature/workspace-runtime"}', ARRAY['demo','review'], NULL, '', '{}', NULL, now() - interval '45 minutes', now() - interval '3 minutes'),
-    ('00000000-0000-0000-0000-000000001002', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'approval-message', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'open', '00000000-0000-0000-0000-000000001102', '00000000-0000-0000-0000-000000000902', '{"channel":"approval"}', ARRAY['demo','waiting'], NULL, '', '{}', NULL, now() - interval '35 minutes', now() - interval '18 minutes'),
-    ('00000000-0000-0000-0000-000000001003', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'failure-boundary', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'failed', NULL, '00000000-0000-0000-0000-000000000903', '{"case":"bad input"}', ARRAY['demo','failed'], now() - interval '21 minutes', 'failed', '{"kind":"task_failed"}', '{"ok":false}', now() - interval '30 minutes', now() - interval '21 minutes'),
-    ('00000000-0000-0000-0000-000000001004', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'release-summary', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'completed', NULL, '00000000-0000-0000-0000-000000000904', '{"release":"dev-2026-06-22"}', ARRAY['demo','completed'], now() - interval '12 minutes', 'completed', '{"kind":"completed"}', '{"ok":true}', now() - interval '24 minutes', now() - interval '12 minutes')
+    ('00000000-0000-0000-0000-000000001001', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'code-review', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'open', '00000000-0000-0000-0000-000000001101', '00000000-0000-0000-0000-000000000901', '{"branch":"feature/workspace-runtime"}', ARRAY['demo','review'], NULL, '', '{}', NULL, now() - interval '45 minutes', now() - interval '3 minutes'),
+    ('00000000-0000-0000-0000-000000001002', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'approval-message', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'open', '00000000-0000-0000-0000-000000001102', '00000000-0000-0000-0000-000000000902', '{"channel":"approval"}', ARRAY['demo','waiting'], NULL, '', '{}', NULL, now() - interval '35 minutes', now() - interval '18 minutes'),
+    ('00000000-0000-0000-0000-000000001003', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'failure-boundary', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'closed', NULL, '00000000-0000-0000-0000-000000000903', '{"case":"bad input"}', ARRAY['demo','failed'], now() - interval '21 minutes', 'failed', '{"kind":"task_failed"}', '{"ok":false}', now() - interval '30 minutes', now() - interval '21 minutes'),
+    ('00000000-0000-0000-0000-000000001004', 'ses_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', 'release-summary', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000601', 'closed', NULL, '00000000-0000-0000-0000-000000000904', '{"release":"dev-2026-06-22"}', ARRAY['demo','completed'], now() - interval '12 minutes', 'completed', '{"kind":"completed"}', '{"ok":true}', now() - interval '24 minutes', now() - interval '12 minutes')
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       status = EXCLUDED.status,
+   SET status = EXCLUDED.status,
        current_run_id = EXCLUDED.current_run_id,
        metadata = EXCLUDED.metadata,
        tags = EXCLUDED.tags,
@@ -250,21 +273,22 @@ ON CONFLICT (id) DO UPDATE
        updated_at = EXCLUDED.updated_at;
 
 INSERT INTO runs (
-    id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id,
+    id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id,
     workspace_id, deployment_version, sdk_version, task_id, session_id,
     status, execution_status, terminal_outcome, payload, output, metadata, tags,
-    queue_name, priority, max_active_duration_ms, trace_id, root_span_id,
+    queue_name, priority, requested_milli_cpu, requested_memory_mib, requested_disk_mib,
+    requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest,
+    initramfs_digest, rootfs_digest, cni_profile, max_active_duration_ms, trace_id, root_span_id,
     current_attempt_number, exit_code, error_message,
     created_at, updated_at, started_at, finished_at
 )
 VALUES
-    ('00000000-0000-0000-0000-000000001101', 'run_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000811', '00000000-0000-0000-0000-000000000901', 'dev-2026-06-22', 'dev', 'code-review', '00000000-0000-0000-0000-000000001001', 'running', 'executing', NULL, '{"repository":"helmr"}', NULL, '{"summary":"Reviewing workspace runtime branch"}', ARRAY['demo','review'], 'default', 10, 1800000, '11111111111111111111111111111111', '1111111111111111', 1, NULL, NULL, now() - interval '45 minutes', now() - interval '3 minutes', now() - interval '44 minutes', NULL),
-    ('00000000-0000-0000-0000-000000001102', 'run_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000812', '00000000-0000-0000-0000-000000000902', 'dev-2026-06-22', 'dev', 'approval-message', '00000000-0000-0000-0000-000000001002', 'waiting', 'waiting', NULL, '{"message":"Approve deployment?"}', NULL, '{"summary":"Waiting for approval input"}', ARRAY['demo','waiting'], 'default', 5, 900000, '22222222222222222222222222222222', '2222222222222222', 1, NULL, NULL, now() - interval '35 minutes', now() - interval '18 minutes', now() - interval '34 minutes', NULL),
-    ('00000000-0000-0000-0000-000000001103', 'run_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000813', '00000000-0000-0000-0000-000000000903', 'dev-2026-06-22', 'dev', 'failure-boundary', '00000000-0000-0000-0000-000000001003', 'failed', 'finished', 'failed', '{"mode":"failure"}', '{"ok":false,"error":"fixture failure"}', '{"summary":"Failed before producing output"}', ARRAY['demo','failed'], 'default', 0, 600000, '33333333333333333333333333333333', '3333333333333333', 1, 1, 'fixture failure', now() - interval '30 minutes', now() - interval '21 minutes', now() - interval '29 minutes', now() - interval '21 minutes'),
-    ('00000000-0000-0000-0000-000000001104', 'run_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000814', '00000000-0000-0000-0000-000000000904', 'dev-2026-06-22', 'dev', 'release-summary', '00000000-0000-0000-0000-000000001004', 'succeeded', 'finished', 'succeeded', '{"release":"dev-2026-06-22"}', '{"ok":true,"summary":"Release notes generated"}', '{"summary":"Generated release summary"}', ARRAY['demo','completed'], 'default', 0, 1200000, '44444444444444444444444444444444', '4444444444444444', 1, 0, NULL, now() - interval '24 minutes', now() - interval '12 minutes', now() - interval '23 minutes', now() - interval '12 minutes')
+    ('00000000-0000-0000-0000-000000001101', 'run_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000811', '00000000-0000-0000-0000-000000000901', 'dev-2026-06-22', 'dev', 'code-review', '00000000-0000-0000-0000-000000001001', 'running', 'executing', NULL, '{"repository":"helmr"}', NULL, '{"summary":"Reviewing workspace runtime branch"}', ARRAY['demo','review'], 'default', 10, 1000, 1024, 1024, 1, 'dev-node-22', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:dev-kernel', 'sha256:dev-initramfs', 'sha256:dev-sandbox-rootfs', 'dev', 1800000, '11111111111111111111111111111111', '1111111111111111', 1, NULL, NULL, now() - interval '45 minutes', now() - interval '3 minutes', now() - interval '44 minutes', NULL),
+    ('00000000-0000-0000-0000-000000001102', 'run_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000812', '00000000-0000-0000-0000-000000000902', 'dev-2026-06-22', 'dev', 'approval-message', '00000000-0000-0000-0000-000000001002', 'waiting', 'waiting', NULL, '{"message":"Approve deployment?"}', NULL, '{"summary":"Waiting for approval input"}', ARRAY['demo','waiting'], 'default', 5, 1000, 1024, 1024, 1, 'dev-node-22', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:dev-kernel', 'sha256:dev-initramfs', 'sha256:dev-sandbox-rootfs', 'dev', 900000, '22222222222222222222222222222222', '2222222222222222', 1, NULL, NULL, now() - interval '35 minutes', now() - interval '18 minutes', now() - interval '34 minutes', NULL),
+    ('00000000-0000-0000-0000-000000001103', 'run_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000813', '00000000-0000-0000-0000-000000000903', 'dev-2026-06-22', 'dev', 'failure-boundary', '00000000-0000-0000-0000-000000001003', 'failed', 'finished', 'failed', '{"mode":"failure"}', '{"ok":false,"error":"fixture failure"}', '{"summary":"Failed before producing output"}', ARRAY['demo','failed'], 'default', 0, 1000, 1024, 1024, 1, 'dev-node-22', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:dev-kernel', 'sha256:dev-initramfs', 'sha256:dev-sandbox-rootfs', 'dev', 600000, '33333333333333333333333333333333', '3333333333333333', 1, 1, 'fixture failure', now() - interval '30 minutes', now() - interval '21 minutes', now() - interval '29 minutes', now() - interval '21 minutes'),
+    ('00000000-0000-0000-0000-000000001104', 'run_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000000601', '00000000-0000-0000-0000-000000000814', '00000000-0000-0000-0000-000000000904', 'dev-2026-06-22', 'dev', 'release-summary', '00000000-0000-0000-0000-000000001004', 'succeeded', 'finished', 'succeeded', '{"release":"dev-2026-06-22"}', '{"ok":true,"summary":"Release notes generated"}', '{"summary":"Generated release summary"}', ARRAY['demo','completed'], 'default', 0, 1000, 1024, 1024, 1, 'dev-node-22', 'x86_64', 'helmr.firecracker.snapshot.v0', 'sha256:dev-kernel', 'sha256:dev-initramfs', 'sha256:dev-sandbox-rootfs', 'dev', 1200000, '44444444444444444444444444444444', '4444444444444444', 1, 0, NULL, now() - interval '24 minutes', now() - interval '12 minutes', now() - interval '23 minutes', now() - interval '12 minutes')
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       status = EXCLUDED.status,
+   SET status = EXCLUDED.status,
        execution_status = EXCLUDED.execution_status,
        terminal_outcome = EXCLUDED.terminal_outcome,
        output = EXCLUDED.output,
@@ -276,15 +300,14 @@ ON CONFLICT (id) DO UPDATE
        started_at = EXCLUDED.started_at,
        finished_at = EXCLUDED.finished_at;
 
-INSERT INTO session_runs (id, public_id, org_id, worker_group_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason, ended_at)
+INSERT INTO session_runs (id, public_id, org_id, project_id, environment_id, session_id, run_id, deployment_id, turn_index, reason, ended_at)
 VALUES
-    ('00000000-0000-0000-0000-000000001301', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000001101', '00000000-0000-0000-0000-000000000601', 0, 'initial', NULL),
-    ('00000000-0000-0000-0000-000000001302', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001002', '00000000-0000-0000-0000-000000001102', '00000000-0000-0000-0000-000000000601', 0, 'initial', NULL),
-    ('00000000-0000-0000-0000-000000001303', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001003', '00000000-0000-0000-0000-000000001103', '00000000-0000-0000-0000-000000000601', 0, 'initial', now() - interval '21 minutes'),
-    ('00000000-0000-0000-0000-000000001304', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', current_setting('helmr.seed_worker_group_id'), '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001004', '00000000-0000-0000-0000-000000001104', '00000000-0000-0000-0000-000000000601', 0, 'initial', now() - interval '12 minutes')
+    ('00000000-0000-0000-0000-000000001301', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaaa', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001001', '00000000-0000-0000-0000-000000001101', '00000000-0000-0000-0000-000000000601', 0, 'initial', NULL),
+    ('00000000-0000-0000-0000-000000001302', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaab', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001002', '00000000-0000-0000-0000-000000001102', '00000000-0000-0000-0000-000000000601', 0, 'initial', NULL),
+    ('00000000-0000-0000-0000-000000001303', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaac', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001003', '00000000-0000-0000-0000-000000001103', '00000000-0000-0000-0000-000000000601', 0, 'initial', now() - interval '21 minutes'),
+    ('00000000-0000-0000-0000-000000001304', 'srun_aaaaaaaaaaaaaaaaaaaaaaaaad', '00000000-0000-0000-0000-000000000201', '00000000-0000-0000-0000-000000000301', '00000000-0000-0000-0000-000000000401', '00000000-0000-0000-0000-000000001004', '00000000-0000-0000-0000-000000001104', '00000000-0000-0000-0000-000000000601', 0, 'initial', now() - interval '12 minutes')
 ON CONFLICT (id) DO UPDATE
-   SET worker_group_id = EXCLUDED.worker_group_id,
-       reason = EXCLUDED.reason,
+   SET reason = EXCLUDED.reason,
        ended_at = EXCLUDED.ended_at;
 
 INSERT INTO task_schedules (id, public_id, org_id, project_id, schedule_type, task_id, dedup_key, user_dedup_key, external_id, cron, timezone, enabled)
@@ -307,5 +330,4 @@ ON CONFLICT (schedule_id, environment_id) DO UPDATE
        last_trigger_run_id = EXCLUDED.last_trigger_run_id,
        updated_at = now();
 
-COMMIT;
 `

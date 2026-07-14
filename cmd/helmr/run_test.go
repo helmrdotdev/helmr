@@ -263,6 +263,56 @@ func TestSessionStartWaitWaitsForInitialRun(t *testing.T) {
 	}
 }
 
+func TestSessionStartWaitPollsSnapshotWhileEventStreamIsIdle(t *testing.T) {
+	oldSnapshotPollInterval := runEventSnapshotPollInterval
+	runEventSnapshotPollInterval = 10 * time.Millisecond
+	t.Cleanup(func() {
+		runEventSnapshotPollInterval = oldSnapshotPollInterval
+	})
+	getRunCalls := 0
+	followCalls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sessions":
+			_ = json.NewEncoder(w).Encode(sessionStartResponseFixture())
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1/events" && r.URL.Query().Get("follow") == "1":
+			followCalls++
+			w.Header().Set("content-type", "text/event-stream")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			<-r.Context().Done()
+		case r.Method == http.MethodGet && r.URL.Path == "/api/runs/run-1":
+			getRunCalls++
+			status := api.RunStatusQueued
+			if getRunCalls > 1 {
+				status = api.RunStatusSucceeded
+			}
+			_ = json.NewEncoder(w).Encode(api.RunResponse{ID: "run-1", TaskID: "deploy", Status: status})
+		default:
+			t.Fatalf("%s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+	t.Setenv(helmrAPIURLEnv, server.URL)
+	t.Setenv(helmrAPIKeyEnv, "test-key")
+
+	var out bytes.Buffer
+	cmd := newRootCommand()
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"session", "start", "deploy", "--wait", "--timeout", "1500ms"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if followCalls != 1 || getRunCalls != 2 {
+		t.Fatalf("follow calls = %d, snapshot calls = %d, want 1/2", followCalls, getRunCalls)
+	}
+	if !strings.Contains(out.String(), "run_status: succeeded") {
+		t.Fatalf("output = %q", out.String())
+	}
+}
+
 func TestSessionStartRejectsJSONFollow(t *testing.T) {
 	called := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

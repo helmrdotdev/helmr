@@ -47,7 +47,7 @@ func TestDeploymentTaskSecretNames(t *testing.T) {
 
 func TestCreateRunWithoutSecretsAllowsDeveloper(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{role: auth.RoleDeveloper}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{role: auth.RoleDeveloper}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
@@ -66,7 +66,7 @@ func TestAPIKeyRunCreateAllowsDeclaredTaskSecrets(t *testing.T) {
 	store := &fakeStore{
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -146,7 +146,7 @@ func TestCreateRunRejectsUnavailableDeclaredSecret(t *testing.T) {
 	store := &fakeStore{
 		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret")}}})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 			UpdatedAt:     testTime(),
 		},
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodGet, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -240,7 +240,7 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 
 func TestDeleteSecret(t *testing.T) {
 	store := &fakeStore{deleteSecretRows: 1}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
 	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
 	req.Header.Set("authorization", "Bearer test-key")
@@ -268,46 +268,6 @@ func TestDeleteSecretNotFound(t *testing.T) {
 	}
 }
 
-func TestSecretRoutesRejectUnavailableEnvironmentRoute(t *testing.T) {
-	store := &fakeStore{
-		secret: db.GetScopedSecretMetadataByNameRow{
-			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
-			EnvironmentID: testEnvironmentID(),
-			Name:          "github-token",
-			CreatedAt:     testTime(),
-			UpdatedAt:     testTime(),
-		},
-		deleteSecretRows:            1,
-		environmentRouteUnavailable: true,
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
-
-	for _, tt := range []struct {
-		name   string
-		method string
-		path   string
-		body   string
-	}{
-		{name: "list", method: http.MethodGet, path: "/api/secrets"},
-		{name: "get", method: http.MethodGet, path: "/api/secrets/github-token"},
-		{name: "set", method: http.MethodPut, path: "/api/secrets/github-token", body: `{"value":"secret-value"}`},
-		{name: "delete", method: http.MethodDelete, path: "/api/secrets/github-token"},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(tt.method, tt.path, strings.NewReader(tt.body))
-			req.Header.Set("authorization", "Bearer test-key")
-			rec := httptest.NewRecorder()
-			server.ServeHTTP(rec, req)
-
-			if rec.Code != http.StatusServiceUnavailable {
-				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-			}
-		})
-	}
-}
-
 func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	store := &fakeStore{
 		secret: db.GetScopedSecretMetadataByNameRow{
@@ -323,7 +283,7 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 		defaultProjectID:     otherProjectID(),
 		defaultEnvironmentID: otherEnvironmentID(),
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
 		kind:          auth.ActorKindAPIKey,
 		role:          auth.RoleOwner,
 		projectID:     testProjectIDString(),
@@ -378,44 +338,89 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	}
 }
 
-func TestWorkerRunLeaseFailsRunWhenSecretUnavailable(t *testing.T) {
-	store := &fakeStore{
-		run: db.Run{
-			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:              "deploy",
-			Status:              db.RunStatusQueued,
-			DispatchGeneration:  1,
-			Output:              []byte(`{}`),
-			MaxActiveDurationMs: 3600_000,
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		currentDeploymentTaskSecretDeclarations: []byte(`[{"name":"API_KEY","env":"API_KEY"}]`),
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, Secrets: fakeSecrets{values: api.ResolvedSecrets{"other": []byte("secret-value")}}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour})
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	assertTerminalPayloadFailure(t, store, "secret_unavailable")
-}
-
 func TestWorkerTokenRejectsWrongSecret(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour, AuthSecret: []byte(testWorkerTokenSecret), PublicURL: mustParseTestURL("http://127.0.0.1:8080")})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"wrong"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"wrong","service_id":"00000000-0000-0000-0000-000000000402","protocol_version":"helmr.worker.v0","supports_run":true,"supports_build":false}`))
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+type workerTokenAuthorityStore struct {
+	*fakeStore
+	row db.AuthenticateWorkerInstanceCredentialRow
+}
+
+func (s *workerTokenAuthorityStore) AuthenticateWorkerInstanceCredential(context.Context, db.AuthenticateWorkerInstanceCredentialParams) (db.AuthenticateWorkerInstanceCredentialRow, error) {
+	return s.row, nil
+}
+
+func TestWorkerTokenExchangeUsesSharedRoleAuthority(t *testing.T) {
+	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000401")
+	credentialID := uuid.MustParse("00000000-0000-0000-0000-000000000403")
+	store := &workerTokenAuthorityStore{fakeStore: &fakeStore{}, row: db.AuthenticateWorkerInstanceCredentialRow{
+		ID: pgvalue.UUID(credentialID), WorkerInstanceID: pgvalue.UUID(workerID), WorkerGroupID: "run-workers",
+		ClaimVersion: 2, GroupClaimVersion: 4, ProtocolVersion: auth.WorkerProtocolVersion,
+		CredentialAllowsRun: true, CredentialAllowsBuild: true,
+		GroupAllowsRun: true, GroupAllowsBuild: false,
+		CurrentEpoch: pgtype.Int8{Int64: 7, Valid: true},
+	}}
+	secret := []byte(testWorkerTokenSecret)
+	server := newTestServer(testServerConfig{DB: store, Auth: fakeAuth{}, WorkerTokenSecret: secret,
+		WorkerTokenTTL: time.Hour, AuthSecret: secret, PublicURL: mustParseTestURL("http://127.0.0.1:8080")})
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"secret","service_id":"00000000-0000-0000-0000-000000000402","protocol_version":"helmr.worker.v0","supports_run":true,"supports_build":true}`))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var response api.WorkerTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	claims, err := auth.VerifyWorkerToken(secret, response.Token, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims.Roles) != 1 || claims.Roles[0] != auth.WorkerRoleRun || claims.WorkerEpoch != 7 || claims.ClaimVersion != 2 || claims.GroupClaimVersion != 4 {
+		t.Fatalf("claims = %#v", claims)
+	}
+}
+
+type workerLivenessStore struct {
+	*fakeStore
+	authenticated bool
+}
+
+func (s *workerLivenessStore) AuthenticateWorkerInstanceCredential(context.Context, db.AuthenticateWorkerInstanceCredentialParams) (db.AuthenticateWorkerInstanceCredentialRow, error) {
+	s.authenticated = true
+	return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+}
+
+func TestWorkerTokenExchangeUsesCredentialAuthorityWithoutProviderLivenessCall(t *testing.T) {
+	store := &workerLivenessStore{fakeStore: &fakeStore{}}
+	server := newTestServer(testServerConfig{
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{},
+		WorkerTokenSecret: []byte(testWorkerTokenSecret), WorkerTokenTTL: time.Hour,
+		AuthSecret: []byte(testWorkerTokenSecret), PublicURL: mustParseTestURL("http://127.0.0.1:8080"),
+		WorkerEnrollment: fixedWorkerEnrollmentVerifier{},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/auth/token", bytes.NewBufferString(`{"worker_instance_id":"00000000-0000-0000-0000-000000000401","worker_instance_secret":"secret","service_id":"00000000-0000-0000-0000-000000000402","protocol_version":"helmr.worker.v0","supports_run":true,"supports_build":false}`))
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !store.authenticated {
+		t.Fatal("worker credential authority was bypassed")
+	}
+}
+
+func (f *fakeStore) AuthenticateWorkerInstanceCredential(context.Context, db.AuthenticateWorkerInstanceCredentialParams) (db.AuthenticateWorkerInstanceCredentialRow, error) {
+	return db.AuthenticateWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 }
 
 func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {

@@ -52,9 +52,8 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("encode worker log event"))
 		return
 	}
-	_, err = s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
+	row, err := s.db.AppendRunLogChunk(r.Context(), db.AppendRunLogChunkParams{
 		OrgID:            pgvalue.UUID(leaseIDs.orgID),
-		WorkerGroupID:    worker.WorkerGroupID,
 		RunID:            pgvalue.UUID(leaseIDs.runID),
 		RunLeaseID:       pgvalue.UUID(leaseIDs.runLeaseID),
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
@@ -65,12 +64,16 @@ func (s *Server) workerAppendLogs(w http.ResponseWriter, r *http.Request) {
 		Payload:          payload,
 	})
 	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker run lease is stale")))
+		writeError(w, conflict(errors.New("worker run lease is stale or the log chunk sequence contains different content")))
 		return
 	}
 	if err != nil {
 		s.log.Error("append worker logs failed", "run_id", request.Lease.RunID, "error", err)
 		writeError(w, errors.New("append worker logs"))
+		return
+	}
+	if !row.ReplayMatches {
+		writeError(w, conflict(errors.New("worker log chunk sequence already contains different content")))
 		return
 	}
 	writeJSON(w, http.StatusOK, api.WorkerEventResponse{RunID: request.Lease.RunID})

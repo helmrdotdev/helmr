@@ -18,7 +18,6 @@ WITH event_args AS (
 ),
 current_run_lease AS (
     SELECT runs.org_id,
-           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
@@ -28,42 +27,39 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.attempt_number
+           run_leases.task_attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id
                      AND run_leases.run_id = runs.id
-      JOIN worker_groups
-        ON worker_groups.id = runs.worker_group_id
-       AND worker_groups.state IN ('active', 'draining')
      WHERE runs.org_id = $3
-       AND runs.worker_group_id = $4
-       AND runs.id = $5
+       AND runs.id = $4
        AND runs.status = 'running'
-       AND run_leases.worker_group_id = $4
-       AND run_leases.id = $6
-       AND run_leases.worker_instance_id = $7
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
+       AND run_leases.id = $5
+       AND run_leases.worker_instance_id = $6
+       AND run_leases.state IN ('starting', 'running')
+       AND run_leases.expires_at > now()
 ),
 candidate AS (
-    SELECT current_run_lease.org_id, current_run_lease.worker_group_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
-           $8::text AS stream,
-           $9::bigint AS observed_seq,
-           $10::bytea AS content,
-           octet_length($10::bytea)::bigint AS size_bytes,
-           'run_log:' || current_run_lease.run_lease_id::text || ':' || $8::text || ':' || ($9::bigint)::text AS idempotency_key
+    SELECT current_run_lease.org_id, current_run_lease.project_id, current_run_lease.environment_id, current_run_lease.trace_id, current_run_lease.state_version, current_run_lease.id, current_run_lease.run_lease_id, current_run_lease.span_id, current_run_lease.parent_span_id, current_run_lease.traceparent, current_run_lease.attempt_number,
+           $7::text AS stream,
+           $8::bigint AS observed_seq,
+           $9::bytea AS content,
+           octet_length($9::bytea)::bigint AS size_bytes,
+           event_args.event_kind,
+           event_args.event_payload,
+           'run_log:' || current_run_lease.run_lease_id::text || ':' || $7::text || ':' || ($8::bigint)::text AS idempotency_key
       FROM current_run_lease
+      CROSS JOIN event_args
 ),
 inserted_chunk AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, stream_name,
+        org_id, stream_kind, source_kind, source_id, stream_name,
         idempotency_key, project_id, environment_id, run_id, run_lease_id, attempt_number,
         trace_id, span_id, parent_span_id, traceparent, source, kind, message, payload,
         content, size_bytes, observed_seq, redaction_class, retention_class, observed_at
     )
     SELECT candidate.org_id,
-           candidate.worker_group_id,
            'run_log',
            'run',
            candidate.id,
@@ -81,7 +77,13 @@ inserted_chunk AS (
            'worker',
            'run.log',
            'run.log',
-           jsonb_build_object('stream', candidate.stream, 'observed_seq', candidate.observed_seq, 'bytes', candidate.size_bytes),
+           jsonb_build_object(
+               'stream', candidate.stream,
+               'observed_seq', candidate.observed_seq,
+               'bytes', candidate.size_bytes,
+               'event_kind', candidate.event_kind,
+               'event_payload', candidate.event_payload
+           ),
            candidate.content,
            candidate.size_bytes,
            candidate.observed_seq,
@@ -89,9 +91,12 @@ inserted_chunk AS (
            'standard',
            now()
       FROM candidate
-    ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key) DO NOTHING
+    ON CONFLICT (org_id, stream_kind, source_kind, source_id, stream_name, idempotency_key)
+    DO UPDATE SET content = telemetry_outbox.content
+     WHERE telemetry_outbox.content IS NOT DISTINCT FROM excluded.content
+       AND telemetry_outbox.size_bytes = excluded.size_bytes
+       AND telemetry_outbox.payload = excluded.payload
     RETURNING telemetry_outbox.org_id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.run_id,
               telemetry_outbox.run_lease_id,
               telemetry_outbox.attempt_number,
@@ -101,38 +106,14 @@ inserted_chunk AS (
               telemetry_outbox.content,
               telemetry_outbox.size_bytes,
               telemetry_outbox.created_at,
-              true AS is_new
-),
-existing_chunk AS (
-    SELECT telemetry_outbox.org_id,
-           telemetry_outbox.worker_group_id,
-           telemetry_outbox.run_id,
-           telemetry_outbox.run_lease_id,
-           telemetry_outbox.attempt_number,
-           telemetry_outbox.stream_name AS stream,
-           telemetry_outbox.id AS seq,
-           telemetry_outbox.observed_seq,
-           telemetry_outbox.content,
-           telemetry_outbox.size_bytes,
-           telemetry_outbox.created_at,
-           false AS is_new
-      FROM telemetry_outbox
-      JOIN candidate ON candidate.org_id = telemetry_outbox.org_id
-                    AND telemetry_outbox.source_kind = 'run'
-                    AND telemetry_outbox.source_id = candidate.id
-                    AND telemetry_outbox.stream_name = candidate.stream::text
-                    AND telemetry_outbox.stream_kind = 'run_log'
-                    AND telemetry_outbox.idempotency_key = candidate.idempotency_key
-     WHERE NOT EXISTS (SELECT 1 FROM inserted_chunk)
+              (xmax = 0) AS is_new,
+              true AS replay_matches
 ),
 selected_chunk AS (
-    SELECT org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at, is_new FROM inserted_chunk
-    UNION ALL
-    SELECT org_id, worker_group_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at, is_new FROM existing_chunk
+    SELECT org_id, run_id, run_lease_id, attempt_number, stream, seq, observed_seq, content, size_bytes, created_at, is_new, replay_matches FROM inserted_chunk
 ),
 event_input AS (
     SELECT current_run_lease.org_id,
-           current_run_lease.worker_group_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
            selected_chunk.run_id,
@@ -152,20 +133,18 @@ event_input AS (
            current_run_lease.state_version AS snapshot_version
       FROM selected_chunk
       JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
-                            AND current_run_lease.worker_group_id = selected_chunk.worker_group_id
                             AND current_run_lease.id = selected_chunk.run_id
       CROSS JOIN event_args
      WHERE selected_chunk.is_new
 ),
 event AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
         parent_span_id, traceparent, category, severity, source, kind, message,
         payload, redaction_class, snapshot_version, observed_at
     )
     SELECT event_input.org_id,
-           event_input.worker_group_id,
            'event',
            'run',
            event_input.run_id,
@@ -191,14 +170,16 @@ event AS (
     RETURNING id
 ),
 meter_event AS (
-    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, details, idempotency_key)
+    INSERT INTO meter_events (
+        org_id, project_id, environment_id, run_id, run_lease_id,
+        attempt_number, trace_id, span_id, meter, quantity, unit, details,
+        idempotency_key, idempotency_fingerprint
+    )
     SELECT current_run_lease.org_id,
-           current_run_lease.worker_group_id,
            current_run_lease.project_id,
            current_run_lease.environment_id,
-           'run_log',
-           selected_chunk.run_lease_id,
            selected_chunk.run_id,
+           selected_chunk.run_lease_id,
            current_run_lease.attempt_number,
            current_run_lease.trace_id,
            current_run_lease.span_id,
@@ -206,30 +187,37 @@ meter_event AS (
            selected_chunk.size_bytes,
            'bytes',
            jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq),
-           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text
+           'log:' || selected_chunk.run_lease_id::text || ':' || selected_chunk.stream::text || ':' || selected_chunk.observed_seq::text,
+           jsonb_build_object(
+               'quantity', selected_chunk.size_bytes,
+               'unit', 'bytes',
+               'details', jsonb_build_object('stream', selected_chunk.stream, 'observed_seq', selected_chunk.observed_seq)
+           )::text
       FROM selected_chunk
       JOIN current_run_lease ON current_run_lease.org_id = selected_chunk.org_id
-                            AND current_run_lease.worker_group_id = selected_chunk.worker_group_id
                             AND current_run_lease.id = selected_chunk.run_id
      WHERE selected_chunk.is_new
        AND selected_chunk.size_bytes > 0
-    ON CONFLICT DO NOTHING
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, occurred_at, details, idempotency_key, created_at
+    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
+     WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
+    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, deployment_id, deployment_build_lease_id, attempt_number, source_type, source_id, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
 ),
 meter_event_outbox AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
-        idempotency_key, observed_at
+        org_id, stream_kind, source_kind, source_id, project_id,
+        environment_id, run_id, run_lease_id, meter_event_id, attempt_number,
+        trace_id, span_id, kind, payload, idempotency_key, observed_at
     )
     SELECT meter_event.org_id,
-           meter_event.worker_group_id,
            'meter_event',
            meter_event.source_type,
            meter_event.source_id,
            meter_event.project_id,
            meter_event.environment_id,
            meter_event.run_id,
+           meter_event.run_lease_id,
+           meter_event.id,
            meter_event.attempt_number,
            meter_event.trace_id,
            meter_event.span_id,
@@ -250,17 +238,21 @@ SELECT selected_chunk.org_id,
        selected_chunk.observed_seq,
        selected_chunk.content,
        selected_chunk.size_bytes,
-       selected_chunk.created_at
+       selected_chunk.created_at,
+       selected_chunk.replay_matches
  FROM selected_chunk
  WHERE (SELECT count(*) FROM event) >= 0
-   AND (SELECT count(*) FROM meter_event_outbox) >= 0
+   AND (
+       NOT selected_chunk.is_new
+       OR selected_chunk.size_bytes = 0
+       OR EXISTS (SELECT 1 FROM meter_event_outbox)
+   )
 `
 
 type AppendRunLogChunkParams struct {
 	Kind             string      `json:"kind"`
 	Payload          []byte      `json:"payload"`
 	OrgID            pgtype.UUID `json:"org_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
 	RunID            pgtype.UUID `json:"run_id"`
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
@@ -280,6 +272,7 @@ type AppendRunLogChunkRow struct {
 	Content       []byte             `json:"content"`
 	SizeBytes     pgtype.Int8        `json:"size_bytes"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	ReplayMatches bool               `json:"replay_matches"`
 }
 
 func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error) {
@@ -287,7 +280,6 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		arg.Kind,
 		arg.Payload,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.RunID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,
@@ -307,6 +299,7 @@ func (q *Queries) AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkPa
 		&i.Content,
 		&i.SizeBytes,
 		&i.CreatedAt,
+		&i.ReplayMatches,
 	)
 	return i, err
 }

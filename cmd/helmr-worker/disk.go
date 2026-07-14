@@ -7,9 +7,16 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func advertisedWorkerDiskMiB(workDir string, configuredMiB int64) (int64, error) {
+func advertisedWorkerDiskMiB(workDir string, configuredMiB int64, reserveMiB int64) (int64, error) {
+	if reserveMiB <= 0 {
+		return 0, errors.New("worker disk reserve must be positive")
+	}
+	totalMiB := configuredMiB
 	if configuredMiB > 0 {
-		return configuredMiB, nil
+		if reserveMiB >= configuredMiB {
+			return 0, errors.New("worker disk reserve consumes configured capacity")
+		}
+		return configuredMiB - reserveMiB, nil
 	}
 	if err := os.MkdirAll(workDir, 0o755); err != nil {
 		return 0, err
@@ -18,15 +25,14 @@ func advertisedWorkerDiskMiB(workDir string, configuredMiB int64) (int64, error)
 	if err := unix.Statfs(workDir, &stat); err != nil {
 		return 0, err
 	}
-	availableMiB := int64((stat.Bavail * uint64(stat.Bsize)) / (1024 * 1024))
-	if availableMiB <= 0 {
+	totalMiB = int64((stat.Bavail * uint64(stat.Bsize)) / (1024 * 1024))
+	if totalMiB <= 0 {
 		return 0, errors.New("worker filesystem has no available disk capacity")
 	}
-	reserveMiB := max(availableMiB/10, 1024)
-	if reserveMiB >= availableMiB {
-		reserveMiB = availableMiB / 2
+	if reserveMiB >= totalMiB {
+		return 0, errors.New("worker disk reserve consumes available capacity")
 	}
-	advertisedMiB := availableMiB - reserveMiB
+	advertisedMiB := totalMiB - reserveMiB
 	if advertisedMiB <= 0 {
 		return 0, errors.New("worker filesystem has no advertisable disk capacity")
 	}

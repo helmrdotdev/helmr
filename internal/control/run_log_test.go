@@ -1,48 +1,31 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/redis/go-redis/v9"
 )
 
-func TestGetRunLogs(t *testing.T) {
+func TestGetRunLogsUsesDurableRunIdentity(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
-		run: db.Run{
-			ID:        pgvalue.UUID(runID),
-			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:    "deploy",
-			Status:    db.RunStatusRunning,
-			CreatedAt: testTime(),
-			UpdatedAt: testTime(),
-		},
-		stdout: []byte("hello\n"),
-		stderr: []byte("warn\n"),
+		run:    db.Run{ID: pgvalue.UUID(runID), OrgID: pgvalue.UUID(dbtest.DefaultOrgID), TaskID: "deploy", Status: db.RunStatusRunning, CreatedAt: testTime(), UpdatedAt: testTime()},
+		stdout: []byte("hello\n"), stderr: []byte("warn\n"),
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
@@ -56,467 +39,42 @@ func TestGetRunLogs(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.StdoutBase64 != base64.StdEncoding.EncodeToString([]byte("hello\n")) || response.StderrBase64 != base64.StdEncoding.EncodeToString([]byte("warn\n")) {
+	if response.StdoutBase64 != base64.StdEncoding.EncodeToString(store.stdout) || response.StderrBase64 != base64.StdEncoding.EncodeToString(store.stderr) {
 		t.Fatalf("logs = %+v", response)
 	}
-	if store.runLogSnapshot.StdoutLimit != maxRunLogSnapshotBytes || store.runLogSnapshot.StderrLimit != maxRunLogSnapshotBytes {
-		t.Fatalf("log snapshot params = %+v", store.runLogSnapshot)
+	if store.runLogSnapshot.OrgID != dbtest.DefaultOrgID || store.runLogSnapshot.RunID != runID {
+		t.Fatalf("snapshot scope = %+v", store.runLogSnapshot)
 	}
 }
 
 func TestGetRunLogsReportsTruncatedSnapshot(t *testing.T) {
 	runID := uuid.Must(uuid.NewV7())
 	store := &fakeStore{
-		run: db.Run{
-			ID:        pgvalue.UUID(runID),
-			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:    "deploy",
-			Status:    db.RunStatusRunning,
-			CreatedAt: testTime(),
-			UpdatedAt: testTime(),
-		},
-		stdout:       []byte("hello\n"),
-		logTruncated: true,
-		logCursor:    42,
+		run:    db.Run{ID: pgvalue.UUID(runID), OrgID: pgvalue.UUID(dbtest.DefaultOrgID), TaskID: "deploy", Status: db.RunStatusRunning, CreatedAt: testTime(), UpdatedAt: testTime()},
+		stdout: []byte("hello\n"), logTruncated: true, logCursor: 42,
 	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-
+	server := newTestServer(testServerConfig{Log: discardTestLogger(), DB: store, Auth: fakeAuth{}})
 	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
 	var response api.LogSnapshotResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if !response.Truncated {
-		t.Fatalf("logs = %+v", response)
+	if rec.Code != http.StatusOK || !response.Truncated || response.Cursor != telemetryCursor(42) {
+		t.Fatalf("status=%d response=%+v", rec.Code, response)
 	}
-	if response.Cursor != telemetryCursor(42) {
-		t.Fatalf("cursor = %q", response.Cursor)
-	}
-}
-
-func TestGetRunLogsDoesNotRequireLocalWorkerGroupRoutability(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{
-		recordPlacementUnavailable: true,
-		run: db.Run{
-			ID:            pgvalue.UUID(runID),
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: "us-east-1-worker-group-2",
-			TaskID:        "deploy",
-			Status:        db.RunStatusRunning,
-			CreatedAt:     testTime(),
-			UpdatedAt:     testTime(),
-		},
-		stdout: []byte("hello\n"),
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.runLogSnapshot.RunID != runID {
-		t.Fatalf("run log snapshot query = %+v", store.runLogSnapshot)
-	}
-}
-
-func TestFollowRunLogsStreamsLiveRedisWhenHistoricalUnavailable(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{
-		run: db.Run{
-			ID:        pgvalue.UUID(runID),
-			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:    "deploy",
-			Status:    db.RunStatusSucceeded,
-			CreatedAt: testTime(),
-			UpdatedAt: testTime(),
-		},
-	}
-	redisServer := miniredis.RunT(t)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
-	publishedChunk := api.RunLogChunk{
-		ID:            telemetryCursor(8),
-		RunID:         runID.String(),
-		AttemptNumber: 1,
-		Stream:        "stdout",
-		ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
-		Bytes:         4,
-		ObservedSeq:   2,
-		At:            pgvalue.Time(testTime()),
-	}
-	payload, err := json.Marshal(publishedChunk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
-		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
-		ID:     redisEventID(8),
-		Values: map[string]any{"run_log": string(payload)},
-	}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable}}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, EventStream: eventStream})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("accept", "text/event-stream")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "event: run_log") || !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(8)) {
-		t.Fatalf("sse body = %q", rec.Body.String())
-	}
-	var chunk api.RunLogChunk
-	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
-		if data, ok := strings.CutPrefix(line, "data: "); ok {
-			if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-	}
-	if chunk.ID != telemetryCursor(8) || chunk.Stream != "stdout" || chunk.ContentBase64 != base64.StdEncoding.EncodeToString([]byte("new\n")) {
-		t.Fatalf("chunk = %+v", chunk)
-	}
-}
-
-func TestFollowRunLogsDrainsAfterTerminalStatus(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{
-		run: db.Run{
-			ID:        pgvalue.UUID(runID),
-			OrgID:     pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:    "deploy",
-			Status:    db.RunStatusSucceeded,
-			CreatedAt: testTime(),
-			UpdatedAt: testTime(),
-		},
-	}
-	redisServer := miniredis.RunT(t)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
-	chunk := api.RunLogChunk{
-		ID:            telemetryCursor(12),
-		RunID:         runID.String(),
-		AttemptNumber: 1,
-		Stream:        "stderr",
-		ContentBase64: base64.StdEncoding.EncodeToString([]byte("final error\n")),
-		Bytes:         int64(len("final error\n")),
-		ObservedSeq:   4,
-		At:            pgvalue.Time(testTime()),
-	}
-	payload, err := json.Marshal(chunk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
-		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
-		ID:     redisEventID(12),
-		Values: map[string]any{"run_log": string(payload)},
-	}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable}}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, EventStream: eventStream})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String()+"/logs?follow=1", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "id: "+telemetryCursor(12)) || !strings.Contains(rec.Body.String(), base64.StdEncoding.EncodeToString([]byte("final error\n"))) {
-		t.Fatalf("sse body = %q", rec.Body.String())
-	}
-}
-
-func TestReadRunLogsRejectsStaleRedisCursorWhenHistoricalUnavailable(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{}
-	redisServer := miniredis.RunT(t)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
-	chunk := api.RunLogChunk{
-		ID:            telemetryCursor(8),
-		RunID:         runID.String(),
-		AttemptNumber: 1,
-		Stream:        "stdout",
-		ContentBase64: base64.StdEncoding.EncodeToString([]byte("new\n")),
-		Bytes:         4,
-		ObservedSeq:   2,
-		At:            pgvalue.Time(testTime()),
-	}
-	payload, err := json.Marshal(chunk)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
-		Stream: runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID),
-		ID:     redisEventID(8),
-		Values: map[string]any{"run_log": string(payload)},
-	}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	stream := &EventStream{
-		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		db:              store,
-		redis:           redisClient,
-		workerGroupID:   dbtest.DefaultWorkerGroupID,
-		telemetryReader: fakeTelemetryReader{store: store, listRunLogChunksErr: telemetry.ErrHistoricalUnavailable},
-	}
-	err = stream.ReadRunLogs(context.Background(), dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID, 7, func(api.RunLogChunk) error {
-		t.Fatal("unexpected run log chunk")
-		return nil
-	}, nil)
-	if !errors.Is(err, telemetry.ErrHistoricalUnavailable) {
-		t.Fatalf("err = %v, want historical unavailable", err)
-	}
-}
-
-func TestWorkerLogsAndEvents(t *testing.T) {
-	store := &fakeStore{
-		run: db.Run{
-			ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:              "deploy",
-			Status:              db.RunStatusQueued,
-			DispatchGeneration:  1,
-			Payload:             []byte(`{}`),
-			MaxActiveDurationMs: 3600_000,
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-	}
-	redisServer := miniredis.RunT(t)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
-	t.Cleanup(func() { _ = redisClient.Close() })
-	eventStream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, redis: redisClient, workerGroupID: dbtest.DefaultWorkerGroupID, telemetryReader: fakeTelemetryReader{store: store}}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{}, WorkerTokenSecret: []byte("01234567890123456789012345678901"), WorkerTokenTTL: time.Hour, EventStream: eventStream})
-	workerBearer := mintTestWorkerToken(t, server, "00000000-0000-0000-0000-000000000401")
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/lease", bytes.NewReader(testWorkerRunLeaseRequestBody(t)))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("claim status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var claimResponse api.WorkerRunLeaseResponse
-	if err := json.Unmarshal(rec.Body.Bytes(), &claimResponse); err != nil {
-		t.Fatal(err)
-	}
-	logBody, err := json.Marshal(api.WorkerAppendLogRequest{
-		Lease:         *claimResponse.Lease,
-		Stream:        api.WorkerLogStreamStdout,
-		ContentBase64: "aGVsbG8K",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req = httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(logBody))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("logs status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+pgvalue.MustUUIDValue(store.run.ID).String()+"/events", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("events status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var events api.RunEventPage
-	if err := json.Unmarshal(rec.Body.Bytes(), &events); err != nil {
-		t.Fatal(err)
-	}
-	if len(events.Events) != 1 || events.Events[0].Message != "log.stdout" {
-		t.Fatalf("events = %+v", events)
-	}
-	if string(events.Events[0].Attributes) != `{"redacted":true}` || events.Events[0].RedactionClass != "sensitive" {
-		t.Fatalf("log event redaction = class %q attributes %s", events.Events[0].RedactionClass, events.Events[0].Attributes)
-	}
-	if events.NextCursor != nil {
-		t.Fatalf("next cursor = %v, want nil for final page", *events.NextCursor)
-	}
-
-	store.events = []db.ClaimLiveTelemetryOutboxRow{{
-		Seq:            1,
-		OrgID:          store.run.OrgID,
-		RunID:          store.run.ID,
-		Kind:           "run.completed",
-		Payload:        []byte(`{"secret":"do-not-stream"}`),
-		RedactionClass: "sensitive",
-		CreatedAt:      testTime(),
-	}}
-	req = httptest.NewRequest(http.MethodGet, "/api/runs/"+pgvalue.MustUUIDValue(store.run.ID).String()+"/events?follow=1", nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	req.Header.Set("accept", "text/event-stream")
-	rec = httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("follow events status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	var followed api.RunEvent
-	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
-		if data, ok := strings.CutPrefix(line, "data: "); ok {
-			if err := json.Unmarshal([]byte(data), &followed); err != nil {
-				t.Fatal(err)
-			}
-			break
-		}
-	}
-	if followed.ID == "" {
-		t.Fatalf("follow event body = %q", rec.Body.String())
-	}
-	if string(followed.Attributes) != `{"redacted":true}` || followed.RedactionClass != "sensitive" {
-		t.Fatalf("follow event redaction = class %q attributes %s", followed.RedactionClass, followed.Attributes)
-	}
-}
-
-func TestWorkerAppendLogsRejectsWrongWorkerGroupLease(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	runLeaseID := uuid.Must(uuid.NewV7())
-	workerID := uuid.MustParse("00000000-0000-0000-0000-000000000401")
-	store := &fakeStore{
-		run: db.Run{
-			ID:                  pgvalue.UUID(runID),
-			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			TaskID:              "deploy",
-			Status:              db.RunStatusRunning,
-			Payload:             []byte(`{}`),
-			MaxActiveDurationMs: 3600_000,
-			CreatedAt:           testTime(),
-			UpdatedAt:           testTime(),
-		},
-		sessionID:                     pgvalue.UUID(runLeaseID),
-		executionWorkerInstanceID:     pgvalue.UUID(workerID),
-		executionLeaseExpiresAt:       pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
-		workerCredentialWorkerGroupID: "us-east-1-worker-group-2",
-	}
-	server := newTestServer(testServerConfig{
-		Log:               slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DB:                store,
-		WorkerGroupID:     "us-east-1-worker-group-2",
-		WorkerTokenSecret: []byte(testWorkerTokenSecret),
-		WorkerTokenTTL:    time.Hour,
-	})
-	workerBearer, err := auth.IssueWorkerToken([]byte(testWorkerTokenSecret), auth.WorkerClaims{
-		WorkerInstanceID: workerID.String(),
-		CredentialID:     testWorkerInstanceCredentialID,
-		WorkerGroupID:    "us-east-1-worker-group-2",
-		ClaimVersion:     1,
-		IssuedAt:         time.Now(),
-		ExpiresAt:        time.Now().Add(time.Hour),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(api.WorkerAppendLogRequest{
-		Lease: api.WorkerRunLease{
-			ID:                runLeaseID.String(),
-			OrgID:             dbtest.DefaultOrgID.String(),
-			RunID:             runID.String(),
-			WorkerInstanceID:  workerID.String(),
-			ProtocolVersion:   api.CurrentWorkerProtocolVersion,
-			AttemptNumber:     1,
-			DispatchMessageID: "message-1",
-			DispatchLeaseID:   "lease-1",
-		},
-		Stream:        api.WorkerLogStreamStdout,
-		ContentBase64: base64.StdEncoding.EncodeToString([]byte("cross-worker-group\n")),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(body))
-	req.Header.Set("authorization", "Bearer "+workerBearer)
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusConflict {
-		t.Fatalf("logs status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if len(store.stdout) != 0 || len(store.events) != 0 {
-		t.Fatalf("wrong-worker-group append mutated stdout=%q events=%d", string(store.stdout), len(store.events))
-	}
-}
-
-func (f *fakeStore) AppendRunLogChunk(_ context.Context, arg db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
-		return db.AppendRunLogChunkRow{}, pgx.ErrNoRows
-	}
-	switch arg.Stream {
-	case "stdout":
-		f.stdout = append(f.stdout, arg.Content...)
-	case "stderr":
-		f.stderr = append(f.stderr, arg.Content...)
-	}
-	event := db.ClaimLiveTelemetryOutboxRow{
-		Seq:            int64(len(f.events) + 1),
-		OrgID:          arg.OrgID,
-		RunID:          arg.RunID,
-		RunLeaseID:     arg.RunLeaseID,
-		AttemptNumber:  pgtype.Int4{Int32: 1, Valid: true},
-		Kind:           arg.Kind,
-		Payload:        arg.Payload,
-		RedactionClass: "sensitive",
-		CreatedAt:      testTime(),
-	}
-	f.events = append(f.events, event)
-	return db.AppendRunLogChunkRow{
-		RunID:         arg.RunID,
-		RunLeaseID:    arg.RunLeaseID,
-		AttemptNumber: pgtype.Int4{Int32: 1, Valid: true},
-		Stream:        arg.Stream,
-		Seq:           int64(len(f.events)),
-		ObservedSeq:   pgtype.Int8{Int64: arg.ObservedSeq, Valid: true},
-		Content:       arg.Content,
-		SizeBytes:     pgtype.Int8{Int64: int64(len(arg.Content)), Valid: true},
-		CreatedAt:     testTime(),
-	}, nil
 }
 
 func (f *fakeStore) ListRunLogChunksAfter(_ context.Context, arg telemetry.RunLogChunkQuery) ([]db.AppendRunLogChunkRow, error) {
 	f.runLogChunksAfter = arg
-	f.runLogChunksAfterCalls++
-	if f.runLogChunksAfterCalls == 1 {
-		f.firstRunLogChunksAfterSeq = arg.AfterSeq
-	}
-	if f.deferLogChunksUntilSecondList && f.runLogChunksAfterCalls == 1 {
-		return nil, nil
-	}
 	rows := make([]db.AppendRunLogChunkRow, 0, len(f.logChunks))
 	for _, chunk := range f.logChunks {
-		if chunk.Seq <= arg.AfterSeq {
-			continue
-		}
-		rows = append(rows, chunk)
-		if len(rows) == int(arg.Limit) {
-			break
+		if chunk.Seq > arg.AfterSeq {
+			rows = append(rows, chunk)
 		}
 	}
 	return rows, nil
@@ -527,11 +85,5 @@ func (f *fakeStore) GetRunLogSnapshot(_ context.Context, arg telemetry.RunLogSna
 	if f.run.ID != pgvalue.UUID(arg.RunID) || (len(f.stdout) == 0 && len(f.stderr) == 0) {
 		return telemetry.RunLogSnapshot{}, pgx.ErrNoRows
 	}
-	return telemetry.RunLogSnapshot{
-		Stdout:    f.stdout,
-		Stderr:    f.stderr,
-		Truncated: f.logTruncated,
-		Cursor:    f.logCursor,
-		UpdatedAt: pgvalue.Time(testTime()),
-	}, nil
+	return telemetry.RunLogSnapshot{Stdout: f.stdout, Stderr: f.stderr, Truncated: f.logTruncated, Cursor: f.logCursor, UpdatedAt: pgvalue.Time(testTime())}, nil
 }

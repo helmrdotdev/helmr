@@ -2,7 +2,6 @@
 INSERT INTO workspace_processes (
     id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -20,7 +19,6 @@ INSERT INTO workspace_processes (
 )
 SELECT sqlc.arg(id),
        workspaces.org_id,
-       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.id,
@@ -382,7 +380,6 @@ SELECT id,
 -- name: InsertWorkspacePtyStreamChunk :one
 INSERT INTO workspace_process_stream_chunks (
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -395,7 +392,6 @@ INSERT INTO workspace_process_stream_chunks (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),
@@ -413,7 +409,6 @@ RETURNING *;
 WITH inserted AS (
     INSERT INTO workspace_process_stream_chunks (
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         workspace_id,
@@ -426,7 +421,6 @@ WITH inserted AS (
         observed_at
     ) VALUES (
         sqlc.arg(org_id),
-        sqlc.arg(worker_group_id),
         sqlc.arg(project_id),
         sqlc.arg(environment_id),
         sqlc.arg(workspace_id),
@@ -444,7 +438,6 @@ WITH inserted AS (
 terminal_telemetry_outbox AS (
     INSERT INTO telemetry_outbox (
         org_id,
-        worker_group_id,
         stream_kind,
         source_kind,
         source_id,
@@ -467,7 +460,6 @@ terminal_telemetry_outbox AS (
         observed_at
     )
     SELECT inserted.org_id,
-           inserted.worker_group_id,
            'terminal_output',
            'workspace_process',
            inserted.process_id,
@@ -579,7 +571,6 @@ SELECT *
 -- name: InsertWorkspacePtyStreamChunkReceipt :one
 INSERT INTO workspace_process_stream_receipts (
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     workspace_id,
@@ -593,7 +584,6 @@ INSERT INTO workspace_process_stream_receipts (
     observed_at
 ) VALUES (
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(workspace_id),

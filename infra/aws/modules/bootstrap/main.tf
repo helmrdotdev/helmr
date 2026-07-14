@@ -102,6 +102,23 @@ resource "aws_s3_bucket_lifecycle_configuration" "source_artifacts" {
       noncurrent_days = 7
     }
   }
+
+  rule {
+    id     = "expire-validation-evidence"
+    status = "Enabled"
+
+    filter {
+      prefix = "helmr/validation-evidence/"
+    }
+
+    expiration {
+      days = 30
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "source_artifacts" {

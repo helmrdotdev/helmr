@@ -44,12 +44,91 @@ variable "deployment_mode" {
 }
 
 variable "worker_group_id" {
-  description = "Worker group ID bootstrapped by this control-plane stack."
+  description = "Default worker group ID used by this control-plane stack."
   type        = string
 
   validation {
     condition     = trimspace(var.worker_group_id) != ""
     error_message = "worker_group_id must be non-empty."
+  }
+}
+
+variable "worker_groups" {
+  description = "EC2 identity, enrollment, and scheduling boundaries for worker groups."
+  type = list(object({
+    id                   = string
+    name                 = string
+    description          = optional(string, "")
+    region               = string
+    account_id           = string
+    autoscaling_group    = string
+    instance_profile_arn = string
+    launch_ami_id        = string
+    ami_ids              = list(string)
+    allows_run           = bool
+    allows_build         = bool
+    instance_capacity = object({
+      milli_cpu            = number
+      memory_bytes         = number
+      workload_disk_bytes  = number
+      scratch_bytes        = number
+      build_cache_bytes    = number
+      artifact_cache_bytes = number
+      vm_slots             = number
+      build_executors      = number
+    })
+  }))
+  validation {
+    condition     = length(var.worker_groups) > 0
+    error_message = "worker_groups must be non-empty."
+  }
+}
+
+variable "worker_fleets" {
+  description = "Run/build fleet policy passed to helmr-dispatcher. An empty list disables fleet control."
+  type = list(object({
+    group_id           = string
+    autoscaling_group  = string
+    role               = string
+    compatibility_keys = list(string)
+    instance_capacity = object({
+      milli_cpu            = number
+      memory_bytes         = number
+      workload_disk_bytes  = number
+      scratch_bytes        = number
+      build_cache_bytes    = number
+      artifact_cache_bytes = number
+      vm_slots             = number
+      build_executors      = number
+    })
+    queued_run_scratch_bytes     = number
+    min_workers                  = number
+    warm_workers                 = number
+    max_workers                  = number
+    max_scale_out_per_cycle      = number
+    max_pending_workers          = number
+    max_packing_items            = number
+    controller_interval_seconds  = number
+    scale_out_cooldown_seconds   = number
+    scale_in_cooldown_seconds    = number
+    scale_in_hysteresis_seconds  = number
+    stale_worker_timeout_seconds = number
+    readiness_timeout_seconds    = number
+    drain_timeout_seconds        = number
+    emergency_stop               = bool
+    metric_interval_seconds      = number
+  }))
+  default = []
+}
+
+variable "fleet_metrics_namespace" {
+  description = "CloudWatch namespace used only for fleet-controller metric projection and alarms."
+  type        = string
+  default     = "Helmr/WorkerFleet"
+
+  validation {
+    condition     = trimspace(var.fleet_metrics_namespace) != ""
+    error_message = "fleet_metrics_namespace must be non-empty."
   }
 }
 

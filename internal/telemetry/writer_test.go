@@ -21,7 +21,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	writer := NewClickHouseWriter(client)
 
 	if err := writer.WriteEvents(context.Background(), []EventRecord{{
-		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -51,16 +50,15 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	eventBatch := client.takeLast(t)
 	assertQueryContains(t, eventBatch.query, "INSERT INTO helmr_telemetry.events", "observed_at")
-	assertRowShape(t, eventBatch.rows, 1, 25)
-	if got := eventBatch.rows[0][7]; got != uint64(7) {
+	assertRowShape(t, eventBatch.rows, 1, 24)
+	if got := eventBatch.rows[0][6]; got != uint64(7) {
 		t.Fatalf("event seq = %v, want 7", got)
 	}
-	if got := eventBatch.rows[0][24]; got != observedAt {
+	if got := eventBatch.rows[0][23]; got != observedAt {
 		t.Fatalf("event observed_at = %v, want %v", got, observedAt)
 	}
 
 	if err := writer.WriteRunLogs(context.Background(), []RunLogRecord{{
-		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -86,28 +84,28 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	if strings.Contains(runLogBatch.query, forbiddenAttemptColumn) {
 		t.Fatalf("run log query contains removed attempt column: %s", runLogBatch.query)
 	}
-	assertRowShape(t, runLogBatch.rows, 1, 17)
-	if got := runLogBatch.rows[0][5]; got != runLeaseID {
+	assertRowShape(t, runLogBatch.rows, 1, 16)
+	if got := runLogBatch.rows[0][4]; got != runLeaseID {
 		t.Fatalf("run log run_lease_id = %v, want %s", got, runLeaseID)
 	}
 
 	if err := writer.WriteMeterEvents(context.Background(), []MeterEventRecord{{
-		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
 		SourceType:     "run_lease",
 		SourceID:       runLeaseID,
-		RunID:          runID,
-		AttemptNumber:  &attemptNumber,
+		RunID:          &runID,
+		AttemptNumber:  attemptNumber,
 		TraceID:        "trace",
 		SpanID:         "span",
 		Meter:          "active_time",
 		Quantity:       "123",
-		Unit:           "ms",
+		Unit:           "milliseconds",
 		MeasuredTo:     &observedAt,
 		Details:        `{"phase":"final"}`,
 		IdempotencyKey: "meter-key",
+		Fingerprint:    "meter-fingerprint",
 		OccurredAt:     observedAt,
 		CreatedAt:      observedAt,
 	}}); err != nil {
@@ -115,7 +113,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	meterBatch := client.takeLast(t)
 	assertQueryContains(t, meterBatch.query, "INSERT INTO helmr_telemetry.meter_events", "quantity", "occurred_at")
-	assertRowShape(t, meterBatch.rows, 1, 18)
+	assertRowShape(t, meterBatch.rows, 1, 20)
 	if got := meterBatch.rows[0][10]; got != "active_time" {
 		t.Fatalf("meter event meter = %v, want active_time", got)
 	}
@@ -124,7 +122,6 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 
 	if err := writer.WriteTerminalOutput(context.Background(), []TerminalOutputRecord{{
-		WorkerGroupID:  "us-east-1-worker-group-1",
 		OrgID:          uuid.Must(uuid.NewV7()),
 		ProjectID:      uuid.Must(uuid.NewV7()),
 		EnvironmentID:  uuid.Must(uuid.NewV7()),
@@ -145,8 +142,8 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 	}
 	terminalBatch := client.takeLast(t)
 	assertQueryContains(t, terminalBatch.query, "INSERT INTO helmr_telemetry.terminal_outputs", "offset_start", "observed_at")
-	assertRowShape(t, terminalBatch.rows, 1, 16)
-	if got := terminalBatch.rows[0][8]; got != uint64(10) {
+	assertRowShape(t, terminalBatch.rows, 1, 15)
+	if got := terminalBatch.rows[0][7]; got != uint64(10) {
 		t.Fatalf("terminal offset_start = %v, want 10", got)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -224,9 +225,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			if cached.CreateRequestFingerprint != fingerprint {
 				return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
 			}
-			if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, cached.WorkerGroupID); err != nil {
-				return db.Workspace{}, false, err
-			}
 			return cached, true, nil
 		}
 		if !isNoRows(err) {
@@ -260,9 +258,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 				if cached.CreateRequestFingerprint != fingerprint {
 					return db.Workspace{}, false, codedError{code: "idempotency_fingerprint_mismatch", message: "idempotency_key was already used with different workspace create parameters"}
 				}
-				if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, cached.WorkerGroupID); err != nil {
-					return db.Workspace{}, false, err
-				}
 				return cached, true, nil
 			}
 			if !isNoRows(err) {
@@ -278,13 +273,8 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 			}
 		}
 	}
-	placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, projectID, environmentID)
-	if err != nil {
-		return db.Workspace{}, false, err
-	}
 	deploymentSandbox, err := s.db.ResolveDeploymentSandboxForWorkspaceCreate(ctx, db.ResolveDeploymentSandboxForWorkspaceCreateParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
-		WorkerGroupID: placement.WorkerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SandboxID:     sandboxID,
@@ -316,7 +306,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 				ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:                   workspacePublicID,
 				OrgID:                      pgvalue.UUID(actor.OrgID),
-				WorkerGroupID:              placement.WorkerGroupID,
 				ProjectID:                  projectID,
 				EnvironmentID:              environmentID,
 				DeploymentSandboxID:        deploymentSandbox.ID,
@@ -339,7 +328,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		if err != nil {
 			return err
 		}
-		row = workspaceFromCreateWorkspaceFromSandbox(created)
+		row = db.Workspace(created)
 		if idempotencyKey != "" {
 			work.AfterCommit(func(postCommitCtx context.Context) {
 				createClaim.resolve(postCommitCtx)
@@ -352,10 +341,6 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 		return db.Workspace{}, false, err
 	}
 	return row, replayed, nil
-}
-
-func workspaceFromCreateWorkspaceFromSandbox(row db.CreateWorkspaceFromSandboxRow) db.Workspace {
-	return db.Workspace(row)
 }
 
 func (s *Server) createInitialWorkspaceArtifact(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID) (db.Artifact, workspace.WorkspaceArtifact, error) {
@@ -413,6 +398,31 @@ func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request,
 		return db.Workspace{}, false
 	}
 	actor := actorFromContext(r.Context())
+	if actor.Kind == auth.ActorKindSession && chi.URLParam(r, "projectID") == "" && chi.URLParam(r, "environmentID") == "" {
+		row, err := s.db.GetWorkspaceByOrgAndID(r.Context(), db.GetWorkspaceByOrgAndIDParams{
+			OrgID: pgvalue.UUID(actor.OrgID),
+			ID:    pgvalue.UUID(workspaceID),
+		})
+		if isNoRows(err) {
+			writeError(w, notFound(errors.New("workspace not found")))
+			return db.Workspace{}, false
+		}
+		if err != nil {
+			s.log.Error("load workspace failed", "workspace_id", workspaceID.String(), "error", err)
+			writeError(w, errors.New("load workspace"))
+			return db.Workspace{}, false
+		}
+		actualScope := auth.Scope{
+			OrgID:         actor.OrgID,
+			ProjectID:     pgvalue.MustUUIDValue(row.ProjectID).String(),
+			EnvironmentID: pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+		}
+		if !actorHasAnyPermission(actor, actualScope, permissions...) {
+			writeError(w, notFound(errors.New("workspace not found")))
+			return db.Workspace{}, false
+		}
+		return row, true
+	}
 	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -435,10 +445,6 @@ func (s *Server) loadWorkspaceForRequest(w http.ResponseWriter, r *http.Request,
 	if err != nil {
 		s.log.Error("load workspace failed", "workspace_id", workspaceID.String(), "error", err)
 		writeError(w, errors.New("load workspace"))
-		return db.Workspace{}, false
-	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, row.WorkerGroupID); err != nil {
-		writeError(w, err)
 		return db.Workspace{}, false
 	}
 	return row, true

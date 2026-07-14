@@ -107,6 +107,7 @@ export const releaseApproval = task({
       metadata: {
         release: payload.release,
         summary: payload.summary,
+        form: { version: 1, type: "approval" },
       },
     }).unwrap()
 
