@@ -53,13 +53,13 @@ not generate or store Helmr internal secret values in Terraform state. This star
 Required secret value formats:
 
 - `database_url`: Postgres connection URL for the `helmr` database with SSL required
-- `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
+- `worker_token_signing_key`, `auth_secret`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
-`checkpoint_encryption_key`, `worker_bootstrap_token`, and `setup_token` locally and writes them
+`checkpoint_encryption_key`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 
 ```sh
@@ -111,10 +111,21 @@ VPC, so do not reuse the CloudFront viewer hostname as the origin.
 
 Worker resources are not created until `create_worker=true`. The official worker AMI is resolved
 from `helmr_version` and `aws_region`; set `worker_ami_id` only for custom builds. Increase
-`worker_desired_capacity` and `worker_min_size` when you are ready to launch hosts.
+`worker_min_size` when you are ready to keep warm hosts.
 
 Workers launch in private subnets, use SSM Session Manager by default, and do not require inbound
 SSH rules. The default worker instance type is a metal host for production isolation; nested
 virtualization remains available for supported instance families when explicitly enabled. Workers
 are filesystem-first: size the root EBS volume for build/cache/runtime data, and set
 `worker_disk_mib` only when the advertised filesystem capacity should differ from auto-detection.
+
+For an AMI rollout, first add the new AMI to `worker_allowed_ami_ids` and apply that control-plane
+change. Then change `worker_ami_id`, apply the launch template, and explicitly start the Auto
+Scaling instance refresh. Retain the old AMI in the allowlist until every old instance terminates.
+This prevents the control plane from fencing healthy old hosts before their replacements activate.
+
+`helmr-dispatcher` owns desired capacity independently for run and build groups in both deployment
+modes. Terraform continues enforcing ASG min/max; `max_size` is the hard spend guardrail and equal
+min/max values provide fixed capacity. Explicit certified CPU, memory, disk, cache, VM-slot, and
+build-executor capacities are required when workers are created. CloudWatch metrics and alarms are
+observational only; cost reporting is kept separate from scaling correctness.

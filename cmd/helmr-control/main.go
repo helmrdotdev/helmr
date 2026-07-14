@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,6 +16,8 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
@@ -26,6 +29,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -82,16 +87,46 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load worker group bootstrap config: %w", err)
 	}
-	if err := workergroup.Bootstrap(ctx, queries, workergroup.BootstrapConfig{
+	var groups []configuredWorkerGroup
+	if err := json.Unmarshal([]byte(cfg.WorkerGroupsJSON), &groups); err != nil {
+		return fmt.Errorf("decode HELMR_WORKER_GROUPS: %w", err)
+	}
+	awsGroups := make([]enrollment.AWSGroupBoundary, 0, len(groups))
+	desiredGroups := make([]workergroup.Desired, 0, len(groups))
+	for _, configuredGroup := range groups {
+		boundary, desired, err := enrollment.PrepareAWSGroup(configuredGroup.awsWorkerGroup())
+		if err != nil {
+			return fmt.Errorf("prepare worker group %q: %w", configuredGroup.ID, err)
+		}
+		awsGroups = append(awsGroups, boundary)
+		desiredGroups = append(desiredGroups, desired)
+	}
+	verifier, err := loadAWSWorkerEnrollmentVerifier(ctx, awsGroups)
+	if err != nil {
+		return err
+	}
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin worker group reconciliation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	txQueries := db.New(tx)
+	if err := region.Ensure(ctx, txQueries, region.BootstrapConfig{
 		RegionID:          bootstrapCfg.RegionID,
 		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
 		Provider:          bootstrapCfg.Provider,
 		ProviderRegion:    bootstrapCfg.ProviderRegion,
 		RegionDisplayName: bootstrapCfg.RegionDisplayName,
-		WorkerGroupID:     bootstrapCfg.WorkerGroupID,
 	}); err != nil {
-		return fmt.Errorf("bootstrap worker group: %w", err)
+		return fmt.Errorf("bootstrap region: %w", err)
 	}
+	if err := workergroup.Reconcile(ctx, txQueries, cfg.RegionID, desiredGroups); err != nil {
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit worker group reconciliation: %w", err)
+	}
+	workerEnrollment := controlWorkerEnrollmentVerifier{verifier: verifier}
 	clickHouseClient, err := clickhouse.New(clickhouse.Config{
 		URL:      cfg.ClickHouseURL,
 		User:     cfg.ClickHouseUser,
@@ -116,16 +151,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
+	wakePublisher, err := dispatchredis.NewWakePublisher(redisClient)
+	if err != nil {
+		return fmt.Errorf("configure worker wake publisher: %w", err)
+	}
+	executionAuthority, err := dispatch.NewAuthority(pool)
+	if err != nil {
+		return fmt.Errorf("configure execution authority: %w", err)
+	}
 	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
 	if err != nil {
 		return fmt.Errorf("configure prepared runtime supply lock: %w", err)
 	}
 	preparedRuntimeSupply, err := dispatch.NewRuntimePreparer(
-		queries,
+		executionAuthority,
 		dispatch.WithRuntimePrepareLogger(log),
 		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
 		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
 		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
+		dispatch.WithRuntimePrepareWakePublisher(wakePublisher),
 	)
 	if err != nil {
 		return fmt.Errorf("configure prepared runtime supply reconciler: %w", err)
@@ -140,36 +184,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	mailer := configuredEmailSender(log, cfg)
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-		WorkerGroupID:   cfg.WorkerGroupID,
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
 		return fmt.Errorf("configure event stream: %w", err)
 	}
-	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.WorkerGroupID)
-	if err != nil {
-		return fmt.Errorf("configure worker command stream: %w", err)
-	}
 	go func() {
 		if err := eventStream.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("live telemetry publisher stopped", "error", err)
-			cancelServer()
-		}
-	}()
-	go func() {
-		if err := workerCommands.RunPublisher(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("worker command stream publisher stopped", "error", err)
-			cancelServer()
-		}
-	}()
-	go func() {
-		if err := workergroup.RunHealthReporter(backgroundCtx, queries, workergroup.HealthReporterConfig{
-			WorkerGroupID:      cfg.WorkerGroupID,
-			Component:          workergroup.ComponentControl,
-			RequiredComponents: workergroup.RoutingRequiredComponents(),
-			Log:                log,
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("worker group health reporter stopped", "error", err)
 			cancelServer()
 		}
 	}()
@@ -186,8 +208,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure schedule run creator: %w", err)
 	}
 	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
-		WorkerGroupID: cfg.WorkerGroupID,
-		Jitter:        cfg.ScheduleJitter,
+		Jitter: cfg.ScheduleJitter,
 	})
 	if err != nil {
 		return fmt.Errorf("configure schedule engine: %w", err)
@@ -217,12 +238,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		DispatchQueue:         dispatchQueue,
 		ScheduleEngine:        scheduleEngine,
 		EventStream:           eventStream,
-		WorkerCommands:        workerCommands,
 		TelemetryReader:       telemetryReader,
 		Mailer:                mailer,
 		AuthProvider:          authProvider,
 		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
-		WorkerRegisterToken:   cfg.WorkerBootstrapToken,
+		WorkerEnrollment:      workerEnrollment,
 		SetupToken:            cfg.SetupToken,
 		AuthSecret:            []byte(cfg.AuthSecret),
 		PublicURL:             publicURL,
@@ -265,6 +285,36 @@ func run(ctx context.Context, log *slog.Logger) error {
 	return nil
 }
 
+var loadAWSWorkerEnrollmentVerifier = func(ctx context.Context, groups []enrollment.AWSGroupBoundary) (*enrollment.AWSVerifier, error) {
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load AWS worker enrollment configuration: %w", err)
+	}
+	verifier, err := enrollment.NewAWSVerifier(awsCfg, groups)
+	if err != nil {
+		return nil, fmt.Errorf("configure AWS worker enrollment: %w", err)
+	}
+	return verifier, nil
+}
+
+type controlWorkerEnrollmentVerifier struct {
+	verifier *enrollment.AWSVerifier
+}
+
+func (v controlWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
+	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
+	if err != nil {
+		return control.VerifiedWorkerEnrollment{}, err
+	}
+	return control.VerifiedWorkerEnrollment{
+		WorkerGroupID: verified.WorkerGroupID, ResourceID: verified.ResourceID,
+		AllowsRun: verified.AllowsRun, AllowsBuild: verified.AllowsBuild,
+		ProtocolVersion:             verified.ProtocolVersion,
+		EnrollmentPolicyFingerprint: verified.EnrollmentPolicyFingerprint,
+		AttestationFingerprint:      verified.AttestationFingerprint,
+	}, nil
+}
+
 func configuredEmailSender(log *slog.Logger, cfg config.Control) email.Sender {
 	switch cfg.EmailProvider {
 	case config.EmailProviderSMTP:
@@ -290,10 +340,6 @@ func runMigrate(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load clickhouse config: %w", err)
 	}
-	bootstrapCfg, err := config.LoadWorkerGroupBootstrap()
-	if err != nil {
-		return fmt.Errorf("load worker group bootstrap config: %w", err)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	if err := clickhouseschema.Up(ctx, clickhouse.Config{
@@ -305,29 +351,6 @@ func runMigrate(log *slog.Logger, args []string) error {
 	}
 	if err := dbschema.Up(ctx, cfg.URL); err != nil {
 		return err
-	}
-	pool, err := pgxpool.New(ctx, cfg.URL)
-	if err != nil {
-		return fmt.Errorf("connect database: %w", err)
-	}
-	defer pool.Close()
-	tx, err := pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("begin worker group bootstrap: %w", err)
-	}
-	defer tx.Rollback(ctx)
-	if err := workergroup.Bootstrap(ctx, db.New(tx), workergroup.BootstrapConfig{
-		RegionID:          bootstrapCfg.RegionID,
-		DefaultRegionID:   bootstrapCfg.DefaultRegionID,
-		Provider:          bootstrapCfg.Provider,
-		ProviderRegion:    bootstrapCfg.ProviderRegion,
-		RegionDisplayName: bootstrapCfg.RegionDisplayName,
-		WorkerGroupID:     bootstrapCfg.WorkerGroupID,
-	}); err != nil {
-		return fmt.Errorf("bootstrap worker group: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit worker group bootstrap: %w", err)
 	}
 	log.Info("database migrations are up to date")
 	return nil

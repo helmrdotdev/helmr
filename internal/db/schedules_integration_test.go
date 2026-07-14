@@ -2,15 +2,12 @@ package db_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -224,114 +221,5 @@ func assertScheduleCounts(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	}
 	if instances != wantInstances {
 		t.Fatalf("schedule instance count = %d, want %d", instances, wantInstances)
-	}
-}
-
-func TestScheduleTriggerFollowsCurrentActiveRoute(t *testing.T) {
-	ctx := context.Background()
-	pool := newIntegrationDB(t, ctx)
-	ids := seedIntegration(t, ctx, pool)
-	queries := db.New(pool)
-
-	scheduleID := uuid.Must(uuid.NewV7())
-	instanceID := uuid.Must(uuid.NewV7())
-	scheduledAt := time.Now().Add(-time.Minute).UTC()
-	created, err := queries.CreateDeclarativeSchedule(ctx, db.CreateDeclarativeScheduleParams{
-		OrgID:          pgvalue.UUID(ids.orgID),
-		ProjectID:      pgvalue.UUID(ids.projectID),
-		DedupKey:       "route-following-schedule",
-		TaskID:         "approval-task",
-		ExternalID:     pgtype.Text{String: "route-following-schedule", Valid: true},
-		Cron:           "0 9 * * *",
-		Timezone:       "UTC",
-		ScheduleID:     pgvalue.UUID(scheduleID),
-		PublicID:       testSchedulePublicID(t),
-		InstanceID:     pgvalue.UUID(instanceID),
-		EnvironmentID:  pgvalue.UUID(ids.environmentID),
-		RunOptions:     []byte(`{}`),
-		InstanceActive: true,
-		NextFireAt:     pgvalue.Timestamptz(scheduledAt),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if created.InstanceID != pgvalue.UUID(instanceID) {
-		t.Fatalf("instance id = %s, want %s", pgvalue.MustUUIDValue(created.InstanceID), instanceID)
-	}
-
-	nonDefaultRegionID := dbtest.DefaultRegionID + "-alt"
-	nonDefaultWorkerGroupID := dbtest.DefaultWorkerGroupID + "-alt-region"
-	ensureAdditionalRegionWorkerGroup(t, ctx, pool, ids, nonDefaultRegionID, nonDefaultWorkerGroupID)
-	nonDefaultRows, err := queries.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
-		AvailableBefore: pgvalue.Timestamptz(time.Now().UTC()),
-		RowLimit:        10,
-		WorkerGroupID:   nonDefaultWorkerGroupID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(nonDefaultRows) != 0 {
-		t.Fatalf("non-default region repair rows = %+v, want none", nonDefaultRows)
-	}
-	if _, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		WorkerGroupID: nonDefaultWorkerGroupID,
-		InstanceID:    pgvalue.UUID(instanceID),
-		Generation:    1,
-		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("non-default region candidate err = %v, want no rows", err)
-	}
-
-	secondWorkerGroupID := dbtest.DefaultWorkerGroupID + "-schedule-route"
-	ensureWorkerGroupPlacement(t, ctx, pool, ids, secondWorkerGroupID)
-
-	if _, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		InstanceID:    pgvalue.UUID(instanceID),
-		Generation:    1,
-		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
-	}); !errors.Is(err, pgx.ErrNoRows) {
-		t.Fatalf("old worker group candidate err = %v, want no rows", err)
-	}
-
-	rows, err := queries.ListScheduleRepairEntries(ctx, db.ListScheduleRepairEntriesParams{
-		AvailableBefore: pgvalue.Timestamptz(time.Now().UTC()),
-		RowLimit:        10,
-		WorkerGroupID:   secondWorkerGroupID,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 1 || rows[0].WorkerGroupID != secondWorkerGroupID || rows[0].InstanceID != pgvalue.UUID(instanceID) {
-		t.Fatalf("repair rows = %+v, want one row for %s", rows, secondWorkerGroupID)
-	}
-
-	candidate, err := queries.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		WorkerGroupID: secondWorkerGroupID,
-		InstanceID:    pgvalue.UUID(instanceID),
-		Generation:    1,
-		ScheduledAt:   pgvalue.Timestamptz(scheduledAt),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if candidate.WorkerGroupID != secondWorkerGroupID {
-		t.Fatalf("candidate worker group = %q, want %q", candidate.WorkerGroupID, secondWorkerGroupID)
-	}
-}
-
-func ensureAdditionalRegionWorkerGroup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, regionID string, workerGroupID string) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO regions (id, provider, provider_region, display_name)
-		VALUES ($1, $2, $3, $4)
-	`, regionID, dbtest.DefaultProvider, regionID, "Alternative Test Region"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_groups (id, region_id, name, state, health_state, routing_fresh_until)
-		VALUES ($1, $2, $1, 'active', 'healthy', now() + interval '5 minutes')
-	`, workerGroupID, regionID); err != nil {
-		t.Fatal(err)
 	}
 }

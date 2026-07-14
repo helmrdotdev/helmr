@@ -15,7 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/publicid"
-	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -46,56 +46,12 @@ func testPublicID(t *testing.T, prefix publicid.Prefix) string {
 	return id
 }
 
-func testDeploymentPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Deployment)
-}
-
-func testEnvironmentPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Environment)
-}
-
-func testTaskPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Task)
-}
-
-func testSandboxPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Sandbox)
-}
-
-func testSchedulePublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Schedule)
-}
-
-func testWorkspacePublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Workspace)
-}
-
+func testEnvironmentPublicID(t *testing.T) string { return testPublicID(t, publicid.Environment) }
+func testTaskPublicID(t *testing.T) string        { return testPublicID(t, publicid.Task) }
+func testSchedulePublicID(t *testing.T) string    { return testPublicID(t, publicid.Schedule) }
+func testWorkspacePublicID(t *testing.T) string   { return testPublicID(t, publicid.Workspace) }
 func testWorkspaceVersionPublicID(t *testing.T) string {
 	return testPublicID(t, publicid.WorkspaceVersion)
-}
-
-func testSessionRunPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.SessionRun)
-}
-
-func testRunOperationPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.RunOperation)
-}
-
-func testWaitPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Wait)
-}
-
-func testStreamPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Stream)
-}
-
-func testStreamRecordPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.StreamRecord)
-}
-
-func testTokenPublicID(t *testing.T) string {
-	return testPublicID(t, publicid.Token)
 }
 
 func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) integrationIDs {
@@ -111,431 +67,151 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		runID:               uuid.Must(uuid.NewV7()),
 	}
 	taskBundleArtifactID := uuid.Must(uuid.NewV7())
-	taskBundleDigest := testDigest("task-bundle")
+	taskBundleDigest := testDigest("task-bundle-" + ids.deploymentID.String())
 	projectSlug := "project-" + shortUUID(ids.projectID)
 	environmentSlug := "env-" + shortUUID(ids.environmentID)
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO organizations (id, public_id, name, slug) VALUES ($1, $2, 'Default', 'default')
+
+	mustExec(t, ctx, pool, `
+		INSERT INTO organizations (id, public_id, name, slug)
+		VALUES ($1, $2, 'Default', 'default')
 		ON CONFLICT (id) DO NOTHING
-	`, ids.orgID, testPublicID(t, publicid.Organization)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-			INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
-			VALUES ($1, $5::text, $2, $3::text, $4::text, 'Project')
-	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug, testPublicID(t, publicid.Project)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-			INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
-			VALUES ($1, $5::text, $2, $3, $4::text, 'Env', '#3366ff')
-	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug, testPublicID(t, publicid.Environment)); err != nil {
-		t.Fatal(err)
-	}
+	`, ids.orgID, testPublicID(t, publicid.Organization))
+	mustExec(t, ctx, pool, `
+		INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
+		VALUES ($1, $5, $2, $3, $4, 'Project')
+	`, ids.projectID, ids.orgID, dbtest.DefaultRegionID, projectSlug, testPublicID(t, publicid.Project))
+	mustExec(t, ctx, pool, `
+		INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
+		VALUES ($1, $5, $2, $3, $4, 'Env', '#3366ff')
+	`, ids.environmentID, ids.orgID, ids.projectID, environmentSlug, testEnvironmentPublicID(t))
+
 	imageArtifactID, imageDigest := seedSandboxImageArtifact(t, ctx, pool, ids)
-	if _, err := pool.Exec(ctx, `
+	mustExec(t, ctx, pool, `
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
 		VALUES ($1, $2, 1, 'application/json')
-	`, ids.orgID, taskBundleDigest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	`, ids.orgID, taskBundleDigest)
+	mustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json')
-	`, taskBundleArtifactID, ids.orgID, ids.projectID, ids.environmentID, taskBundleDigest); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployments (id, public_id, org_id, build_worker_group_id, project_id, environment_id, version, content_hash, deployment_source_artifact_id, status)
+	`, taskBundleArtifactID, ids.orgID, ids.projectID, ids.environmentID, taskBundleDigest)
+	mustExec(t, ctx, pool, `
+		INSERT INTO deployments (
+			id, public_id, org_id, build_region_id, project_id, environment_id,
+			version, content_hash, deployment_source_artifact_id, status
+		)
 		VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')
-	`, ids.deploymentID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	`, ids.deploymentID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
+		taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment))
+	mustExec(t, ctx, pool, `
 		INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name)
 		VALUES ($1, $2, $3, $4, 'default')
-	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
+	`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID)
+	mustExec(t, ctx, pool, `
+		INSERT INTO runtime_identities (
+			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+		)
 		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 		ON CONFLICT DO NOTHING
-	`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	`)
+	mustExec(t, ctx, pool, `
 		INSERT INTO deployment_sandboxes (
 			id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
 			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
 			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
 			disk_floor_mib, contract_version, fingerprint
 		)
-		VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', 'sha256:rootfs', $7, 'oci-tar', '/workspace',
-			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, 'sandbox-fingerprint')
-	`, ids.deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, imageArtifactID, imageDigest, testPublicID(t, publicid.Sandbox)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+		VALUES ($1, $8, $2, $3, $4, $5, 'default', $6, 'oci-tar', 'sha256:rootfs', $7,
+			'oci-tar', '/workspace', 'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1,
+			'sandbox-fingerprint')
+	`, ids.deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID,
+		imageArtifactID, imageDigest, testPublicID(t, publicid.Sandbox))
+	mustExec(t, ctx, pool, `
 		INSERT INTO tasks (public_id, org_id, project_id, environment_id, task_id)
 		VALUES ($4, $1, $2, $3, 'approval-task')
-		ON CONFLICT DO NOTHING
-	`, ids.orgID, ids.projectID, ids.environmentID, testPublicID(t, publicid.Task)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	`, ids.orgID, ids.projectID, ids.environmentID, testTaskPublicID(t))
+	mustExec(t, ctx, pool, `
 		INSERT INTO deployment_tasks (
-			id, public_id, org_id, project_id, environment_id, deployment_id, deployment_sandbox_id, task_id, bundle_artifact_id,
-			queue_name, max_active_duration_ms
+			id, public_id, org_id, project_id, environment_id, deployment_id,
+			deployment_sandbox_id, task_id, bundle_artifact_id, queue_name, max_active_duration_ms
 		)
 		VALUES ($1, $8, $2, $3, $4, $5, $6, 'approval-task', $7, 'default', 300000)
-	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentSandboxID, taskBundleArtifactID, testPublicID(t, publicid.DeploymentTask)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	`, ids.taskID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID,
+		ids.deploymentSandboxID, taskBundleArtifactID, testPublicID(t, publicid.DeploymentTask))
+	mustExec(t, ctx, pool, `
 		INSERT INTO workspaces (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+			id, public_id, org_id, region_id, project_id, environment_id,
+			deployment_sandbox_id, sandbox_id, sandbox_fingerprint
 		)
 		VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
-	`, ids.workspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testPublicID(t, publicid.Workspace)); err != nil {
-		t.Fatal(err)
-	}
+	`, ids.workspaceID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID,
+		ids.deploymentSandboxID, testWorkspacePublicID(t))
+
 	initialWorkspaceArtifactID := seedWorkspaceVersionArtifact(t, ctx, pool, ids)
 	initialVersionID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
+	mustExec(t, ctx, pool, `
 		INSERT INTO workspace_versions (
 			id, public_id, org_id, project_id, environment_id, workspace_id, kind, state,
 			artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, promoted_at
 		)
-		SELECT $1, $8, $2, $3, $4, $5, 'system', 'ready',
-		       artifacts.id, $6, 0, artifacts.digest, artifacts.size_bytes, now()
+		SELECT $1, $8, $2, $3, $4, $5, 'system', 'ready', artifacts.id, $6, 0,
+		       artifacts.digest, artifacts.size_bytes, now()
 		  FROM artifacts
-		 WHERE artifacts.org_id = $2
-		   AND artifacts.project_id = $3
-		   AND artifacts.environment_id = $4
-		   AND artifacts.id = $7
-	`, initialVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID, workspace.ArtifactEncoding, initialWorkspaceArtifactID, testPublicID(t, publicid.WorkspaceVersion)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE workspaces
-		   SET current_version_id = $1
-		 WHERE org_id = $2
-		   AND id = $3
-	`, initialVersionID, ids.orgID, ids.workspaceID); err != nil {
-		t.Fatal(err)
-	}
+		 WHERE artifacts.org_id = $2 AND artifacts.project_id = $3
+		   AND artifacts.environment_id = $4 AND artifacts.id = $7
+	`, initialVersionID, ids.orgID, ids.projectID, ids.environmentID, ids.workspaceID,
+		workspace.ArtifactEncoding, initialWorkspaceArtifactID, testWorkspaceVersionPublicID(t))
+	mustExec(t, ctx, pool, `
+		UPDATE workspaces SET current_version_id = $1 WHERE org_id = $2 AND id = $3
+	`, initialVersionID, ids.orgID, ids.workspaceID)
+
 	sessionID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
+	mustExec(t, ctx, pool, `
 		INSERT INTO sessions (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, task_id,
+			id, public_id, org_id, project_id, environment_id, task_id,
 			initial_deployment_id, active_deployment_id, workspace_id
 		)
-		VALUES ($1, $8, $2, $3, $4, $5, 'approval-task', $6, $6, $7)
-	`, sessionID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.workspaceID, testPublicID(t, publicid.Session)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+		VALUES ($1, $7, $2, $3, $4, 'approval-task', $5, $5, $6)
+	`, sessionID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID,
+		ids.workspaceID, testPublicID(t, publicid.Session))
+	mustExec(t, ctx, pool, `
 		INSERT INTO runs (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, task_id,
-			session_id, status, execution_status, payload, queue_name,
-			requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots,
-			runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
+			id, public_id, org_id, project_id, environment_id, deployment_id,
+			deployment_task_id, workspace_id, task_id, session_id, status, execution_status,
+			payload, queue_name, requested_milli_cpu, requested_memory_mib,
+			requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch,
+			runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile,
 			max_active_duration_ms, trace_id, root_span_id
 		)
-		VALUES ($1, $10, $2, $3, $4, $5, $6, $7, $8, 'approval-task', $9, 'waiting', 'waiting', '{}', 'default',
-			1000, 1024, 4096, 1,
-			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
-			300000, '11111111111111111111111111111111', '2222222222222222')
-	`, ids.runID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentID, ids.taskID, ids.workspaceID, sessionID, testPublicID(t, publicid.Run)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE sessions
-		   SET current_run_id = $1
-		 WHERE org_id = $2
-		   AND id = $3
-	`, ids.runID, ids.orgID, sessionID); err != nil {
-		t.Fatal(err)
-	}
+		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting',
+			'{}', 'default', 1000, 1024, 4096, 1, 'test-runtime', 'arm64', 'test',
+			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', 300000,
+			'11111111111111111111111111111111', '2222222222222222')
+	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID,
+		ids.taskID, ids.workspaceID, sessionID, testPublicID(t, publicid.Run))
+	mustExec(t, ctx, pool, `
+		UPDATE sessions SET current_run_id = $1 WHERE org_id = $2 AND id = $3
+	`, ids.runID, ids.orgID, sessionID)
 	return ids
 }
 
-func seedDefaultPlacementWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
+func mustExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, query string, args ...any) {
 	t.Helper()
-	workerID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_instances (
-			id, org_id, worker_group_id, resource_id, status, protocol_version,
-			total_milli_cpu, total_memory_mib, total_disk_mib, total_execution_slots,
-			available_milli_cpu, available_memory_mib, available_disk_mib, available_execution_slots,
-			runtime_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
-		)
-		VALUES ($1, $2, $3, $4, 'active', $5,
-			4000, 8192, 65536, 4, 4000, 8192, 65536, 4,
-			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, ids.orgID, dbtest.DefaultWorkerGroupID, "worker-"+shortUUID(workerID), api.CurrentWorkerProtocolVersion); err != nil {
+	if _, err := pool.Exec(ctx, query, args...); err != nil {
 		t.Fatal(err)
 	}
-	return workerID
-}
-
-func seedSessionForRun(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
-	t.Helper()
-	var sessionID uuid.UUID
-	if err := pool.QueryRow(ctx, `
-		SELECT session_id
-		  FROM runs
-		 WHERE org_id = $1
-		   AND id = $2
-	`, ids.orgID, ids.runID).Scan(&sessionID); err != nil {
-		t.Fatal(err)
-	}
-	return sessionID
-}
-
-func seedRunningSessionLease(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) (sessionID uuid.UUID, runLeaseID uuid.UUID, workerID uuid.UUID) {
-	t.Helper()
-	sessionID = seedSessionForRun(t, ctx, pool, ids)
-	runLeaseID = uuid.Must(uuid.NewV7())
-	workerID = uuid.Must(uuid.NewV7())
-	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
-	workerResourceID := "worker-" + shortUUID(workerID)
-	dispatchMessageID := "dispatch-" + runLeaseID.String()[:8]
-	dispatchLeaseID := "lease-" + runLeaseID.String()[:8]
-	workspaceMountID := uuid.Must(uuid.NewV7())
-	runtimeInstanceID := uuid.Must(uuid.NewV7())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
-		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO worker_instances (
-			id, worker_group_id, resource_id, total_milli_cpu, total_memory_mib, total_disk_mib,
-			protocol_version, total_execution_slots, available_milli_cpu, available_memory_mib, available_disk_mib,
-			available_execution_slots, runtime_id, runtime_arch, runtime_abi, kernel_digest,
-			initramfs_digest, rootfs_digest, cni_profile
-		)
-		VALUES ($1, $2, $3, 1000, 1024, 4096, $4, 1, 1000, 1024, 4096, 1,
-			$5, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
-	`, workerID, dbtest.DefaultWorkerGroupID, workerResourceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_leases (
-			id, org_id, worker_group_id, project_id, environment_id, queue_class, queue_name,
-			run_id, worker_instance_id, dispatch_message_id, dispatch_generation,
-			dispatch_lease_id, dispatch_attempt, attempt_number, status, lease_expires_at, runtime_identity_id,
-			worker_protocol_version, trace_id,
-			span_id, parent_span_id, traceparent
-		)
-		VALUES ($1, $2, $3, $4, $5, 'default', 'default',
-			$6, $7, $8, 1, $9, 1, 1, 'running', now() + interval '1 hour', $10, $11,
-			'11111111111111111111111111111111', '3333333333333333', '2222222222222222',
-			'00-11111111111111111111111111111111-3333333333333333-01')
-	`, runLeaseID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.runID, workerID, dispatchMessageID, dispatchLeaseID, runtimeID, api.CurrentWorkerProtocolVersion); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO workspace_mounts (
-			id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint,
-			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id,
-			workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest,
-			workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path,
-			runtime_abi, guestd_abi, adapter_abi, state, mounted_at, last_heartbeat_at
-		)
-		SELECT $1, workspaces.org_id, workspaces.worker_group_id, workspaces.project_id, workspaces.environment_id, workspaces.id,
-		       deployment_sandboxes.id, workspaces.sandbox_fingerprint,
-		       image_artifact.id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest,
-		       deployment_sandboxes.image_digest, deployment_sandboxes.image_format,
-		       workspace_artifact.id, workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
-		       workspace_artifact.digest, workspace_artifact.size_bytes, workspace_artifact.media_type,
-		       deployment_sandboxes.workspace_mount_path, deployment_sandboxes.runtime_abi,
-		       deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, 'mounted', now(), now()
-		  FROM workspaces
-		  JOIN deployment_sandboxes
-		    ON deployment_sandboxes.org_id = workspaces.org_id
-		   AND deployment_sandboxes.project_id = workspaces.project_id
-		   AND deployment_sandboxes.environment_id = workspaces.environment_id
-		   AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-		  JOIN artifacts AS image_artifact
-		    ON image_artifact.org_id = deployment_sandboxes.org_id
-		   AND image_artifact.project_id = deployment_sandboxes.project_id
-		   AND image_artifact.environment_id = deployment_sandboxes.environment_id
-		   AND image_artifact.id = deployment_sandboxes.image_artifact_id
-		  JOIN workspace_versions
-		    ON workspace_versions.org_id = workspaces.org_id
-		   AND workspace_versions.project_id = workspaces.project_id
-		   AND workspace_versions.environment_id = workspaces.environment_id
-		   AND workspace_versions.workspace_id = workspaces.id
-		   AND workspace_versions.id = workspaces.current_version_id
-		  JOIN artifacts AS workspace_artifact
-		    ON workspace_artifact.org_id = workspace_versions.org_id
-		   AND workspace_artifact.project_id = workspace_versions.project_id
-		   AND workspace_artifact.environment_id = workspace_versions.environment_id
-		   AND workspace_artifact.id = workspace_versions.artifact_id
-		 WHERE workspaces.org_id = $2
-		   AND workspaces.id = $3
-	`, workspaceMountID, ids.orgID, ids.workspaceID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO runtime_instances (
-			id, org_id, worker_group_id, project_id, environment_id, worker_instance_id,
-			runtime_identity_id, deployment_sandbox_id, runtime_key_hash, runtime_key,
-			sandbox_fingerprint, rootfs_digest, image_digest, image_format,
-			sandbox_image_artifact_id, sandbox_image_artifact_digest,
-			sandbox_image_artifact_format, workspace_mount_path, runtime_abi,
-			guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
-			reserved_memory_mib, reserved_disk_mib, reserved_execution_slots,
-			workspace_mount_id, owner_run_id, owner_run_lease_id,
-			owner_run_state_version, state, instance_token, last_heartbeat_at,
-			running_at
-		)
-		SELECT $1, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id,
-		       workspace_mounts.environment_id, $2, $3,
-		       workspace_mounts.deployment_sandbox_id, $4, '{}'::jsonb,
-		       workspace_mounts.sandbox_fingerprint, workspace_mounts.rootfs_digest,
-		       workspace_mounts.image_digest, workspace_mounts.image_format,
-		       workspace_mounts.image_artifact_id, image_artifact.digest,
-		       workspace_mounts.image_artifact_format, workspace_mounts.workspace_mount_path,
-		       workspace_mounts.runtime_abi, workspace_mounts.guestd_abi,
-		       workspace_mounts.adapter_abi, '{}'::jsonb,
-		       1000, 1024, 4096, 1,
-		       workspace_mounts.id, $5, $6, 0, 'running',
-		       'runtime-instance-token-' || $7, now(), now()
-		  FROM workspace_mounts
-		  JOIN artifacts AS image_artifact
-		    ON image_artifact.org_id = workspace_mounts.org_id
-		   AND image_artifact.project_id = workspace_mounts.project_id
-		   AND image_artifact.environment_id = workspace_mounts.environment_id
-		   AND image_artifact.id = workspace_mounts.image_artifact_id
-		 WHERE workspace_mounts.org_id = $8
-		   AND workspace_mounts.id = $9
-	`, runtimeInstanceID, workerID, runtimeID, "runtime-key-"+shortUUID(runtimeInstanceID), ids.runID, runLeaseID, shortUUID(runtimeInstanceID), ids.orgID, workspaceMountID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE workspace_mounts
-		   SET runtime_instance_id = $1,
-		       updated_at = now()
-		 WHERE org_id = $2
-		   AND id = $3
-	`, runtimeInstanceID, ids.orgID, workspaceMountID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE runs
-		   SET session_id = $1,
-		       workspace_id = $6,
-		       workspace_mount_id = $7,
-		       current_run_lease_id = $2,
-		       current_attempt_number = 1,
-		       status = 'running',
-		       execution_status = 'executing',
-		       active_started_at = now(),
-		       requested_milli_cpu = 1000,
-		       requested_memory_mib = 1024,
-		       requested_disk_mib = 4096,
-		       requested_execution_slots = 1,
-		       runtime_identity_id = $3,
-		       runtime_arch = 'arm64',
-		       runtime_abi = 'test',
-		       kernel_digest = 'sha256:kernel',
-		       initramfs_digest = 'sha256:initramfs',
-		       rootfs_digest = 'sha256:rootfs',
-		       cni_profile = 'default'
-		 WHERE org_id = $4
-		   AND id = $5
-	`, sessionID, runLeaseID, runtimeID, ids.orgID, ids.runID, ids.workspaceID, workspaceMountID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO run_state_snapshots (
-			org_id, worker_group_id, run_id, version, status, execution_status,
-			attempt_number, run_lease_id, transition, reason
-		)
-		SELECT org_id, worker_group_id, id, state_version, status, execution_status,
-		       current_attempt_number, current_run_lease_id, 'run.started', '{}'::jsonb
-		  FROM runs
-		 WHERE org_id = $1
-		   AND id = $2
-		ON CONFLICT DO NOTHING
-	`, ids.orgID, ids.runID); err != nil {
-		t.Fatal(err)
-	}
-	return sessionID, runLeaseID, workerID
-}
-
-func requestWorkspaceMountForTest(ctx context.Context, queries *db.Queries, arg db.EnsureWorkspaceMountRequestedParams) (db.EnsureWorkspaceMountRequestedRow, error) {
-	return queries.EnsureWorkspaceMountRequested(ctx, arg)
-}
-
-func seedRuntimeSubstrateSourceInOtherWorkerGroup(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs, label string) (workerGroupID string, deploymentSandboxID uuid.UUID) {
-	t.Helper()
-	workerGroupID = placeEnvironmentInOtherWorkerGroup(t, ctx, pool, ids)
-	deploymentID := uuid.Must(uuid.NewV7())
-	deploymentSandboxID = uuid.Must(uuid.NewV7())
-	taskBundleArtifactID := uuid.Must(uuid.NewV7())
-	imageArtifactID := uuid.Must(uuid.NewV7())
-	taskBundleDigest := testDigest(label + "-task-bundle")
-	imageDigest := testDigest(label + "-sandbox-image")
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 1, 'application/json'),
-		       ($1, $3, 6, $4)
-	`, ids.orgID, taskBundleDigest, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
-		VALUES ($1, $2, $3, $4, $5, 'task_bundle', 1, 'application/json'),
-		       ($6, $2, $3, $4, $7, 'sandbox_image', 6, $8)
-	`, taskBundleArtifactID, ids.orgID, ids.projectID, ids.environmentID, taskBundleDigest, imageArtifactID, imageDigest, api.SandboxImageArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployments (
-			id, public_id, org_id, build_worker_group_id, project_id, environment_id,
-			version, content_hash, deployment_source_artifact_id, status
-		)
-		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, $8, 'deployed')
-	`, deploymentID, ids.orgID, workerGroupID, ids.projectID, ids.environmentID, "wrong-worker-group-"+shortUUID(deploymentID), taskBundleDigest, taskBundleArtifactID, testPublicID(t, publicid.Deployment)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO deployment_sandboxes (
-			id, public_id, org_id, project_id, environment_id, deployment_id, sandbox_id,
-			image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format,
-			workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, filesystem_format,
-			disk_floor_mib, contract_version, fingerprint
-		)
-		VALUES ($1, $9, $2, $3, $4, $5, 'wrong-worker-group', $6, 'oci-tar', 'sha256:rootfs', $7, 'oci-tar', '/workspace',
-			'test', 'guestd-test', 'adapter-test', 'tar', 1024, 1, $8)
-	`, deploymentSandboxID, ids.orgID, ids.projectID, ids.environmentID, deploymentID, imageArtifactID, imageDigest, "wrong-worker-group-"+shortUUID(deploymentSandboxID), testPublicID(t, publicid.Sandbox)); err != nil {
-		t.Fatal(err)
-	}
-	return workerGroupID, deploymentSandboxID
 }
 
 func seedWorkspaceVersionArtifact(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) uuid.UUID {
 	t.Helper()
 	artifactID := uuid.Must(uuid.NewV7())
 	digest := testDigest("workspace-version-" + artifactID.String())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 10, $3)
-	`, ids.orgID, digest, workspace.ArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	mustExec(t, ctx, pool, `
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 10, $3)
+	`, ids.orgID, digest, workspace.ArtifactMediaType)
+	mustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $2, $3, $4, $5, 'workspace_version', 10, $6)
-	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, workspace.ArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, workspace.ArtifactMediaType)
 	return artifactID
 }
 
@@ -543,18 +219,13 @@ func seedSandboxImageArtifact(t *testing.T, ctx context.Context, pool *pgxpool.P
 	t.Helper()
 	artifactID := uuid.Must(uuid.NewV7())
 	digest := testDigest("sandbox-image-" + artifactID.String())
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
-		VALUES ($1, $2, 6, $3)
-	`, ids.orgID, digest, api.SandboxImageArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
+	mustExec(t, ctx, pool, `
+		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 6, $3)
+	`, ids.orgID, digest, api.SandboxImageArtifactMediaType)
+	mustExec(t, ctx, pool, `
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
 		VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 6, $6)
-	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, api.SandboxImageArtifactMediaType); err != nil {
-		t.Fatal(err)
-	}
+	`, artifactID, ids.orgID, ids.projectID, ids.environmentID, digest, api.SandboxImageArtifactMediaType)
 	return artifactID, digest
 }
 
@@ -600,20 +271,21 @@ func newIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(pool.Close)
-	if err := workergroup.Bootstrap(ctx, db.New(pool), workergroup.BootstrapConfig{
+	queries := db.New(pool)
+	if err := region.Ensure(ctx, queries, region.BootstrapConfig{
 		RegionID:          dbtest.DefaultRegionID,
 		DefaultRegionID:   dbtest.DefaultRegionID,
 		Provider:          dbtest.DefaultProvider,
 		ProviderRegion:    dbtest.DefaultProviderRegion,
 		RegionDisplayName: dbtest.DefaultRegionDisplay,
-		WorkerGroupID:     dbtest.DefaultWorkerGroupID,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := workergroup.ReportHealth(ctx, db.New(pool), workergroup.HealthConfig{
-		WorkerGroupID:      dbtest.DefaultWorkerGroupID,
-		Component:          workergroup.ComponentDispatcher,
-		RequiredComponents: workergroup.RoutingRequiredComponents(),
+	if _, err := queries.ReconcileWorkerGroup(ctx, db.ReconcileWorkerGroupParams{
+		ID: dbtest.DefaultWorkerGroupID, RegionID: dbtest.DefaultRegionID, Name: dbtest.DefaultWorkerGroupID,
+		EnrollmentPolicyFingerprint: "sha256:test-worker-group", AllowsRun: true, AllowsBuild: true,
+		RequiredCpuMillis: 1, RequiredMemoryBytes: 1, RequiredWorkloadDiskBytes: 1, RequiredScratchBytes: 1, RequiredVmSlots: 1, RequiredBuildExecutors: 1,
+		ProtocolVersion: api.CurrentWorkerProtocolVersion, AllowedAttestationFingerprints: []string{"sha256:test-attestation"},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -628,23 +300,4 @@ func databaseDSN(t *testing.T, dsn string, database string) string {
 	}
 	parsed.Path = "/" + database
 	return parsed.String()
-}
-
-func markDefaultWorkerGroupDrainingWithStaleHealth(t *testing.T, ctx context.Context, pool *pgxpool.Pool, ids integrationIDs) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `
-		UPDATE worker_groups
-		   SET state = 'draining'
-		 WHERE id = $1
-	`, dbtest.DefaultWorkerGroupID); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := pool.Exec(ctx, `
-		UPDATE worker_groups
-		   SET health_state = 'unavailable',
-		       routing_fresh_until = now() - interval '1 second'
-		 WHERE id = $1
-	`, dbtest.DefaultWorkerGroupID); err != nil {
-		t.Fatal(err)
-	}
 }

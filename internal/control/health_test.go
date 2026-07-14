@@ -10,11 +10,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestHealthzDoesNotRequireReadinessDB(t *testing.T) {
@@ -65,10 +63,6 @@ func TestReadyzChecksSchemaVersion(t *testing.T) {
 		},
 		"query error": {
 			row:  fakeReadinessRow{err: errors.New("relation does not exist")},
-			want: http.StatusServiceUnavailable,
-		},
-		"component not ready": {
-			row:  fakeReadinessRow{version: currentVersion, ready: false},
 			want: http.StatusServiceUnavailable,
 		},
 	}
@@ -151,32 +145,12 @@ func (row fakeReadinessRow) Scan(dest ...any) error {
 	if row.err != nil {
 		return row.err
 	}
-	if len(dest) == 5 {
-		if workerGroupID, ok := dest[0].(*string); ok {
-			*workerGroupID = "us-east-1-worker-group-1"
-		} else {
-			return errors.New("worker group id destination is not *string")
+	if len(dest) == 1 {
+		ready, ok := dest[0].(*int)
+		if !ok {
+			return errors.New("regional readiness destination is not *int")
 		}
-		if state, ok := dest[1].(*db.WorkerGroupState); ok {
-			*state = db.WorkerGroupStateActive
-		} else {
-			return errors.New("worker group state destination is not *db.WorkerGroupState")
-		}
-		if healthState, ok := dest[2].(*db.WorkerGroupHealthState); ok {
-			*healthState = db.WorkerGroupHealthStateHealthy
-		} else {
-			return errors.New("health state destination is not *db.WorkerGroupHealthState")
-		}
-		if freshUntil, ok := dest[3].(*pgtype.Timestamptz); ok {
-			*freshUntil = pgtype.Timestamptz{Valid: true}
-		} else {
-			return errors.New("fresh until destination is not *pgtype.Timestamptz")
-		}
-		if ready, ok := dest[4].(*pgtype.Bool); ok {
-			*ready = pgtype.Bool{Bool: row.ready, Valid: true}
-		} else {
-			return errors.New("ready destination is not *pgtype.Bool")
-		}
+		*ready = 1
 		return nil
 	}
 	if len(dest) != 2 {

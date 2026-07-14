@@ -5,17 +5,24 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/config"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"golang.org/x/sys/unix"
 )
 
 const workerCredentialFileName = "worker-credential.json"
+
+var buildWorkerEnrollmentRequest = enrollment.BuildAWSRequest
 
 type workerCredentialFile struct {
 	WorkerInstanceID     string    `json:"worker_instance_id"`
@@ -38,28 +45,37 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		bootstrapToken, cleanupBootstrapToken, err := workerBootstrapToken(cfg)
+		controlClient, err := client.New(cfg.ControlURL)
+		if err != nil {
+			return fmt.Errorf("configure worker enrollment client: %w", err)
+		}
+		supportsRun := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleRun)
+		supportsBuild := slices.Contains(cfg.WorkerRoles, auth.WorkerRoleBuild)
+		challenge, err := controlClient.CreateWorkerEnrollmentChallenge(ctx, cfg.WorkerGroupID)
+		if err != nil {
+			return fmt.Errorf("create worker enrollment challenge: %w", err)
+		}
+		if strings.TrimSpace(challenge.WorkerGroupID) != cfg.WorkerGroupID || strings.TrimSpace(challenge.Nonce) == "" {
+			return errors.New("worker enrollment challenge is invalid")
+		}
+		evidence, err := buildWorkerEnrollmentRequest(ctx, cfg.WorkerGroupID, challenge.Nonce)
 		if err != nil {
 			return err
 		}
-		if bootstrapToken == "" {
-			return fmt.Errorf("worker instance credential not found at %s and neither HELMR_WORKER_BOOTSTRAP_TOKEN nor HELMR_WORKER_BOOTSTRAP_TOKEN_PATH is set", path)
-		}
-		controlClient, err := client.New(cfg.ControlURL)
+		evidence.SupportsRun = supportsRun
+		evidence.SupportsBuild = supportsBuild
+		evidence.ProtocolVersion = auth.WorkerProtocolVersion
+		registered, err := controlClient.EnrollWorker(ctx, evidence)
 		if err != nil {
-			return fmt.Errorf("configure worker bootstrap client: %w", err)
-		}
-		registered, err := controlClient.RegisterWorker(ctx, bootstrapToken, workerResourceID(cfg))
-		if err != nil {
-			return fmt.Errorf("register worker: %w", err)
+			return fmt.Errorf("enroll worker: %w", err)
 		}
 		registered.WorkerInstanceID = strings.TrimSpace(registered.WorkerInstanceID)
 		registered.WorkerInstanceSecret = strings.TrimSpace(registered.WorkerInstanceSecret)
 		if registered.WorkerInstanceID == "" {
-			return errors.New("worker bootstrap response worker_instance_id is empty")
+			return errors.New("worker enrollment response worker_instance_id is empty")
 		}
 		if registered.WorkerInstanceSecret == "" {
-			return errors.New("worker bootstrap response secret is empty")
+			return errors.New("worker enrollment response secret is empty")
 		}
 		credential = workerCredentialFile{
 			WorkerInstanceID:     registered.WorkerInstanceID,
@@ -69,7 +85,6 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 		if err := writeWorkerInstanceSecret(path, credential); err != nil {
 			return err
 		}
-		cleanupBootstrapToken()
 		return nil
 	}); err != nil {
 		return workerCredentialFile{}, err
@@ -77,25 +92,55 @@ func resolveWorkerInstanceCredential(ctx context.Context, cfg config.Worker, wor
 	return credential, nil
 }
 
-func workerBootstrapToken(cfg config.Worker) (string, func(), error) {
-	if token := strings.TrimSpace(cfg.WorkerBootstrapToken); token != "" {
-		return token, func() {}, nil
-	}
-	path := strings.TrimSpace(cfg.WorkerBootstrapTokenPath)
-	if path == "" {
-		return "", func() {}, nil
-	}
-	bytes, err := os.ReadFile(path)
+func resolveAuthenticatedWorkerCredential(
+	ctx context.Context,
+	cfg config.Worker,
+	workDir string,
+	authenticate func(workerCredentialFile) error,
+) (workerCredentialFile, error) {
+	credential, err := resolveWorkerInstanceCredential(ctx, cfg, workDir)
 	if err != nil {
-		return "", func() {}, fmt.Errorf("read worker bootstrap token: %w", err)
+		return workerCredentialFile{}, err
 	}
-	return strings.TrimSpace(string(bytes)), func() {
-		_ = os.Remove(path)
-	}, nil
+	if err := authenticate(credential); err == nil {
+		return credential, nil
+	} else if !client.IsStatus(err, http.StatusUnauthorized) {
+		return workerCredentialFile{}, fmt.Errorf("authenticate worker credential: %w", err)
+	}
+	path := workerCredentialPath(workDir, cfg.WorkerInstanceCredentialPath)
+	if err := removeWorkerCredentialIfMatch(path, credential); err != nil {
+		return workerCredentialFile{}, err
+	}
+	credential, err = resolveWorkerInstanceCredential(ctx, cfg, workDir)
+	if err != nil {
+		return workerCredentialFile{}, fmt.Errorf("replace rejected worker credential: %w", err)
+	}
+	if err := authenticate(credential); err != nil {
+		return workerCredentialFile{}, fmt.Errorf("authenticate replaced worker credential: %w", err)
+	}
+	return credential, nil
 }
 
-func workerResourceID(cfg config.Worker) string {
-	return strings.TrimSpace(cfg.WorkerResourceID)
+func removeWorkerCredentialIfMatch(path string, rejected workerCredentialFile) error {
+	return withWorkerCredentialLock(path, func() error {
+		current, err := readWorkerInstanceCredential(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if current.WorkerInstanceID != rejected.WorkerInstanceID || current.WorkerInstanceSecret != rejected.WorkerInstanceSecret {
+			return nil
+		}
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove rejected worker instance credential: %w", err)
+		}
+		if err := syncDirectory(filepath.Dir(path)); err != nil {
+			return fmt.Errorf("sync rejected worker instance credential removal: %w", err)
+		}
+		return nil
+	})
 }
 
 func resolveWorkerControlCredential(cfg config.WorkerControl, workDir string) (workerCredentialFile, error) {
@@ -111,9 +156,32 @@ func workerCredentialPath(workDir string, configured string) string {
 }
 
 func readWorkerInstanceCredential(path string) (workerCredentialFile, error) {
-	bytes, err := os.ReadFile(path)
+	info, err := os.Lstat(path)
 	if err != nil {
 		return workerCredentialFile{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s is not a regular file", path)
+	}
+	if info.Mode().Perm() != 0o600 {
+		return workerCredentialFile{}, fmt.Errorf("worker instance credential %s must have mode 0600", path)
+	}
+	fd, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return workerCredentialFile{}, fmt.Errorf("open worker instance credential %s without following links: %w", path, err)
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil {
+		return workerCredentialFile{}, fmt.Errorf("inspect opened worker instance credential %s: %w", path, err)
+	}
+	if !opened.Mode().IsRegular() || opened.Mode().Perm() != 0o600 {
+		return workerCredentialFile{}, fmt.Errorf("opened worker instance credential %s changed type or permissions", path)
+	}
+	bytes, err := io.ReadAll(file)
+	if err != nil {
+		return workerCredentialFile{}, fmt.Errorf("read worker instance credential %s: %w", path, err)
 	}
 	var credential workerCredentialFile
 	if err := json.Unmarshal(bytes, &credential); err != nil {

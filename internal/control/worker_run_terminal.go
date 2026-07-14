@@ -1,7 +1,6 @@
 package control
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,28 +8,12 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type payloadFailure struct {
-	kind    string
-	message string
-}
-
 type workerMessagePayload struct {
 	Message string `json:"message"`
-}
-
-type workerHeartbeatPayload struct {
-	CNIProfile      string `json:"cni_profile"`
-	InitramfsDigest string `json:"initramfs_digest"`
-	KernelDigest    string `json:"kernel_digest"`
-	RootfsDigest    string `json:"rootfs_digest"`
-	RuntimeABI      string `json:"runtime_abi"`
-	RuntimeArch     string `json:"runtime_arch"`
-	RuntimeID       string `json:"runtime_id"`
 }
 
 type runCompletedPayload struct {
@@ -62,50 +45,6 @@ type terminalPayloadError struct {
 
 func terminalPayload(kind string, err error) error {
 	return terminalPayloadError{kind: kind, err: err}
-}
-
-func terminalPayloadFailure(err error) (payloadFailure, bool) {
-	var terminal terminalPayloadError
-	if !errors.As(err, &terminal) {
-		return payloadFailure{}, false
-	}
-	return payloadFailure{kind: terminal.kind, message: terminal.err.Error()}, true
-}
-
-func (s *Server) failLeasedRunPayload(ctx context.Context, row db.LeaseRunLeaseRow, lease dispatch.Lease, failure payloadFailure) error {
-	_, payload, err := payloadFailureRunEvent(failure)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.ReleaseRunLease(ctx, db.ReleaseRunLeaseParams{
-		OrgID:                row.OrgID,
-		RunID:                row.ID,
-		RunLeaseID:           row.RunLeaseID,
-		WorkerInstanceID:     row.RunLeaseWorkerInstanceID,
-		DispatchMessageID:    row.RunLeaseDispatchMessageID,
-		DispatchLeaseID:      row.RunLeaseDispatchLeaseID,
-		RunStatus:            db.RunStatusFailed,
-		ExitCode:             pgtype.Int4{},
-		ErrorMessage:         pgtype.Text{String: failure.message, Valid: true},
-		TerminalEventPayload: payload,
-	})
-	if err != nil {
-		s.requeueWorkerDispatch(ctx, row.ID, lease, dispatch.NackReasonRetry, err.Error())
-		return err
-	}
-	s.ackWorkerQueueLease(ctx, row.ID, lease)
-	return nil
-}
-
-func payloadFailureRunEvent(failure payloadFailure) (string, []byte, error) {
-	payload, err := json.Marshal(runFailurePayload{
-		FailureKind: failure.kind,
-		Detail:      workerMessagePayload{Message: failure.message},
-	})
-	if err != nil {
-		return "", nil, err
-	}
-	return "run.failed", payload, nil
 }
 
 func releaseFields(result api.WorkerReleaseResult) (db.RunStatus, pgtype.Int4, pgtype.Text, error) {
@@ -146,6 +85,7 @@ func releaseOutput(result api.WorkerReleaseResult, status db.RunStatus, exitCode
 type releaseWorkspaceCommitFields struct {
 	leaseID            pgtype.UUID
 	fencingToken       pgtype.Text
+	fencingGeneration  pgtype.Int8
 	baseVersionID      pgtype.UUID
 	artifactDigest     pgtype.Text
 	artifactSizeBytes  pgtype.Int8
@@ -166,6 +106,9 @@ func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCom
 	fencingToken := strings.TrimSpace(workspace.WriteFencingToken)
 	if fencingToken == "" {
 		return releaseWorkspaceCommitFields{}, errors.New("workspace.write_fencing_token is required")
+	}
+	if workspace.FencingGeneration <= 0 {
+		return releaseWorkspaceCommitFields{}, errors.New("workspace.fencing_generation must be positive")
 	}
 	baseVersionID, err := parseOptionalWorkspaceUUID("workspace.base_version_id", workspace.BaseVersionID)
 	if err != nil {
@@ -200,6 +143,7 @@ func releaseWorkspaceFields(workspace *api.WorkerWorkspace) (releaseWorkspaceCom
 	return releaseWorkspaceCommitFields{
 		leaseID:            leaseID,
 		fencingToken:       pgvalue.Text(fencingToken),
+		fencingGeneration:  pgtype.Int8{Int64: workspace.FencingGeneration, Valid: workspace.FencingGeneration > 0},
 		baseVersionID:      baseVersionID,
 		artifactDigest:     pgvalue.Text(digest),
 		artifactSizeBytes:  pgtype.Int8{Int64: artifact.SizeBytes, Valid: true},

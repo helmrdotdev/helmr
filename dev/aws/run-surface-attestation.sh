@@ -340,44 +340,53 @@ SELECT 'worker_runtime_identity' AS section,
        runtime_identities.cni_profile,
        worker_instances.id AS worker_instance_id,
        worker_groups.name AS worker_group,
-       worker_instances.status AS worker_status,
+       worker_instances.state AS worker_state,
        runtime_identities.last_seen_at
   FROM worker_instances
   JOIN worker_groups
     ON worker_groups.id = worker_instances.worker_group_id
   JOIN runtime_identities
-    ON runtime_identities.id = worker_instances.runtime_id
+    ON runtime_identities.id = worker_instances.runtime_identity_id
  ORDER BY runtime_identities.last_seen_at DESC,
           worker_instances.id;
 
 SELECT 'worker_instance' AS section,
        worker_instances.id AS worker_instance_id,
        worker_groups.name AS worker_group,
-       worker_instances.status,
-       worker_instances.region,
-       worker_instances.worker_version,
+       worker_instances.state,
+       worker_groups.region_id AS region,
+       worker_instances.supervisor_version AS worker_version,
        worker_instances.protocol_version,
-       worker_instances.runtime_id,
-       worker_instances.runtime_arch,
-       worker_instances.runtime_abi,
-       worker_instances.kernel_digest,
-       worker_instances.initramfs_digest,
-       worker_instances.rootfs_digest,
-       worker_instances.cni_profile,
-       worker_instances.total_milli_cpu,
-       worker_instances.total_memory_mib,
-       worker_instances.total_disk_mib,
-       worker_instances.total_execution_slots,
-       worker_instances.available_milli_cpu,
-       worker_instances.available_memory_mib,
-       worker_instances.available_disk_mib,
-       worker_instances.available_execution_slots,
-       round(extract(epoch FROM now() - worker_instances.last_seen_at))::bigint AS last_seen_age_seconds,
-       worker_instances.first_seen_at,
-       worker_instances.last_seen_at
+       worker_instances.runtime_identity_id,
+       runtime_identities.runtime_arch,
+       runtime_identities.runtime_abi,
+       runtime_identities.kernel_digest,
+       runtime_identities.initramfs_digest,
+       runtime_identities.rootfs_digest,
+       runtime_identities.cni_profile,
+       worker_instances.certified_cpu_millis,
+       worker_instances.certified_memory_bytes,
+       worker_instances.certified_workload_disk_bytes,
+       worker_instances.certified_scratch_bytes,
+       worker_instances.max_vm_slots,
+       worker_instances.max_run_consumers,
+       worker_instances.max_build_executors,
+       worker_observations.run_queue_depth,
+       worker_observations.build_queue_depth,
+       worker_observations.runtime_start_queue_depth,
+       round(extract(epoch FROM now() - worker_observations.observed_at))::bigint AS observation_age_seconds,
+       worker_instances.created_at,
+       worker_instances.activated_at,
+       worker_observations.observed_at
   FROM worker_instances
-  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
- ORDER BY worker_instances.status, worker_instances.last_seen_at DESC;
+  JOIN worker_groups
+    ON worker_groups.id = worker_instances.worker_group_id
+  LEFT JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+  LEFT JOIN worker_observations
+    ON worker_observations.worker_instance_id = worker_instances.id
+   AND worker_observations.worker_epoch = worker_instances.current_epoch
+ ORDER BY worker_instances.state, worker_observations.observed_at DESC NULLS LAST;
 SQL
 )"
 

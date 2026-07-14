@@ -15,7 +15,6 @@ const appendDeploymentEvent = `-- name: AppendDeploymentEvent :one
 WITH target_deployment AS (
     SELECT deployments.id,
            deployments.org_id,
-           deployments.build_worker_group_id AS worker_group_id,
            deployments.project_id,
            deployments.environment_id
       FROM deployments
@@ -26,12 +25,11 @@ WITH target_deployment AS (
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, deployment_id, category, severity, source, kind, message,
         payload, redaction_class, observed_at
     )
     SELECT target_deployment.org_id,
-           target_deployment.worker_group_id,
            'event',
            'deployment',
            target_deployment.id,
@@ -49,11 +47,10 @@ appended AS (
       FROM target_deployment
     RETURNING telemetry_outbox.deployment_id AS id,
               telemetry_outbox.org_id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id
 )
-SELECT id, org_id, worker_group_id, project_id, environment_id
+SELECT id, org_id, project_id, environment_id
   FROM appended
 `
 
@@ -74,7 +71,6 @@ type AppendDeploymentEventParams struct {
 type AppendDeploymentEventRow struct {
 	ID            pgtype.UUID `json:"id"`
 	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 }
@@ -97,7 +93,6 @@ func (q *Queries) AppendDeploymentEvent(ctx context.Context, arg AppendDeploymen
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 	)
@@ -111,7 +106,6 @@ WITH event_args AS (
 ),
 target_run AS (
     SELECT runs.id,
-           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.current_attempt_number,
@@ -124,13 +118,12 @@ target_run AS (
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, run_id, attempt_number, trace_id, span_id, traceparent,
         category, severity, source, kind, message, payload, redaction_class,
         snapshot_version, observed_at
     )
     SELECT $3::uuid,
-           target_run.worker_group_id,
            'event',
            'run',
            target_run.id,
@@ -153,7 +146,6 @@ appended AS (
       FROM target_run
       CROSS JOIN event_args
     RETURNING telemetry_outbox.run_id AS id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id,
               COALESCE(telemetry_outbox.attempt_number, 0)::integer AS current_attempt_number,
@@ -163,7 +155,7 @@ appended AS (
               telemetry_outbox.kind AS event_kind,
               telemetry_outbox.payload AS event_payload
 )
-SELECT id, worker_group_id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, state_version, event_kind, event_payload
+SELECT id, project_id, environment_id, current_attempt_number, trace_id, root_span_id, state_version, event_kind, event_payload
   FROM appended
 `
 
@@ -176,7 +168,6 @@ type AppendRunEventParams struct {
 
 type AppendRunEventRow struct {
 	ID                   pgtype.UUID `json:"id"`
-	WorkerGroupID        string      `json:"worker_group_id"`
 	ProjectID            pgtype.UUID `json:"project_id"`
 	EnvironmentID        pgtype.UUID `json:"environment_id"`
 	CurrentAttemptNumber int32       `json:"current_attempt_number"`
@@ -197,7 +188,6 @@ func (q *Queries) AppendRunEvent(ctx context.Context, arg AppendRunEventParams) 
 	var i AppendRunEventRow
 	err := row.Scan(
 		&i.ID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.CurrentAttemptNumber,
@@ -217,7 +207,6 @@ WITH event_args AS (
 ),
 current_run_lease AS (
     SELECT runs.id,
-           runs.worker_group_id,
            runs.project_id,
            runs.environment_id,
            runs.trace_id,
@@ -226,32 +215,27 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.attempt_number
+           run_leases.task_attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id
                      AND run_leases.run_id = runs.id
-      JOIN worker_groups ON worker_groups.id = runs.worker_group_id
-                        AND worker_groups.state IN ('active', 'draining')
      WHERE runs.org_id = $3
-       AND runs.worker_group_id = $4
-       AND runs.id = $5
+       AND runs.id = $4
        AND runs.status = 'running'
-       AND run_leases.worker_group_id = $4
-       AND run_leases.id = $6
-       AND run_leases.worker_instance_id = $7
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
+       AND run_leases.id = $5
+       AND run_leases.worker_instance_id = $6
+       AND run_leases.state IN ('starting', 'running')
+       AND run_leases.expires_at > now()
 ),
 appended AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
+        org_id, stream_kind, source_kind, source_id, project_id,
         environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
         parent_span_id, traceparent, category, severity, source, kind, message,
         payload, redaction_class, snapshot_version, observed_at
     )
     SELECT $3::uuid,
-           current_run_lease.worker_group_id,
            'event',
            'run',
            current_run_lease.id,
@@ -276,7 +260,6 @@ appended AS (
       FROM current_run_lease
       CROSS JOIN event_args
     RETURNING telemetry_outbox.run_id AS id,
-              telemetry_outbox.worker_group_id,
               telemetry_outbox.project_id,
               telemetry_outbox.environment_id,
               telemetry_outbox.trace_id,
@@ -289,7 +272,7 @@ appended AS (
               telemetry_outbox.kind AS event_kind,
               telemetry_outbox.payload AS event_payload
 )
-SELECT id, worker_group_id, project_id, environment_id, trace_id, state_version, run_lease_id, span_id, parent_span_id, traceparent, attempt_number, event_kind, event_payload
+SELECT id, project_id, environment_id, trace_id, state_version, run_lease_id, span_id, parent_span_id, traceparent, attempt_number, event_kind, event_payload
   FROM appended
 `
 
@@ -297,7 +280,6 @@ type AppendRunEventForExecutionParams struct {
 	Kind             string      `json:"kind"`
 	Payload          []byte      `json:"payload"`
 	OrgID            pgtype.UUID `json:"org_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
 	RunID            pgtype.UUID `json:"run_id"`
 	RunLeaseID       pgtype.UUID `json:"run_lease_id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
@@ -305,7 +287,6 @@ type AppendRunEventForExecutionParams struct {
 
 type AppendRunEventForExecutionRow struct {
 	ID            pgtype.UUID `json:"id"`
-	WorkerGroupID string      `json:"worker_group_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
 	TraceID       pgtype.Text `json:"trace_id"`
@@ -324,7 +305,6 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 		arg.Kind,
 		arg.Payload,
 		arg.OrgID,
-		arg.WorkerGroupID,
 		arg.RunID,
 		arg.RunLeaseID,
 		arg.WorkerInstanceID,
@@ -332,7 +312,6 @@ func (q *Queries) AppendRunEventForExecution(ctx context.Context, arg AppendRunE
 	var i AppendRunEventForExecutionRow
 	err := row.Scan(
 		&i.ID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.TraceID,

@@ -1,555 +1,398 @@
 -- name: ListQueueScopes :many
 SELECT runs.org_id,
-       runs.worker_group_id,
        runs.project_id,
        runs.environment_id,
+       workspaces.region_id,
        runs.queue_class,
        runs.queue_name
   FROM runs
-  JOIN worker_groups
-    ON worker_groups.id = runs.worker_group_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.health_state IN ('healthy', 'degraded')
-   AND worker_groups.routing_fresh_until > now()
-  JOIN regions
-    ON regions.id = worker_groups.region_id
-   AND regions.state = 'available'
+  JOIN workspaces
+    ON workspaces.org_id = runs.org_id
+   AND workspaces.project_id = runs.project_id
+   AND workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
  WHERE runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- GROUP BY runs.org_id,
-          runs.worker_group_id,
-          runs.project_id,
-          runs.environment_id,
-          runs.queue_class,
-          runs.queue_name
- ORDER BY md5(runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text),
-          runs.org_id ASC,
-          runs.worker_group_id ASC,
-          runs.project_id ASC,
-          runs.environment_id ASC,
-          runs.queue_class ASC,
-          runs.queue_name ASC
+ GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+          runs.queue_class, runs.queue_name
+ ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
+              runs.environment_id::text || ':' || workspaces.region_id || ':' ||
+              runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text),
+          runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+          runs.queue_class, runs.queue_name
  LIMIT sqlc.arg(row_limit)
 OFFSET sqlc.arg(row_offset);
 
--- name: UpsertWorkerInstanceHeartbeat :one
-WITH observed_runtime AS (
-    INSERT INTO runtime_identities (
-        id,
-        runtime_arch,
-        runtime_abi,
-        kernel_digest,
-        initramfs_digest,
-        rootfs_digest,
-        cni_profile,
-        last_seen_at
-    ) VALUES (
-        sqlc.arg(runtime_id),
-        sqlc.arg(runtime_arch),
-        sqlc.arg(runtime_abi),
-        sqlc.arg(kernel_digest),
-        sqlc.arg(initramfs_digest),
-        sqlc.arg(rootfs_digest),
-        sqlc.arg(cni_profile),
-        now()
-    )
-    ON CONFLICT (id) DO UPDATE
-       SET last_seen_at = now()
-     WHERE runtime_identities.runtime_arch = EXCLUDED.runtime_arch
-       AND runtime_identities.runtime_abi = EXCLUDED.runtime_abi
-       AND runtime_identities.kernel_digest = EXCLUDED.kernel_digest
-       AND runtime_identities.initramfs_digest = EXCLUDED.initramfs_digest
-       AND runtime_identities.rootfs_digest = EXCLUDED.rootfs_digest
-       AND runtime_identities.cni_profile = EXCLUDED.cni_profile
-    RETURNING *
-),
-upserted_worker AS (
-    INSERT INTO worker_instances (
-        id,
-        worker_group_id,
-        resource_id,
-        status,
-        region,
-        total_milli_cpu,
-        total_memory_mib,
-        total_disk_mib,
-        total_execution_slots,
-        available_milli_cpu,
-        available_memory_mib,
-        available_disk_mib,
-        available_execution_slots,
-        labels,
-        heartbeat,
-        worker_version,
-        protocol_version,
-        runtime_id,
-        runtime_arch,
-        runtime_abi,
-        kernel_digest,
-        initramfs_digest,
-        rootfs_digest,
-        cni_profile,
-        last_seen_at
-    )
-    SELECT sqlc.arg(id),
-           sqlc.arg(worker_group_id),
-           sqlc.arg(resource_id),
-           'active',
-           sqlc.arg(region),
-           sqlc.arg(total_milli_cpu),
-           sqlc.arg(total_memory_mib),
-           sqlc.arg(total_disk_mib),
-           sqlc.arg(total_execution_slots),
-           sqlc.arg(available_milli_cpu),
-           sqlc.arg(available_memory_mib),
-           sqlc.arg(available_disk_mib),
-           sqlc.arg(available_execution_slots),
-           sqlc.arg(labels),
-           sqlc.arg(heartbeat),
-           sqlc.arg(worker_version),
-           sqlc.arg(protocol_version),
-           observed_runtime.id,
-           observed_runtime.runtime_arch,
-           observed_runtime.runtime_abi,
-           observed_runtime.kernel_digest,
-           observed_runtime.initramfs_digest,
-           observed_runtime.rootfs_digest,
-           observed_runtime.cni_profile,
-           now()
-      FROM observed_runtime
-    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
-       SET status = CASE
-               WHEN worker_instances.status IN ('draining', 'unschedulable') THEN worker_instances.status
-               ELSE 'active'
-           END,
-           region = excluded.region,
-           total_milli_cpu = excluded.total_milli_cpu,
-           total_memory_mib = excluded.total_memory_mib,
-           total_disk_mib = excluded.total_disk_mib,
-           total_execution_slots = excluded.total_execution_slots,
-           available_milli_cpu = excluded.available_milli_cpu,
-           available_memory_mib = excluded.available_memory_mib,
-           available_disk_mib = excluded.available_disk_mib,
-           available_execution_slots = excluded.available_execution_slots,
-           labels = excluded.labels,
-           heartbeat = excluded.heartbeat,
-           worker_version = excluded.worker_version,
-           protocol_version = excluded.protocol_version,
-           runtime_id = excluded.runtime_id,
-           runtime_arch = excluded.runtime_arch,
-           runtime_abi = excluded.runtime_abi,
-           kernel_digest = excluded.kernel_digest,
-           initramfs_digest = excluded.initramfs_digest,
-           rootfs_digest = excluded.rootfs_digest,
-           cni_profile = excluded.cni_profile,
-           last_seen_at = now()
-     WHERE worker_instances.worker_group_id = excluded.worker_group_id
-    RETURNING *
-)
-SELECT upserted_worker.*
-  FROM upserted_worker;
-
--- name: SetWorkerInstanceStatus :one
+-- name: SetWorkerInstanceState :one
 UPDATE worker_instances
-   SET status = sqlc.arg(status)::worker_instance_status,
-       drained_at = CASE
-           WHEN sqlc.arg(status)::worker_instance_status = 'draining' THEN COALESCE(drained_at, now())
-           ELSE drained_at
-       END
- WHERE worker_instances.id = sqlc.arg(id)
-   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   SET state = sqlc.arg(state)::worker_instance_state,
+       draining_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'draining'
+                          THEN COALESCE(draining_at, now()) ELSE draining_at END,
+       disabled_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'disabled'
+                          THEN COALESCE(disabled_at, now()) ELSE disabled_at END,
+       lost_at = CASE WHEN sqlc.arg(state)::worker_instance_state = 'lost'
+                      THEN COALESCE(lost_at, now()) ELSE lost_at END,
+       updated_at = now()
+ WHERE id = sqlc.arg(id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND (sqlc.narg(expected_epoch)::bigint IS NULL OR current_epoch = sqlc.narg(expected_epoch)::bigint)
 RETURNING *;
 
+-- name: DrainWorkerInstance :one
+WITH target AS (
+    UPDATE worker_instances
+       SET state = 'draining', draining_at = COALESCE(draining_at, now()), updated_at = now()
+     WHERE worker_instances.id = sqlc.arg(id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
+       AND worker_instances.state IN ('active', 'draining')
+    RETURNING *
+), idle_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
+      FROM target
+     WHERE workspace_mounts.worker_instance_id = target.id
+       AND workspace_mounts.worker_epoch = target.current_epoch
+       AND workspace_mounts.state IN ('mounting', 'mounted')
+       AND NOT EXISTS (
+           SELECT 1 FROM workspace_leases
+            WHERE workspace_leases.workspace_mount_id = workspace_mounts.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       )
+    RETURNING workspace_mounts.id
+), idle_runtimes AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = now(), desired_reason = 'worker_draining', updated_at = now()
+      FROM target
+     WHERE runtime_instances.worker_instance_id = target.id
+       AND runtime_instances.worker_epoch = target.current_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.desired_state <> 'closed'
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+       AND NOT EXISTS (
+           SELECT 1 FROM run_leases
+            WHERE run_leases.runtime_instance_id = runtime_instances.id
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+       )
+       AND NOT EXISTS (
+           SELECT 1 FROM workspace_mounts
+            WHERE workspace_mounts.runtime_instance_id = runtime_instances.id
+              AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+       )
+    RETURNING runtime_instances.id
+)
+SELECT target.*
+  FROM target
+ WHERE (SELECT count(*) FROM idle_mounts) >= 0
+   AND (SELECT count(*) FROM idle_runtimes) >= 0;
+
+-- name: FenceWorkerInstance :one
+WITH target AS (
+    UPDATE worker_instances
+       SET state = 'lost', claim_version = claim_version + 1,
+           lost_at = COALESCE(lost_at, now()), updated_at = now()
+     WHERE worker_instances.id = sqlc.arg(id)
+       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+       AND worker_instances.current_epoch = sqlc.arg(expected_epoch)
+       AND worker_instances.state IN ('active', 'draining')
+    RETURNING *
+), revoked_credentials AS (
+    UPDATE worker_instance_credentials
+       SET revoked_at = COALESCE(revoked_at, now())
+      FROM target
+     WHERE worker_instance_credentials.worker_instance_id = target.id
+       AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), lost_mounts AS (
+    UPDATE workspace_mounts
+       SET state = 'lost', lost_at = now(), terminal_at = now(),
+           terminal_reason_code = sqlc.arg(reason_code), updated_at = now()
+      FROM target
+     WHERE workspace_mounts.worker_instance_id = target.id
+       AND workspace_mounts.worker_epoch = target.current_epoch
+       AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
+    RETURNING workspace_mounts.id
+), lost_runtimes AS (
+    UPDATE runtime_instances
+       SET observed_state = 'lost', observed_version = observed_version + 1,
+           observed_at = now(), lost_at = now(), terminal_at = now(),
+           terminal_reason_code = sqlc.arg(reason_code), updated_at = now()
+      FROM target
+     WHERE runtime_instances.worker_instance_id = target.id
+       AND runtime_instances.worker_epoch = target.current_epoch
+       AND runtime_instances.reclaimed_at IS NULL
+       AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
+    RETURNING runtime_instances.id
+), lost_slots AS (
+    UPDATE worker_network_slots
+       SET state = 'lost', generation = generation + 1,
+           lost_at = now(), state_reason_code = sqlc.arg(reason_code), updated_at = now()
+      FROM target
+     WHERE worker_network_slots.worker_instance_id = target.id
+       AND worker_network_slots.worker_epoch = target.current_epoch
+       AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
+    RETURNING worker_network_slots.id
+)
+SELECT target.*
+  FROM target
+ WHERE (SELECT count(*) FROM revoked_credentials) >= 0
+   AND (SELECT count(*) FROM lost_mounts) >= 0
+   AND (SELECT count(*) FROM lost_runtimes) >= 0
+   AND (SELECT count(*) FROM lost_slots) >= 0;
+
 -- name: ListWorkerInstances :many
-SELECT worker_instances.*
-  FROM worker_instances
- WHERE (
-       sqlc.arg(status_filter)::text = 'all'
-       OR worker_instances.status::text = sqlc.arg(status_filter)::text
-   )
- ORDER BY worker_instances.last_seen_at DESC, worker_instances.first_seen_at ASC
+SELECT * FROM worker_instances
+ WHERE sqlc.arg(state_filter)::text = 'all' OR state::text = sqlc.arg(state_filter)::text
+ ORDER BY updated_at DESC, created_at ASC
  LIMIT sqlc.arg(row_limit);
 
 -- name: GetWorkerInstanceState :one
 SELECT worker_instances.*,
-       (
-           SELECT count(*)::int
-             FROM run_leases
-            WHERE run_leases.worker_instance_id = worker_instances.id
-              AND run_leases.status IN ('leased', 'running')
-       ) AS active_executions
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi,
+       ((SELECT count(*) FROM run_leases
+         WHERE run_leases.worker_instance_id = worker_instances.id
+           AND run_leases.worker_epoch = worker_instances.current_epoch
+           AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')) +
+        (SELECT count(*) FROM deployment_build_leases
+         WHERE deployment_build_leases.worker_instance_id = worker_instances.id
+           AND deployment_build_leases.worker_epoch = worker_instances.current_epoch
+           AND deployment_build_leases.state IN ('assigned', 'starting', 'running')) +
+        (SELECT count(*) FROM workspace_mounts
+         WHERE workspace_mounts.worker_instance_id = worker_instances.id
+           AND workspace_mounts.worker_epoch = worker_instances.current_epoch
+           AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')) +
+        (SELECT count(*) FROM workspace_process_operations
+         WHERE workspace_process_operations.claimed_by_worker_instance_id = worker_instances.id
+           AND workspace_process_operations.claimed_worker_epoch = worker_instances.current_epoch
+           AND workspace_process_operations.state IN ('claimed', 'running')) +
+        (SELECT count(*) FROM runtime_instances
+         WHERE runtime_instances.worker_instance_id = worker_instances.id
+           AND runtime_instances.worker_epoch = worker_instances.current_epoch
+           AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')))::int AS active_executions
   FROM worker_instances
+  LEFT JOIN runtime_identities ON runtime_identities.id = worker_instances.runtime_identity_id
  WHERE worker_instances.id = sqlc.arg(id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id);
 
--- name: GetWorkerInstanceQueueCapacity :one
-SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_runtime_instances.used_milli_cpu, 0)::bigint AS available_milli_cpu,
-       GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_runtime_instances.used_memory_mib, 0)::bigint AS available_memory_mib,
-       GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_runtime_instances.used_disk_mib, 0)::bigint AS available_disk_mib,
-       GREATEST(worker_instances.available_execution_slots - active.used_slots - active_runtime_instances.used_slots, 0)::int AS available_execution_slots
+-- name: GetWorkerInstanceRunDispatchCapacity :one
+SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
+       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.max_vm_slots - usage.vm_slots, 0)::int AS available_vm_slots,
+       GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
+       GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
   FROM worker_instances
-  LEFT JOIN LATERAL (
-      SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-             COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
-             COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
-             COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
-        FROM run_leases
-        JOIN runs ON runs.org_id = run_leases.org_id
-                 AND runs.id = run_leases.run_id
-                 AND runs.workspace_mount_id IS NULL
-       WHERE run_leases.worker_instance_id = worker_instances.id
-         AND run_leases.status IN ('leased', 'running')
-  ) active ON true
-  LEFT JOIN LATERAL (
-      SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
-             COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
-             COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
-             COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
-        FROM runtime_instances
-       WHERE runtime_instances.worker_instance_id = worker_instances.id
-         AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
-         AND (
-             runtime_instances.expires_at IS NULL
-             OR runtime_instances.expires_at > now()
-         )
-  ) active_runtime_instances ON true
+  CROSS JOIN LATERAL (
+      SELECT
+        COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND (observed_state IN ('allocated','preparing','ready','closing')
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_cpu_millis) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS cpu_millis,
+        COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND (observed_state IN ('allocated','preparing','ready','closing')
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_memory_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
+        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND (observed_state IN ('allocated','preparing','ready','closing')
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
+        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND (observed_state IN ('allocated','preparing','ready','closing')
+                           OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+        COALESCE((SELECT count(*) FROM runtime_instances
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND (observed_state IN ('allocated','preparing','ready','closing')
+                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)::int AS vm_slots,
+        COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+        COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND state IN ('assigned','starting','running')), 0)::int AS build_executors
+  ) usage
  WHERE worker_instances.id = sqlc.arg(id)
    AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instances.status = 'active';
+   AND worker_instances.state = 'active'
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch);
 
--- name: GetWorkerInstanceRunDispatchCapacity :one
-SELECT * FROM (
-    SELECT GREATEST(worker_instances.available_milli_cpu - active.used_milli_cpu - active_runtime_instances.used_milli_cpu, 0)::bigint AS available_milli_cpu,
-           GREATEST(worker_instances.available_memory_mib - active.used_memory_mib - active_runtime_instances.used_memory_mib, 0)::bigint AS available_memory_mib,
-           GREATEST(worker_instances.available_disk_mib - active.used_disk_mib - active_runtime_instances.used_disk_mib, 0)::bigint AS available_disk_mib,
-           GREATEST(worker_instances.available_execution_slots - active.used_slots - active_runtime_instances.used_slots, 0)::int AS available_execution_slots
-      FROM worker_instances
-      LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
-            FROM run_leases
-            JOIN runs ON runs.org_id = run_leases.org_id
-                     AND runs.id = run_leases.run_id
-                     AND runs.workspace_mount_id IS NULL
-           WHERE run_leases.worker_instance_id = worker_instances.id
-             AND run_leases.status IN ('leased', 'running')
-      ) active ON true
-      LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
-            FROM runtime_instances
-           WHERE runtime_instances.worker_instance_id = worker_instances.id
-             AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
-             AND (
-                 runtime_instances.expires_at IS NULL
-                 OR runtime_instances.expires_at > now()
-             )
-      ) active_runtime_instances ON true
-     WHERE worker_instances.id = sqlc.arg(id)
-       AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
-       AND worker_instances.status = 'active'
-) capacity;
+-- name: GetWorkerInstanceQueueCapacity :one
+SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
+       GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,
+       GREATEST(worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes, 0)::bigint AS available_workload_disk_bytes,
+       GREATEST(worker_instances.certified_scratch_bytes - usage.scratch_bytes, 0)::bigint AS available_scratch_bytes,
+       GREATEST(worker_instances.max_run_consumers - usage.run_consumers, 0)::int AS available_run_consumers,
+       GREATEST(worker_instances.max_build_executors - usage.build_executors, 0)::int AS available_build_executors
+  FROM worker_instances
+  CROSS JOIN LATERAL (
+      SELECT
+        COALESCE((SELECT sum(reserved_cpu_millis) FROM runtime_instances
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND (observed_state IN ('allocated','preparing','ready','closing')
+                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_cpu_millis) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS cpu_millis,
+        COALESCE((SELECT sum(reserved_memory_bytes) FROM runtime_instances
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND (observed_state IN ('allocated','preparing','ready','closing')
+                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_memory_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS memory_bytes,
+        COALESCE((SELECT sum(reserved_workload_disk_bytes) FROM runtime_instances
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND (observed_state IN ('allocated','preparing','ready','closing')
+                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_workload_disk_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS workload_disk_bytes,
+        COALESCE((SELECT sum(reserved_scratch_bytes) FROM runtime_instances
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND (observed_state IN ('allocated','preparing','ready','closing')
+                          OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+        + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0) AS scratch_bytes,
+        COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+        COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
+                   WHERE worker_instance_id = worker_instances.id
+                     AND worker_epoch = worker_instances.current_epoch
+                     AND state IN ('assigned','starting','running')), 0)::int AS build_executors
+  ) usage
+ WHERE worker_instances.id = sqlc.arg(id)
+   AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+   AND worker_instances.state = 'active';
 
 -- name: PrepareQueuedRunDispatch :one
-SELECT runs.id AS run_id,
-       runs.org_id,
-       runs.worker_group_id,
-       runs.queue_class,
-       runs.project_id,
-       runs.environment_id,
-       runs.queue_name,
-       runs.queue_concurrency_limit,
-       runs.priority,
-       runs.concurrency_key,
-       runs.queue_timestamp,
-       runs.queued_expires_at,
-       runs.dispatch_generation,
-       COALESCE(runs.last_enqueued_at, runs.created_at) AS enqueued_at,
-       runs.requested_milli_cpu,
-       runs.requested_memory_mib,
-       runs.requested_disk_mib,
-       runs.requested_execution_slots,
-       runs.runtime_identity_id AS runtime_id,
-       runs.runtime_arch,
-       runs.runtime_abi,
-       runs.kernel_digest,
-       runs.initramfs_digest,
-       runs.rootfs_digest,
-       runs.cni_profile,
-       runs.network_policy,
-       runs.placement
+SELECT runs.*, workspaces.region_id
   FROM runs
-  JOIN worker_groups
-    ON worker_groups.id = runs.worker_group_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.health_state IN ('healthy', 'degraded')
-   AND worker_groups.routing_fresh_until > now()
-  JOIN regions
-    ON regions.id = worker_groups.region_id
-   AND regions.state = 'available'
+  JOIN workspaces
+    ON workspaces.org_id = runs.org_id
+   AND workspaces.project_id = runs.project_id
+   AND workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
    AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-   AND EXISTS (
-       SELECT 1
-         FROM sessions
-        WHERE sessions.org_id = runs.org_id
-          AND sessions.project_id = runs.project_id
-          AND sessions.environment_id = runs.environment_id
-          AND sessions.id = runs.session_id
-          AND sessions.current_run_id = runs.id
-          AND sessions.status = 'open'
-   );
+ FOR UPDATE OF runs;
 
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
-    SELECT runs.org_id,
-           runs.worker_group_id,
-           runs.project_id,
-           runs.environment_id,
-           runs.queue_class,
-           runs.queue_name,
-           md5(runs.org_id::text || ':' || runs.worker_group_id || ':' || runs.project_id::text || ':' || runs.environment_id::text || ':' || runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
+    SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+           runs.queue_class, runs.queue_name,
+           md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
+               runs.environment_id::text || ':' || workspaces.region_id || ':' ||
+               runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
-      JOIN worker_groups
-        ON worker_groups.id = runs.worker_group_id
-       AND worker_groups.state = 'active'
-       AND worker_groups.health_state IN ('healthy', 'degraded')
-       AND worker_groups.routing_fresh_until > now()
-      JOIN regions
-        ON regions.id = worker_groups.region_id
-       AND regions.state = 'available'
-     WHERE runs.status = 'queued'
-       AND runs.worker_group_id = sqlc.arg(worker_group_id)
-       AND runs.current_run_lease_id IS NULL
+      JOIN workspaces ON workspaces.org_id = runs.org_id
+                     AND workspaces.project_id = runs.project_id
+                     AND workspaces.environment_id = runs.environment_id
+                     AND workspaces.id = runs.workspace_id
+     WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
        AND runs.queue_timestamp <= now()
        AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-       AND (
-           runs.last_enqueued_at IS NULL
-           OR runs.last_enqueue_error <> ''
-           OR runs.last_enqueued_at <= now() - interval '1 minute'
-       )
-       AND EXISTS (
-           SELECT 1
-             FROM sessions
-            WHERE sessions.org_id = runs.org_id
-              AND sessions.project_id = runs.project_id
-              AND sessions.environment_id = runs.environment_id
-              AND sessions.id = runs.session_id
-              AND sessions.current_run_id = runs.id
-              AND sessions.status = 'open'
-       )
-     GROUP BY runs.org_id,
-              runs.worker_group_id,
-              runs.project_id,
-              runs.environment_id,
-              runs.queue_class,
-              runs.queue_name
+     GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
+              runs.queue_class, runs.queue_name
 )
-SELECT candidate_scopes.org_id,
-       candidate_scopes.worker_group_id,
-       candidate_scopes.project_id,
-       candidate_scopes.environment_id,
-       candidate_scopes.queue_class,
-       candidate_scopes.queue_name,
-       candidate_scopes.sort_key
-  FROM candidate_scopes
+SELECT * FROM candidate_scopes
  WHERE sqlc.arg(after_sort_key)::text = ''
-    OR (candidate_scopes.sort_key, candidate_scopes.org_id, candidate_scopes.worker_group_id, candidate_scopes.project_id, candidate_scopes.environment_id, candidate_scopes.queue_class, candidate_scopes.queue_name) > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid, sqlc.arg(after_worker_group_id)::text, sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid, sqlc.arg(after_queue_class)::text, sqlc.arg(after_queue_name)::text)
- ORDER BY candidate_scopes.sort_key ASC,
-          candidate_scopes.org_id ASC,
-          candidate_scopes.worker_group_id ASC,
-          candidate_scopes.project_id ASC,
-          candidate_scopes.environment_id ASC,
-          candidate_scopes.queue_class ASC,
-          candidate_scopes.queue_name ASC
+    OR (sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name)
+       > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid,
+          sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid,
+          sqlc.arg(after_region_id)::text, sqlc.arg(after_queue_class)::text,
+          sqlc.arg(after_queue_name)::text)
+ ORDER BY sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name
  LIMIT sqlc.arg(row_limit);
 
 -- name: ListQueuedRunDispatchCandidatesForScope :many
-SELECT runs.org_id,
-       runs.worker_group_id,
-       runs.id AS run_id,
-       (runs.id::text || ':' || runs.dispatch_generation::text) AS dispatch_message_id
+SELECT runs.org_id, runs.id AS run_id, runs.state_version
   FROM runs
-  JOIN worker_groups
-    ON worker_groups.id = runs.worker_group_id
-   AND worker_groups.state = 'active'
-   AND worker_groups.health_state IN ('healthy', 'degraded')
-   AND worker_groups.routing_fresh_until > now()
-  JOIN regions
-    ON regions.id = worker_groups.region_id
-   AND regions.state = 'available'
+  JOIN workspaces ON workspaces.org_id = runs.org_id
+                 AND workspaces.project_id = runs.project_id
+                 AND workspaces.environment_id = runs.environment_id
+                 AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
+   AND workspaces.region_id = sqlc.arg(region_id)
    AND runs.queue_class = sqlc.arg(queue_class)
    AND runs.queue_name = sqlc.arg(queue_name)
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
+   AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
    AND runs.queue_timestamp <= now()
    AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-   AND (
-       runs.last_enqueued_at IS NULL
-       OR runs.last_enqueue_error <> ''
-       OR runs.last_enqueued_at <= now() - interval '1 minute'
-   )
- ORDER BY runs.priority DESC, runs.queue_timestamp ASC, runs.id ASC
+ ORDER BY runs.priority DESC, runs.queue_timestamp, runs.id
  LIMIT sqlc.arg(row_limit);
 
--- name: MarkRunDispatchEnqueueError :one
-UPDATE runs
-   SET last_enqueue_error = sqlc.arg(last_error),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND queue_class = sqlc.arg(queue_class)
-   AND id = sqlc.arg(run_id)
-   AND status = 'queued'
-   AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
-RETURNING *;
-
--- name: MarkRunDispatchEnqueued :one
-UPDATE runs
-   SET last_enqueue_error = '',
-       last_enqueued_at = now(),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND queue_class = sqlc.arg(queue_class)
-   AND id = sqlc.arg(run_id)
-   AND status = 'queued'
-   AND dispatch_generation = sqlc.arg(expected_dispatch_generation)
-RETURNING *;
-
 -- name: CompleteRunDispatch :one
-SELECT runs.*
-  FROM runs
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
-   AND runs.queue_class = sqlc.arg(queue_class)
-   AND runs.id = sqlc.arg(run_id);
-
--- name: RequeueRunDispatch :one
-UPDATE runs
-   SET dispatch_generation = dispatch_generation + 1,
-       dispatch_attempt_count = dispatch_attempt_count + 1,
-       last_enqueue_error = sqlc.arg(last_error),
-       last_enqueued_at = NULL,
-       updated_at = now()
- WHERE runs.org_id = sqlc.arg(org_id)
-   AND runs.worker_group_id = sqlc.arg(worker_group_id)
-   AND runs.queue_class = sqlc.arg(queue_class)
-   AND runs.id = sqlc.arg(run_id)
-   AND runs.status = 'queued'
-   AND runs.dispatch_generation = sqlc.arg(expected_dispatch_generation)
-   AND runs.current_run_lease_id IS NULL
-RETURNING *;
+SELECT * FROM runs WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(run_id);
 
 -- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
-       SET status = 'failed',
-           execution_status = 'finished',
-           terminal_outcome = 'dead_lettered',
-           current_run_lease_id = NULL,
-           dispatch_generation = dispatch_generation + 1,
-           dispatch_attempt_count = GREATEST(dispatch_attempt_count, sqlc.arg(dispatch_attempt)::int),
-           last_enqueue_error = sqlc.arg(last_error),
-           state_version = state_version + 1,
-           finished_at = COALESCE(finished_at, now()),
+       SET status = 'failed', execution_status = 'finished', terminal_outcome = 'dead_lettered',
+           current_run_lease_id = NULL, state_version = state_version + 1,
+           error_message = sqlc.arg(last_error), finished_at = COALESCE(finished_at, now()),
            updated_at = now()
-     WHERE runs.org_id = sqlc.arg(org_id)
-       AND runs.worker_group_id = sqlc.arg(worker_group_id)
-       AND runs.queue_class = sqlc.arg(queue_class)
-       AND runs.id = sqlc.arg(run_id)
-       AND runs.dispatch_generation = sqlc.arg(dispatch_generation)
-       AND runs.status = 'queued'
-       AND sqlc.arg(dispatch_attempt)::int > sqlc.arg(max_dispatch_attempts)::int
+     WHERE runs.org_id = sqlc.arg(org_id) AND runs.id = sqlc.arg(run_id)
+       AND runs.status = 'queued' AND runs.state_version = sqlc.arg(expected_run_state_version)
     RETURNING *
-),
-ended_session_run AS (
-    UPDATE session_runs
-       SET ended_at = COALESCE(session_runs.ended_at, terminalized.finished_at)
-      FROM terminalized
-     WHERE session_runs.org_id = terminalized.org_id
-       AND session_runs.project_id = terminalized.project_id
-       AND session_runs.environment_id = terminalized.environment_id
-       AND session_runs.session_id = terminalized.session_id
-       AND session_runs.run_id = terminalized.id
-    RETURNING session_runs.id
-),
-terminal_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, previous_version, transition, reason, error)
-    SELECT terminalized.org_id,
-           terminalized.worker_group_id,
-           terminalized.id,
-           terminalized.state_version,
-           terminalized.status,
-           terminalized.execution_status,
-           terminalized.terminal_outcome,
-           terminalized.current_attempt_number,
-           terminalized.state_version - 1,
-           'run.dead_lettered',
+), snapshot AS (
+    INSERT INTO run_state_snapshots
+        (org_id, run_id, version, status, execution_status, terminal_outcome,
+         attempt_number, previous_version, transition, reason, error)
+    SELECT terminalized.org_id, terminalized.id, terminalized.state_version,
+           terminalized.status, terminalized.execution_status, terminalized.terminal_outcome,
+           terminalized.current_attempt_number, terminalized.state_version - 1, 'run.dead_lettered',
            jsonb_build_object('message', sqlc.arg(last_error)::text),
            jsonb_build_object('message', sqlc.arg(last_error)::text)
       FROM terminalized
-    RETURNING run_state_snapshots.run_id, run_state_snapshots.version
-),
-terminal_event AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
-        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
-        kind, message, payload, redaction_class, snapshot_version, observed_at
-    )
-    SELECT terminalized.org_id,
-           terminalized.worker_group_id,
-           'event',
-           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
-           COALESCE(NULL::uuid, terminalized.id),
-           terminalized.project_id,
-           terminalized.environment_id,
-           terminalized.id,
-           NULL::uuid,
-           NULL::uuid,
-           terminalized.current_attempt_number,
-           terminalized.trace_id,
-           terminalized.root_span_id,
-           NULL::text,
-           '00-' || terminalized.trace_id || '-' || terminalized.root_span_id || '-01',
-           COALESCE(NULLIF('lifecycle', ''), 'system'),
-           COALESCE(NULLIF('error', ''), 'info'),
-           COALESCE(NULLIF('control', ''), 'control'),
-           'run.dead_lettered',
-           COALESCE('run.dead_lettered', ''),
-           COALESCE(jsonb_build_object('message', sqlc.arg(last_error)::text), '{}'::jsonb),
-           COALESCE(NULLIF('internal', ''), 'internal'),
-           terminalized.state_version,
-           now()
-      FROM terminalized
-      JOIN terminal_snapshot ON terminal_snapshot.run_id = terminalized.id
-    RETURNING id
-),
-cleanup AS (
-    SELECT (SELECT count(*) FROM ended_session_run) AS ended_session_run_count,
-           (SELECT count(*) FROM terminal_event) AS terminal_telemetry_outbox_count
+    RETURNING run_id
 )
-SELECT terminalized.id AS run_id,
-       terminalized.org_id,
-       terminalized.worker_group_id,
-       terminalized.project_id,
-       terminalized.environment_id,
-       terminalized.state_version
-  FROM terminalized
- WHERE (SELECT ended_session_run_count + terminal_telemetry_outbox_count FROM cleanup) >= 0;
+SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
+       terminalized.environment_id, terminalized.state_version
+  FROM terminalized JOIN snapshot ON snapshot.run_id = terminalized.id;

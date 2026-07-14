@@ -2,926 +2,362 @@ package redis
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/alicebob/miniredis/v2"
+	miniredis "github.com/alicebob/miniredis/v2"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
-	"github.com/redis/go-redis/v9"
+	redisv9 "github.com/redis/go-redis/v9"
 )
 
-func TestQueueEnqueueDequeueAck(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})); err != nil {
+func TestQueueStoresOnlyReconstructableReadyIndex(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("test"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
+	now := time.Unix(100, 0).UTC()
+	result, err := queue.Enqueue(context.Background(), dispatch.Message{
+		WorkKind: dispatch.WorkKindRun, RunID: "run-1", OrgID: "org-1", RegionID: "us-east-1",
+		ProjectID: "project-1", EnvironmentID: "env-1", QueueClass: "default",
+		QueueName: "jobs", RunStateVersion: 3, QueueTimestamp: now, EnqueuedAt: now,
+		Requirements: compute.RunRuntimeRequirements{
+			Resources: compute.ResourceVector{MilliCPU: 100, MemoryMiB: 128, Slots: 1},
+			Runtime: compute.RuntimeSelector{ID: "runtime", Arch: "x86_64", ABI: "abi",
+				KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", CNIProfile: "cni"},
+			Network: compute.DefaultNetworkPolicy(),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(leases) != 1 || leases[0].Message.RunID != "run-1" || leases[0].MessageID == "" || leases[0].AttemptNumber != 1 {
-		t.Fatalf("leases = %+v", leases)
-	}
-	if err := queue.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases after ack = %+v", leases)
-	}
-}
-
-func TestQueueDequeueInvalidatesMessageWithoutRuntimeMetadata(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	invalid, err := queue.Enqueue(ctx, testMessage("invalid", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	valid, err := queue.Enqueue(ctx, testMessage("valid", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	invalidMessageKey := queue.prefix + ":message:" + invalid.MessageID
-	if err := queue.client.HDel(ctx, invalidMessageKey, "runtime_id", "initramfs_digest").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].MessageID != valid.MessageID || leases[0].Message.RunID != "valid" {
-		t.Fatalf("leases = %+v, want valid message %s", leases, valid.MessageID)
-	}
-	if count, err := queue.client.Exists(ctx, invalidMessageKey).Result(); err != nil {
-		t.Fatal(err)
-	} else if count != 0 {
-		t.Fatal("message without runtime metadata was not deleted by dequeue")
-	}
-}
-
-func TestQueueMessageIDUsesRunIDAndDispatchGeneration(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	message.DispatchGeneration = 42
-	result, err := queue.Enqueue(ctx, message)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.MessageID != "run-1:42" {
-		t.Fatalf("message id = %q, want run-1:42", result.MessageID)
-	}
-}
-
-func TestQueueEnqueueIsIdempotentForActiveMessage(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	if _, err := queue.Enqueue(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if _, err := queue.Enqueue(ctx, message); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-2",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases after duplicate enqueue of active message = %+v, want none", leases)
-	}
-	if err := queue.Nack(ctx, lease, dispatch.NackReasonRetry); err != nil {
-		t.Fatal(err)
-	}
-	released := mustDequeueOne(t, ctx, queue, "host-2")
-	if released.MessageID != lease.MessageID || released.AttemptNumber != 2 {
-		t.Fatalf("released lease = %+v, want message %s attempt 2", released, lease.MessageID)
-	}
-}
-
-func TestQueueDequeueHandlesQueueNamedRun(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	message.QueueName = "run"
-	result, err := queue.Enqueue(ctx, message)
-	if err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "run",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].MessageID != result.MessageID {
-		t.Fatalf("leases = %+v, want message %s", leases, result.MessageID)
-	}
-}
-
-func TestQueueLeaseConflictNackBacksOff(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Minute))
-	defer cleanup()
-
-	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	first.QueueConcurrencyScope = "queue-a"
-	first.QueueConcurrencyLimit = 1
-	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	second.QueueConcurrencyScope = "queue-a"
-	second.QueueConcurrencyLimit = 1
-	if _, err := queue.Enqueue(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Enqueue(ctx, second); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if err := queue.Nack(ctx, lease, dispatch.NackReasonLeaseConflict); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-2",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "run-2" {
-		t.Fatalf("leases after lease-conflict nack = %+v, want second run while first backs off", leases)
-	}
-	if err := queue.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-	now = now.Add(time.Minute)
-	released := mustDequeueOne(t, ctx, queue, "host-2")
-	if released.MessageID != lease.MessageID || released.AttemptNumber != 2 {
-		t.Fatalf("released lease = %+v, want message %s attempt 2", released, lease.MessageID)
-	}
-}
-
-func TestQueueHonorsQueueConcurrencyLimit(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	first.QueueConcurrencyScope = "queue-a"
-	first.QueueConcurrencyLimit = 1
-	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	second.QueueConcurrencyScope = "queue-a"
-	second.QueueConcurrencyLimit = 1
-	if _, err := queue.Enqueue(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Enqueue(ctx, second); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %+v, want one lease under queue concurrency limit", leases)
-	}
-	if leases[0].Message.QueueConcurrencyScope != "queue-a" || leases[0].Message.QueueConcurrencyLimit != 1 {
-		t.Fatalf("leased message queue concurrency = %+v", leases[0].Message)
-	}
-	if err := queue.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "run-2" {
-		t.Fatalf("leases after ack = %+v, want second run", leases)
-	}
-}
-
-func TestQueueConcurrencyLimitSpansRuntimeQueues(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	first := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	first.QueueName = "queue-a:rt:arm64"
-	first.QueueConcurrencyScope = "queue-a"
-	first.QueueConcurrencyLimit = 1
-	second := testMessage("run-2", 9, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	second.QueueName = "queue-a:rt:amd64"
-	second.QueueConcurrencyScope = "queue-a"
-	second.QueueConcurrencyLimit = 1
-	if _, err := queue.Enqueue(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Enqueue(ctx, second); err != nil {
-		t.Fatal(err)
-	}
-
-	firstLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a:rt:arm64",
-		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(firstLease) != 1 || firstLease[0].Message.RunID != "run-1" {
-		t.Fatalf("first lease = %+v", firstLease)
-	}
-	blocked, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a:rt:amd64",
-		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(blocked) != 0 {
-		t.Fatalf("blocked lease = %+v, want no lease while shared scope is full", blocked)
-	}
-	if err := queue.Ack(ctx, firstLease[0]); err != nil {
-		t.Fatal(err)
-	}
-	secondLease, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a:rt:amd64",
-		Available:        compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(secondLease) != 1 || secondLease[0].Message.RunID != "run-2" {
-		t.Fatalf("second lease = %+v", secondLease)
-	}
-}
-
-func TestQueueDequeueHandlesMissingQueueConcurrencyActiveKey(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	enqueued, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1}))
-	if err != nil {
-		t.Fatal(err)
-	}
-	messageKey := queue.prefix + ":message:" + enqueued.MessageID
-	if err := queue.client.HDel(ctx, messageKey, "queue_concurrency_active_key").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if lease.MessageID != enqueued.MessageID {
-		t.Fatalf("lease message id = %q, want %q", lease.MessageID, enqueued.MessageID)
-	}
-}
-
-func TestQueueDequeueInvalidatesLimitedMessageMissingQueueConcurrencyActiveKey(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	message := testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})
-	message.QueueConcurrencyLimit = 1
-	enqueued, err := queue.Enqueue(ctx, message)
-	if err != nil {
-		t.Fatal(err)
-	}
-	messageKey := queue.prefix + ":message:" + enqueued.MessageID
-	if err := queue.client.HDel(ctx, messageKey, "queue_concurrency_active_key").Err(); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("leases = %+v, want malformed message invalidated", leases)
-	}
-	if exists, err := queue.client.Exists(ctx, messageKey).Result(); err != nil || exists != 0 {
-		t.Fatalf("message exists = %d, err = %v", exists, err)
-	}
-}
-
-func TestQueueDefaultLeaseMatchesWorkerExecutionLease(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }))
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 10, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 2048, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if !lease.ExpiresAt.Equal(now.Add(5 * time.Minute)) {
-		t.Fatalf("lease expires at %s, want %s", lease.ExpiresAt, now.Add(5*time.Minute))
-	}
-}
-
-func TestQueuePriorityAndCapacity(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("low", 1, compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Enqueue(ctx, testMessage("high", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
-		Runtime:          testRuntime(),
-		MaxMessages:      2,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "high" {
-		t.Fatalf("leases = %+v", leases)
-	}
-}
-
-func TestQueueSkipsOversizedHeadForCurrentHost(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("oversized", 100, compute.ResourceVector{MilliCPU: 4000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2})); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := queue.Enqueue(ctx, testMessage("fits", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, DiskMiB: 1024, Slots: 1},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "fits" {
-		t.Fatalf("leases = %+v", leases)
-	}
-}
-
-func TestQueueStoresRuntimeMetadata(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	message := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	message.Requirements.Runtime = compute.RuntimeSelector{
-		ID:              "sha256:runtime-arm64",
-		Arch:            "arm64",
-		ABI:             "helmr.firecracker.snapshot.v0",
-		KernelDigest:    "sha256:kernel",
-		InitramfsDigest: "sha256:initramfs",
-		RootfsDigest:    "sha256:rootfs",
-		CNIProfile:      "helmr/v0",
-	}
-	message.Requirements.Placement = compute.Placement{
-		Tags:         map[string]string{"pool": "snapshot"},
-		DedicatedKey: "tenant-a",
-		SnapshotKey:  "snapshot-a",
-	}
-	result, err := queue.Enqueue(ctx, message)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	metadata, err := queue.client.HGetAll(ctx, "test:message:"+result.MessageID).Result()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for key, want := range map[string]string{
-		"runtime_arch":            "arm64",
-		"runtime_id":              "sha256:runtime-arm64",
-		"runtime_abi":             "helmr.firecracker.snapshot.v0",
-		"kernel_digest":           "sha256:kernel",
-		"initramfs_digest":        "sha256:initramfs",
-		"rootfs_digest":           "sha256:rootfs",
-		"cni_profile":             "helmr/v0",
-		"placement_region":        "",
-		"placement_dedicated_key": "tenant-a",
-		"placement_snapshot_key":  "snapshot-a",
-	} {
-		if metadata[key] != want {
-			t.Fatalf("%s = %q, want %q; metadata = %+v", key, metadata[key], want, metadata)
+	if result.MessageID != "run-1" || result.Depth != 1 {
+		t.Fatalf("enqueue result = %+v", result)
+	}
+	keys := server.Keys()
+	for _, key := range keys {
+		if containsAny(key, "lease", "active", "worker_group", "dispatch_generation") {
+			t.Fatalf("forbidden authority key created: %s", key)
 		}
 	}
-	var labels map[string]string
-	if err := json.Unmarshal([]byte(metadata["placement_labels"]), &labels); err != nil {
-		t.Fatal(err)
-	}
-	if labels["pool"] != "snapshot" {
-		t.Fatalf("placement_labels = %+v", labels)
-	}
 }
 
-func TestQueueFiltersByRuntimeIdentity(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	requiresArm := testMessage("requires-arm", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requiresArm.Requirements.Runtime = testRuntimeFor("sha256:runtime-arm", "arm64", "sha256:kernel-arm")
-	if _, err := queue.Enqueue(ctx, requiresArm); err != nil {
-		t.Fatal(err)
-	}
-	requiresAMD := testMessage("requires-amd", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requiresAMD.Requirements.Runtime = testRuntimeFor("sha256:runtime-amd", "amd64", "sha256:kernel-amd")
-	if _, err := queue.Enqueue(ctx, requiresAMD); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-amd",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntimeFor("sha256:runtime-amd", "amd64", "sha256:kernel-amd"),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "requires-amd" {
-		t.Fatalf("leases = %+v", leases)
-	}
-	if err := queue.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-arm",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntimeFor("sha256:runtime-arm", "arm64", "sha256:kernel-arm"),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "requires-arm" || leases[0].AttemptNumber != 1 {
-		t.Fatalf("leases = %+v", leases)
-	}
-}
-
-func TestQueueFiltersByPlacementCompatibility(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	special := testMessage("special-placement", 100, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	special.Requirements.Placement = compute.Placement{
-		Tags:         map[string]string{"pool": "snapshot", "gpu": "true"},
-		DedicatedKey: "tenant-a",
-		SnapshotKey:  "snapshot-a",
-	}
-	if _, err := queue.Enqueue(ctx, special); err != nil {
-		t.Fatal(err)
-	}
-	standard := testMessage("standard-placement", 1, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	standard.Requirements.Placement = compute.Placement{
-		Tags: map[string]string{"pool": "standard"},
-	}
-	if _, err := queue.Enqueue(ctx, standard); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-standard",
-		QueueName:        "queue-a",
-		Region:           "us-west-2",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		Labels:           map[string]string{"pool": "standard"},
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "standard-placement" {
-		t.Fatalf("leases = %+v", leases)
-	}
-	if err := queue.Ack(ctx, leases[0]); err != nil {
-		t.Fatal(err)
-	}
-
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-special",
-		QueueName:        "queue-a",
-		Region:           "us-east-1",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		Labels:           map[string]string{"pool": "snapshot", "gpu": "true", "dedicated_key": "tenant-a", "snapshot_key": "snapshot-a"},
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 1 || leases[0].Message.RunID != "special-placement" || leases[0].AttemptNumber != 1 {
-		t.Fatalf("leases = %+v", leases)
-	}
-}
-
-func TestQueueNamespacesByScopeAndQueue(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	requeued := testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})
-	requeued.DispatchGeneration = 2
-	if _, err := queue.Enqueue(ctx, requeued); err != nil {
-		t.Fatal(err)
-	}
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-2",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("cross-org leases = %+v", leases)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-2",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("cross-project leases = %+v", leases)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-2",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("cross-environment leases = %+v", leases)
-	}
-	leases, err = queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: "host-1",
-		QueueName:        "queue-b",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(leases) != 0 {
-		t.Fatalf("cross-queue leases = %+v", leases)
-	}
-	if got := mustDequeueOne(t, ctx, queue, "host-1"); got.Message.RunID != "run-1" {
-		t.Fatalf("same-queue lease = %+v", got)
-	}
-}
-
-func TestQueueNackRequeues(t *testing.T) {
-	ctx := context.Background()
-	queue, cleanup := newTestQueue(t)
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	if err := queue.Nack(ctx, lease, dispatch.NackReasonRetry); err != nil {
-		t.Fatal(err)
-	}
-	lease = mustDequeueOne(t, ctx, queue, "host-1")
-	if lease.Message.RunID != "run-1" || lease.AttemptNumber != 2 {
-		t.Fatalf("redelivered lease = %+v", lease)
-	}
-}
-
-func TestQueueExpiredLeaseIsReleased(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	now = now.Add(2 * time.Second)
-	if err := queue.Ack(ctx, lease); !errors.Is(err, dispatch.ErrLeaseExpired) {
-		t.Fatalf("expired ack error = %v, want lease expired", err)
-	}
-	released := mustDequeueOne(t, ctx, queue, "host-2")
-	if released.Message.RunID != "run-1" || released.WorkerInstanceID != "host-2" || released.AttemptNumber != 2 {
-		t.Fatalf("released lease = %+v", released)
-	}
-}
-
-func TestQueueRenewFencesExpiredAndConflictingLeases(t *testing.T) {
-	ctx := context.Background()
-	now := time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC)
-	queue, cleanup := newTestQueue(t, WithClock(func() time.Time { return now }), WithLeaseTimeout(time.Second))
-	defer cleanup()
-
-	if _, err := queue.Enqueue(ctx, testMessage("run-1", 0, compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 1024, Slots: 1})); err != nil {
-		t.Fatal(err)
-	}
-	lease := mustDequeueOne(t, ctx, queue, "host-1")
-	conflicting := lease
-	conflicting.WorkerInstanceID = "host-2"
-	if _, err := queue.Renew(ctx, conflicting, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseConflict) {
-		t.Fatalf("conflicting renew error = %v, want lease conflict", err)
-	}
-	now = now.Add(2 * time.Second)
-	if _, err := queue.Renew(ctx, lease, now.Add(time.Second)); !errors.Is(err, dispatch.ErrLeaseExpired) {
-		t.Fatalf("expired renew error = %v, want lease expired", err)
-	}
-}
-
-func newTestQueue(t *testing.T, opts ...Option) (*Queue, func()) {
-	t.Helper()
+func TestSelectReadyBoundsTenantContributionAndInterleavesOrganizations(t *testing.T) {
 	server := miniredis.RunT(t)
-	client := redis.NewClient(&redis.Options{Addr: server.Addr()})
-	allOpts := append([]Option{WithPrefix("test")}, opts...)
-	queue, err := New(client, allOpts...)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	now := time.Unix(1_000, 0).UTC()
+	queue, err := New(client, WithPrefix("fair"), WithClock(func() time.Time { return now }))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return queue, func() {
-		_ = client.Close()
-		server.Close()
+	for i := range 6 {
+		message := testMessage("a-"+time.Unix(int64(i), 0).Format("05"), "org-a", "env-a", now.Add(time.Duration(i)*time.Millisecond))
+		if _, err := queue.Enqueue(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
 	}
-}
-
-func testMessage(runID string, priority int32, resources compute.ResourceVector) dispatch.Message {
-	if resources.DiskMiB == 0 {
-		resources.DiskMiB = 1024
+	for i := range 3 {
+		message := testMessage("b-"+time.Unix(int64(i), 0).Format("05"), "org-b", "env-b", now.Add(time.Duration(i)*time.Millisecond))
+		if _, err := queue.Enqueue(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
 	}
-	return dispatch.Message{
-		RunID:              runID,
-		OrgID:              "org-1",
-		WorkerGroupID:      "worker-group-1",
-		ProjectID:          "project-1",
-		EnvironmentID:      "env-1",
-		QueueClass:         "default",
-		QueueName:          "queue-a",
-		DispatchGeneration: 1,
-		Requirements:       dispatchRequirements(resources),
-		Priority:           priority,
-		EnqueuedAt:         time.Date(2026, 5, 19, 0, 0, 0, 0, time.UTC),
-	}
-}
 
-func dispatchRequirements(resources compute.ResourceVector) compute.RunRuntimeRequirements {
-	return compute.RunRuntimeRequirements{Resources: resources, Runtime: testRuntime()}
-}
-
-func testRuntime() compute.RuntimeSelector {
-	return compute.RuntimeSelector{
-		ID:              "sha256:runtime-arm64",
-		Arch:            "arm64",
-		ABI:             "helmr.firecracker.snapshot.v0",
-		KernelDigest:    "sha256:kernel-arm64",
-		InitramfsDigest: "sha256:initramfs",
-		RootfsDigest:    "sha256:rootfs",
-		CNIProfile:      "helmr/v0",
-	}
-}
-
-func testRuntimeFor(id string, arch string, kernelDigest string) compute.RuntimeSelector {
-	runtime := testRuntime()
-	runtime.ID = id
-	runtime.Arch = arch
-	runtime.KernelDigest = kernelDigest
-	return runtime
-}
-
-func mustDequeueOne(t *testing.T, ctx context.Context, queue *Queue, workerInstanceID string) dispatch.Lease {
-	t.Helper()
-	leases, err := queue.Dequeue(ctx, dispatch.DequeueRequest{
-		OrgID:            "org-1",
-		WorkerGroupID:    "worker-group-1",
-		ProjectID:        "project-1",
-		EnvironmentID:    "env-1",
-		QueueClass:       "default",
-		WorkerInstanceID: workerInstanceID,
-		QueueName:        "queue-a",
-		Available:        compute.ResourceVector{MilliCPU: 2000, MemoryMiB: 4096, DiskMiB: 4096, Slots: 2},
-		Runtime:          testRuntime(),
-		MaxMessages:      1,
+	selected, err := queue.SelectReady(context.Background(), dispatch.ReadySelection{
+		WorkKind: dispatch.WorkKindRun, RegionID: "us-east-1", Limit: 8, TenantContributionLimit: 2, OldestWorkAfter: time.Hour,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(leases) != 1 {
-		t.Fatalf("leases = %+v, want one", leases)
+	counts := map[string]int{}
+	for _, message := range selected {
+		counts[message.OrgID]++
 	}
-	return leases[0]
+	if counts["org-a"] != 2 || counts["org-b"] != 2 || len(selected) != 4 {
+		t.Fatalf("selected tenant contributions = %#v (%d total), want two each", counts, len(selected))
+	}
+	if selected[0].OrgID == selected[1].OrgID {
+		t.Fatalf("first fair selections did not interleave organizations: %s, %s", selected[0].OrgID, selected[1].OrgID)
+	}
+}
+
+func TestSelectReadyOldestWorkEscapesFairOrder(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	now := time.Unix(2_000, 0).UTC()
+	queue, err := New(client, WithPrefix("oldest"), WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := testMessage("old-run", "org-z", "env-z", now.Add(-time.Minute))
+	fresh := testMessage("fresh-run", "org-a", "env-a", now)
+	if _, err := queue.Enqueue(context.Background(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queue.Enqueue(context.Background(), old); err != nil {
+		t.Fatal(err)
+	}
+	selected, err := queue.SelectReady(context.Background(), dispatch.ReadySelection{
+		WorkKind: dispatch.WorkKindRun, RegionID: "us-east-1", Limit: 1, OldestWorkAfter: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(selected) != 1 || selected[0].RunID != "old-run" {
+		t.Fatalf("oldest escape selection = %+v, want old-run", selected)
+	}
+}
+
+func TestRemoveReadyCleansReconstructableSourceAndLeaf(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("cleanup"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := testMessage("stale-run", "org-a", "env-a", time.Now().UTC())
+	if _, err := queue.Enqueue(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.RemoveReady(context.Background(), dispatch.WorkKindRun, message.RunID, message.ReadyFence()); err != nil {
+		t.Fatal(err)
+	}
+	if server.Exists(queue.sourceKey(dispatch.WorkKindRun, message.RunID)) {
+		t.Fatal("ready source survived cleanup")
+	}
+	if members, err := client.ZRange(context.Background(), queue.readyKey(message), 0, -1).Result(); err != nil || len(members) != 0 {
+		t.Fatalf("ready leaf after cleanup = %v, %v", members, err)
+	}
+}
+
+func TestSelectReadyRotatesContinuouslyBackloggedSiblingLeaves(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	now := time.Unix(4_000, 0).UTC()
+	queue, err := New(client, WithPrefix("leaf-fair"), WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := testMessage("run-a", "org-a", "env-a", now)
+	first.QueueName = "queue-a"
+	second := testMessage("run-b", "org-a", "env-a", now.Add(time.Millisecond))
+	second.QueueName = "queue-b"
+	for _, message := range []dispatch.Message{first, second} {
+		if _, err := queue.Enqueue(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	counts := map[string]int{}
+	for range 8 {
+		selected, err := queue.SelectReady(context.Background(), dispatch.ReadySelection{
+			WorkKind: dispatch.WorkKindRun, RegionID: "us-east-1", Limit: 1, TenantContributionLimit: 1,
+			OldestWorkAfter: time.Hour,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(selected) != 1 {
+			t.Fatalf("selected = %+v, want one ready item", selected)
+		}
+		counts[selected[0].QueueName]++
+	}
+	if counts["queue-a"] == 0 || counts["queue-b"] == 0 {
+		t.Fatalf("sibling leaf starved under sustained backlog: %#v", counts)
+	}
+	if delta := counts["queue-a"] - counts["queue-b"]; delta < -1 || delta > 1 {
+		t.Fatalf("sibling leaf service is not bounded: %#v", counts)
+	}
+}
+
+func TestRegionKeyEncodingIsInjective(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("region-encoding"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	colon := testMessage("run-colon", "org-a", "env-a", time.Now().UTC())
+	colon.RegionID = "a:b"
+	underscore := testMessage("run-underscore", "org-a", "env-a", time.Now().UTC())
+	underscore.RegionID = "a_b"
+	if queue.oldestKey(dispatch.WorkKindRun, colon.RegionID) == queue.oldestKey(dispatch.WorkKindRun, underscore.RegionID) ||
+		queue.organizationsKey(dispatch.WorkKindRun, colon.RegionID) == queue.organizationsKey(dispatch.WorkKindRun, underscore.RegionID) {
+		t.Fatal("distinct DB-valid region IDs produced the same hierarchy key")
+	}
+	for _, message := range []dispatch.Message{colon, underscore} {
+		if _, err := queue.Enqueue(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, test := range []struct {
+		region string
+		want   string
+	}{{"a:b", "run-colon"}, {"a_b", "run-underscore"}} {
+		selected, err := queue.SelectReady(context.Background(), dispatch.ReadySelection{
+			WorkKind: dispatch.WorkKindRun, RegionID: test.region, Limit: 1, OldestWorkAfter: time.Hour,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(selected) != 1 || selected[0].RunID != test.want {
+			t.Fatalf("region %q selected %+v, want %s", test.region, selected, test.want)
+		}
+	}
+}
+
+func TestReadyRegionsRotatesBeyondFirstScanBatch(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("region-rotation"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const regionCount = 11
+	for i := range regionCount {
+		message := testMessage(fmt.Sprintf("run-%02d", i), "org-a", "env-a", time.Now().UTC())
+		message.RegionID = fmt.Sprintf("region-%02d", i)
+		if _, err := queue.Enqueue(context.Background(), message); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seen := map[string]bool{}
+	for range 8 {
+		regions, err := queue.ReadyRegions(context.Background(), dispatch.WorkKindRun, 3)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(regions) > 3 {
+			t.Fatalf("ready region batch exceeded limit: %v", regions)
+		}
+		for _, region := range regions {
+			seen[region] = true
+		}
+		if len(seen) == regionCount {
+			break
+		}
+	}
+	if len(seen) != regionCount {
+		t.Fatalf("bounded SSCAN rotation starved regions: saw %d/%d: %#v", len(seen), regionCount, seen)
+	}
+}
+
+func TestRemoveReadyDoesNotDeleteNewerReconstructedEntry(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("versioned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := testMessage("run-1", "org-a", "env-a", time.Now().UTC())
+	message.RunStateVersion = 2
+	if _, err := queue.Enqueue(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.RemoveReady(context.Background(), dispatch.WorkKindRun, message.RunID, "run:1"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok, err := queue.loadMessage(context.Background(), dispatch.WorkKindRun, message.RunID)
+	if err != nil || !ok || loaded.RunStateVersion != 2 {
+		t.Fatalf("newer ready source was removed: loaded=%+v ok=%v err=%v", loaded, ok, err)
+	}
+}
+
+func TestBuildReadyIndexUsesSameFairnessAndPreservesFrozenResources(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	now := time.Unix(3_000, 0).UTC()
+	queue, err := New(client, WithPrefix("build-fair"), WithClock(func() time.Time { return now }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 4 {
+		if _, err := queue.Enqueue(context.Background(), testBuildMessage("dep-a-"+time.Unix(int64(i), 0).Format("05"), "org-a", "env-a", now.Add(time.Duration(i)*time.Millisecond))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := range 2 {
+		if _, err := queue.Enqueue(context.Background(), testBuildMessage("dep-b-"+time.Unix(int64(i), 0).Format("05"), "org-b", "env-b", now.Add(time.Duration(i)*time.Millisecond))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	regions, err := queue.ReadyRegions(context.Background(), dispatch.WorkKindBuild, 4)
+	if err != nil || len(regions) != 1 || regions[0] != "us-east-1" {
+		t.Fatalf("build regions = %v, %v", regions, err)
+	}
+	selected, err := queue.SelectReady(context.Background(), dispatch.ReadySelection{WorkKind: dispatch.WorkKindBuild,
+		RegionID: "us-east-1", Limit: 6, TenantContributionLimit: 2, OldestWorkAfter: time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, message := range selected {
+		counts[message.OrgID]++
+		if message.WorkKind != dispatch.WorkKindBuild || message.BuildResources.BuildCacheBytes != 4096 ||
+			message.BuildResources.ArtifactCacheBytes != 8192 || message.BuildResources.Executors != 2 {
+			t.Fatalf("frozen build message changed: %+v", message)
+		}
+	}
+	if len(selected) != 4 || counts["org-a"] != 2 || counts["org-b"] != 2 {
+		t.Fatalf("build fair selection = %#v (%d)", counts, len(selected))
+	}
+}
+
+func TestBuildReadyCASRemovalPreservesNewAttempt(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("build-cas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := testBuildMessage("dep-1", "org-a", "env-a", time.Now().UTC())
+	message.BuildAttemptNumber = 2
+	message.LeaseSequence = 1
+	if _, err := queue.Enqueue(context.Background(), message); err != nil {
+		t.Fatal(err)
+	}
+	if err := queue.RemoveReady(context.Background(), dispatch.WorkKindBuild, message.DeploymentID, "build:1:4"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok, err := queue.loadMessage(context.Background(), dispatch.WorkKindBuild, message.DeploymentID)
+	if err != nil || !ok || loaded.ReadyFence() != "build:2:1" {
+		t.Fatalf("new build attempt removed: loaded=%+v ok=%v err=%v", loaded, ok, err)
+	}
+}
+
+func testMessage(runID, orgID, environmentID string, queuedAt time.Time) dispatch.Message {
+	return dispatch.Message{
+		WorkKind: dispatch.WorkKindRun, RunID: runID, OrgID: orgID, RegionID: "us-east-1", ProjectID: "project-1",
+		EnvironmentID: environmentID, QueueClass: "default", QueueName: "jobs",
+		RunStateVersion: 1, QueueTimestamp: queuedAt, EnqueuedAt: queuedAt,
+		Requirements: compute.RunRuntimeRequirements{
+			Resources: compute.ResourceVector{MilliCPU: 100, MemoryMiB: 128, Slots: 1},
+			Runtime: compute.RuntimeSelector{ID: "runtime", Arch: "x86_64", ABI: "abi",
+				KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", CNIProfile: "cni"},
+			Network: compute.DefaultNetworkPolicy(),
+		},
+	}
+}
+
+func testBuildMessage(deploymentID, orgID, environmentID string, queuedAt time.Time) dispatch.Message {
+	return dispatch.Message{WorkKind: dispatch.WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
+		RegionID: "us-east-1", ProjectID: "project-1", EnvironmentID: environmentID,
+		QueueClass: "build", QueueName: "deployment-build", BuildAttemptNumber: 1, LeaseSequence: 1,
+		QueueTimestamp: queuedAt, EnqueuedAt: queuedAt,
+		BuildResources: dispatch.BuildResourceVector{CPUMillis: 1000, MemoryBytes: 1024,
+			WorkloadDiskBytes: 2048, ScratchBytes: 1024, BuildCacheBytes: 4096,
+			ArtifactCacheBytes: 8192, Executors: 2}}
+}
+
+func containsAny(value string, needles ...string) bool {
+	for _, needle := range needles {
+		if strings.Contains(value, needle) {
+			return true
+		}
+	}
+	return false
 }

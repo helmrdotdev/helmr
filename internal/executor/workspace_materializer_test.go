@@ -52,7 +52,9 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMou
 	return store, api.WorkerWorkspaceMount{
 		BaseVersionID:              "version-1",
 		RuntimeInstanceID:          "runtime-instance-1",
-		RuntimeInstanceToken:       "runtime-instance-token-1",
+		RuntimeEpoch:               1,
+		NetworkSlotID:              "network-slot-1",
+		NetworkSlotGeneration:      1,
 		RuntimeID:                  "runtime-1",
 		SandboxImageArtifact:       api.CASObject{Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType},
 		SandboxImageArtifactFormat: "oci-tar",
@@ -444,14 +446,13 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 	if string(client.completed.Result) != `{"ok":true}` || client.completed.OperationID != "operation-1" || client.completed.ClaimToken != "claim-token" {
 		t.Fatalf("completed operation = %+v", client.completed)
 	}
-	runtimeInstanceToken := workspaceMount.RuntimeInstanceToken
-	if len(client.claims) == 0 || client.claims[0].OrgID != "org-1" || client.claims[0].WorkspaceMountID != "mat-1" || client.claims[0].RuntimeInstanceToken != runtimeInstanceToken {
+	if len(client.claims) == 0 || client.claims[0].OrgID != "org-1" || client.claims[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("claim request = %+v", client.claims)
 	}
 	if len(client.starts) != 2 || client.starts[0].OperationID != "operation-1" || client.starts[1].OperationID != "operation-1" {
 		t.Fatalf("start retries = %+v", client.starts)
 	}
-	if len(client.mounted) != 1 || client.mounted[0].OrgID != "org-1" || client.mounted[0].WorkspaceMountID != "mat-1" || client.mounted[0].RuntimeInstanceToken != runtimeInstanceToken {
+	if len(client.mounted) != 1 || client.mounted[0].OrgID != "org-1" || client.mounted[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("mounted request = %+v", client.mounted)
 	}
 	if client.stops != 0 {
@@ -560,7 +561,6 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.FencingGeneration = 7
 	done := make(chan error, 1)
@@ -590,9 +590,10 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
 	}()
 	client := &workspaceMaterializerTestClient{}
-	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
+	session := &workspaceMaterializerTestSession{
 		streams: []io.ReadWriteCloser{clientConn},
-	}, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
+	}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, api.WorkspaceMountResponse{State: "unmounting", FencingGeneration: 9}, client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -601,6 +602,50 @@ func TestWorkspaceMaterializerControlledStopUsesRenewedFencingGeneration(t *test
 	}
 	if client.stops != 1 {
 		t.Fatalf("stops = %d, want 1", client.stops)
+	}
+	if session.closed != 1 {
+		t.Fatalf("session closes = %d, want 1 before reporting the mount stopped", session.closed)
+	}
+}
+
+func TestWorkspaceMaterializerDoesNotReportStoppedWhenRuntimeCloseFails(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer serverConn.Close()
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-1"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	done := make(chan error, 1)
+	go func() {
+		if _, _, err := wire.ReadStreamFrameHeader(serverConn); err != nil {
+			done <- err
+			return
+		}
+		var request workspacev0.StopWorkspaceRequest
+		if err := frameio.ReadProtoFrame(serverConn, &request); err != nil {
+			done <- err
+			return
+		}
+		done <- frameio.WriteProtoFrame(serverConn, &workspacev0.StopWorkspaceResponse{State: "stopped"})
+	}()
+	client := &workspaceMaterializerTestClient{}
+	session := &workspaceMaterializerTestSession{
+		streams:  []io.ReadWriteCloser{clientConn},
+		closeErr: errors.New("runtime cleanup failed"),
+	}
+	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), session, workspaceMount, api.WorkspaceMountResponse{State: "unmounting"}, client)
+	if err == nil {
+		t.Fatal("expected runtime close failure")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if client.stops != 0 {
+		t.Fatalf("stops = %d, want 0", client.stops)
+	}
+	if len(client.failures) != 1 || !strings.Contains(string(client.failures[0].Error), "workspace_mount_runtime_close_failed") {
+		t.Fatalf("failures = %+v", client.failures)
 	}
 }
 
@@ -611,7 +656,6 @@ func TestWorkspaceMaterializerControlledCleanStopFailureFailsWorkspaceMount(t *t
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	client := &workspaceMaterializerTestClient{}
 	err := (WorkspaceMaterializer{CAS: store}).stopControlledWorkspaceMount(context.Background(), &workspaceMaterializerTestSession{
@@ -645,7 +689,6 @@ func TestWorkspaceMaterializerControlledDirtyStopPromotesBeforeFinalize(t *testi
 		ProjectID:              "project-1",
 		EnvironmentID:          "environment-1",
 		WorkspaceID:            "workspace-1",
-		RuntimeInstanceToken:   "reservation-token",
 		GuestdChannelToken:     "channel-token",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
 		FencingGeneration:      7,
@@ -744,7 +787,6 @@ func TestWorkspaceMaterializerControlledDirtyStopFinalizeFailureFailsWorkspaceMo
 		ProjectID:              "project-1",
 		EnvironmentID:          "environment-1",
 		WorkspaceID:            "workspace-1",
-		RuntimeInstanceToken:   "reservation-token",
 		GuestdChannelToken:     "channel-token",
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte("channel-token")),
 		FencingGeneration:      7,
@@ -820,7 +862,6 @@ func TestWorkspaceMaterializerCleansPartialArtifactsOnMaterializeFailure(t *test
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.WorkspaceArtifact.SizeBytes++
 	tempDir := t.TempDir()
 	client := &workspaceMaterializerTestClient{}
@@ -853,7 +894,6 @@ func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T)
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "runtime-instance-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
@@ -912,7 +952,6 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go acknowledgeWorkspaceMount(t, initialServer, workspaceMount)
@@ -934,11 +973,10 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 	if err == nil || !strings.Contains(err.Error(), "renew workspace mount") {
 		t.Fatalf("materializer err = %v, want renew error", err)
 	}
-	runtimeInstanceToken := workspaceMount.RuntimeInstanceToken
-	if len(client.renews) == 0 || client.renews[0].OrgID != "org-1" || client.renews[0].WorkspaceMountID != "mat-1" || client.renews[0].RuntimeInstanceToken != runtimeInstanceToken {
+	if len(client.renews) == 0 || client.renews[0].OrgID != "org-1" || client.renews[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("renew requests = %+v", client.renews)
 	}
-	if len(client.failures) != 1 || client.failures[0].WorkspaceMountID != "mat-1" || client.failures[0].RuntimeInstanceToken != runtimeInstanceToken {
+	if len(client.failures) != 1 || client.failures[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("failures = %+v", client.failures)
 	}
 }
@@ -952,7 +990,6 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "runtime-instance-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
@@ -976,8 +1013,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 	if err == nil || !strings.Contains(err.Error(), "workspace mount VM exited") {
 		t.Fatalf("materializer err = %v, want VM exit", err)
 	}
-	runtimeInstanceToken := workspaceMount.RuntimeInstanceToken
-	if len(client.failures) != 1 || client.failures[0].WorkspaceMountID != "mat-1" || client.failures[0].RuntimeInstanceToken != runtimeInstanceToken {
+	if len(client.failures) != 1 || client.failures[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("failures = %+v", client.failures)
 	}
 	if got := string(client.failures[0].Error); !strings.Contains(got, "workspace_mount_vm_exited") {
@@ -998,7 +1034,6 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	go func() {
@@ -1116,12 +1151,11 @@ func TestWorkspaceMaterializerPersistsWorkspaceOperationEvents(t *testing.T) {
 	materializer := WorkspaceMaterializer{}
 	client := &workspaceMaterializerTestClient{}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
+		ID:            "mat-1",
+		OrgID:         "org-1",
+		ProjectID:     "project-1",
+		EnvironmentID: "env-1",
+		WorkspaceID:   "workspace-1",
 	}
 	events := []*workspacev0.WorkspaceOperationEvent{
 		{Event: &workspacev0.WorkspaceOperationEvent_ExecStarted{ExecStarted: &workspacev0.WorkspaceExecStarted{ExecId: "exec-1", ProcessId: "pid-1"}}},
@@ -1168,12 +1202,11 @@ func TestWorkspaceMaterializerRetriesOutputEventWithStableOffset(t *testing.T) {
 		execOutputErrors: []error{errors.New("transient response loss")},
 	}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
+		ID:            "mat-1",
+		OrgID:         "org-1",
+		ProjectID:     "project-1",
+		EnvironmentID: "env-1",
+		WorkspaceID:   "workspace-1",
 	}
 	event := &workspacev0.WorkspaceOperationEvent{
 		Event: &workspacev0.WorkspaceOperationEvent_ExecStdoutChunk{
@@ -1211,7 +1244,6 @@ func TestWorkspaceMaterializerRegistersPreparedRuntimeOverOpenedStream(t *testin
 	workspaceMount.ID = "mat-1"
 	workspaceMount.OrgID = "org-1"
 	workspaceMount.WorkspaceID = "workspace-1"
-	workspaceMount.RuntimeInstanceToken = "reservation-token"
 	workspaceMount.GuestdChannelToken = "channel-token"
 	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
 	workspacePath := filepath.Join(t.TempDir(), "workspace.tar")
@@ -1415,6 +1447,8 @@ type workspaceMaterializerTestSession struct {
 	streams   []io.ReadWriteCloser
 	opened    []io.ReadWriteCloser
 	exit      <-chan error
+	closeErr  error
+	closed    int
 }
 
 func (s *workspaceMaterializerTestSession) Stream() io.ReadWriteCloser {
@@ -1433,6 +1467,7 @@ func (s *workspaceMaterializerTestSession) OpenStream(context.Context) (io.ReadW
 }
 
 func (s *workspaceMaterializerTestSession) Close(context.Context) error {
+	s.closed++
 	if s.initial != nil {
 		_ = s.initial.Close()
 	}
@@ -1447,7 +1482,7 @@ func (s *workspaceMaterializerTestSession) Close(context.Context) error {
 	for _, stream := range s.streams {
 		_ = stream.Close()
 	}
-	return nil
+	return s.closeErr
 }
 
 func (s *workspaceMaterializerTestSession) Wait(ctx context.Context) error {
@@ -1778,14 +1813,13 @@ func TestWorkspaceExecInputRelayClosesAfterAllPagedInputIsDelivered(t *testing.T
 	}()
 	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{clientStream}}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
-		GuestdChannelToken:   "guest-token",
-		FencingGeneration:    1,
+		ID:                 "mat-1",
+		OrgID:              "org-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		WorkspaceID:        "workspace-1",
+		GuestdChannelToken: "guest-token",
+		FencingGeneration:  1,
 	}
 	operation := api.WorkerWorkspaceOperation{WorkspaceOperationResponse: api.WorkspaceOperationResponse{
 		ID:                 "op-1",
@@ -1856,14 +1890,13 @@ func TestWorkspaceExecInputRelayUsesPersistedDeliveredCursorForClose(t *testing.
 	}()
 	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{clientStream}}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
-		GuestdChannelToken:   "guest-token",
-		FencingGeneration:    1,
+		ID:                 "mat-1",
+		OrgID:              "org-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		WorkspaceID:        "workspace-1",
+		GuestdChannelToken: "guest-token",
+		FencingGeneration:  1,
 	}
 	operation := api.WorkerWorkspaceOperation{WorkspaceOperationResponse: api.WorkspaceOperationResponse{
 		ID:                 "op-1",
@@ -1925,14 +1958,13 @@ func TestWorkspaceExecInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T)
 	}()
 	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{clientStream}}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
-		GuestdChannelToken:   "guest-token",
-		FencingGeneration:    1,
+		ID:                 "mat-1",
+		OrgID:              "org-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		WorkspaceID:        "workspace-1",
+		GuestdChannelToken: "guest-token",
+		FencingGeneration:  1,
 	}
 	operation := api.WorkerWorkspaceOperation{WorkspaceOperationResponse: api.WorkspaceOperationResponse{
 		ID:                 "op-1",
@@ -1996,14 +2028,13 @@ func TestWorkspacePtyInputRelayStopsBeforeDeliveringTerminalInput(t *testing.T) 
 	}()
 	session := &workspaceMaterializerTestSession{streams: []io.ReadWriteCloser{clientStream}}
 	workspaceMount := api.WorkerWorkspaceMount{
-		ID:                   "mat-1",
-		OrgID:                "org-1",
-		ProjectID:            "project-1",
-		EnvironmentID:        "env-1",
-		WorkspaceID:          "workspace-1",
-		RuntimeInstanceToken: "reservation-token",
-		GuestdChannelToken:   "guest-token",
-		FencingGeneration:    1,
+		ID:                 "mat-1",
+		OrgID:              "org-1",
+		ProjectID:          "project-1",
+		EnvironmentID:      "env-1",
+		WorkspaceID:        "workspace-1",
+		GuestdChannelToken: "guest-token",
+		FencingGeneration:  1,
 	}
 	operation := api.WorkerWorkspaceOperation{WorkspaceOperationResponse: api.WorkspaceOperationResponse{
 		ID:                 "op-1",

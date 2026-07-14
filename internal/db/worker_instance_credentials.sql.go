@@ -13,266 +13,599 @@ import (
 
 const authenticateWorkerInstanceCredential = `-- name: AuthenticateWorkerInstanceCredential :one
 WITH credential AS (
-    SELECT worker_instance_credentials.id
+    SELECT worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at,
+           worker_groups.claim_version AS group_claim_version,
+           worker_groups.allows_run AS group_allows_run,
+           worker_groups.allows_build AS group_allows_build,
+           (worker_instance_credentials.allows_run AND worker_groups.allows_run AND $1::boolean) AS effective_allows_run,
+           (worker_instance_credentials.allows_build AND worker_groups.allows_build AND $2::boolean) AS effective_allows_build
       FROM worker_instance_credentials
       JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
-      JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-     WHERE worker_instance_credentials.worker_instance_id = $1
-       AND worker_instance_credentials.secret_hash = $2
-       AND worker_instance_credentials.worker_group_id = $3
-       AND worker_instance_credentials.worker_group_id = worker_instances.worker_group_id
-       AND worker_instance_credentials.claim_version = worker_instances.claim_version
-       AND worker_instance_credentials.claim_version = worker_groups.claim_version
-       AND worker_groups.state = 'active'
+                           AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
+      JOIN worker_groups ON worker_groups.id = worker_instance_credentials.worker_group_id
+     WHERE worker_instance_credentials.worker_instance_id = $3
+       AND worker_instance_credentials.secret_hash = $4
        AND worker_instance_credentials.revoked_at IS NULL
+       AND (worker_instance_credentials.expires_at IS NULL OR worker_instance_credentials.expires_at > now())
+       AND worker_instance_credentials.claim_version = worker_instances.claim_version
+       AND worker_instance_credentials.protocol_version = $5
+       AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
+       AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
+       AND worker_instances.state IN ('registering','active','draining')
+       AND worker_groups.state IN ('active','draining')
+     FOR UPDATE OF worker_instance_credentials, worker_instances, worker_groups
+), advanced AS (
+    UPDATE worker_instances
+       SET current_epoch = CASE WHEN worker_instances.current_service_id = $6
+                                THEN worker_instances.current_epoch
+                                ELSE COALESCE(worker_instances.current_epoch, 0) + 1 END,
+           current_service_id = $6,
+           epoch_started_at = CASE WHEN worker_instances.current_service_id = $6
+                                   THEN worker_instances.epoch_started_at ELSE now() END,
+           startup_inventory_epoch = CASE WHEN worker_instances.current_service_id = $6
+                                          THEN worker_instances.startup_inventory_epoch ELSE NULL END,
+           startup_inventory_evidence = CASE WHEN worker_instances.current_service_id = $6
+                                             THEN worker_instances.startup_inventory_evidence ELSE NULL END,
+           state = CASE
+               WHEN worker_instances.current_service_id = $6 THEN worker_instances.state
+               WHEN worker_instances.state = 'active' THEN 'registering'
+               ELSE worker_instances.state
+           END,
+           supports_run = credential.effective_allows_run,
+           supports_build = credential.effective_allows_build,
+           certified_at = CASE WHEN worker_instances.current_service_id = $6
+                                      OR worker_instances.state = 'draining'
+                               THEN worker_instances.certified_at ELSE NULL END,
+           activated_at = CASE WHEN worker_instances.current_service_id = $6
+                                      OR worker_instances.state = 'draining'
+                               THEN worker_instances.activated_at ELSE NULL END,
+           certification_profile = CASE WHEN worker_instances.current_service_id = $6
+                                               OR worker_instances.state = 'draining'
+                                        THEN worker_instances.certification_profile ELSE '' END,
+           certification_fingerprint = CASE WHEN worker_instances.current_service_id = $6
+                                                   OR worker_instances.state = 'draining'
+                                            THEN worker_instances.certification_fingerprint ELSE '' END,
+           updated_at = now()
+      FROM credential
+     WHERE worker_instances.id = credential.worker_instance_id
+    RETURNING worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
 )
-UPDATE worker_instance_credentials
-   SET last_used_at = now()
-  FROM credential
- WHERE worker_instance_credentials.id = credential.id
-RETURNING worker_instance_credentials.id,
-          worker_instance_credentials.worker_group_id,
-          worker_instance_credentials.worker_instance_id,
-          worker_instance_credentials.claim_version
+SELECT credential.id, credential.worker_group_id,
+       credential.worker_instance_id, credential.key_prefix, credential.claim_version,
+       credential.protocol_version, credential.group_claim_version,
+       credential.allows_run AS credential_allows_run,
+       credential.allows_build AS credential_allows_build,
+       credential.group_allows_run, credential.group_allows_build,
+       credential.effective_allows_run, credential.effective_allows_build,
+       advanced.current_epoch, advanced.current_service_id, advanced.state,
+       advanced.resource_id
+  FROM credential JOIN advanced ON advanced.id = credential.worker_instance_id
 `
 
 type AuthenticateWorkerInstanceCredentialParams struct {
+	SupportsRun      bool        `json:"supports_run"`
+	SupportsBuild    bool        `json:"supports_build"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
 	SecretHash       []byte      `json:"secret_hash"`
-	WorkerGroupID    string      `json:"worker_group_id"`
+	ProtocolVersion  string      `json:"protocol_version"`
+	ServiceID        pgtype.UUID `json:"service_id"`
 }
 
 type AuthenticateWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID `json:"id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	ClaimVersion     int64       `json:"claim_version"`
+	ID                    pgtype.UUID         `json:"id"`
+	WorkerGroupID         string              `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID         `json:"worker_instance_id"`
+	KeyPrefix             string              `json:"key_prefix"`
+	ClaimVersion          int64               `json:"claim_version"`
+	ProtocolVersion       string              `json:"protocol_version"`
+	GroupClaimVersion     int64               `json:"group_claim_version"`
+	CredentialAllowsRun   bool                `json:"credential_allows_run"`
+	CredentialAllowsBuild bool                `json:"credential_allows_build"`
+	GroupAllowsRun        bool                `json:"group_allows_run"`
+	GroupAllowsBuild      bool                `json:"group_allows_build"`
+	EffectiveAllowsRun    pgtype.Bool         `json:"effective_allows_run"`
+	EffectiveAllowsBuild  pgtype.Bool         `json:"effective_allows_build"`
+	CurrentEpoch          pgtype.Int8         `json:"current_epoch"`
+	CurrentServiceID      pgtype.UUID         `json:"current_service_id"`
+	State                 WorkerInstanceState `json:"state"`
+	ResourceID            string              `json:"resource_id"`
 }
 
 func (q *Queries) AuthenticateWorkerInstanceCredential(ctx context.Context, arg AuthenticateWorkerInstanceCredentialParams) (AuthenticateWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential, arg.WorkerInstanceID, arg.SecretHash, arg.WorkerGroupID)
-	var i AuthenticateWorkerInstanceCredentialRow
-	err := row.Scan(
-		&i.ID,
-		&i.WorkerGroupID,
-		&i.WorkerInstanceID,
-		&i.ClaimVersion,
-	)
-	return i, err
-}
-
-const authorizeWorkerInstanceCredential = `-- name: AuthorizeWorkerInstanceCredential :one
-SELECT worker_instance_credentials.id,
-       worker_instance_credentials.worker_group_id,
-       worker_instance_credentials.worker_instance_id,
-       worker_instance_credentials.claim_version,
-       worker_instances.resource_id
-  FROM worker_instance_credentials
-  JOIN worker_instances ON worker_instances.id = worker_instance_credentials.worker_instance_id
-  JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
-WHERE worker_instance_credentials.id = $1
-   AND worker_instance_credentials.worker_instance_id = $2
-   AND worker_instance_credentials.worker_group_id = $3
-   AND worker_instance_credentials.worker_group_id = worker_instances.worker_group_id
-   AND worker_instance_credentials.claim_version = worker_instances.claim_version
-   AND worker_instance_credentials.claim_version = worker_groups.claim_version
-   AND worker_groups.state = 'active'
-   AND worker_instance_credentials.revoked_at IS NULL
-`
-
-type AuthorizeWorkerInstanceCredentialParams struct {
-	CredentialID     pgtype.UUID `json:"credential_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
-}
-
-type AuthorizeWorkerInstanceCredentialRow struct {
-	ID               pgtype.UUID `json:"id"`
-	WorkerGroupID    string      `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
-	ClaimVersion     int64       `json:"claim_version"`
-	ResourceID       string      `json:"resource_id"`
-}
-
-func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error) {
-	row := q.db.QueryRow(ctx, authorizeWorkerInstanceCredential, arg.CredentialID, arg.WorkerInstanceID, arg.WorkerGroupID)
-	var i AuthorizeWorkerInstanceCredentialRow
-	err := row.Scan(
-		&i.ID,
-		&i.WorkerGroupID,
-		&i.WorkerInstanceID,
-		&i.ClaimVersion,
-		&i.ResourceID,
-	)
-	return i, err
-}
-
-const createWorkerInstanceCredentialFromBootstrap = `-- name: CreateWorkerInstanceCredentialFromBootstrap :one
-WITH bootstrap_token AS (
-    SELECT worker_bootstrap_tokens.id,
-           worker_bootstrap_tokens.org_id,
-           worker_bootstrap_tokens.worker_group_id,
-           worker_groups.claim_version
-     FROM worker_bootstrap_tokens
-      JOIN worker_groups ON worker_groups.id = worker_bootstrap_tokens.worker_group_id
-     WHERE worker_bootstrap_tokens.token_hash = $4
-       AND worker_bootstrap_tokens.worker_group_id = $5
-       AND worker_groups.state = 'active'
-       AND worker_bootstrap_tokens.revoked_at IS NULL
-       AND (worker_bootstrap_tokens.expires_at IS NULL OR worker_bootstrap_tokens.expires_at > now())
-     FOR UPDATE
-),
-reserved_worker_instance AS (
-    INSERT INTO worker_instances (
-        id,
-        org_id,
-        worker_group_id,
-        resource_id,
-        status,
-        claim_version,
-        total_milli_cpu,
-        total_memory_mib,
-        total_disk_mib,
-        total_execution_slots,
-        available_milli_cpu,
-        available_memory_mib,
-        available_disk_mib,
-        available_execution_slots,
-        labels,
-        heartbeat,
-        last_seen_at
-    )
-    SELECT $6,
-           bootstrap_token.org_id,
-           bootstrap_token.worker_group_id,
-           $7,
-           'offline',
-           bootstrap_token.claim_version,
-           1,
-           1,
-           0,
-           1,
-           0,
-           0,
-           0,
-           0,
-           '{}'::jsonb,
-           '{}'::jsonb,
-           now()
-      FROM bootstrap_token
-    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
-       SET resource_id = EXCLUDED.resource_id,
-           worker_group_id = EXCLUDED.worker_group_id,
-           claim_version = EXCLUDED.claim_version
-    RETURNING id AS worker_instance_id, org_id, worker_group_id, claim_version
-),
-revoked_existing_credentials AS (
-    UPDATE worker_instance_credentials
-       SET revoked_at = now()
-      FROM reserved_worker_instance
-     WHERE worker_instance_credentials.worker_instance_id = reserved_worker_instance.worker_instance_id
-       AND worker_instance_credentials.revoked_at IS NULL
-    RETURNING worker_instance_credentials.id
-),
-credential_rotation AS (
-    SELECT count(*) FROM revoked_existing_credentials
-),
-bootstrap_token_update AS (
-    UPDATE worker_bootstrap_tokens
-       SET last_used_at = now(),
-           last_used_by_worker_instance_id = (SELECT worker_instance_id FROM reserved_worker_instance)
-     WHERE worker_bootstrap_tokens.token_hash = $4
-       AND worker_bootstrap_tokens.worker_group_id = $5
-       AND worker_bootstrap_tokens.revoked_at IS NULL
-     RETURNING 1
-)
-INSERT INTO worker_instance_credentials (id, org_id, worker_group_id, worker_instance_id, key_prefix, claim_version, secret_hash)
-SELECT $1,
-       reserved_worker_instance.org_id,
-       reserved_worker_instance.worker_group_id,
-       reserved_worker_instance.worker_instance_id,
-       $2,
-       reserved_worker_instance.claim_version,
-       $3
-  FROM bootstrap_token
- CROSS JOIN reserved_worker_instance
- CROSS JOIN bootstrap_token_update
- CROSS JOIN credential_rotation
-RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, created_at
-`
-
-type CreateWorkerInstanceCredentialFromBootstrapParams struct {
-	CredentialID       pgtype.UUID `json:"credential_id"`
-	KeyPrefix          string      `json:"key_prefix"`
-	SecretHash         []byte      `json:"secret_hash"`
-	BootstrapTokenHash []byte      `json:"bootstrap_token_hash"`
-	WorkerGroupID      string      `json:"worker_group_id"`
-	WorkerInstanceID   pgtype.UUID `json:"worker_instance_id"`
-	ResourceID         string      `json:"resource_id"`
-}
-
-type CreateWorkerInstanceCredentialFromBootstrapRow struct {
-	ID               pgtype.UUID        `json:"id"`
-	WorkerGroupID    string             `json:"worker_group_id"`
-	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
-	KeyPrefix        string             `json:"key_prefix"`
-	ClaimVersion     int64              `json:"claim_version"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-}
-
-func (q *Queries) CreateWorkerInstanceCredentialFromBootstrap(ctx context.Context, arg CreateWorkerInstanceCredentialFromBootstrapParams) (CreateWorkerInstanceCredentialFromBootstrapRow, error) {
-	row := q.db.QueryRow(ctx, createWorkerInstanceCredentialFromBootstrap,
-		arg.CredentialID,
-		arg.KeyPrefix,
-		arg.SecretHash,
-		arg.BootstrapTokenHash,
-		arg.WorkerGroupID,
+	row := q.db.QueryRow(ctx, authenticateWorkerInstanceCredential,
+		arg.SupportsRun,
+		arg.SupportsBuild,
 		arg.WorkerInstanceID,
-		arg.ResourceID,
+		arg.SecretHash,
+		arg.ProtocolVersion,
+		arg.ServiceID,
 	)
-	var i CreateWorkerInstanceCredentialFromBootstrapRow
+	var i AuthenticateWorkerInstanceCredentialRow
 	err := row.Scan(
 		&i.ID,
 		&i.WorkerGroupID,
 		&i.WorkerInstanceID,
 		&i.KeyPrefix,
 		&i.ClaimVersion,
+		&i.ProtocolVersion,
+		&i.GroupClaimVersion,
+		&i.CredentialAllowsRun,
+		&i.CredentialAllowsBuild,
+		&i.GroupAllowsRun,
+		&i.GroupAllowsBuild,
+		&i.EffectiveAllowsRun,
+		&i.EffectiveAllowsBuild,
+		&i.CurrentEpoch,
+		&i.CurrentServiceID,
+		&i.State,
+		&i.ResourceID,
+	)
+	return i, err
+}
+
+const authorizeRegisteringWorkerInstanceCredential = `-- name: AuthorizeRegisteringWorkerInstanceCredential :one
+UPDATE worker_instance_credentials
+   SET last_used_at = now()
+  FROM worker_instances, worker_groups
+ WHERE worker_instance_credentials.id = $1
+   AND worker_instances.id = worker_instance_credentials.worker_instance_id
+   AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
+   AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_instance_credentials.revoked_at IS NULL
+   AND worker_instance_credentials.claim_version = $2
+   AND worker_instance_credentials.claim_version = worker_instances.claim_version
+   AND worker_groups.claim_version = $3
+   AND worker_instance_credentials.protocol_version = $4
+   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
+   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
+   AND worker_instances.current_epoch = $5
+   AND worker_instances.state = 'registering'
+   AND worker_groups.state IN ('active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+          worker_instances.current_epoch, worker_instances.state AS worker_state,
+          worker_instances.supports_run, worker_instances.supports_build,
+          worker_instances.epoch_started_at
+`
+
+type AuthorizeRegisteringWorkerInstanceCredentialParams struct {
+	CredentialID      pgtype.UUID `json:"credential_id"`
+	ClaimVersion      int64       `json:"claim_version"`
+	GroupClaimVersion int64       `json:"group_claim_version"`
+	ProtocolVersion   string      `json:"protocol_version"`
+	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
+}
+
+type AuthorizeRegisteringWorkerInstanceCredentialRow struct {
+	ID               pgtype.UUID         `json:"id"`
+	WorkerGroupID    string              `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
+	KeyPrefix        string              `json:"key_prefix"`
+	ClaimVersion     int64               `json:"claim_version"`
+	AllowsRun        bool                `json:"allows_run"`
+	AllowsBuild      bool                `json:"allows_build"`
+	ProtocolVersion  string              `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
+	SecretHash       []byte              `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
+	ResourceID       string              `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
+	WorkerState      WorkerInstanceState `json:"worker_state"`
+	SupportsRun      bool                `json:"supports_run"`
+	SupportsBuild    bool                `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+}
+
+func (q *Queries) AuthorizeRegisteringWorkerInstanceCredential(ctx context.Context, arg AuthorizeRegisteringWorkerInstanceCredentialParams) (AuthorizeRegisteringWorkerInstanceCredentialRow, error) {
+	row := q.db.QueryRow(ctx, authorizeRegisteringWorkerInstanceCredential,
+		arg.CredentialID,
+		arg.ClaimVersion,
+		arg.GroupClaimVersion,
+		arg.ProtocolVersion,
+		arg.WorkerEpoch,
+	)
+	var i AuthorizeRegisteringWorkerInstanceCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.KeyPrefix,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.ProtocolVersion,
+		&i.ExpiresAt,
+		&i.SecretHash,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ResourceID,
+		&i.CurrentEpoch,
+		&i.WorkerState,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.EpochStartedAt,
+	)
+	return i, err
+}
+
+const authorizeTerminalWorkerInstanceCredential = `-- name: AuthorizeTerminalWorkerInstanceCredential :one
+UPDATE worker_instance_credentials
+   SET last_used_at = now()
+  FROM worker_instances, worker_groups
+ WHERE worker_instance_credentials.id = $1
+   AND worker_instances.id = worker_instance_credentials.worker_instance_id
+   AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
+   AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_instance_credentials.revoked_at IS NULL
+   AND worker_instance_credentials.claim_version = $2
+   AND worker_instance_credentials.claim_version = worker_instances.claim_version
+   AND worker_groups.claim_version = $3
+   AND worker_instance_credentials.protocol_version = $4
+   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
+   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
+   AND worker_instances.current_epoch = $5
+   AND worker_instances.state IN ('active','draining','disabled')
+   AND worker_groups.state IN ('active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+          worker_instances.current_epoch, worker_instances.state AS worker_state,
+          worker_instances.supports_run, worker_instances.supports_build,
+          worker_instances.epoch_started_at
+`
+
+type AuthorizeTerminalWorkerInstanceCredentialParams struct {
+	CredentialID      pgtype.UUID `json:"credential_id"`
+	ClaimVersion      int64       `json:"claim_version"`
+	GroupClaimVersion int64       `json:"group_claim_version"`
+	ProtocolVersion   string      `json:"protocol_version"`
+	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
+}
+
+type AuthorizeTerminalWorkerInstanceCredentialRow struct {
+	ID               pgtype.UUID         `json:"id"`
+	WorkerGroupID    string              `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
+	KeyPrefix        string              `json:"key_prefix"`
+	ClaimVersion     int64               `json:"claim_version"`
+	AllowsRun        bool                `json:"allows_run"`
+	AllowsBuild      bool                `json:"allows_build"`
+	ProtocolVersion  string              `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
+	SecretHash       []byte              `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
+	ResourceID       string              `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
+	WorkerState      WorkerInstanceState `json:"worker_state"`
+	SupportsRun      bool                `json:"supports_run"`
+	SupportsBuild    bool                `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+}
+
+func (q *Queries) AuthorizeTerminalWorkerInstanceCredential(ctx context.Context, arg AuthorizeTerminalWorkerInstanceCredentialParams) (AuthorizeTerminalWorkerInstanceCredentialRow, error) {
+	row := q.db.QueryRow(ctx, authorizeTerminalWorkerInstanceCredential,
+		arg.CredentialID,
+		arg.ClaimVersion,
+		arg.GroupClaimVersion,
+		arg.ProtocolVersion,
+		arg.WorkerEpoch,
+	)
+	var i AuthorizeTerminalWorkerInstanceCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.KeyPrefix,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.ProtocolVersion,
+		&i.ExpiresAt,
+		&i.SecretHash,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ResourceID,
+		&i.CurrentEpoch,
+		&i.WorkerState,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.EpochStartedAt,
+	)
+	return i, err
+}
+
+const authorizeWorkerInstanceCredential = `-- name: AuthorizeWorkerInstanceCredential :one
+UPDATE worker_instance_credentials
+   SET last_used_at = now()
+  FROM worker_instances, worker_groups
+ WHERE worker_instance_credentials.id = $1
+   AND worker_instances.id = worker_instance_credentials.worker_instance_id
+   AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
+   AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_instance_credentials.revoked_at IS NULL
+   AND worker_instance_credentials.claim_version = $2
+   AND worker_instance_credentials.claim_version = worker_instances.claim_version
+   AND worker_groups.claim_version = $3
+   AND worker_instance_credentials.protocol_version = $4
+   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
+   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
+   AND worker_instances.current_epoch = $5
+   AND worker_instances.state IN ('active','draining')
+   AND worker_groups.state IN ('active','draining')
+RETURNING worker_instance_credentials.id, worker_instance_credentials.worker_group_id, worker_instance_credentials.worker_instance_id, worker_instance_credentials.key_prefix, worker_instance_credentials.claim_version, worker_instance_credentials.allows_run, worker_instance_credentials.allows_build, worker_instance_credentials.protocol_version, worker_instance_credentials.expires_at, worker_instance_credentials.secret_hash, worker_instance_credentials.created_at, worker_instance_credentials.last_used_at, worker_instance_credentials.revoked_at, worker_instances.resource_id,
+          worker_instances.current_epoch, worker_instances.state AS worker_state,
+          worker_instances.supports_run, worker_instances.supports_build,
+          worker_instances.epoch_started_at
+`
+
+type AuthorizeWorkerInstanceCredentialParams struct {
+	CredentialID      pgtype.UUID `json:"credential_id"`
+	ClaimVersion      int64       `json:"claim_version"`
+	GroupClaimVersion int64       `json:"group_claim_version"`
+	ProtocolVersion   string      `json:"protocol_version"`
+	WorkerEpoch       pgtype.Int8 `json:"worker_epoch"`
+}
+
+type AuthorizeWorkerInstanceCredentialRow struct {
+	ID               pgtype.UUID         `json:"id"`
+	WorkerGroupID    string              `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID         `json:"worker_instance_id"`
+	KeyPrefix        string              `json:"key_prefix"`
+	ClaimVersion     int64               `json:"claim_version"`
+	AllowsRun        bool                `json:"allows_run"`
+	AllowsBuild      bool                `json:"allows_build"`
+	ProtocolVersion  string              `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz  `json:"expires_at"`
+	SecretHash       []byte              `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz  `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz  `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz  `json:"revoked_at"`
+	ResourceID       string              `json:"resource_id"`
+	CurrentEpoch     pgtype.Int8         `json:"current_epoch"`
+	WorkerState      WorkerInstanceState `json:"worker_state"`
+	SupportsRun      bool                `json:"supports_run"`
+	SupportsBuild    bool                `json:"supports_build"`
+	EpochStartedAt   pgtype.Timestamptz  `json:"epoch_started_at"`
+}
+
+func (q *Queries) AuthorizeWorkerInstanceCredential(ctx context.Context, arg AuthorizeWorkerInstanceCredentialParams) (AuthorizeWorkerInstanceCredentialRow, error) {
+	row := q.db.QueryRow(ctx, authorizeWorkerInstanceCredential,
+		arg.CredentialID,
+		arg.ClaimVersion,
+		arg.GroupClaimVersion,
+		arg.ProtocolVersion,
+		arg.WorkerEpoch,
+	)
+	var i AuthorizeWorkerInstanceCredentialRow
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.KeyPrefix,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.ProtocolVersion,
+		&i.ExpiresAt,
+		&i.SecretHash,
+		&i.CreatedAt,
+		&i.LastUsedAt,
+		&i.RevokedAt,
+		&i.ResourceID,
+		&i.CurrentEpoch,
+		&i.WorkerState,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.EpochStartedAt,
+	)
+	return i, err
+}
+
+const createWorkerEnrollmentNonce = `-- name: CreateWorkerEnrollmentNonce :one
+WITH pruned AS (
+    DELETE FROM worker_enrollment_nonces
+     WHERE expires_at <= now() AND created_at < now() - interval '10 minutes'
+    RETURNING id
+)
+INSERT INTO worker_enrollment_nonces (id, nonce_hash, worker_group_id, expires_at)
+SELECT $1, $2, worker_groups.id, $3
+  FROM worker_groups
+ WHERE worker_groups.id = $4
+   AND worker_groups.state = 'active'
+   AND (SELECT count(*) FROM pruned) >= 0
+RETURNING id, nonce_hash, worker_group_id, expires_at, consumed_at, consumed_by_worker_instance_id, created_at
+`
+
+type CreateWorkerEnrollmentNonceParams struct {
+	ID            pgtype.UUID        `json:"id"`
+	NonceHash     []byte             `json:"nonce_hash"`
+	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
+	WorkerGroupID string             `json:"worker_group_id"`
+}
+
+func (q *Queries) CreateWorkerEnrollmentNonce(ctx context.Context, arg CreateWorkerEnrollmentNonceParams) (WorkerEnrollmentNonce, error) {
+	row := q.db.QueryRow(ctx, createWorkerEnrollmentNonce,
+		arg.ID,
+		arg.NonceHash,
+		arg.ExpiresAt,
+		arg.WorkerGroupID,
+	)
+	var i WorkerEnrollmentNonce
+	err := row.Scan(
+		&i.ID,
+		&i.NonceHash,
+		&i.WorkerGroupID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.ConsumedByWorkerInstanceID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const upsertWorkerBootstrapToken = `-- name: UpsertWorkerBootstrapToken :one
-INSERT INTO worker_bootstrap_tokens (id, token_hash, worker_group_id)
-VALUES (
-    $1,
-    $2::bytea,
-    $3
+const enrollWorkerInstance = `-- name: EnrollWorkerInstance :one
+WITH nonce AS (
+    SELECT worker_enrollment_nonces.id, worker_enrollment_nonces.nonce_hash, worker_enrollment_nonces.worker_group_id, worker_enrollment_nonces.expires_at, worker_enrollment_nonces.consumed_at, worker_enrollment_nonces.consumed_by_worker_instance_id, worker_enrollment_nonces.created_at, worker_groups.allows_run,
+           worker_groups.allows_build, worker_groups.protocol_version
+      FROM worker_enrollment_nonces
+      JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
+     WHERE worker_enrollment_nonces.nonce_hash = $1
+       AND worker_enrollment_nonces.worker_group_id = $2
+       AND worker_enrollment_nonces.consumed_at IS NULL
+       AND worker_enrollment_nonces.expires_at > now()
+       AND worker_groups.state = 'active'
+       AND worker_groups.allows_run = $3
+       AND worker_groups.allows_build = $4
+       AND worker_groups.protocol_version = $5
+       AND worker_groups.enrollment_policy_fingerprint = $6
+       AND $7::text = ANY(worker_groups.allowed_attestation_fingerprints)
+     FOR UPDATE OF worker_enrollment_nonces, worker_groups
+), worker AS (
+    INSERT INTO worker_instances (
+        id, worker_group_id, resource_id, state, claim_version,
+        protocol_version, supports_run, supports_build, attestation_fingerprint
+    )
+    SELECT $8, nonce.worker_group_id,
+           $9, 'registering', 1, nonce.protocol_version,
+           nonce.allows_run, nonce.allows_build, $7
+      FROM nonce
+    ON CONFLICT (worker_group_id, resource_id) DO UPDATE
+       SET claim_version = worker_instances.claim_version + 1,
+           state = 'registering', protocol_version = EXCLUDED.protocol_version,
+           supports_run = EXCLUDED.supports_run, supports_build = EXCLUDED.supports_build,
+           attestation_fingerprint = EXCLUDED.attestation_fingerprint,
+           current_service_id = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE uuidv7() END,
+           epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
+           startup_inventory_epoch = NULL, startup_inventory_evidence = NULL,
+           drain_cleanup_fingerprint = NULL, drain_cleanup_evidence = NULL,
+           certified_at = NULL, activated_at = NULL,
+           certification_profile = '', certification_fingerprint = '',
+           draining_at = NULL, disabled_at = NULL, lost_at = NULL, updated_at = now()
+     WHERE worker_instances.termination_claimed_at IS NULL
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+), revoked AS (
+    UPDATE worker_instance_credentials SET revoked_at = now()
+      FROM worker WHERE worker_instance_credentials.worker_instance_id = worker.id
+                    AND worker_instance_credentials.revoked_at IS NULL
+    RETURNING worker_instance_credentials.id
+), credential AS (
+    INSERT INTO worker_instance_credentials (
+        id, worker_group_id, worker_instance_id, key_prefix, secret_hash,
+        claim_version, allows_run, allows_build, protocol_version, expires_at
+    )
+    SELECT $10, worker.worker_group_id, worker.id,
+           $11, $12, worker.claim_version,
+           worker.supports_run, worker.supports_build, worker.protocol_version,
+           $13
+      FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
+    RETURNING id, worker_group_id, worker_instance_id, key_prefix, claim_version, allows_run, allows_build, protocol_version, expires_at, secret_hash, created_at, last_used_at, revoked_at
+), consumed AS (
+    UPDATE worker_enrollment_nonces
+       SET consumed_at = now(), consumed_by_worker_instance_id = credential.worker_instance_id
+      FROM credential
+     WHERE worker_enrollment_nonces.id = (SELECT id FROM nonce)
+    RETURNING worker_enrollment_nonces.id
 )
-ON CONFLICT (token_hash) DO UPDATE
-   SET revoked_at = worker_bootstrap_tokens.revoked_at
-RETURNING id, org_id, token_hash, worker_group_id, expires_at, created_at, last_used_at, last_used_by_worker_instance_id, revoked_at
+SELECT credential.id, credential.worker_group_id, credential.worker_instance_id, credential.key_prefix, credential.claim_version, credential.allows_run, credential.allows_build, credential.protocol_version, credential.expires_at, credential.secret_hash, credential.created_at, credential.last_used_at, credential.revoked_at FROM credential JOIN consumed ON true
 `
 
-type UpsertWorkerBootstrapTokenParams struct {
-	ID            pgtype.UUID `json:"id"`
-	TokenHash     []byte      `json:"token_hash"`
-	WorkerGroupID string      `json:"worker_group_id"`
+type EnrollWorkerInstanceParams struct {
+	NonceHash                   []byte             `json:"nonce_hash"`
+	WorkerGroupID               string             `json:"worker_group_id"`
+	AllowsRun                   bool               `json:"allows_run"`
+	AllowsBuild                 bool               `json:"allows_build"`
+	ProtocolVersion             string             `json:"protocol_version"`
+	EnrollmentPolicyFingerprint string             `json:"enrollment_policy_fingerprint"`
+	AttestationFingerprint      string             `json:"attestation_fingerprint"`
+	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
+	ResourceID                  string             `json:"resource_id"`
+	CredentialID                pgtype.UUID        `json:"credential_id"`
+	KeyPrefix                   string             `json:"key_prefix"`
+	SecretHash                  []byte             `json:"secret_hash"`
+	CredentialExpiresAt         pgtype.Timestamptz `json:"credential_expires_at"`
 }
 
-func (q *Queries) UpsertWorkerBootstrapToken(ctx context.Context, arg UpsertWorkerBootstrapTokenParams) (WorkerBootstrapToken, error) {
-	row := q.db.QueryRow(ctx, upsertWorkerBootstrapToken, arg.ID, arg.TokenHash, arg.WorkerGroupID)
-	var i WorkerBootstrapToken
+type EnrollWorkerInstanceRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkerGroupID    string             `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	KeyPrefix        string             `json:"key_prefix"`
+	ClaimVersion     int64              `json:"claim_version"`
+	AllowsRun        bool               `json:"allows_run"`
+	AllowsBuild      bool               `json:"allows_build"`
+	ProtocolVersion  string             `json:"protocol_version"`
+	ExpiresAt        pgtype.Timestamptz `json:"expires_at"`
+	SecretHash       []byte             `json:"secret_hash"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt       pgtype.Timestamptz `json:"last_used_at"`
+	RevokedAt        pgtype.Timestamptz `json:"revoked_at"`
+}
+
+func (q *Queries) EnrollWorkerInstance(ctx context.Context, arg EnrollWorkerInstanceParams) (EnrollWorkerInstanceRow, error) {
+	row := q.db.QueryRow(ctx, enrollWorkerInstance,
+		arg.NonceHash,
+		arg.WorkerGroupID,
+		arg.AllowsRun,
+		arg.AllowsBuild,
+		arg.ProtocolVersion,
+		arg.EnrollmentPolicyFingerprint,
+		arg.AttestationFingerprint,
+		arg.WorkerInstanceID,
+		arg.ResourceID,
+		arg.CredentialID,
+		arg.KeyPrefix,
+		arg.SecretHash,
+		arg.CredentialExpiresAt,
+	)
+	var i EnrollWorkerInstanceRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.TokenHash,
 		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.KeyPrefix,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.ProtocolVersion,
 		&i.ExpiresAt,
+		&i.SecretHash,
 		&i.CreatedAt,
 		&i.LastUsedAt,
-		&i.LastUsedByWorkerInstanceID,
 		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getActiveWorkerEnrollmentNonce = `-- name: GetActiveWorkerEnrollmentNonce :one
+SELECT worker_enrollment_nonces.id, worker_enrollment_nonces.nonce_hash, worker_enrollment_nonces.worker_group_id, worker_enrollment_nonces.expires_at, worker_enrollment_nonces.consumed_at, worker_enrollment_nonces.consumed_by_worker_instance_id, worker_enrollment_nonces.created_at
+  FROM worker_enrollment_nonces
+  JOIN worker_groups ON worker_groups.id = worker_enrollment_nonces.worker_group_id
+ WHERE worker_enrollment_nonces.nonce_hash = $1
+   AND worker_enrollment_nonces.worker_group_id = $2
+   AND worker_enrollment_nonces.consumed_at IS NULL
+   AND worker_enrollment_nonces.expires_at > now()
+   AND worker_groups.state = 'active'
+`
+
+type GetActiveWorkerEnrollmentNonceParams struct {
+	NonceHash     []byte `json:"nonce_hash"`
+	WorkerGroupID string `json:"worker_group_id"`
+}
+
+func (q *Queries) GetActiveWorkerEnrollmentNonce(ctx context.Context, arg GetActiveWorkerEnrollmentNonceParams) (WorkerEnrollmentNonce, error) {
+	row := q.db.QueryRow(ctx, getActiveWorkerEnrollmentNonce, arg.NonceHash, arg.WorkerGroupID)
+	var i WorkerEnrollmentNonce
+	err := row.Scan(
+		&i.ID,
+		&i.NonceHash,
+		&i.WorkerGroupID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.ConsumedByWorkerInstanceID,
+		&i.CreatedAt,
 	)
 	return i, err
 }

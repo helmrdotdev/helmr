@@ -586,7 +586,6 @@ func TestPromoteDeploymentResolvesVersionInPathScope(t *testing.T) {
 		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
-			BuildWorkerGroupID:         dbtest.DefaultWorkerGroupID,
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              environmentID,
 			Version:                    "20260101.2",
@@ -740,7 +739,6 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		return db.Deployment{
 			ID:                         testDeploymentID(),
 			OrgID:                      arg.OrgID,
-			BuildWorkerGroupID:         firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
 			ProjectID:                  arg.ProjectID,
 			EnvironmentID:              arg.EnvironmentID,
 			Version:                    "20260101.1",
@@ -760,7 +758,6 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 	return db.Deployment{
 		ID:                           f.deployment.ID,
 		OrgID:                        f.deployment.OrgID,
-		BuildWorkerGroupID:           firstNonEmptyString(f.deployment.BuildWorkerGroupID, f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
 		ProjectID:                    f.deployment.ProjectID,
 		EnvironmentID:                f.deployment.EnvironmentID,
 		DeploymentSourceArtifactID:   f.deployment.DeploymentSourceArtifactID,
@@ -777,11 +774,7 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 }
 
 func (f *fakeStore) GetCurrentDeploymentForRoute(ctx context.Context, arg db.GetCurrentDeploymentForRouteParams) (db.Deployment, error) {
-	deployment, err := f.GetCurrentDeployment(ctx, db.GetCurrentDeploymentParams{
-		OrgID:         arg.OrgID,
-		ProjectID:     arg.ProjectID,
-		EnvironmentID: arg.EnvironmentID,
-	})
+	deployment, err := f.GetCurrentDeployment(ctx, db.GetCurrentDeploymentParams(arg))
 	if err != nil {
 		return db.Deployment{}, err
 	}
@@ -901,16 +894,11 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		if f.deployment.WorkerProtocolVersion == "" {
 			f.deployment.WorkerProtocolVersion = arg.WorkerProtocolVersion
 		}
-		if f.deployment.BuildWorkerGroupID == "" {
-			f.deployment.BuildWorkerGroupID = arg.BuildWorkerGroupID
-		}
-
 		return f.deployment, nil
 	}
 	f.deployment = db.Deployment{
 		ID:                         arg.ID,
 		OrgID:                      arg.OrgID,
-		BuildWorkerGroupID:         arg.BuildWorkerGroupID,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
 		Version:                    arg.Version,
@@ -1040,7 +1028,7 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 }
 
 func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
-	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash && f.deployment.BuildWorkerGroupID == arg.BuildWorkerGroupID {
+	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash {
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows
@@ -1069,10 +1057,6 @@ func (f *fakeStore) GetDeploymentByVersion(_ context.Context, arg db.GetDeployme
 
 func (f *fakeStore) GetDeploymentForOrg(_ context.Context, arg db.GetDeploymentForOrgParams) (db.Deployment, error) {
 	if f.deployment.ID == arg.ID && f.deployment.OrgID == arg.OrgID {
-		if f.deployment.BuildWorkerGroupID == "" {
-			f.deployment.BuildWorkerGroupID = firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1")
-		}
-
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows
@@ -1261,7 +1245,6 @@ func (f *fakeStore) AppendDeploymentEvent(_ context.Context, arg db.AppendDeploy
 	f.deploymentEvents = append(f.deploymentEvents, event)
 	return db.AppendDeploymentEventRow{
 		OrgID:         event.OrgID,
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     event.ProjectID,
 		EnvironmentID: event.EnvironmentID,
 	}, nil

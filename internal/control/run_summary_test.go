@@ -135,37 +135,6 @@ func TestCreateGetAndListRun(t *testing.T) {
 	}
 }
 
-func TestGetRunRejectsWrongWorkerGroupRoute(t *testing.T) {
-	runID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{
-		recordPlacementUnavailable: true,
-		run: db.Run{
-			ID:               pgvalue.UUID(runID),
-			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:    "us-east-1-worker-group-2",
-			ProjectID:        testProjectID(),
-			EnvironmentID:    testEnvironmentID(),
-			DeploymentID:     testDeploymentID(),
-			DeploymentTaskID: testDeploymentTaskID(),
-			SessionID:        pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000602")),
-			TaskID:           "deploy",
-			Status:           db.RunStatusRunning,
-			CreatedAt:        testTime(),
-			UpdatedAt:        testTime(),
-		},
-	}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-
-	req := httptest.NewRequest(http.MethodGet, "/api/runs/"+runID.String(), nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-}
-
 func TestListRunsQuery(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
@@ -200,7 +169,7 @@ func TestListRunsQuery(t *testing.T) {
 
 func TestAPIKeyListRunsUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -347,13 +316,6 @@ func fakeRunSessionID(run db.Run) pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000601"))
 }
 
-func fakeRunWorkerGroupID(run db.Run) string {
-	if run.WorkerGroupID != "" {
-		return run.WorkerGroupID
-	}
-	return dbtest.DefaultWorkerGroupID
-}
-
 func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams) (db.Run, error) {
 	if f.run.ID != arg.ID {
 		return db.Run{}, pgx.ErrNoRows
@@ -361,7 +323,6 @@ func (f *fakeStore) GetRunSummary(_ context.Context, arg db.GetRunSummaryParams)
 	return db.Run{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		WorkerGroupID:    fakeRunWorkerGroupID(f.run),
 		ProjectID:        fakeRunProjectID(f.run),
 		EnvironmentID:    fakeRunEnvironmentID(f.run),
 		DeploymentID:     fakeRunDeploymentID(f.run),
@@ -388,7 +349,6 @@ func (f *fakeStore) ListScopedRunSummaries(_ context.Context, arg db.ListScopedR
 	return []db.Run{{
 		ID:               f.run.ID,
 		OrgID:            f.run.OrgID,
-		WorkerGroupID:    fakeRunWorkerGroupID(f.run),
 		ProjectID:        f.run.ProjectID,
 		EnvironmentID:    f.run.EnvironmentID,
 		DeploymentID:     fakeRunDeploymentID(f.run),

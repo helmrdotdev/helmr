@@ -19,7 +19,7 @@ Helmr is split between authoring tools, a control plane, and workers.
 | Worker | Leases queued runs, materializes workspaces, starts isolated guests, runs task code, serves direct workspace exec and PTY requests, streams logs, and releases results. |
 | Guest runtime | Loads the deployment task module inside the guest and bridges task output, logs, session stream output, metadata updates, waits, exec streams, and PTY streams. |
 
-Workers register into a worker group. The initial control plane creates a `default` worker group and routes deployments, build leases, and run session leases through that group.
+Workers enroll into explicitly configured worker groups. Run and build groups use the same identity and lifecycle model but scale independently. Enrollment proves AWS instance identity and binds the issued credential to the group's account, region, Auto Scaling group, instance profile, AMI policy, and permitted role.
 
 ## Deployment Model
 
@@ -29,9 +29,9 @@ worker, dispatcher, database, API, and task execution paths are designed around
 that model.
 
 Managed cloud can create many organizations. Self-hosted deployments run the
-same architecture with initial setup gated to one organization. The difference is
-at the organization creation boundary, not in the workspace, runtime, or worker
-execution model.
+same architecture with initial setup gated to one organization. Deployment mode
+is an edge policy used for organization setup and future commercial policy such
+as billing; it does not branch worker enrollment, scheduling, runtime, or storage.
 
 ## Run Flow
 

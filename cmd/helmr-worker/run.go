@@ -7,9 +7,13 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"sync"
 	"syscall"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/buildkit"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
@@ -23,7 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/version"
 	"github.com/helmrdotdev/helmr/internal/vm"
-	"github.com/helmrdotdev/helmr/internal/worker"
+	workerdaemon "github.com/helmrdotdev/helmr/internal/worker"
 )
 
 func run(log *slog.Logger) error {
@@ -45,25 +49,51 @@ func run(log *slog.Logger) error {
 	if workDir == "" {
 		workDir = executor.DefaultWorkDir()
 	}
+	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
+	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
+	serviceID := uuid.NewString()
+	process, err := workerdaemon.Acquire(workDir, workerdaemon.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
+	if err != nil {
+		return fmt.Errorf("acquire worker supervisor singleton: %w", err)
+	}
+	defer process.Close()
+	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("clear stale drain marker: %w", err)
+	}
 	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
-	workerCredential, err := resolveWorkerInstanceCredential(ctx, cfg, workDir)
-	if err != nil {
-		return err
-	}
-	controlClient, err := client.New(cfg.ControlURL, client.WithWorkerAuth(workerCredential.WorkerInstanceID, workerCredential.WorkerInstanceSecret), client.WithClientIdentity("worker", version.Version))
-	if err != nil {
-		return fmt.Errorf("configure control client: %w", err)
-	}
-	builder, closeBuilder, err := buildkit.Open(ctx, buildkit.Config{
-		Addr:           cfg.BuildKitAddr,
-		OutputRoot:     filepath.Join(workDir, "builds"),
-		CacheNamespace: cfg.BuildKitCacheNS,
+	var controlClient *client.Client
+	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
+		candidate, candidateErr := client.New(cfg.ControlURL,
+			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
+			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
+			client.WithClientIdentity("worker", version.Version),
+		)
+		if candidateErr != nil {
+			return candidateErr
+		}
+		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
+			return candidateErr
+		}
+		controlClient = candidate
+		return nil
 	})
 	if err != nil {
-		return fmt.Errorf("configure buildkit: %w", err)
+		return fmt.Errorf("configure authenticated control client: %w", err)
+	}
+	var imageBuilder builder.Engine
+	closeBuilder := func() error { return nil }
+	if supportsBuild {
+		imageBuilder, closeBuilder, err = buildkit.Open(ctx, buildkit.Config{
+			Addr:           cfg.BuildKitAddr,
+			OutputRoot:     filepath.Join(workDir, "builds"),
+			CacheNamespace: cfg.BuildKitCacheNS,
+		})
+		if err != nil {
+			return fmt.Errorf("configure buildkit: %w", err)
+		}
 	}
 	defer func() {
 		if err := closeBuilder(); err != nil {
@@ -87,6 +117,7 @@ func run(log *slog.Logger) error {
 		KernelPath:              filepath.Join(guestImageDir, "vmlinuz"),
 		InitramfsPath:           filepath.Join(guestImageDir, "initramfs"),
 		RootfsPath:              rootfsPath,
+		RuntimeArtifactsPath:    filepath.Join(guestImageDir, "runtime-artifacts.json"),
 		StateDir:                filepath.Join(workDir, "vms", "guest"),
 		CNINetworkName:          cfg.CNINetworkName,
 		CNIProfile:              cfg.CNIProfile,
@@ -113,12 +144,20 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect firecracker runtime: %w", err)
 	}
-	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB)
+	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(cfg.WorkerBuildExecutors))
+	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
+	if err != nil {
+		return fmt.Errorf("configure host runtime start limit: %w", err)
+	}
+	hostDiskMiB, err := advertisedWorkerDiskMiB(workDir, cfg.WorkerDiskMiB, cfg.WorkerDiskReserveMiB)
 	if err != nil {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
-	workerDiskMiB := min(hostDiskMiB, cfg.VMScratchDiskMiB)
 	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
+	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, cfg.VMScratchDiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
+	if err != nil {
+		return fmt.Errorf("partition worker physical disk capacity: %w", err)
+	}
 	workerCapabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
 		WorkerVersion:           version.Version,
@@ -133,21 +172,27 @@ func run(log *slog.Logger) error {
 		Labels:                  cfg.WorkerLabels,
 		MaxVCPUs:                cfg.WorkerCapacityVCPUs,
 		MaxMemoryMiB:            cfg.WorkerCapacityMemoryMiB,
-		MaxDiskMiB:              workerDiskMiB,
+		VMMilliCPU:              cfg.VMVCPUCount * 1000,
+		VMMemoryMiB:             cfg.VMMemoryMiB,
+		MaxDiskMiB:              diskCapacity.HostWorkloadMiB,
+		VMMaxDiskMiB:            diskCapacity.VMWorkloadDiskMiB,
 		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
+		SupportsRun:             supportsRun,
+		SupportsBuild:           supportsBuild,
+		MaxBuildExecutors:       cfg.WorkerBuildExecutors,
+		MaxRuntimeStarts:        int32(runtimeStartLimit),
+		ScratchBytes:            diskCapacity.HostScratchBytes,
+		VMMaxScratchBytes:       diskCapacity.VMScratchBytes,
+		BuildCacheBytes:         substrateCacheMaxBytes,
+		ArtifactCacheBytes:      artifactCacheMaxBytes,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      true,
 			BlockInternet: true,
 			DenyCIDRs:     true,
 		},
 	}
-	status, err := controlClient.ActivateWorker(ctx, workerCapabilities)
-	if err != nil {
-		return fmt.Errorf("activate worker: %w", err)
-	}
-	log.Info("worker activated", "worker_instance_id", status.WorkerInstanceID, "status", status.Status, "active_executions", status.ActiveExecutions)
 	compiler := task.GuestCompiler{
-		Connector: connector,
+		Connector: runtimeConnector,
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}
 	substrateResolver := &substrate.Resolver{
@@ -158,21 +203,19 @@ func run(log *slog.Logger) error {
 	workspaceMountSessions := executor.NewWorkspaceMountSessions()
 	backgroundGate := executor.NewBackgroundWorkGate()
 	workspaceMountSessions.BackgroundGate = backgroundGate
-	var workspaceMountConnector vm.MaterializingConnector = connector
-	var preparedBaseConnector *firecracker.PreparedBaseConnector
-	if cfg.PreparedBasePoolSize > 0 {
-		preparedBaseConnector = firecracker.NewPreparedBaseConnector(connector, cfg.PreparedBasePoolSize, log)
-		preparedBaseConnector.BackgroundGate = backgroundGate
-		preparedBaseConnector.Start(ctx, compute.DefaultNetworkPolicy())
-		defer func() {
-			if err := preparedBaseConnector.Close(context.Background()); err != nil {
-				log.Warn("prepared base connector close failed", "error", err)
-			}
-		}()
-		workspaceMountConnector = preparedBaseConnector
-		log.Info("prepared base connector enabled", "pool_size", cfg.PreparedBasePoolSize)
-	}
+	var workspaceMountConnector vm.MaterializingConnector = runtimeConnector
 	var preparedRuntimePool *executor.PreparedRuntimePool
+	closePreparedRuntime := retryableWorkerCloser{close: func(closeCtx context.Context) error {
+		if preparedRuntimePool != nil {
+			return preparedRuntimePool.Close(closeCtx)
+		}
+		return nil
+	}}
+	defer func() {
+		if err := closePreparedRuntime.Close(context.Background()); err != nil {
+			log.Warn("prepared runtime pool close failed", "error", err)
+		}
+	}()
 	if cfg.PreparedRuntimePoolSize > 0 {
 		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, cfg.PreparedRuntimePoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
@@ -184,26 +227,20 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.Network = compute.DefaultNetworkPolicy()
 		preparedRuntimePool.RuntimeInstances = controlClient
 		preparedRuntimePool.BackgroundGate = backgroundGate
-		defer func() {
-			if err := preparedRuntimePool.Close(context.Background()); err != nil {
-				log.Warn("prepared runtime pool close failed", "error", err)
-			}
-		}()
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
 	}
-	workspaceMountSessions.RuntimePool = preparedRuntimePool
-	runner, err := worker.NewRunner(
+	runner, err := workerdaemon.NewRunner(
 		controlClient,
 		executor.Executor{
 			WorkDir: workDir,
 			GitPath: cfg.GitPath,
 			CAS:     store,
-			Builder: builder,
+			Builder: imageBuilder,
 			RunWaits: executor.ControlRunWaits{
 				Client: controlClient,
 			},
 			Runner: executor.GuestRunner{
-				Connector:             connector,
+				Connector:             runtimeConnector,
 				CAS:                   store,
 				CheckpointEncryptor:   checkpointEncryptor,
 				WorkspaceMounts:       workspaceMountSessions,
@@ -219,16 +256,16 @@ func run(log *slog.Logger) error {
 			},
 		},
 		workerCapabilities,
-		worker.WithPollEvery(cfg.PollEvery),
-		worker.WithLogger(log),
-		worker.WithDeploymentBuilder(deployment.Builder{
+		workerdaemon.WithPollEvery(cfg.PollEvery),
+		workerdaemon.WithLogger(log),
+		workerdaemon.WithDeploymentBuilder(deployment.Builder{
 			WorkDir:      workDir,
 			CAS:          store,
-			Indexer:      deployment.GuestIndexer{Connector: connector, TempDir: filepath.Join(workDir, "tmp")},
+			Indexer:      deployment.GuestIndexer{Connector: runtimeConnector, TempDir: filepath.Join(workDir, "tmp")},
 			Compiler:     compiler,
-			ImageBuilder: builder,
+			ImageBuilder: imageBuilder,
 		}),
-		worker.WithMaterializer(executor.WorkspaceMaterializer{
+		workerdaemon.WithMaterializer(executor.WorkspaceMaterializer{
 			Connector:             workspaceMountConnector,
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
@@ -245,16 +282,95 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure worker: %w", err)
 	}
-	if preparedRuntimePool != nil {
-		go func() {
-			if err := preparedRuntimePool.FollowWarmCommands(ctx, controlClient, workerCapabilities); err != nil && err != context.Canceled {
-				log.Warn("prepared runtime warm command follower stopped", "error", err)
+	consumerSpecs := make([]workerdaemon.ConsumerSpec, 0, 3)
+	admission := map[string]int{}
+	if supportsRun {
+		admission["run"] = int(cfg.WorkerExecutionSlots)
+		admission["workspace"] = int(cfg.WorkerExecutionSlots)
+		consumerSpecs = append(consumerSpecs,
+			workerdaemon.ConsumerSpec{Name: "run", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "run", Consumer: workerdaemon.NewRunConsumer(runner)},
+			workerdaemon.ConsumerSpec{Name: "workspace", Concurrency: int(cfg.WorkerExecutionSlots), Admission: "workspace", DrainEligible: true, Consumer: workerdaemon.NewWorkspaceConsumer(runner)},
+		)
+	}
+	if supportsBuild {
+		admission["build"] = int(cfg.WorkerBuildExecutors)
+		consumerSpecs = append(consumerSpecs, workerdaemon.ConsumerSpec{Name: "build", Concurrency: int(cfg.WorkerBuildExecutors), Admission: "build", Consumer: workerdaemon.NewBuildConsumer(runner)})
+	}
+	background := make([]workerdaemon.BackgroundSpec, 0, 1)
+	if supportsRun && preparedRuntimePool != nil {
+		background = append(background, workerdaemon.BackgroundSpec{Name: "runtime-controller", DrainEligible: true, Run: func(runCtx context.Context) error {
+			return preparedRuntimePool.ReconcileDesiredRuntimes(runCtx, controlClient)
+		}})
+	}
+	hardAdmission, err := workerdaemon.NewHardAdmission(workerdaemon.HardAdmissionConfig{
+		Probe: workerdaemon.SystemHostHealthProbe{
+			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
+		},
+		DiskFloorBytes:   (cfg.WorkerDiskReserveMiB + cfg.VMScratchDiskMiB) * 1024 * 1024,
+		FDHeadroom:       256,
+		RuntimeSlotCount: cfg.WorkerExecutionSlots,
+	})
+	if err != nil {
+		return fmt.Errorf("configure worker hard admission: %w", err)
+	}
+	supervisor, err := workerdaemon.New(workerdaemon.Config{
+		Control: controlClient, Capabilities: workerCapabilities, Consumers: consumerSpecs, Admission: admission,
+		Background: background, PollEvery: cfg.PollEvery, CertificationTTL: cfg.WorkerCertificationTTL,
+		AdmissionEvaluator: hardAdmission, Log: log,
+		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
+			return workerdaemon.RecoverLocalRuntimeState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+		},
+		FinalizeDrain: func(finalizeCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
+			if err := closePreparedRuntime.Close(finalizeCtx); err != nil {
+				return workerdaemon.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
 			}
-		}()
+			first, err := workerdaemon.RecoverLocalRuntimeState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			if err != nil {
+				return workerdaemon.RecoveryEvidence{}, err
+			}
+			if len(first.Quarantined) != 0 || len(first.QuarantineErrors) != 0 {
+				return first, nil
+			}
+			// The first pass reclaims any residue. A second complete inventory is
+			// the proof submitted to control and therefore must be empty.
+			return workerdaemon.RecoverLocalRuntimeState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+		},
+		DrainCompleted: func(status api.WorkerStatusResponse) error {
+			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("configure worker supervisor: %w", err)
+	}
+	if preparedRuntimePool != nil {
+		preparedRuntimePool.AdmitRuntimeStart = supervisor.AdmitRuntimeStart
 	}
 	log.Info("helmr worker listening", "control_url", cfg.ControlURL, "worker_instance_id", workerCredential.WorkerInstanceID)
-	if err := runner.Run(ctx); err != nil && err != context.Canceled {
+	if err := supervisor.Run(ctx); err != nil && err != context.Canceled {
 		return err
 	}
+	return nil
+}
+
+type retryableWorkerCloser struct {
+	mu     sync.Mutex
+	close  func(context.Context) error
+	closed bool
+}
+
+func (c *retryableWorkerCloser) Close(ctx context.Context) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return nil
+	}
+	if c.close == nil {
+		c.closed = true
+		return nil
+	}
+	if err := c.close(ctx); err != nil {
+		return err
+	}
+	c.closed = true
 	return nil
 }

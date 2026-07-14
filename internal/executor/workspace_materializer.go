@@ -76,13 +76,14 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 		return fmt.Errorf("connect workspace mount guest: %w", err)
 	}
 	renewal := m.startRenewalLoop(ctx, api.WorkerWorkspaceMountRenewRequest{
-		OrgID:                mount.OrgID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
+		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	}, client, renewEvery)
 	defer renewal.stopAndWait()
 	session := newManagedWorkspaceMountSession(rawSession)
 	defer cleanup()
+	if usePreparedRuntime && m.RuntimePool != nil {
+		defer m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch)
+	}
 	defer func() { _ = m.closeSession(session) }()
 	phaseStarted = time.Now()
 	if err := m.registerWorkspaceMountContext(startupCtx, session, mount, sandboxImagePath, workspaceArtifactPath, preparedRuntimeKey, usePreparedRuntime); err != nil {
@@ -96,9 +97,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 	m.logWorkspaceMountPhase(mount, "workspace mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds())
 	phaseStarted = time.Now()
 	mounted, err := client.MarkWorkspaceMountMounted(renewal.ctx, api.WorkerWorkspaceMountMountedRequest{
-		OrgID:                mount.OrgID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
+		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	})
 	m.logWorkspaceMountPhase(mount, "workspace mount marked mounted", "duration_ms", time.Since(phaseStarted).Milliseconds(), "state", strings.TrimSpace(mounted.State), "error", errorString(err))
 	if err != nil {
@@ -259,9 +258,7 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 			}
 		case <-poll.C:
 			claimed, err := client.ClaimWorkspaceOperation(renewal.ctx, api.WorkerWorkspaceOperationClaimRequest{
-				OrgID:                mount.OrgID,
-				WorkspaceMountID:     mount.ID,
-				RuntimeInstanceToken: mount.RuntimeInstanceToken,
+				OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 			})
 			if err != nil {
 				poll.Reset(claimErrorBackoff)
@@ -411,12 +408,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "workspace_mount_temp_unavailable", err: fmt.Errorf("create mount temp dir: %w", err)}
 	}
 	if m.RuntimePool != nil {
-		if session, key, runtimeInstanceToken, ok := m.RuntimePool.Checkout(ctx, *mount); ok {
-			mount.RuntimeInstanceToken = strings.TrimSpace(runtimeInstanceToken)
-			if mount.RuntimeInstanceToken == "" {
-				_ = session.Close(context.Background())
-				return nil, "", "", func() {}, key, true, workspaceMountFailure{code: "runtime_instance_token_unavailable", err: errors.New("prepared runtime checkout returned empty instance token")}
-			}
+		if session, key, ok := m.RuntimePool.Checkout(ctx, *mount); ok {
 			workspaceArtifact := api.CASObject{
 				Digest:    strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 				SizeBytes: mount.WorkspaceArtifact.SizeBytes,
@@ -427,6 +419,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 			m.logWorkspaceMountPhase(*mount, "workspace mount workspace artifact restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", workspaceArtifact.SizeBytes, "error", errorString(err), "prepared_runtime_hit", true)
 			if err != nil {
 				_ = session.Close(context.Background())
+				m.RuntimePool.ReleaseCheckout(mount.RuntimeInstanceID, mount.RuntimeEpoch)
 				return nil, "", "", cleanupWorkspace, key, true, err
 			}
 			m.logWorkspaceMountPhase(*mount, "workspace mount prepared runtime checked out", "runtime_key_id", runtime.ID(key))
@@ -434,12 +427,11 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		}
 	}
 	mount.RuntimeInstanceID = strings.TrimSpace(mount.RuntimeInstanceID)
-	mount.RuntimeInstanceToken = strings.TrimSpace(mount.RuntimeInstanceToken)
 	if mount.RuntimeInstanceID == "" {
 		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "runtime_instance_missing", err: errors.New("workspace mount claim must include a runtime instance id")}
 	}
-	if mount.RuntimeInstanceToken == "" {
-		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "runtime_instance_token_unavailable", err: errors.New("workspace mount claim must include a runtime instance token")}
+	if mount.RuntimeEpoch <= 0 || strings.TrimSpace(mount.NetworkSlotID) == "" || mount.NetworkSlotGeneration <= 0 {
+		return nil, "", "", func() {}, "", false, workspaceMountFailure{code: "runtime_instance_fence_missing", err: errors.New("workspace mount claim must include runtime epoch and network slot generation")}
 	}
 	runtimeKey := preparedRuntimeKeyFromWorkspaceMount(*mount, m.networkPolicy())
 	m.logWorkspaceMountPhase(*mount, "workspace mount runtime instance claimed", "runtime_instance_id", mount.RuntimeInstanceID, "runtime_key_id", runtime.ID(runtimeKey))
@@ -489,7 +481,8 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		group.Go(func() error {
 			phaseStarted := time.Now()
 			materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
-				ID:                 mount.ID,
+				ID:                 mount.RuntimeInstanceID,
+				OwnerKind:          vm.RuntimeOwnerRuntime,
 				RootfsDigest:       mount.RootfsDigest,
 				ImageDigest:        mount.ImageDigest,
 				ImageFormat:        mount.ImageFormat,
@@ -528,7 +521,8 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		}
 		phaseStarted = time.Now()
 		materialized, err := connector.Materialize(ctx, vm.MaterializeRequest{
-			ID:                 mount.ID,
+			ID:                 mount.RuntimeInstanceID,
+			OwnerKind:          vm.RuntimeOwnerRuntime,
 			RootfsDigest:       mount.RootfsDigest,
 			ImageDigest:        mount.ImageDigest,
 			ImageFormat:        mount.ImageFormat,
@@ -977,17 +971,16 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 	}
 	if capture {
 		if _, err := client.CaptureWorkspaceMount(ctx, api.WorkerWorkspaceMountCaptureRequest{
-			OrgID:                mount.OrgID,
-			ProjectID:            mount.ProjectID,
-			EnvironmentID:        mount.EnvironmentID,
-			WorkspaceID:          mount.WorkspaceID,
-			WorkspaceMountID:     mount.ID,
-			RuntimeInstanceToken: mount.RuntimeInstanceToken,
-			ArtifactDigest:       artifact.Digest,
-			ArtifactSizeBytes:    artifact.SizeBytes,
-			ArtifactMediaType:    artifact.MediaType,
-			ArtifactEncoding:     artifact.Encoding,
-			ArtifactEntryCount:   int32(artifact.EntryCount),
+			OrgID:              mount.OrgID,
+			ProjectID:          mount.ProjectID,
+			EnvironmentID:      mount.EnvironmentID,
+			WorkspaceID:        mount.WorkspaceID,
+			WorkspaceMountID:   mount.ID,
+			ArtifactDigest:     artifact.Digest,
+			ArtifactSizeBytes:  artifact.SizeBytes,
+			ArtifactMediaType:  artifact.MediaType,
+			ArtifactEncoding:   artifact.Encoding,
+			ArtifactEntryCount: int32(artifact.EntryCount),
 		}); err != nil {
 			_ = m.failWorkspaceMount(client, mount, workspaceMountFailure{
 				code: "workspace_mount_recovery_required",
@@ -1005,10 +998,15 @@ func (m WorkspaceMaterializer) stopControlledWorkspaceMount(ctx context.Context,
 			return fmt.Errorf("finalize workspace stop: %w", err)
 		}
 	}
+	if err := m.closeSession(session); err != nil {
+		_ = m.failWorkspaceMount(client, mount, workspaceMountFailure{
+			code: "workspace_mount_runtime_close_failed",
+			err:  fmt.Errorf("close workspace runtime: %w", err),
+		})
+		return fmt.Errorf("close workspace runtime: %w", err)
+	}
 	if _, err := client.StopWorkspaceMount(context.Background(), api.WorkerWorkspaceMountStopRequest{
-		OrgID:                mount.OrgID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
+		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	}); err != nil {
 		return fmt.Errorf("stop workspace mount: %w", err)
 	}
@@ -1496,12 +1494,9 @@ func writeWorkspaceInputClose(ctx context.Context, session vm.Session, stream io
 
 func workerPrimitiveScope(mount api.WorkerWorkspaceMount) api.WorkerWorkspacePrimitiveScope {
 	return api.WorkerWorkspacePrimitiveScope{
-		OrgID:                mount.OrgID,
-		ProjectID:            mount.ProjectID,
-		EnvironmentID:        mount.EnvironmentID,
-		WorkspaceID:          mount.WorkspaceID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
+		OrgID: mount.OrgID, ProjectID: mount.ProjectID, EnvironmentID: mount.EnvironmentID,
+		WorkspaceID: mount.WorkspaceID, WorkspaceMountID: mount.ID,
+		RuntimeInstanceID: mount.RuntimeInstanceID, WorkerEpoch: mount.RuntimeEpoch,
 	}
 }
 
@@ -1604,14 +1599,7 @@ func (s *workspaceOperationEventPersistState) advancePtyOutputOffset(ptyID strin
 }
 
 func (m WorkspaceMaterializer) persistWorkspaceOperationEvent(ctx context.Context, client api.WorkerWorkspaceMaterializerControlClient, mount api.WorkerWorkspaceMount, state *workspaceOperationEventPersistState, event *workspacev0.WorkspaceOperationEvent) error {
-	scope := api.WorkerWorkspacePrimitiveScope{
-		OrgID:                mount.OrgID,
-		ProjectID:            mount.ProjectID,
-		EnvironmentID:        mount.EnvironmentID,
-		WorkspaceID:          mount.WorkspaceID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
-	}
+	scope := workerPrimitiveScope(mount)
 	switch payload := event.GetEvent().(type) {
 	case *workspacev0.WorkspaceOperationEvent_ExecStarted:
 		response, err := client.MarkWorkspaceExecStarted(ctx, api.WorkerWorkspaceExecStartedRequest{
@@ -1776,10 +1764,7 @@ func (m WorkspaceMaterializer) failWorkspaceMount(client api.WorkerWorkspaceMate
 	ctx, cancel := context.WithTimeout(context.Background(), m.failureTimeout())
 	defer cancel()
 	_, err := client.FailWorkspaceMount(ctx, api.WorkerWorkspaceMountFailRequest{
-		OrgID:                mount.OrgID,
-		WorkspaceMountID:     mount.ID,
-		RuntimeInstanceToken: mount.RuntimeInstanceToken,
-		Error:                body,
+		OrgID: mount.OrgID, WorkspaceMountID: mount.ID, Error: body,
 	})
 	return err
 }

@@ -65,7 +65,7 @@ func validateResources(capabilities api.WorkerCapabilities, resources compute.Re
 	available := compute.ResourceVector{
 		MilliCPU:  capabilities.MaxVCPUs * 1000,
 		MemoryMiB: capabilities.MaxMemoryMiB,
-		DiskMiB:   capabilities.MaxDiskMiB,
+		DiskMiB:   capabilities.VMMaxDiskMiB,
 		Slots:     capabilities.ExecutionSlotsAvailable,
 	}
 	if !available.Fits(resources) {

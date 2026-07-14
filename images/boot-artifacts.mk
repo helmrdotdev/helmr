@@ -27,6 +27,7 @@ INITRAMFS_ROOT ?= $(OUT)/initramfs-root
 MODLOOP ?= $(OUT)/modloop-virt
 MODLOOP_ROOT ?= $(OUT)/modloop
 ROOTFS ?= $(OUT)/rootfs.ext4
+RUNTIME_ARTIFACTS ?= $(OUT)/runtime-artifacts.json
 APKO_CONFIG ?= apko.yaml
 APKO_LOCK ?= apko.$(APKO_ARCH).lock.json
 GUESTD_INPUT_PATHS := go.mod go.sum cmd/guestd internal scripts/build-guestd-linux.sh
@@ -34,7 +35,7 @@ GUESTD_INPUT_STAMP := $(dir $(GUESTD)).guestd-inputs.$(ARCH).sha256
 
 .PHONY: all clean guestd apko-lock force-guestd
 
-all: $(KERNEL) $(INITRAMFS) $(ROOTFS)
+all: $(RUNTIME_ARTIFACTS)
 
 $(OUT):
 	mkdir -p $(OUT)
@@ -86,6 +87,16 @@ $(APKO_LOCK): $(APKO_CONFIG)
 
 $(ROOTFS): $(APKO_CONFIG) $(APKO_LOCK) $(INITRAMFS) $(ROLE_ROOTFS_DEPS) ../build-rootfs.sh | $(OUT)
 	ARCH=$(ARCH) APKO_ARCH=$(APKO_ARCH) APKO_LOCK=$(APKO_LOCK) APKO_IMAGE=$(APKO_IMAGE) ROOTFS_TOOLS_IMAGE=$(ROOTFS_TOOLS_IMAGE) ../build-rootfs.sh $(ROLE) "$(abspath $(REPO_ROOT))" "$(ROLE_DIR)" "$(OUT)" "$(ROOTFS)" "$(GUESTD)"
+
+$(RUNTIME_ARTIFACTS): $(KERNEL) $(INITRAMFS) $(ROOTFS) ../boot-artifacts.mk
+	@set -eu; \
+	case "$(ARCH)" in aarch64) goarch=arm64 ;; x86_64) goarch=amd64 ;; esac; \
+	tmp="$@.tmp"; trap 'rm -f "$$tmp"' EXIT; \
+	printf '{\n  "schema": "helmr.runtime-artifacts.v0",\n  "arch": "%s",\n  "runtime_abi": "helmr.firecracker.snapshot.v0",\n  "kernel": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s},\n  "initramfs": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s},\n  "rootfs": {"path": "%s", "digest": "sha256:%s", "size_bytes": %s}\n}\n' \
+		"$$goarch" "$(notdir $(KERNEL))" "$$(shasum -a 256 "$(KERNEL)" | awk '{print $$1}')" "$$(wc -c < "$(KERNEL)" | tr -d ' ')" \
+		"$(notdir $(INITRAMFS))" "$$(shasum -a 256 "$(INITRAMFS)" | awk '{print $$1}')" "$$(wc -c < "$(INITRAMFS)" | tr -d ' ')" \
+		"$(notdir $(ROOTFS))" "$$(shasum -a 256 "$(ROOTFS)" | awk '{print $$1}')" "$$(wc -c < "$(ROOTFS)" | tr -d ' ')" > "$$tmp"; \
+	mv "$$tmp" "$@"; trap - EXIT
 
 clean:
 	rm -rf $(OUT)

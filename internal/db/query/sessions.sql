@@ -11,7 +11,6 @@ INSERT INTO sessions (
     id,
     public_id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     task_id,
@@ -28,7 +27,6 @@ SELECT
     sqlc.arg(id),
     sqlc.arg(public_id),
     workspaces.org_id,
-    workspaces.worker_group_id,
     workspaces.project_id,
     workspaces.environment_id,
     sqlc.arg(task_id),
@@ -55,7 +53,6 @@ INSERT INTO workspaces (
     id,
     public_id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     deployment_sandbox_id,
@@ -69,7 +66,6 @@ INSERT INTO workspaces (
     sqlc.arg(id),
     sqlc.arg(public_id),
     sqlc.arg(org_id),
-    sqlc.arg(worker_group_id),
     sqlc.arg(project_id),
     sqlc.arg(environment_id),
     sqlc.arg(deployment_sandbox_id),
@@ -85,9 +81,9 @@ RETURNING *;
 -- name: GetWorkspaceForSessionStart :one
 SELECT workspaces.id,
        workspaces.org_id,
-       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
+       workspaces.region_id,
        workspaces.deployment_sandbox_id,
        deployment_sandboxes.deployment_id,
        workspaces.sandbox_id,
@@ -112,8 +108,6 @@ SELECT workspaces.id,
    AND deployment_sandboxes.project_id = workspaces.project_id
    AND deployment_sandboxes.environment_id = workspaces.environment_id
    AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-  JOIN worker_groups ON worker_groups.id = workspaces.worker_group_id
-                    AND worker_groups.state IN ('active', 'draining')
  WHERE workspaces.org_id = sqlc.arg(org_id)
    AND workspaces.project_id = sqlc.arg(project_id)
    AND workspaces.environment_id = sqlc.arg(environment_id)
@@ -124,7 +118,6 @@ SELECT workspaces.id,
 -- name: GetWorkspaceSourceForSessionStart :one
 SELECT workspaces.id,
        workspaces.org_id,
-       workspaces.worker_group_id,
        workspaces.project_id,
        workspaces.environment_id,
        workspaces.deployment_sandbox_id,
@@ -171,7 +164,6 @@ INSERT INTO session_runs (
     id,
     public_id,
     org_id,
-    worker_group_id,
     project_id,
     environment_id,
     session_id,
@@ -184,7 +176,6 @@ INSERT INTO session_runs (
 SELECT sqlc.arg(id),
        sqlc.arg(public_id),
        sessions.org_id,
-       sessions.worker_group_id,
        sessions.project_id,
        sessions.environment_id,
        sessions.id,
@@ -196,7 +187,6 @@ SELECT sqlc.arg(id),
   FROM sessions
   JOIN runs
     ON runs.org_id = sessions.org_id
-   AND runs.worker_group_id = sessions.worker_group_id
    AND runs.project_id = sessions.project_id
    AND runs.environment_id = sessions.environment_id
    AND runs.session_id = sessions.id
@@ -257,7 +247,6 @@ SELECT sessions.id,
   FROM sessions
   LEFT JOIN runs
     ON runs.org_id = sessions.org_id
-   AND runs.worker_group_id = sessions.worker_group_id
    AND runs.project_id = sessions.project_id
    AND runs.environment_id = sessions.environment_id
    AND runs.id = sessions.current_run_id
@@ -265,7 +254,6 @@ SELECT sessions.id,
        SELECT run_waits.state
          FROM run_waits
         WHERE run_waits.org_id = sessions.org_id
-          AND run_waits.worker_group_id = sessions.worker_group_id
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
@@ -286,7 +274,6 @@ SELECT sessions.id,
              SELECT 1
               FROM session_continuation_requests
              WHERE session_continuation_requests.org_id = sessions.org_id
-               AND session_continuation_requests.worker_group_id = sessions.worker_group_id
                AND session_continuation_requests.project_id = sessions.project_id
                AND session_continuation_requests.environment_id = sessions.environment_id
                AND session_continuation_requests.session_id = sessions.id
@@ -312,7 +299,6 @@ SELECT sessions.id,
              SELECT 1
               FROM session_continuation_requests
              WHERE session_continuation_requests.org_id = sessions.org_id
-               AND session_continuation_requests.worker_group_id = sessions.worker_group_id
                AND session_continuation_requests.project_id = sessions.project_id
                AND session_continuation_requests.environment_id = sessions.environment_id
                AND session_continuation_requests.session_id = sessions.id
@@ -324,7 +310,6 @@ SELECT sessions.id,
     ON target.id = sessions.id
   LEFT JOIN runs
     ON runs.org_id = sessions.org_id
-   AND runs.worker_group_id = sessions.worker_group_id
    AND runs.project_id = sessions.project_id
    AND runs.environment_id = sessions.environment_id
    AND runs.id = sessions.current_run_id
@@ -332,7 +317,6 @@ SELECT sessions.id,
        SELECT run_waits.state
          FROM run_waits
         WHERE run_waits.org_id = sessions.org_id
-          AND run_waits.worker_group_id = sessions.worker_group_id
           AND run_waits.project_id = sessions.project_id
           AND run_waits.environment_id = sessions.environment_id
           AND run_waits.run_id = sessions.current_run_id
@@ -367,7 +351,6 @@ SELECT *
 SELECT *
   FROM sessions
  WHERE org_id = sqlc.arg(org_id)
-   AND worker_group_id = sqlc.arg(worker_group_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
@@ -515,7 +498,6 @@ UPDATE sessions
        ),
        updated_at = now()
  WHERE sessions.org_id = sqlc.arg(org_id)
-   AND sessions.worker_group_id = sqlc.arg(worker_group_id)
    AND sessions.status = 'open'
    AND sessions.expires_at IS NOT NULL
    AND sessions.expires_at <= now()
@@ -523,7 +505,6 @@ UPDATE sessions
        SELECT 1
          FROM runs
         WHERE runs.org_id = sessions.org_id
-          AND runs.worker_group_id = sessions.worker_group_id
           AND runs.project_id = sessions.project_id
           AND runs.environment_id = sessions.environment_id
           AND runs.id = sessions.current_run_id
@@ -533,7 +514,6 @@ UPDATE sessions
        SELECT 1
          FROM session_continuation_requests
         WHERE session_continuation_requests.org_id = sessions.org_id
-          AND session_continuation_requests.worker_group_id = sessions.worker_group_id
           AND session_continuation_requests.project_id = sessions.project_id
           AND session_continuation_requests.environment_id = sessions.environment_id
           AND session_continuation_requests.session_id = sessions.id
@@ -573,7 +553,6 @@ cancelled_session AS (
            updated_at = now()
       FROM target_session
      WHERE sessions.org_id = target_session.org_id
-       AND sessions.worker_group_id = target_session.worker_group_id
        AND sessions.id = target_session.id
        AND sessions.status = 'open'
     RETURNING sessions.*

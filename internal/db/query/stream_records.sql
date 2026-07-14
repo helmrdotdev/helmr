@@ -50,7 +50,6 @@ inserted_record AS (
         id,
         public_id,
         org_id,
-        worker_group_id,
         project_id,
         environment_id,
         session_id,
@@ -69,7 +68,6 @@ inserted_record AS (
     SELECT sqlc.arg(id),
            sqlc.arg(public_id),
            allocated_stream.org_id,
-           allocated_stream.worker_group_id,
            allocated_stream.project_id,
            allocated_stream.environment_id,
            allocated_stream.session_id,
@@ -126,7 +124,6 @@ WITH candidate_raw AS (
            waits.project_id,
            waits.environment_id,
            run_waits.id AS run_wait_id,
-           run_waits.worker_group_id,
            run_waits.run_id,
            waits.stream_id,
            waits.created_at,
@@ -150,7 +147,6 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE waits.org_id = sqlc.arg(org_id)
-       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND waits.project_id = sqlc.arg(project_id)
        AND waits.environment_id = sqlc.arg(environment_id)
        AND waits.stream_id = sqlc.arg(stream_id)
@@ -181,7 +177,6 @@ matched_wait AS (
     RETURNING waits.id AS wait_id,
               candidate_raw.run_wait_id,
               waits.org_id,
-              candidate_raw.worker_group_id,
               waits.project_id,
               waits.environment_id,
               candidate_raw.run_id,
@@ -191,20 +186,14 @@ matched_wait AS (
               candidate_raw.data
 ),
 resolved_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+    SELECT run_waits.*
       FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.worker_group_id = matched_wait.worker_group_id
-       AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.*
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.id = matched_wait.run_wait_id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
-       resolved_wait.worker_group_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -214,7 +203,6 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
-                   AND matched_wait.worker_group_id = resolved_wait.worker_group_id
                    AND matched_wait.run_wait_id = resolved_wait.id;
 
 -- name: ResolveStreamWaitForRunWait :one
@@ -224,7 +212,6 @@ WITH candidate_raw AS (
            waits.project_id,
            waits.environment_id,
            run_waits.id AS run_wait_id,
-           run_waits.worker_group_id,
            run_waits.run_id,
            waits.stream_id,
            next_record.id AS record_id,
@@ -247,7 +234,6 @@ WITH candidate_raw AS (
            LIMIT 1
       ) next_record ON true
      WHERE waits.org_id = sqlc.arg(org_id)
-       AND run_waits.worker_group_id = sqlc.arg(worker_group_id)
        AND waits.project_id = sqlc.arg(project_id)
        AND waits.environment_id = sqlc.arg(environment_id)
        AND run_waits.id = sqlc.arg(run_wait_id)
@@ -277,7 +263,6 @@ matched_wait AS (
     RETURNING waits.id AS wait_id,
               candidate_raw.run_wait_id,
               waits.org_id,
-              candidate_raw.worker_group_id,
               waits.project_id,
               waits.environment_id,
               candidate_raw.run_id,
@@ -287,20 +272,14 @@ matched_wait AS (
               candidate_raw.data
 ),
 resolved_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
+    SELECT run_waits.*
       FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.worker_group_id = matched_wait.worker_group_id
-       AND run_waits.id = matched_wait.run_wait_id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.*
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.id = matched_wait.run_wait_id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT resolved_wait.id AS run_wait_id,
        resolved_wait.org_id,
-       resolved_wait.worker_group_id,
        resolved_wait.project_id,
        resolved_wait.environment_id,
        resolved_wait.run_id,
@@ -310,5 +289,4 @@ SELECT resolved_wait.id AS run_wait_id,
        matched_wait.data
   FROM resolved_wait
   JOIN matched_wait ON matched_wait.org_id = resolved_wait.org_id
-                   AND matched_wait.worker_group_id = resolved_wait.worker_group_id
                    AND matched_wait.run_wait_id = resolved_wait.id;

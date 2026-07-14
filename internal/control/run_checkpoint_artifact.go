@@ -167,10 +167,10 @@ func (s *Server) createRunCheckpointArtifactRows(ctx context.Context, store db.Q
 			EncryptDurationMs: row.artifact.EncryptDurationMs,
 			StoreDurationMs:   row.artifact.StoreDurationMs,
 			ArtifactID:        row.id,
+			SizeBytes:         row.artifact.SizeBytes,
+			MediaType:         row.artifact.MediaType,
 			Digest:            row.artifact.Digest,
 			OrgID:             scope.OrgID,
-			ProjectID:         scope.ProjectID,
-			EnvironmentID:     scope.EnvironmentID,
 			RunID:             scope.RunID,
 			RunCheckpointID:   runCheckpointID,
 		}); err != nil {

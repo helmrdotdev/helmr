@@ -10,11 +10,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
-	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -29,162 +27,19 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount claim request JSON: %w", err)))
 		return
 	}
-	capabilities, err := normalizeWorkerCapabilities(request.Capabilities)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
 	worker := workerFromContext(r.Context())
-	if err := s.recordWorkerInstanceHeartbeat(r.Context(), worker, capabilities); err != nil {
-		s.log.Error("worker heartbeat failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, err)
-		return
-	}
-	if err := s.markStaleWorkspaceMountsLost(r.Context()); err != nil {
-		s.log.Error("mark stale workspace mounts lost failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("reap stale workspace mounts"))
-		return
-	}
-	if err := s.releaseExpiredPreparedRuntimeReservations(r.Context()); err != nil {
-		s.log.Error("release expired prepared runtime reservations failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("release expired prepared runtime reservations"))
-		return
-	}
-	capacity, err := s.db.GetWorkerInstanceQueueCapacity(r.Context(), db.GetWorkerInstanceQueueCapacityParams{
-		ID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID: worker.WorkerGroupID,
-	})
-	if isNoRows(err) {
-		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
-		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "worker_capacity_missing")
-		if s.log != nil {
-			s.log.Info("worker workspace mount claim skipped",
-				"worker_instance_id", worker.WorkerInstanceID.String(),
-				"reason", "worker_capacity_missing",
-			)
-		}
-		writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
-		return
-	}
-	if err != nil {
-		s.log.Error("worker capacity lookup failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
-		writeError(w, errors.New("get worker capacity"))
-		return
-	}
-	if capacity.AvailableExecutionSlots <= 0 || capacity.AvailableMilliCpu <= 0 || capacity.AvailableMemoryMib <= 0 || capacity.AvailableDiskMib <= 0 {
-		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "no_available_capacity")
-		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_available_capacity")
-		if s.log != nil {
-			s.log.Info("worker workspace mount claim capacity constrained",
-				"worker_instance_id", worker.WorkerInstanceID.String(),
-				"reason", "no_available_capacity",
-				"available_execution_slots", capacity.AvailableExecutionSlots,
-				"available_milli_cpu", capacity.AvailableMilliCpu,
-				"available_memory_mib", capacity.AvailableMemoryMib,
-				"available_disk_mib", capacity.AvailableDiskMib,
-			)
-		}
-	}
-	guestdChannelToken, err := newGuestdChannelToken()
+	guestdChannelToken, err := token.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate workspace mount guest channel token"))
 		return
 	}
-	runtimeInstanceToken, err := runtime.NewInstanceToken()
-	if err != nil {
-		writeError(w, errors.New("generate workspace mount runtime instance token"))
-		return
-	}
-	networkPolicy, err := json.Marshal(compute.DefaultNetworkPolicy())
-	if err != nil {
-		writeError(w, errors.New("encode workspace mount runtime network policy"))
-		return
-	}
 	row, err := s.db.ClaimWorkspaceMount(r.Context(), db.ClaimWorkspaceMountParams{
-		RootfsDigest:                capabilities.RootfsDigest,
-		RuntimeABI:                  capabilities.RuntimeABI,
-		GuestdAbi:                   currentGuestdABI,
-		AdapterAbi:                  currentAdapterABI,
-		NetworkPolicy:               networkPolicy,
-		RuntimeInstanceID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		RuntimeInstanceToken:        runtimeInstanceToken,
 		WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerGroupID:               worker.WorkerGroupID,
+		WorkerEpoch:                 worker.WorkerEpoch,
 		GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(workspaceMountReservationDuration), Valid: true},
 		GuestdChannelTokenHash:      guestdChannelTokenHash(guestdChannelToken),
-		RuntimeID:                   capabilities.RuntimeID,
 	})
 	if isNoRows(err) {
-		reserved, reserveErr := s.db.ReserveWorkspaceMountPreparingRuntime(r.Context(), db.ReserveWorkspaceMountPreparingRuntimeParams{
-			RootfsDigest:                capabilities.RootfsDigest,
-			RuntimeABI:                  capabilities.RuntimeABI,
-			GuestdAbi:                   currentGuestdABI,
-			AdapterAbi:                  currentAdapterABI,
-			WorkerInstanceID:            pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:               worker.WorkerGroupID,
-			RuntimeID:                   capabilities.RuntimeID,
-			GuestdChannelTokenExpiresAt: pgtype.Timestamptz{Time: time.Now().Add(preparedRuntimeReservationDuration), Valid: true},
-		})
-		if reserveErr == nil {
-			if s.log != nil {
-				s.log.Info("worker workspace mount awaiting prepared runtime",
-					"worker_instance_id", worker.WorkerInstanceID.String(),
-					"workspace_mount_id", pgvalue.UUIDString(reserved.ID),
-					"preparing_runtime_instance_id", pgvalue.UUIDString(reserved.PreparingRuntimeInstanceID),
-					"runtime_id", capabilities.RuntimeID,
-					"rootfs_digest", capabilities.RootfsDigest,
-					"runtime_abi", capabilities.RuntimeABI,
-				)
-			}
-			writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
-			return
-		}
-		if !isNoRows(reserveErr) {
-			s.log.Error("reserve workspace mount preparing runtime failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", reserveErr)
-			writeError(w, errors.New("reserve workspace mount preparing runtime"))
-			return
-		}
-		awaiting, awaitingErr := s.db.GetAwaitingPreparedRuntimeMountForWorker(r.Context(), db.GetAwaitingPreparedRuntimeMountForWorkerParams{
-			RootfsDigest:     capabilities.RootfsDigest,
-			RuntimeABI:       capabilities.RuntimeABI,
-			GuestdAbi:        currentGuestdABI,
-			AdapterAbi:       currentAdapterABI,
-			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerGroupID:    worker.WorkerGroupID,
-			RuntimeID:        capabilities.RuntimeID,
-		})
-		if awaitingErr == nil {
-			if s.log != nil {
-				s.log.Info("worker workspace mount still awaiting prepared runtime",
-					"worker_instance_id", worker.WorkerInstanceID.String(),
-					"workspace_mount_id", pgvalue.UUIDString(awaiting.ID),
-					"preparing_runtime_instance_id", pgvalue.UUIDString(awaiting.PreparingRuntimeInstanceID),
-					"runtime_id", capabilities.RuntimeID,
-				)
-			}
-			writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
-			return
-		}
-		if !isNoRows(awaitingErr) {
-			s.log.Error("get awaiting prepared runtime mount failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", awaitingErr)
-			writeError(w, errors.New("get awaiting prepared runtime mount"))
-			return
-		}
-		s.requestCapacityPressureIdleWorkspaceStops(r.Context(), worker.WorkerInstanceID, "no_claimable_mount")
-		s.createCapacityPressureLiveRunCheckpointWaitCommands(r.Context(), worker.WorkerInstanceID, "no_claimable_mount")
-		if s.log != nil {
-			s.log.Info("worker workspace mount claim skipped",
-				"worker_instance_id", worker.WorkerInstanceID.String(),
-				"reason", "no_claimable_mount",
-				"available_execution_slots", capacity.AvailableExecutionSlots,
-				"available_milli_cpu", capacity.AvailableMilliCpu,
-				"available_memory_mib", capacity.AvailableMemoryMib,
-				"available_disk_mib", capacity.AvailableDiskMib,
-				"runtime_id", capabilities.RuntimeID,
-				"rootfs_digest", capabilities.RootfsDigest,
-				"runtime_abi", capabilities.RuntimeABI,
-			)
-		}
 		writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{})
 		return
 	}
@@ -204,7 +59,7 @@ func (s *Server) workerRenewWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount renew request JSON: %w", err)))
 		return
 	}
-	row, err := s.workerRenewWorkspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID, request.RuntimeInstanceToken)
+	row, err := s.workerRenewWorkspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
@@ -222,7 +77,7 @@ func (s *Server) workerMarkWorkspaceMountMounted(w http.ResponseWriter, r *http.
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount mounted request JSON: %w", err)))
 		return
 	}
-	row, err := s.workerMarkWorkspaceMountMountedTransition(r.Context(), request.OrgID, request.WorkspaceMountID, request.RuntimeInstanceToken)
+	row, err := s.workerMarkWorkspaceMountMountedTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
@@ -240,7 +95,7 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount capture request JSON: %w", err)))
 		return
 	}
-	params, err := workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID, request.RuntimeInstanceToken)
+	params, err := s.workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -284,14 +139,9 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 	var response api.WorkerWorkspaceMountCaptureResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		_, err := work.q.GetWorkspaceMountForWorkerPrimitiveScope(r.Context(), db.GetWorkspaceMountForWorkerPrimitiveScopeParams{
-			OrgID:                params.OrgID,
-			WorkerGroupID:        params.WorkerGroupID,
-			ProjectID:            pgvalue.UUID(projectID),
-			EnvironmentID:        pgvalue.UUID(environmentID),
-			WorkspaceID:          pgvalue.UUID(workspaceID),
-			ID:                   params.ID,
-			WorkerInstanceID:     params.WorkerInstanceID,
-			RuntimeInstanceToken: params.RuntimeInstanceToken,
+			OrgID: params.OrgID, WorkspaceID: pgvalue.UUID(workspaceID), ID: params.ID,
+			WorkerInstanceID: params.WorkerInstanceID, WorkerEpoch: params.WorkerEpoch,
+			RuntimeInstanceID: params.RuntimeInstanceID,
 		})
 		if isNoRows(err) {
 			return conflict(codedError{code: "workspace_mount_capture_rejected", message: "workspace mount capture is stale"})
@@ -324,21 +174,14 @@ func (s *Server) workerCaptureWorkspaceMount(w http.ResponseWriter, r *http.Requ
 		var versionPublicID string
 		version, err := createWithPublicID(r.Context(), []publicIDSlot{{prefix: publicid.WorkspaceVersion, value: &versionPublicID}}, func() (db.PromoteWorkspaceMountStopCaptureRow, error) {
 			return work.q.PromoteWorkspaceMountStopCapture(r.Context(), db.PromoteWorkspaceMountStopCaptureParams{
-				OrgID:                params.OrgID,
-				ID:                   params.ID,
-				WorkspaceID:          pgvalue.UUID(workspaceID),
-				WorkerInstanceID:     params.WorkerInstanceID,
-				RuntimeInstanceToken: params.RuntimeInstanceToken,
-				ProjectID:            pgvalue.UUID(projectID),
-				EnvironmentID:        pgvalue.UUID(environmentID),
-				ArtifactID:           artifact.ID,
-				SizeBytes:            request.ArtifactSizeBytes,
-				ArtifactEncoding:     strings.TrimSpace(request.ArtifactEncoding),
-				ContentDigest:        digest,
-				VersionID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-				VersionPublicID:      versionPublicID,
-				ArtifactEntryCount:   request.ArtifactEntryCount,
-				Message:              "system capture before workspace stop",
+				OrgID: params.OrgID, ProjectID: pgvalue.UUID(projectID), EnvironmentID: pgvalue.UUID(environmentID),
+				WorkspaceID: pgvalue.UUID(workspaceID), ID: params.ID,
+				WorkerInstanceID: params.WorkerInstanceID, WorkerEpoch: params.WorkerEpoch,
+				RuntimeInstanceID: params.RuntimeInstanceID, FencingGeneration: params.FencingGeneration,
+				WorkspaceVersionID: pgvalue.UUID(uuid.Must(uuid.NewV7())), WorkspaceVersionPublicID: versionPublicID,
+				ArtifactID: artifact.ID, ArtifactEncoding: strings.TrimSpace(request.ArtifactEncoding),
+				ArtifactEntryCount: request.ArtifactEntryCount, ContentDigest: digest,
+				SizeBytes: request.ArtifactSizeBytes, Message: "system capture before workspace stop",
 			})
 		})
 		if isNoRows(err) {
@@ -370,7 +213,7 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
-	params, err := workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID, request.RuntimeInstanceToken)
+	params, err := s.workerWorkspaceMountTransitionParams(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -378,20 +221,16 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 	var response api.WorkspaceMountResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
 		row, err := work.q.FailWorkspaceMount(r.Context(), db.FailWorkspaceMountParams{
-			OrgID:                params.OrgID,
-			ID:                   params.ID,
-			WorkerInstanceID:     params.WorkerInstanceID,
-			RuntimeInstanceToken: params.RuntimeInstanceToken,
-			Error:                errorJSON,
+			ReasonCode: pgtype.Text{String: "worker_mount_failed", Valid: true}, Error: errorJSON,
+			OrgID: params.OrgID, ID: params.ID, WorkerInstanceID: params.WorkerInstanceID,
+			WorkerEpoch: params.WorkerEpoch, RuntimeInstanceID: params.RuntimeInstanceID,
+			FencingGeneration: params.FencingGeneration,
 		})
 		if isNoRows(err) {
 			return conflict(errors.New("workspace mount is stale"))
 		}
 		if err != nil {
 			return errors.New("fail workspace mount")
-		}
-		if err := failQueuedRunsForWorkspaceMountFailure(r.Context(), work.q, row, errorJSON); err != nil {
-			return errors.New("fail queued runs waiting for workspace mount")
 		}
 		response = failedWorkspaceMountResponse(row)
 		return nil
@@ -403,15 +242,11 @@ func (s *Server) workerFailWorkspaceMount(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, response)
 }
 
-func newGuestdChannelToken() (string, error) {
-	return token.GenerateOpaque(32)
-}
-
 func guestdChannelTokenHash(token string) string {
 	return sha256sum.HexBytes([]byte(strings.TrimSpace(token)))
 }
 
-func failedWorkspaceMountResponse(row db.FailWorkspaceMountRow) api.WorkspaceMountResponse {
+func failedWorkspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
 	return workspaceMountResponse(db.WorkspaceMount{
 		ID:                  row.ID,
 		ProjectID:           row.ProjectID,
@@ -424,7 +259,6 @@ func failedWorkspaceMountResponse(row db.FailWorkspaceMountRow) api.WorkspaceMou
 		ClaimAttempt:        row.ClaimAttempt,
 		FencingGeneration:   row.FencingGeneration,
 		DirtyGeneration:     row.DirtyGeneration,
-		LastHeartbeatAt:     row.LastHeartbeatAt,
 		CreatedAt:           row.CreatedAt,
 		UpdatedAt:           row.UpdatedAt,
 	})
@@ -440,7 +274,8 @@ type workerWorkspaceMountFields struct {
 	baseVersionID              pgtype.UUID
 	runtimeInstanceID          pgtype.UUID
 	runtimeEpoch               int64
-	reservationToken           string
+	networkSlotID              pgtype.UUID
+	networkSlotGeneration      int64
 	guestdChannelTokenHash     string
 	state                      db.WorkspaceMountState
 	runtimeID                  string
@@ -472,13 +307,14 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 		deploymentSandboxID:    row.DeploymentSandboxID,
 		baseVersionID:          row.BaseVersionID,
 		runtimeInstanceID:      row.RuntimeInstanceID,
-		runtimeEpoch:           row.RuntimeEpoch,
-		reservationToken:       row.RuntimeInstanceToken,
+		runtimeEpoch:           row.WorkerEpoch,
+		networkSlotID:          row.NetworkSlotID,
+		networkSlotGeneration:  row.NetworkSlotGeneration,
 		guestdChannelTokenHash: row.GuestdChannelTokenHash,
 		state:                  row.State,
 		runtimeID:              row.RuntimeID,
 		sandboxImageArtifact: api.CASObject{
-			Digest:    row.ImageArtifactDigest,
+			Digest:    row.ImageDigest,
 			SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,
 		},
@@ -494,10 +330,10 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 			EntryCount: row.WorkspaceArtifactEntryCount,
 		},
 		workspaceMountPath:      row.WorkspaceMountPath,
-		requestedMilliCPU:       int64(row.RequestedCpuMillis),
-		requestedMemoryMiB:      int64(row.RequestedMemoryMib),
-		requestedDiskMiB:        row.RequestedDiskMib,
-		requestedExecutionSlots: row.RequestedExecutionSlots,
+		requestedMilliCPU:       row.ReservedCpuMillis,
+		requestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
+		requestedDiskMiB:        row.ReservedWorkloadDiskBytes / (1024 * 1024),
+		requestedExecutionSlots: row.ReservedExecutionSlots,
 		runtimeABI:              row.RuntimeABI,
 		guestdABI:               row.GuestdAbi,
 		adapterABI:              row.AdapterAbi,
@@ -516,7 +352,8 @@ func workerWorkspaceMountFromFields(fields workerWorkspaceMountFields) *api.Work
 		DeploymentSandboxID:        pgvalue.MustUUIDValue(fields.deploymentSandboxID).String(),
 		RuntimeInstanceID:          pgvalue.UUIDString(fields.runtimeInstanceID),
 		RuntimeEpoch:               fields.runtimeEpoch,
-		RuntimeInstanceToken:       fields.reservationToken,
+		NetworkSlotID:              pgvalue.UUIDString(fields.networkSlotID),
+		NetworkSlotGeneration:      fields.networkSlotGeneration,
 		GuestdChannelTokenHash:     fields.guestdChannelTokenHash,
 		State:                      string(fields.state),
 		RuntimeID:                  fields.runtimeID,

@@ -23,10 +23,10 @@ helmr_cmd=()
 staging_scope_args=()
 production_scope_args=()
 skip_production="${SKIP_PRODUCTION:-}"
-phase9_http_smoke_enabled=0
+root_api_smoke_enabled=0
 selected_smoke_cases="${SMOKE_CASES:-}"
 all_smoke_cases=(
-  phase9-start-and-wait
+  root-api-start-and-wait
   runtime
   session-continuation
   stream-input
@@ -51,7 +51,7 @@ if [ -z "${HELMR_API_KEY:-}" ]; then
   production_scope_args=(--project "${PROJECT}" --env "${PRODUCTION_ENV}")
 else
   skip_production="${skip_production:-1}"
-  phase9_http_smoke_enabled=1
+  root_api_smoke_enabled=1
 fi
 
 run_helmr() {
@@ -132,8 +132,8 @@ validate_selected_smoke_preconditions() {
   if [ -z "${selected_smoke_cases}" ]; then
     return 0
   fi
-  if smoke_case_enabled phase9-start-and-wait && [ "${phase9_http_smoke_enabled}" != "1" ]; then
-    printf 'SMOKE_CASES=phase9-start-and-wait requires HELMR_API_KEY for root API checks\n' >&2
+  if smoke_case_enabled root-api-start-and-wait && [ "${root_api_smoke_enabled}" != "1" ]; then
+    printf 'SMOKE_CASES=root-api-start-and-wait requires HELMR_API_KEY for root API checks\n' >&2
     return 2
   fi
   if smoke_case_enabled production-secrets && [ "${skip_production}" = "1" ]; then
@@ -148,6 +148,38 @@ print_smoke_summary() {
   printf 'release smoke stopped workspace ids: %s\n' "${stopped_workspace_ids[*]-}"
   printf 'release smoke executed cases: %s\n' "${executed_smoke_cases[*]-}"
   printf 'release smoke skipped cases: %s\n' "${skipped_smoke_cases[*]-}"
+}
+
+write_smoke_result() {
+  local command_status=$1
+  local result_file="${HELMR_SMOKE_RESULT_FILE:-}"
+  local terminal_status="failed"
+  [ -n "${result_file}" ] || return 0
+  if [ "${command_status}" = "0" ]; then
+    terminal_status="passed"
+  fi
+  mkdir -p "$(dirname "${result_file}")"
+  umask 077
+  jq -n \
+    --arg schema "helmrdotdev.release-smoke-result.v1" \
+    --arg status "${terminal_status}" \
+    --argjson exit_code "${command_status}" \
+    --arg selected "${selected_smoke_cases}" \
+    --argjson executed "$(printf '%s\n' "${executed_smoke_cases[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    --argjson skipped "$(printf '%s\n' "${skipped_smoke_cases[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    --argjson sessions "$(printf '%s\n' "${session_ids[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    --argjson runs "$(printf '%s\n' "${run_ids[@]-}" | jq -Rsc 'split("\n") | map(select(length > 0))')" \
+    '{schema:$schema,status:$status,exit_code:$exit_code,selected_cases:($selected | split(",") | map(select(length > 0))),executed_cases:$executed,skipped_cases:$skipped,session_ids:$sessions,run_ids:$runs}' \
+    >"${result_file}.tmp"
+  chmod 0600 "${result_file}.tmp"
+  mv "${result_file}.tmp" "${result_file}"
+}
+
+smoke_exit() {
+  local command_status=$?
+  trap - EXIT
+  write_smoke_result "${command_status}" || true
+  exit "${command_status}"
 }
 
 production_smoke_enabled() {
@@ -746,6 +778,7 @@ expect_token_checkpoint_success() {
 }
 
 cd "${ROOT}"
+trap smoke_exit EXIT
 validate_smoke_cases
 validate_selected_smoke_preconditions
 
@@ -757,12 +790,12 @@ if [ "${SKIP_DEPLOY:-0}" != "1" ]; then
   fi
 fi
 
-if [ "${phase9_http_smoke_enabled}" = "1" ] && smoke_case_enabled phase9-start-and-wait; then
-  mark_smoke_executed phase9-start-and-wait
-  expect_start_and_wait_success phase9-start-and-wait
-elif [ "${phase9_http_smoke_enabled}" != "1" ] && smoke_case_enabled phase9-start-and-wait; then
-  printf 'SKIP phase9 HTTP smoke: HELMR_API_KEY is required for root API checks\n'
-  mark_smoke_skipped phase9-start-and-wait
+if [ "${root_api_smoke_enabled}" = "1" ] && smoke_case_enabled root-api-start-and-wait; then
+  mark_smoke_executed root-api-start-and-wait
+  expect_start_and_wait_success root-api-start-and-wait
+elif [ "${root_api_smoke_enabled}" != "1" ] && smoke_case_enabled root-api-start-and-wait; then
+  printf 'SKIP root API smoke: HELMR_API_KEY is required for root API checks\n'
+  mark_smoke_skipped root-api-start-and-wait
 fi
 
 if smoke_case_enabled runtime; then

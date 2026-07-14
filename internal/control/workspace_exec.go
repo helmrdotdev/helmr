@@ -344,13 +344,8 @@ func (s *Server) createWorkspaceExecForRequest(ctx context.Context, actor auth.A
 			return err
 		}
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:           pgvalue.UUID(actor.OrgID),
-			ProjectID:       ws.ProjectID,
-			EnvironmentID:   ws.EnvironmentID,
-			WorkspaceID:     ws.ID,
-			RequestPriority: 0,
-			Request:         []byte(`{"reason":"workspace_exec"}`),
+			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: pgvalue.UUID(actor.OrgID),
+			WorkspaceID: ws.ID, Priority: 0, Request: []byte(`{"reason":"workspace_exec"}`),
 		})
 		if err != nil {
 			return err
@@ -470,7 +465,6 @@ func (s *Server) appendWorkspaceExecStreamChunk(ctx context.Context, exec db.Wor
 		}
 		chunk, err = work.q.InsertWorkspaceExecStreamChunk(ctx, db.InsertWorkspaceExecStreamChunkParams{
 			OrgID:         exec.OrgID,
-			WorkerGroupID: exec.WorkerGroupID,
 			ProjectID:     exec.ProjectID,
 			EnvironmentID: exec.EnvironmentID,
 			WorkspaceID:   exec.WorkspaceID,
@@ -567,7 +561,7 @@ func workspaceExecResponse(row db.WorkspaceProcess) api.WorkspaceExecResponse {
 		ProcessID:        row.RuntimeProcessID,
 		ExitCode:         pgvalue.Int4Response(row.ExitCode),
 		Signal:           row.Signal,
-		Error:            json.RawMessage(row.Error),
+		Error:            json.RawMessage(row.TerminalError),
 		StdoutCursor:     row.StdoutCursor,
 		StderrCursor:     row.StderrCursor,
 		StdinCursor:      row.StdinCursor,
@@ -577,10 +571,6 @@ func workspaceExecResponse(row db.WorkspaceProcess) api.WorkspaceExecResponse {
 		ExitedAt:         pgvalue.TimePtr(row.ExitedAt),
 		UpdatedAt:        pgvalue.Time(row.UpdatedAt),
 	}
-}
-
-func workspaceExecFromExitedRow(row db.MarkWorkspaceExecExitedRow) db.WorkspaceProcess {
-	return db.WorkspaceProcess(row)
 }
 
 func workspaceExecStreamChunkResponse(row db.WorkspaceProcessStreamChunk) api.WorkspaceExecStreamChunkResponse {

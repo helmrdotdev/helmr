@@ -164,17 +164,6 @@ func TestWorkerEventPayloadJSONShapes(t *testing.T) {
 	}
 	assertJSONBytes(t, payload, `{"bytes":12,"observed_seq":7,"run_id":"run-1","stream":"stdout"}`)
 
-	params := workerInstanceHeartbeatParams(workerActor{WorkerInstanceID: uuid.Must(uuid.NewV7()), WorkerGroupID: "us-east-1-worker-group-1", ResourceID: "worker-resource"}, api.WorkerCapabilities{
-		ProtocolVersion: api.CurrentWorkerProtocolVersion,
-		RuntimeID:       "sha256:runtime",
-		RuntimeArch:     "arm64",
-		RuntimeABI:      "helmr/v1",
-		KernelDigest:    "sha256:kernel",
-		InitramfsDigest: "sha256:initramfs",
-		RootfsDigest:    "sha256:rootfs",
-		CNIProfile:      "helmr/v0",
-	})
-	assertJSONBytes(t, params.Heartbeat, `{"cni_profile":"helmr/v0","initramfs_digest":"sha256:initramfs","kernel_digest":"sha256:kernel","rootfs_digest":"sha256:rootfs","runtime_abi":"helmr/v1","runtime_arch":"arm64","runtime_id":"sha256:runtime"}`)
 }
 
 func TestRunEventsPaginationUsesLookahead(t *testing.T) {
@@ -265,7 +254,7 @@ func TestEventStreamTreatsTrimmedOlderDuplicateAsPublished(t *testing.T) {
 	redisServer := miniredis.RunT(t)
 	redisClient := redis.NewClient(&redis.Options{Addr: redisServer.Addr()})
 	t.Cleanup(func() { _ = redisClient.Close() })
-	streamKey := eventStreamKey(dbtest.DefaultOrgID, "us-east-1-worker-group-1", eventSubjectTypeRun, runID)
+	streamKey := eventStreamKey(dbtest.DefaultOrgID, eventSubjectTypeRun, runID)
 	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: streamKey,
 		ID:     "2-0",
@@ -302,20 +291,19 @@ func TestEventStreamPublishesRunLogAndTerminalOutput(t *testing.T) {
 	t.Cleanup(func() { _ = redisClient.Close() })
 	stream := &EventStream{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: &fakeStore{}, redis: redisClient}
 
-	runLogKey := runLogStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, runID)
+	runLogKey := runLogStreamKey(dbtest.DefaultOrgID, runID)
 	if err := stream.publishOutboxRow(context.Background(), db.ClaimLiveTelemetryOutboxRow{
-		OutboxID:      10,
-		StreamKind:    db.TelemetryStreamKindRunLog,
-		StreamKey:     runLogKey,
-		Seq:           11,
-		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		RunID:         pgvalue.UUID(runID),
-		StreamName:    "stdout",
-		Content:       []byte("hello\n"),
-		SizeBytes:     6,
-		ObservedSeq:   4,
-		CreatedAt:     testTime(),
+		OutboxID:    10,
+		StreamKind:  db.TelemetryStreamKindRunLog,
+		StreamKey:   runLogKey,
+		Seq:         11,
+		OrgID:       pgvalue.UUID(dbtest.DefaultOrgID),
+		RunID:       pgvalue.UUID(runID),
+		StreamName:  "stdout",
+		Content:     []byte("hello\n"),
+		SizeBytes:   6,
+		ObservedSeq: 4,
+		CreatedAt:   testTime(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -334,22 +322,21 @@ func TestEventStreamPublishesRunLogAndTerminalOutput(t *testing.T) {
 		t.Fatalf("run log = %+v", runLog)
 	}
 
-	terminalKey := terminalOutputStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, workspaceID, "workspace_process", processID, "stdout")
+	terminalKey := terminalOutputStreamKey(dbtest.DefaultOrgID, workspaceID, "workspace_process", processID, "stdout")
 	if err := stream.publishOutboxRow(context.Background(), db.ClaimLiveTelemetryOutboxRow{
-		OutboxID:      12,
-		StreamKind:    db.TelemetryStreamKindTerminalOutput,
-		StreamKey:     terminalKey,
-		OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
-		WorkspaceID:   pgvalue.UUID(workspaceID),
-		ResourceKind:  "workspace_process",
-		ResourceID:    pgvalue.UUID(processID),
-		StreamName:    "stdout",
-		Content:       []byte("term\n"),
-		OffsetStart:   3,
-		OffsetEnd:     8,
-		OccurredAt:    testTime(),
-		CreatedAt:     testTime(),
+		OutboxID:     12,
+		StreamKind:   db.TelemetryStreamKindTerminalOutput,
+		StreamKey:    terminalKey,
+		OrgID:        pgvalue.UUID(dbtest.DefaultOrgID),
+		WorkspaceID:  pgvalue.UUID(workspaceID),
+		ResourceKind: "workspace_process",
+		ResourceID:   pgvalue.UUID(processID),
+		StreamName:   "stdout",
+		Content:      []byte("term\n"),
+		OffsetStart:  3,
+		OffsetEnd:    8,
+		OccurredAt:   testTime(),
+		CreatedAt:    testTime(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +366,6 @@ func TestEventStreamReadsTerminalOutputFromRedisWhenHistoricalUnavailable(t *tes
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 		db:              &fakeStore{},
 		redis:           redisClient,
-		workerGroupID:   dbtest.DefaultWorkerGroupID,
 		telemetryReader: fakeTelemetryReader{store: &fakeStore{}, listTerminalOutputErr: telemetry.ErrHistoricalUnavailable},
 	}
 	chunk := telemetry.TerminalOutputChunk{
@@ -395,7 +381,7 @@ func TestEventStreamReadsTerminalOutputFromRedisWhenHistoricalUnavailable(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := terminalOutputStreamKey(dbtest.DefaultOrgID, dbtest.DefaultWorkerGroupID, workspaceID, "workspace_process", processID, "stdout")
+	key := terminalOutputStreamKey(dbtest.DefaultOrgID, workspaceID, "workspace_process", processID, "stdout")
 	if err := redisClient.XAdd(context.Background(), &redis.XAddArgs{
 		Stream: key,
 		ID:     redisEventID(5),
@@ -406,7 +392,6 @@ func TestEventStreamReadsTerminalOutputFromRedisWhenHistoricalUnavailable(t *tes
 	var got telemetry.TerminalOutputChunk
 	err = stream.ReadTerminalOutput(context.Background(), telemetry.TerminalOutputQuery{
 		OrgID:         dbtest.DefaultOrgID,
-		WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		ProjectID:     pgvalue.MustUUIDValue(testProjectID()),
 		EnvironmentID: pgvalue.MustUUIDValue(testEnvironmentID()),
 		WorkspaceID:   workspaceID,
@@ -445,7 +430,7 @@ func (f *fakeStore) AppendRunEvent(_ context.Context, arg db.AppendRunEventParam
 }
 
 func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendRunEventForExecutionParams) (db.AppendRunEventForExecutionRow, error) {
-	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID || arg.WorkerGroupID != dbtest.DefaultWorkerGroupID {
+	if f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
 		return db.AppendRunEventForExecutionRow{}, pgx.ErrNoRows
 	}
 	event := db.ClaimLiveTelemetryOutboxRow{
@@ -462,7 +447,6 @@ func (f *fakeStore) AppendRunEventForExecution(_ context.Context, arg db.AppendR
 	f.events = append(f.events, event)
 	return db.AppendRunEventForExecutionRow{
 		ID:            event.RunID,
-		WorkerGroupID: arg.WorkerGroupID,
 		RunLeaseID:    event.RunLeaseID,
 		AttemptNumber: 1,
 		EventKind:     event.Kind,

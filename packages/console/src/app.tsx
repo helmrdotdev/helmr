@@ -27,6 +27,8 @@ import { ProjectNew } from "./routes/project-new";
 import { OrganizationNew } from "./routes/organization-new";
 import { AccessRequired } from "./routes/access-required";
 import { Device } from "./routes/device";
+import { WorkspaceDetail } from "./routes/workspace-detail";
+import { WorkspaceExecDetail } from "./routes/workspace-exec-detail";
 
 function TabLink(props: {
   href: string;
@@ -218,6 +220,8 @@ export function App() {
       <Route path="/sessions/:id" component={wrap(SessionDetail)} />
       <Route path="/schedules" component={wrap(Schedules)} />
       <Route path="/tasks" component={wrap(Tasks)} />
+      <Route path="/workspaces/:workspace_id" component={wrap(WorkspaceDetail)} />
+      <Route path="/workspaces/:workspace_id/execs/:exec_id" component={wrap(WorkspaceExecDetail)} />
       <Route path="/projects/new" component={() => <RequireAuth allowOnboarding><ProjectNew /></RequireAuth>} />
 
       <Route path="/settings" component={() => <Navigate href="/settings/projects" />} />

@@ -71,10 +71,6 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, summary.WorkerGroupID); err != nil {
-		writeError(w, err)
-		return
-	}
 	requestBody, err := json.Marshal(request)
 	if err != nil {
 		writeError(w, errors.New("encode cancel request"))
@@ -102,17 +98,16 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cancelled, err := s.db.CancelRun(r.Context(), db.CancelRunParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		WorkerGroupID: summary.WorkerGroupID,
-		RunID:         pgvalue.UUID(runID),
-		Reason:        request.Reason,
-		Force:         request.Force,
-		OperationID:   operation.ID,
+		OrgID:       pgvalue.UUID(actor.OrgID),
+		RunID:       pgvalue.UUID(runID),
+		OperationID: operation.ID,
 	})
 	if err != nil {
 		if isNoRows(err) {
 			operationID := operation.ID
-			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: pgvalue.UUID(actor.OrgID), ID: operationID})
+			operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{
+				OrgID: pgvalue.UUID(actor.OrgID), RunID: pgvalue.UUID(runID), ID: operationID,
+			})
 			if err != nil {
 				s.log.Error("get idempotent cancel operation failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 				writeError(w, errors.New("cancel run"))
@@ -134,9 +129,12 @@ func (s *Server) cancelRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("cancel run"))
 		return
 	}
-	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{OrgID: pgvalue.UUID(actor.OrgID), ID: operation.ID})
+	operationID := operation.ID
+	operation, err = s.db.GetRunOperation(r.Context(), db.GetRunOperationParams{
+		OrgID: pgvalue.UUID(actor.OrgID), RunID: pgvalue.UUID(runID), ID: operationID,
+	})
 	if err != nil {
-		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operation.ID).String(), "error", err)
+		s.log.Error("get cancel operation failed", "run_id", runID.String(), "operation_id", pgvalue.MustUUIDValue(operationID).String(), "error", err)
 		writeError(w, errors.New("cancel run"))
 		return
 	}
@@ -174,9 +172,6 @@ func createRunOperationWithStore(ctx context.Context, store db.Querier, actor au
 			ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:       publicID,
 			OrgID:          run.OrgID,
-			WorkerGroupID:  run.WorkerGroupID,
-			ProjectID:      run.ProjectID,
-			EnvironmentID:  run.EnvironmentID,
 			RunID:          run.ID,
 			Kind:           kind,
 			ActorKind:      string(actor.Kind),

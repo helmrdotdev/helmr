@@ -55,13 +55,13 @@ values in Terraform state.
 Required value formats:
 
 - `database_url`: `postgres://helmr:<password>@<postgres_endpoint>/helmr?sslmode=require`
-- `worker_token_signing_key`, `auth_secret`, `worker_bootstrap_token`, `setup_token`: high-entropy strings
+- `worker_token_signing_key`, `auth_secret`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
-`checkpoint_encryption_key`, `worker_bootstrap_token`, and `setup_token` locally and writes them
+`checkpoint_encryption_key`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 
 ```sh
@@ -116,7 +116,6 @@ enable_nat_gateway                  = true
 create_worker                       = true
 worker_instance_type                = "c8i.xlarge"
 worker_enable_nested_virtualization = true
-worker_desired_capacity             = 1
 worker_min_size                     = 1
 worker_max_size                     = 1
 worker_root_volume_size_gb          = 120
@@ -134,6 +133,17 @@ BuildKit, CNI plugins, guest boot artifacts, AWS CLI, and `helmr-worker` install
 while a worker is running or draining because workers run in private subnets. Workers are
 filesystem-first: the root EBS volume carries build/cache/runtime data, and `worker_disk_mib` can
 override the disk capacity advertised to the control plane.
+
+For an AMI rollout, first add the new AMI to `worker_allowed_ami_ids` and apply that control-plane
+change. Then change `worker_ami_id`, apply the launch template, and explicitly start the Auto
+Scaling instance refresh. Retain the old AMI in the allowlist until every old instance terminates.
+This preserves enrollment for old and new hosts without weakening the worker-group boundary.
+
+`helmr-dispatcher` owns desired capacity for run and build groups in both deployment modes.
+Terraform retains the ASG min/max guardrails, and equal min/max values provide fixed capacity.
+Worker capacity and disk/cache partitions must be explicit when workers are created. CloudWatch
+metrics and alarms are observational only; cost reporting does not participate in scaling
+correctness.
 
 ## Destroy
 

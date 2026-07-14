@@ -29,7 +29,7 @@ type RunCreator interface {
 
 type Index interface {
 	Enqueue(context.Context, IndexEntry) error
-	Delete(context.Context, string, uuid.UUID) error
+	Delete(context.Context, uuid.UUID) error
 	Dequeue(context.Context, DequeueRequest) ([]IndexLease, error)
 	Ack(context.Context, IndexLease) error
 	Nack(context.Context, IndexLease, time.Time) error
@@ -139,11 +139,10 @@ func (w *Worker) tick(ctx context.Context) error {
 
 func (w *Worker) runDue(ctx context.Context) error {
 	leases, err := w.engine.index.Dequeue(ctx, DequeueRequest{
-		WorkerGroupID: w.engine.workerGroupID,
-		WorkerID:      w.workerID,
-		Limit:         w.limit,
-		Now:           w.now(),
-		Lease:         w.lease,
+		WorkerID: w.workerID,
+		Limit:    w.limit,
+		Now:      w.now(),
+		Lease:    w.lease,
 	})
 	if err != nil {
 		return err

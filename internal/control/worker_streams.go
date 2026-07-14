@@ -39,7 +39,7 @@ func (s *Server) workerAppendOutputStream(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	leaseRow, _, err := s.workerExecutionLease(r.Context(), worker, leaseIDs)
+	err := s.workerCurrentRunningLease(r.Context(), worker, leaseIDs)
 	if isNoRows(err) {
 		writeError(w, conflict(errActiveStreamLeaseLost))
 		return
@@ -48,7 +48,7 @@ func (s *Server) workerAppendOutputStream(w http.ResponseWriter, r *http.Request
 		writeError(w, errors.New("load worker stream lease"))
 		return
 	}
-	session, stream, err := s.workerStreamScope(r.Context(), leaseIDs, queueLeaseStreamScope(leaseRow), request.Stream, db.StreamDirectionOutput)
+	session, stream, err := s.workerStreamScope(r.Context(), leaseIDs, request.Stream, db.StreamDirectionOutput)
 	if err != nil {
 		s.writeWorkerStreamError(w, err)
 		return
@@ -110,14 +110,14 @@ func (w serverActiveStreamWakeups) waitSessionInputStreamWakeup(ctx context.Cont
 }
 
 func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker workerActor, leaseIDs workerRunLeaseIDs, request api.WorkerActiveStreamReadRequest, wakeups activeStreamWakeups) (api.WorkerActiveStreamReadResponse, error) {
-	leaseRow, err := s.workerCurrentRunningLease(ctx, worker, leaseIDs)
+	err := s.workerCurrentRunningLease(ctx, worker, leaseIDs)
 	if isNoRows(err) {
 		return api.WorkerActiveStreamReadResponse{}, conflict(errActiveStreamLeaseLost)
 	}
 	if err != nil {
 		return api.WorkerActiveStreamReadResponse{}, err
 	}
-	session, stream, err := s.workerStreamScope(ctx, leaseIDs, currentLeaseStreamScope(leaseRow), request.Stream, db.StreamDirectionInput)
+	session, stream, err := s.workerStreamScope(ctx, leaseIDs, request.Stream, db.StreamDirectionInput)
 	if err != nil {
 		return api.WorkerActiveStreamReadResponse{}, err
 	}
@@ -130,7 +130,7 @@ func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker wo
 	leaseValidated := true
 	for {
 		if !leaseValidated {
-			if _, err := s.workerCurrentRunningLease(ctx, worker, leaseIDs); isNoRows(err) {
+			if err := s.workerCurrentRunningLease(ctx, worker, leaseIDs); isNoRows(err) {
 				return api.WorkerActiveStreamReadResponse{}, conflict(errActiveStreamLeaseLost)
 			} else if err != nil {
 				return api.WorkerActiveStreamReadResponse{}, err
@@ -167,36 +167,17 @@ func (s *Server) readWorkerInputStreamWithWakeups(ctx context.Context, worker wo
 	}
 }
 
-type workerRunLeaseStreamScope struct {
-	workerGroupID string
-	projectID     pgtype.UUID
-	environmentID pgtype.UUID
-	deploymentID  pgtype.UUID
-	taskID        string
-	sessionID     pgtype.UUID
-}
-
-func queueLeaseStreamScope(row db.GetRunLeaseQueueLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{workerGroupID: row.WorkerGroupID, projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, sessionID: row.SessionID}
-}
-
-func currentLeaseStreamScope(row db.GetCurrentRunningRunLeaseRow) workerRunLeaseStreamScope {
-	return workerRunLeaseStreamScope{workerGroupID: row.WorkerGroupID, projectID: row.ProjectID, environmentID: row.EnvironmentID, deploymentID: row.DeploymentID, taskID: row.TaskID, sessionID: row.SessionID}
-}
-
-func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseIDs, leaseRow workerRunLeaseStreamScope, streamName string, direction db.StreamDirection) (db.Session, db.Stream, error) {
+func (s *Server) workerStreamScope(ctx context.Context, leaseIDs workerRunLeaseIDs, streamName string, direction db.StreamDirection) (db.Session, db.Stream, error) {
 	name := strings.TrimSpace(streamName)
 	if err := validateSessionStreamName(name); err != nil {
 		return db.Session{}, db.Stream{}, badRequest(err)
 	}
-	session := db.Session{
-		ID:            leaseRow.sessionID,
-		OrgID:         pgvalue.UUID(leaseIDs.orgID),
-		WorkerGroupID: leaseRow.workerGroupID,
-		ProjectID:     leaseRow.projectID,
-		EnvironmentID: leaseRow.environmentID,
+	run, err := s.db.GetRun(ctx, db.GetRunParams{OrgID: pgvalue.UUID(leaseIDs.orgID), ID: pgvalue.UUID(leaseIDs.runID)})
+	if err != nil || run.CurrentRunLeaseID != pgvalue.UUID(leaseIDs.runLeaseID) {
+		return db.Session{}, db.Stream{}, conflict(errActiveStreamLeaseLost)
 	}
-	stream, err := s.ensureSessionStream(ctx, s.db, session, leaseRow.deploymentID, name, direction)
+	session := db.Session{ID: run.SessionID, OrgID: run.OrgID, ProjectID: run.ProjectID, EnvironmentID: run.EnvironmentID}
+	stream, err := s.ensureSessionStream(ctx, s.db, session, run.DeploymentID, name, direction)
 	if err != nil {
 		return db.Session{}, db.Stream{}, err
 	}

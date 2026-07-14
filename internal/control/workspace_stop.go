@@ -44,11 +44,6 @@ func (s *Server) stopWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	if err := s.markStaleWorkspaceMountsLost(r.Context()); err != nil {
-		s.log.Error("mark stale workspace mounts lost failed", "workspace_id", workspaceID.String(), "error", err)
-		writeError(w, errors.New("reap stale workspace mounts"))
-		return
-	}
 	response, err := s.requestWorkspaceStopForRequest(r.Context(), actor, projectID, environmentID, pgvalue.UUID(workspaceID))
 	if err != nil {
 		s.writeWorkspaceError(w, "request workspace stop", err)
@@ -61,6 +56,7 @@ func (s *Server) requestWorkspaceStopForRequest(ctx context.Context, actor auth.
 	var response api.WorkspaceStopResponse
 	err := s.inTx(ctx, func(work *txWork) error {
 		row, err := work.q.RequestWorkspaceMountStop(ctx, db.RequestWorkspaceMountStopParams{
+			ReasonCode:    "workspace_stop_requested",
 			OrgID:         pgvalue.UUID(actor.OrgID),
 			ProjectID:     projectID,
 			EnvironmentID: environmentID,
@@ -97,16 +93,12 @@ func workspaceStopResponse(workspaceID pgtype.UUID, row db.RequestWorkspaceMount
 			State:       "no_active_mount",
 		}
 	}
-	mount := workspaceMountResponse(workspaceMountFromStopRow(row))
+	mount := workspaceMountResponse(db.WorkspaceMount(row))
 	return api.WorkspaceStopResponse{
 		WorkspaceID: pgvalue.MustUUIDValue(row.WorkspaceID).String(),
 		State:       string(row.State),
 		Mount:       &mount,
 	}
-}
-
-func workspaceMountFromStopRow(row db.RequestWorkspaceMountStopRow) db.WorkspaceMount {
-	return db.WorkspaceMount(row)
 }
 
 func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +107,7 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace mount stop request JSON: %w", err)))
 		return
 	}
-	row, err := s.workerStopWorkspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID, request.RuntimeInstanceToken)
+	row, err := s.workerStopWorkspaceMountTransition(r.Context(), request.OrgID, request.WorkspaceMountID)
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("workspace mount is stale")))
 		return
@@ -125,8 +117,4 @@ func (s *Server) workerStopWorkspaceMount(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceMountResponse(row))
-}
-
-func stoppedWorkspaceMount(row db.StopWorkspaceMountRow) db.WorkspaceMount {
-	return db.WorkspaceMount(row)
 }

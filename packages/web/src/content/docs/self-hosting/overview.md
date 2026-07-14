@@ -15,6 +15,8 @@ deployment, worker, runtime, and run model as managed cloud. The self-hosted
 path is operated as a single organization: initial setup requires a setup token
 and creates the only organization for that environment. After setup, the control
 plane, dispatcher, workers, API, and database model follow the same architecture.
+Run and build workers are separate groups in both deployment modes and each group
+can be scaled independently with minimum, desired, and maximum instance counts.
 
 The deployment has these runtime components:
 

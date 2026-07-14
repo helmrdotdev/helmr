@@ -32,7 +32,6 @@ import (
 
 const testGitSHA = "0123456789abcdef0123456789abcdef01234567"
 const testWorkerTokenSecret = "01234567890123456789012345678901"
-const testWorkerInstanceCredentialID = "00000000-0000-0000-0000-00000000c001"
 
 func requireErrorCode(t *testing.T, body []byte, want string) {
 	t.Helper()
@@ -46,10 +45,6 @@ func requireErrorCode(t *testing.T, body []byte, want string) {
 	if response.Code != want {
 		t.Fatalf("error response code = %q, want %q; body=%s", response.Code, want, string(body))
 	}
-}
-
-func testWorkerGroupID() string {
-	return "us-east-1-worker-group-1"
 }
 
 func testProjectID() pgtype.UUID {
@@ -96,15 +91,6 @@ func testArtifactID() pgtype.UUID {
 	return pgvalue.UUID(uuid.MustParse("00000000-0000-0000-0000-000000000306"))
 }
 
-func testWorkerRunLeaseRequestBody(t *testing.T) []byte {
-	t.Helper()
-	body, err := json.Marshal(api.WorkerRunLeaseRequest{Capabilities: testWorkerCapabilities()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return body
-}
-
 func testWorkerCapabilities() api.WorkerCapabilities {
 	capabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
@@ -116,7 +102,12 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 		CNIProfile:              "helmr/v0",
 		MaxVCPUs:                2,
 		MaxMemoryMiB:            2048,
+		VMMilliCPU:              2000,
+		VMMemoryMiB:             2048,
 		MaxDiskMiB:              20480,
+		VMMaxDiskMiB:            20480,
+		ScratchBytes:            20480 << 20,
+		VMMaxScratchBytes:       20480 << 20,
 		ExecutionSlotsAvailable: 1,
 		Network: api.WorkerNetworkCapabilities{
 			Internet:      true,
@@ -139,28 +130,6 @@ func testWorkerCapabilities() api.WorkerCapabilities {
 	return capabilities
 }
 
-func testRunRuntimeRequirements() compute.RunRuntimeRequirements {
-	capabilities := testWorkerCapabilities()
-	return compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{
-			MilliCPU:  1000,
-			MemoryMiB: 512,
-			DiskMiB:   1024,
-			Slots:     1,
-		},
-		Runtime: compute.RuntimeSelector{
-			ID:              capabilities.RuntimeID,
-			Arch:            capabilities.RuntimeArch,
-			ABI:             capabilities.RuntimeABI,
-			KernelDigest:    capabilities.KernelDigest,
-			InitramfsDigest: capabilities.InitramfsDigest,
-			RootfsDigest:    capabilities.RootfsDigest,
-			CNIProfile:      capabilities.CNIProfile,
-		},
-		Network: compute.DefaultNetworkPolicy(),
-	}
-}
-
 func testSandboxFingerprint() string {
 	return "sha256:" + strings.Repeat("7", 64)
 }
@@ -169,7 +138,6 @@ func fakeWorkspaceForSessionStart(workspaceID pgtype.UUID) db.GetWorkspaceForSes
 	return db.GetWorkspaceForSessionStartRow{
 		ID:                                workspaceID,
 		OrgID:                             pgvalue.UUID(dbtest.DefaultOrgID),
-		WorkerGroupID:                     dbtest.DefaultWorkerGroupID,
 		ProjectID:                         testProjectID(),
 		EnvironmentID:                     testEnvironmentID(),
 		DeploymentSandboxID:               testDeploymentSandboxID(),
@@ -193,7 +161,7 @@ func fakeWorkspaceForSessionStart(workspaceID pgtype.UUID) db.GetWorkspaceForSes
 
 func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}})
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{kind: auth.ActorKindAPIKey, role: auth.RoleOwner}})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy"})
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +184,7 @@ func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 
 func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -242,7 +210,7 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 
 func TestAPIKeyRunCreateRejectsExplicitScopeOverride(t *testing.T) {
 	store := &fakeStore{}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, DispatchQueue: store, Auth: fakeAuth{
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -425,7 +393,7 @@ func TestSessionStartRejectsOversizedExternalID(t *testing.T) {
 
 func TestWorkspaceMaterializeEnsuresRunnableWorkspaceMountCreated(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMountInserted: true}
+	store := &fakeStore{workspace: testWorkspaceRow(workspaceID), ensureWorkspaceMountInserted: true}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/materialize", strings.NewReader(`{}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -470,7 +438,7 @@ func TestWorkspaceMaterializeAllowsPrimitiveReadPermissions(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			workspaceID := uuid.Must(uuid.NewV7())
-			store := &fakeStore{ensureWorkspaceMountInserted: true}
+			store := &fakeStore{workspace: testWorkspaceRow(workspaceID), ensureWorkspaceMountInserted: true}
 			server := newTestServer(testServerConfig{
 				Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
 				DB:          store,
@@ -558,34 +526,6 @@ func TestWorkspaceListAndGetRejectUnrelatedPermission(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("%s status = %d body=%s", path, rec.Code, rec.Body.String())
 		}
-	}
-}
-
-func TestGetWorkspaceRejectsUnavailableRecordPlacement(t *testing.T) {
-	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{
-		workspace:                  testWorkspaceRow(workspaceID),
-		recordPlacementUnavailable: true,
-	}
-	server := newTestServer(testServerConfig{
-		Log:         slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DB:          store,
-		Auth:        fakeAuth{permissions: []auth.Permission{auth.PermissionFilesRead}},
-		CAS:         &fakeCAS{},
-		Secrets:     fakeSecrets{},
-		EventStream: newTestEventStream(t),
-	})
-	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/"+workspaceID.String(), nil)
-	req.Header.Set("authorization", "Bearer test-key")
-	rec := httptest.NewRecorder()
-
-	server.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "record placement is not available") {
-		t.Fatalf("body = %s", rec.Body.String())
 	}
 }
 
@@ -781,7 +721,7 @@ func TestWorkspaceMaterializeRejectsPublicPriority(t *testing.T) {
 
 func TestWorkspaceConnectReturnsExistingRunnableWorkspaceMount(t *testing.T) {
 	workspaceID := uuid.Must(uuid.NewV7())
-	store := &fakeStore{ensureWorkspaceMountState: db.WorkspaceMountStateMounted}
+	store := &fakeStore{workspace: testWorkspaceRow(workspaceID), ensureWorkspaceMountState: db.WorkspaceMountStateMounted}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	req := httptest.NewRequest(http.MethodPost, "/api/workspaces/"+workspaceID.String()+"/connect", strings.NewReader(`{}`))
 	req.Header.Set("authorization", "Bearer test-key")
@@ -860,30 +800,12 @@ func TestSessionStartAttachesCompatibleWorkspace(t *testing.T) {
 	if store.createWorkspaceCalls != 0 {
 		t.Fatalf("CreateWorkspace calls = %d, want 0", store.createWorkspaceCalls)
 	}
-	if store.ensureWorkspaceMountCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
-	}
-	if store.ensureWorkspaceMount.WorkspaceID != workspaceID {
-		t.Fatalf("mount workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID), pgvalue.MustUUIDValue(workspaceID))
-	}
-	if store.setQueuedRunWorkspaceMountCalls != 1 {
-		t.Fatalf("SetQueuedRunWorkspaceMount calls = %d, want 1", store.setQueuedRunWorkspaceMountCalls)
-	}
-	if store.setQueuedRunWorkspaceMount.WorkspaceMountID != store.ensureWorkspaceMount.ID {
-		t.Fatalf("run workspace_mount_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMount.WorkspaceMountID), pgvalue.MustUUIDValue(store.ensureWorkspaceMount.ID))
-	}
-	if !store.createRun.AllowDrainingRoute {
-		t.Fatalf("created run allow_draining_route = false, want true for explicit workspace attach")
-	}
 }
 
-func TestSessionStartAttachesWorkspaceOnDrainingWorkerGroupPlacement(t *testing.T) {
+func TestSessionStartAttachesExistingWorkspaceWithoutLogicalGroupPlacement(t *testing.T) {
 	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	workspace := fakeWorkspaceForSessionStart(workspaceID)
-	store := &fakeStore{
-		attachedWorkspace:                 workspace,
-		environmentPlacementWorkerGroupID: "us-east-1-worker-group-2",
-	}
+	store := &fakeStore{attachedWorkspace: workspace}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
 	bodyBytes, err := json.Marshal(api.SessionStartRequest{TaskID: "deploy",
 		Options: api.SessionStartOptions{WorkspaceID: pgvalue.MustUUIDValue(workspaceID).String()},
@@ -899,18 +821,6 @@ func TestSessionStartAttachesWorkspaceOnDrainingWorkerGroupPlacement(t *testing.
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
-	}
-	if store.getDeploymentTask.WorkerGroupID != workspace.WorkerGroupID {
-		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, workspace.WorkerGroupID)
-	}
-	if store.run.WorkerGroupID != workspace.WorkerGroupID {
-		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, workspace.WorkerGroupID)
-	}
-	if !store.createRun.AllowDrainingRoute {
-		t.Fatalf("created run allow_draining_route = false, want true for explicit workspace attach")
-	}
-	if store.session.WorkerGroupID != workspace.WorkerGroupID {
-		t.Fatalf("created session worker_group_id = %q, want %q", store.session.WorkerGroupID, workspace.WorkerGroupID)
 	}
 }
 
@@ -957,21 +867,6 @@ func TestSessionStartCreatesArtifactBackedWorkspaceForColdStart(t *testing.T) {
 	}
 	if casEventIndex == -1 || artifactEventIndex == -1 || casEventIndex > artifactEventIndex {
 		t.Fatalf("artifact authority event order = %v, want %q before %q", store.artifactAuthorityEvents, casEvent, artifactEvent)
-	}
-	if store.ensureWorkspaceMountCalls != 1 {
-		t.Fatalf("EnsureWorkspaceMountRequested calls = %d, want 1", store.ensureWorkspaceMountCalls)
-	}
-	if store.ensureWorkspaceMount.WorkspaceID != store.workspace.ID {
-		t.Fatalf("mount workspace_id = %s, want %s", pgvalue.MustUUIDValue(store.ensureWorkspaceMount.WorkspaceID), pgvalue.MustUUIDValue(store.workspace.ID))
-	}
-	if store.setQueuedRunWorkspaceMountCalls != 1 {
-		t.Fatalf("SetQueuedRunWorkspaceMount calls = %d, want 1", store.setQueuedRunWorkspaceMountCalls)
-	}
-	if store.setQueuedRunWorkspaceMount.WorkspaceMountID != store.ensureWorkspaceMount.ID {
-		t.Fatalf("run workspace_mount_id = %s, want %s", pgvalue.MustUUIDValue(store.setQueuedRunWorkspaceMount.WorkspaceMountID), pgvalue.MustUUIDValue(store.ensureWorkspaceMount.ID))
-	}
-	if store.createRun.AllowDrainingRoute {
-		t.Fatalf("created run allow_draining_route = true, want false for new placement")
 	}
 }
 
@@ -1056,7 +951,6 @@ func TestSessionStartExternalIDRejectsDifferentFingerprint(t *testing.T) {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1332,43 +1226,6 @@ func TestSessionStartExternalIDRejectsMetadataTagsMismatch(t *testing.T) {
 	requireErrorCode(t, rec.Body.Bytes(), "session_fingerprint_mismatch")
 }
 
-func TestContinuationRunRequestRetriesTransientEnsureFailure(t *testing.T) {
-	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
-	previousRun := store.run
-	store.ensureWorkspaceMountErr = errors.New("transient mount failure")
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
-	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runID.Valid ||
-		store.sessionContinuationRequest.Status != "accepted" ||
-		store.sessionContinuationRequest.LastErrorCode != "continuation_reconcile_failed" ||
-		!strings.Contains(store.sessionContinuationRequest.LastErrorMessage, "transient mount failure") {
-		t.Fatalf("first reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
-	}
-	if len(store.sessionRuns) != 1 {
-		t.Fatalf("session runs after first reconcile = %d, want previous only", len(store.sessionRuns))
-	}
-
-	store.ensureWorkspaceMountErr = nil
-	store.run = previousRun
-	store.sessionContinuationRequest.Status = "claimed"
-	runID, err = server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !runID.Valid || store.sessionContinuationRequest.Status != "created" || store.sessionContinuationRequest.CreatedRunID != runID {
-		t.Fatalf("second reconcile run=%s request=%+v", pgvalue.UUIDString(runID), store.sessionContinuationRequest)
-	}
-	if len(store.sessionRuns) != 2 || store.sessionRuns[1].PreviousRunID != store.sessionRuns[0].RunID || store.sessionRuns[1].Reason != "input" {
-		t.Fatalf("session runs = %+v", store.sessionRuns)
-	}
-	if store.session.CurrentRunID != runID || store.ensureWorkspaceMountCalls != 2 {
-		t.Fatalf("session current=%s mount calls=%d", pgvalue.UUIDString(store.session.CurrentRunID), store.ensureWorkspaceMountCalls)
-	}
-}
-
 func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	store := continuationRunRequestFakeStore(db.RunStatusRunning)
 	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
@@ -1391,45 +1248,6 @@ func TestContinuationRunRequestCreatedAfterLiveRunTerminal(t *testing.T) {
 	}
 	if len(store.sessionRuns) != 2 || store.session.CurrentRunID != runID {
 		t.Fatalf("session runs=%+v current=%s", store.sessionRuns, pgvalue.UUIDString(store.session.CurrentRunID))
-	}
-}
-
-func TestContinuationRunRequestUsesSessionWorkerGroup(t *testing.T) {
-	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
-
-	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !runID.Valid || store.sessionContinuationRequest.Status != "created" {
-		t.Fatalf("run=%s request status=%q", pgvalue.UUIDString(runID), store.sessionContinuationRequest.Status)
-	}
-	if store.getDeploymentTask.WorkerGroupID != store.session.WorkerGroupID {
-		t.Fatalf("deployment task worker_group_id = %q, want %q", store.getDeploymentTask.WorkerGroupID, store.session.WorkerGroupID)
-	}
-	if store.run.WorkerGroupID != store.session.WorkerGroupID {
-		t.Fatalf("created run worker_group_id = %q, want %q", store.run.WorkerGroupID, store.session.WorkerGroupID)
-	}
-	if !store.createRun.AllowDrainingRoute {
-		t.Fatalf("created run allow_draining_route = false, want true for continuation worker group placement")
-	}
-}
-
-func TestContinuationRunRequestFailsWhenSessionWorkerGroupPlacementUnavailable(t *testing.T) {
-	store := continuationRunRequestFakeStore(db.RunStatusSucceeded)
-	store.environmentRouteUnavailable = true
-	server := &Server{log: slog.New(slog.NewTextHandler(io.Discard, nil)), db: store, workerGroupID: "us-east-1-worker-group-1"}
-
-	runID, err := server.sessionContinuationRequestWorkflow().reconcileClaimed(context.Background(), store.sessionContinuationRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runID.Valid || store.sessionContinuationRequest.Status != "failed" || store.sessionContinuationRequest.StatusReason != "session_route_unavailable" {
-		t.Fatalf("run=%s request status=%q status_reason=%q", pgvalue.UUIDString(runID), store.sessionContinuationRequest.Status, store.sessionContinuationRequest.StatusReason)
-	}
-	if store.createRun.ID.Valid {
-		t.Fatalf("created run: %+v", store.createRun)
 	}
 }
 
@@ -1482,7 +1300,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		session: db.Session{
 			ID:                  sessionID,
 			OrgID:               pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:       dbtest.DefaultWorkerGroupID,
 			ProjectID:           testProjectID(),
 			EnvironmentID:       testEnvironmentID(),
 			TaskID:              "deploy",
@@ -1500,7 +1317,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		run: db.Run{
 			ID:               previousRunID,
 			OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:    dbtest.DefaultWorkerGroupID,
 			ProjectID:        testProjectID(),
 			EnvironmentID:    testEnvironmentID(),
 			DeploymentID:     testDeploymentID(),
@@ -1515,7 +1331,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		streamRecord: db.StreamRecord{
 			ID:            recordID,
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -1530,7 +1345,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionContinuationRequest: db.SessionContinuationRequest{
 			ID:             requestID,
 			OrgID:          pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID:  dbtest.DefaultWorkerGroupID,
 			ProjectID:      testProjectID(),
 			EnvironmentID:  testEnvironmentID(),
 			SessionID:      sessionID,
@@ -1562,7 +1376,6 @@ func continuationRunRequestFakeStore(previousStatus db.RunStatus) *fakeStore {
 		sessionRuns: []db.SessionRun{{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			WorkerGroupID: dbtest.DefaultWorkerGroupID,
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			SessionID:     sessionID,
@@ -2256,7 +2069,7 @@ func TestPatchSessionAllowsActiveRun(t *testing.T) {
 		},
 	}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}})
-	req := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String(), strings.NewReader(`{"metadata":{"owner":"release"},"tags":["phase3"]}`))
+	req := httptest.NewRequest(http.MethodPatch, "/api/sessions/"+pgvalue.MustUUIDValue(sessionID).String(), strings.NewReader(`{"metadata":{"owner":"release"},"tags":["validation"]}`))
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 
@@ -2272,7 +2085,7 @@ func TestPatchSessionAllowsActiveRun(t *testing.T) {
 	if got := string(response.Metadata); got != `{"owner":"release"}` {
 		t.Fatalf("metadata = %s", got)
 	}
-	if len(response.Tags) != 1 || response.Tags[0] != "phase3" {
+	if len(response.Tags) != 1 || response.Tags[0] != "validation" {
 		t.Fatalf("tags = %+v", response.Tags)
 	}
 	if response.CurrentRunID != pgvalue.MustUUIDValue(runID).String() {
@@ -2502,7 +2315,7 @@ func TestCancelSessionTerminalizesPendingCancelRun(t *testing.T) {
 	if response.Status != string(db.SessionStatusCancelled) || response.CurrentRunID != "" {
 		t.Fatalf("response = %+v, want cancelled session without current run", response)
 	}
-	if store.cancelRunCalls != 1 || store.run.ExecutionStatus != db.RunExecutionStatusPendingCancel {
+	if store.cancelRunCalls != 1 || store.run.ExecutionStatus != db.RunExecutionStatusFinished {
 		t.Fatalf("cancel calls/status = %d/%s", store.cancelRunCalls, store.run.ExecutionStatus)
 	}
 }
@@ -2526,31 +2339,6 @@ func assertJSONBytes(t *testing.T, got []byte, want string) {
 	t.Helper()
 	if string(got) != want {
 		t.Fatalf("json = %s, want %s", got, want)
-	}
-}
-
-func assertTerminalPayloadFailure(t *testing.T, store *fakeStore, failureKind string) {
-	t.Helper()
-	if store.abandonedClaim {
-		t.Fatal("claim should not be abandoned")
-	}
-	if store.run.Status != db.RunStatusFailed {
-		t.Fatalf("run status = %s", store.run.Status)
-	}
-	if store.run.CurrentRunLeaseID.Valid {
-		t.Fatalf("current execution id = %+v", store.run.CurrentRunLeaseID)
-	}
-	if len(store.events) != 1 || store.events[0].Kind != "run.failed" {
-		t.Fatalf("events = %+v", store.events)
-	}
-	var payload struct {
-		FailureKind string `json:"failure_kind"`
-	}
-	if err := json.Unmarshal(store.events[0].Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload.FailureKind != failureKind {
-		t.Fatalf("failure kind = %q", payload.FailureKind)
 	}
 }
 
@@ -2595,9 +2383,6 @@ type fakeStore struct {
 	stderr                                  []byte
 	runLogSnapshot                          telemetry.RunLogSnapshotQuery
 	runLogChunksAfter                       telemetry.RunLogChunkQuery
-	runLogChunksAfterCalls                  int
-	firstRunLogChunksAfterSeq               int64
-	deferLogChunksUntilSecondList           bool
 	logChunks                               []db.AppendRunLogChunkRow
 	logTruncated                            bool
 	updateRunMetadata                       db.UpdateRunMetadataForExecutionParams
@@ -2613,35 +2398,6 @@ type fakeStore struct {
 	getCasObjectErr                         error
 	sessionID                               pgtype.UUID
 	executionWorkerInstanceID               pgtype.UUID
-	executionLeaseExpiresAt                 pgtype.Timestamptz
-	releaseRunLeaseErr                      error
-	checkpoint                              db.RunCheckpoint
-	abandonedClaim                          bool
-	workerBootstrapTokenHash                []byte
-	upsertWorkerBootstrapToken              db.UpsertWorkerBootstrapTokenParams
-	workerCredentialID                      pgtype.UUID
-	workerCredentialSecretHash              []byte
-	workerCredentialWorkerGroupID           string
-	workerCredentialClaimVersion            int64
-	dequeueRequest                          dispatch.DequeueRequest
-	ackedLeases                             []dispatch.Lease
-	nackedLeases                            []dispatch.Lease
-	nackReasons                             []dispatch.NackReason
-	dispatchLeaseAttempt                    int32
-	deadLetterRunDispatch                   db.DeadLetterRunDispatchParams
-	deadLetterRunDispatchCalls              int
-	activeQueueLeaseMissing                 bool
-	renewErr                                error
-	listQueueScopes                         db.ListQueueScopesParams
-	markStaleWorkspaceMountsLostCalls       int
-	workerQueueCapacity                     db.GetWorkerInstanceQueueCapacityRow
-	workerQueueCapacitySet                  bool
-	claimWorkspaceMount                     db.ClaimWorkspaceMountParams
-	claimWorkspaceMountCalls                int
-	requestCapacityPressureStops            db.RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams
-	requestCapacityPressureStopsCalls       int
-	createCapacityPressureCheckpoints       db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorkerParams
-	createCapacityPressureCheckpointsCalls  int
 	session                                 db.Session
 	lockSession                             db.Session
 	createSessionErr                        error
@@ -2650,12 +2406,12 @@ type fakeStore struct {
 	ensureWorkspaceMountInserted            bool
 	ensureWorkspaceMountState               db.WorkspaceMountState
 	ensureWorkspaceMountErr                 error
-	setQueuedRunWorkspaceMount              db.SetQueuedRunWorkspaceMountParams
-	setQueuedRunWorkspaceMountCalls         int
 	resolveDeploymentSandbox                db.ResolveDeploymentSandboxForWorkspaceCreateParams
 	resolveDeploymentSandboxCalls           int
 	getSessionByExternalIDMisses            int
 	workspace                               db.Workspace
+	getWorkspaceCalls                       int
+	getWorkspaceByOrgAndIDCalls             int
 	workspaceVersions                       []db.WorkspaceVersion
 	getWorkspaceVersionCalls                int
 	listWorkspaceVersionsCalls              int
@@ -2666,10 +2422,6 @@ type fakeStore struct {
 	sessionContinuationRequest              db.SessionContinuationRequest
 	lockSessionCalls                        int
 	deploymentTaskRow                       db.GetDeploymentTaskRow
-	environmentPlacementWorkerGroupID       string
-	environmentRouteRegionID                string
-	environmentRouteUnavailable             bool
-	recordPlacementUnavailable              bool
 	scheduleTriggerNotCurrent               bool
 	closeSessionAttachesRun                 pgtype.UUID
 	closeSessionRetryRun                    db.Run
@@ -2707,40 +2459,6 @@ type fakeControlTransaction struct {
 	sessionRuns                []db.SessionRun
 	sessionContinuationRequest db.SessionContinuationRequest
 	committed                  bool
-}
-
-func fakeSessionRecord(session db.Session) db.Session {
-	if session.WorkerGroupID == "" {
-		session.WorkerGroupID = "us-east-1-worker-group-1"
-	}
-	return session
-}
-
-func (f *fakeStore) SelectProjectPlacementWorkerGroup(_ context.Context, arg db.SelectProjectPlacementWorkerGroupParams) (db.SelectProjectPlacementWorkerGroupRow, error) {
-	if f.environmentRouteUnavailable {
-		return db.SelectProjectPlacementWorkerGroupRow{}, pgx.ErrNoRows
-	}
-	return db.SelectProjectPlacementWorkerGroupRow{
-		OrgID:             arg.OrgID,
-		ProjectID:         arg.ProjectID,
-		RegionID:          firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		WorkerGroupID:     firstNonEmptyString(f.environmentPlacementWorkerGroupID, "us-east-1-worker-group-1"),
-		HealthState:       db.WorkerGroupHealthStateHealthy,
-		RoutingFreshUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
-	}, nil
-}
-
-func (f *fakeStore) GetWorkerGroupPlacementForRecord(_ context.Context, workerGroupID string) (db.GetWorkerGroupPlacementForRecordRow, error) {
-	if f.environmentRouteUnavailable || f.recordPlacementUnavailable {
-		return db.GetWorkerGroupPlacementForRecordRow{}, pgx.ErrNoRows
-	}
-	return db.GetWorkerGroupPlacementForRecordRow{
-		WorkerGroupID:     workerGroupID,
-		RegionID:          firstNonEmptyString(f.environmentRouteRegionID, "us-east-1"),
-		State:             db.WorkerGroupStateActive,
-		HealthState:       db.WorkerGroupHealthStateHealthy,
-		RoutingFreshUntil: pgtype.Timestamptz{Time: time.Now().Add(time.Minute), Valid: true},
-	}, nil
 }
 
 func (tx *fakeControlTransaction) Commit(context.Context) error {
@@ -2802,11 +2520,9 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	if status == "" {
 		status = db.RunStatusQueued
 	}
-	workerGroupID := firstNonEmptyString(f.session.WorkerGroupID, f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, "us-east-1-worker-group-1")
 	f.run = db.Run{
 		ID:                    arg.ID,
 		OrgID:                 arg.OrgID,
-		WorkerGroupID:         workerGroupID,
 		ProjectID:             arg.ProjectID,
 		EnvironmentID:         arg.EnvironmentID,
 		DeploymentID:          arg.DeploymentID,
@@ -2851,7 +2567,6 @@ func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunPar
 	return db.CreateScopedRunRow{
 		ID:                f.run.ID,
 		OrgID:             f.run.OrgID,
-		WorkerGroupID:     f.run.WorkerGroupID,
 		ProjectID:         f.run.ProjectID,
 		EnvironmentID:     f.run.EnvironmentID,
 		DeploymentID:      f.run.DeploymentID,
@@ -2917,9 +2632,8 @@ func (f *fakeStore) CreateSession(_ context.Context, arg db.CreateSessionParams)
 	f.session = db.Session{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		WorkerGroupID:       firstNonEmptyString(f.workspace.WorkerGroupID, f.attachedWorkspace.WorkerGroupID, dbtest.DefaultWorkerGroupID),
-		ProjectID:           arg.ProjectID,
-		EnvironmentID:       arg.EnvironmentID,
+		ProjectID:           fakeRunProjectID(f.run),
+		EnvironmentID:       fakeRunEnvironmentID(f.run),
 		TaskID:              arg.TaskID,
 		InitialDeploymentID: arg.InitialDeploymentID,
 		ActiveDeploymentID:  arg.ActiveDeploymentID,
@@ -2944,9 +2658,8 @@ func (f *fakeStore) CreateWorkspace(_ context.Context, arg db.CreateWorkspacePar
 	f.workspace = db.Workspace{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		WorkerGroupID:       arg.WorkerGroupID,
-		ProjectID:           arg.ProjectID,
-		EnvironmentID:       arg.EnvironmentID,
+		ProjectID:           f.workspace.ProjectID,
+		EnvironmentID:       f.workspace.EnvironmentID,
 		DeploymentSandboxID: arg.DeploymentSandboxID,
 		SandboxID:           arg.SandboxID,
 		SandboxFingerprint:  arg.SandboxFingerprint,
@@ -2993,7 +2706,6 @@ func (f *fakeStore) CreateWorkspaceFromSandbox(_ context.Context, arg db.CreateW
 	return db.CreateWorkspaceFromSandboxRow{
 		ID:                         f.workspace.ID,
 		OrgID:                      f.workspace.OrgID,
-		WorkerGroupID:              f.workspace.WorkerGroupID,
 		ProjectID:                  f.workspace.ProjectID,
 		EnvironmentID:              f.workspace.EnvironmentID,
 		DeploymentSandboxID:        f.workspace.DeploymentSandboxID,
@@ -3037,16 +2749,23 @@ func (f *fakeStore) ResolveDeploymentSandboxForWorkspaceCreate(_ context.Context
 }
 
 func (f *fakeStore) GetWorkspace(_ context.Context, arg db.GetWorkspaceParams) (db.Workspace, error) {
+	f.getWorkspaceCalls++
 	if f.workspace.ID.Valid &&
 		f.workspace.OrgID == arg.OrgID &&
 		f.workspace.ProjectID == arg.ProjectID &&
 		f.workspace.EnvironmentID == arg.EnvironmentID &&
 		f.workspace.ID == arg.ID {
-		workspace := f.workspace
-		if workspace.WorkerGroupID == "" {
-			workspace.WorkerGroupID = "us-east-1-worker-group-1"
-		}
-		return workspace, nil
+		return f.workspace, nil
+	}
+	return db.Workspace{}, pgx.ErrNoRows
+}
+
+func (f *fakeStore) GetWorkspaceByOrgAndID(_ context.Context, arg db.GetWorkspaceByOrgAndIDParams) (db.Workspace, error) {
+	f.getWorkspaceByOrgAndIDCalls++
+	if f.workspace.ID.Valid &&
+		f.workspace.OrgID == arg.OrgID &&
+		f.workspace.ID == arg.ID {
+		return f.workspace, nil
 	}
 	return db.Workspace{}, pgx.ErrNoRows
 }
@@ -3146,7 +2865,6 @@ func (f *fakeStore) GetWorkspaceSourceForSessionStart(_ context.Context, arg db.
 		return db.GetWorkspaceSourceForSessionStartRow{
 			ID:                  f.attachedWorkspace.ID,
 			OrgID:               f.attachedWorkspace.OrgID,
-			WorkerGroupID:       f.attachedWorkspace.WorkerGroupID,
 			ProjectID:           f.attachedWorkspace.ProjectID,
 			EnvironmentID:       f.attachedWorkspace.EnvironmentID,
 			DeploymentSandboxID: f.attachedWorkspace.DeploymentSandboxID,
@@ -3170,8 +2888,8 @@ func (f *fakeStore) EnsureWorkspaceMountRequested(_ context.Context, arg db.Ensu
 	return db.EnsureWorkspaceMountRequestedRow{
 		ID:                  arg.ID,
 		OrgID:               arg.OrgID,
-		ProjectID:           arg.ProjectID,
-		EnvironmentID:       arg.EnvironmentID,
+		ProjectID:           f.workspace.ProjectID,
+		EnvironmentID:       f.workspace.EnvironmentID,
 		WorkspaceID:         arg.WorkspaceID,
 		DeploymentSandboxID: testDeploymentSandboxID(),
 		Priority:            0,
@@ -3182,13 +2900,6 @@ func (f *fakeStore) EnsureWorkspaceMountRequested(_ context.Context, arg db.Ensu
 		UpdatedAt:           now,
 		Inserted:            f.ensureWorkspaceMountInserted,
 	}, nil
-}
-
-func (f *fakeStore) SetQueuedRunWorkspaceMount(_ context.Context, arg db.SetQueuedRunWorkspaceMountParams) error {
-	f.setQueuedRunWorkspaceMount = arg
-	f.setQueuedRunWorkspaceMountCalls++
-	f.run.WorkspaceMountID = arg.WorkspaceMountID
-	return nil
 }
 
 func (f *fakeStore) SetSessionCurrentRun(_ context.Context, arg db.SetSessionCurrentRunParams) (db.Session, error) {
@@ -3340,7 +3051,7 @@ func (f *fakeStore) GetSession(_ context.Context, arg db.GetSessionParams) (db.S
 		f.session.ProjectID == arg.ProjectID &&
 		f.session.EnvironmentID == arg.EnvironmentID &&
 		f.session.ID == arg.ID {
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3412,14 +3123,14 @@ func (f *fakeStore) LockSession(_ context.Context, arg db.LockSessionParams) (db
 		session.ProjectID == arg.ProjectID &&
 		session.EnvironmentID == arg.EnvironmentID &&
 		session.ID == arg.ID {
-		return fakeSessionRecord(session), nil
+		return session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
 
 func (f *fakeStore) GetSessionByOrgID(_ context.Context, arg db.GetSessionByOrgIDParams) (db.Session, error) {
 	if f.session.ID.Valid && f.session.OrgID == arg.OrgID && f.session.ID == arg.ID {
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3441,7 +3152,7 @@ func (f *fakeStore) PatchSession(_ context.Context, arg db.PatchSessionParams) (
 			f.session.ExpiresAt = arg.ExpiresAt
 		}
 		f.session.UpdatedAt = testTime()
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3456,7 +3167,7 @@ func (f *fakeStore) GetSessionByExternalID(_ context.Context, arg db.GetSessionB
 		f.session.ProjectID == arg.ProjectID &&
 		f.session.EnvironmentID == arg.EnvironmentID &&
 		f.session.ExternalID == arg.ExternalID {
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3466,7 +3177,7 @@ func (f *fakeStore) GetSessionByExternalIDInWorkerGroup(_ context.Context, arg d
 		f.getSessionByExternalIDMisses--
 		return db.Session{}, pgx.ErrNoRows
 	}
-	session := fakeSessionRecord(f.session)
+	session := f.session
 	if session.ID.Valid &&
 		session.OrgID == arg.OrgID &&
 		session.ProjectID == arg.ProjectID &&
@@ -3491,7 +3202,7 @@ func (f *fakeStore) CancelSession(_ context.Context, arg db.CancelSessionParams)
 		f.session.CurrentRunID = pgtype.UUID{}
 		f.session.CurrentRunVersion++
 		f.session.UpdatedAt = testTime()
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3532,7 +3243,7 @@ func (f *fakeStore) CloseSession(_ context.Context, arg db.CloseSessionParams) (
 		f.session.ClosedReason = arg.Reason
 		f.session.TerminalReason = fmt.Appendf(nil, `{"origin":"api","reason":%q}`, arg.Reason)
 		f.session.UpdatedAt = testTime()
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3561,7 +3272,7 @@ func (f *fakeStore) ExpireSessionIfDue(_ context.Context, arg db.ExpireSessionIf
 		f.session.TerminalReason = []byte(`{"origin":"api","reason":"session_expired"}`)
 		f.session.Result = []byte(`{"ok":false,"error":{"name":"SessionExpired","message":"session expired","details":{"origin":"api"}}}`)
 		f.session.UpdatedAt = testTime()
-		return fakeSessionRecord(f.session), nil
+		return f.session, nil
 	}
 	return db.Session{}, pgx.ErrNoRows
 }
@@ -3577,10 +3288,7 @@ func (f *fakeStore) GetRun(_ context.Context, arg db.GetRunParams) (db.Run, erro
 }
 
 func (f *fakeStore) GetRunLeaseRuntimeIdentity(_ context.Context, arg db.GetRunLeaseRuntimeIdentityParams) (db.RuntimeIdentity, error) {
-	if f.activeQueueLeaseMissing {
-		return db.RuntimeIdentity{}, pgx.ErrNoRows
-	}
-	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID || f.executionWorkerInstanceID != arg.WorkerInstanceID {
+	if f.run.ID != arg.RunID || f.sessionID != arg.RunLeaseID {
 		return db.RuntimeIdentity{}, pgx.ErrNoRows
 	}
 	capabilities := testWorkerCapabilities()
@@ -3593,24 +3301,6 @@ func (f *fakeStore) GetRunLeaseRuntimeIdentity(_ context.Context, arg db.GetRunL
 		RootfsDigest:    capabilities.RootfsDigest,
 		CniProfile:      capabilities.CNIProfile,
 	}, nil
-}
-
-func (f *fakeStore) FailExpiredRunningRunLeases(context.Context, db.FailExpiredRunningRunLeasesParams) error {
-	return nil
-}
-
-func (f *fakeStore) CreateResolvedLiveRunResumeWaitCommandsForOrg(context.Context, db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
-	return nil, nil
-}
-
-func (f *fakeStore) CreateDueLiveRunCheckpointWaitCommandsForOrg(context.Context, db.CreateDueLiveRunCheckpointWaitCommandsForOrgParams) ([]db.WorkerCommand, error) {
-	return nil, nil
-}
-
-func (f *fakeStore) CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorker(_ context.Context, arg db.CreateCapacityPressureLiveRunCheckpointWaitCommandsForWorkerParams) ([]db.WorkerCommand, error) {
-	f.createCapacityPressureCheckpoints = arg
-	f.createCapacityPressureCheckpointsCalls++
-	return nil, nil
 }
 
 func testTime() pgtype.Timestamptz {

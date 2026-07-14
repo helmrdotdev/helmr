@@ -12,7 +12,6 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/felixge/httpsnoop"
@@ -27,7 +26,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
-	workergrouppkg "github.com/helmrdotdev/helmr/internal/workergroup"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -53,7 +51,6 @@ type Server struct {
 	workerGroupID         string
 	regionID              string
 	defaultRegionID       string
-	readinessComponent    string
 	db                    db.Querier
 	tx                    TxBeginner
 	readinessDB           db.DBTX
@@ -66,11 +63,10 @@ type Server struct {
 	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
-	workerCommandStream   *WorkerCommandStream
-	workerLeaseScanSeed   atomic.Uint64
 	workerTokenSecret     []byte
 	workerTokenTTL        time.Duration
-	workerRegisterToken   string
+	workerEnrollment      WorkerEnrollmentVerifier
+	workerEnrollmentGuard *workerEnrollmentGuard
 	setupToken            string
 	authSecret            []byte
 	publicURL             *url.URL
@@ -103,12 +99,11 @@ type RunEnqueuer interface {
 
 type PreparedRuntimeSupplyReconciler interface {
 	Reconcile(context.Context) error
-	ReconcileDeploymentSandbox(context.Context, pgtype.UUID) error
 }
 
 type ScheduleRegistrar interface {
 	RegisterNext(context.Context, schedule.Instance) error
-	DeleteInstance(context.Context, string, pgtype.UUID) error
+	DeleteInstance(context.Context, pgtype.UUID) error
 }
 
 type TxBeginner interface {
@@ -121,12 +116,11 @@ type dbTXBeginner interface {
 }
 
 type ServerConfig struct {
-	Log                *slog.Logger
-	DeploymentMode     string
-	WorkerGroupID      string
-	RegionID           string
-	DefaultRegionID    string
-	ReadinessComponent string
+	Log             *slog.Logger
+	DeploymentMode  string
+	WorkerGroupID   string
+	RegionID        string
+	DefaultRegionID string
 
 	DB          db.Querier
 	TX          TxBeginner
@@ -141,16 +135,15 @@ type ServerConfig struct {
 	ScheduleEngine        ScheduleRegistrar
 	EventStream           *EventStream
 	TelemetryReader       telemetry.Reader
-	WorkerCommands        *WorkerCommandStream
 	Mailer                email.Sender
 	AuthProvider          AuthProvider
 
-	WorkerTokenSecret   []byte
-	WorkerTokenTTL      time.Duration
-	WorkerRegisterToken string
-	SetupToken          string
-	AuthSecret          []byte
-	PublicURL           *url.URL
+	WorkerTokenSecret []byte
+	WorkerTokenTTL    time.Duration
+	WorkerEnrollment  WorkerEnrollmentVerifier
+	SetupToken        string
+	AuthSecret        []byte
+	PublicURL         *url.URL
 
 	MagicLinkDebugURLs bool
 	SessionTTL         time.Duration
@@ -180,8 +173,11 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		deploymentMode = deploymentModeSelfHosted
 	}
 	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
-	if workerGroupID == "" {
-		return nil, errors.New("control worker group id is required")
+	if deploymentMode != deploymentModeSelfHosted && deploymentMode != deploymentModeManagedCloud {
+		return nil, errors.New("deployment mode must be self-hosted or managed-cloud")
+	}
+	if cfg.WorkerEnrollment == nil {
+		return nil, errors.New("worker enrollment verifier is required")
 	}
 	regionID := strings.TrimSpace(cfg.RegionID)
 	if regionID == "" {
@@ -191,21 +187,11 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if defaultRegionID == "" {
 		return nil, errors.New("control default region id is required")
 	}
-	readinessComponent := strings.TrimSpace(cfg.ReadinessComponent)
-	if readinessComponent == "" {
-		readinessComponent = workergrouppkg.ComponentControl
-	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
 		return nil, errors.New("control telemetry reader is required")
 	}
 	if cfg.EventStream != nil {
-		if cfg.EventStream.workerGroupID == "" {
-			return nil, errors.New("event stream worker group id is required")
-		}
-		if cfg.EventStream.workerGroupID != workerGroupID {
-			return nil, errors.New("event stream worker group id must match control worker group id")
-		}
 		if cfg.EventStream.telemetryReader == nil {
 			return nil, errors.New("event stream telemetry reader is required")
 		}
@@ -228,7 +214,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		workerGroupID:         workerGroupID,
 		regionID:              regionID,
 		defaultRegionID:       defaultRegionID,
-		readinessComponent:    readinessComponent,
 		db:                    cfg.DB,
 		tx:                    cfg.TX,
 		readinessDB:           cfg.ReadinessDB,
@@ -241,10 +226,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
-		workerCommandStream:   cfg.WorkerCommands,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
 		workerTokenTTL:        workerTokenTTL,
-		workerRegisterToken:   strings.TrimSpace(cfg.WorkerRegisterToken),
+		workerEnrollment:      cfg.WorkerEnrollment,
+		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
 		authSecret:            cfg.AuthSecret,
 		publicURL:             cfg.PublicURL,
@@ -586,62 +571,74 @@ func (s *Server) mountSessionRoutes(r chi.Router, prefix string) {
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
 	r.Route("/worker", func(r chi.Router) {
-		r.Post("/register", s.workerRegister)
+		r.Post("/enrollment/challenge", s.workerEnrollmentChallenge)
+		r.Post("/enrollment", s.workerEnroll)
 		r.Post("/auth/token", s.workerAuthToken)
+		r.With(s.requireRegisteringWorker).Post("/startup-recovery", s.workerStartupRecovery)
+		r.With(s.requireRegisteringWorker).Post("/activate", s.workerActivate)
+		r.With(s.requireTerminalWorker).Get("/status", s.workerStatus)
+		r.With(s.requireTerminalWorker).Post("/drain/complete", s.workerCompleteDrain)
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireWorker)
-			r.Post("/activate", s.workerActivate)
+			r.Post("/observe", s.workerObserve)
+			r.Post("/certification/renew", s.workerRenewCertification)
 			r.Post("/drain", s.workerDrain)
-			r.Get("/status", s.workerStatus)
-			r.Get("/commands", s.workerReadCommands)
-			r.Post("/commands/accept", s.workerAcceptCommand)
-			r.Post("/commands/ack", s.workerAcknowledgeCommand)
-			r.Post("/runtime-instances/prepared-runtime", s.workerCreatePreparedRuntimeInstance)
-			r.Post("/runtime-instances/prepared-runtime-warm", s.workerCreateRuntimePrepareInstance)
-			r.Post("/runtime-instances/renew", s.workerRenewRuntimeInstance)
-			r.Post("/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
-			r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
-			r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
-			r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
-			r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
-			r.Post("/deployments/lease", s.workerLeaseDeploymentBuild)
-			r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
-			r.Post("/leases/lease", s.workerLease)
-			r.Post("/leases/start", s.workerStart)
-			r.Post("/leases/renew", s.workerRenew)
-			r.Post("/leases/release", s.workerRelease)
-			r.Post("/leases/tokens", s.workerCreateToken)
-			r.Post("/leases/run-waits", s.workerCreateRunWait)
-			r.Post("/leases/run-waits/workspace-capture", s.workerCaptureRunWaitWorkspace)
-			r.Post("/leases/streams/input/read", s.workerReadInputStream)
-			r.Post("/leases/streams/output", s.workerAppendOutputStream)
-			r.Post("/leases/metadata", s.workerUpdateRunMetadata)
-			r.Post("/leases/checkpoints/claim", s.workerClaimRunCheckpointWait)
-			r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
-			r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
-			r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
-			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
-			r.Post("/leases/log-entries", s.workerRecordLogEntry)
-			r.Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
-			r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
-			r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
-			r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
-			r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
-			r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
-			r.Post("/workspaces/mounts/operations/claim", s.workerClaimWorkspaceOperation)
-			r.Post("/workspaces/mounts/operations/start", s.workerStartWorkspaceOperation)
-			r.Post("/workspaces/mounts/operations/complete", s.workerCompleteWorkspaceOperation)
-			r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
-			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
-			r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)
-			r.Post("/workspaces/execs/input-delivered", s.workerAdvanceWorkspaceExecInputDelivered)
-			r.Post("/workspaces/execs/exited", s.workerMarkWorkspaceExecExited)
-			r.Post("/workspaces/ptys/opened", s.workerMarkWorkspacePtyOpened)
-			r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/ptys/output", s.workerAppendWorkspacePtyOutput)
-			r.Post("/workspaces/ptys/input", s.workerListWorkspacePtyInput)
-			r.Post("/workspaces/ptys/input-delivered", s.workerAdvanceWorkspacePtyInputDelivered)
-			r.Post("/workspaces/ptys/resize-applied", s.workerMarkWorkspacePtyResizeApplied)
-			r.Post("/workspaces/ptys/closed", s.workerMarkWorkspacePtyClosed)
+			r.Post("/fence", s.workerFence)
+			r.Group(func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleBuild, next) })
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleBuild, next) }).Post("/deployments/lease", s.workerLeaseDeploymentBuild)
+				r.Post("/deployments/start", s.workerStartDeploymentBuild)
+				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)
+				r.Post("/deployments/reject", s.workerRejectDeploymentBuild)
+				r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(func(next http.Handler) http.Handler { return requireWorkerRole(auth.WorkerRoleRun, next) })
+				r.Post("/runtime-instances/reconcile", s.workerNextRuntimeReconcileTarget)
+				r.Post("/runtime-instances/ready", s.workerMarkRuntimeInstanceReady)
+				r.Post("/runtime-instances/closed", s.workerMarkRuntimeInstanceClosed)
+				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
+				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
+				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/leases/lease", s.workerLease)
+				r.Post("/leases/start", s.workerStart)
+				r.Post("/leases/reject", s.workerRejectRun)
+				r.Post("/leases/renew", s.workerRenew)
+				r.Post("/leases/release", s.workerRelease)
+				r.Post("/leases/tokens", s.workerCreateToken)
+				r.Post("/leases/run-waits", s.workerCreateRunWait)
+				r.Post("/leases/run-waits/poll", s.workerPollRunWait)
+				r.Post("/leases/run-waits/resume-ack", s.workerAcknowledgeRunWaitResume)
+				r.Post("/leases/run-waits/workspace-capture", s.workerCaptureRunWaitWorkspace)
+				r.Post("/leases/streams/input/read", s.workerReadInputStream)
+				r.Post("/leases/streams/output", s.workerAppendOutputStream)
+				r.Post("/leases/metadata", s.workerUpdateRunMetadata)
+				r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
+				r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
+				r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
+				r.Post("/leases/log-entries", s.workerRecordLogEntry)
+				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
+				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
+				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
+				r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
+				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
+				r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
+				r.Post("/workspaces/mounts/operations/claim", s.workerClaimWorkspaceOperation)
+				r.Post("/workspaces/mounts/operations/start", s.workerStartWorkspaceOperation)
+				r.Post("/workspaces/mounts/operations/complete", s.workerCompleteWorkspaceOperation)
+				r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
+				r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)
+				r.Post("/workspaces/execs/input-delivered", s.workerAdvanceWorkspaceExecInputDelivered)
+				r.Post("/workspaces/execs/exited", s.workerMarkWorkspaceExecExited)
+				r.Post("/workspaces/ptys/opened", s.workerMarkWorkspacePtyOpened)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/ptys/output", s.workerAppendWorkspacePtyOutput)
+				r.Post("/workspaces/ptys/input", s.workerListWorkspacePtyInput)
+				r.Post("/workspaces/ptys/input-delivered", s.workerAdvanceWorkspacePtyInputDelivered)
+				r.Post("/workspaces/ptys/resize-applied", s.workerMarkWorkspacePtyResizeApplied)
+				r.Post("/workspaces/ptys/closed", s.workerMarkWorkspacePtyClosed)
+			})
 		})
 	})
 }
@@ -677,13 +674,13 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 		s.writeReadinessUnavailable(w, fmt.Errorf("database schema version is %d, required %d", version, currentVersion))
 		return
 	}
-	readiness, err := db.New(s.readinessDB).GetControlWorkerGroupReadiness(ctx, s.workerGroupID)
-	if err != nil {
-		s.writeReadinessUnavailable(w, fmt.Errorf("worker group readiness is not available: %w", err))
+	var databaseReady int
+	if err := s.readinessDB.QueryRow(ctx, `SELECT 1`).Scan(&databaseReady); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf("regional control database is not ready: %w", err))
 		return
 	}
-	if !readiness.Routable.Bool {
-		s.writeReadinessUnavailable(w, errors.New("worker group is not routable"))
+	if databaseReady != 1 {
+		s.writeReadinessUnavailable(w, errors.New("regional control database is not ready"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})

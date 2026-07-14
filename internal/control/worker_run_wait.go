@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -43,21 +44,12 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, forbidden(errors.New("worker lease does not belong to this worker")))
-		return
-	}
-	orgID, runID, runLeaseID, err := workerWaitLeaseIDs(request.Lease)
+	params, err := workerRunWaitCreateScopeParams(worker, request.Lease)
 	if err != nil {
-		writeError(w, badRequest(err))
+		writeError(w, err)
 		return
 	}
-	scope, err := s.db.GetWorkerRunWaitScope(r.Context(), db.GetWorkerRunWaitScopeParams{
-		OrgID:            pgvalue.UUID(orgID),
-		RunID:            pgvalue.UUID(runID),
-		RunLeaseID:       pgvalue.UUID(runLeaseID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
+	createdScope, err := s.db.GetWorkerRunWaitCreateScope(r.Context(), params)
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("worker run lease is not active")))
 		return
@@ -66,12 +58,209 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load worker run wait scope"))
 		return
 	}
+	scope := db.GetWorkerRunWaitScopeRow{
+		OrgID: createdScope.OrgID, ProjectID: createdScope.ProjectID,
+		EnvironmentID: createdScope.EnvironmentID, RunID: createdScope.RunID,
+		ExpectedRunStateVersion: createdScope.ExpectedRunStateVersion,
+		CurrentRunLeaseID:       createdScope.RunLeaseID, WorkerGroupID: createdScope.WorkerGroupID,
+		WorkerInstanceID: createdScope.WorkerInstanceID, WorkerEpoch: createdScope.WorkerEpoch,
+		RuntimeInstanceID: createdScope.RuntimeInstanceID, NetworkSlotID: createdScope.NetworkSlotID,
+		NetworkSlotGeneration: createdScope.NetworkSlotGeneration,
+	}
 	response, err := s.createWorkerRunWait(r.Context(), scope, request)
 	if err != nil {
 		s.writeWorkerWaitError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func workerRunWaitCreateScopeParams(worker workerActor, lease api.WorkerRunLease) (db.GetWorkerRunWaitCreateScopeParams, error) {
+	if lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerEpoch != worker.WorkerEpoch {
+		return db.GetWorkerRunWaitCreateScopeParams{}, forbidden(errors.New("worker lease does not belong to this worker epoch"))
+	}
+	orgID, runID, runLeaseID, err := workerWaitLeaseIDs(lease)
+	if err != nil {
+		return db.GetWorkerRunWaitCreateScopeParams{}, badRequest(err)
+	}
+	runtimeInstanceID, err := uuid.Parse(strings.TrimSpace(lease.RuntimeInstanceID))
+	if err != nil {
+		return db.GetWorkerRunWaitCreateScopeParams{}, badRequest(errors.New("lease.runtime_instance_id must be a UUID"))
+	}
+	networkSlotID, err := uuid.Parse(strings.TrimSpace(lease.NetworkSlotID))
+	if err != nil {
+		return db.GetWorkerRunWaitCreateScopeParams{}, badRequest(errors.New("lease.network_slot_id must be a UUID"))
+	}
+	if lease.LeaseSequence <= 0 || lease.NetworkSlotGeneration <= 0 {
+		return db.GetWorkerRunWaitCreateScopeParams{}, badRequest(errors.New("lease sequence and network slot generation must be positive"))
+	}
+	return db.GetWorkerRunWaitCreateScopeParams{
+		OrgID: pgvalue.UUID(orgID), RunID: pgvalue.UUID(runID), RunLeaseID: pgvalue.UUID(runLeaseID),
+		WorkerGroupID: lease.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch: worker.WorkerEpoch, RuntimeInstanceID: pgvalue.UUID(runtimeInstanceID),
+		NetworkSlotID: pgvalue.UUID(networkSlotID), NetworkSlotGeneration: lease.NetworkSlotGeneration,
+	}, nil
+}
+
+func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerRunWaitPollRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker run wait poll request JSON: %w", err)))
+		return
+	}
+	worker := workerFromContext(r.Context())
+	scope, err := s.loadWorkerRunWaitScope(r.Context(), worker, request.Lease, request.RunWaitID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response := api.WorkerRunWaitPollResponse{
+		RunID:     pgvalue.MustUUIDValue(scope.RunID).String(),
+		RunWaitID: pgvalue.MustUUIDValue(scope.ID).String(),
+		Status:    api.WorkerRunWaitPollStatusWaiting,
+	}
+	if scope.ResumeAckVersion < scope.ResumeRequestVersion {
+		wait, err := s.db.GetWaitForRunWait(r.Context(), db.GetWaitForRunWaitParams{
+			OrgID: scope.OrgID, ProjectID: scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID, RunWaitID: scope.ID,
+		})
+		if err != nil {
+			writeError(w, errors.New("load run wait resolution"))
+			return
+		}
+		kind, payload, err := workerRunWaitResumeDecision(wait)
+		if err != nil {
+			writeError(w, conflict(err))
+			return
+		}
+		response.Status = api.WorkerRunWaitPollStatusResumeRequested
+		response.RequestVersion = scope.ResumeRequestVersion
+		response.ResumeKind = kind
+		response.ResumePayload = payload
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	if scope.CheckpointAckVersion < scope.CheckpointRequestVersion {
+		if !scope.CheckpointAttemptID.Valid {
+			writeError(w, errors.New("pending run wait checkpoint has no attempt id"))
+			return
+		}
+		response.Status = api.WorkerRunWaitPollStatusCheckpointRequested
+		response.RequestVersion = scope.CheckpointRequestVersion
+		response.CheckpointID = pgvalue.MustUUIDValue(scope.CheckpointAttemptID).String()
+		response.CaptureWorkspace = true
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	if scope.TerminalAt.Valid {
+		response.Status = api.WorkerRunWaitPollStatusTerminal
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.Request) {
+	var request api.WorkerRunWaitResumeAckRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker run wait resume acknowledgement JSON: %w", err)))
+		return
+	}
+	if request.ResumeRequestVersion <= 0 {
+		writeError(w, badRequest(errors.New("resume_request_version must be positive")))
+		return
+	}
+	worker := workerFromContext(r.Context())
+	scope, err := s.loadWorkerRunWaitScope(r.Context(), worker, request.Lease, request.RunWaitID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response := api.WorkerRunWaitResumeAckResponse{
+		RunID: pgvalue.MustUUIDValue(scope.RunID).String(), RunWaitID: pgvalue.MustUUIDValue(scope.ID).String(),
+		ResumeRequestVersion: request.ResumeRequestVersion,
+	}
+	if scope.ResumeAckVersion == request.ResumeRequestVersion && scope.State == db.RunWaitStateReleased {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+	_, err = s.db.MarkRunResumeWaitResumed(r.Context(), db.MarkRunResumeWaitResumedParams{
+		OrgID: scope.OrgID, RunID: scope.RunID, RunWaitID: scope.ID,
+		RunLeaseID: scope.CurrentRunLeaseID, RunCheckpointID: pgtype.UUID{},
+		ResumeRequestVersion: request.ResumeRequestVersion,
+	})
+	if isNoRows(err) {
+		writeError(w, conflict(errors.New("run wait resume acknowledgement is stale")))
+		return
+	}
+	if err != nil {
+		writeError(w, errors.New("acknowledge run wait resume"))
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (s *Server) loadWorkerRunWaitScope(ctx context.Context, worker workerActor, lease api.WorkerRunLease, rawRunWaitID string) (db.GetWorkerRunWaitScopeRow, error) {
+	if lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerEpoch != worker.WorkerEpoch {
+		return db.GetWorkerRunWaitScopeRow{}, forbidden(errors.New("worker lease does not belong to this worker epoch"))
+	}
+	orgID, runID, runLeaseID, err := workerWaitLeaseIDs(lease)
+	if err != nil {
+		return db.GetWorkerRunWaitScopeRow{}, badRequest(err)
+	}
+	runWaitID, err := uuid.Parse(strings.TrimSpace(rawRunWaitID))
+	if err != nil {
+		return db.GetWorkerRunWaitScopeRow{}, badRequest(errors.New("run_wait_id must be a UUID"))
+	}
+	runtimeInstanceID, err := uuid.Parse(strings.TrimSpace(lease.RuntimeInstanceID))
+	if err != nil {
+		return db.GetWorkerRunWaitScopeRow{}, badRequest(errors.New("lease.runtime_instance_id must be a UUID"))
+	}
+	networkSlotID, err := uuid.Parse(strings.TrimSpace(lease.NetworkSlotID))
+	if err != nil {
+		return db.GetWorkerRunWaitScopeRow{}, badRequest(errors.New("lease.network_slot_id must be a UUID"))
+	}
+	if lease.LeaseSequence <= 0 || lease.NetworkSlotGeneration <= 0 {
+		return db.GetWorkerRunWaitScopeRow{}, badRequest(errors.New("lease sequence and network slot generation must be positive"))
+	}
+	scope, err := s.db.GetWorkerRunWaitScope(ctx, db.GetWorkerRunWaitScopeParams{
+		OrgID: pgvalue.UUID(orgID), RunWaitID: pgvalue.UUID(runWaitID),
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+	})
+	if isNoRows(err) {
+		return db.GetWorkerRunWaitScopeRow{}, conflict(errors.New("worker run wait is not active"))
+	}
+	if err != nil {
+		return db.GetWorkerRunWaitScopeRow{}, errors.New("load worker run wait scope")
+	}
+	if scope.RunID != pgvalue.UUID(runID) || scope.CurrentRunLeaseID != pgvalue.UUID(runLeaseID) ||
+		scope.WorkerGroupID != lease.WorkerGroupID || scope.WorkerEpoch != lease.WorkerEpoch ||
+		scope.RuntimeInstanceID != pgvalue.UUID(runtimeInstanceID) || scope.NetworkSlotID != pgvalue.UUID(networkSlotID) ||
+		scope.NetworkSlotGeneration != lease.NetworkSlotGeneration {
+		return db.GetWorkerRunWaitScopeRow{}, conflict(errors.New("worker run wait fence is stale"))
+	}
+	return scope, nil
+}
+
+func workerRunWaitResumeDecision(wait db.Wait) (string, json.RawMessage, error) {
+	payload := json.RawMessage(wait.Result)
+	if len(payload) == 0 {
+		payload = json.RawMessage(`null`)
+	}
+	switch wait.State {
+	case db.WaitStateCompleted:
+		return "completed", payload, nil
+	case db.WaitStateCancelled:
+		return "cancelled", payload, nil
+	case db.WaitStateExpired:
+		return "timed_out", payload, nil
+	case db.WaitStateFailed:
+		failed := json.RawMessage(wait.Error)
+		if len(failed) == 0 {
+			failed = json.RawMessage(`null`)
+		}
+		return "failed", failed, nil
+	default:
+		return "", nil, errors.New("run wait resume was requested before its wait became terminal")
+	}
 }
 
 func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunWaitScopeRow, request api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
@@ -142,34 +331,39 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 	runWaitID := uuid.Must(uuid.NewV7())
 	waitID := uuid.Must(uuid.NewV7())
 	waitPolicy := selectWorkerRunWaitPolicy(request)
+	metadata, tags, err := workerRunWaitPresentation(request.Metadata, request.Tags)
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, badRequest(err)
+	}
 	var response api.WorkerCreateRunWaitResponse
-	err := s.inTx(ctx, func(work *txWork) error {
+	err = s.inTx(ctx, func(work *txWork) error {
 		var publicID string
 		createdRunWait, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Wait, value: &publicID}}, func() (db.CreateHotRunWaitRow, error) {
 			return work.q.CreateHotRunWait(ctx, db.CreateHotRunWaitParams{
-				RunWaitID:        pgvalue.UUID(runWaitID),
-				WaitID:           pgvalue.UUID(waitID),
-				PublicID:         publicID,
-				OrgID:            scope.OrgID,
-				ProjectID:        scope.ProjectID,
-				EnvironmentID:    scope.EnvironmentID,
-				RunID:            scope.RunID,
-				RunLeaseID:       scope.CurrentRunLeaseID,
-				WorkerInstanceID: scope.WorkerInstanceID,
-				Kind:             db.WaitKind(request.Kind),
-				CorrelationKey:   correlationKey,
-				StreamID:         streamID,
-				StreamSequence:   streamSequence,
-				TokenID:          tokenID,
-				CompletedAfter:   completedAfter,
-				ExpiresAt:        expiresAt,
-				CheckpointDelay:  pgvalue.Interval(waitPolicy.CheckpointDelay),
+				RunWaitID:               pgvalue.UUID(runWaitID),
+				WaitID:                  pgvalue.UUID(waitID),
+				PublicID:                publicID,
+				OrgID:                   scope.OrgID,
+				RunID:                   scope.RunID,
+				RunLeaseID:              scope.CurrentRunLeaseID,
+				ExpectedRunStateVersion: scope.ExpectedRunStateVersion,
+				WorkerInstanceID:        scope.WorkerInstanceID,
+				Kind:                    db.WaitKind(request.Kind),
+				CorrelationKey:          correlationKey,
+				StreamID:                streamID,
+				StreamSequence:          streamSequence,
+				TokenID:                 tokenID,
+				CompletedAfter:          completedAfter,
+				ExpiresAt:               expiresAt,
+				Metadata:                metadata,
+				Tags:                    tags,
+				CheckpointDelay:         pgvalue.Interval(waitPolicy.CheckpointDelay),
 			})
 		})
 		if err != nil {
 			return err
 		}
-		runWait := runWaitFromCreateHotRunWait(createdRunWait)
+		runWait := db.RunWait(createdRunWait)
 		if s.log != nil && s.log.Enabled(ctx, slog.LevelDebug) {
 			s.log.Debug("worker run wait policy selected",
 				"org_id", pgvalue.UUIDString(scope.OrgID),
@@ -187,15 +381,14 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 		response = api.WorkerCreateRunWaitResponse{
 			RunID:             pgvalue.MustUUIDValue(scope.RunID).String(),
 			RunWaitID:         pgvalue.MustUUIDValue(runWait.ID).String(),
-			RuntimeInstanceID: pgvalue.UUIDString(runWait.OwnerRuntimeInstanceID),
-			RuntimeEpoch:      pgvalue.Int8Value(runWait.OwnerRuntimeEpoch),
+			RuntimeInstanceID: pgvalue.UUIDString(scope.RuntimeInstanceID),
+			RuntimeEpoch:      scope.WorkerEpoch,
 			CheckpointDelayMs: waitPolicy.CheckpointDelay.Milliseconds(),
 		}
 		if request.Kind == api.WorkerRunWaitKindToken {
 			tokenResolved := true
 			_, err := work.q.ResolveImmediateTokenWaitForRunWait(ctx, db.ResolveImmediateTokenWaitForRunWaitParams{
 				OrgID:         scope.OrgID,
-				WorkerGroupID: scope.WorkerGroupID,
 				ProjectID:     scope.ProjectID,
 				EnvironmentID: scope.EnvironmentID,
 				RunWaitID:     runWait.ID,
@@ -231,20 +424,6 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 				}
 			}
 		}
-		if scope.DirtyGeneration == 0 {
-			runWait, err = work.q.SetRunWaitWorkspaceVersion(ctx, db.SetRunWaitWorkspaceVersionParams{
-				OrgID:              scope.OrgID,
-				ProjectID:          scope.ProjectID,
-				EnvironmentID:      scope.EnvironmentID,
-				ID:                 runWait.ID,
-				RunID:              scope.RunID,
-				WorkspaceVersionID: scope.WorkspaceCurrentVersionID,
-			})
-			if err != nil {
-				return errors.New("record clean run wait workspace version")
-			}
-			response.WorkspaceVersionID = pgvalue.MustUUIDValue(runWait.WorkspaceVersionID).String()
-		}
 		switch request.Kind {
 		case api.WorkerRunWaitKindStream:
 			return nil
@@ -264,8 +443,28 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 	return response, nil
 }
 
-func runWaitFromCreateHotRunWait(row db.CreateHotRunWaitRow) db.RunWait {
-	return db.RunWait(row)
+func workerRunWaitPresentation(rawMetadata json.RawMessage, rawTags []string) ([]byte, []string, error) {
+	metadata := []byte(rawMetadata)
+	if len(metadata) == 0 {
+		metadata = []byte(`{}`)
+	}
+	if len(metadata) > 64*1024 || !json.Valid(metadata) {
+		return nil, nil, errors.New("wait metadata must be valid JSON no larger than 64 KiB")
+	}
+	var object map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &object); err != nil || object == nil {
+		return nil, nil, errors.New("wait metadata must be a JSON object")
+	}
+	if len(rawTags) > 32 {
+		return nil, nil, errors.New("wait tags must contain at most 32 values")
+	}
+	tags := append([]string{}, rawTags...)
+	for _, tag := range tags {
+		if tag == "" || !utf8.ValidString(tag) || len([]byte(tag)) > 128 {
+			return nil, nil, errors.New("wait tags must be nonempty UTF-8 strings no larger than 128 bytes")
+		}
+	}
+	return metadata, tags, nil
 }
 
 func selectWorkerRunWaitPolicy(request api.WorkerCreateRunWaitRequest) workerRunWaitPolicy {
@@ -352,7 +551,6 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 	case db.WaitKindStream:
 		_, err = store.ResolveStreamWaitForRunWait(ctx, db.ResolveStreamWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
-			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     runWaitID,
@@ -364,7 +562,6 @@ func (s *Server) resolveReadyRunWait(ctx context.Context, store db.Querier, scop
 	case db.WaitKindToken:
 		_, err = store.ResolveImmediateTokenWaitForRunWait(ctx, db.ResolveImmediateTokenWaitForRunWaitParams{
 			OrgID:         scope.OrgID,
-			WorkerGroupID: scope.WorkerGroupID,
 			ProjectID:     scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID,
 			RunWaitID:     runWaitID,

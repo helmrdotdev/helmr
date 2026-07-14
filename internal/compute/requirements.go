@@ -1,9 +1,11 @@
 package compute
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -57,8 +59,13 @@ func RunRuntimeRequirementsFromFields(fields RunRuntimeRequirementFields) (RunRu
 	}
 	var placement Placement
 	if len(fields.PlacementJSON) > 0 {
-		if err := json.Unmarshal(fields.PlacementJSON, &placement); err != nil {
+		decoder := json.NewDecoder(bytes.NewReader(fields.PlacementJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&placement); err != nil {
 			return RunRuntimeRequirements{}, fmt.Errorf("%s: %w", placementLabel, err)
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return RunRuntimeRequirements{}, fmt.Errorf("%s: multiple JSON values are not allowed", placementLabel)
 		}
 	}
 	requirements := RunRuntimeRequirements{

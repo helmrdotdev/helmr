@@ -25,7 +25,6 @@ func NewHistoricalReader(client historicalClient) *HistoricalReader {
 }
 
 type EventRecord struct {
-	WorkerGroupID  string     `json:"worker_group_id"`
 	OrgID          uuid.UUID  `json:"org_id"`
 	ProjectID      uuid.UUID  `json:"project_id"`
 	EnvironmentID  uuid.UUID  `json:"environment_id"`
@@ -53,7 +52,6 @@ type EventRecord struct {
 }
 
 type RunLogRecord struct {
-	WorkerGroupID  string    `json:"worker_group_id"`
 	OrgID          uuid.UUID `json:"org_id"`
 	ProjectID      uuid.UUID `json:"project_id"`
 	EnvironmentID  uuid.UUID `json:"environment_id"`
@@ -73,7 +71,6 @@ type RunLogRecord struct {
 }
 
 type TerminalOutputRecord struct {
-	WorkerGroupID  string    `json:"worker_group_id"`
 	OrgID          uuid.UUID `json:"org_id"`
 	ProjectID      uuid.UUID `json:"project_id"`
 	EnvironmentID  uuid.UUID `json:"environment_id"`
@@ -95,7 +92,6 @@ func (r *HistoricalReader) ListEvents(ctx context.Context, q EventQuery) (EventP
 	sql := `SELECT seq, run_id, deployment_id, run_lease_id, attempt_number, trace_id, span_id, traceparent, category, severity, source, event_kind, message, body, redaction_class, observed_at
 FROM helmr_telemetry.events FINAL
 WHERE org_id = @org_id
-  AND worker_group_id = @worker_group_id
   AND subject_kind = @subject_kind
   AND subject_id = @subject_id
   AND seq > @after
@@ -104,7 +100,6 @@ LIMIT @row_limit`
 	var rows []eventRow
 	if err := r.client.Select(ctx, &rows, sql,
 		clickhouse.Named("org_id", q.OrgID),
-		clickhouse.Named("worker_group_id", q.WorkerGroupID),
 		clickhouse.Named("subject_kind", q.SubjectType),
 		clickhouse.Named("subject_id", q.SubjectID),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
@@ -125,7 +120,6 @@ func (r *HistoricalReader) ListRunLogChunks(ctx context.Context, q RunLogChunkQu
 	sql := `SELECT run_id, run_lease_id, attempt_number, stream_name, seq, observed_seq, content, size_bytes, observed_at
 FROM helmr_telemetry.run_logs FINAL
 WHERE org_id = @org_id
-  AND worker_group_id = @worker_group_id
   AND run_id = @run_id
   AND seq > @after
 ORDER BY seq ASC
@@ -133,7 +127,6 @@ LIMIT @row_limit`
 	var rows []runLogRow
 	if err := r.client.Select(ctx, &rows, sql,
 		clickhouse.Named("org_id", q.OrgID),
-		clickhouse.Named("worker_group_id", q.WorkerGroupID),
 		clickhouse.Named("run_id", q.RunID),
 		clickhouse.Named("after", uint64(q.AfterSeq)),
 		clickhouse.Named("row_limit", uint32(q.Limit)),
@@ -153,7 +146,6 @@ func (r *HistoricalReader) ListTerminalOutput(ctx context.Context, q TerminalOut
 	sql := `SELECT stream_name, offset_start, offset_end, content, observed_at, ingested_at
 FROM helmr_telemetry.terminal_outputs FINAL
 WHERE org_id = @org_id
-  AND worker_group_id = @worker_group_id
   AND project_id = @project_id
   AND environment_id = @environment_id
   AND workspace_id = @workspace_id
@@ -166,7 +158,6 @@ LIMIT @row_limit`
 	var rows []terminalOutputHistoryRow
 	if err := r.client.Select(ctx, &rows, sql,
 		clickhouse.Named("org_id", q.OrgID),
-		clickhouse.Named("worker_group_id", q.WorkerGroupID),
 		clickhouse.Named("project_id", q.ProjectID),
 		clickhouse.Named("environment_id", q.EnvironmentID),
 		clickhouse.Named("workspace_id", q.WorkspaceID),
@@ -193,11 +184,10 @@ func (r *HistoricalReader) GetRunLogSnapshot(ctx context.Context, q RunLogSnapsh
 	const pageLimit = int32(1000)
 	for {
 		page, err := r.ListRunLogChunks(ctx, RunLogChunkQuery{
-			OrgID:         q.OrgID,
-			WorkerGroupID: q.WorkerGroupID,
-			RunID:         q.RunID,
-			AfterSeq:      cursor,
-			Limit:         pageLimit,
+			OrgID:    q.OrgID,
+			RunID:    q.RunID,
+			AfterSeq: cursor,
+			Limit:    pageLimit,
 		})
 		if err != nil {
 			return RunLogSnapshot{}, err

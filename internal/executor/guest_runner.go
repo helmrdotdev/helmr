@@ -128,7 +128,7 @@ func (r GuestRunner) runDirect(ctx context.Context, request Request) (Result, er
 		return Result{}, errors.New("workspace artifact path is required")
 	}
 	phaseStarted := time.Now()
-	session, err := r.Connector.Connect(ctx, vm.ConnectRequest{Network: request.Run.Requirements.Network})
+	session, err := r.Connector.Connect(ctx, vm.ConnectRequest{ID: request.Leases.CurrentWorkerRunLease().RuntimeInstanceID, OwnerKind: vm.RuntimeOwnerRuntime, Network: request.Run.Requirements.Network})
 	r.logRunPhase(request, "guest run connector opened", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return Result{}, fmt.Errorf("connect guest runtime: %w", err)
@@ -245,6 +245,8 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 	runtimeInfo := restore.Checkpoint.RecoveryPoint.Runtime
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
 		ID:                   restore.CheckpointID,
+		RuntimeInstanceID:    request.Leases.CurrentWorkerRunLease().RuntimeInstanceID,
+		OwnerKind:            vm.RuntimeOwnerRuntime,
 		VMState:              state,
 		VMStateMediaType:     stateArtifact.MediaType,
 		ScratchDisk:          scratchDisk,
@@ -535,10 +537,11 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
-		Lease:        currentRunLease(request),
-		RunWaitID:    restore.RunWait.ID,
-		CheckpointID: restore.CheckpointID,
-		Phases:       phases.Snapshot(),
+		Lease:                currentRunLease(request),
+		RunWaitID:            restore.RunWait.ID,
+		CheckpointID:         restore.CheckpointID,
+		ResumeRequestVersion: restore.RunWait.ResumeRequestVersion,
+		Phases:               phases.Snapshot(),
 	}); err != nil {
 		return fmt.Errorf("acknowledge restore: %w", err)
 	}
@@ -1227,6 +1230,7 @@ func (r GuestRunner) handleRunWaitRequested(ctx context.Context, stream io.ReadW
 	runtimeWait.Leases = request.Leases
 	runtimeWait.Lease = currentRunLease(request)
 	runtimeWait.ActiveDuration = activeDuration
+	runtimeWait.Workspace = request.Run.Workspace
 	resumeSent := false
 	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
 		if strings.TrimSpace(decision.Kind) == "" {

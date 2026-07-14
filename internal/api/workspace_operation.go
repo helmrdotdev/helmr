@@ -42,7 +42,6 @@ type WorkerWorkspaceOperation struct {
 type WorkerWorkspaceOperationClaimRequest struct {
 	OrgID                 string `json:"org_id"`
 	WorkspaceMountID      string `json:"workspace_mount_id"`
-	RuntimeInstanceToken  string `json:"runtime_instance_token"`
 	ClaimExpiresInSeconds int32  `json:"claim_expires_in_seconds,omitempty"`
 }
 

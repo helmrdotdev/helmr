@@ -123,7 +123,6 @@ func (i *Ingestor) ingestTerminalOutput(ctx context.Context) (int, error) {
 		record := terminalOutputRecord(terminalOutputRow{
 			IdempotencyKey: row.IdempotencyKey,
 			OrgID:          row.OrgID,
-			WorkerGroupID:  row.WorkerGroupID,
 			ProjectID:      row.ProjectID,
 			EnvironmentID:  row.EnvironmentID,
 			WorkspaceID:    row.WorkspaceID,
@@ -401,7 +400,6 @@ type terminalIngestCandidate struct {
 type terminalOutputRow struct {
 	IdempotencyKey string
 	OrgID          pgtype.UUID
-	WorkerGroupID  string
 	ProjectID      pgtype.UUID
 	EnvironmentID  pgtype.UUID
 	WorkspaceID    pgtype.UUID
@@ -420,7 +418,6 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 		body = json.RawMessage(`{}`)
 	}
 	return EventRecord{
-		WorkerGroupID:  row.WorkerGroupID,
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
@@ -450,7 +447,6 @@ func eventRecord(row db.ClaimEventIngestBatchRow) EventRecord {
 
 func terminalOutputRecord(row terminalOutputRow) TerminalOutputRecord {
 	return TerminalOutputRecord{
-		WorkerGroupID:  row.WorkerGroupID,
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
@@ -471,7 +467,6 @@ func terminalOutputRecord(row terminalOutputRow) TerminalOutputRecord {
 
 func runLogRecord(row db.ClaimRunLogIngestBatchRow) RunLogRecord {
 	return RunLogRecord{
-		WorkerGroupID:  row.WorkerGroupID,
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
@@ -497,22 +492,24 @@ func meterEventRecord(row db.ClaimMeterEventIngestBatchRow) MeterEventRecord {
 		details = json.RawMessage(`{}`)
 	}
 	return MeterEventRecord{
-		WorkerGroupID:  row.WorkerGroupID,
 		OrgID:          pgvalue.MustUUIDValue(row.OrgID),
 		ProjectID:      pgvalue.MustUUIDValue(row.ProjectID),
 		EnvironmentID:  pgvalue.MustUUIDValue(row.EnvironmentID),
 		SourceType:     row.SourceType,
 		SourceID:       pgvalue.MustUUIDValue(row.SourceID),
-		RunID:          pgvalue.MustUUIDValue(row.RunID),
-		AttemptNumber:  optionalInt32(row.AttemptNumber),
+		RunID:          optionalUUID(row.RunID),
+		DeploymentID:   optionalUUID(row.DeploymentID),
+		AttemptNumber:  row.AttemptNumber,
 		TraceID:        pgvalue.TextValue(row.TraceID),
 		SpanID:         pgvalue.TextValue(row.SpanID),
 		Meter:          row.Meter,
 		Quantity:       numericString(row.Quantity),
 		Unit:           row.Unit,
+		MeasuredFrom:   optionalTime(row.MeasuredFrom),
 		MeasuredTo:     optionalTime(row.MeasuredTo),
 		Details:        string(details),
 		IdempotencyKey: row.IdempotencyKey,
+		Fingerprint:    row.IdempotencyFingerprint,
 		OccurredAt:     observedAt(row.OccurredAt, row.CreatedAt),
 		CreatedAt:      observedAt(row.CreatedAt, row.OccurredAt),
 	}

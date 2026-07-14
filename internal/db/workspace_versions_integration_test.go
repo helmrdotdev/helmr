@@ -30,11 +30,11 @@ func TestWorkspaceCurrentVersionAllowsReadyVersionCreatedInSameTransaction(t *te
 	defer tx.Rollback(ctx)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id,
+			id, public_id, org_id, region_id, project_id, environment_id, deployment_sandbox_id,
 			sandbox_id, sandbox_fingerprint, current_version_id
 		)
 		VALUES ($1, $8, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint', $7)
-	`, workspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, versionID, testWorkspacePublicID(t)); err != nil {
+	`, workspaceID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, versionID, testWorkspacePublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(ctx, `
@@ -65,7 +65,6 @@ func TestCreateWorkspaceFromSandboxCreatesInitialCurrentVersion(t *testing.T) {
 		ID:                        pgvalue.UUID(workspaceID),
 		PublicID:                  testWorkspacePublicID(t),
 		OrgID:                     pgvalue.UUID(ids.orgID),
-		WorkerGroupID:             dbtest.DefaultWorkerGroupID,
 		ProjectID:                 pgvalue.UUID(ids.projectID),
 		EnvironmentID:             pgvalue.UUID(ids.environmentID),
 		DeploymentSandboxID:       pgvalue.UUID(ids.deploymentSandboxID),
@@ -155,10 +154,10 @@ func TestWorkspaceVersionReadQueriesRequireReadySameWorkspace(t *testing.T) {
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO workspaces (
-			id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
+			id, public_id, org_id, region_id, project_id, environment_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint
 		)
 		VALUES ($1, $7, $2, $3, $4, $5, $6, 'default', 'sandbox-fingerprint')
-	`, otherWorkspaceID, ids.orgID, dbtest.DefaultWorkerGroupID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testWorkspacePublicID(t)); err != nil {
+	`, otherWorkspaceID, ids.orgID, dbtest.DefaultRegionID, ids.projectID, ids.environmentID, ids.deploymentSandboxID, testWorkspacePublicID(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

@@ -32,10 +32,6 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID); err != nil {
-		writeError(w, err)
-		return
-	}
 	rows, err := s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
 		OrgID:         pgvalue.UUID(actor.OrgID),
 		ProjectID:     projectID,
@@ -71,10 +67,6 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionSecretsWrite, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID); err != nil {
-		writeError(w, err)
 		return
 	}
 	record, err := s.db.GetScopedSecretMetadataByName(r.Context(), db.GetScopedSecretMetadataByNameParams{
@@ -125,10 +117,6 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID); err != nil {
-		writeError(w, err)
-		return
-	}
 	record, err := s.secrets.PutScoped(r.Context(), actor.OrgID, pgvalue.MustUUIDValue(projectID), pgvalue.MustUUIDValue(environmentID), name, []byte(request.Value))
 	if err != nil {
 		s.log.Error("set secret failed", "name", name, "error", err)
@@ -156,10 +144,6 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if !actor.HasPermission(auth.PermissionSecretsWrite, scope) {
 		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, projectID, environmentID); err != nil {
-		writeError(w, err)
 		return
 	}
 	rows, err := s.db.DeleteScopedSecret(r.Context(), db.DeleteScopedSecretParams{

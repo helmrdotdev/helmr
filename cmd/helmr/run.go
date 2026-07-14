@@ -20,6 +20,7 @@ import (
 
 var (
 	runEventReconnectDelay           = time.Second
+	runEventSnapshotPollInterval     = 2 * time.Second
 	runTerminalSnapshotRetryDelay    = 100 * time.Millisecond
 	runTerminalSnapshotConvergeLimit = 5 * time.Second
 )
@@ -795,7 +796,7 @@ func waitForRun(ctx context.Context, control *client.Client, runID string, scope
 	}
 	var cursor string
 	for {
-		streamCtx, cancel := context.WithCancel(ctx)
+		streamCtx, cancel := context.WithTimeout(ctx, runEventSnapshotPollInterval)
 		terminal := false
 		err := control.FollowRunEvents(streamCtx, runID, cursor, func(event api.RunEvent) error {
 			if event.ID != "" {

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -15,16 +14,14 @@ import (
 )
 
 type Instance struct {
-	WorkerGroupID string
-	InstanceID    pgtype.UUID
-	Generation    int64
-	Active        bool
-	NextFireAt    pgtype.Timestamptz
-	RetryAfter    pgtype.Timestamptz
+	InstanceID pgtype.UUID
+	Generation int64
+	Active     bool
+	NextFireAt pgtype.Timestamptz
+	RetryAfter pgtype.Timestamptz
 }
 
 type AdvanceInstance struct {
-	WorkerGroupID    string
 	InstanceID       pgtype.UUID
 	Generation       int64
 	CurrentFireAt    pgtype.Timestamptz
@@ -33,7 +30,6 @@ type AdvanceInstance struct {
 }
 
 type EngineConfig struct {
-	WorkerGroupID   string
 	RepairLimit     int32
 	RepairLookahead time.Duration
 	MaxAttempts     int32
@@ -43,17 +39,16 @@ type EngineConfig struct {
 }
 
 type Engine struct {
-	log           *slog.Logger
-	db            *db.Queries
-	lock          ReconcileLock
-	index         Index
-	runner        RunCreator
-	repairLimit   int32
-	lookahead     time.Duration
-	maxAttempts   int32
-	jitter        time.Duration
-	now           func() time.Time
-	workerGroupID string
+	log         *slog.Logger
+	db          *db.Queries
+	lock        ReconcileLock
+	index       Index
+	runner      RunCreator
+	repairLimit int32
+	lookahead   time.Duration
+	maxAttempts int32
+	jitter      time.Duration
+	now         func() time.Time
 }
 
 func NewEngine(log *slog.Logger, database dbConn, index Index, runner RunCreator, cfg EngineConfig) (*Engine, error) {
@@ -83,21 +78,16 @@ func NewEngine(log *slog.Logger, database dbConn, index Index, runner RunCreator
 	if now == nil {
 		now = func() time.Time { return time.Now().UTC() }
 	}
-	workerGroupID := strings.TrimSpace(cfg.WorkerGroupID)
-	if workerGroupID == "" {
-		return nil, errors.New("schedule engine worker group id is required")
-	}
 	engine := &Engine{
-		log:           log,
-		lock:          cfg.ReconcileLock,
-		index:         index,
-		runner:        runner,
-		repairLimit:   repairLimit,
-		lookahead:     lookahead,
-		maxAttempts:   maxAttempts,
-		jitter:        jitter,
-		now:           now,
-		workerGroupID: workerGroupID,
+		log:         log,
+		lock:        cfg.ReconcileLock,
+		index:       index,
+		runner:      runner,
+		repairLimit: repairLimit,
+		lookahead:   lookahead,
+		maxAttempts: maxAttempts,
+		jitter:      jitter,
+		now:         now,
 	}
 	if database != nil {
 		engine.db = db.New(database)
@@ -109,13 +99,6 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 	if !instance.Active || !instance.NextFireAt.Valid {
 		return nil
 	}
-	workerGroupID := strings.TrimSpace(instance.WorkerGroupID)
-	if workerGroupID == "" {
-		return errors.New("schedule worker group id is required")
-	}
-	if workerGroupID != e.workerGroupID {
-		return fmt.Errorf("schedule instance worker group %q is not served by engine worker group %q", workerGroupID, e.workerGroupID)
-	}
 	instanceID, err := pgvalue.UUIDValue(instance.InstanceID)
 	if err != nil {
 		return fmt.Errorf("schedule instance id is invalid: %v", err)
@@ -126,27 +109,19 @@ func (e *Engine) RegisterNext(ctx context.Context, instance Instance) error {
 		return err
 	}
 	return e.index.Enqueue(ctx, IndexEntry{
-		WorkerGroupID: workerGroupID,
-		InstanceID:    instanceID,
-		Generation:    instance.Generation,
-		ScheduledAt:   nextFireAt,
-		AvailableAt:   availableAt,
+		InstanceID:  instanceID,
+		Generation:  instance.Generation,
+		ScheduledAt: nextFireAt,
+		AvailableAt: availableAt,
 	})
 }
 
-func (e *Engine) DeleteInstance(ctx context.Context, workerGroupID string, instanceID pgtype.UUID) error {
-	workerGroupID = strings.TrimSpace(workerGroupID)
-	if workerGroupID == "" {
-		return errors.New("schedule worker group id is required")
-	}
-	if workerGroupID != e.workerGroupID {
-		return fmt.Errorf("schedule instance worker group %q is not served by engine worker group %q", workerGroupID, e.workerGroupID)
-	}
+func (e *Engine) DeleteInstance(ctx context.Context, instanceID pgtype.UUID) error {
 	value, err := pgvalue.UUIDValue(instanceID)
 	if err != nil {
 		return fmt.Errorf("schedule instance id is invalid: %v", err)
 	}
-	return e.index.Delete(ctx, workerGroupID, value)
+	return e.index.Delete(ctx, value)
 }
 
 func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
@@ -156,28 +131,16 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 	if e.runner == nil {
 		return errors.New("schedule run creator is required")
 	}
-	readiness, err := e.db.GetControlWorkerGroupReadiness(ctx, e.workerGroupID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return e.index.Nack(ctx, lease, e.now().Add(DefaultRepairEvery))
-	}
-	if err != nil {
-		return err
-	}
-	if !readiness.Routable.Bool {
-		return e.index.Nack(ctx, lease, e.now().Add(DefaultRepairEvery))
-	}
 	candidate, err := e.db.GetScheduleTriggerCandidate(ctx, db.GetScheduleTriggerCandidateParams{
-		WorkerGroupID: e.workerGroupID,
-		InstanceID:    pgvalue.UUID(lease.Entry.InstanceID),
-		Generation:    lease.Entry.Generation,
-		ScheduledAt:   pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
+		InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
+		Generation:  lease.Entry.Generation,
+		ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		retryAfter, retryErr := e.db.GetScheduleRetryAfter(ctx, db.GetScheduleRetryAfterParams{
-			WorkerGroupID: e.workerGroupID,
-			InstanceID:    pgvalue.UUID(lease.Entry.InstanceID),
-			Generation:    lease.Entry.Generation,
-			ScheduledAt:   pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
+			InstanceID:  pgvalue.UUID(lease.Entry.InstanceID),
+			Generation:  lease.Entry.Generation,
+			ScheduledAt: pgvalue.TimestamptzUTCZeroInvalid(lease.Entry.ScheduledAt),
 		})
 		if retryErr == nil && retryAfter.Valid {
 			return e.index.Nack(ctx, lease, retryAfter.Time.UTC())
@@ -208,7 +171,6 @@ func (e *Engine) Fire(ctx context.Context, lease IndexLease) error {
 		return errors.New("created schedule run has no id")
 	}
 	advanced, err := e.Advance(ctx, AdvanceInstance{
-		WorkerGroupID:    candidate.WorkerGroupID,
 		InstanceID:       candidate.InstanceID,
 		Generation:       candidate.Generation,
 		CurrentFireAt:    candidate.NextFireAt,
@@ -233,17 +195,15 @@ func (e *Engine) Advance(ctx context.Context, instance AdvanceInstance) (Instanc
 		LastTriggerRunID: instance.LastTriggerRunID,
 		InstanceID:       instance.InstanceID,
 		Generation:       instance.Generation,
-		WorkerGroupID:    instance.WorkerGroupID,
 	})
 	if err != nil {
 		return Instance{}, err
 	}
 	return Instance{
-		WorkerGroupID: instance.WorkerGroupID,
-		InstanceID:    advanced.InstanceID,
-		Generation:    advanced.Generation,
-		Active:        true,
-		NextFireAt:    advanced.NextFireAt,
+		InstanceID: advanced.InstanceID,
+		Generation: advanced.Generation,
+		Active:     true,
+		NextFireAt: advanced.NextFireAt,
 	}, nil
 }
 
@@ -282,19 +242,17 @@ func (e *Engine) Repair(ctx context.Context) error {
 			AfterAvailableAt: afterAvailableAt,
 			AfterInstanceID:  afterInstanceID,
 			RowLimit:         e.repairLimit,
-			WorkerGroupID:    e.workerGroupID,
 		})
 		if err != nil {
 			return err
 		}
 		for _, row := range rows {
 			if err := e.RegisterNext(ctx, Instance{
-				WorkerGroupID: row.WorkerGroupID,
-				InstanceID:    row.InstanceID,
-				Generation:    row.Generation,
-				Active:        true,
-				NextFireAt:    row.NextFireAt,
-				RetryAfter:    row.RetryAfter,
+				InstanceID: row.InstanceID,
+				Generation: row.Generation,
+				Active:     true,
+				NextFireAt: row.NextFireAt,
+				RetryAfter: row.RetryAfter,
 			}); err != nil {
 				return err
 			}
@@ -313,13 +271,12 @@ func (e *Engine) markTriggerFailed(ctx context.Context, lease IndexLease, row db
 	nextAttempt := row.TriggerAttemptCount + 1
 	retryAt := e.now().Add(RetryDelay(nextAttempt))
 	_, err := e.db.MarkScheduleInstanceTriggerFailed(ctx, db.MarkScheduleInstanceTriggerFailedParams{
-		ErrorKind:     triggerErrorKind(cause),
-		ErrorMessage:  cause.Error(),
-		RetryAfter:    pgvalue.TimestamptzUTCZeroInvalid(retryAt),
-		InstanceID:    row.InstanceID,
-		Generation:    row.Generation,
-		ScheduledAt:   row.NextFireAt,
-		WorkerGroupID: row.WorkerGroupID,
+		ErrorKind:    triggerErrorKind(cause),
+		ErrorMessage: cause.Error(),
+		RetryAfter:   pgvalue.TimestamptzUTCZeroInvalid(retryAt),
+		InstanceID:   row.InstanceID,
+		Generation:   row.Generation,
+		ScheduledAt:  row.NextFireAt,
 	})
 	if err != nil {
 		return err
@@ -337,11 +294,10 @@ func (e *Engine) deferTrigger(ctx context.Context, lease IndexLease, row db.GetS
 	indexAttempt := max(lease.Attempt, 1)
 	retryAt := e.now().Add(RetryDelay(row.TriggerAttemptCount + indexAttempt))
 	affected, err := e.db.DeferScheduleInstanceTrigger(ctx, db.DeferScheduleInstanceTriggerParams{
-		RetryAfter:    pgvalue.TimestamptzUTCZeroInvalid(retryAt),
-		InstanceID:    row.InstanceID,
-		Generation:    row.Generation,
-		ScheduledAt:   row.NextFireAt,
-		WorkerGroupID: row.WorkerGroupID,
+		RetryAfter:  pgvalue.TimestamptzUTCZeroInvalid(retryAt),
+		InstanceID:  row.InstanceID,
+		Generation:  row.Generation,
+		ScheduledAt: row.NextFireAt,
 	})
 	if err != nil {
 		return err
@@ -356,10 +312,9 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 	next, err := e.nextFireAt(row.Cron, row.Timezone, row.NextFireAt, e.now())
 	if err != nil {
 		affected, stopErr := e.db.StopScheduleInstanceTrigger(ctx, db.StopScheduleInstanceTriggerParams{
-			InstanceID:    row.InstanceID,
-			Generation:    row.Generation,
-			ScheduledAt:   row.NextFireAt,
-			WorkerGroupID: row.WorkerGroupID,
+			InstanceID:  row.InstanceID,
+			Generation:  row.Generation,
+			ScheduledAt: row.NextFireAt,
 		})
 		if stopErr != nil {
 			return stopErr
@@ -373,11 +328,10 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 		return err
 	}
 	skipped, err := e.db.SkipScheduleInstanceTrigger(ctx, db.SkipScheduleInstanceTriggerParams{
-		NextFireAt:    pgvalue.TimestamptzUTCZeroInvalid(next),
-		InstanceID:    row.InstanceID,
-		Generation:    row.Generation,
-		LastFireAt:    row.NextFireAt,
-		WorkerGroupID: row.WorkerGroupID,
+		NextFireAt: pgvalue.TimestamptzUTCZeroInvalid(next),
+		InstanceID: row.InstanceID,
+		Generation: row.Generation,
+		LastFireAt: row.NextFireAt,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return e.index.Ack(ctx, lease)
@@ -389,11 +343,10 @@ func (e *Engine) skipFailedFire(ctx context.Context, lease IndexLease, row db.Ge
 		return err
 	}
 	return e.RegisterNext(ctx, Instance{
-		WorkerGroupID: row.WorkerGroupID,
-		InstanceID:    skipped.InstanceID,
-		Generation:    skipped.Generation,
-		Active:        true,
-		NextFireAt:    skipped.NextFireAt,
+		InstanceID: skipped.InstanceID,
+		Generation: skipped.Generation,
+		Active:     true,
+		NextFireAt: skipped.NextFireAt,
 	})
 }
 

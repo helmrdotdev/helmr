@@ -15,7 +15,6 @@ func execChunkFromReceipt(receipt db.WorkspaceProcessStreamReceipt, data []byte)
 	return db.WorkspaceProcessStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,
-		WorkerGroupID: receipt.WorkerGroupID,
 		ProjectID:     receipt.ProjectID,
 		EnvironmentID: receipt.EnvironmentID,
 		WorkspaceID:   receipt.WorkspaceID,
@@ -34,7 +33,6 @@ func ptyChunkFromReceipt(receipt db.WorkspaceProcessStreamReceipt, data []byte) 
 	return db.WorkspaceProcessStreamChunk{
 		ID:            receipt.ID,
 		OrgID:         receipt.OrgID,
-		WorkerGroupID: receipt.WorkerGroupID,
 		ProjectID:     receipt.ProjectID,
 		EnvironmentID: receipt.EnvironmentID,
 		WorkspaceID:   receipt.WorkspaceID,

@@ -7,7 +7,7 @@ VALUES (
     sqlc.arg(display_name),
     sqlc.arg(state)::region_state,
     sqlc.arg(visibility)::region_visibility,
-    sqlc.arg(location),
+    sqlc.arg(location)::text,
     sqlc.arg(static_ips)::text[]
 )
 ON CONFLICT (id) DO UPDATE

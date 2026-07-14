@@ -341,13 +341,8 @@ func (s *Server) createWorkspacePtyForRequest(ctx context.Context, actor auth.Ac
 			return err
 		}
 		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:           pgvalue.UUID(actor.OrgID),
-			ProjectID:       ws.ProjectID,
-			EnvironmentID:   ws.EnvironmentID,
-			WorkspaceID:     ws.ID,
-			RequestPriority: 0,
-			Request:         []byte(`{"reason":"workspace_pty"}`),
+			ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: pgvalue.UUID(actor.OrgID),
+			WorkspaceID: ws.ID, Priority: 0, Request: []byte(`{"reason":"workspace_pty"}`),
 		})
 		if err != nil {
 			return err
@@ -463,7 +458,6 @@ func (s *Server) appendWorkspacePtyStreamChunk(ctx context.Context, pty db.Works
 		}
 		chunk, err = work.q.InsertWorkspacePtyStreamChunk(ctx, db.InsertWorkspacePtyStreamChunkParams{
 			OrgID:         pty.OrgID,
-			WorkerGroupID: pty.WorkerGroupID,
 			ProjectID:     pty.ProjectID,
 			EnvironmentID: pty.EnvironmentID,
 			WorkspaceID:   pty.WorkspaceID,
@@ -541,20 +535,12 @@ func workspacePtyResponse(row db.WorkspaceProcess) api.WorkspacePtyResponse {
 		ProcessID:        row.RuntimeProcessID,
 		OutputCursor:     row.OutputCursor,
 		InputCursor:      row.InputCursor,
-		Error:            json.RawMessage(row.Error),
+		Error:            json.RawMessage(row.TerminalError),
 		CreatedAt:        pgvalue.Time(row.CreatedAt),
 		StartedAt:        pgvalue.TimePtr(row.StartedAt),
 		ClosedAt:         pgvalue.TimePtr(row.ExitedAt),
 		UpdatedAt:        pgvalue.Time(row.UpdatedAt),
 	}
-}
-
-func workspacePtyFromClosedRow(row db.MarkWorkspacePtyClosedRow) db.WorkspaceProcess {
-	return db.WorkspaceProcess(row)
-}
-
-func workspacePtyFromFailedRow(row db.MarkWorkspacePtyFailedRow) db.WorkspaceProcess {
-	return db.WorkspaceProcess(row)
 }
 
 func workspacePtyStreamChunkResponse(row db.WorkspaceProcessStreamChunk) api.WorkspacePtyStreamChunkResponse {

@@ -23,15 +23,13 @@ Commands:
   control-url        Print the current dev control-plane URL.
   control-up [CONTROL_COUNT] [DISPATCHER_COUNT]
                      Temporarily scale control and dispatcher ECS services up. Defaults to 1 each.
-  control-down       Temporarily scale control and dispatcher ECS services down to zero tasks.
+  control-down       Stop control and dispatcher on a control-only stack.
   database-up        Start the dev RDS instance and wait until available.
-  database-down      Stop the dev RDS instance and wait until stopped.
+  database-down      Stop RDS on a control-only stack and wait until stopped.
   dev-on [COUNT]     Start database and control service. Defaults to one control task.
-  dev-off            Scale worker/control to zero and stop the database.
+  dev-off            Stop control and database for a control-only stack.
   dev-destroy        Prepare and destroy the ephemeral dev stack through aws-dev-smoke.sh.
   worker-instance    Print the active worker EC2 instance ID.
-  worker-up [COUNT]  Temporarily scale the worker Auto Scaling group up. Defaults to 1.
-  worker-down        Temporarily scale the worker Auto Scaling group down to zero instances.
   worker-image-cleanup [KEEP]
                      Deregister old tagged worker AMIs and delete their snapshots.
   worker-journal     Print recent worker and BuildKit journal logs over SSM.
@@ -59,14 +57,9 @@ Common optional environment:
   DEBUG_ARTIFACT_PREFIX
                      S3 key prefix for hotpatch artifacts. Defaults to helmr/debug.
   WORKER_INSTANCE_ID Override worker discovery.
-  WORKER_UP_ALLOW_NO_NAT
-                     Set to 1 to bypass the NAT check for emergency debugging.
-  WORKER_SCALE_TIMEOUT_SECONDS
-                     Seconds to wait for worker scaling. Defaults to 900.
-  WORKER_SCALE_DOWN_TIMEOUT_SECONDS
-                     Seconds to wait for worker scale-down. Defaults to 3900.
-  WORKER_SCALE_POLL_SECONDS
-                     Seconds between worker scaling polls. Defaults to 15.
+  CONTROL_URL_OVERRIDE
+                     Use an alternate local control URL for CLI/API debug commands.
+                     This is useful with a loopback TLS forwarder before public DNS cutover.
   DATABASE_WAIT_TIMEOUT_SECONDS
                      Seconds to wait for RDS start/stop. Defaults to 1800.
   DATABASE_WAIT_POLL_SECONDS
@@ -119,6 +112,14 @@ bootstrap_output_raw() {
 }
 
 control_url() {
+  if [ -n "${CONTROL_URL_OVERRIDE:-}" ]; then
+    case "${CONTROL_URL_OVERRIDE}" in
+      http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*|https://*) ;;
+      *) die "CONTROL_URL_OVERRIDE must use HTTPS or loopback HTTP" ;;
+    esac
+    printf '%s\n' "${CONTROL_URL_OVERRIDE}"
+    return
+  fi
   value="$(tf_output_raw control_url)"
   [ -n "${value}" ] || die "control_url output is unavailable; run dev-init/dev-apply first"
   printf '%s\n' "${value}"
@@ -176,6 +177,39 @@ try_worker_asg_name() {
   value="$(tf_output_raw worker_autoscaling_group_name 2>/dev/null || true)"
   [ -n "${value}" ] && [ "${value}" != "null" ] || return 1
   printf '%s\n' "${value}"
+}
+
+try_build_worker_asg_name() {
+  value="$(tf_output_raw build_worker_autoscaling_group_name 2>/dev/null || true)"
+  [ -n "${value}" ] && [ "${value}" != "null" ] || return 1
+  printf '%s\n' "${value}"
+}
+
+worker_asg_names() {
+  found=0
+  if value="$(try_worker_asg_name)"; then
+    printf '%s\n' "${value}"
+    found=1
+  fi
+  if value="$(try_build_worker_asg_name)"; then
+    printf '%s\n' "${value}"
+    found=1
+  fi
+  [ "${found}" -eq 1 ]
+}
+
+require_control_only_topology() {
+  local run_asg
+  local build_asg
+
+  if ! run_asg="$(tf_output_raw worker_autoscaling_group_name 2>/dev/null)" ||
+    ! build_asg="$(tf_output_raw build_worker_autoscaling_group_name 2>/dev/null)"; then
+    die "cannot prove that the stack is control-only; use dev-destroy"
+  fi
+  if { [ -n "${run_asg}" ] && [ "${run_asg}" != "null" ]; } ||
+    { [ -n "${build_asg}" ] && [ "${build_asg}" != "null" ]; }; then
+    die "operation cannot bypass application-owned worker drain; finish or cancel demand and use dev-destroy"
+  fi
 }
 
 artifact_bucket() {
@@ -285,28 +319,24 @@ status() {
     printf 'redis=unavailable\n'
   fi
 
-  if asg="$(try_worker_asg_name)"; then
-    printf 'worker_asg=%s\n' "${asg}"
-    aws autoscaling describe-auto-scaling-groups \
-      --region "${AWS_REGION}" \
-      --auto-scaling-group-names "${asg}" \
-      --query 'AutoScalingGroups[0].{min:MinSize,max:MaxSize,desired:DesiredCapacity,instances:Instances[].{instance:InstanceId,lifecycle:LifecycleState,health:HealthStatus,launchTemplate:LaunchTemplate.Version}}' \
-      --output table
-
-    if instance_id="$(worker_instance_id 2>/dev/null)"; then
-      aws ec2 describe-instances \
+  if asgs="$(worker_asg_names)"; then
+    while IFS= read -r asg; do
+      [ -n "${asg}" ] || continue
+      printf 'worker_asg=%s\n' "${asg}"
+      aws autoscaling describe-auto-scaling-groups \
         --region "${AWS_REGION}" \
-        --instance-ids "${instance_id}" \
-        --query 'Reservations[].Instances[].{instance:InstanceId,state:State.Name,type:InstanceType,privateIp:PrivateIpAddress,launchTime:LaunchTime}' \
+        --auto-scaling-group-names "${asg}" \
+        --query 'AutoScalingGroups[0].{min:MinSize,max:MaxSize,desired:DesiredCapacity,instances:Instances[].{instance:InstanceId,lifecycle:LifecycleState,health:HealthStatus,launchTemplate:LaunchTemplate.Version}}' \
         --output table
-    fi
+    done <<EOF
+${asgs}
+EOF
   else
     printf 'worker_asg=unavailable\n'
   fi
 }
 
 control_scale() {
-  check_tools
   desired=${1:-}
   dispatcher_desired=${2:-${DEV_DISPATCHER_DESIRED_COUNT:-${desired}}}
   case "${desired}" in
@@ -315,6 +345,10 @@ control_scale() {
   case "${dispatcher_desired}" in
     ''|*[!0-9]*) die "dispatcher task count must be a non-negative integer" ;;
   esac
+  if [ "${desired}" -eq 0 ] || [ "${dispatcher_desired}" -eq 0 ]; then
+    require_control_only_topology
+  fi
+  check_tools
 
   cluster="$(control_cluster_name)"
   if ! service="$(try_control_service_name)"; then
@@ -406,6 +440,7 @@ database_up() {
 }
 
 database_down() {
+  require_control_only_topology
   check_tools
   database_id="$(database_identifier)"
   status="$(database_status)"
@@ -434,98 +469,13 @@ dev_on() {
 }
 
 dev_off() {
-  if try_worker_asg_name >/dev/null; then
-    worker_down
-  else
-    info "worker Auto Scaling group is unavailable; skipping worker scale-down"
-  fi
+  require_control_only_topology
   control_down
   database_down
 }
 
 dev_destroy() {
   "${ROOT}/scripts/aws-dev-smoke.sh" dev-destroy
-}
-
-wait_worker_capacity() {
-  asg=$1
-  desired=$2
-  if [ "${desired}" -eq 0 ]; then
-    timeout="${WORKER_SCALE_DOWN_TIMEOUT_SECONDS:-3900}"
-  else
-    timeout="${WORKER_SCALE_TIMEOUT_SECONDS:-900}"
-  fi
-  interval="${WORKER_SCALE_POLL_SECONDS:-15}"
-  deadline=$((SECONDS + timeout))
-
-  while :; do
-    group="$(
-      aws autoscaling describe-auto-scaling-groups \
-        --region "${AWS_REGION}" \
-        --auto-scaling-group-names "${asg}" \
-        --query 'AutoScalingGroups[0]' \
-        --output json
-    )"
-    current_desired="$(printf '%s\n' "${group}" | jq -r '.DesiredCapacity')"
-    in_service="$(printf '%s\n' "${group}" | jq '[.Instances[]? | select(.LifecycleState == "InService")] | length')"
-    total="$(printf '%s\n' "${group}" | jq '[.Instances[]?] | length')"
-    info "worker scale: desired=${current_desired} in_service=${in_service} total=${total}"
-
-    if [ "${desired}" -eq 0 ]; then
-      [ "${current_desired}" -eq 0 ] && [ "${total}" -eq 0 ] && return 0
-    elif [ "${current_desired}" -eq "${desired}" ] && [ "${in_service}" -ge "${desired}" ]; then
-      return 0
-    fi
-
-    [ "${SECONDS}" -lt "${deadline}" ] || die "timed out waiting for worker capacity ${desired}"
-    sleep "${interval}"
-  done
-}
-
-worker_scale() {
-  check_tools
-  desired=${1:-}
-  case "${desired}" in
-    ''|*[!0-9]*) die "worker count must be a non-negative integer" ;;
-  esac
-
-  if [ "${desired}" -gt 0 ]; then
-    require_worker_private_egress
-  fi
-
-  asg="$(worker_asg_name)"
-  if [ "${desired}" -eq 0 ]; then
-    aws autoscaling update-auto-scaling-group \
-      --region "${AWS_REGION}" \
-      --auto-scaling-group-name "${asg}" \
-      --min-size 0 \
-      --desired-capacity 0
-  else
-    aws autoscaling update-auto-scaling-group \
-      --region "${AWS_REGION}" \
-      --auto-scaling-group-name "${asg}" \
-      --min-size "${desired}" \
-      --max-size "${desired}" \
-      --desired-capacity "${desired}"
-  fi
-  wait_worker_capacity "${asg}" "${desired}"
-}
-
-worker_up() {
-  worker_scale "${1:-1}"
-}
-
-worker_down() {
-  worker_scale 0
-}
-
-require_worker_private_egress() {
-  [ "${WORKER_UP_ALLOW_NO_NAT:-0}" != "1" ] || return 0
-
-  nat_gateway_id="$(try_tf_output_raw nat_gateway_id)"
-  if [ -z "${nat_gateway_id}" ] || [ "${nat_gateway_id}" = "null" ]; then
-    die "worker-up requires NAT Gateway because workers run in private subnets; run aws-dev-smoke.sh dev-worker-tfvars and dev-apply first, or set WORKER_UP_ALLOW_NO_NAT=1 for emergency debugging"
-  fi
 }
 
 worker_image_cleanup() {
@@ -584,39 +534,44 @@ worker_image_cleanup() {
 }
 
 protected_worker_image_ids() {
-  asg="$(try_worker_asg_name 2>/dev/null || true)"
-  [ -n "${asg}" ] || return 0
+  asgs="$(worker_asg_names 2>/dev/null || true)"
+  [ -n "${asgs}" ] || return 0
 
-  group="$(
-    aws autoscaling describe-auto-scaling-groups \
-      --region "${AWS_REGION}" \
-      --auto-scaling-group-names "${asg}" \
-      --query 'AutoScalingGroups[0]' \
-      --output json 2>/dev/null || true
-  )"
-  [ -n "${group}" ] && [ "${group}" != "null" ] || return 0
+  while IFS= read -r asg; do
+    [ -n "${asg}" ] || continue
+    group="$(
+      aws autoscaling describe-auto-scaling-groups \
+        --region "${AWS_REGION}" \
+        --auto-scaling-group-names "${asg}" \
+        --query 'AutoScalingGroups[0]' \
+        --output json 2>/dev/null || true
+    )"
+    [ -n "${group}" ] && [ "${group}" != "null" ] || continue
 
-  instance_ids=()
-  while IFS= read -r instance_id; do
-    [ -n "${instance_id}" ] && instance_ids+=("${instance_id}")
-  done < <(printf '%s\n' "${group}" | jq -r '.Instances[]?.InstanceId // empty')
-  if [ "${#instance_ids[@]}" -gt 0 ]; then
-    aws ec2 describe-instances \
-      --region "${AWS_REGION}" \
-      --instance-ids "${instance_ids[@]}" |
-      jq -r '.Reservations[].Instances[].ImageId // empty'
-  fi
+    instance_ids=()
+    while IFS= read -r instance_id; do
+      [ -n "${instance_id}" ] && instance_ids+=("${instance_id}")
+    done < <(printf '%s\n' "${group}" | jq -r '.Instances[]?.InstanceId // empty')
+    if [ "${#instance_ids[@]}" -gt 0 ]; then
+      aws ec2 describe-instances \
+        --region "${AWS_REGION}" \
+        --instance-ids "${instance_ids[@]}" |
+        jq -r '.Reservations[].Instances[].ImageId // empty'
+    fi
 
-  launch_template_id="$(printf '%s\n' "${group}" | jq -r '.LaunchTemplate.LaunchTemplateId // empty')"
-  launch_template_version="$(printf '%s\n' "${group}" | jq -r '.LaunchTemplate.Version // empty')"
-  if [ -n "${launch_template_id}" ] && [ -n "${launch_template_version}" ]; then
-    aws ec2 describe-launch-template-versions \
-      --region "${AWS_REGION}" \
-      --launch-template-id "${launch_template_id}" \
-      --versions "${launch_template_version}" \
-      --query 'LaunchTemplateVersions[].LaunchTemplateData.ImageId' \
-      --output text 2>/dev/null | tr '\t' '\n'
-  fi
+    launch_template_id="$(printf '%s\n' "${group}" | jq -r '.LaunchTemplate.LaunchTemplateId // empty')"
+    launch_template_version="$(printf '%s\n' "${group}" | jq -r '.LaunchTemplate.Version // empty')"
+    if [ -n "${launch_template_id}" ] && [ -n "${launch_template_version}" ]; then
+      aws ec2 describe-launch-template-versions \
+        --region "${AWS_REGION}" \
+        --launch-template-id "${launch_template_id}" \
+        --versions "${launch_template_version}" \
+        --query 'LaunchTemplateVersions[].LaunchTemplateData.ImageId' \
+        --output text 2>/dev/null | tr '\t' '\n'
+    fi
+  done <<EOF
+${asgs}
+EOF
 }
 
 ssm_send_commands() {
@@ -854,8 +809,6 @@ case "${command}" in
   dev-off) dev_off ;;
   dev-destroy) dev_destroy ;;
   worker-instance) worker_instance_id ;;
-  worker-up) shift; worker_up "$@" ;;
-  worker-down) worker_down ;;
   worker-image-cleanup) shift; worker_image_cleanup "$@" ;;
   worker-journal) worker_journal ;;
   restart-worker) restart_worker ;;

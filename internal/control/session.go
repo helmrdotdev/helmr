@@ -215,7 +215,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	if err != nil {
 		return sessionStartResult{}, err
 	}
-	var placementWorkerGroupID string
 	var attachedWorkspace db.GetWorkspaceSourceForSessionStartRow
 	if requestedWorkspaceID.Valid {
 		workspace, err := s.db.GetWorkspaceSourceForSessionStart(ctx, db.GetWorkspaceSourceForSessionStartParams{
@@ -230,17 +229,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 		if err != nil {
 			return sessionStartResult{}, err
 		}
-		if err := s.requireRoutableRecordWorkerGroup(ctx, s.db, workspace.WorkerGroupID); err != nil {
-			return sessionStartResult{}, err
-		}
-		placementWorkerGroupID = workspace.WorkerGroupID
 		attachedWorkspace = workspace
-	} else {
-		placement, err := s.resolveEnvironmentPlacement(ctx, s.db, actor.OrgID, projectID, environmentID)
-		if err != nil {
-			return sessionStartResult{}, err
-		}
-		placementWorkerGroupID = placement.WorkerGroupID
 	}
 	if externalID != "" {
 		if existing, err := s.loadExistingSessionStart(ctx, s.db, actor.OrgID, projectID, environmentID, externalID, startFingerprint.String, source); err == nil {
@@ -266,9 +255,9 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	var deploymentTask db.GetDeploymentTaskRow
 	if requestedWorkspaceID.Valid {
-		deploymentTask, err = s.deploymentTask(ctx, placementWorkerGroupID, actor.OrgID, projectID, environmentID, attachedWorkspace.DeploymentID, taskID)
+		deploymentTask, err = s.deploymentTask(ctx, actor.OrgID, projectID, environmentID, attachedWorkspace.DeploymentID, taskID)
 	} else {
-		deploymentTask, err = s.deploymentTaskForRunRequest(ctx, placementWorkerGroupID, actor.OrgID, projectID, environmentID, taskID, runDeploymentSelection{})
+		deploymentTask, err = s.deploymentTaskForRunRequest(ctx, actor.OrgID, projectID, environmentID, taskID, runDeploymentSelection{})
 	}
 	if isNoRows(err) {
 		return sessionStartResult{}, errTaskNotDeployed
@@ -355,7 +344,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				return err
 			}
 		}
-		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, placementWorkerGroupID, deploymentTask, requestedWorkspaceID)
+		workspace, err := s.createOrAttachSessionStartWorkspace(ctx, work.q, actor.OrgID, projectID, environmentID, deploymentTask, requestedWorkspaceID)
 		if err != nil {
 			return err
 		}
@@ -418,9 +407,8 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 				EventPayload:          createdPayload,
 				ScheduleID:            source.scheduleID,
 				ScheduleInstanceID:    source.scheduleInstanceID,
-				ScheduleGeneration:    pgtype.Int8{Int64: source.scheduleGeneration, Valid: source.scheduleInstanceID.Valid},
+				ScheduleGeneration:    source.scheduleGeneration,
 				ScheduledAt:           source.scheduledAt,
-				AllowDrainingRoute:    requestedWorkspaceID.Valid,
 			})
 		})
 		if err != nil {
@@ -430,36 +418,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			if isNoRows(err) {
 				return unavailable(errors.New("execution route is not available"))
 			}
-			return err
-		}
-		workspaceMountRequest, err := json.Marshal(map[string]string{
-			"source": "session_start",
-			"run_id": pgvalue.MustUUIDValue(run.ID).String(),
-		})
-		if err != nil {
-			return err
-		}
-		mount, err := work.q.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
-			ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:           pgvalue.UUID(actor.OrgID),
-			ProjectID:       projectID,
-			EnvironmentID:   environmentID,
-			WorkspaceID:     workspace.ID,
-			RequestPriority: scheduling.priority,
-			Request:         workspaceMountRequest,
-		})
-		if err != nil {
-			if isNoRows(err) {
-				return workspaceMountPrerequisiteErrorWithStore(ctx, work.q, pgvalue.UUID(actor.OrgID), projectID, environmentID, workspace.ID)
-			}
-			return err
-		}
-		if err := work.q.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
-			OrgID:            pgvalue.UUID(actor.OrgID),
-			RunID:            run.ID,
-			WorkspaceID:      workspace.ID,
-			WorkspaceMountID: mount.ID,
-		}); err != nil {
 			return err
 		}
 		var sessionRunPublicID string
@@ -490,7 +448,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			return err
 		}
 		work.AfterCommit(func(postCommitCtx context.Context) {
-			s.reconcilePreparedRuntimeSupplyForSandboxAsync(postCommitCtx, deploymentTask.DeploymentSandboxID, "session_start")
+			s.reconcilePreparedRuntimeSupplyAsync(postCommitCtx, "session_start")
 			if s.runEnqueuer != nil {
 				if _, err := s.runEnqueuer.EnqueueRun(postCommitCtx, run.OrgID, run.ID); err != nil {
 					s.log.Error("enqueue session run failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)
@@ -584,7 +542,7 @@ func parseOptionalWorkspaceID(raw string) (pgtype.UUID, error) {
 	return pgvalue.UUID(parsed), nil
 }
 
-func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, placementWorkerGroupID string, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
+func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store db.Querier, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, task db.GetDeploymentTaskRow, requestedWorkspaceID pgtype.UUID) (db.Workspace, error) {
 	if !requestedWorkspaceID.Valid {
 		workspaceArtifact, initialWorkspace, err := s.createInitialWorkspaceArtifact(ctx, store, orgID, projectID, environmentID)
 		if err != nil {
@@ -598,7 +556,6 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 			return store.CreateWorkspaceFromSandbox(ctx, db.CreateWorkspaceFromSandboxParams{
 				ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
 				PublicID:                  workspacePublicID,
-				WorkerGroupID:             placementWorkerGroupID,
 				OrgID:                     pgvalue.UUID(orgID),
 				ProjectID:                 projectID,
 				EnvironmentID:             environmentID,
@@ -622,7 +579,7 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 		if err != nil {
 			return db.Workspace{}, err
 		}
-		return workspaceFromCreateWorkspaceFromSandbox(workspace), nil
+		return db.Workspace(workspace), nil
 	}
 	workspace, err := store.GetWorkspaceForSessionStart(ctx, db.GetWorkspaceForSessionStartParams{
 		OrgID:         pgvalue.UUID(orgID),
@@ -664,9 +621,9 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 	return db.Workspace{
 		ID:                  workspace.ID,
 		OrgID:               workspace.OrgID,
-		WorkerGroupID:       workspace.WorkerGroupID,
 		ProjectID:           workspace.ProjectID,
 		EnvironmentID:       workspace.EnvironmentID,
+		RegionID:            workspace.RegionID,
 		DeploymentSandboxID: workspace.DeploymentSandboxID,
 		SandboxID:           workspace.SandboxID,
 		SandboxFingerprint:  workspace.SandboxFingerprint,
@@ -1376,12 +1333,9 @@ func (s *Server) cancelSessionRun(ctx context.Context, store db.Querier, actor a
 		return err
 	}
 	_, err = store.CancelRun(ctx, db.CancelRunParams{
-		OrgID:         session.OrgID,
-		WorkerGroupID: run.WorkerGroupID,
-		RunID:         session.CurrentRunID,
-		Reason:        reason,
-		Force:         false,
-		OperationID:   operation.ID,
+		OrgID:       session.OrgID,
+		RunID:       session.CurrentRunID,
+		OperationID: operation.ID,
 	})
 	if isNoRows(err) {
 		_, _ = store.MarkRunOperationRejected(ctx, db.MarkRunOperationRejectedParams{
@@ -1479,10 +1433,6 @@ func (s *Server) loadSessionForRequest(w http.ResponseWriter, r *http.Request, p
 	}
 	if !actor.HasPermission(permission, scope) {
 		writeError(w, forbidden(errPermissionRequired))
-		return db.Session{}, false
-	}
-	if err := s.requireRoutableRecordWorkerGroup(r.Context(), s.db, session.WorkerGroupID); err != nil {
-		writeError(w, err)
 		return db.Session{}, false
 	}
 	return session, true

@@ -1,24 +1,45 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/compute"
+)
 
 func TestAdvertisedWorkerDiskMiBUsesConfiguredValue(t *testing.T) {
-	got, err := advertisedWorkerDiskMiB(t.TempDir(), 1234)
+	got, err := advertisedWorkerDiskMiB(t.TempDir(), 1234, 234)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != 1234 {
-		t.Fatalf("disk MiB = %d, want 1234", got)
+	if got != 1000 {
+		t.Fatalf("disk MiB = %d, want 1000", got)
 	}
 }
 
 func TestAdvertisedWorkerDiskMiBDetectsFilesystemCapacity(t *testing.T) {
-	got, err := advertisedWorkerDiskMiB(t.TempDir(), 0)
+	got, err := advertisedWorkerDiskMiB(t.TempDir(), 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got <= 0 {
 		t.Fatalf("disk MiB = %d, want positive", got)
+	}
+}
+
+func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
+	hostMiB, err := advertisedWorkerDiskMiB(t.TempDir(), 4*8192+1024, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capacity := compute.WorkerDiskCapacity{
+		VMWorkloadDiskMiB: 8192, VMScratchBytes: 8192 << 20,
+		HostWorkloadMiB: hostMiB, HostScratchBytes: hostMiB << 20,
+	}
+	if !capacity.FitsVMs(4) {
+		t.Fatal("explicit reserve was not removed before four-slot exact fit")
+	}
+	if capacity.FitsVMs(5) {
+		t.Fatal("N+1 VM fit past net aggregate host capacity")
 	}
 }
 

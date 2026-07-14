@@ -34,11 +34,9 @@ type WorkspaceMountSessions struct {
 	mu             sync.RWMutex
 	sessions       map[string]workspaceMountSessionEntry
 	BackgroundGate *BackgroundWorkGate
-	RuntimePool    *PreparedRuntimePool
 }
 
 type workspaceMountSessionEntry struct {
-	mount        api.WorkerWorkspaceMount
 	session      vm.Session
 	channelToken string
 }
@@ -56,7 +54,7 @@ func (s *WorkspaceMountSessions) RegisterWorkspaceMountSession(mount api.WorkerW
 	if s.sessions == nil {
 		s.sessions = map[string]workspaceMountSessionEntry{}
 	}
-	s.sessions[id] = workspaceMountSessionEntry{mount: mount, session: session, channelToken: strings.TrimSpace(channelToken)}
+	s.sessions[id] = workspaceMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken)}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
@@ -86,14 +84,8 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 		return WorkspaceMountSession{}, fmt.Errorf("open workspace mount stream %s: %w", id, err)
 	}
 	endForeground := s.beginForegroundRun()
-	refillAfterRun := func() {
-		endForeground()
-		if s.RuntimePool != nil {
-			s.RuntimePool.Refill(context.Background(), entry.mount)
-		}
-	}
 	return WorkspaceMountSession{
-		Session:      newBorrowedRunSession(entry.session, stream, refillAfterRun),
+		Session:      newBorrowedRunSession(entry.session, stream, endForeground),
 		ChannelToken: entry.channelToken,
 	}, nil
 }
@@ -108,6 +100,9 @@ func (s *WorkspaceMountSessions) beginForegroundRun() func() {
 type managedWorkspaceMountSession struct {
 	session                      vm.Session
 	mu                           sync.RWMutex
+	closeStarted                 bool
+	closeDone                    chan struct{}
+	closeErr                     error
 	releaseForCheckpointStarted  bool
 	releaseForCheckpointFinished bool
 	releaseForCheckpointErr      error
@@ -117,6 +112,7 @@ type managedWorkspaceMountSession struct {
 func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountSession {
 	return &managedWorkspaceMountSession{
 		session:                  session,
+		closeDone:                make(chan struct{}),
 		releaseForCheckpointDone: make(chan struct{}),
 	}
 }
@@ -134,7 +130,33 @@ func (s *managedWorkspaceMountSession) Wait(ctx context.Context) error {
 }
 
 func (s *managedWorkspaceMountSession) Close(ctx context.Context) error {
-	return s.session.Close(ctx)
+	return s.close(ctx)
+}
+
+func (s *managedWorkspaceMountSession) close(ctx context.Context) error {
+	s.mu.Lock()
+	if s.closeStarted {
+		done := s.closeDone
+		s.mu.Unlock()
+		select {
+		case <-done:
+			s.mu.RLock()
+			defer s.mu.RUnlock()
+			return s.closeErr
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	s.closeStarted = true
+	done := s.closeDone
+	s.mu.Unlock()
+
+	err := s.session.Close(ctx)
+	s.mu.Lock()
+	s.closeErr = err
+	close(done)
+	s.mu.Unlock()
+	return err
 }
 
 func (s *managedWorkspaceMountSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRequest) (vm.SnapshotArtifact, error) {
@@ -158,7 +180,11 @@ func (s *managedWorkspaceMountSession) ReleaseCheckpointSource(ctx context.Conte
 	if s.releaseForCheckpointStarted {
 		done := s.releaseForCheckpointDone
 		s.mu.Unlock()
-		<-done
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 		s.mu.RLock()
 		defer s.mu.RUnlock()
 		return s.releaseForCheckpointErr
@@ -167,7 +193,7 @@ func (s *managedWorkspaceMountSession) ReleaseCheckpointSource(ctx context.Conte
 	done := s.releaseForCheckpointDone
 	s.mu.Unlock()
 
-	err := s.session.Close(ctx)
+	err := s.close(ctx)
 	s.mu.Lock()
 	s.releaseForCheckpointErr = err
 	s.releaseForCheckpointFinished = true

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,15 +17,18 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
+	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
@@ -55,6 +59,26 @@ func main() {
 		log.Error("load dev config", "error", err)
 		os.Exit(1)
 	}
+	desiredWorkerGroups := make([]workergroup.Desired, 0, len(cfg.workerGroups))
+	for i, group := range cfg.workerGroups {
+		boundary, desired, err := enrollment.PrepareAWSGroup(group)
+		if err != nil {
+			log.Error("prepare worker group", "worker_group_id", group.ID, "error", err)
+			os.Exit(1)
+		}
+		cfg.workerGroups[i] = boundary
+		desiredWorkerGroups = append(desiredWorkerGroups, desired)
+	}
+	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(cfg.providerRegion))
+	if err != nil {
+		log.Error("load AWS config", "error", err)
+		os.Exit(1)
+	}
+	workerEnrollment, err := enrollment.NewAWSVerifier(awsCfg, cfg.workerGroups)
+	if err != nil {
+		log.Error("configure worker enrollment", "error", err)
+		os.Exit(1)
+	}
 	pool, err := pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
 		log.Error("connect database", "error", err)
@@ -70,16 +94,21 @@ func main() {
 		log.Error("begin worker group bootstrap", "error", err)
 		os.Exit(1)
 	}
-	if err := workergroup.Bootstrap(ctx, db.New(tx), workergroup.BootstrapConfig{
+	queries := db.New(tx)
+	if err := region.Ensure(ctx, queries, region.BootstrapConfig{
 		RegionID:          cfg.regionID,
 		DefaultRegionID:   cfg.defaultRegionID,
 		Provider:          cfg.provider,
 		ProviderRegion:    cfg.providerRegion,
 		RegionDisplayName: cfg.regionDisplayName,
-		WorkerGroupID:     cfg.workerGroupID,
 	}); err != nil {
 		_ = tx.Rollback(ctx)
 		log.Error("bootstrap worker group", "error", err)
+		os.Exit(1)
+	}
+	if err := workergroup.Reconcile(ctx, queries, cfg.regionID, desiredWorkerGroups); err != nil {
+		_ = tx.Rollback(ctx)
+		log.Error("reconcile worker groups", "error", err)
 		os.Exit(1)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -104,7 +133,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	queries := db.New(pool)
+	queries = db.New(pool)
 	redisOptions, err := redis.ParseURL(cfg.redisURL)
 	if err != nil {
 		log.Error("parse redis URL", "error", err)
@@ -133,7 +162,6 @@ func main() {
 	defer clickHouseClient.Close()
 	telemetryReader := telemetry.NewHistoricalReader(clickHouseClient)
 	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-		WorkerGroupID:   cfg.workerGroupID,
 		TelemetryReader: telemetryReader,
 	})
 	if err != nil {
@@ -145,28 +173,9 @@ func main() {
 		log.Error("configure telemetry ingester", "error", err)
 		os.Exit(1)
 	}
-	workerCommands, err := control.NewWorkerCommandStream(log, queries, redisClient, cfg.workerGroupID)
-	if err != nil {
-		log.Error("configure worker command stream", "error", err)
-		os.Exit(1)
-	}
 	go func() {
 		if err := eventStream.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("event stream publisher stopped", "error", err)
-		}
-	}()
-	go func() {
-		if err := workerCommands.RunPublisher(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("worker command stream publisher stopped", "error", err)
-		}
-	}()
-	go func() {
-		if err := workergroup.RunHealthReporter(ctx, queries, workergroup.HealthReporterConfig{
-			WorkerGroupID:      cfg.workerGroupID,
-			Component:          workergroup.ComponentDevControl,
-			RequiredComponents: workergroup.DevRoutingRequiredComponents(),
-		}); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("worker group health reporter stopped", "error", err)
 		}
 	}()
 	go func() {
@@ -184,43 +193,30 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
-	sweeper, err := dispatch.NewExpirySweeper(queries, dispatch.WithExpirySweepWorkerGroupID(cfg.workerGroupID), dispatch.WithExpirySweepLogger(log))
-	if err != nil {
-		log.Error("configure sweeper", "error", err)
-		os.Exit(1)
-	}
-	go func() {
-		if err := sweeper.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("sweeper stopped", "error", err)
-		}
-	}()
-
 	publicURL, err := url.Parse(cfg.publicURL)
 	if err != nil {
 		log.Error("parse public URL", "error", err)
 		os.Exit(1)
 	}
 	app, err := control.NewServer(control.ServerConfig{
-		Log:                 log,
-		DeploymentMode:      cfg.deploymentMode,
-		DB:                  queries,
-		TX:                  pool,
-		ReadinessDB:         pool,
-		Auth:                auth.NewDBAuthenticator(queries),
-		CAS:                 casStore,
-		Secrets:             secretStore,
-		WorkerTokenSecret:   []byte(cfg.workerTokenSecret),
-		WorkerRegisterToken: cfg.workerBootstrapToken,
-		SetupToken:          cfg.setupToken,
-		AuthSecret:          []byte(cfg.authSecret),
-		PublicURL:           publicURL,
-		WorkerGroupID:       cfg.workerGroupID,
-		RegionID:            cfg.regionID,
-		DefaultRegionID:     cfg.defaultRegionID,
-		ReadinessComponent:  workergroup.ComponentDevControl,
-		EventStream:         eventStream,
-		TelemetryReader:     telemetryReader,
-		WorkerCommands:      workerCommands,
+		Log:               log,
+		DeploymentMode:    cfg.deploymentMode,
+		DB:                queries,
+		TX:                pool,
+		ReadinessDB:       pool,
+		Auth:              auth.NewDBAuthenticator(queries),
+		CAS:               casStore,
+		Secrets:           secretStore,
+		WorkerTokenSecret: []byte(cfg.workerTokenSecret),
+		WorkerEnrollment:  devWorkerEnrollmentVerifier{verifier: workerEnrollment},
+		SetupToken:        cfg.setupToken,
+		AuthSecret:        []byte(cfg.authSecret),
+		PublicURL:         publicURL,
+		WorkerGroupID:     cfg.workerGroupID,
+		RegionID:          cfg.regionID,
+		DefaultRegionID:   cfg.defaultRegionID,
+		EventStream:       eventStream,
+		TelemetryReader:   telemetryReader,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
@@ -264,6 +260,7 @@ type devConfig struct {
 	providerRegion         string
 	regionDisplayName      string
 	workerGroupID          string
+	workerGroups           []enrollment.AWSGroupBoundary
 	clickHouseURL          string
 	clickHouseUser         string
 	clickHousePassword     string
@@ -272,12 +269,27 @@ type devConfig struct {
 	publicURL              string
 	authSecret             string
 	setupToken             string
-	workerBootstrapToken   string
 	workerTokenSecret      string
 	secretEncryptionKey    string
 	secretEncryptionKeyOld string
 	resetDatabase          bool
 	seedData               bool
+}
+
+type devWorkerEnrollmentVerifier struct {
+	verifier *enrollment.AWSVerifier
+}
+
+func (v devWorkerEnrollmentVerifier) VerifyWorkerEnrollment(ctx context.Context, request api.WorkerEnrollmentRequest) (control.VerifiedWorkerEnrollment, error) {
+	verified, err := v.verifier.VerifyWorkerEnrollment(ctx, request)
+	if err != nil {
+		return control.VerifiedWorkerEnrollment{}, err
+	}
+	return control.VerifiedWorkerEnrollment{
+		WorkerGroupID: verified.WorkerGroupID, ResourceID: verified.ResourceID,
+		AllowsRun: verified.AllowsRun, AllowsBuild: verified.AllowsBuild,
+		ProtocolVersion: verified.ProtocolVersion, AttestationFingerprint: verified.AttestationFingerprint,
+	}, nil
 }
 
 func loadConfig() (devConfig, error) {
@@ -299,7 +311,6 @@ func loadConfig() (devConfig, error) {
 		publicURL:              env("HELMR_PUBLIC_URL", defaultPublicURL),
 		authSecret:             env("HELMR_AUTH_SECRET", defaultAuthSecret),
 		setupToken:             env("HELMR_SETUP_TOKEN", defaultSetupToken),
-		workerBootstrapToken:   strings.TrimSpace(os.Getenv("HELMR_WORKER_BOOTSTRAP_TOKEN")),
 		workerTokenSecret:      env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
 		secretEncryptionKey:    env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
 		secretEncryptionKeyOld: strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD")),
@@ -326,6 +337,21 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.workerGroupID == "" {
 		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(os.Getenv("HELMR_WORKER_GROUPS"))), &cfg.workerGroups); err != nil || len(cfg.workerGroups) == 0 {
+		return cfg, errors.New("HELMR_WORKER_GROUPS must be a non-empty JSON array")
+	}
+	foundDefaultGroup := false
+	for i, group := range cfg.workerGroups {
+		normalized, err := enrollment.NormalizeAWSGroupBoundary(group)
+		if err != nil {
+			return cfg, err
+		}
+		cfg.workerGroups[i] = normalized
+		foundDefaultGroup = foundDefaultGroup || normalized.ID == cfg.workerGroupID
+	}
+	if !foundDefaultGroup {
+		return cfg, errors.New("HELMR_WORKER_GROUP_ID must identify a group in HELMR_WORKER_GROUPS")
 	}
 	if cfg.clickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")

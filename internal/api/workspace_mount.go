@@ -57,8 +57,9 @@ type WorkerWorkspaceMount struct {
 	WorkspaceID                string                  `json:"workspace_id"`
 	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
 	BaseVersionID              string                  `json:"base_version_id,omitempty"`
-	RuntimeInstanceToken       string                  `json:"runtime_instance_token"`
 	RuntimeInstanceID          string                  `json:"runtime_instance_id,omitempty"`
+	NetworkSlotID              string                  `json:"network_slot_id"`
+	NetworkSlotGeneration      int64                   `json:"network_slot_generation"`
 	RuntimeEpoch               int64                   `json:"runtime_epoch"`
 	GuestdChannelToken         string                  `json:"guestd_channel_token"`
 	GuestdChannelTokenHash     string                  `json:"guestd_channel_token_hash"`
@@ -83,35 +84,31 @@ type WorkerWorkspaceMount struct {
 }
 
 type WorkerWorkspaceMountRenewRequest struct {
-	OrgID                string `json:"org_id"`
-	WorkspaceMountID     string `json:"workspace_mount_id"`
-	RuntimeInstanceToken string `json:"runtime_instance_token"`
+	OrgID            string `json:"org_id"`
+	WorkspaceMountID string `json:"workspace_mount_id"`
 }
 
 type WorkerWorkspaceMountMountedRequest struct {
-	OrgID                string `json:"org_id"`
-	WorkspaceMountID     string `json:"workspace_mount_id"`
-	RuntimeInstanceToken string `json:"runtime_instance_token"`
+	OrgID            string `json:"org_id"`
+	WorkspaceMountID string `json:"workspace_mount_id"`
 }
 
 type WorkerWorkspaceMountStopRequest struct {
-	OrgID                string `json:"org_id"`
-	WorkspaceMountID     string `json:"workspace_mount_id"`
-	RuntimeInstanceToken string `json:"runtime_instance_token"`
+	OrgID            string `json:"org_id"`
+	WorkspaceMountID string `json:"workspace_mount_id"`
 }
 
 type WorkerWorkspaceMountCaptureRequest struct {
-	OrgID                string `json:"org_id"`
-	ProjectID            string `json:"project_id"`
-	EnvironmentID        string `json:"environment_id"`
-	WorkspaceID          string `json:"workspace_id"`
-	WorkspaceMountID     string `json:"workspace_mount_id"`
-	RuntimeInstanceToken string `json:"runtime_instance_token"`
-	ArtifactDigest       string `json:"artifact_digest"`
-	ArtifactSizeBytes    int64  `json:"artifact_size_bytes"`
-	ArtifactMediaType    string `json:"artifact_media_type"`
-	ArtifactEncoding     string `json:"artifact_encoding"`
-	ArtifactEntryCount   int32  `json:"artifact_entry_count"`
+	OrgID              string `json:"org_id"`
+	ProjectID          string `json:"project_id"`
+	EnvironmentID      string `json:"environment_id"`
+	WorkspaceID        string `json:"workspace_id"`
+	WorkspaceMountID   string `json:"workspace_mount_id"`
+	ArtifactDigest     string `json:"artifact_digest"`
+	ArtifactSizeBytes  int64  `json:"artifact_size_bytes"`
+	ArtifactMediaType  string `json:"artifact_media_type"`
+	ArtifactEncoding   string `json:"artifact_encoding"`
+	ArtifactEntryCount int32  `json:"artifact_entry_count"`
 }
 
 type WorkerWorkspaceMountCaptureResponse struct {
@@ -119,8 +116,7 @@ type WorkerWorkspaceMountCaptureResponse struct {
 }
 
 type WorkerWorkspaceMountFailRequest struct {
-	OrgID                string          `json:"org_id"`
-	WorkspaceMountID     string          `json:"workspace_mount_id"`
-	RuntimeInstanceToken string          `json:"runtime_instance_token"`
-	Error                json.RawMessage `json:"error"`
+	OrgID            string          `json:"org_id"`
+	WorkspaceMountID string          `json:"workspace_mount_id"`
+	Error            json.RawMessage `json:"error"`
 }

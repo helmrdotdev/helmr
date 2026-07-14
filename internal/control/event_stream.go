@@ -41,12 +41,10 @@ type EventStream struct {
 	log             *slog.Logger
 	db              db.Querier
 	redis           redis.Cmdable
-	workerGroupID   string
 	telemetryReader telemetry.Reader
 }
 
 type EventStreamConfig struct {
-	WorkerGroupID   string
 	TelemetryReader telemetry.Reader
 }
 
@@ -64,14 +62,11 @@ func NewEventStream(log *slog.Logger, queries db.Querier, redis redis.Cmdable, c
 	if len(configs) > 0 {
 		cfg = configs[0]
 	}
-	if strings.TrimSpace(cfg.WorkerGroupID) == "" {
-		return nil, errors.New("event stream worker group id is required")
-	}
 	reader := cfg.TelemetryReader
 	if reader == nil {
 		return nil, errors.New("event stream telemetry reader is required")
 	}
-	return &EventStream{log: log, db: queries, redis: redis, workerGroupID: cfg.WorkerGroupID, telemetryReader: reader}, nil
+	return &EventStream{log: log, db: queries, redis: redis, telemetryReader: reader}, nil
 }
 
 func (s *EventStream) RunPublisher(ctx context.Context) error {
@@ -215,13 +210,13 @@ func (s *EventStream) streamAdvancedPastID(ctx context.Context, streamKey string
 	return latestSeq > seq, nil
 }
 
-func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
-	streamKey := eventStreamKey(orgID, workerGroupID, subjectType, subjectID)
+func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error, onIdle func() error) error {
+	streamKey := eventStreamKey(orgID, subjectType, subjectID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		nextCursor, hasMore, err := s.readDurableSubjectEvents(ctx, orgID, workerGroupID, subjectType, subjectID, cursor, onEvent)
+		nextCursor, hasMore, err := s.readDurableSubjectEvents(ctx, orgID, subjectType, subjectID, cursor, onEvent)
 		durableErr := err
 		if err != nil {
 			s.log.Debug("read durable subject events failed; continuing with redis live stream", "subject_type", subjectType, "subject_id", subjectID.String(), "error", err)
@@ -281,13 +276,13 @@ func (s *EventStream) ReadSubject(ctx context.Context, orgID uuid.UUID, workerGr
 	}
 }
 
-func (s *EventStream) ReadRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error, onIdle func() error) error {
-	streamKey := runLogStreamKey(orgID, workerGroupID, runID)
+func (s *EventStream) ReadRunLogs(ctx context.Context, orgID uuid.UUID, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error, onIdle func() error) error {
+	streamKey := runLogStreamKey(orgID, runID)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		nextCursor, hasMore, err := s.readDurableRunLogs(ctx, orgID, workerGroupID, runID, cursor, onChunk)
+		nextCursor, hasMore, err := s.readDurableRunLogs(ctx, orgID, runID, cursor, onChunk)
 		durableErr := err
 		if err != nil {
 			s.log.Debug("read durable run logs failed; continuing with redis live stream", "run_id", runID.String(), "error", err)
@@ -347,13 +342,12 @@ func (s *EventStream) ReadRunLogs(ctx context.Context, orgID uuid.UUID, workerGr
 	}
 }
 
-func (s *EventStream) readDurableRunLogs(ctx context.Context, orgID uuid.UUID, workerGroupID string, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error) (int64, bool, error) {
+func (s *EventStream) readDurableRunLogs(ctx context.Context, orgID uuid.UUID, runID uuid.UUID, cursor int64, onChunk func(api.RunLogChunk) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListRunLogChunks(ctx, telemetry.RunLogChunkQuery{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		RunID:         runID,
-		AfterSeq:      cursor,
-		Limit:         runLogStreamBatchSize,
+		OrgID:    orgID,
+		RunID:    runID,
+		AfterSeq: cursor,
+		Limit:    runLogStreamBatchSize,
 	})
 	if err != nil {
 		return cursor, false, fmt.Errorf("list durable run logs: %w", err)
@@ -374,7 +368,7 @@ func (s *EventStream) readDurableRunLogs(ctx context.Context, orgID uuid.UUID, w
 func (s *EventStream) ReadTerminalOutput(ctx context.Context, query telemetry.TerminalOutputQuery, cursor int64, limit int32, onChunk func(telemetry.TerminalOutputChunk) error, onIdle func() error) error {
 	query.AfterOffset = cursor
 	query.Limit = limit
-	streamKey := terminalOutputStreamKey(query.OrgID, query.WorkerGroupID, query.WorkspaceID, query.ResourceKind, query.ResourceID, query.StreamName)
+	streamKey := terminalOutputStreamKey(query.OrgID, query.WorkspaceID, query.ResourceKind, query.ResourceID, query.StreamName)
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -493,14 +487,13 @@ func (s *EventStream) redisTerminalStreamCoversCursor(ctx context.Context, strea
 	return chunk.OffsetStart <= cursor, nil
 }
 
-func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
+func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.UUID, subjectType string, subjectID uuid.UUID, cursor int64, onEvent func(api.RunEvent) error) (int64, bool, error) {
 	page, err := s.telemetryReader.ListEvents(ctx, telemetry.EventQuery{
-		OrgID:         orgID,
-		WorkerGroupID: workerGroupID,
-		SubjectType:   subjectType,
-		SubjectID:     subjectID,
-		AfterSeq:      cursor,
-		Limit:         runEventsPageSize,
+		OrgID:       orgID,
+		SubjectType: subjectType,
+		SubjectID:   subjectID,
+		AfterSeq:    cursor,
+		Limit:       runEventsPageSize,
 	})
 	if err != nil {
 		return cursor, false, fmt.Errorf("list durable subject events: %w", err)
@@ -518,16 +511,16 @@ func (s *EventStream) readDurableSubjectEvents(ctx context.Context, orgID uuid.U
 	return cursor, len(page.Events) == int(runEventsPageSize), nil
 }
 
-func eventStreamKey(orgID uuid.UUID, workerGroupID string, subjectType string, subjectID uuid.UUID) string {
-	return "helmr:events:" + orgID.String() + ":" + workerGroupID + ":" + subjectType + ":" + subjectID.String()
+func eventStreamKey(orgID uuid.UUID, subjectType string, subjectID uuid.UUID) string {
+	return "helmr:events:" + orgID.String() + ":" + subjectType + ":" + subjectID.String()
 }
 
-func runLogStreamKey(orgID uuid.UUID, workerGroupID string, runID uuid.UUID) string {
-	return "helmr:run_logs:" + orgID.String() + ":" + workerGroupID + ":" + runID.String()
+func runLogStreamKey(orgID uuid.UUID, runID uuid.UUID) string {
+	return "helmr:run_logs:" + orgID.String() + ":" + runID.String()
 }
 
-func terminalOutputStreamKey(orgID uuid.UUID, workerGroupID string, workspaceID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) string {
-	return "helmr:terminal_outputs:" + orgID.String() + ":" + workerGroupID + ":" + workspaceID.String() + ":" + resourceKind + ":" + resourceID.String() + ":" + streamName
+func terminalOutputStreamKey(orgID uuid.UUID, workspaceID uuid.UUID, resourceKind string, resourceID uuid.UUID, streamName string) string {
+	return "helmr:terminal_outputs:" + orgID.String() + ":" + workspaceID.String() + ":" + resourceKind + ":" + resourceID.String() + ":" + streamName
 }
 
 func redisEventID(seq int64) string {
@@ -569,10 +562,6 @@ func liveTelemetryPublisherBackoff(attempts int) time.Duration {
 		}
 	}
 	return backoff
-}
-
-func eventPublisherBackoff(attempts int) time.Duration {
-	return liveTelemetryPublisherBackoff(attempts)
 }
 
 func sleepWithContext(ctx context.Context, duration time.Duration) error {

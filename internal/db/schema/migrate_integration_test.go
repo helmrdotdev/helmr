@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,6 +81,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	}
 	assertWorkspaceStreamSchema(t, dbctx, pool)
 	assertTelemetrySchema(t, dbctx, pool)
+	assertWorkerSchema(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -91,6 +93,181 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	}
 	if exists {
 		t.Fatal("runs table still exists after down migration")
+	}
+}
+
+func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var forbiddenRelations int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_class
+		 WHERE relnamespace = 'public'::regnamespace
+		   AND relname = ANY($1::text[])
+	`, []string{"worker_commands", "run_checkpoint_restores", "worker_assignments", "runtime_routes"}).Scan(&forbiddenRelations); err != nil {
+		t.Fatal(err)
+	}
+	if forbiddenRelations != 0 {
+		t.Fatalf("forbidden worker relations = %d, want 0", forbiddenRelations)
+	}
+	var shapeColumns int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_schema='public' AND table_name='worker_instances' AND column_name = ANY($1::text[])`,
+		[]string{"per_vm_cpu_millis", "per_vm_memory_bytes", "per_vm_workload_disk_bytes", "per_vm_scratch_bytes"}).Scan(&shapeColumns); err != nil {
+		t.Fatal(err)
+	}
+	if shapeColumns != 4 {
+		t.Fatalf("per-VM shape columns = %d, want 4", shapeColumns)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO regions (id, provider, provider_region, display_name) VALUES ('shape-region', 'test', 'shape-region', 'Shape Region');
+		INSERT INTO worker_groups (id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints)
+		VALUES ('shape-test', 'shape-region', 'shape-test', 'sha256:shape-test', ARRAY['sha256:shape-test']);
+		INSERT INTO worker_instances (id, resource_id, worker_group_id, attestation_fingerprint, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes)
+		VALUES ('00000000-0000-0000-0000-000000000099', 'shape-test', 'shape-test', 'sha256:shape-test', 2000, 2147483648, 8589934592, 8589934592);
+	`); err != nil {
+		t.Fatal(err)
+	}
+	var exactFit, overShape bool
+	if err := pool.QueryRow(ctx, `SELECT 4000::bigint <= per_vm_cpu_millis * 2, 4001::bigint <= per_vm_cpu_millis * 2 FROM worker_instances WHERE id='00000000-0000-0000-0000-000000000099'`).Scan(&exactFit, &overShape); err != nil {
+		t.Fatal(err)
+	}
+	if !exactFit || overShape {
+		t.Fatalf("per-executor exact/over shape fence = %t/%t", exactFit, overShape)
+	}
+	var beforeFull, replacementAllowed, replacementRefillsCap, withinVMSlots bool
+	var selectedWorker string
+	if err := pool.QueryRow(ctx, `
+		WITH workers(id, max_runtime_starts, max_vm_slots) AS (VALUES ('worker-a',2,4),('worker-b',2,4)),
+		runtimes(id, worker_id, observed_state) AS (VALUES ('r1','worker-a','ready'),('r2','worker-a','preparing'),('rb','worker-b','ready')),
+		active_run_leases(runtime_id, state) AS (VALUES ('r1','running')),
+		after_replacement AS (SELECT * FROM runtimes UNION ALL SELECT 'r3','worker-a','allocated')
+		SELECT
+			(SELECT count(*) FROM runtimes WHERE worker_id='worker-a') = 2,
+			(SELECT count(*) FROM runtimes WHERE worker_id='worker-a' AND NOT EXISTS (SELECT 1 FROM active_run_leases WHERE runtime_id=runtimes.id AND state IN ('assigned','starting','running','checkpointing'))) < 2,
+			(SELECT count(*) FROM after_replacement WHERE worker_id='worker-a' AND NOT EXISTS (SELECT 1 FROM active_run_leases WHERE runtime_id=after_replacement.id AND state IN ('assigned','starting','running','checkpointing'))) = 2,
+			(SELECT count(*) FROM after_replacement WHERE worker_id='worker-a') <= 4,
+			(SELECT id FROM workers WHERE id <> 'worker-a' AND (SELECT count(*) FROM runtimes WHERE worker_id=workers.id) < max_runtime_starts ORDER BY id LIMIT 1)
+	`).Scan(&beforeFull, &replacementAllowed, &replacementRefillsCap, &withinVMSlots, &selectedWorker); err != nil {
+		t.Fatal(err)
+	}
+	if !beforeFull || !replacementAllowed || !replacementRefillsCap || !withinVMSlots || selectedWorker != "worker-b" {
+		t.Fatalf("prepared transition = before:%t replacement:%t refilled:%t slots:%t next:%q", beforeFull, replacementAllowed, replacementRefillsCap, withinVMSlots, selectedWorker)
+	}
+	assertPreparedSupplySerialization(t, ctx, pool)
+
+	logicalTables := []string{"workspaces", "runs", "run_operations", "sessions", "session_runs", "session_continuation_requests", "streams", "stream_records", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "run_state_snapshots", "meter_events", "telemetry_outbox"}
+	var placementLeaks int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM information_schema.columns
+		 WHERE table_schema = 'public' AND table_name = ANY($1::text[])
+		   AND column_name = 'worker_group_id'
+	`, logicalTables).Scan(&placementLeaks); err != nil {
+		t.Fatal(err)
+	}
+	if placementLeaks != 0 {
+		t.Fatalf("logical worker_group_id columns = %d, want 0", placementLeaks)
+	}
+
+	forbiddenColumns := map[string][]string{
+		"runs":              {"dispatch_generation", "dispatch_attempt", "dispatch_message_id", "dispatch_lease_id", "workspace_mount_id", "worker_instance_id"},
+		"runtime_instances": {"runtime_epoch", "state", "instance_token", "last_heartbeat_at", "owner_run_id", "owner_run_wait_id", "workspace_mount_id"},
+		"worker_instances":  {"available_milli_cpu", "available_memory_mib", "heartbeat", "labels", "last_seen_at", "total_milli_cpu"},
+	}
+	for table, columns := range forbiddenColumns {
+		var count int
+		if err := pool.QueryRow(ctx, `
+			SELECT count(*) FROM information_schema.columns
+			 WHERE table_schema = 'public' AND table_name = $1
+			   AND column_name = ANY($2::text[])
+		`, table, columns).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		if count != 0 {
+			t.Fatalf("forbidden columns on %s = %d, want 0", table, count)
+		}
+	}
+
+	requiredIndexes := []string{
+		"deployment_build_leases_deployment_active_uidx",
+		"run_leases_run_active_uidx",
+		"run_leases_runtime_active_uidx",
+		"runtime_instances_workspace_active_uidx",
+		"runtime_instances_reservation_active_uidx",
+		"network_slots_runtime_active_uidx",
+		"workspace_mounts_workspace_active_uidx",
+		"workspace_mounts_runtime_active_uidx",
+		"workspace_leases_workspace_write_active_uidx",
+		"run_waits_reserved_workspace_uidx",
+	}
+	var indexCount int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1::text[])`, requiredIndexes).Scan(&indexCount); err != nil {
+		t.Fatal(err)
+	}
+	if indexCount != len(requiredIndexes) {
+		t.Fatalf("required managed-worker indexes = %d, want %d", indexCount, len(requiredIndexes))
+	}
+
+	var enumLabels int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM pg_enum JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+		 WHERE (pg_type.typname, pg_enum.enumlabel) IN (
+		   ('worker_instance_state','registering'), ('worker_instance_state','lost'),
+		   ('run_lease_state','checkpointing'), ('run_lease_state','expired'),
+		   ('deployment_build_lease_state','succeeded'),
+		   ('runtime_desired_state','closed'), ('runtime_observed_state','lost'),
+		   ('worker_network_slot_state','quarantined'), ('run_wait_state','resuming')
+		 )
+	`).Scan(&enumLabels); err != nil {
+		t.Fatal(err)
+	}
+	if enumLabels != 9 {
+		t.Fatalf("managed-worker enum sentinel labels = %d, want 9", enumLabels)
+	}
+}
+
+func assertPreparedSupplySerialization(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		CREATE TABLE prepared_supply_concurrency_test (id bigserial primary key, worker_group text not null, scope text not null, observed_state text not null, active_run_lease boolean not null);
+		INSERT INTO prepared_supply_concurrency_test (worker_group,scope,observed_state,active_run_lease) VALUES
+		('group-a','scope','running',true), ('group-a','scope','ready',false)`); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, group := range []string{"group-a", "group-b"} {
+		wg.Go(func() {
+			<-start
+			tx, err := pool.Begin(ctx)
+			if err != nil {
+				errs <- err
+				return
+			}
+			defer tx.Rollback(ctx)
+			if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('scope',0))`); err == nil {
+				_, err = tx.Exec(ctx, `INSERT INTO prepared_supply_concurrency_test (worker_group,scope,observed_state,active_run_lease)
+					SELECT $1,'scope','allocated',false WHERE (SELECT count(*) FROM prepared_supply_concurrency_test WHERE scope='scope' AND observed_state IN ('allocated','preparing','ready') AND NOT active_run_lease) < 2`, group)
+			}
+			if err == nil {
+				err = tx.Commit(ctx)
+			}
+			if err != nil {
+				errs <- err
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	var prepared, occupied int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE observed_state IN ('allocated','preparing','ready') AND NOT active_run_lease), count(*) FROM prepared_supply_concurrency_test`).Scan(&prepared, &occupied); err != nil {
+		t.Fatal(err)
+	}
+	if prepared != 2 || occupied != 3 {
+		t.Fatalf("serialized prepared supply = prepared:%d occupied:%d, want 2/3", prepared, occupied)
 	}
 }
 

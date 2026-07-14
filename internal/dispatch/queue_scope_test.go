@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestRoundRobinQueueScopeSelectorInterleavesOrganizations(t *testing.T) {
@@ -44,4 +45,8 @@ func sameQueueScopes(a, b []QueueScope) bool {
 		}
 	}
 	return true
+}
+
+func testQueueScope(orgID pgtype.UUID, queueName string) QueueScope {
+	return QueueScope{OrgID: orgID, RegionID: "us-east-1", QueueClass: "default", QueueName: queueName}
 }

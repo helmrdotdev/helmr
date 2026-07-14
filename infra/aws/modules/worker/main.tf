@@ -4,9 +4,11 @@ locals {
   launch_hook_name      = "${local.name}-worker-launch"
   termination_hook_name = "${local.name}-worker-terminate"
 
-  disk_environment = var.worker_disk_mib == null ? {} : {
+  disk_environment = merge({
+    HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
+    }, var.worker_disk_mib == null ? {} : {
     HELMR_WORKER_DISK_MIB = tostring(var.worker_disk_mib)
-  }
+  })
   capacity_environment = merge(
     var.worker_capacity_vcpus == null ? {} : {
       HELMR_WORKER_CAPACITY_VCPUS = tostring(var.worker_capacity_vcpus)
@@ -18,10 +20,19 @@ locals {
       HELMR_WORKER_EXECUTION_SLOTS = tostring(var.worker_execution_slots)
     },
   )
+  cache_environment = merge(
+    var.substrate_cache_max_mib == null ? {} : {
+      HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB = tostring(var.substrate_cache_max_mib)
+    },
+    var.artifact_cache_max_mib == null ? {} : {
+      HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB = tostring(var.artifact_cache_max_mib)
+    },
+  )
 
-  managed_worker_environment = merge({
+  worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
+    HELMR_WORKER_GROUP_ID                   = var.worker_group_id
     HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
     HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
     HELMR_WORKER_BUILDKIT_CACHE_NAMESPACE   = local.name
@@ -34,7 +45,7 @@ locals {
     HELMR_WORKER_CNI_PROFILE                = "helmr/v0"
     HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
     HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
-    HELMR_WORKER_BOOTSTRAP_TOKEN_PATH       = "/etc/helmr/worker-bootstrap-token"
+    HELMR_WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
     HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
     HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
@@ -43,11 +54,11 @@ locals {
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
-  }, local.disk_environment, local.capacity_environment)
+  }, local.disk_environment, local.capacity_environment, local.cache_environment)
 
-  reserved_worker_environment_keys = toset(concat(keys(local.managed_worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY", "HELMR_WORKER_RESOURCE_ID"]))
+  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY"]))
   worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
-  base_worker_environment          = merge(local.managed_worker_environment, var.worker_environment)
+  base_worker_environment          = merge(local.worker_environment, var.worker_environment)
 
   buildkit_slirp_cidr_parts   = regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.buildkit_slirp_cidr)
   buildkit_slirp_cidr_prefix  = tonumber(local.buildkit_slirp_cidr_parts[4])
@@ -160,12 +171,7 @@ resource "aws_iam_role_policy" "worker" {
         Action = [
           "secretsmanager:GetSecretValue"
         ]
-        Resource = [
-          for arn in [
-            var.secret_arns.worker_bootstrap_token,
-            var.secret_arns.checkpoint_encryption_key
-          ] : arn if arn != null
-        ]
+        Resource = [var.secret_arns.checkpoint_encryption_key]
       }
     ]
   })
@@ -191,16 +197,18 @@ resource "aws_launch_template" "worker" {
   vpc_security_group_ids = [aws_security_group.worker.id]
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
-    worker_bootstrap_token_secret_arn    = var.secret_arns.worker_bootstrap_token
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
     buildkit_service_name                = var.buildkit_service_name
+    worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
     autoscaling_group_name               = local.asg_name
     launch_lifecycle_hook_name           = var.enable_lifecycle_hooks ? local.launch_hook_name : ""
+    launch_readiness_timeout_seconds     = var.launch_lifecycle_heartbeat_timeout_seconds
     termination_lifecycle_hook_name      = var.enable_lifecycle_hooks ? local.termination_hook_name : ""
     termination_drain_timeout_seconds    = var.termination_drain_timeout_seconds
     lifecycle_heartbeat_interval_seconds = var.lifecycle_heartbeat_interval_seconds
+    worker_work_dir                      = local.base_worker_environment.HELMR_WORKER_WORK_DIR
     buildkit_slirp_cidr                  = var.buildkit_slirp_cidr
     network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
     network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
@@ -260,6 +268,11 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
+      condition     = var.worker_disk_mib == null || var.worker_disk_mib > var.worker_disk_reserve_mib
+      error_message = "worker_disk_mib must exceed worker_disk_reserve_mib when an explicit filesystem capacity is configured."
+    }
+
+    precondition {
       condition = alltrue([
         for blocked in local.network_blocked_ipv4_ranges :
         local.buildkit_slirp_cidr_start > blocked.end || blocked.start > local.buildkit_slirp_cidr_end
@@ -273,7 +286,8 @@ resource "aws_autoscaling_group" "worker" {
   name                      = local.asg_name
   min_size                  = var.min_size
   max_size                  = var.max_size
-  desired_capacity          = var.desired_capacity
+  desired_capacity          = null
+  protect_from_scale_in     = true
   vpc_zone_identifier       = var.subnet_ids
   health_check_type         = "EC2"
   health_check_grace_period = var.health_check_grace_period_seconds
@@ -306,16 +320,6 @@ resource "aws_autoscaling_group" "worker" {
     }
   }
 
-  instance_refresh {
-    strategy = "Rolling"
-
-    preferences {
-      instance_warmup        = var.enable_lifecycle_hooks ? 0 : var.health_check_grace_period_seconds
-      min_healthy_percentage = 50
-      skip_matching          = true
-    }
-  }
-
   tag {
     key                 = "Name"
     value               = "${local.name}-worker"
@@ -324,13 +328,13 @@ resource "aws_autoscaling_group" "worker" {
 
   lifecycle {
     precondition {
-      condition     = var.min_size <= var.desired_capacity && var.desired_capacity <= var.max_size
-      error_message = "worker capacity must satisfy min_size <= desired_capacity <= max_size."
+      condition     = var.min_size <= var.max_size
+      error_message = "worker capacity must satisfy min_size <= max_size."
     }
 
     precondition {
-      condition     = var.termination_drain_timeout_seconds < var.termination_lifecycle_heartbeat_timeout_seconds
-      error_message = "termination_drain_timeout_seconds must be less than termination_lifecycle_heartbeat_timeout_seconds."
+      condition     = var.enable_lifecycle_hooks
+      error_message = "worker groups require launch and termination lifecycle hooks."
     }
   }
 }

@@ -149,11 +149,51 @@ output "secret_arns" {
 }
 
 output "worker_autoscaling_group_name" {
-  description = "Worker Auto Scaling group name."
-  value       = try(module.worker[0].autoscaling_group_name, null)
+  description = "Run-worker Auto Scaling group name."
+  value       = try(module.run_worker[0].autoscaling_group_name, null)
+}
+
+output "worker_autoscaling_group_arn" {
+  description = "Exact run-worker Auto Scaling group ARN."
+  value       = try(module.run_worker[0].autoscaling_group_arn, null)
+}
+
+output "worker_protect_from_scale_in" {
+  description = "Whether new run-worker instances start protected from scale in."
+  value       = try(module.run_worker[0].protect_from_scale_in, null)
+}
+
+output "worker_ami_id" {
+  description = "Worker AMI currently applied to the launch templates."
+  value       = var.worker_ami_id
+}
+
+output "worker_allowed_ami_ids" {
+  description = "Worker AMIs currently applied to the enrollment policy."
+  value       = local.worker_allowed_ami_ids
 }
 
 output "worker_iam_role_name" {
-  description = "Worker IAM role name."
-  value       = try(module.worker[0].iam_role_name, null)
+  description = "Run-worker IAM role name."
+  value       = try(module.run_worker[0].iam_role_name, null)
+}
+
+output "build_worker_autoscaling_group_name" {
+  description = "Build-worker Auto Scaling group name."
+  value       = try(module.build_worker[0].autoscaling_group_name, null)
+}
+
+output "build_worker_autoscaling_group_arn" {
+  description = "Exact build-worker Auto Scaling group ARN."
+  value       = try(module.build_worker[0].autoscaling_group_arn, null)
+}
+
+output "build_worker_protect_from_scale_in" {
+  description = "Whether new build-worker instances start protected from scale in."
+  value       = try(module.build_worker[0].protect_from_scale_in, null)
+}
+
+output "build_worker_iam_role_name" {
+  description = "Build-worker IAM role name."
+  value       = try(module.build_worker[0].iam_role_name, null)
 }

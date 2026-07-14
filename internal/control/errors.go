@@ -21,6 +21,7 @@ const (
 	errBadGateway
 	errNotImplemented
 	errUnavailable
+	errTooManyRequests
 )
 
 var errRecordNotFound = errors.New("record not found")
@@ -94,6 +95,10 @@ func unavailable(err error) error {
 	return apiError{kind: errUnavailable, err: err}
 }
 
+func tooManyRequests(err error) error {
+	return apiError{kind: errTooManyRequests, err: err}
+}
+
 func errorStatus(err error) int {
 	var apiErr apiError
 	if !errors.As(err, &apiErr) {
@@ -122,6 +127,8 @@ func errorStatus(err error) int {
 		return http.StatusNotImplemented
 	case errUnavailable:
 		return http.StatusServiceUnavailable
+	case errTooManyRequests:
+		return http.StatusTooManyRequests
 	default:
 		return http.StatusInternalServerError
 	}

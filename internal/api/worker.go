@@ -10,30 +10,119 @@ import (
 type WorkerTokenRequest struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
+	ServiceID            string `json:"service_id"`
+	ProtocolVersion      string `json:"protocol_version"`
+	SupportsRun          bool   `json:"supports_run"`
+	SupportsBuild        bool   `json:"supports_build"`
 }
 
 type WorkerTokenResponse struct {
-	Token            string `json:"token"`
-	ExpiresInSeconds int64  `json:"expires_in_seconds"`
+	Token            string   `json:"token"`
+	ExpiresInSeconds int64    `json:"expires_in_seconds"`
+	WorkerEpoch      int64    `json:"worker_epoch"`
+	Roles            []string `json:"roles"`
+	ProtocolVersion  string   `json:"protocol_version"`
 }
 
-type WorkerRegisterRequest struct {
-	BootstrapToken string `json:"bootstrap_token"`
-	ResourceID     string `json:"resource_id,omitempty"`
-}
-
-type WorkerRegisterResponse struct {
+type WorkerEnrollmentResponse struct {
 	WorkerInstanceID     string `json:"worker_instance_id"`
 	WorkerGroupID        string `json:"worker_group_id"`
 	WorkerInstanceSecret string `json:"worker_instance_secret"`
 }
 
-type WorkerRunLeaseRequest struct {
+type WorkerEnrollmentChallengeRequest struct {
+	WorkerGroupID string `json:"worker_group_id"`
+}
+
+type WorkerEnrollmentChallengeResponse struct {
+	Nonce           string    `json:"nonce"`
+	WorkerGroupID   string    `json:"worker_group_id"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	ProtocolVersion string    `json:"protocol_version"`
+}
+
+type WorkerEnrollmentRequest struct {
+	WorkerGroupID            string            `json:"worker_group_id"`
+	Nonce                    string            `json:"nonce,omitempty"`
+	InstanceIdentityDocument json.RawMessage   `json:"instance_identity_document,omitempty"`
+	SignedSTSRequest         SignedHTTPRequest `json:"signed_sts_request"`
+	SupportsRun              bool              `json:"supports_run"`
+	SupportsBuild            bool              `json:"supports_build"`
+	ProtocolVersion          string            `json:"protocol_version"`
+}
+
+type SignedHTTPRequest struct {
+	Method  string              `json:"method"`
+	URL     string              `json:"url"`
+	Headers map[string][]string `json:"headers"`
+	Body    string              `json:"body"`
+}
+
+type WorkerRunLeaseRequest struct{}
+
+type WorkerActivateRequest struct {
+	Capabilities             WorkerCapabilities `json:"capabilities"`
+	CertificationProfile     string             `json:"certification_profile"`
+	CertificationFingerprint string             `json:"certification_fingerprint"`
+}
+
+type WorkerObserveRequest struct {
+	Observation WorkerObservation `json:"observation"`
+}
+
+type WorkerCertificationRenewRequest struct {
 	Capabilities WorkerCapabilities `json:"capabilities"`
 }
 
-type WorkerActivateRequest struct {
-	Capabilities WorkerCapabilities `json:"capabilities"`
+type WorkerStartupRecoveryRequest struct {
+	InventoryComplete bool      `json:"inventory_complete"`
+	InventoryScope    string    `json:"inventory_scope"`
+	ObservedAt        time.Time `json:"observed_at"`
+	Inventory         []string  `json:"inventory"`
+	Reclaimed         []string  `json:"reclaimed,omitempty"`
+	Quarantined       []string  `json:"quarantined,omitempty"`
+	Errors            []string  `json:"errors,omitempty"`
+}
+
+// WorkerDrainCompletionRequest is the worker's proof that a server-directed
+// drain has removed both durable execution authority and local runtime state.
+// The control plane must treat an identical proof as idempotent.
+type WorkerDrainCompletionRequest struct {
+	InventoryComplete bool      `json:"inventory_complete"`
+	InventoryScope    string    `json:"inventory_scope"`
+	ObservedAt        time.Time `json:"observed_at"`
+	Inventory         []string  `json:"inventory"`
+	Reclaimed         []string  `json:"reclaimed,omitempty"`
+	Quarantined       []string  `json:"quarantined,omitempty"`
+	Errors            []string  `json:"errors,omitempty"`
+}
+
+type WorkerNetworkFacts struct {
+	HostInterfaceName string `json:"host_interface_name"`
+	GuestAddress      string `json:"guest_address"`
+	GatewayAddress    string `json:"gateway_address"`
+	Subnet            string `json:"subnet"`
+	TapName           string `json:"tap_name"`
+	NetNSName         string `json:"netns_name"`
+	GuestMAC          string `json:"guest_mac"`
+}
+
+type WorkerObservation struct {
+	CPUPressureBPS           int32           `json:"cpu_pressure_bps"`
+	MemoryPressureBPS        int32           `json:"memory_pressure_bps"`
+	WorkloadDiskPressureBPS  int32           `json:"workload_disk_pressure_bps"`
+	ScratchPressureBPS       int32           `json:"scratch_pressure_bps"`
+	BuildCachePressureBPS    int32           `json:"build_cache_pressure_bps"`
+	ArtifactCachePressureBPS int32           `json:"artifact_cache_pressure_bps"`
+	CheckpointPressureBPS    int32           `json:"checkpoint_pressure_bps"`
+	LeakedSlotCount          int32           `json:"leaked_slot_count"`
+	RunQueueDepth            int32           `json:"run_queue_depth"`
+	BuildQueueDepth          int32           `json:"build_queue_depth"`
+	RuntimeStartQueueDepth   int32           `json:"runtime_start_queue_depth"`
+	RunPausedReason          string          `json:"run_paused_reason,omitempty"`
+	BuildPausedReason        string          `json:"build_paused_reason,omitempty"`
+	RuntimePausedReason      string          `json:"runtime_paused_reason,omitempty"`
+	HealthDetails            json.RawMessage `json:"health_details,omitempty"`
 }
 
 type WorkerCapabilities struct {
@@ -50,8 +139,22 @@ type WorkerCapabilities struct {
 	Labels                  map[string]string         `json:"labels,omitempty"`
 	MaxVCPUs                int64                     `json:"max_vcpus"`
 	MaxMemoryMiB            int64                     `json:"max_memory_mib"`
+	VMMilliCPU              int64                     `json:"vm_milli_cpu"`
+	VMMemoryMiB             int64                     `json:"vm_memory_mib"`
 	MaxDiskMiB              int64                     `json:"max_disk_mib"`
+	VMMaxDiskMiB            int64                     `json:"vm_max_disk_mib"`
 	ExecutionSlotsAvailable int32                     `json:"execution_slots_available"`
+	SupportsRun             bool                      `json:"supports_run"`
+	SupportsBuild           bool                      `json:"supports_build"`
+	MaxBuildExecutors       int32                     `json:"max_build_executors"`
+	MaxRuntimeStarts        int32                     `json:"max_runtime_starts"`
+	ScratchBytes            int64                     `json:"scratch_bytes"`
+	VMMaxScratchBytes       int64                     `json:"vm_max_scratch_bytes"`
+	BuildCacheBytes         int64                     `json:"build_cache_bytes"`
+	ArtifactCacheBytes      int64                     `json:"artifact_cache_bytes"`
+	HugepagesBytes          int64                     `json:"hugepages_bytes"`
+	CheckpointBytes         int64                     `json:"checkpoint_bytes"`
+	Observation             WorkerObservation         `json:"observation"`
 	Network                 WorkerNetworkCapabilities `json:"network"`
 }
 
@@ -74,13 +177,33 @@ type TraceContext struct {
 	Traceparent string `json:"traceparent,omitempty"`
 }
 
-type WorkerDeploymentBuildLeaseRequest struct {
-	Capabilities WorkerCapabilities `json:"capabilities"`
-}
+type WorkerDeploymentBuildLeaseRequest struct{}
 
 type WorkerDeploymentBuildLeaseResponse struct {
 	Lease      *WorkerDeploymentBuildLease `json:"lease,omitempty"`
 	Deployment *WorkerDeploymentBuild      `json:"deployment,omitempty"`
+}
+
+type WorkerDeploymentBuildStartRequest struct {
+	Lease WorkerDeploymentBuildLease `json:"lease"`
+}
+
+type WorkerDeploymentBuildStartResponse struct {
+	Lease WorkerDeploymentBuildLease `json:"lease"`
+}
+
+type WorkerDeploymentBuildRenewRequest struct {
+	Lease WorkerDeploymentBuildLease `json:"lease"`
+}
+
+type WorkerDeploymentBuildRenewResponse struct {
+	Lease WorkerDeploymentBuildLease `json:"lease"`
+}
+
+type WorkerDeploymentBuildRejectRequest struct {
+	Lease      WorkerDeploymentBuildLease `json:"lease"`
+	ReasonCode string                     `json:"reason_code"`
+	Error      json.RawMessage            `json:"error,omitempty"`
 }
 
 type WorkerStatus string
@@ -88,6 +211,7 @@ type WorkerStatus string
 const (
 	WorkerStatusActive   WorkerStatus = "active"
 	WorkerStatusDraining WorkerStatus = "draining"
+	WorkerStatusDisabled WorkerStatus = "disabled"
 )
 
 type WorkerStatusResponse struct {
@@ -97,49 +221,8 @@ type WorkerStatusResponse struct {
 	ActiveExecutions int32        `json:"active_executions"`
 }
 
-type WorkerCommand struct {
-	ID                  int64           `json:"id"`
-	OrgID               string          `json:"org_id"`
-	ProjectID           string          `json:"project_id"`
-	EnvironmentID       string          `json:"environment_id"`
-	RunID               string          `json:"run_id"`
-	RunWaitID           string          `json:"run_wait_id"`
-	RunLeaseID          string          `json:"run_lease_id"`
-	WorkerInstanceID    string          `json:"worker_instance_id"`
-	DeploymentSandboxID string          `json:"deployment_sandbox_id,omitempty"`
-	RuntimeInstanceID   string          `json:"runtime_instance_id,omitempty"`
-	RuntimeEpoch        int64           `json:"runtime_epoch,omitempty"`
-	RunStateVersion     int64           `json:"run_state_version"`
-	Kind                string          `json:"kind"`
-	Payload             json.RawMessage `json:"payload"`
-}
-
-type WorkerCommandKind string
-
-const (
-	WorkerCommandKindRuntimePrepare          WorkerCommandKind = "runtime_prepare"
-	WorkerCommandKindRunResumeWait           WorkerCommandKind = "run_resume_wait"
-	WorkerCommandKindRunCheckpointWait       WorkerCommandKind = "run_checkpoint_wait"
-	WorkerCommandKindRuntimeStop             WorkerCommandKind = "runtime_stop"
-	WorkerCommandKindRuntimeSubstratePrepare WorkerCommandKind = "runtime_substrate_prepare"
-)
-
-type WorkerCommandAckRequest struct {
-	ID int64 `json:"id"`
-}
-
-type WorkerCommandAcceptRequest struct {
-	ID int64 `json:"id"`
-}
-
-type WorkerCommandAckResponse struct {
-	ID               int64  `json:"id"`
-	WorkerInstanceID string `json:"worker_instance_id"`
-}
-
-type WorkerCommandAcceptResponse struct {
-	ID               int64  `json:"id"`
-	WorkerInstanceID string `json:"worker_instance_id"`
+type WorkerFenceRequest struct {
+	ReasonCode string `json:"reason_code"`
 }
 
 type WorkerRuntimeInstance struct {
@@ -154,39 +237,12 @@ type WorkerRuntimeInstance struct {
 	RuntimeID              string          `json:"runtime_id"`
 	DeploymentSandboxID    string          `json:"deployment_sandbox_id"`
 	State                  string          `json:"state"`
-	InstanceToken          string          `json:"instance_token"`
 	ReservedCpuMillis      int32           `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32           `json:"reserved_memory_mib"`
 	ReservedDiskMiB        int64           `json:"reserved_disk_mib"`
 	ReservedExecutionSlots int32           `json:"reserved_execution_slots"`
 	WorkspaceMountID       string          `json:"workspace_mount_id,omitempty"`
 	ExpiresAt              *time.Time      `json:"expires_at,omitempty"`
-}
-
-type WorkerPreparedRuntimeInstanceCreateRequest struct {
-	ID                 string          `json:"id"`
-	WorkspaceMountID   string          `json:"workspace_mount_id"`
-	GuestdChannelToken string          `json:"guestd_channel_token"`
-	RuntimeKeyHash     string          `json:"runtime_key_hash"`
-	RuntimeKey         json.RawMessage `json:"runtime_key"`
-	NetworkPolicy      json.RawMessage `json:"network_policy,omitempty"`
-	InstanceToken      string          `json:"instance_token"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-}
-
-type WorkerPreparedRuntimeInstanceCreateResponse struct {
-	Instance WorkerRuntimeInstance `json:"instance"`
-}
-
-type WorkerRuntimePrepareCommand struct {
-	DeploymentSandboxID string                      `json:"deployment_sandbox_id"`
-	RuntimeInstance     WorkerRuntimeInstance       `json:"runtime_instance"`
-	Source              WorkerPreparedRuntimeSource `json:"source"`
-}
-
-type WorkerRuntimeSubstratePrepareCommand struct {
-	DeploymentSandboxID string                      `json:"deployment_sandbox_id"`
-	Source              WorkerPreparedRuntimeSource `json:"source"`
 }
 
 type WorkerPreparedRuntimeSource struct {
@@ -208,48 +264,75 @@ type WorkerPreparedRuntimeSource struct {
 	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
-type WorkerRuntimePrepareInstanceCreateRequest struct {
-	ID                  string          `json:"id"`
-	DeploymentSandboxID string          `json:"deployment_sandbox_id"`
-	RuntimeID           string          `json:"runtime_id"`
-	RootfsDigest        string          `json:"rootfs_digest"`
-	RuntimeABI          string          `json:"runtime_abi"`
-	RuntimeKeyHash      string          `json:"runtime_key_hash"`
-	RuntimeKey          json.RawMessage `json:"runtime_key"`
-	InstanceToken       string          `json:"instance_token"`
-	ExpiresAt           time.Time       `json:"expires_at"`
-}
-
-type WorkerRuntimePrepareInstanceCreateResponse struct {
-	Instance WorkerRuntimeInstance       `json:"instance"`
-	Source   WorkerPreparedRuntimeSource `json:"source"`
-}
-
-type WorkerRuntimeInstanceRenewRequest struct {
-	ID            string    `json:"id"`
-	InstanceToken string    `json:"instance_token"`
-	ExpiresAt     time.Time `json:"expires_at"`
-}
-
 type WorkerRuntimeInstanceStateRequest struct {
-	ID                 string          `json:"id"`
-	InstanceToken      string          `json:"instance_token"`
-	ExpiresAt          time.Time       `json:"expires_at"`
-	RuntimeSubstrateID string          `json:"runtime_substrate_id,omitempty"`
-	Error              json.RawMessage `json:"error,omitempty"`
+	ID                      string                     `json:"id"`
+	WorkerEpoch             int64                      `json:"worker_epoch"`
+	NetworkSlotID           string                     `json:"network_slot_id"`
+	NetworkSlotGeneration   int64                      `json:"network_slot_generation"`
+	DesiredVersion          int64                      `json:"desired_version"`
+	ExpectedObservedVersion int64                      `json:"expected_observed_version"`
+	RuntimeSubstrateID      string                     `json:"runtime_substrate_id,omitempty"`
+	NetworkFacts            *WorkerNetworkFacts        `json:"network_facts,omitempty"`
+	ReasonCode              string                     `json:"reason_code,omitempty"`
+	Error                   json.RawMessage            `json:"error,omitempty"`
+	CleanupProof            *WorkerRuntimeCleanupProof `json:"cleanup_proof,omitempty"`
 }
+
+type WorkerRuntimeCleanupProof struct {
+	Method      string    `json:"method"`
+	CompletedAt time.Time `json:"completed_at"`
+}
+
+const (
+	WorkerRuntimeCleanupSessionClosed   = "session_closed"
+	WorkerRuntimeCleanupHostReconciled  = "host_reconciled"
+	WorkerRuntimeCleanupNotMaterialized = "not_materialized"
+)
+
+type WorkerRuntimeReconcileRequest struct{}
+
+type WorkerRuntimeReconcileResponse struct {
+	Target *WorkerRuntimeReconcileTarget `json:"target,omitempty"`
+}
+
+type WorkerRuntimeReconcileTarget struct {
+	ID                     string                      `json:"id"`
+	WorkerEpoch            int64                       `json:"worker_epoch"`
+	NetworkSlotID          string                      `json:"network_slot_id"`
+	NetworkSlotGeneration  int64                       `json:"network_slot_generation"`
+	DesiredState           string                      `json:"desired_state"`
+	DesiredVersion         int64                       `json:"desired_version"`
+	ObservedState          string                      `json:"observed_state"`
+	ObservedVersion        int64                       `json:"observed_version"`
+	ObservedDesiredVersion int64                       `json:"observed_desired_version"`
+	Action                 string                      `json:"action"`
+	RuntimeKeyHash         string                      `json:"runtime_key_hash"`
+	RuntimeKey             json.RawMessage             `json:"runtime_key"`
+	Source                 WorkerPreparedRuntimeSource `json:"source"`
+}
+
+const (
+	WorkerRuntimeReconcilePrepare = "prepare"
+	WorkerRuntimeReconcileClose   = "close"
+	WorkerRuntimeReconcileReclaim = "reclaim"
+)
 
 type WorkerRunLease struct {
-	ID                string       `json:"id"`
-	OrgID             string       `json:"org_id"`
-	RunID             string       `json:"run_id"`
-	WorkerInstanceID  string       `json:"worker_instance_id"`
-	ProtocolVersion   string       `json:"protocol_version"`
-	AttemptNumber     int32        `json:"attempt_number"`
-	DispatchMessageID string       `json:"dispatch_message_id,omitempty"`
-	DispatchLeaseID   string       `json:"dispatch_lease_id,omitempty"`
-	Trace             TraceContext `json:"trace"`
-	ExpiresAt         time.Time    `json:"expires_at"`
+	ID                    string       `json:"id"`
+	OrgID                 string       `json:"org_id"`
+	RunID                 string       `json:"run_id"`
+	WorkerGroupID         string       `json:"worker_group_id"`
+	WorkerInstanceID      string       `json:"worker_instance_id"`
+	WorkerEpoch           int64        `json:"worker_epoch"`
+	LeaseSequence         int64        `json:"lease_sequence"`
+	SnapshotVersion       int64        `json:"snapshot_version"`
+	RuntimeInstanceID     string       `json:"runtime_instance_id"`
+	NetworkSlotID         string       `json:"network_slot_id"`
+	NetworkSlotGeneration int64        `json:"network_slot_generation"`
+	ProtocolVersion       string       `json:"protocol_version"`
+	AttemptNumber         int32        `json:"attempt_number"`
+	Trace                 TraceContext `json:"trace"`
+	ExpiresAt             time.Time    `json:"expires_at"`
 }
 
 type WorkerRunLeaseProvider interface {
@@ -257,13 +340,23 @@ type WorkerRunLeaseProvider interface {
 }
 
 type WorkerDeploymentBuildLease struct {
-	ID               string    `json:"id"`
-	OrgID            string    `json:"org_id"`
-	ProjectID        string    `json:"project_id"`
-	EnvironmentID    string    `json:"environment_id"`
-	DeploymentID     string    `json:"deployment_id"`
-	WorkerInstanceID string    `json:"worker_instance_id"`
-	ExpiresAt        time.Time `json:"expires_at"`
+	ID                         string    `json:"id"`
+	OrgID                      string    `json:"org_id"`
+	ProjectID                  string    `json:"project_id"`
+	EnvironmentID              string    `json:"environment_id"`
+	DeploymentID               string    `json:"deployment_id"`
+	WorkerGroupID              string    `json:"worker_group_id"`
+	WorkerInstanceID           string    `json:"worker_instance_id"`
+	WorkerEpoch                int64     `json:"worker_epoch"`
+	BuildAttemptNumber         int32     `json:"build_attempt_number"`
+	LeaseSequence              int64     `json:"lease_sequence"`
+	WorkerProtocolVersion      string    `json:"worker_protocol_version"`
+	ExpiresAt                  time.Time `json:"expires_at"`
+	RequestedWorkloadDiskBytes int64     `json:"requested_workload_disk_bytes"`
+	RequestedScratchBytes      int64     `json:"requested_scratch_bytes"`
+	RequestedCPUMillis         int64     `json:"requested_cpu_millis"`
+	RequestedMemoryBytes       int64     `json:"requested_memory_bytes"`
+	RequestedBuildExecutors    int32     `json:"requested_build_executors"`
 }
 
 type WorkerDeploymentBuild struct {
@@ -395,26 +488,35 @@ type WorkerRestore struct {
 }
 
 type WorkerRestoreRunWait struct {
-	ID                string          `json:"id"`
-	Kind              string          `json:"kind"`
-	ResumeKind        string          `json:"resume_kind"`
-	ResumePayloadJSON json.RawMessage `json:"resume_payload_json"`
+	ID                   string          `json:"id"`
+	ResumeRequestVersion int64           `json:"resume_request_version"`
+	Kind                 string          `json:"kind"`
+	ResumeKind           string          `json:"resume_kind"`
+	ResumePayloadJSON    json.RawMessage `json:"resume_payload_json"`
 }
 
 type WorkerStartRequest struct {
 	Lease WorkerRunLease `json:"lease"`
 }
 
+type WorkerRejectRunRequest struct {
+	Lease      WorkerRunLease  `json:"lease"`
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
 type WorkerStartResponse struct {
-	RunID  string `json:"run_id"`
-	Status string `json:"status"`
+	RunID  string         `json:"run_id"`
+	Status string         `json:"status"`
+	Lease  WorkerRunLease `json:"lease"`
 }
 
 type WorkerAcknowledgeRestoreRequest struct {
-	Lease        WorkerRunLease          `json:"lease"`
-	RunWaitID    string                  `json:"run_wait_id"`
-	CheckpointID string                  `json:"checkpoint_id"`
-	Phases       []WorkerCheckpointPhase `json:"phases,omitempty"`
+	Lease                WorkerRunLease          `json:"lease"`
+	RunWaitID            string                  `json:"run_wait_id"`
+	CheckpointID         string                  `json:"checkpoint_id"`
+	ResumeRequestVersion int64                   `json:"resume_request_version"`
+	Phases               []WorkerCheckpointPhase `json:"phases,omitempty"`
 }
 
 type WorkerAcknowledgeRestoreResponse struct {
@@ -437,13 +539,14 @@ type WorkerReleaseRequest struct {
 }
 
 type WorkerReleaseResult struct {
-	Kind         string           `json:"kind"`
-	ExitCode     *int32           `json:"exit_code,omitempty"`
-	Output       json.RawMessage  `json:"output,omitempty"`
-	Error        *string          `json:"error,omitempty"`
-	FailureKind  *string          `json:"failure_kind,omitempty"`
-	LimitSeconds *int32           `json:"limit_seconds,omitempty"`
-	Workspace    *WorkerWorkspace `json:"workspace,omitempty"`
+	Kind             string           `json:"kind"`
+	ActiveDurationMs int64            `json:"active_duration_ms,omitempty"`
+	ExitCode         *int32           `json:"exit_code,omitempty"`
+	Output           json.RawMessage  `json:"output,omitempty"`
+	Error            *string          `json:"error,omitempty"`
+	FailureKind      *string          `json:"failure_kind,omitempty"`
+	LimitSeconds     *int32           `json:"limit_seconds,omitempty"`
+	Workspace        *WorkerWorkspace `json:"workspace,omitempty"`
 }
 
 type WorkerReleaseResponse struct {
@@ -620,18 +723,41 @@ type WorkerCreateRunWaitResponse struct {
 	Resolution         json.RawMessage `json:"resolution,omitempty"`
 }
 
-type WorkerCheckpointClaimRequest struct {
+type WorkerRunWaitPollRequest struct {
 	Lease     WorkerRunLease `json:"lease"`
 	RunWaitID string         `json:"run_wait_id"`
 }
 
-type WorkerCheckpointClaimResponse struct {
-	RunID              string `json:"run_id"`
-	RunWaitID          string `json:"run_wait_id"`
-	Status             string `json:"status"`
-	CheckpointID       string `json:"checkpoint_id,omitempty"`
-	CaptureWorkspace   bool   `json:"capture_workspace,omitempty"`
-	WorkspaceVersionID string `json:"workspace_version_id,omitempty"`
+type WorkerRunWaitPollStatus string
+
+const (
+	WorkerRunWaitPollStatusWaiting             WorkerRunWaitPollStatus = "waiting"
+	WorkerRunWaitPollStatusCheckpointRequested WorkerRunWaitPollStatus = "checkpoint_requested"
+	WorkerRunWaitPollStatusResumeRequested     WorkerRunWaitPollStatus = "resume_requested"
+	WorkerRunWaitPollStatusTerminal            WorkerRunWaitPollStatus = "terminal"
+)
+
+type WorkerRunWaitPollResponse struct {
+	RunID            string                  `json:"run_id"`
+	RunWaitID        string                  `json:"run_wait_id"`
+	Status           WorkerRunWaitPollStatus `json:"status"`
+	RequestVersion   int64                   `json:"request_version,omitempty"`
+	CheckpointID     string                  `json:"checkpoint_id,omitempty"`
+	CaptureWorkspace bool                    `json:"capture_workspace,omitempty"`
+	ResumeKind       string                  `json:"resume_kind,omitempty"`
+	ResumePayload    json.RawMessage         `json:"resume_payload,omitempty"`
+}
+
+type WorkerRunWaitResumeAckRequest struct {
+	Lease                WorkerRunLease `json:"lease"`
+	RunWaitID            string         `json:"run_wait_id"`
+	ResumeRequestVersion int64          `json:"resume_request_version"`
+}
+
+type WorkerRunWaitResumeAckResponse struct {
+	RunID                string `json:"run_id"`
+	RunWaitID            string `json:"run_wait_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
 }
 
 type WorkerCheckpointResponse struct {
@@ -730,26 +856,31 @@ type CASObject struct {
 }
 
 type WorkerCheckpointReadyRequest struct {
-	Lease            WorkerRunLease           `json:"lease"`
-	WorkerCommandID  int64                    `json:"worker_command_id"`
-	RunWaitID        string                   `json:"run_wait_id"`
-	CheckpointID     string                   `json:"checkpoint_id"`
-	ActiveDurationMs int64                    `json:"active_duration_ms"`
-	Manifest         WorkerCheckpointManifest `json:"manifest"`
+	Lease              WorkerRunLease           `json:"lease"`
+	RequestVersion     int64                    `json:"request_version"`
+	RunWaitID          string                   `json:"run_wait_id"`
+	CheckpointID       string                   `json:"checkpoint_id"`
+	Workspace          WorkerWorkspace          `json:"workspace"`
+	WorkspaceVersionID string                   `json:"workspace_version_id"`
+	ActiveDurationMs   int64                    `json:"active_duration_ms"`
+	Manifest           WorkerCheckpointManifest `json:"manifest"`
 }
 
 type WorkerCheckpointFailedRequest struct {
-	Lease           WorkerRunLease `json:"lease"`
-	WorkerCommandID int64          `json:"worker_command_id"`
-	RunWaitID       string         `json:"run_wait_id"`
-	CheckpointID    string         `json:"checkpoint_id"`
-	Error           string         `json:"error"`
+	Lease            WorkerRunLease `json:"lease"`
+	RequestVersion   int64          `json:"request_version"`
+	RunWaitID        string         `json:"run_wait_id"`
+	CheckpointID     string         `json:"checkpoint_id"`
+	Error            string         `json:"error"`
+	ActiveDurationMs int64          `json:"active_duration_ms"`
 }
 
 type WorkerRunWaitWorkspaceCaptureRequest struct {
 	Lease            WorkerRunLease          `json:"lease"`
 	RunWaitID        string                  `json:"run_wait_id"`
 	CheckpointID     string                  `json:"checkpoint_id"`
+	RequestVersion   int64                   `json:"request_version"`
+	Workspace        WorkerWorkspace         `json:"workspace"`
 	WorkspaceCapture WorkerWorkspaceArtifact `json:"workspace_capture"`
 }
 

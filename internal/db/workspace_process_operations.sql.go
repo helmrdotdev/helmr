@@ -12,201 +12,71 @@ import (
 )
 
 const claimWorkspaceOperation = `-- name: ClaimWorkspaceOperation :one
-WITH exhausted AS (
-    UPDATE workspace_process_operations
-       SET state = 'lost',
-           error = jsonb_build_object('code', 'workspace_operation_claims_exhausted'),
-           completed_at = now(),
-           updated_at = now()
-     WHERE workspace_process_operations.org_id = $4
-       AND workspace_process_operations.workspace_mount_id = $5
-       AND workspace_process_operations.state = 'claimed'
-       AND workspace_process_operations.claim_expires_at <= now()
-       AND workspace_process_operations.claim_attempt >= $6
-    RETURNING workspace_process_operations.id, workspace_process_operations.org_id, workspace_process_operations.worker_group_id, workspace_process_operations.project_id, workspace_process_operations.environment_id, workspace_process_operations.workspace_id, workspace_process_operations.workspace_mount_id, workspace_process_operations.operation_kind, workspace_process_operations.process_id, workspace_process_operations.request_fingerprint, workspace_process_operations.operation_expires_at, workspace_process_operations.state, workspace_process_operations.priority, workspace_process_operations.instance_lease_id, workspace_process_operations.write_lease_id, workspace_process_operations.fencing_token, workspace_process_operations.fencing_generation, workspace_process_operations.request, workspace_process_operations.result, workspace_process_operations.error, workspace_process_operations.claimed_by_worker_instance_id, workspace_process_operations.claim_token, workspace_process_operations.claim_attempt, workspace_process_operations.claim_expires_at, workspace_process_operations.requested_at, workspace_process_operations.claimed_at, workspace_process_operations.completed_at, workspace_process_operations.updated_at
-),
-expired AS (
-    UPDATE workspace_process_operations
-       SET state = 'expired',
-           error = jsonb_build_object('code', 'workspace_operation_expired'),
-           completed_at = now(),
-           updated_at = now()
-     WHERE workspace_process_operations.org_id = $4
-       AND workspace_process_operations.workspace_mount_id = $5
-       AND workspace_process_operations.state IN ('queued', 'claimed', 'running')
-       AND workspace_process_operations.operation_expires_at <= now()
-    RETURNING workspace_process_operations.id, workspace_process_operations.org_id, workspace_process_operations.worker_group_id, workspace_process_operations.project_id, workspace_process_operations.environment_id, workspace_process_operations.workspace_id, workspace_process_operations.workspace_mount_id, workspace_process_operations.operation_kind, workspace_process_operations.process_id, workspace_process_operations.request_fingerprint, workspace_process_operations.operation_expires_at, workspace_process_operations.state, workspace_process_operations.priority, workspace_process_operations.instance_lease_id, workspace_process_operations.write_lease_id, workspace_process_operations.fencing_token, workspace_process_operations.fencing_generation, workspace_process_operations.request, workspace_process_operations.result, workspace_process_operations.error, workspace_process_operations.claimed_by_worker_instance_id, workspace_process_operations.claim_token, workspace_process_operations.claim_attempt, workspace_process_operations.claim_expires_at, workspace_process_operations.requested_at, workspace_process_operations.claimed_at, workspace_process_operations.completed_at, workspace_process_operations.updated_at
-),
-terminal_start_process_operations AS (
-    SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
-     WHERE operation_kind = 'start_process'
-    UNION ALL
-    SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
-     WHERE operation_kind = 'start_process'
-),
-terminal_pty_control_operations AS (
-    SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM exhausted
-     WHERE operation_kind IN ('resize_process', 'close_process')
-    UNION ALL
-    SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM expired
-     WHERE operation_kind IN ('resize_process', 'close_process')
-),
-failed_start_processes AS (
-    UPDATE workspace_processes
-       SET state = 'failed',
-           error = terminal_start_process_operations.error,
-           exited_at = coalesce(workspace_processes.exited_at, now()),
-           updated_at = now()
-      FROM terminal_start_process_operations
-     WHERE workspace_processes.org_id = terminal_start_process_operations.org_id
-       AND workspace_processes.project_id = terminal_start_process_operations.project_id
-       AND workspace_processes.environment_id = terminal_start_process_operations.environment_id
-       AND workspace_processes.workspace_id = terminal_start_process_operations.workspace_id
-       AND workspace_processes.workspace_mount_id = terminal_start_process_operations.workspace_mount_id
-       AND workspace_processes.id = terminal_start_process_operations.process_id
-       AND workspace_processes.state IN ('queued', 'starting')
-    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
-),
-rolled_back_pty_controls AS (
-    UPDATE workspace_processes
-       SET state = 'running',
-           pending_pty_cols = CASE
-               WHEN terminal_pty_control_operations.operation_kind = 'close_process'
-                   THEN workspace_processes.pending_pty_cols
-               ELSE NULL
-           END,
-           pending_pty_rows = CASE
-               WHEN terminal_pty_control_operations.operation_kind = 'close_process'
-                   THEN workspace_processes.pending_pty_rows
-               ELSE NULL
-           END,
-           updated_at = now()
-      FROM terminal_pty_control_operations
-     WHERE workspace_processes.org_id = terminal_pty_control_operations.org_id
-       AND workspace_processes.project_id = terminal_pty_control_operations.project_id
-       AND workspace_processes.environment_id = terminal_pty_control_operations.environment_id
-       AND workspace_processes.workspace_id = terminal_pty_control_operations.workspace_id
-       AND workspace_processes.workspace_mount_id = terminal_pty_control_operations.workspace_mount_id
-       AND workspace_processes.id = terminal_pty_control_operations.process_id
-       AND workspace_processes.kind = 'pty'
-       AND (
-           (
-               terminal_pty_control_operations.operation_kind = 'resize_process'
-               AND workspace_processes.state = 'running'
-               AND workspace_processes.pending_pty_cols::text = terminal_pty_control_operations.request->>'cols'
-               AND workspace_processes.pending_pty_rows::text = terminal_pty_control_operations.request->>'rows'
-           )
-           OR (
-               terminal_pty_control_operations.operation_kind = 'close_process'
-               AND workspace_processes.state = 'closing'
-           )
-       )
-    RETURNING workspace_processes.id, workspace_processes.org_id, workspace_processes.worker_group_id, workspace_processes.project_id, workspace_processes.environment_id, workspace_processes.workspace_id, workspace_processes.workspace_mount_id, workspace_processes.instance_lease_id, workspace_processes.write_lease_id, workspace_processes.kind, workspace_processes.command, workspace_processes.cwd, workspace_processes.env_shape, workspace_processes.filesystem_mode, workspace_processes.state, workspace_processes.detached, workspace_processes.idempotency_key, workspace_processes.idempotency_expires_at, workspace_processes.request_fingerprint, workspace_processes.runtime_process_id, workspace_processes.exit_code, workspace_processes.signal, workspace_processes.error, workspace_processes.pty_cols, workspace_processes.pty_rows, workspace_processes.pending_pty_cols, workspace_processes.pending_pty_rows, workspace_processes.stdout_cursor, workspace_processes.stderr_cursor, workspace_processes.stdin_cursor, workspace_processes.stdin_delivered_cursor, workspace_processes.stdin_closed_at, workspace_processes.input_cursor, workspace_processes.input_delivered_cursor, workspace_processes.output_cursor, workspace_processes.created_by_subject_type, workspace_processes.created_by_subject_id, workspace_processes.created_at, workspace_processes.started_at, workspace_processes.exited_at, workspace_processes.updated_at
-),
-released_terminal_operation_write_leases AS (
-    UPDATE workspace_leases
-       SET state = 'released',
-           released_at = coalesce(workspace_leases.released_at, now()),
-           updated_at = now()
-      FROM (
-          SELECT write_lease_id,
-                 org_id,
-                 project_id,
-                 environment_id,
-                 workspace_id,
-                 workspace_mount_id
-            FROM failed_start_processes
-           WHERE write_lease_id IS NOT NULL
-      ) AS terminal_operations
-     WHERE workspace_leases.org_id = terminal_operations.org_id
-       AND workspace_leases.project_id = terminal_operations.project_id
-       AND workspace_leases.environment_id = terminal_operations.environment_id
-       AND workspace_leases.workspace_id = terminal_operations.workspace_id
-       AND workspace_leases.workspace_mount_id = terminal_operations.workspace_mount_id
-       AND workspace_leases.id = terminal_operations.write_lease_id
-       AND workspace_leases.lease_kind = 'write'
-       AND workspace_leases.state IN ('active', 'releasing')
-    RETURNING workspace_leases.id
-),
-candidate AS (
-    SELECT workspace_process_operations.id
+WITH target_group AS MATERIALIZED (
+    SELECT worker_groups.id
+      FROM worker_groups
+      JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
+     WHERE worker_instances.id = $1
+       AND worker_groups.state = 'active'
+     FOR UPDATE OF worker_groups
+), worker_fence AS MATERIALIZED (
+    SELECT worker_instances.id, worker_instances.current_epoch
+      FROM worker_instances
+      JOIN target_group ON target_group.id = worker_instances.worker_group_id
+     WHERE worker_instances.id = $1
+       AND worker_instances.current_epoch = $4
+       AND worker_instances.state = 'active'
+     FOR UPDATE OF worker_instances
+), candidate AS (
+    SELECT workspace_process_operations.id, workspace_mounts.worker_epoch
       FROM workspace_process_operations
-      JOIN workspace_mounts
-        ON workspace_mounts.org_id = workspace_process_operations.org_id
-       AND workspace_mounts.project_id = workspace_process_operations.project_id
-       AND workspace_mounts.environment_id = workspace_process_operations.environment_id
-       AND workspace_mounts.workspace_id = workspace_process_operations.workspace_id
-       AND workspace_mounts.id = workspace_process_operations.workspace_mount_id
-      JOIN runtime_instances
-        ON runtime_instances.org_id = workspace_mounts.org_id
-       AND runtime_instances.id = workspace_mounts.runtime_instance_id
-     WHERE workspace_process_operations.org_id = $4
-       AND workspace_process_operations.workspace_mount_id = $5
-       AND (
-           workspace_process_operations.state = 'queued'
-           OR (
-               workspace_process_operations.state = 'claimed'
-               AND workspace_process_operations.claim_expires_at <= now()
-           )
-       )
-       AND workspace_process_operations.claim_attempt < $6
+      JOIN workspace_mounts ON workspace_mounts.org_id = workspace_process_operations.org_id
+                           AND workspace_mounts.workspace_id = workspace_process_operations.workspace_id
+                           AND workspace_mounts.id = workspace_process_operations.workspace_mount_id
+      JOIN runtime_instances ON runtime_instances.id = workspace_mounts.runtime_instance_id
+      JOIN worker_fence ON worker_fence.id = runtime_instances.worker_instance_id
+                       AND worker_fence.current_epoch = runtime_instances.worker_epoch
+      JOIN workspace_leases ON workspace_leases.org_id = workspace_process_operations.org_id
+                            AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
+                            AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
+                            AND workspace_leases.id = COALESCE(workspace_process_operations.write_lease_id, workspace_process_operations.instance_lease_id)
+     WHERE workspace_process_operations.org_id = $5
+       AND workspace_process_operations.workspace_mount_id = $6
+       AND workspace_process_operations.state IN ('queued','claimed')
+       AND (workspace_process_operations.state = 'queued' OR workspace_process_operations.claim_expires_at <= now())
+       AND workspace_process_operations.claim_attempt < $7
        AND workspace_process_operations.operation_expires_at > now()
-       AND (SELECT count(*) FROM released_terminal_operation_write_leases) >= 0
-       AND runtime_instances.worker_instance_id = $1
-       AND runtime_instances.instance_token = $7
-       AND runtime_instances.state IN ('running', 'waiting_hot')
        AND workspace_mounts.state = 'mounted'
-       AND (
-           workspace_process_operations.write_lease_id IS NULL
-           OR EXISTS (
-               SELECT 1
-                 FROM workspace_leases
-                WHERE workspace_leases.org_id = workspace_process_operations.org_id
-                  AND workspace_leases.project_id = workspace_process_operations.project_id
-                  AND workspace_leases.environment_id = workspace_process_operations.environment_id
-                  AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
-                  AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
-                  AND workspace_leases.id = workspace_process_operations.write_lease_id
-                  AND workspace_leases.lease_kind = 'write'
-                  AND workspace_leases.state = 'active'
-                  AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
-                  AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
-                  AND workspace_leases.expires_at > now()
-           )
-       )
+       AND runtime_instances.worker_instance_id = $1
+       AND runtime_instances.worker_epoch = $4
+       AND runtime_instances.observed_state = 'ready'
+       AND workspace_leases.worker_instance_id = $1
+       AND workspace_leases.worker_epoch = $4
+       AND workspace_leases.runtime_instance_id = workspace_mounts.runtime_instance_id
+       AND workspace_leases.state = 'active' AND workspace_leases.expires_at > now()
+       AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
+       AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
      ORDER BY workspace_process_operations.priority DESC,
-              workspace_process_operations.requested_at ASC
-     LIMIT 1
-     FOR UPDATE SKIP LOCKED
+              workspace_process_operations.requested_at, workspace_process_operations.id
+     LIMIT 1 FOR UPDATE OF workspace_process_operations SKIP LOCKED
 )
 UPDATE workspace_process_operations
-   SET state = 'claimed',
-       claimed_by_worker_instance_id = $1,
-       claim_token = $2,
-       claim_attempt = workspace_process_operations.claim_attempt + 1,
-       claim_expires_at = $3,
-       claimed_at = now(),
-       updated_at = now()
- FROM candidate
- WHERE workspace_process_operations.id = candidate.id
-   AND (
-       workspace_process_operations.state = 'queued'
-       OR (
-           workspace_process_operations.state = 'claimed'
-           AND workspace_process_operations.claim_expires_at <= now()
-       )
-   )
-RETURNING workspace_process_operations.id, workspace_process_operations.org_id, workspace_process_operations.worker_group_id, workspace_process_operations.project_id, workspace_process_operations.environment_id, workspace_process_operations.workspace_id, workspace_process_operations.workspace_mount_id, workspace_process_operations.operation_kind, workspace_process_operations.process_id, workspace_process_operations.request_fingerprint, workspace_process_operations.operation_expires_at, workspace_process_operations.state, workspace_process_operations.priority, workspace_process_operations.instance_lease_id, workspace_process_operations.write_lease_id, workspace_process_operations.fencing_token, workspace_process_operations.fencing_generation, workspace_process_operations.request, workspace_process_operations.result, workspace_process_operations.error, workspace_process_operations.claimed_by_worker_instance_id, workspace_process_operations.claim_token, workspace_process_operations.claim_attempt, workspace_process_operations.claim_expires_at, workspace_process_operations.requested_at, workspace_process_operations.claimed_at, workspace_process_operations.completed_at, workspace_process_operations.updated_at
+   SET state = 'claimed', claimed_by_worker_instance_id = $1,
+       claimed_worker_epoch = candidate.worker_epoch, claim_token = $2,
+       claim_attempt = claim_attempt + 1, claim_expires_at = $3,
+       claimed_at = now(), updated_at = now()
+  FROM candidate WHERE workspace_process_operations.id = candidate.id
+RETURNING workspace_process_operations.id, workspace_process_operations.org_id, workspace_process_operations.project_id, workspace_process_operations.environment_id, workspace_process_operations.workspace_id, workspace_process_operations.workspace_mount_id, workspace_process_operations.operation_kind, workspace_process_operations.process_id, workspace_process_operations.request_fingerprint, workspace_process_operations.operation_expires_at, workspace_process_operations.state, workspace_process_operations.priority, workspace_process_operations.instance_lease_id, workspace_process_operations.write_lease_id, workspace_process_operations.fencing_token, workspace_process_operations.fencing_generation, workspace_process_operations.request, workspace_process_operations.result, workspace_process_operations.claimed_by_worker_instance_id, workspace_process_operations.claimed_worker_epoch, workspace_process_operations.claim_token, workspace_process_operations.claim_attempt, workspace_process_operations.claim_expires_at, workspace_process_operations.requested_at, workspace_process_operations.claimed_at, workspace_process_operations.completed_at, workspace_process_operations.terminal_at, workspace_process_operations.terminal_reason_code, workspace_process_operations.terminal_error, workspace_process_operations.updated_at
 `
 
 type ClaimWorkspaceOperationParams struct {
-	WorkerInstanceID     pgtype.UUID        `json:"worker_instance_id"`
-	ClaimToken           string             `json:"claim_token"`
-	ClaimExpiresAt       pgtype.Timestamptz `json:"claim_expires_at"`
-	OrgID                pgtype.UUID        `json:"org_id"`
-	WorkspaceMountID     pgtype.UUID        `json:"workspace_mount_id"`
-	MaxClaimAttempts     int32              `json:"max_claim_attempts"`
-	RuntimeInstanceToken string             `json:"runtime_instance_token"`
+	WorkerInstanceID pgtype.UUID        `json:"worker_instance_id"`
+	ClaimToken       string             `json:"claim_token"`
+	ClaimExpiresAt   pgtype.Timestamptz `json:"claim_expires_at"`
+	WorkerEpoch      pgtype.Int8        `json:"worker_epoch"`
+	OrgID            pgtype.UUID        `json:"org_id"`
+	WorkspaceMountID pgtype.UUID        `json:"workspace_mount_id"`
+	MaxClaimAttempts int32              `json:"max_claim_attempts"`
 }
 
 func (q *Queries) ClaimWorkspaceOperation(ctx context.Context, arg ClaimWorkspaceOperationParams) (WorkspaceProcessOperation, error) {
@@ -214,16 +84,15 @@ func (q *Queries) ClaimWorkspaceOperation(ctx context.Context, arg ClaimWorkspac
 		arg.WorkerInstanceID,
 		arg.ClaimToken,
 		arg.ClaimExpiresAt,
+		arg.WorkerEpoch,
 		arg.OrgID,
 		arg.WorkspaceMountID,
 		arg.MaxClaimAttempts,
-		arg.RuntimeInstanceToken,
 	)
 	var i WorkspaceProcessOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -240,64 +109,45 @@ func (q *Queries) ClaimWorkspaceOperation(ctx context.Context, arg ClaimWorkspac
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const completeWorkspaceOperation = `-- name: CompleteWorkspaceOperation :one
-WITH completed AS (
-    UPDATE workspace_process_operations
-       SET state = 'completed',
-           result = coalesce($1::jsonb, '{}'::jsonb),
-           completed_at = now(),
-           updated_at = now()
-     WHERE workspace_process_operations.org_id = $2
-       AND workspace_process_operations.id = $3
-       AND workspace_process_operations.claimed_by_worker_instance_id = $4
-       AND workspace_process_operations.claim_token = $5
-	       AND workspace_process_operations.state = 'running'
-	       AND workspace_process_operations.operation_expires_at > now()
-	       AND (
-	           workspace_process_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_process_operations.org_id
-	                  AND workspace_leases.project_id = workspace_process_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_process_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
-	                  AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
-	                  AND workspace_leases.id = workspace_process_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-)
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM completed
-UNION ALL
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-  FROM workspace_process_operations
- WHERE NOT EXISTS (SELECT 1 FROM completed)
-   AND workspace_process_operations.org_id = $2
-       AND workspace_process_operations.id = $3
-       AND workspace_process_operations.claimed_by_worker_instance_id = $4
-       AND workspace_process_operations.claim_token = $5
-       AND workspace_process_operations.state = 'completed'
-   AND workspace_process_operations.result = coalesce($1::jsonb, '{}'::jsonb)
-LIMIT 1
+UPDATE workspace_process_operations
+   SET state = 'completed', result = $1, completed_at = now(),
+       terminal_at = now(), terminal_reason_code = 'completed', terminal_error = NULL,
+       claim_expires_at = NULL, updated_at = now()
+ WHERE workspace_process_operations.org_id = $2
+   AND workspace_process_operations.id = $3
+   AND claimed_by_worker_instance_id = $4
+   AND claimed_worker_epoch = $5
+   AND claim_token = $6 AND state = 'running'
+   AND EXISTS (
+       SELECT 1 FROM workspace_leases
+        WHERE workspace_leases.org_id = workspace_process_operations.org_id
+          AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
+          AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
+          AND workspace_leases.id = COALESCE(workspace_process_operations.write_lease_id, workspace_process_operations.instance_lease_id)
+          AND workspace_leases.worker_instance_id = $4
+          AND workspace_leases.worker_epoch = $5
+          AND workspace_leases.state = 'active' AND workspace_leases.expires_at > now()
+          AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
+          AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
+   )
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type CompleteWorkspaceOperationParams struct {
@@ -305,53 +155,23 @@ type CompleteWorkspaceOperationParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	ID               pgtype.UUID `json:"id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 	ClaimToken       string      `json:"claim_token"`
 }
 
-type CompleteWorkspaceOperationRow struct {
-	ID                        pgtype.UUID             `json:"id"`
-	OrgID                     pgtype.UUID             `json:"org_id"`
-	WorkerGroupID             string                  `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID             `json:"project_id"`
-	EnvironmentID             pgtype.UUID             `json:"environment_id"`
-	WorkspaceID               pgtype.UUID             `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID             `json:"workspace_mount_id"`
-	OperationKind             WorkspaceOperationKind  `json:"operation_kind"`
-	ProcessID                 pgtype.UUID             `json:"process_id"`
-	RequestFingerprint        string                  `json:"request_fingerprint"`
-	OperationExpiresAt        pgtype.Timestamptz      `json:"operation_expires_at"`
-	State                     WorkspaceOperationState `json:"state"`
-	Priority                  int32                   `json:"priority"`
-	InstanceLeaseID           pgtype.UUID             `json:"instance_lease_id"`
-	WriteLeaseID              pgtype.UUID             `json:"write_lease_id"`
-	FencingToken              string                  `json:"fencing_token"`
-	FencingGeneration         int64                   `json:"fencing_generation"`
-	Request                   []byte                  `json:"request"`
-	Result                    []byte                  `json:"result"`
-	Error                     []byte                  `json:"error"`
-	ClaimedByWorkerInstanceID pgtype.UUID             `json:"claimed_by_worker_instance_id"`
-	ClaimToken                string                  `json:"claim_token"`
-	ClaimAttempt              int32                   `json:"claim_attempt"`
-	ClaimExpiresAt            pgtype.Timestamptz      `json:"claim_expires_at"`
-	RequestedAt               pgtype.Timestamptz      `json:"requested_at"`
-	ClaimedAt                 pgtype.Timestamptz      `json:"claimed_at"`
-	CompletedAt               pgtype.Timestamptz      `json:"completed_at"`
-	UpdatedAt                 pgtype.Timestamptz      `json:"updated_at"`
-}
-
-func (q *Queries) CompleteWorkspaceOperation(ctx context.Context, arg CompleteWorkspaceOperationParams) (CompleteWorkspaceOperationRow, error) {
+func (q *Queries) CompleteWorkspaceOperation(ctx context.Context, arg CompleteWorkspaceOperationParams) (WorkspaceProcessOperation, error) {
 	row := q.db.QueryRow(ctx, completeWorkspaceOperation,
 		arg.Result,
 		arg.OrgID,
 		arg.ID,
 		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
 		arg.ClaimToken,
 	)
-	var i CompleteWorkspaceOperationRow
+	var i WorkspaceProcessOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -368,122 +188,70 @@ func (q *Queries) CompleteWorkspaceOperation(ctx context.Context, arg CompleteWo
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const failWorkspaceOperation = `-- name: FailWorkspaceOperation :one
-WITH failed AS (
-    UPDATE workspace_process_operations
-       SET state = 'failed',
-           error = coalesce($1::jsonb, '{}'::jsonb),
-           completed_at = now(),
-           updated_at = now()
-     WHERE workspace_process_operations.org_id = $2
-       AND workspace_process_operations.id = $3
-       AND workspace_process_operations.claimed_by_worker_instance_id = $4
-       AND workspace_process_operations.claim_token = $5
-       AND workspace_process_operations.state IN ('claimed', 'running')
-	       AND (
-	           workspace_process_operations.state = 'running'
-	           OR workspace_process_operations.claim_expires_at > now()
-	       )
-	       AND workspace_process_operations.operation_expires_at > now()
-	       AND (
-	           workspace_process_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_process_operations.org_id
-	                  AND workspace_leases.project_id = workspace_process_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_process_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
-	                  AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
-	                  AND workspace_leases.id = workspace_process_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-)
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM failed
-UNION ALL
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-  FROM workspace_process_operations
- WHERE NOT EXISTS (SELECT 1 FROM failed)
-   AND workspace_process_operations.org_id = $2
-   AND workspace_process_operations.id = $3
-   AND workspace_process_operations.claimed_by_worker_instance_id = $4
-   AND workspace_process_operations.claim_token = $5
-   AND workspace_process_operations.state = 'failed'
-   AND workspace_process_operations.error = coalesce($1::jsonb, '{}'::jsonb)
-LIMIT 1
+UPDATE workspace_process_operations
+   SET state = 'failed', terminal_at = now(), terminal_reason_code = $1,
+       terminal_error = $2, claim_expires_at = NULL, updated_at = now()
+ WHERE workspace_process_operations.org_id = $3
+   AND workspace_process_operations.id = $4
+   AND claimed_by_worker_instance_id = $5
+   AND claimed_worker_epoch = $6
+   AND claim_token = $7 AND state IN ('claimed','running')
+   AND EXISTS (
+       SELECT 1 FROM workspace_leases
+        WHERE workspace_leases.org_id = workspace_process_operations.org_id
+          AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
+          AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
+          AND workspace_leases.id = COALESCE(workspace_process_operations.write_lease_id, workspace_process_operations.instance_lease_id)
+          AND workspace_leases.worker_instance_id = $5
+          AND workspace_leases.worker_epoch = $6
+          AND workspace_leases.state = 'active' AND workspace_leases.expires_at > now()
+          AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
+          AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
+   )
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type FailWorkspaceOperationParams struct {
+	ReasonCode       pgtype.Text `json:"reason_code"`
 	Error            []byte      `json:"error"`
 	OrgID            pgtype.UUID `json:"org_id"`
 	ID               pgtype.UUID `json:"id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 	ClaimToken       string      `json:"claim_token"`
 }
 
-type FailWorkspaceOperationRow struct {
-	ID                        pgtype.UUID             `json:"id"`
-	OrgID                     pgtype.UUID             `json:"org_id"`
-	WorkerGroupID             string                  `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID             `json:"project_id"`
-	EnvironmentID             pgtype.UUID             `json:"environment_id"`
-	WorkspaceID               pgtype.UUID             `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID             `json:"workspace_mount_id"`
-	OperationKind             WorkspaceOperationKind  `json:"operation_kind"`
-	ProcessID                 pgtype.UUID             `json:"process_id"`
-	RequestFingerprint        string                  `json:"request_fingerprint"`
-	OperationExpiresAt        pgtype.Timestamptz      `json:"operation_expires_at"`
-	State                     WorkspaceOperationState `json:"state"`
-	Priority                  int32                   `json:"priority"`
-	InstanceLeaseID           pgtype.UUID             `json:"instance_lease_id"`
-	WriteLeaseID              pgtype.UUID             `json:"write_lease_id"`
-	FencingToken              string                  `json:"fencing_token"`
-	FencingGeneration         int64                   `json:"fencing_generation"`
-	Request                   []byte                  `json:"request"`
-	Result                    []byte                  `json:"result"`
-	Error                     []byte                  `json:"error"`
-	ClaimedByWorkerInstanceID pgtype.UUID             `json:"claimed_by_worker_instance_id"`
-	ClaimToken                string                  `json:"claim_token"`
-	ClaimAttempt              int32                   `json:"claim_attempt"`
-	ClaimExpiresAt            pgtype.Timestamptz      `json:"claim_expires_at"`
-	RequestedAt               pgtype.Timestamptz      `json:"requested_at"`
-	ClaimedAt                 pgtype.Timestamptz      `json:"claimed_at"`
-	CompletedAt               pgtype.Timestamptz      `json:"completed_at"`
-	UpdatedAt                 pgtype.Timestamptz      `json:"updated_at"`
-}
-
-func (q *Queries) FailWorkspaceOperation(ctx context.Context, arg FailWorkspaceOperationParams) (FailWorkspaceOperationRow, error) {
+func (q *Queries) FailWorkspaceOperation(ctx context.Context, arg FailWorkspaceOperationParams) (WorkspaceProcessOperation, error) {
 	row := q.db.QueryRow(ctx, failWorkspaceOperation,
+		arg.ReasonCode,
 		arg.Error,
 		arg.OrgID,
 		arg.ID,
 		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
 		arg.ClaimToken,
 	)
-	var i FailWorkspaceOperationRow
+	var i WorkspaceProcessOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -500,39 +268,32 @@ func (q *Queries) FailWorkspaceOperation(ctx context.Context, arg FailWorkspaceO
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getActiveWorkspaceOperationByResource = `-- name: GetActiveWorkspaceOperationByResource :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-  FROM workspace_process_operations
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND workspace_mount_id = $5
-   AND operation_kind = $6::workspace_operation_kind
-   AND process_id = $7
-   AND state IN ('queued', 'claimed', 'running')
- ORDER BY requested_at ASC
- LIMIT 1
+SELECT id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at FROM workspace_process_operations
+ WHERE org_id = $1 AND workspace_mount_id = $2
+   AND operation_kind = $3 AND process_id = $4
+   AND state IN ('queued','claimed','running')
+ ORDER BY requested_at, id LIMIT 1
 `
 
 type GetActiveWorkspaceOperationByResourceParams struct {
 	OrgID            pgtype.UUID            `json:"org_id"`
-	ProjectID        pgtype.UUID            `json:"project_id"`
-	EnvironmentID    pgtype.UUID            `json:"environment_id"`
-	WorkspaceID      pgtype.UUID            `json:"workspace_id"`
 	WorkspaceMountID pgtype.UUID            `json:"workspace_mount_id"`
 	OperationKind    WorkspaceOperationKind `json:"operation_kind"`
 	ProcessID        pgtype.UUID            `json:"process_id"`
@@ -541,9 +302,6 @@ type GetActiveWorkspaceOperationByResourceParams struct {
 func (q *Queries) GetActiveWorkspaceOperationByResource(ctx context.Context, arg GetActiveWorkspaceOperationByResourceParams) (WorkspaceProcessOperation, error) {
 	row := q.db.QueryRow(ctx, getActiveWorkspaceOperationByResource,
 		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
 		arg.WorkspaceMountID,
 		arg.OperationKind,
 		arg.ProcessID,
@@ -552,7 +310,6 @@ func (q *Queries) GetActiveWorkspaceOperationByResource(ctx context.Context, arg
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -569,50 +326,38 @@ func (q *Queries) GetActiveWorkspaceOperationByResource(ctx context.Context, arg
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const getWorkspaceOperation = `-- name: GetWorkspaceOperation :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-  FROM workspace_process_operations
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND workspace_id = $4
-   AND id = $5
+SELECT id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at FROM workspace_process_operations
+ WHERE org_id = $1 AND id = $2
 `
 
 type GetWorkspaceOperationParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	ID            pgtype.UUID `json:"id"`
+	OrgID pgtype.UUID `json:"org_id"`
+	ID    pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) GetWorkspaceOperation(ctx context.Context, arg GetWorkspaceOperationParams) (WorkspaceProcessOperation, error) {
-	row := q.db.QueryRow(ctx, getWorkspaceOperation,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.WorkspaceID,
-		arg.ID,
-	)
+	row := q.db.QueryRow(ctx, getWorkspaceOperation, arg.OrgID, arg.ID)
 	var i WorkspaceProcessOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -629,93 +374,42 @@ func (q *Queries) GetWorkspaceOperation(ctx context.Context, arg GetWorkspaceOpe
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const requestWorkspaceOperation = `-- name: RequestWorkspaceOperation :one
-WITH active_mount AS MATERIALIZED (
-    SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, lease_generation, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, last_heartbeat_at, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, error, created_at, updated_at
-      FROM workspace_mounts
-     WHERE workspace_mounts.org_id = $11
-       AND workspace_mounts.project_id = $12
-       AND workspace_mounts.environment_id = $13
-       AND workspace_mounts.workspace_id = $14
-       AND workspace_mounts.id = $15
-       AND workspace_mounts.state = 'mounted'
-),
-active_write_lease AS MATERIALIZED (
-    SELECT workspace_leases.id,
-           workspace_leases.acquired_fencing_generation
-      FROM active_mount
-      JOIN workspace_leases
-        ON workspace_leases.org_id = active_mount.org_id
-       AND workspace_leases.project_id = active_mount.project_id
-       AND workspace_leases.environment_id = active_mount.environment_id
-       AND workspace_leases.workspace_id = active_mount.workspace_id
-       AND workspace_leases.workspace_mount_id = active_mount.id
-     WHERE $8::uuid IS NOT NULL
-       AND workspace_leases.id = $8::uuid
-       AND workspace_leases.lease_kind = 'write'
-       AND workspace_leases.state = 'active'
-       AND workspace_leases.fencing_token = coalesce($9::text, '')
-       AND workspace_leases.expires_at > now()
-)
 INSERT INTO workspace_process_operations (
-    id,
-    org_id,
-    worker_group_id,
-    project_id,
-    environment_id,
-    workspace_id,
-    workspace_mount_id,
-    operation_kind,
-    process_id,
-    request_fingerprint,
-    operation_expires_at,
-    priority,
-    instance_lease_id,
-    write_lease_id,
-    fencing_token,
-    fencing_generation,
-    request
+    id, org_id, project_id, environment_id, workspace_id, workspace_mount_id,
+    operation_kind, process_id, request_fingerprint, operation_expires_at,
+    priority, instance_lease_id, write_lease_id, fencing_token,
+    fencing_generation, request
 )
-SELECT $1,
-       active_mount.org_id,
-       active_mount.worker_group_id,
-       active_mount.project_id,
-       active_mount.environment_id,
-       active_mount.workspace_id,
-       active_mount.id,
-       $2::workspace_operation_kind,
-       $3,
-       $4,
-       $5,
-       $6,
-       $7,
-       $8,
-       coalesce($9::text, ''),
-       coalesce(active_write_lease.acquired_fencing_generation, active_mount.fencing_generation),
-       coalesce($10::jsonb, '{}'::jsonb)
-  FROM active_mount
-  LEFT JOIN active_write_lease ON true
- WHERE (
-       (
-           $8::uuid IS NULL
-           AND coalesce($9::text, '') = ''
-       )
-       OR active_write_lease.id IS NOT NULL
-   )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
+SELECT $1, workspace_mounts.org_id, workspace_mounts.project_id,
+       workspace_mounts.environment_id, workspace_mounts.workspace_id,
+       workspace_mounts.id, $2, $3,
+       $4, $5,
+       $6, $7, $8,
+       COALESCE($9::text, ''), workspace_mounts.fencing_generation,
+       $10
+  FROM workspace_mounts
+ WHERE workspace_mounts.org_id = $11
+   AND workspace_mounts.workspace_id = $12
+   AND workspace_mounts.id = $13
+   AND workspace_mounts.state = 'mounted'
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type RequestWorkspaceOperationParams struct {
@@ -727,11 +421,9 @@ type RequestWorkspaceOperationParams struct {
 	Priority           int32                  `json:"priority"`
 	InstanceLeaseID    pgtype.UUID            `json:"instance_lease_id"`
 	WriteLeaseID       pgtype.UUID            `json:"write_lease_id"`
-	FencingToken       string                 `json:"fencing_token"`
+	FencingToken       pgtype.Text            `json:"fencing_token"`
 	Request            []byte                 `json:"request"`
 	OrgID              pgtype.UUID            `json:"org_id"`
-	ProjectID          pgtype.UUID            `json:"project_id"`
-	EnvironmentID      pgtype.UUID            `json:"environment_id"`
 	WorkspaceID        pgtype.UUID            `json:"workspace_id"`
 	WorkspaceMountID   pgtype.UUID            `json:"workspace_mount_id"`
 }
@@ -749,8 +441,6 @@ func (q *Queries) RequestWorkspaceOperation(ctx context.Context, arg RequestWork
 		arg.FencingToken,
 		arg.Request,
 		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
 		arg.WorkspaceID,
 		arg.WorkspaceMountID,
 	)
@@ -758,7 +448,6 @@ func (q *Queries) RequestWorkspaceOperation(ctx context.Context, arg RequestWork
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -775,133 +464,66 @@ func (q *Queries) RequestWorkspaceOperation(ctx context.Context, arg RequestWork
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const startWorkspaceOperation = `-- name: StartWorkspaceOperation :one
-WITH started AS (
-    UPDATE workspace_process_operations
-       SET state = 'running',
-           updated_at = now()
-     WHERE workspace_process_operations.org_id = $1
-       AND workspace_process_operations.id = $2
-       AND workspace_process_operations.claimed_by_worker_instance_id = $3
-       AND workspace_process_operations.claim_token = $4
-	       AND workspace_process_operations.state = 'claimed'
-	       AND workspace_process_operations.claim_expires_at > now()
-	       AND workspace_process_operations.operation_expires_at > now()
-	       AND (
-	           workspace_process_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_process_operations.org_id
-	                  AND workspace_leases.project_id = workspace_process_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_process_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
-	                  AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
-	                  AND workspace_leases.id = workspace_process_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-)
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at FROM started
-UNION ALL
-SELECT id, org_id, worker_group_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, error, claimed_by_worker_instance_id, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, updated_at
-  FROM workspace_process_operations
- WHERE NOT EXISTS (SELECT 1 FROM started)
-   AND workspace_process_operations.org_id = $1
-       AND workspace_process_operations.id = $2
-       AND workspace_process_operations.claimed_by_worker_instance_id = $3
-	       AND workspace_process_operations.claim_token = $4
-	       AND workspace_process_operations.state = 'running'
-	       AND workspace_process_operations.operation_expires_at > now()
-	       AND (
-	           workspace_process_operations.write_lease_id IS NULL
-	           OR EXISTS (
-	               SELECT 1
-	                 FROM workspace_leases
-	                WHERE workspace_leases.org_id = workspace_process_operations.org_id
-	                  AND workspace_leases.project_id = workspace_process_operations.project_id
-	                  AND workspace_leases.environment_id = workspace_process_operations.environment_id
-	                  AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
-	                  AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
-	                  AND workspace_leases.id = workspace_process_operations.write_lease_id
-	                  AND workspace_leases.lease_kind = 'write'
-	                  AND workspace_leases.state = 'active'
-	                  AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
-	                  AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
-	                  AND workspace_leases.expires_at > now()
-	           )
-	       )
-LIMIT 1
+UPDATE workspace_process_operations
+   SET state = 'running', updated_at = now()
+ WHERE workspace_process_operations.org_id = $1
+   AND workspace_process_operations.id = $2
+   AND claimed_by_worker_instance_id = $3
+   AND claimed_worker_epoch = $4
+   AND claim_token = $5 AND state = 'claimed'
+   AND claim_expires_at > now() AND operation_expires_at > now()
+   AND EXISTS (
+       SELECT 1 FROM workspace_leases
+        WHERE workspace_leases.org_id = workspace_process_operations.org_id
+          AND workspace_leases.workspace_id = workspace_process_operations.workspace_id
+          AND workspace_leases.workspace_mount_id = workspace_process_operations.workspace_mount_id
+          AND workspace_leases.id = COALESCE(workspace_process_operations.write_lease_id, workspace_process_operations.instance_lease_id)
+          AND workspace_leases.worker_instance_id = $3
+          AND workspace_leases.worker_epoch = $4
+          AND workspace_leases.state = 'active' AND workspace_leases.expires_at > now()
+          AND workspace_leases.fencing_token = workspace_process_operations.fencing_token
+          AND workspace_leases.acquired_fencing_generation = workspace_process_operations.fencing_generation
+   )
+RETURNING id, org_id, project_id, environment_id, workspace_id, workspace_mount_id, operation_kind, process_id, request_fingerprint, operation_expires_at, state, priority, instance_lease_id, write_lease_id, fencing_token, fencing_generation, request, result, claimed_by_worker_instance_id, claimed_worker_epoch, claim_token, claim_attempt, claim_expires_at, requested_at, claimed_at, completed_at, terminal_at, terminal_reason_code, terminal_error, updated_at
 `
 
 type StartWorkspaceOperationParams struct {
 	OrgID            pgtype.UUID `json:"org_id"`
 	ID               pgtype.UUID `json:"id"`
 	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      pgtype.Int8 `json:"worker_epoch"`
 	ClaimToken       string      `json:"claim_token"`
 }
 
-type StartWorkspaceOperationRow struct {
-	ID                        pgtype.UUID             `json:"id"`
-	OrgID                     pgtype.UUID             `json:"org_id"`
-	WorkerGroupID             string                  `json:"worker_group_id"`
-	ProjectID                 pgtype.UUID             `json:"project_id"`
-	EnvironmentID             pgtype.UUID             `json:"environment_id"`
-	WorkspaceID               pgtype.UUID             `json:"workspace_id"`
-	WorkspaceMountID          pgtype.UUID             `json:"workspace_mount_id"`
-	OperationKind             WorkspaceOperationKind  `json:"operation_kind"`
-	ProcessID                 pgtype.UUID             `json:"process_id"`
-	RequestFingerprint        string                  `json:"request_fingerprint"`
-	OperationExpiresAt        pgtype.Timestamptz      `json:"operation_expires_at"`
-	State                     WorkspaceOperationState `json:"state"`
-	Priority                  int32                   `json:"priority"`
-	InstanceLeaseID           pgtype.UUID             `json:"instance_lease_id"`
-	WriteLeaseID              pgtype.UUID             `json:"write_lease_id"`
-	FencingToken              string                  `json:"fencing_token"`
-	FencingGeneration         int64                   `json:"fencing_generation"`
-	Request                   []byte                  `json:"request"`
-	Result                    []byte                  `json:"result"`
-	Error                     []byte                  `json:"error"`
-	ClaimedByWorkerInstanceID pgtype.UUID             `json:"claimed_by_worker_instance_id"`
-	ClaimToken                string                  `json:"claim_token"`
-	ClaimAttempt              int32                   `json:"claim_attempt"`
-	ClaimExpiresAt            pgtype.Timestamptz      `json:"claim_expires_at"`
-	RequestedAt               pgtype.Timestamptz      `json:"requested_at"`
-	ClaimedAt                 pgtype.Timestamptz      `json:"claimed_at"`
-	CompletedAt               pgtype.Timestamptz      `json:"completed_at"`
-	UpdatedAt                 pgtype.Timestamptz      `json:"updated_at"`
-}
-
-func (q *Queries) StartWorkspaceOperation(ctx context.Context, arg StartWorkspaceOperationParams) (StartWorkspaceOperationRow, error) {
+func (q *Queries) StartWorkspaceOperation(ctx context.Context, arg StartWorkspaceOperationParams) (WorkspaceProcessOperation, error) {
 	row := q.db.QueryRow(ctx, startWorkspaceOperation,
 		arg.OrgID,
 		arg.ID,
 		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
 		arg.ClaimToken,
 	)
-	var i StartWorkspaceOperationRow
+	var i WorkspaceProcessOperation
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.WorkspaceID,
@@ -918,14 +540,17 @@ func (q *Queries) StartWorkspaceOperation(ctx context.Context, arg StartWorkspac
 		&i.FencingGeneration,
 		&i.Request,
 		&i.Result,
-		&i.Error,
 		&i.ClaimedByWorkerInstanceID,
+		&i.ClaimedWorkerEpoch,
 		&i.ClaimToken,
 		&i.ClaimAttempt,
 		&i.ClaimExpiresAt,
 		&i.RequestedAt,
 		&i.ClaimedAt,
 		&i.CompletedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
 		&i.UpdatedAt,
 	)
 	return i, err

@@ -133,7 +133,6 @@ output "secret_arns" {
   value = merge({
     database_url               = aws_secretsmanager_secret.database_url.arn
     worker_token_signing_key   = aws_secretsmanager_secret.worker_token_signing_key.arn
-    worker_bootstrap_token     = aws_secretsmanager_secret.worker_bootstrap_token.arn
     setup_token                = aws_secretsmanager_secret.setup_token.arn
     auth_secret                = aws_secretsmanager_secret.auth_secret.arn
     secret_encryption_key      = aws_secretsmanager_secret.secret_encryption_key.arn
@@ -147,4 +146,9 @@ output "secret_arns" {
       smtp_password = aws_secretsmanager_secret.smtp_password[0].arn
     } : {}
   )
+}
+
+output "worker_fleets" {
+  description = "Exact non-secret fleet-controller configuration delivered to helmr-dispatcher."
+  value       = var.worker_fleets
 }

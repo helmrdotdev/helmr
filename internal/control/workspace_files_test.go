@@ -161,8 +161,8 @@ func TestWorkspaceFilesReadListStatAndVersionsFromReadyArtifacts(t *testing.T) {
 		request.handler(rec, req)
 		request.check(t, rec)
 	}
-	if store.ensureWorkspaceMountCalls != 0 || store.claimWorkspaceMountCalls != 0 {
-		t.Fatalf("mount calls = ensure %d claim %d", store.ensureWorkspaceMountCalls, store.claimWorkspaceMountCalls)
+	if store.ensureWorkspaceMountCalls != 0 {
+		t.Fatalf("mount requests = %d, want artifact-only reads", store.ensureWorkspaceMountCalls)
 	}
 }
 

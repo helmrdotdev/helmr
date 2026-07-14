@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,28 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const (
-	workspaceMountReservationDuration             = 5 * time.Minute
-	preparedRuntimeReservationDuration            = 2 * time.Minute
-	capacityPressureCheckpointCommandPreemptLimit = int32(1)
-	capacityPressureIdleStopPreemptLimit          = int32(1)
-)
-
-func (s *Server) markStaleWorkspaceMountsLost(ctx context.Context) error {
-	_, err := s.db.MarkStaleWorkspaceMountsLost(ctx, pgtype.Timestamptz{
-		Time:  time.Now().Add(-workspaceMountReservationDuration),
-		Valid: true,
-	})
-	return err
-}
-
-func (s *Server) releaseExpiredPreparedRuntimeReservations(ctx context.Context) error {
-	_, err := s.db.ReleaseExpiredPreparedRuntimeReservations(ctx, pgtype.Timestamptz{
-		Time:  time.Now(),
-		Valid: true,
-	})
-	return err
-}
+const workspaceMountReservationDuration = 5 * time.Minute
 
 func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := uuid.Parse(strings.TrimSpace(chi.URLParam(r, "workspaceID")))
@@ -76,19 +54,9 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errPermissionRequired))
 		return
 	}
-	if err := s.markStaleWorkspaceMountsLost(r.Context()); err != nil {
-		s.log.Error("mark stale workspace mounts lost failed", "workspace_id", workspaceID.String(), "error", err)
-		writeError(w, errors.New("reap stale workspace mounts"))
-		return
-	}
 	row, err := s.db.EnsureWorkspaceMountRequested(r.Context(), db.EnsureWorkspaceMountRequestedParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           pgvalue.UUID(actor.OrgID),
-		ProjectID:       projectID,
-		EnvironmentID:   environmentID,
-		WorkspaceID:     pgvalue.UUID(workspaceID),
-		RequestPriority: 0,
-		Request:         []byte(`{"source":"api"}`),
+		ID: pgvalue.UUID(uuid.Must(uuid.NewV7())), OrgID: pgvalue.UUID(actor.OrgID),
+		WorkspaceID: pgvalue.UUID(workspaceID), Priority: 0, Request: []byte(`{"source":"api"}`),
 	})
 	if isNoRows(err) {
 		if s.log != nil {
@@ -127,7 +95,7 @@ func (s *Server) requestWorkspaceMount(w http.ResponseWriter, r *http.Request) {
 	if row.Inserted {
 		status = http.StatusCreated
 	}
-	writeJSON(w, status, ensuredWorkspaceMountResponse(row))
+	writeJSON(w, status, workspaceMountResponse(workspaceMountFromEnsureRow(row)))
 }
 
 func actorHasAnyPermission(actor auth.Actor, scope auth.Scope, permissions ...auth.Permission) bool {
@@ -202,68 +170,6 @@ func workspaceMountPrerequisiteErrorWithStore(ctx context.Context, store db.Quer
 	return conflict(codedError{code: "workspace_mount_prerequisite_failed", message: "workspace mount prerequisites are not satisfied"})
 }
 
-type queuedRunFailer interface {
-	ListQueuedRunsForWorkspaceMount(context.Context, db.ListQueuedRunsForWorkspaceMountParams) ([]pgtype.UUID, error)
-	FailQueuedRun(context.Context, db.FailQueuedRunParams) error
-}
-
-func failQueuedRunsForWorkspaceMountFailure(ctx context.Context, store queuedRunFailer, row db.FailWorkspaceMountRow, errorJSON json.RawMessage) error {
-	runIDs, err := store.ListQueuedRunsForWorkspaceMount(ctx, db.ListQueuedRunsForWorkspaceMountParams{
-		OrgID:            row.OrgID,
-		WorkspaceID:      row.WorkspaceID,
-		WorkspaceMountID: row.ID,
-	})
-	if err != nil {
-		return err
-	}
-	message := workspaceMountFailureRunMessage(errorJSON)
-	reason, err := workspaceMountFailureRunReason(row, message, errorJSON)
-	if err != nil {
-		return err
-	}
-	for _, runID := range runIDs {
-		if err := store.FailQueuedRun(ctx, db.FailQueuedRunParams{
-			OrgID:        row.OrgID,
-			RunID:        runID,
-			ErrorMessage: message,
-			Reason:       reason,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func workspaceMountFailureRunMessage(errorJSON json.RawMessage) string {
-	var body struct {
-		Message string `json:"message"`
-		Code    string `json:"code"`
-	}
-	if len(errorJSON) > 0 && json.Unmarshal(errorJSON, &body) == nil {
-		if message := strings.TrimSpace(body.Message); message != "" {
-			return message
-		}
-		if code := strings.TrimSpace(body.Code); code != "" {
-			return code
-		}
-	}
-	return "workspace mount failed"
-}
-
-func workspaceMountFailureRunReason(row db.FailWorkspaceMountRow, message string, errorJSON json.RawMessage) (json.RawMessage, error) {
-	body, err := json.Marshal(map[string]any{
-		"origin":             "workspace_mount",
-		"message":            message,
-		"workspace_id":       pgvalue.MustUUIDValue(row.WorkspaceID).String(),
-		"workspace_mount_id": pgvalue.MustUUIDValue(row.ID).String(),
-		"error":              json.RawMessage(errorJSON),
-	})
-	if err != nil {
-		return nil, err
-	}
-	return body, nil
-}
-
 func workspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
 	response := api.WorkspaceMountResponse{
 		ID:                  pgvalue.MustUUIDValue(row.ID).String(),
@@ -281,27 +187,5 @@ func workspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountResponse {
 	if row.BaseVersionID.Valid {
 		response.BaseVersionID = pgvalue.MustUUIDValue(row.BaseVersionID).String()
 	}
-	if row.LastHeartbeatAt.Valid {
-		response.LastHeartbeatAt = &row.LastHeartbeatAt.Time
-	}
 	return response
-}
-
-func ensuredWorkspaceMountResponse(row db.EnsureWorkspaceMountRequestedRow) api.WorkspaceMountResponse {
-	return workspaceMountResponse(db.WorkspaceMount{
-		ID:                  row.ID,
-		ProjectID:           row.ProjectID,
-		EnvironmentID:       row.EnvironmentID,
-		WorkspaceID:         row.WorkspaceID,
-		DeploymentSandboxID: row.DeploymentSandboxID,
-		BaseVersionID:       row.BaseVersionID,
-		RuntimeInstanceID:   row.RuntimeInstanceID,
-		State:               row.State,
-		ClaimAttempt:        row.ClaimAttempt,
-		FencingGeneration:   row.FencingGeneration,
-		DirtyGeneration:     row.DirtyGeneration,
-		LastHeartbeatAt:     row.LastHeartbeatAt,
-		CreatedAt:           row.CreatedAt,
-		UpdatedAt:           row.UpdatedAt,
-	})
 }

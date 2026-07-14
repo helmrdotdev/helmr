@@ -40,15 +40,11 @@ matched_wait AS (
     RETURNING waits.id, waits.org_id
 ),
 resolved_cancelled_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-     FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
+    SELECT run_waits.id
+      FROM matched_wait
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.wait_id = matched_wait.id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
   FROM cancelled
@@ -178,15 +174,11 @@ matched_wait AS (
     RETURNING waits.id, waits.org_id
 ),
 resolved_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-     FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
+    SELECT run_waits.id
+      FROM matched_wait
+      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
+                    AND run_waits.wait_id = matched_wait.id
+     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
 )
 SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.was_already_completed, selected_token.is_expired,
        (
@@ -466,17 +458,6 @@ matched_wait AS (
        AND waits.kind = 'token'
        AND waits.state = 'pending'
     RETURNING waits.id, waits.org_id
-),
-expired_wait AS (
-    UPDATE run_waits
-       SET state = 'resuming',
-           resuming_at = COALESCE(run_waits.resuming_at, now()),
-           updated_at = now()
-      FROM matched_wait
-     WHERE run_waits.org_id = matched_wait.org_id
-       AND run_waits.wait_id = matched_wait.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
-    RETURNING run_waits.id
 )
 SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM expired

@@ -30,6 +30,7 @@ const (
 	DefaultCgroupVersion        = "2"
 	DefaultHealthTimeout        = 30 * time.Second
 	DefaultHealthAttemptTimeout = 5 * time.Second
+	runtimeABI                  = "helmr.firecracker.snapshot.v0"
 )
 
 type Config struct {
@@ -43,6 +44,7 @@ type Config struct {
 	KernelPath              string
 	InitramfsPath           string
 	RootfsPath              string
+	RuntimeArtifactsPath    string
 	StateDir                string
 	CNINetworkName          string
 	CNIProfile              string
@@ -93,6 +95,9 @@ func (cfg Config) WithDefaults() Config {
 	}
 	if strings.TrimSpace(cfg.CgroupVersion) == "" {
 		cfg.CgroupVersion = DefaultCgroupVersion
+	}
+	if strings.TrimSpace(cfg.RuntimeArtifactsPath) == "" && strings.TrimSpace(cfg.RootfsPath) != "" {
+		cfg.RuntimeArtifactsPath = filepath.Join(filepath.Dir(cfg.RootfsPath), "runtime-artifacts.json")
 	}
 	if strings.TrimSpace(cfg.CNINetworkName) == "" {
 		cfg.CNINetworkName = DefaultCNINetworkName
@@ -182,6 +187,9 @@ func (cfg Config) Validate() error {
 	}
 	if strings.TrimSpace(cfg.RootfsPath) == "" {
 		problems = append(problems, errors.New("guest rootfs path is required"))
+	}
+	if strings.TrimSpace(cfg.RuntimeArtifactsPath) == "" {
+		problems = append(problems, errors.New("guest runtime artifacts manifest path is required"))
 	}
 	if strings.TrimSpace(cfg.StateDir) == "" {
 		problems = append(problems, errors.New("firecracker state dir is required"))

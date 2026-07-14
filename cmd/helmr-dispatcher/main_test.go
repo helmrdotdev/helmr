@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -10,11 +11,45 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestFleetConfigurationDoesNotLoadAWSWhenDisabled(t *testing.T) {
+	original := loadAWSConfig
+	t.Cleanup(func() { loadAWSConfig = original })
+	called := false
+	loadAWSConfig = func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
+		called = true
+		return aws.Config{}, nil
+	}
+	controllers, pools, err := configureFleetControllers(context.Background(), config.Dispatcher{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if called || len(controllers) != 0 || len(pools) != 0 {
+		t.Fatalf("called=%t controllers=%d pools=%d", called, len(controllers), len(pools))
+	}
+}
+
+func TestExplicitManagedFleetFailsStartupWhenAWSConfigCannotLoad(t *testing.T) {
+	original := loadAWSConfig
+	t.Cleanup(func() { loadAWSConfig = original })
+	loadAWSConfig = func(context.Context, ...func(*awsconfig.LoadOptions) error) (aws.Config, error) {
+		return aws.Config{}, errors.New("no credentials")
+	}
+	_, _, err := configureFleetControllers(context.Background(), config.Dispatcher{
+		WorkerFleets: []config.WorkerFleet{{GroupID: "run", Role: "run", ASGName: "run-asg"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "load AWS config") {
+		t.Fatalf("error = %v", err)
+	}
+}
 
 func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	ctx := context.Background()

@@ -35,35 +35,26 @@ func (s *Server) workerClaimWorkspaceOperation(w http.ResponseWriter, r *http.Re
 		writeError(w, badRequest(err))
 		return
 	}
-	orgID, err := parseWorkspaceOperationStringUUID("org_id", request.OrgID)
+	orgID, err := parseWorkspaceUUID("org_id", request.OrgID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	workspaceMountID, err := parseWorkspaceOperationStringUUID("workspace_mount_id", request.WorkspaceMountID)
+	workspaceMountID, err := parseWorkspaceUUID("workspace_mount_id", request.WorkspaceMountID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	runtimeInstanceToken := strings.TrimSpace(request.RuntimeInstanceToken)
-	if runtimeInstanceToken == "" {
-		writeError(w, badRequest(errors.New("runtime_instance_token is required")))
-		return
-	}
-	token, err := newWorkspaceOperationClaimToken()
+	token, err := token.GenerateOpaque(32)
 	if err != nil {
 		writeError(w, errors.New("generate workspace operation claim token"))
 		return
 	}
 	worker := workerFromContext(r.Context())
 	row, err := s.db.ClaimWorkspaceOperation(r.Context(), db.ClaimWorkspaceOperationParams{
-		WorkerInstanceID:     pgvalue.UUID(worker.WorkerInstanceID),
-		OrgID:                orgID,
-		WorkspaceMountID:     workspaceMountID,
-		RuntimeInstanceToken: runtimeInstanceToken,
-		ClaimToken:           token,
-		ClaimExpiresAt:       pgvalue.Timestamptz(time.Now().Add(ttl)),
-		MaxClaimAttempts:     maxWorkspaceOperationClaimAttempts,
+		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
+		OrgID: orgID, WorkspaceMountID: workspaceMountID, ClaimToken: token,
+		ClaimExpiresAt: pgvalue.Timestamptz(time.Now().Add(ttl)), MaxClaimAttempts: maxWorkspaceOperationClaimAttempts,
 	})
 	if isNoRows(err) {
 		writeJSON(w, http.StatusOK, api.WorkerWorkspaceOperationClaimResponse{})
@@ -83,22 +74,18 @@ func (s *Server) workerClaimWorkspaceOperation(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceOperationClaimResponse{Operation: &operation})
 }
 
-func newWorkspaceOperationClaimToken() (string, error) {
-	return token.GenerateOpaque(32)
-}
-
 func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
 	var request api.WorkerWorkspaceOperationStartRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace operation start request JSON: %w", err)))
 		return
 	}
-	orgID, err := parseWorkspaceOperationStringUUID("org_id", request.OrgID)
+	orgID, err := parseWorkspaceUUID("org_id", request.OrgID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	operationID, err := parseWorkspaceOperationStringUUID("operation_id", request.OperationID)
+	operationID, err := parseWorkspaceUUID("operation_id", request.OperationID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -113,6 +100,7 @@ func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Re
 		OrgID:            orgID,
 		ID:               operationID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 		ClaimToken:       claimToken,
 	})
 	if isNoRows(err) {
@@ -124,7 +112,7 @@ func (s *Server) workerStartWorkspaceOperation(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("start workspace operation"))
 		return
 	}
-	writeJSON(w, http.StatusOK, workspaceOperationResponse(startedWorkspaceOperation(row)))
+	writeJSON(w, http.StatusOK, workspaceOperationResponse(row))
 }
 
 func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http.Request) {
@@ -133,12 +121,12 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 		writeError(w, badRequest(fmt.Errorf("invalid worker workspace operation complete request JSON: %w", err)))
 		return
 	}
-	orgID, err := parseWorkspaceOperationStringUUID("org_id", request.OrgID)
+	orgID, err := parseWorkspaceUUID("org_id", request.OrgID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
-	operationID, err := parseWorkspaceOperationStringUUID("operation_id", request.OperationID)
+	operationID, err := parseWorkspaceUUID("operation_id", request.OperationID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -168,13 +156,15 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 		store := work.q
 		if len(failure) > 0 {
 			failed, failErr := store.FailWorkspaceOperation(r.Context(), db.FailWorkspaceOperationParams{
+				ReasonCode:       pgtype.Text{String: "worker_operation_failed", Valid: true},
 				OrgID:            orgID,
 				ID:               operationID,
 				WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+				WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 				ClaimToken:       claimToken,
 				Error:            failure,
 			})
-			row = failedWorkspaceOperation(failed)
+			row = failed
 			if failErr != nil {
 				return failErr
 			}
@@ -184,10 +174,11 @@ func (s *Server) workerCompleteWorkspaceOperation(w http.ResponseWriter, r *http
 			OrgID:            orgID,
 			ID:               operationID,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:      pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 			ClaimToken:       claimToken,
 			Result:           result,
 		})
-		row = completedWorkspaceOperation(completed)
+		row = completed
 		if completeErr != nil {
 			return completeErr
 		}
@@ -351,18 +342,6 @@ func completeWorkspacePtyResizeOperation(ctx context.Context, store workspacePri
 	return getErr
 }
 
-func startedWorkspaceOperation(row db.StartWorkspaceOperationRow) db.WorkspaceProcessOperation {
-	return db.WorkspaceProcessOperation(row)
-}
-
-func completedWorkspaceOperation(row db.CompleteWorkspaceOperationRow) db.WorkspaceProcessOperation {
-	return db.WorkspaceProcessOperation(row)
-}
-
-func failedWorkspaceOperation(row db.FailWorkspaceOperationRow) db.WorkspaceProcessOperation {
-	return db.WorkspaceProcessOperation(row)
-}
-
 func workerWorkspaceOperationResponse(row db.WorkspaceProcessOperation) (api.WorkerWorkspaceOperation, error) {
 	response := api.WorkerWorkspaceOperation{
 		WorkspaceOperationResponse: workspaceOperationResponse(row),
@@ -404,7 +383,7 @@ func workspaceOperationResponse(row db.WorkspaceProcessOperation) api.WorkspaceO
 	case db.WorkspaceOperationStateCompleted:
 		response.Result = optionalRawMessage(row.Result)
 	case db.WorkspaceOperationStateFailed, db.WorkspaceOperationStateCancelled, db.WorkspaceOperationStateLost, db.WorkspaceOperationStateExpired:
-		response.Error = optionalRawMessage(row.Error)
+		response.Error = optionalRawMessage(row.TerminalError)
 	}
 	if row.InstanceLeaseID.Valid {
 		response.InstanceLeaseID = pgvalue.MustUUIDValue(row.InstanceLeaseID).String()
@@ -429,10 +408,6 @@ func workspaceOperationClaimTTL(seconds int32) (time.Duration, error) {
 		return 0, fmt.Errorf("claim_expires_in_seconds must be %d or less", int(maxWorkspaceOperationClaimTTL/time.Second))
 	}
 	return ttl, nil
-}
-
-func parseWorkspaceOperationStringUUID(field string, raw string) (pgtype.UUID, error) {
-	return parseWorkspaceUUID(field, raw)
 }
 
 func normalizedOptionalJSONObject(raw json.RawMessage, label string) ([]byte, error) {

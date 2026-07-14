@@ -2,12 +2,94 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
+
+func TestManagedWorkspaceMountSessionClosesPhysicalSessionOnce(t *testing.T) {
+	closeErr := errors.New("close failed")
+	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{}), closeErr: closeErr}
+	session := newManagedWorkspaceMountSession(physical)
+
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- session.Close(context.Background()) }()
+	waitForTestSignal(t, physical.started, "physical close start")
+
+	releaseResult := make(chan error, 1)
+	go func() { releaseResult <- session.ReleaseCheckpointSource(context.Background()) }()
+	close(physical.release)
+
+	if err := waitForTestError(t, closeResult, "managed close"); !errors.Is(err, closeErr) {
+		t.Fatalf("managed close error = %v, want %v", err, closeErr)
+	}
+	if err := waitForTestError(t, releaseResult, "checkpoint release"); !errors.Is(err, closeErr) {
+		t.Fatalf("checkpoint release error = %v, want %v", err, closeErr)
+	}
+	if got := physical.closeCount.Load(); got != 1 {
+		t.Fatalf("physical close count = %d, want 1", got)
+	}
+	released, err := session.CheckpointReleaseResult(context.Background())
+	if !errors.Is(err, closeErr) {
+		t.Fatalf("checkpoint release result error = %v, want %v", err, closeErr)
+	}
+	if !released {
+		t.Fatal("checkpoint release was not recorded")
+	}
+}
+
+func TestManagedWorkspaceMountSessionDuplicateReleaseObservesContext(t *testing.T) {
+	physical := &blockingCloseSession{started: make(chan struct{}), release: make(chan struct{})}
+	session := newManagedWorkspaceMountSession(physical)
+
+	firstRelease := make(chan error, 1)
+	go func() { firstRelease <- session.ReleaseCheckpointSource(context.Background()) }()
+	waitForTestSignal(t, physical.started, "physical close start")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := session.ReleaseCheckpointSource(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("duplicate release error = %v, want context.Canceled", err)
+	}
+
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- session.Close(context.Background()) }()
+	close(physical.release)
+	if err := waitForTestError(t, firstRelease, "first checkpoint release"); err != nil {
+		t.Fatal(err)
+	}
+	if err := waitForTestError(t, closeResult, "managed close"); err != nil {
+		t.Fatal(err)
+	}
+	if got := physical.closeCount.Load(); got != 1 {
+		t.Fatalf("physical close count = %d, want 1", got)
+	}
+}
+
+func waitForTestSignal(t *testing.T, signal <-chan struct{}, name string) {
+	t.Helper()
+	select {
+	case <-signal:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+	}
+}
+
+func waitForTestError(t *testing.T, result <-chan error, name string) error {
+	t.Helper()
+	select {
+	case err := <-result:
+		return err
+	case <-time.After(5 * time.Second):
+		t.Fatalf("timed out waiting for %s", name)
+		return nil
+	}
+}
 
 func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentWorkspaceMount(t *testing.T) {
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
@@ -116,6 +198,32 @@ func (s *borrowedParentSession) Resume(context.Context) error {
 
 type countingReadWriteCloser struct {
 	closeCount int
+}
+
+type blockingCloseSession struct {
+	started    chan struct{}
+	release    chan struct{}
+	closeCount atomic.Int32
+	closeErr   error
+}
+
+func (s *blockingCloseSession) Stream() io.ReadWriteCloser { return discardReadWriteCloser{} }
+
+func (s *blockingCloseSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+	return discardReadWriteCloser{}, nil
+}
+
+func (s *blockingCloseSession) Wait(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (s *blockingCloseSession) Close(context.Context) error {
+	if s.closeCount.Add(1) == 1 {
+		close(s.started)
+	}
+	<-s.release
+	return s.closeErr
 }
 
 func (s *countingReadWriteCloser) Read([]byte) (int, error)    { return 0, io.EOF }

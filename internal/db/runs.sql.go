@@ -13,375 +13,148 @@ import (
 
 const cancelRun = `-- name: CancelRun :one
 WITH operation AS (
-    SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
-      FROM run_operations
-     WHERE run_operations.org_id = $1
-       AND run_operations.run_id = $2
-       AND run_operations.id = $3
-       AND run_operations.kind = 'cancel'
-       AND run_operations.status = 'requested'
+    SELECT id, public_id, org_id, project_id, environment_id, run_id, expected_run_state_version, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at FROM run_operations
+     WHERE run_operations.org_id = $2 AND run_operations.run_id = $3
+       AND run_operations.id = $1 AND run_operations.kind = 'cancel' AND run_operations.status = 'requested'
      FOR UPDATE
-),
-locked_session AS MATERIALIZED (
-    SELECT sessions.id
-      FROM runs
-      JOIN operation ON operation.org_id = runs.org_id
-                    AND operation.run_id = runs.id
-      JOIN sessions
-        ON sessions.org_id = runs.org_id
-       AND sessions.project_id = runs.project_id
-       AND sessions.environment_id = runs.environment_id
-       AND sessions.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.worker_group_id = $4
-       AND runs.id = $2
-     FOR UPDATE OF sessions
-),
-target AS (
-    SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
-      FROM runs
-      JOIN operation ON operation.org_id = runs.org_id
-                    AND operation.run_id = runs.id
-      LEFT JOIN locked_session
-        ON locked_session.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.worker_group_id = $4
-       AND runs.id = $2
-       AND locked_session.id = runs.session_id
-     FOR UPDATE
-),
-updated AS (
-    UPDATE runs
-       SET status = 'cancelled',
-           execution_status = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN 'pending_cancel'::run_execution_status
-             ELSE 'finished'::run_execution_status
-           END,
-           terminal_outcome = 'cancelled',
-           current_run_lease_id = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.current_run_lease_id
-             ELSE NULL
-           END,
-           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-           dispatch_generation = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.dispatch_generation
-             ELSE runs.dispatch_generation + 1
-           END,
-           state_version = runs.state_version + 1,
-           active_elapsed_ms = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.active_elapsed_ms
-             ELSE LEAST(
-               runs.active_elapsed_ms
-               + CASE
-                   WHEN runs.active_started_at IS NULL THEN 0
-                   ELSE GREATEST(floor(extract(epoch from (now() - runs.active_started_at)) * 1000)::bigint, 0)
-                 END,
-               runs.max_active_duration_ms
-             )
-           END,
-           active_started_at = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.active_started_at
-             ELSE NULL
-           END,
-           finished_at = CASE
-             WHEN target.execution_status = 'executing' AND NOT $5::bool THEN runs.finished_at
-             ELSE COALESCE(runs.finished_at, now())
-           END,
-           updated_at = now()
-      FROM target
-     WHERE runs.org_id = target.org_id
-       AND runs.id = target.id
-       AND (
-           target.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired')
-           OR (
-               target.status = 'cancelled'
-               AND target.execution_status = 'pending_cancel'
-               AND $5::bool
-           )
-       )
-    RETURNING runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, target.current_run_lease_id AS previous_run_lease_id
-),
-cancelled_run_waits AS (
-    UPDATE run_waits
-       SET state = 'cancelled',
-           cancelled_at = now(),
-           updated_at = now()
-      FROM updated
-     WHERE run_waits.org_id = updated.org_id
-       AND run_waits.run_id = updated.id
-       AND run_waits.state IN ('hot_waiting', 'checkpointing', 'checkpointed_waiting', 'resuming')
-    RETURNING run_waits.org_id, run_waits.wait_id
-),
-cancelled_waits AS (
-    UPDATE waits
-       SET state = 'cancelled',
-           completed_at = COALESCE(waits.completed_at, now()),
-           updated_at = now()
-      FROM cancelled_run_waits
-     WHERE waits.org_id = cancelled_run_waits.org_id
-       AND waits.id = cancelled_run_waits.wait_id
-       AND waits.state = 'pending'
-    RETURNING waits.id
-),
-terminal_session_runs AS (
-    UPDATE session_runs
-       SET ended_at = now()
-      FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
-       AND session_runs.org_id = updated.org_id
-       AND session_runs.project_id = updated.project_id
-       AND session_runs.environment_id = updated.environment_id
-       AND session_runs.session_id = updated.session_id
-       AND session_runs.run_id = updated.id
-    RETURNING session_runs.id
-),
-terminal_sessions AS (
-    SELECT updated.session_id AS id
-      FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
-),
-cancelled_run_lease AS (
+), target AS (
+    SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at FROM runs, operation
+     WHERE runs.org_id = operation.org_id AND runs.id = operation.run_id
+       AND runs.state_version = operation.expected_run_state_version
+       AND runs.status NOT IN ('succeeded','failed','cancelled','expired')
+     FOR UPDATE OF runs
+), cancelled_lease AS (
     UPDATE run_leases
-       SET status = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN 'cancelled'::run_lease_status ELSE run_leases.status END,
-           released_at = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN COALESCE(run_leases.released_at, now()) ELSE run_leases.released_at END,
-           renewed_at = now(),
-           active_duration_ms = CASE WHEN updated.execution_status <> 'pending_cancel' OR $5::bool THEN updated.active_elapsed_ms ELSE run_leases.active_duration_ms END
-      FROM updated
-     WHERE run_leases.org_id = updated.org_id
-       AND run_leases.run_id = updated.id
-       AND run_leases.id = updated.previous_run_lease_id
-       AND run_leases.status IN ('leased', 'running')
-    RETURNING run_leases.id, run_leases.org_id, run_leases.queue_class, run_leases.run_id, run_leases.worker_instance_id, run_leases.worker_group_id, run_leases.project_id, run_leases.environment_id, run_leases.dispatch_message_id, run_leases.dispatch_generation, run_leases.dispatch_lease_id, run_leases.dispatch_attempt, run_leases.attempt_number, run_leases.queue_name, run_leases.concurrency_key, run_leases.status, run_leases.lease_expires_at, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.active_duration_ms, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.restore_run_checkpoint_id, run_leases.leased_at, run_leases.started_at, run_leases.renewed_at, run_leases.released_at, run_leases.lost_at
-),
-released_workspace_leases AS (
+       SET state = 'cancelled', terminal_at = now(),
+           terminal_reason_code = 'cancel_operation', updated_at = now()
+      FROM target
+     WHERE run_leases.org_id = target.org_id AND run_leases.run_id = target.id
+       AND run_leases.id = target.current_run_lease_id
+       AND run_leases.state IN ('assigned','starting','running','checkpointing')
+    RETURNING run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.task_attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.network_slot_id, run_leases.network_slot_generation, run_leases.queue_name, run_leases.queue_class, run_leases.concurrency_key, run_leases.queue_concurrency_limit, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes, run_leases.requested_scratch_bytes, run_leases.requested_execution_slots, run_leases.resource_snapshot, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at
+), released_workspace_leases AS (
     UPDATE workspace_leases
-       SET state = 'released',
-           released_at = COALESCE(released_at, now()),
-           renewed_at = now(),
-           updated_at = now()
-      FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
-       AND workspace_leases.org_id = updated.org_id
-       AND workspace_leases.owner_run_id = updated.id
+       SET state = 'released', released_at = now(), terminal_at = now(),
+           terminal_reason_code = 'run_cancelled', updated_at = now()
+      FROM target
+     WHERE workspace_leases.org_id = target.org_id
+       AND workspace_leases.owner_run_id = target.id
        AND workspace_leases.lease_kind = 'write'
-       AND workspace_leases.state = 'active'
-       AND workspace_leases.released_at IS NULL
+       AND workspace_leases.state IN ('active','releasing')
     RETURNING workspace_leases.id
-),
-invalidated_run_checkpoints AS (
-    UPDATE run_checkpoints
-       SET state = 'invalid',
-           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-           invalidated_at = now()
-      FROM updated
-     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
-       AND run_checkpoints.org_id = updated.org_id
-       AND run_checkpoints.run_id = updated.id
-       AND run_checkpoints.state = 'creating'
-    RETURNING run_checkpoints.id
-),
-failed_run_checkpoint_restores AS (
-    UPDATE run_checkpoint_restores
-       SET status = 'failed',
-           error_message = COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-           finished_at = COALESCE(run_checkpoint_restores.finished_at, now()),
-           updated_at = now()
-      FROM updated
-      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
-                              AND cancelled_run_lease.run_id = updated.id
-                              AND cancelled_run_lease.id = updated.previous_run_lease_id
-     WHERE (updated.execution_status <> 'pending_cancel' OR $5::bool)
-       AND run_checkpoint_restores.org_id = updated.org_id
-       AND run_checkpoint_restores.run_id = updated.id
-       AND run_checkpoint_restores.run_lease_id = cancelled_run_lease.id
-       AND run_checkpoint_restores.run_checkpoint_id = cancelled_run_lease.restore_run_checkpoint_id
-       AND run_checkpoint_restores.status = 'restoring'
-    RETURNING run_checkpoint_restores.id
-),
-active_time_delta AS (
-    SELECT GREATEST(
-               cancelled_run_lease.active_duration_ms
-               - COALESCE((
-                   SELECT SUM(meter_events.quantity)::bigint
-                     FROM meter_events
-                    WHERE meter_events.org_id = updated.org_id
-                      AND meter_events.run_id = updated.id
-                      AND meter_events.meter = 'active_time'
-               ), 0),
-               0
-           )::bigint AS quantity
-      FROM updated
-      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
-                              AND cancelled_run_lease.run_id = updated.id
-                              AND cancelled_run_lease.id = updated.previous_run_lease_id
-     WHERE updated.execution_status <> 'pending_cancel' OR $5::bool
-),
-active_time_meter_event AS (
-    INSERT INTO meter_events (org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, details, idempotency_key)
-    SELECT updated.org_id,
-           updated.worker_group_id,
-           updated.project_id,
-           updated.environment_id,
-           'run_lease',
-           cancelled_run_lease.id,
-           updated.id,
-           cancelled_run_lease.attempt_number,
-           cancelled_run_lease.trace_id,
-           cancelled_run_lease.span_id,
-           'active_time',
-           active_time_delta.quantity,
-           'ms',
-           now(),
-           jsonb_build_object('phase', 'cancelled', 'force', $5::bool),
-           'active_time:' || cancelled_run_lease.id::text || ':cancelled'
-      FROM updated
-      JOIN cancelled_run_lease ON cancelled_run_lease.org_id = updated.org_id
-                              AND cancelled_run_lease.run_id = updated.id
-                              AND cancelled_run_lease.id = updated.previous_run_lease_id
-     JOIN active_time_delta ON true
-    WHERE active_time_delta.quantity > 0
-    ON CONFLICT DO NOTHING
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, source_type, source_id, run_id, attempt_number, trace_id, span_id, meter, quantity, unit, measured_to, occurred_at, details, idempotency_key, created_at
-),
-active_time_meter_event_outbox AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, attempt_number, trace_id, span_id, kind, payload,
-        idempotency_key, observed_at
+), requested_runtime_close AS (
+    UPDATE runtime_instances
+       SET desired_state = 'closed', desired_version = desired_version + 1,
+           desired_at = now(), desired_reason = 'run_cancelled', updated_at = now()
+      FROM cancelled_lease
+     WHERE runtime_instances.org_id = cancelled_lease.org_id
+       AND runtime_instances.id = cancelled_lease.runtime_instance_id
+       AND runtime_instances.worker_group_id = cancelled_lease.worker_group_id
+       AND runtime_instances.worker_instance_id = cancelled_lease.worker_instance_id
+       AND runtime_instances.worker_epoch = cancelled_lease.worker_epoch
+       AND runtime_instances.desired_state <> 'closed'
+       AND runtime_instances.observed_state IN ('allocated','preparing','ready')
+    RETURNING runtime_instances.id
+), cancelled_run_waits AS (
+    UPDATE run_waits
+       SET state = 'cancelled', cancelled_at = now(), terminal_at = now(),
+           terminal_reason_code = 'run_cancelled', updated_at = now()
+      FROM target
+     WHERE run_waits.org_id = target.org_id AND run_waits.run_id = target.id
+       AND run_waits.state IN ('hot_waiting','checkpointing','checkpointed_waiting','resuming')
+    RETURNING run_waits.id
+), cancelled AS (
+    UPDATE runs SET status = 'cancelled', execution_status = 'finished',
+                    terminal_outcome = 'cancelled', state_version = runs.state_version + 1,
+                    current_run_lease_id = NULL, active_started_at = NULL,
+                    active_elapsed_ms = runs.active_elapsed_ms + COALESCE((
+                        SELECT GREATEST((extract(epoch FROM (now() - cancelled_lease.started_at)) * 1000)::bigint, 0)
+                          FROM cancelled_lease WHERE cancelled_lease.started_at IS NOT NULL
+                    ), 0),
+                    finished_at = COALESCE(runs.finished_at, now()), updated_at = now()
+      FROM target
+     WHERE runs.org_id = target.org_id AND runs.id = target.id
+    RETURNING runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
+), meter_event AS (
+    INSERT INTO meter_events (
+        org_id, project_id, environment_id, run_id, run_lease_id, attempt_number,
+        trace_id, span_id, meter, quantity, unit, measured_from, measured_to,
+        details, idempotency_key, idempotency_fingerprint
     )
-    SELECT active_time_meter_event.org_id,
-           active_time_meter_event.worker_group_id,
-           'meter_event',
-           active_time_meter_event.source_type,
-           active_time_meter_event.source_id,
-           active_time_meter_event.project_id,
-           active_time_meter_event.environment_id,
-           active_time_meter_event.run_id,
-           active_time_meter_event.attempt_number,
-           active_time_meter_event.trace_id,
-           active_time_meter_event.span_id,
-           active_time_meter_event.meter,
-           active_time_meter_event.details,
-           active_time_meter_event.idempotency_key,
-           active_time_meter_event.occurred_at
-      FROM active_time_meter_event
-    ON CONFLICT DO NOTHING
-    RETURNING id
-),
-snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, run_lease_id, operation_id, previous_version, transition, reason)
-    SELECT updated.org_id,
-           updated.worker_group_id,
-           updated.id,
-           updated.state_version,
-           updated.status,
-           updated.execution_status,
-           updated.terminal_outcome,
-           updated.current_attempt_number,
-           updated.previous_run_lease_id,
-           $3,
-           updated.state_version - 1,
-           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
-           jsonb_build_object(
-               'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-               'force', $5::bool
-           )
-      FROM updated
-    RETURNING run_state_snapshots.run_id
-),
-event AS (
+    SELECT cancelled.org_id, cancelled.project_id, cancelled.environment_id,
+           cancelled.id, cancelled_lease.id, cancelled_lease.task_attempt_number,
+           cancelled_lease.trace_id, cancelled_lease.span_id, 'active_time',
+           GREATEST((extract(epoch FROM (now() - cancelled_lease.started_at)) * 1000)::bigint, 0),
+           'milliseconds', cancelled_lease.started_at, now(),
+           jsonb_build_object('transition','cancelled','cpu_millis',cancelled_lease.requested_cpu_millis,
+               'memory_bytes',cancelled_lease.requested_memory_bytes,
+               'workload_disk_bytes',cancelled_lease.requested_workload_disk_bytes,
+               'scratch_bytes',cancelled_lease.requested_scratch_bytes,
+               'execution_slots',cancelled_lease.requested_execution_slots),
+           'cancel:' || cancelled_lease.id::text,
+           jsonb_build_object('quantity',GREATEST((extract(epoch FROM (now() - cancelled_lease.started_at)) * 1000)::bigint, 0),
+               'unit','milliseconds','measured_from',cancelled_lease.started_at,'measured_to',now(),
+               'transition','cancelled','cpu_millis',cancelled_lease.requested_cpu_millis,
+               'memory_bytes',cancelled_lease.requested_memory_bytes,
+               'workload_disk_bytes',cancelled_lease.requested_workload_disk_bytes,
+               'scratch_bytes',cancelled_lease.requested_scratch_bytes,
+               'execution_slots',cancelled_lease.requested_execution_slots)::text
+      FROM cancelled, cancelled_lease
+     WHERE cancelled_lease.started_at IS NOT NULL AND cancelled_lease.started_at < now()
+    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
+     WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
+    RETURNING id, org_id, project_id, environment_id, run_id, run_lease_id, deployment_id, deployment_build_lease_id, attempt_number, source_type, source_id, trace_id, span_id, meter, quantity, unit, measured_from, measured_to, occurred_at, details, idempotency_key, idempotency_fingerprint, created_at
+), meter_outbox AS (
     INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
-        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
-        kind, message, payload, redaction_class, snapshot_version, observed_at
+        org_id, stream_kind, source_kind, source_id, project_id, environment_id,
+        run_id, run_lease_id, meter_event_id, attempt_number, trace_id, span_id,
+        kind, payload, idempotency_key, observed_at
     )
-    SELECT updated.org_id,
-           updated.worker_group_id,
-           'event',
-           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
-           COALESCE(NULL::uuid, updated.id),
-           updated.project_id,
-           updated.environment_id,
-           updated.id,
-           NULL::uuid,
-           updated.previous_run_lease_id,
-           updated.current_attempt_number,
-           updated.trace_id,
-           updated.root_span_id,
-           NULL::text,
-           '00-' || updated.trace_id || '-' || updated.root_span_id || '-01',
-           COALESCE(NULLIF('lifecycle', ''), 'system'),
-           COALESCE(NULLIF('warn', ''), 'info'),
-           COALESCE(NULLIF('control', ''), 'control'),
-           CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END,
-           COALESCE(CASE WHEN updated.execution_status = 'pending_cancel' THEN 'run.cancel_requested' ELSE 'run.cancelled' END, ''),
-           COALESCE(jsonb_build_object(
-              'reason', COALESCE(NULLIF($6::text, ''), 'run cancelled'),
-              'force', $5::bool
-          ), '{}'::jsonb),
-           COALESCE(NULLIF('internal', ''), 'internal'),
-           updated.state_version,
-           now()
-      FROM updated
-      JOIN snapshot ON true
-    RETURNING id
-),
-operation_applied AS (
-    UPDATE run_operations
-       SET status = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN 'applied'::run_operation_status ELSE 'rejected'::run_operation_status END,
-           result = CASE
-             WHEN EXISTS (SELECT 1 FROM updated)
-             THEN jsonb_build_object('run_id', $2::uuid, 'status', 'cancelled')
-             ELSE jsonb_build_object('run_id', $2::uuid, 'status', (SELECT status FROM target)::text, 'reason', 'run is already terminal')
-           END,
-           applied_at = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN now() ELSE run_operations.applied_at END,
-           rejected_at = CASE WHEN EXISTS (SELECT 1 FROM updated) THEN run_operations.rejected_at ELSE now() END
-      FROM operation
-     WHERE run_operations.id = operation.id
-       AND run_operations.org_id = operation.org_id
-       AND run_operations.status = 'requested'
-    RETURNING run_operations.id
+    SELECT org_id, 'meter_event', source_type, source_id, project_id, environment_id,
+           run_id, run_lease_id, id, attempt_number, trace_id, span_id,
+           meter, details, idempotency_key, occurred_at
+      FROM meter_event
+    ON CONFLICT DO NOTHING
+    RETURNING meter_event_id
+), snapshot AS (
+    INSERT INTO run_state_snapshots
+        (org_id, run_id, version, status, execution_status, terminal_outcome,
+         attempt_number, run_lease_id, operation_id, previous_version,
+         transition, reason)
+    SELECT cancelled.org_id, cancelled.id, cancelled.state_version,
+           cancelled.status, cancelled.execution_status, cancelled.terminal_outcome,
+           cancelled.current_attempt_number, target.current_run_lease_id,
+           operation.id, cancelled.state_version - 1, 'run.cancelled',
+           jsonb_build_object('message', operation.reason)
+      FROM cancelled JOIN operation ON operation.run_id = cancelled.id
+                     JOIN target ON target.id = cancelled.id
+     WHERE NOT EXISTS (SELECT 1 FROM meter_event) OR EXISTS (SELECT 1 FROM meter_outbox)
+    RETURNING run_id
 )
-SELECT updated.id, updated.public_id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.workspace_id, updated.workspace_mount_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.session_id, updated.schedule_id, updated.schedule_instance_id, updated.scheduled_at, updated.status, updated.execution_status, updated.terminal_outcome, updated.payload, updated.output, updated.metadata, updated.tags, updated.locked_retry_policy, updated.queue_class, updated.queue_name, updated.queue_concurrency_limit, updated.concurrency_key, updated.priority, updated.queue_timestamp, updated.ttl, updated.queued_expires_at, updated.dispatch_generation, updated.dispatch_attempt_count, updated.last_enqueue_error, updated.last_enqueued_at, updated.requested_milli_cpu, updated.requested_memory_mib, updated.requested_disk_mib, updated.requested_execution_slots, updated.runtime_identity_id, updated.runtime_arch, updated.runtime_abi, updated.kernel_digest, updated.initramfs_digest, updated.rootfs_digest, updated.cni_profile, updated.network_policy, updated.placement, updated.max_active_duration_ms, updated.active_elapsed_ms, updated.active_started_at, updated.trace_id, updated.root_span_id, updated.state_version, updated.current_attempt_number, updated.current_run_lease_id, updated.latest_run_checkpoint_id, updated.exit_code, updated.error_message, updated.created_at, updated.updated_at, updated.started_at, updated.finished_at, updated.previous_run_lease_id
-  FROM updated
-  JOIN operation_applied ON true
-  JOIN event ON true
- WHERE (SELECT count(*) FROM cancelled_run_waits) >= 0
-   AND (SELECT count(*) FROM terminal_session_runs) >= 0
-   AND (SELECT count(*) FROM terminal_sessions) >= 0
-   AND (SELECT count(*) FROM cancelled_run_lease) >= 0
-   AND (SELECT count(*) FROM released_workspace_leases) >= 0
-   AND (SELECT count(*) FROM invalidated_run_checkpoints) >= 0
-   AND (SELECT count(*) FROM failed_run_checkpoint_restores) >= 0
-   AND (SELECT count(*) FROM active_time_meter_event_outbox) >= 0
-UNION ALL
-SELECT target.id, target.public_id, target.org_id, target.worker_group_id, target.project_id, target.environment_id, target.deployment_id, target.deployment_task_id, target.workspace_id, target.workspace_mount_id, target.deployment_version, target.api_version, target.sdk_version, target.cli_version, target.task_id, target.session_id, target.schedule_id, target.schedule_instance_id, target.scheduled_at, target.status, target.execution_status, target.terminal_outcome, target.payload, target.output, target.metadata, target.tags, target.locked_retry_policy, target.queue_class, target.queue_name, target.queue_concurrency_limit, target.concurrency_key, target.priority, target.queue_timestamp, target.ttl, target.queued_expires_at, target.dispatch_generation, target.dispatch_attempt_count, target.last_enqueue_error, target.last_enqueued_at, target.requested_milli_cpu, target.requested_memory_mib, target.requested_disk_mib, target.requested_execution_slots, target.runtime_identity_id, target.runtime_arch, target.runtime_abi, target.kernel_digest, target.initramfs_digest, target.rootfs_digest, target.cni_profile, target.network_policy, target.placement, target.max_active_duration_ms, target.active_elapsed_ms, target.active_started_at, target.trace_id, target.root_span_id, target.state_version, target.current_attempt_number, target.current_run_lease_id, target.latest_run_checkpoint_id, target.exit_code, target.error_message, target.created_at, target.updated_at, target.started_at, target.finished_at, NULL::uuid AS previous_run_lease_id
-  FROM target
-  JOIN operation_applied ON true
- WHERE NOT EXISTS (SELECT 1 FROM updated)
+UPDATE run_operations SET status = 'applied', applied_at = now(),
+                          result = jsonb_build_object('state_version', cancelled.state_version)
+  FROM cancelled, snapshot
+ WHERE run_operations.id = $1
+   AND snapshot.run_id = cancelled.id
+RETURNING cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.deployment_id, cancelled.deployment_task_id, cancelled.workspace_id, cancelled.deployment_version, cancelled.api_version, cancelled.sdk_version, cancelled.cli_version, cancelled.task_id, cancelled.session_id, cancelled.schedule_id, cancelled.schedule_instance_id, cancelled.scheduled_at, cancelled.status, cancelled.execution_status, cancelled.terminal_outcome, cancelled.payload, cancelled.output, cancelled.metadata, cancelled.tags, cancelled.locked_retry_policy, cancelled.queue_class, cancelled.queue_name, cancelled.queue_concurrency_limit, cancelled.concurrency_key, cancelled.priority, cancelled.queue_timestamp, cancelled.ttl, cancelled.queued_expires_at, cancelled.requested_milli_cpu, cancelled.requested_memory_mib, cancelled.requested_disk_mib, cancelled.requested_execution_slots, cancelled.runtime_identity_id, cancelled.runtime_arch, cancelled.runtime_abi, cancelled.kernel_digest, cancelled.initramfs_digest, cancelled.rootfs_digest, cancelled.cni_profile, cancelled.network_policy, cancelled.resource_placement_policy, cancelled.max_active_duration_ms, cancelled.active_elapsed_ms, cancelled.active_started_at, cancelled.trace_id, cancelled.root_span_id, cancelled.state_version, cancelled.current_attempt_number, cancelled.current_run_lease_id, cancelled.latest_run_checkpoint_id, cancelled.exit_code, cancelled.error_message, cancelled.created_at, cancelled.updated_at, cancelled.started_at, cancelled.finished_at
 `
 
 type CancelRunParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	RunID         pgtype.UUID `json:"run_id"`
-	OperationID   pgtype.UUID `json:"operation_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-	Force         bool        `json:"force"`
-	Reason        string      `json:"reason"`
+	OperationID pgtype.UUID `json:"operation_id"`
+	OrgID       pgtype.UUID `json:"org_id"`
+	RunID       pgtype.UUID `json:"run_id"`
 }
 
 type CancelRunRow struct {
 	ID                      pgtype.UUID            `json:"id"`
 	PublicID                string                 `json:"public_id"`
 	OrgID                   pgtype.UUID            `json:"org_id"`
-	WorkerGroupID           string                 `json:"worker_group_id"`
 	ProjectID               pgtype.UUID            `json:"project_id"`
 	EnvironmentID           pgtype.UUID            `json:"environment_id"`
 	DeploymentID            pgtype.UUID            `json:"deployment_id"`
 	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
 	WorkspaceID             pgtype.UUID            `json:"workspace_id"`
-	WorkspaceMountID        pgtype.UUID            `json:"workspace_mount_id"`
 	DeploymentVersion       string                 `json:"deployment_version"`
 	ApiVersion              string                 `json:"api_version"`
 	SdkVersion              string                 `json:"sdk_version"`
@@ -407,10 +180,6 @@ type CancelRunRow struct {
 	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
 	Ttl                     string                 `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
-	DispatchGeneration      int64                  `json:"dispatch_generation"`
-	DispatchAttemptCount    int32                  `json:"dispatch_attempt_count"`
-	LastEnqueueError        string                 `json:"last_enqueue_error"`
-	LastEnqueuedAt          pgtype.Timestamptz     `json:"last_enqueued_at"`
 	RequestedMilliCpu       int64                  `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
 	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
@@ -423,7 +192,7 @@ type CancelRunRow struct {
 	RootfsDigest            string                 `json:"rootfs_digest"`
 	CniProfile              string                 `json:"cni_profile"`
 	NetworkPolicy           []byte                 `json:"network_policy"`
-	Placement               []byte                 `json:"placement"`
+	ResourcePlacementPolicy []byte                 `json:"resource_placement_policy"`
 	MaxActiveDurationMs     int64                  `json:"max_active_duration_ms"`
 	ActiveElapsedMs         int64                  `json:"active_elapsed_ms"`
 	ActiveStartedAt         pgtype.Timestamptz     `json:"active_started_at"`
@@ -439,30 +208,20 @@ type CancelRunRow struct {
 	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
 	StartedAt               pgtype.Timestamptz     `json:"started_at"`
 	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
-	PreviousRunLeaseID      pgtype.UUID            `json:"previous_run_lease_id"`
 }
 
 func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRunRow, error) {
-	row := q.db.QueryRow(ctx, cancelRun,
-		arg.OrgID,
-		arg.RunID,
-		arg.OperationID,
-		arg.WorkerGroupID,
-		arg.Force,
-		arg.Reason,
-	)
+	row := q.db.QueryRow(ctx, cancelRun, arg.OperationID, arg.OrgID, arg.RunID)
 	var i CancelRunRow
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
 		&i.WorkspaceID,
-		&i.WorkspaceMountID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -488,10 +247,6 @@ func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRun
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -504,7 +259,7 @@ func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRun
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
-		&i.Placement,
+		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
@@ -520,23 +275,21 @@ func (q *Queries) CancelRun(ctx context.Context, arg CancelRunParams) (CancelRun
 		&i.UpdatedAt,
 		&i.StartedAt,
 		&i.FinishedAt,
-		&i.PreviousRunLeaseID,
 	)
 	return i, err
 }
 
 const countScopedRunsByStatus = `-- name: CountScopedRunsByStatus :one
-SELECT count(*) FILTER (WHERE status = 'queued') AS queued,
-       count(*) FILTER (WHERE status = 'running') AS running,
-       count(*) FILTER (WHERE status = 'waiting') AS waiting,
-       count(*) FILTER (WHERE status = 'succeeded') AS succeeded,
-       count(*) FILTER (WHERE status = 'failed') AS failed,
-       count(*) FILTER (WHERE status = 'cancelled') AS cancelled,
-       count(*) FILTER (WHERE status = 'expired') AS expired
-FROM runs
-WHERE runs.org_id = $1
-  AND runs.project_id = $2
-  AND runs.environment_id = $3
+SELECT count(*) FILTER (WHERE status = 'queued')::bigint AS queued,
+       count(*) FILTER (WHERE status = 'running')::bigint AS running,
+       count(*) FILTER (WHERE status = 'waiting')::bigint AS waiting,
+       count(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
+       count(*) FILTER (WHERE status = 'failed')::bigint AS failed,
+       count(*) FILTER (WHERE status = 'cancelled')::bigint AS cancelled,
+       count(*) FILTER (WHERE status = 'expired')::bigint AS expired
+  FROM runs
+ WHERE org_id = $1 AND project_id = $2
+   AND environment_id = $3
 `
 
 type CountScopedRunsByStatusParams struct {
@@ -572,51 +325,25 @@ func (q *Queries) CountScopedRunsByStatus(ctx context.Context, arg CountScopedRu
 
 const createRunOperation = `-- name: CreateRunOperation :one
 INSERT INTO run_operations (
-    id,
-    public_id,
-    org_id,
-    worker_group_id,
-    project_id,
-    environment_id,
-    run_id,
-    kind,
-    actor_kind,
-    actor_id,
-    api_key_id,
-    reason,
-    request,
-    idempotency_key
-) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9,
-    $10,
-    $11,
-    $12,
-    coalesce($13::jsonb, '{}'::jsonb),
-    $14
+    id, public_id, org_id, project_id, environment_id, run_id,
+    expected_run_state_version, kind, actor_kind, actor_id, api_key_id,
+    reason, request, idempotency_key
 )
+SELECT $1, $2, runs.org_id, runs.project_id,
+       runs.environment_id, runs.id, runs.state_version, $3,
+       $4, $5, $6,
+       $7, $8, $9
+ FROM runs
+ WHERE runs.org_id = $10 AND runs.id = $11
 ON CONFLICT (org_id, project_id, environment_id, run_id, kind, idempotency_key)
-WHERE idempotency_key <> ''
-DO UPDATE
-   SET request = run_operations.request
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+    WHERE idempotency_key <> ''
+DO UPDATE SET idempotency_key = excluded.idempotency_key
+RETURNING id, public_id, org_id, project_id, environment_id, run_id, expected_run_state_version, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
 `
 
 type CreateRunOperationParams struct {
 	ID             pgtype.UUID      `json:"id"`
 	PublicID       string           `json:"public_id"`
-	OrgID          pgtype.UUID      `json:"org_id"`
-	WorkerGroupID  string           `json:"worker_group_id"`
-	ProjectID      pgtype.UUID      `json:"project_id"`
-	EnvironmentID  pgtype.UUID      `json:"environment_id"`
-	RunID          pgtype.UUID      `json:"run_id"`
 	Kind           RunOperationKind `json:"kind"`
 	ActorKind      string           `json:"actor_kind"`
 	ActorID        string           `json:"actor_id"`
@@ -624,17 +351,14 @@ type CreateRunOperationParams struct {
 	Reason         string           `json:"reason"`
 	Request        []byte           `json:"request"`
 	IdempotencyKey string           `json:"idempotency_key"`
+	OrgID          pgtype.UUID      `json:"org_id"`
+	RunID          pgtype.UUID      `json:"run_id"`
 }
 
 func (q *Queries) CreateRunOperation(ctx context.Context, arg CreateRunOperationParams) (RunOperation, error) {
 	row := q.db.QueryRow(ctx, createRunOperation,
 		arg.ID,
 		arg.PublicID,
-		arg.OrgID,
-		arg.WorkerGroupID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RunID,
 		arg.Kind,
 		arg.ActorKind,
 		arg.ActorID,
@@ -642,16 +366,18 @@ func (q *Queries) CreateRunOperation(ctx context.Context, arg CreateRunOperation
 		arg.Reason,
 		arg.Request,
 		arg.IdempotencyKey,
+		arg.OrgID,
+		arg.RunID,
 	)
 	var i RunOperation
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
+		&i.ExpectedRunStateVersion,
 		&i.Kind,
 		&i.Status,
 		&i.ActorKind,
@@ -669,257 +395,112 @@ func (q *Queries) CreateRunOperation(ctx context.Context, arg CreateRunOperation
 }
 
 const createScopedRun = `-- name: CreateScopedRun :one
-WITH run_scope AS MATERIALIZED (
-    SELECT sessions.org_id,
-           sessions.worker_group_id,
-           sessions.project_id,
-           sessions.environment_id,
-           sessions.id AS session_id,
-           sessions.workspace_id
+WITH scope AS (
+    SELECT sessions.org_id, sessions.project_id, sessions.environment_id,
+           sessions.id AS session_id, sessions.workspace_id, workspaces.region_id
       FROM sessions
-      JOIN workspaces
-        ON workspaces.org_id = sessions.org_id
-       AND workspaces.project_id = sessions.project_id
-       AND workspaces.environment_id = sessions.environment_id
-       AND workspaces.id = sessions.workspace_id
-       AND workspaces.worker_group_id = sessions.worker_group_id
-      JOIN worker_groups
-        ON worker_groups.id = sessions.worker_group_id
-       AND (
-           worker_groups.state = 'active'
-           OR (
-               $1::boolean
-               AND worker_groups.state = 'draining'
-           )
-       )
-     WHERE sessions.org_id = $2
-       AND sessions.project_id = $3
-       AND sessions.environment_id = $4
-       AND sessions.id = $5
-	       AND sessions.workspace_id = $6
-	),
-deployment_task AS MATERIALIZED (
-    SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.placement, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at
+      JOIN workspaces ON workspaces.org_id = sessions.org_id
+                     AND workspaces.project_id = sessions.project_id
+                     AND workspaces.environment_id = sessions.environment_id
+                     AND workspaces.id = sessions.workspace_id
+     WHERE sessions.org_id = $1 AND sessions.project_id = $2
+       AND sessions.environment_id = $3
+       AND sessions.id = $4 AND sessions.workspace_id = $5
+), task AS (
+    SELECT deployment_tasks.id, deployment_tasks.public_id, deployment_tasks.org_id, deployment_tasks.project_id, deployment_tasks.environment_id, deployment_tasks.deployment_id, deployment_tasks.deployment_sandbox_id, deployment_tasks.task_id, deployment_tasks.file_path, deployment_tasks.export_name, deployment_tasks.handler_entrypoint, deployment_tasks.bundle_artifact_id, deployment_tasks.bundle_format_version, deployment_tasks.requested_milli_cpu, deployment_tasks.requested_memory_mib, deployment_tasks.requested_disk_mib, deployment_tasks.requested_execution_slots, deployment_tasks.secret_declarations, deployment_tasks.resource_requirements, deployment_tasks.network_policy, deployment_tasks.resource_placement_policy, deployment_tasks.schedule_declarations, deployment_tasks.queue_name, deployment_tasks.queue_concurrency_limit, deployment_tasks.ttl, deployment_tasks.max_active_duration_ms, deployment_tasks.retry_policy, deployment_tasks.created_at,
+           deployment_sandboxes.runtime_abi AS sandbox_runtime_abi,
+           deployment_sandboxes.rootfs_digest AS sandbox_rootfs_digest
       FROM deployment_tasks
-      JOIN deployments
-        ON deployments.org_id = deployment_tasks.org_id
-       AND deployments.project_id = deployment_tasks.project_id
-       AND deployments.environment_id = deployment_tasks.environment_id
-       AND deployments.id = deployment_tasks.deployment_id
-       AND deployments.status = 'deployed'
-     WHERE deployment_tasks.org_id = $2
-       AND deployment_tasks.project_id = $3
-       AND deployment_tasks.environment_id = $4
-       AND deployment_tasks.deployment_id = $7
-       AND deployment_tasks.id = $8
-       AND deployment_tasks.task_id = $9
-),
-runtime_identity AS MATERIALIZED (
-    SELECT runtime_identities.id AS runtime_identity_id,
-           runtime_identities.runtime_arch,
-           runtime_identities.runtime_abi,
-           runtime_identities.kernel_digest,
-           runtime_identities.initramfs_digest,
-           runtime_identities.rootfs_digest,
-           runtime_identities.cni_profile
-      FROM run_scope
+      JOIN deployments ON deployments.org_id = deployment_tasks.org_id
+                      AND deployments.project_id = deployment_tasks.project_id
+                      AND deployments.environment_id = deployment_tasks.environment_id
+                      AND deployments.id = deployment_tasks.deployment_id
+                      AND deployments.status = 'deployed'
+      JOIN deployment_sandboxes
+        ON deployment_sandboxes.org_id = deployment_tasks.org_id
+       AND deployment_sandboxes.project_id = deployment_tasks.project_id
+       AND deployment_sandboxes.environment_id = deployment_tasks.environment_id
+       AND deployment_sandboxes.deployment_id = deployment_tasks.deployment_id
+       AND deployment_sandboxes.id = deployment_tasks.deployment_sandbox_id
+     WHERE deployment_tasks.org_id = $1
+       AND deployment_tasks.project_id = $2
+       AND deployment_tasks.environment_id = $3
+       AND deployment_tasks.deployment_id = $6
+       AND deployment_tasks.id = $7
+       AND deployment_tasks.task_id = $8
+), runtime_target AS (
+    SELECT runtime_identities.id, runtime_identities.runtime_arch, runtime_identities.runtime_abi, runtime_identities.kernel_digest, runtime_identities.initramfs_digest, runtime_identities.rootfs_digest, runtime_identities.cni_profile, runtime_identities.first_seen_at, runtime_identities.last_seen_at
+      FROM scope
+      JOIN task ON true
+      JOIN worker_groups
+        ON worker_groups.region_id = scope.region_id
+       AND worker_groups.state = 'active'
+       AND worker_groups.allows_run
       JOIN worker_instances
-        ON worker_instances.worker_group_id = run_scope.worker_group_id
-       AND worker_instances.status = 'active'
-       AND worker_instances.runtime_id <> ''
+        ON worker_instances.worker_group_id = worker_groups.id
+       AND worker_instances.supports_run
+       AND worker_instances.runtime_identity_id IS NOT NULL
+       AND worker_instances.certified_at IS NOT NULL
       JOIN runtime_identities
-        ON runtime_identities.id = worker_instances.runtime_id
-       AND runtime_identities.runtime_arch = worker_instances.runtime_arch
-       AND runtime_identities.runtime_abi = worker_instances.runtime_abi
-       AND runtime_identities.kernel_digest = worker_instances.kernel_digest
-       AND runtime_identities.initramfs_digest = worker_instances.initramfs_digest
-       AND runtime_identities.rootfs_digest = worker_instances.rootfs_digest
-       AND runtime_identities.cni_profile = worker_instances.cni_profile
-     ORDER BY worker_instances.last_seen_at DESC,
-              worker_instances.id ASC
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+       AND runtime_identities.runtime_abi = task.sandbox_runtime_abi
+       AND runtime_identities.rootfs_digest = task.sandbox_rootfs_digest
+     ORDER BY (worker_instances.state = 'active') DESC,
+              worker_instances.certified_at DESC,
+              runtime_identities.id
      LIMIT 1
-),
-created AS (
+), created AS (
     INSERT INTO runs (
-        id,
-        public_id,
-        org_id,
-        worker_group_id,
-        project_id,
-        environment_id,
-        deployment_id,
-        deployment_task_id,
-        workspace_id,
-        deployment_version,
-        api_version,
-        sdk_version,
-        cli_version,
-        task_id,
-        session_id,
-        payload,
-        metadata,
-        tags,
-        locked_retry_policy,
-        queue_name,
-        queue_concurrency_limit,
-        concurrency_key,
-        priority,
-        queue_timestamp,
-        ttl,
-        queued_expires_at,
-        requested_milli_cpu,
-        requested_memory_mib,
-        requested_disk_mib,
-        requested_execution_slots,
-        runtime_identity_id,
-        runtime_arch,
-        runtime_abi,
-        kernel_digest,
-        initramfs_digest,
-        rootfs_digest,
-        cni_profile,
-        network_policy,
-        placement,
-        max_active_duration_ms,
-        trace_id,
-        root_span_id,
-        current_attempt_number,
-        schedule_id,
-        schedule_instance_id,
-        scheduled_at
+        id, public_id, org_id, project_id, environment_id, deployment_id,
+        deployment_task_id, workspace_id, deployment_version, api_version,
+        sdk_version, cli_version, task_id, session_id, payload, metadata, tags,
+        locked_retry_policy, queue_name, queue_concurrency_limit, concurrency_key,
+        priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu,
+        requested_memory_mib, requested_disk_mib, requested_execution_slots,
+        runtime_identity_id, runtime_arch, runtime_abi, kernel_digest,
+        initramfs_digest, rootfs_digest, cni_profile, network_policy,
+        resource_placement_policy, max_active_duration_ms, trace_id, root_span_id,
+        current_attempt_number, schedule_id, schedule_instance_id, scheduled_at
     )
-    SELECT $10,
-           $11,
-           $2,
-           run_scope.worker_group_id,
-           $3,
-           $4,
-           $7,
-           $8,
-           $6,
-           $12,
-           $13,
-           $14,
-           $15,
-           $9,
-           $5,
-           $16,
-           coalesce($17::jsonb, '{}'::jsonb),
-           coalesce($18::text[], '{}'::text[]),
-           coalesce($19::jsonb, '{"enabled": false}'::jsonb),
-           $20,
-           $21,
-           $22,
-           $23,
-           $24,
-           $25,
-           $26,
-           deployment_task.requested_milli_cpu,
-           deployment_task.requested_memory_mib,
-           deployment_task.requested_disk_mib,
-           deployment_task.requested_execution_slots,
-           runtime_identity.runtime_identity_id,
-           runtime_identity.runtime_arch,
-           runtime_identity.runtime_abi,
-           runtime_identity.kernel_digest,
-           runtime_identity.initramfs_digest,
-           runtime_identity.rootfs_digest,
-           runtime_identity.cni_profile,
-           deployment_task.network_policy,
-           deployment_task.placement,
-           $27,
-           $28,
-           $29,
-           1,
-           $30,
-           $31,
-           $32
-      FROM run_scope
-      JOIN deployment_task ON true
-      JOIN runtime_identity ON true
-     WHERE (
-            $31::uuid IS NULL
-            OR EXISTS (
-            SELECT 1
-              FROM task_schedule_instances
-              JOIN task_schedules ON task_schedules.id = task_schedule_instances.schedule_id
-             WHERE task_schedule_instances.id = $31
-               AND task_schedule_instances.generation = $33
-               AND task_schedule_instances.next_fire_at = $32
-               AND task_schedule_instances.schedule_id = $30
-               AND task_schedule_instances.org_id = $2
-               AND task_schedule_instances.project_id = $3
-               AND task_schedule_instances.environment_id = $4
-               AND task_schedule_instances.enabled
-               AND (
-                   task_schedule_instances.retry_after IS NULL
-                   OR task_schedule_instances.retry_after <= now()
-               )
-               AND task_schedules.org_id = $2
-               AND task_schedules.project_id = $3
-               AND task_schedules.enabled
+    SELECT $9, $10, scope.org_id, scope.project_id,
+           scope.environment_id, $6, $7,
+           scope.workspace_id, $11, $12,
+           $13, $14, $8, scope.session_id,
+           $15, COALESCE($16::jsonb, '{}'::jsonb),
+           COALESCE($17::text[], '{}'::text[]),
+           COALESCE($18::jsonb, '{"enabled":false}'::jsonb),
+           $19, $20, $21,
+           $22, $23, $24,
+           $25, task.requested_milli_cpu,
+           task.requested_memory_mib, task.requested_disk_mib,
+           task.requested_execution_slots, runtime_target.id,
+           runtime_target.runtime_arch, runtime_target.runtime_abi,
+           runtime_target.kernel_digest, runtime_target.initramfs_digest,
+           runtime_target.rootfs_digest, runtime_target.cni_profile,
+           task.network_policy, task.resource_placement_policy,
+           $26, $27, $28,
+           1, $29, $30, $31
+      FROM scope JOIN task ON true JOIN runtime_target ON true
+     WHERE $30::uuid IS NULL
+        OR EXISTS (
+            SELECT 1 FROM task_schedule_instances
+             WHERE task_schedule_instances.id = $30::uuid
+               AND task_schedule_instances.schedule_id = $29::uuid
+               AND task_schedule_instances.generation = $32
         )
-	       )
-		    RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
-),
-created_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, attempt_number, operation_id, transition, reason)
-    SELECT created.org_id,
-           created.worker_group_id,
-           created.id,
-           created.state_version,
-           created.status,
-           created.execution_status,
-           created.current_attempt_number,
-           NULL::uuid,
-           'run.created',
-           $34
-      FROM created
-    RETURNING run_state_snapshots.run_id
-),
-created_event AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
-        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
-        kind, message, payload, redaction_class, snapshot_version, observed_at
-    )
-    SELECT created.org_id,
-           created.worker_group_id,
-           'event',
-           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
-           COALESCE(NULL::uuid, created.id),
-           created.project_id,
-           created.environment_id,
-           created.id,
-           NULL::uuid,
-           NULL::uuid,
-           created.current_attempt_number,
-           created.trace_id,
-           created.root_span_id,
-           NULL::text,
-           '00-' || created.trace_id || '-' || created.root_span_id || '-01',
-           COALESCE(NULLIF('lifecycle', ''), 'system'),
-           COALESCE(NULLIF('info', ''), 'info'),
-           COALESCE(NULLIF('control', ''), 'control'),
-           'run.created',
-           COALESCE('run.created', ''),
-           COALESCE($34, '{}'::jsonb),
-           COALESCE(NULLIF('internal', ''), 'internal'),
-           created.state_version,
-           now()
-      FROM created
-      JOIN created_snapshot ON true
-    RETURNING id
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
+), snap AS (
+    INSERT INTO run_state_snapshots
+        (org_id, run_id, version, status, execution_status, attempt_number,
+         operation_id, transition, reason)
+    SELECT org_id, id, state_version, status, execution_status,
+           current_attempt_number, NULL, 'run.created', $33
+      FROM created RETURNING run_id
 )
-SELECT created.id, created.public_id, created.org_id, created.worker_group_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.workspace_mount_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.session_id, created.schedule_id, created.schedule_instance_id, created.scheduled_at, created.status, created.execution_status, created.terminal_outcome, created.payload, created.output, created.metadata, created.tags, created.locked_retry_policy, created.queue_class, created.queue_name, created.queue_concurrency_limit, created.concurrency_key, created.priority, created.queue_timestamp, created.ttl, created.queued_expires_at, created.dispatch_generation, created.dispatch_attempt_count, created.last_enqueue_error, created.last_enqueued_at, created.requested_milli_cpu, created.requested_memory_mib, created.requested_disk_mib, created.requested_execution_slots, created.runtime_identity_id, created.runtime_arch, created.runtime_abi, created.kernel_digest, created.initramfs_digest, created.rootfs_digest, created.cni_profile, created.network_policy, created.placement, created.max_active_duration_ms, created.active_elapsed_ms, created.active_started_at, created.trace_id, created.root_span_id, created.state_version, created.current_attempt_number, created.current_run_lease_id, created.latest_run_checkpoint_id, created.exit_code, created.error_message, created.created_at, created.updated_at, created.started_at, created.finished_at
-  FROM created
-  JOIN created_snapshot ON true
-  JOIN created_event ON true
+SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.deployment_id, created.deployment_task_id, created.workspace_id, created.deployment_version, created.api_version, created.sdk_version, created.cli_version, created.task_id, created.session_id, created.schedule_id, created.schedule_instance_id, created.scheduled_at, created.status, created.execution_status, created.terminal_outcome, created.payload, created.output, created.metadata, created.tags, created.locked_retry_policy, created.queue_class, created.queue_name, created.queue_concurrency_limit, created.concurrency_key, created.priority, created.queue_timestamp, created.ttl, created.queued_expires_at, created.requested_milli_cpu, created.requested_memory_mib, created.requested_disk_mib, created.requested_execution_slots, created.runtime_identity_id, created.runtime_arch, created.runtime_abi, created.kernel_digest, created.initramfs_digest, created.rootfs_digest, created.cni_profile, created.network_policy, created.resource_placement_policy, created.max_active_duration_ms, created.active_elapsed_ms, created.active_started_at, created.trace_id, created.root_span_id, created.state_version, created.current_attempt_number, created.current_run_lease_id, created.latest_run_checkpoint_id, created.exit_code, created.error_message, created.created_at, created.updated_at, created.started_at, created.finished_at FROM created JOIN snap ON snap.run_id = created.id
 `
 
 type CreateScopedRunParams struct {
-	AllowDrainingRoute    bool               `json:"allow_draining_route"`
 	OrgID                 pgtype.UUID        `json:"org_id"`
 	ProjectID             pgtype.UUID        `json:"project_id"`
 	EnvironmentID         pgtype.UUID        `json:"environment_id"`
@@ -951,7 +532,7 @@ type CreateScopedRunParams struct {
 	ScheduleID            pgtype.UUID        `json:"schedule_id"`
 	ScheduleInstanceID    pgtype.UUID        `json:"schedule_instance_id"`
 	ScheduledAt           pgtype.Timestamptz `json:"scheduled_at"`
-	ScheduleGeneration    pgtype.Int8        `json:"schedule_generation"`
+	ScheduleGeneration    int64              `json:"schedule_generation"`
 	EventPayload          []byte             `json:"event_payload"`
 }
 
@@ -959,13 +540,11 @@ type CreateScopedRunRow struct {
 	ID                      pgtype.UUID            `json:"id"`
 	PublicID                string                 `json:"public_id"`
 	OrgID                   pgtype.UUID            `json:"org_id"`
-	WorkerGroupID           string                 `json:"worker_group_id"`
 	ProjectID               pgtype.UUID            `json:"project_id"`
 	EnvironmentID           pgtype.UUID            `json:"environment_id"`
 	DeploymentID            pgtype.UUID            `json:"deployment_id"`
 	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
 	WorkspaceID             pgtype.UUID            `json:"workspace_id"`
-	WorkspaceMountID        pgtype.UUID            `json:"workspace_mount_id"`
 	DeploymentVersion       string                 `json:"deployment_version"`
 	ApiVersion              string                 `json:"api_version"`
 	SdkVersion              string                 `json:"sdk_version"`
@@ -991,10 +570,6 @@ type CreateScopedRunRow struct {
 	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
 	Ttl                     string                 `json:"ttl"`
 	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
-	DispatchGeneration      int64                  `json:"dispatch_generation"`
-	DispatchAttemptCount    int32                  `json:"dispatch_attempt_count"`
-	LastEnqueueError        string                 `json:"last_enqueue_error"`
-	LastEnqueuedAt          pgtype.Timestamptz     `json:"last_enqueued_at"`
 	RequestedMilliCpu       int64                  `json:"requested_milli_cpu"`
 	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
 	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
@@ -1007,7 +582,7 @@ type CreateScopedRunRow struct {
 	RootfsDigest            string                 `json:"rootfs_digest"`
 	CniProfile              string                 `json:"cni_profile"`
 	NetworkPolicy           []byte                 `json:"network_policy"`
-	Placement               []byte                 `json:"placement"`
+	ResourcePlacementPolicy []byte                 `json:"resource_placement_policy"`
 	MaxActiveDurationMs     int64                  `json:"max_active_duration_ms"`
 	ActiveElapsedMs         int64                  `json:"active_elapsed_ms"`
 	ActiveStartedAt         pgtype.Timestamptz     `json:"active_started_at"`
@@ -1027,7 +602,6 @@ type CreateScopedRunRow struct {
 
 func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams) (CreateScopedRunRow, error) {
 	row := q.db.QueryRow(ctx, createScopedRun,
-		arg.AllowDrainingRoute,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
@@ -1067,13 +641,11 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
 		&i.WorkspaceID,
-		&i.WorkspaceMountID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -1099,10 +671,6 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -1115,7 +683,7 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
-		&i.Placement,
+		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
@@ -1136,264 +704,70 @@ func (q *Queries) CreateScopedRun(ctx context.Context, arg CreateScopedRunParams
 }
 
 const expireQueuedRuns = `-- name: ExpireQueuedRuns :exec
-WITH locked_sessions AS MATERIALIZED (
-    SELECT sessions.id
-      FROM runs
-      JOIN sessions
-        ON sessions.org_id = runs.org_id
-       AND sessions.project_id = runs.project_id
-       AND sessions.environment_id = runs.environment_id
-       AND sessions.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.worker_group_id = $2
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NULL
-       AND runs.queued_expires_at IS NOT NULL
-       AND runs.queued_expires_at <= now()
-     FOR UPDATE OF sessions
-),
-eligible AS (
-    SELECT runs.id, runs.org_id
-      FROM runs
-      LEFT JOIN locked_sessions
-        ON locked_sessions.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.worker_group_id = $2
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NULL
-       AND runs.queued_expires_at IS NOT NULL
-       AND runs.queued_expires_at <= now()
-       AND locked_sessions.id = runs.session_id
-     FOR UPDATE OF runs
-),
-expired_runs AS (
-    UPDATE runs
-	       SET status = 'expired',
-	           execution_status = 'finished',
-	           terminal_outcome = 'expired',
-	           error_message = 'run ttl expired before execution started',
-	           dispatch_generation = dispatch_generation + 1,
-	           state_version = state_version + 1,
-	           finished_at = now(),
-	           updated_at = now()
-      FROM eligible
-     WHERE runs.org_id = eligible.org_id
-       AND runs.id = eligible.id
-       AND runs.status = 'queued'
-	    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.ttl
-),
-expired_session_runs AS (
-    UPDATE session_runs
-       SET ended_at = now()
-      FROM expired_runs
-     WHERE session_runs.org_id = expired_runs.org_id
-       AND session_runs.project_id = expired_runs.project_id
-       AND session_runs.environment_id = expired_runs.environment_id
-       AND session_runs.session_id = expired_runs.session_id
-       AND session_runs.run_id = expired_runs.id
-    RETURNING session_runs.id
-),
-expired_sessions AS (
-    SELECT expired_runs.session_id AS id
-      FROM expired_runs
-),
-expired_snapshots AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason, error)
-    SELECT expired_runs.org_id,
-           expired_runs.worker_group_id,
-           expired_runs.id,
-           expired_runs.state_version,
-           'expired',
-           'finished',
-           'expired',
-           expired_runs.current_attempt_number,
-           'run.expired',
-           jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'),
-           jsonb_build_object('message', 'run ttl expired before execution started')
-      FROM expired_runs
-    RETURNING run_state_snapshots.run_id
-),
-expired_event AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
-        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
-        kind, message, payload, redaction_class, snapshot_version, observed_at
-    )
-    SELECT expired_runs.org_id,
-           expired_runs.worker_group_id,
-           'event',
-           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
-           COALESCE(NULL::uuid, expired_runs.id),
-           expired_runs.project_id,
-           expired_runs.environment_id,
-           expired_runs.id,
-           NULL::uuid,
-           NULL::uuid,
-           expired_runs.current_attempt_number,
-           expired_runs.trace_id,
-           expired_runs.root_span_id,
-           NULL::text,
-           '00-' || expired_runs.trace_id || '-' || expired_runs.root_span_id || '-01',
-           COALESCE(NULLIF('lifecycle', ''), 'system'),
-           COALESCE(NULLIF('warn', ''), 'info'),
-           COALESCE(NULLIF('control', ''), 'control'),
-           'run.expired',
-           COALESCE('run.expired', ''),
-           COALESCE(jsonb_build_object('ttl', expired_runs.ttl, 'message', 'run ttl expired before execution started'), '{}'::jsonb),
-           COALESCE(NULLIF('internal', ''), 'internal'),
-           expired_runs.state_version,
-           now()
-      FROM expired_runs
-      JOIN expired_snapshots ON expired_snapshots.run_id = expired_runs.id
-    RETURNING id
+WITH expired AS (
+    UPDATE runs SET status = 'expired', execution_status = 'finished',
+                    terminal_outcome = 'expired', state_version = state_version + 1,
+                    error_message = 'run ttl expired before execution started',
+                    finished_at = now(), updated_at = now()
+     WHERE runs.org_id = $1 AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL AND runs.queued_expires_at <= now()
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 )
-SELECT expired_event.id
-  FROM expired_event
+INSERT INTO run_state_snapshots
+    (org_id, run_id, version, status, execution_status, terminal_outcome,
+     attempt_number, previous_version, transition, reason)
+SELECT expired.org_id, expired.id, expired.state_version, expired.status,
+       expired.execution_status, expired.terminal_outcome,
+       expired.current_attempt_number, expired.state_version - 1, 'run.expired',
+       jsonb_build_object('message','run ttl expired before execution started')
+  FROM expired
 `
 
-type ExpireQueuedRunsParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	WorkerGroupID string      `json:"worker_group_id"`
-}
-
-func (q *Queries) ExpireQueuedRuns(ctx context.Context, arg ExpireQueuedRunsParams) error {
-	_, err := q.db.Exec(ctx, expireQueuedRuns, arg.OrgID, arg.WorkerGroupID)
+func (q *Queries) ExpireQueuedRuns(ctx context.Context, orgID pgtype.UUID) error {
+	_, err := q.db.Exec(ctx, expireQueuedRuns, orgID)
 	return err
 }
 
 const failQueuedRun = `-- name: FailQueuedRun :exec
-WITH locked_session AS MATERIALIZED (
-    SELECT sessions.id
-      FROM runs
-      JOIN sessions
-        ON sessions.org_id = runs.org_id
-       AND sessions.project_id = runs.project_id
-       AND sessions.environment_id = runs.environment_id
-       AND sessions.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.id = $2
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NULL
-     FOR UPDATE OF sessions
-),
-target AS (
-    SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
-      FROM runs
-      JOIN locked_session ON locked_session.id = runs.session_id
-     WHERE runs.org_id = $1
-       AND runs.id = $2
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NULL
-     FOR UPDATE OF runs
-),
-failed_run AS (
-    UPDATE runs
-       SET status = 'failed',
-	           execution_status = 'finished',
-	           terminal_outcome = 'failed',
-	           error_message = COALESCE(NULLIF($3::text, ''), 'run failed before execution started'),
-	           dispatch_generation = dispatch_generation + 1,
-	           state_version = runs.state_version + 1,
-	           finished_at = now(),
-	           updated_at = now()
-      FROM target
-     WHERE runs.org_id = target.org_id
-       AND runs.id = target.id
-       AND runs.status = 'queued'
-       AND runs.current_run_lease_id IS NULL
-	    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.session_id, runs.current_attempt_number, runs.trace_id, runs.root_span_id, runs.state_version, runs.error_message
-),
-failed_session_run AS (
-    UPDATE session_runs
-       SET ended_at = now()
-      FROM failed_run
-     WHERE session_runs.org_id = failed_run.org_id
-       AND session_runs.project_id = failed_run.project_id
-       AND session_runs.environment_id = failed_run.environment_id
-       AND session_runs.session_id = failed_run.session_id
-       AND session_runs.run_id = failed_run.id
-    RETURNING session_runs.id
-),
-failed_session AS (
-    SELECT failed_run.session_id AS id
-      FROM failed_run
-),
-failed_snapshot AS (
-    INSERT INTO run_state_snapshots (org_id, worker_group_id, run_id, version, status, execution_status, terminal_outcome, attempt_number, transition, reason, error)
-    SELECT failed_run.org_id,
-           failed_run.worker_group_id,
-           failed_run.id,
-           failed_run.state_version,
-           'failed',
-           'finished',
-           'failed',
-           failed_run.current_attempt_number,
-           'run.failed',
-           COALESCE($4::jsonb, '{}'::jsonb),
-           COALESCE($4::jsonb, '{}'::jsonb)
-      FROM failed_run
-    RETURNING run_state_snapshots.run_id
-),
-failed_event AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, deployment_id, run_lease_id, attempt_number,
-        trace_id, span_id, parent_span_id, traceparent, category, severity, source,
-        kind, message, payload, redaction_class, snapshot_version, observed_at
-    )
-    SELECT failed_run.org_id,
-           failed_run.worker_group_id,
-           'event',
-           CASE WHEN NULL::uuid IS NOT NULL THEN 'deployment' ELSE 'run' END,
-           COALESCE(NULL::uuid, failed_run.id),
-           failed_run.project_id,
-           failed_run.environment_id,
-           failed_run.id,
-           NULL::uuid,
-           NULL::uuid,
-           failed_run.current_attempt_number,
-           failed_run.trace_id,
-           failed_run.root_span_id,
-           NULL::text,
-           '00-' || failed_run.trace_id || '-' || failed_run.root_span_id || '-01',
-           COALESCE(NULLIF('lifecycle', ''), 'system'),
-           COALESCE(NULLIF('error', ''), 'info'),
-           COALESCE(NULLIF('control', ''), 'control'),
-           'run.failed',
-           COALESCE('run.failed', ''),
-           COALESCE(COALESCE($4::jsonb, '{}'::jsonb), '{}'::jsonb),
-           COALESCE(NULLIF('internal', ''), 'internal'),
-           failed_run.state_version,
-           now()
-      FROM failed_run
-      JOIN failed_snapshot ON failed_snapshot.run_id = failed_run.id
-    RETURNING id
+WITH failed AS (
+    UPDATE runs SET status = 'failed', execution_status = 'finished',
+                    terminal_outcome = 'failed', state_version = state_version + 1,
+                    error_message = $1, finished_at = now(), updated_at = now()
+     WHERE runs.org_id = $2 AND runs.id = $3
+       AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
+       AND runs.state_version = $4
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
 )
-SELECT failed_event.id
-  FROM failed_event
+INSERT INTO run_state_snapshots
+    (org_id, run_id, version, status, execution_status, terminal_outcome,
+     attempt_number, previous_version, transition, reason, error)
+SELECT failed.org_id, failed.id, failed.state_version, failed.status,
+       failed.execution_status, failed.terminal_outcome,
+       failed.current_attempt_number, failed.state_version - 1, 'run.failed',
+       jsonb_build_object('message', $1::text),
+       jsonb_build_object('message', $1::text)
+  FROM failed
 `
 
 type FailQueuedRunParams struct {
-	OrgID        pgtype.UUID `json:"org_id"`
-	RunID        pgtype.UUID `json:"run_id"`
-	ErrorMessage string      `json:"error_message"`
-	Reason       []byte      `json:"reason"`
+	ErrorMessage            string      `json:"error_message"`
+	OrgID                   pgtype.UUID `json:"org_id"`
+	RunID                   pgtype.UUID `json:"run_id"`
+	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
 }
 
 func (q *Queries) FailQueuedRun(ctx context.Context, arg FailQueuedRunParams) error {
 	_, err := q.db.Exec(ctx, failQueuedRun,
+		arg.ErrorMessage,
 		arg.OrgID,
 		arg.RunID,
-		arg.ErrorMessage,
-		arg.Reason,
+		arg.ExpectedRunStateVersion,
 	)
 	return err
 }
 
 const getRun = `-- name: GetRun :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
-WHERE org_id = $1 AND id = $2
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs WHERE org_id = $1 AND id = $2
 `
 
 type GetRunParams struct {
@@ -1408,13 +782,11 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
 		&i.WorkspaceID,
-		&i.WorkspaceMountID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -1440,10 +812,6 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -1456,7 +824,7 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
-		&i.Placement,
+		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
@@ -1477,28 +845,27 @@ func (q *Queries) GetRun(ctx context.Context, arg GetRunParams) (Run, error) {
 }
 
 const getRunOperation = `-- name: GetRunOperation :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
-  FROM run_operations
- WHERE org_id = $1
-   AND id = $2
+SELECT id, public_id, org_id, project_id, environment_id, run_id, expected_run_state_version, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at FROM run_operations
+ WHERE org_id = $1 AND run_id = $2 AND id = $3
 `
 
 type GetRunOperationParams struct {
 	OrgID pgtype.UUID `json:"org_id"`
+	RunID pgtype.UUID `json:"run_id"`
 	ID    pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) GetRunOperation(ctx context.Context, arg GetRunOperationParams) (RunOperation, error) {
-	row := q.db.QueryRow(ctx, getRunOperation, arg.OrgID, arg.ID)
+	row := q.db.QueryRow(ctx, getRunOperation, arg.OrgID, arg.RunID, arg.ID)
 	var i RunOperation
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
+		&i.ExpectedRunStateVersion,
 		&i.Kind,
 		&i.Status,
 		&i.ActorKind,
@@ -1516,8 +883,8 @@ func (q *Queries) GetRunOperation(ctx context.Context, arg GetRunOperationParams
 }
 
 const getRunSummary = `-- name: GetRunSummary :one
-SELECT id, public_id, org_id, worker_group_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, workspace_mount_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, dispatch_generation, dispatch_attempt_count, last_enqueue_error, last_enqueued_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, placement, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
-WHERE org_id = $1 AND id = $2
+SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at FROM runs
+ WHERE org_id = $1 AND id = $2
 `
 
 type GetRunSummaryParams struct {
@@ -1532,13 +899,11 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (R
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
 		&i.WorkspaceID,
-		&i.WorkspaceMountID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
@@ -1564,10 +929,6 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (R
 		&i.QueueTimestamp,
 		&i.Ttl,
 		&i.QueuedExpiresAt,
-		&i.DispatchGeneration,
-		&i.DispatchAttemptCount,
-		&i.LastEnqueueError,
-		&i.LastEnqueuedAt,
 		&i.RequestedMilliCpu,
 		&i.RequestedMemoryMib,
 		&i.RequestedDiskMib,
@@ -1580,7 +941,7 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (R
 		&i.RootfsDigest,
 		&i.CniProfile,
 		&i.NetworkPolicy,
-		&i.Placement,
+		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
@@ -1600,61 +961,13 @@ func (q *Queries) GetRunSummary(ctx context.Context, arg GetRunSummaryParams) (R
 	return i, err
 }
 
-const listQueuedRunsForWorkspaceMount = `-- name: ListQueuedRunsForWorkspaceMount :many
-SELECT runs.id
-  FROM runs
- WHERE runs.org_id = $1
-   AND runs.workspace_id = $2
-   AND runs.workspace_mount_id = $3
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
- ORDER BY runs.queue_timestamp ASC, runs.id ASC
-`
-
-type ListQueuedRunsForWorkspaceMountParams struct {
-	OrgID            pgtype.UUID `json:"org_id"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
-}
-
-func (q *Queries) ListQueuedRunsForWorkspaceMount(ctx context.Context, arg ListQueuedRunsForWorkspaceMountParams) ([]pgtype.UUID, error) {
-	rows, err := q.db.Query(ctx, listQueuedRunsForWorkspaceMount, arg.OrgID, arg.WorkspaceID, arg.WorkspaceMountID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []pgtype.UUID
-	for rows.Next() {
-		var id pgtype.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listScopedRunSummaries = `-- name: ListScopedRunSummaries :many
-SELECT runs.id, runs.public_id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.workspace_mount_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.dispatch_generation, runs.dispatch_attempt_count, runs.last_enqueue_error, runs.last_enqueued_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.placement, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at
-FROM runs
-WHERE runs.org_id = $1
-  AND runs.project_id = $2
-  AND runs.environment_id = $3
-  AND (
-    $4::text = 'all'
-    OR ($4::text = 'live' AND runs.status NOT IN ('succeeded', 'failed', 'cancelled', 'expired'))
-    OR ($4::text = 'running' AND runs.status = 'running')
-    OR runs.status::text = $4::text
-  )
-  AND (
-    $5::uuid IS NULL
-    OR runs.session_id = $5::uuid
-  )
-ORDER BY runs.created_at DESC, runs.id DESC
-LIMIT $6
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs
+ WHERE org_id = $1 AND project_id = $2
+   AND environment_id = $3
+   AND ($4::text = 'all' OR status::text = $4::text)
+   AND ($5::uuid IS NULL OR session_id = $5::uuid)
+ ORDER BY created_at DESC, id DESC LIMIT $6
 `
 
 type ListScopedRunSummariesParams struct {
@@ -1686,13 +999,11 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
-			&i.WorkerGroupID,
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.DeploymentID,
 			&i.DeploymentTaskID,
 			&i.WorkspaceID,
-			&i.WorkspaceMountID,
 			&i.DeploymentVersion,
 			&i.ApiVersion,
 			&i.SdkVersion,
@@ -1718,10 +1029,6 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.QueueTimestamp,
 			&i.Ttl,
 			&i.QueuedExpiresAt,
-			&i.DispatchGeneration,
-			&i.DispatchAttemptCount,
-			&i.LastEnqueueError,
-			&i.LastEnqueuedAt,
 			&i.RequestedMilliCpu,
 			&i.RequestedMemoryMib,
 			&i.RequestedDiskMib,
@@ -1734,7 +1041,7 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 			&i.RootfsDigest,
 			&i.CniProfile,
 			&i.NetworkPolicy,
-			&i.Placement,
+			&i.ResourcePlacementPolicy,
 			&i.MaxActiveDurationMs,
 			&i.ActiveElapsedMs,
 			&i.ActiveStartedAt,
@@ -1762,33 +1069,35 @@ func (q *Queries) ListScopedRunSummaries(ctx context.Context, arg ListScopedRunS
 }
 
 const markRunOperationApplied = `-- name: MarkRunOperationApplied :one
-UPDATE run_operations
-   SET status = 'applied',
-       result = coalesce($1::jsonb, '{}'::jsonb),
-       applied_at = now()
- WHERE id = $2
-   AND org_id = $3
+UPDATE run_operations SET status = 'applied', result = $1, applied_at = now()
+ WHERE org_id = $2 AND run_id = $3 AND id = $4
    AND status = 'requested'
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+RETURNING id, public_id, org_id, project_id, environment_id, run_id, expected_run_state_version, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
 `
 
 type MarkRunOperationAppliedParams struct {
 	Result []byte      `json:"result"`
-	ID     pgtype.UUID `json:"id"`
 	OrgID  pgtype.UUID `json:"org_id"`
+	RunID  pgtype.UUID `json:"run_id"`
+	ID     pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) MarkRunOperationApplied(ctx context.Context, arg MarkRunOperationAppliedParams) (RunOperation, error) {
-	row := q.db.QueryRow(ctx, markRunOperationApplied, arg.Result, arg.ID, arg.OrgID)
+	row := q.db.QueryRow(ctx, markRunOperationApplied,
+		arg.Result,
+		arg.OrgID,
+		arg.RunID,
+		arg.ID,
+	)
 	var i RunOperation
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
+		&i.ExpectedRunStateVersion,
 		&i.Kind,
 		&i.Status,
 		&i.ActorKind,
@@ -1806,33 +1115,35 @@ func (q *Queries) MarkRunOperationApplied(ctx context.Context, arg MarkRunOperat
 }
 
 const markRunOperationRejected = `-- name: MarkRunOperationRejected :one
-UPDATE run_operations
-   SET status = 'rejected',
-       result = coalesce($1::jsonb, '{}'::jsonb),
-       rejected_at = now()
- WHERE id = $2
-   AND org_id = $3
+UPDATE run_operations SET status = 'rejected', result = $1, rejected_at = now()
+ WHERE org_id = $2 AND run_id = $3 AND id = $4
    AND status = 'requested'
-RETURNING id, public_id, org_id, worker_group_id, project_id, environment_id, run_id, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
+RETURNING id, public_id, org_id, project_id, environment_id, run_id, expected_run_state_version, kind, status, actor_kind, actor_id, api_key_id, reason, request, result, idempotency_key, created_at, applied_at, rejected_at
 `
 
 type MarkRunOperationRejectedParams struct {
 	Result []byte      `json:"result"`
-	ID     pgtype.UUID `json:"id"`
 	OrgID  pgtype.UUID `json:"org_id"`
+	RunID  pgtype.UUID `json:"run_id"`
+	ID     pgtype.UUID `json:"id"`
 }
 
 func (q *Queries) MarkRunOperationRejected(ctx context.Context, arg MarkRunOperationRejectedParams) (RunOperation, error) {
-	row := q.db.QueryRow(ctx, markRunOperationRejected, arg.Result, arg.ID, arg.OrgID)
+	row := q.db.QueryRow(ctx, markRunOperationRejected,
+		arg.Result,
+		arg.OrgID,
+		arg.RunID,
+		arg.ID,
+	)
 	var i RunOperation
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RunID,
+		&i.ExpectedRunStateVersion,
 		&i.Kind,
 		&i.Status,
 		&i.ActorKind,
@@ -1849,238 +1160,187 @@ func (q *Queries) MarkRunOperationRejected(ctx context.Context, arg MarkRunOpera
 	return i, err
 }
 
-const setQueuedRunWorkspaceMount = `-- name: SetQueuedRunWorkspaceMount :exec
-UPDATE runs
-   SET workspace_mount_id = $1,
-       updated_at = now()
- WHERE runs.org_id = $2
-   AND runs.id = $3
-   AND runs.workspace_id = $4
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-`
-
-type SetQueuedRunWorkspaceMountParams struct {
-	WorkspaceMountID pgtype.UUID `json:"workspace_mount_id"`
-	OrgID            pgtype.UUID `json:"org_id"`
-	RunID            pgtype.UUID `json:"run_id"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) SetQueuedRunWorkspaceMount(ctx context.Context, arg SetQueuedRunWorkspaceMountParams) error {
-	_, err := q.db.Exec(ctx, setQueuedRunWorkspaceMount,
-		arg.WorkspaceMountID,
-		arg.OrgID,
-		arg.RunID,
-		arg.WorkspaceID,
-	)
-	return err
-}
-
 const updateRunMetadataForExecution = `-- name: UpdateRunMetadataForExecution :one
-WITH current_run_lease AS (
-    SELECT runs.id,
-           runs.org_id,
-           runs.project_id,
-           runs.environment_id,
-	           runs.trace_id,
-	           runs.state_version,
-	           run_leases.id AS run_lease_id,
-	           run_leases.span_id,
-	           run_leases.parent_span_id,
-	           run_leases.traceparent,
-	           run_leases.attempt_number
-	      FROM runs
-	      JOIN run_leases ON run_leases.id = runs.current_run_lease_id
-	                          AND run_leases.org_id = runs.org_id
-	                          AND run_leases.run_id = runs.id
-     WHERE runs.org_id = $1
-       AND runs.id = $2
-       AND runs.current_run_lease_id = $3
-       AND runs.status = 'running'
-       AND run_leases.status IN ('leased', 'running')
-       AND run_leases.lease_expires_at > now()
-),
-updated AS (
-    UPDATE runs
-       SET metadata = CASE $4::text
-             WHEN 'set' THEN jsonb_set(
-                 COALESCE(runs.metadata, '{}'::jsonb),
-                 ARRAY[$5::text],
-                 $6::jsonb,
-                 true
-               )
-             WHEN 'patch' THEN COALESCE(runs.metadata, '{}'::jsonb) || $7::jsonb
-             WHEN 'increment' THEN jsonb_set(
-                 COALESCE(runs.metadata, '{}'::jsonb),
-                 ARRAY[$5::text],
-                 to_jsonb(COALESCE((runs.metadata ->> $5::text)::numeric, 0) + $8::numeric),
-                 true
-               )
-             ELSE runs.metadata
-           END,
-           updated_at = now()
-      FROM current_run_lease
-     WHERE runs.org_id = current_run_lease.org_id
-       AND runs.id = current_run_lease.id
-       AND runs.current_run_lease_id = $3
-       AND runs.status = 'running'
-       AND octet_length((
-           CASE $4::text
-             WHEN 'set' THEN jsonb_set(
-                 COALESCE(runs.metadata, '{}'::jsonb),
-                 ARRAY[$5::text],
-                 $6::jsonb,
-                 true
-               )
-             WHEN 'patch' THEN COALESCE(runs.metadata, '{}'::jsonb) || $7::jsonb
-             WHEN 'increment' THEN jsonb_set(
-                 COALESCE(runs.metadata, '{}'::jsonb),
-                 ARRAY[$5::text],
-                 to_jsonb(COALESCE((runs.metadata ->> $5::text)::numeric, 0) + $8::numeric),
-                 true
-               )
-             ELSE runs.metadata
-           END
-       )::text) <= $9::integer
-    RETURNING runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at
-),
-	updated_with_context AS (
-	    SELECT updated.id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at,
-	           current_run_lease.run_lease_id,
-	           current_run_lease.attempt_number,
-           current_run_lease.trace_id,
-           current_run_lease.span_id,
-           current_run_lease.parent_span_id,
-           current_run_lease.traceparent,
-           current_run_lease.state_version
-      FROM updated
-      JOIN current_run_lease ON current_run_lease.org_id = updated.org_id
-                           AND current_run_lease.id = updated.id
-),
-inserted_event AS (
-    INSERT INTO telemetry_outbox (
-        org_id, worker_group_id, stream_kind, source_kind, source_id, project_id,
-        environment_id, run_id, run_lease_id, attempt_number, trace_id, span_id,
-        parent_span_id, traceparent, category, severity, source, kind, message,
-        payload, redaction_class, snapshot_version, observed_at
-    )
-    SELECT updated_with_context.org_id,
-           updated_with_context.worker_group_id,
-           'event',
-           'run',
-           updated_with_context.id,
-           updated_with_context.project_id,
-           updated_with_context.environment_id,
-           updated_with_context.id,
-           updated_with_context.run_lease_id,
-           updated_with_context.attempt_number,
-           updated_with_context.trace_id,
-           updated_with_context.span_id,
-           updated_with_context.parent_span_id,
-           updated_with_context.traceparent,
-           'guest',
-           'info',
-           'worker',
-           'run.metadata.updated',
-           'run.metadata.updated',
-           jsonb_build_object(
-               'operation', $4::text,
-               'key', NULLIF($5::text, '')
-           ),
-           'sensitive',
-           updated_with_context.state_version,
-           now()
-      FROM updated_with_context
-    RETURNING id
-)
-SELECT updated.id, updated.org_id, updated.worker_group_id, updated.project_id, updated.environment_id, updated.deployment_id, updated.deployment_task_id, updated.deployment_version, updated.api_version, updated.sdk_version, updated.cli_version, updated.task_id, updated.status, updated.execution_status, updated.terminal_outcome, updated.metadata, updated.tags, updated.locked_retry_policy, updated.current_attempt_number, updated.exit_code, updated.output, updated.created_at, updated.updated_at, false AS metadata_too_large
-  FROM updated
-  JOIN inserted_event ON true
-UNION ALL
-SELECT runs.id, runs.org_id, runs.worker_group_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.status, runs.execution_status, runs.terminal_outcome, runs.metadata, runs.tags, runs.locked_retry_policy, runs.current_attempt_number, runs.exit_code, runs.output, runs.created_at, runs.updated_at, true AS metadata_too_large
-  FROM current_run_lease
-  JOIN runs ON runs.org_id = current_run_lease.org_id
-           AND runs.id = current_run_lease.id
- WHERE NOT EXISTS (SELECT 1 FROM updated)
+UPDATE runs
+   SET metadata = CASE $1::text
+         WHEN 'set' THEN jsonb_set(runs.metadata, ARRAY[$2::text], $3::jsonb, true)
+         WHEN 'patch' THEN runs.metadata || $4::jsonb
+         WHEN 'increment' THEN jsonb_set(
+             runs.metadata, ARRAY[$2::text],
+             to_jsonb(COALESCE((runs.metadata ->> $2::text)::numeric, 0) + $5::numeric), true)
+         ELSE runs.metadata
+       END,
+       updated_at = now()
+  FROM run_leases
+ WHERE runs.org_id = $6 AND runs.id = $7
+   AND runs.current_run_lease_id = $8
+   AND run_leases.org_id = runs.org_id AND run_leases.run_id = runs.id
+   AND run_leases.id = runs.current_run_lease_id
+   AND runs.status IN ('running','waiting')
+   AND run_leases.state IN ('starting','running','checkpointing')
+   AND run_leases.expires_at > now()
+   AND octet_length((CASE $1::text
+         WHEN 'set' THEN jsonb_set(runs.metadata, ARRAY[$2::text], $3::jsonb, true)
+         WHEN 'patch' THEN runs.metadata || $4::jsonb
+         WHEN 'increment' THEN jsonb_set(
+             runs.metadata, ARRAY[$2::text],
+             to_jsonb(COALESCE((runs.metadata ->> $2::text)::numeric, 0) + $5::numeric), true)
+         ELSE runs.metadata END)::text) <= $9::integer
+RETURNING runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, false AS metadata_too_large
 `
 
 type UpdateRunMetadataForExecutionParams struct {
-	OrgID            pgtype.UUID    `json:"org_id"`
-	RunID            pgtype.UUID    `json:"run_id"`
-	RunLeaseID       pgtype.UUID    `json:"run_lease_id"`
 	Operation        string         `json:"operation"`
 	Key              string         `json:"key"`
 	Value            []byte         `json:"value"`
 	Patch            []byte         `json:"patch"`
 	Amount           pgtype.Numeric `json:"amount"`
+	OrgID            pgtype.UUID    `json:"org_id"`
+	RunID            pgtype.UUID    `json:"run_id"`
+	RunLeaseID       pgtype.UUID    `json:"run_lease_id"`
 	MaxMetadataBytes int32          `json:"max_metadata_bytes"`
 }
 
 type UpdateRunMetadataForExecutionRow struct {
-	ID                   pgtype.UUID            `json:"id"`
-	OrgID                pgtype.UUID            `json:"org_id"`
-	WorkerGroupID        string                 `json:"worker_group_id"`
-	ProjectID            pgtype.UUID            `json:"project_id"`
-	EnvironmentID        pgtype.UUID            `json:"environment_id"`
-	DeploymentID         pgtype.UUID            `json:"deployment_id"`
-	DeploymentTaskID     pgtype.UUID            `json:"deployment_task_id"`
-	DeploymentVersion    string                 `json:"deployment_version"`
-	ApiVersion           string                 `json:"api_version"`
-	SdkVersion           string                 `json:"sdk_version"`
-	CliVersion           string                 `json:"cli_version"`
-	TaskID               string                 `json:"task_id"`
-	Status               RunStatus              `json:"status"`
-	ExecutionStatus      RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome      NullRunTerminalOutcome `json:"terminal_outcome"`
-	Metadata             []byte                 `json:"metadata"`
-	Tags                 []string               `json:"tags"`
-	LockedRetryPolicy    []byte                 `json:"locked_retry_policy"`
-	CurrentAttemptNumber int32                  `json:"current_attempt_number"`
-	ExitCode             pgtype.Int4            `json:"exit_code"`
-	Output               []byte                 `json:"output"`
-	CreatedAt            pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz     `json:"updated_at"`
-	MetadataTooLarge     bool                   `json:"metadata_too_large"`
+	ID                      pgtype.UUID            `json:"id"`
+	PublicID                string                 `json:"public_id"`
+	OrgID                   pgtype.UUID            `json:"org_id"`
+	ProjectID               pgtype.UUID            `json:"project_id"`
+	EnvironmentID           pgtype.UUID            `json:"environment_id"`
+	DeploymentID            pgtype.UUID            `json:"deployment_id"`
+	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
+	WorkspaceID             pgtype.UUID            `json:"workspace_id"`
+	DeploymentVersion       string                 `json:"deployment_version"`
+	ApiVersion              string                 `json:"api_version"`
+	SdkVersion              string                 `json:"sdk_version"`
+	CliVersion              string                 `json:"cli_version"`
+	TaskID                  string                 `json:"task_id"`
+	SessionID               pgtype.UUID            `json:"session_id"`
+	ScheduleID              pgtype.UUID            `json:"schedule_id"`
+	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
+	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
+	Status                  RunStatus              `json:"status"`
+	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
+	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
+	Payload                 []byte                 `json:"payload"`
+	Output                  []byte                 `json:"output"`
+	Metadata                []byte                 `json:"metadata"`
+	Tags                    []string               `json:"tags"`
+	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
+	QueueClass              string                 `json:"queue_class"`
+	QueueName               string                 `json:"queue_name"`
+	QueueConcurrencyLimit   pgtype.Int4            `json:"queue_concurrency_limit"`
+	ConcurrencyKey          pgtype.Text            `json:"concurrency_key"`
+	Priority                int32                  `json:"priority"`
+	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
+	Ttl                     string                 `json:"ttl"`
+	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
+	RequestedMilliCpu       int64                  `json:"requested_milli_cpu"`
+	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
+	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
+	RequestedExecutionSlots int32                  `json:"requested_execution_slots"`
+	RuntimeIdentityID       string                 `json:"runtime_identity_id"`
+	RuntimeArch             string                 `json:"runtime_arch"`
+	RuntimeABI              string                 `json:"runtime_abi"`
+	KernelDigest            string                 `json:"kernel_digest"`
+	InitramfsDigest         string                 `json:"initramfs_digest"`
+	RootfsDigest            string                 `json:"rootfs_digest"`
+	CniProfile              string                 `json:"cni_profile"`
+	NetworkPolicy           []byte                 `json:"network_policy"`
+	ResourcePlacementPolicy []byte                 `json:"resource_placement_policy"`
+	MaxActiveDurationMs     int64                  `json:"max_active_duration_ms"`
+	ActiveElapsedMs         int64                  `json:"active_elapsed_ms"`
+	ActiveStartedAt         pgtype.Timestamptz     `json:"active_started_at"`
+	TraceID                 pgtype.Text            `json:"trace_id"`
+	RootSpanID              string                 `json:"root_span_id"`
+	StateVersion            int64                  `json:"state_version"`
+	CurrentAttemptNumber    int32                  `json:"current_attempt_number"`
+	CurrentRunLeaseID       pgtype.UUID            `json:"current_run_lease_id"`
+	LatestRunCheckpointID   pgtype.UUID            `json:"latest_run_checkpoint_id"`
+	ExitCode                pgtype.Int4            `json:"exit_code"`
+	ErrorMessage            pgtype.Text            `json:"error_message"`
+	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
+	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
+	StartedAt               pgtype.Timestamptz     `json:"started_at"`
+	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
+	MetadataTooLarge        bool                   `json:"metadata_too_large"`
 }
 
 func (q *Queries) UpdateRunMetadataForExecution(ctx context.Context, arg UpdateRunMetadataForExecutionParams) (UpdateRunMetadataForExecutionRow, error) {
 	row := q.db.QueryRow(ctx, updateRunMetadataForExecution,
-		arg.OrgID,
-		arg.RunID,
-		arg.RunLeaseID,
 		arg.Operation,
 		arg.Key,
 		arg.Value,
 		arg.Patch,
 		arg.Amount,
+		arg.OrgID,
+		arg.RunID,
+		arg.RunLeaseID,
 		arg.MaxMetadataBytes,
 	)
 	var i UpdateRunMetadataForExecutionRow
 	err := row.Scan(
 		&i.ID,
+		&i.PublicID,
 		&i.OrgID,
-		&i.WorkerGroupID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
 		&i.DeploymentTaskID,
+		&i.WorkspaceID,
 		&i.DeploymentVersion,
 		&i.ApiVersion,
 		&i.SdkVersion,
 		&i.CliVersion,
 		&i.TaskID,
+		&i.SessionID,
+		&i.ScheduleID,
+		&i.ScheduleInstanceID,
+		&i.ScheduledAt,
 		&i.Status,
 		&i.ExecutionStatus,
 		&i.TerminalOutcome,
+		&i.Payload,
+		&i.Output,
 		&i.Metadata,
 		&i.Tags,
 		&i.LockedRetryPolicy,
+		&i.QueueClass,
+		&i.QueueName,
+		&i.QueueConcurrencyLimit,
+		&i.ConcurrencyKey,
+		&i.Priority,
+		&i.QueueTimestamp,
+		&i.Ttl,
+		&i.QueuedExpiresAt,
+		&i.RequestedMilliCpu,
+		&i.RequestedMemoryMib,
+		&i.RequestedDiskMib,
+		&i.RequestedExecutionSlots,
+		&i.RuntimeIdentityID,
+		&i.RuntimeArch,
+		&i.RuntimeABI,
+		&i.KernelDigest,
+		&i.InitramfsDigest,
+		&i.RootfsDigest,
+		&i.CniProfile,
+		&i.NetworkPolicy,
+		&i.ResourcePlacementPolicy,
+		&i.MaxActiveDurationMs,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.StateVersion,
 		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.LatestRunCheckpointID,
 		&i.ExitCode,
-		&i.Output,
+		&i.ErrorMessage,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StartedAt,
+		&i.FinishedAt,
 		&i.MetadataTooLarge,
 	)
 	return i, err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type actorContextKey struct{}
@@ -21,8 +23,13 @@ type workerContextKey struct{}
 type workerActor struct {
 	WorkerInstanceID uuid.UUID
 	WorkerGroupID    string
+	WorkerEpoch      int64
 	ClaimVersion     int64
+	ProtocolVersion  string
+	Roles            []string
 	ResourceID       string
+	State            db.WorkerInstanceState
+	EpochStartedAt   time.Time
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
@@ -218,6 +225,18 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
+	return s.requireWorkerState(false, false, next)
+}
+
+func (s *Server) requireRegisteringWorker(next http.Handler) http.Handler {
+	return s.requireWorkerState(true, false, next)
+}
+
+func (s *Server) requireTerminalWorker(next http.Handler) http.Handler {
+	return s.requireWorkerState(false, true, next)
+}
+
+func (s *Server) requireWorkerState(registering, terminal bool, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.db == nil || len(s.workerTokenSecret) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
@@ -243,17 +262,30 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		row, err := s.db.AuthorizeWorkerInstanceCredential(r.Context(), db.AuthorizeWorkerInstanceCredentialParams{
-			CredentialID:     pgvalue.UUID(credentialID),
-			WorkerInstanceID: pgvalue.UUID(workerInstanceID),
-			WorkerGroupID:    s.workerGroupID,
-		})
-		if isNoRows(err) {
+		params := db.AuthorizeWorkerInstanceCredentialParams{
+			CredentialID:      pgvalue.UUID(credentialID),
+			ClaimVersion:      payload.ClaimVersion,
+			GroupClaimVersion: payload.GroupClaimVersion,
+			ProtocolVersion:   payload.ProtocolVersion,
+			WorkerEpoch:       pgtype.Int8{Int64: payload.WorkerEpoch, Valid: true},
+		}
+		var row db.AuthorizeWorkerInstanceCredentialRow
+		var authorizationErr error
+		if registering {
+			startupRow, startupErr := s.db.AuthorizeRegisteringWorkerInstanceCredential(r.Context(), db.AuthorizeRegisteringWorkerInstanceCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(startupRow), startupErr
+		} else if terminal {
+			terminalRow, terminalErr := s.db.AuthorizeTerminalWorkerInstanceCredential(r.Context(), db.AuthorizeTerminalWorkerInstanceCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(terminalRow), terminalErr
+		} else {
+			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
+		}
+		if isNoRows(authorizationErr) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		if err != nil {
-			s.log.Error("worker instance credential authorization failed", "worker_instance_id", payload.WorkerInstanceID, "error", err)
+		if authorizationErr != nil {
+			s.log.Error("worker instance credential authorization failed", "worker_instance_id", payload.WorkerInstanceID, "error", authorizationErr)
 			writeError(w, unavailable(errors.New("worker authentication is unavailable")))
 			return
 		}
@@ -262,16 +294,57 @@ func (s *Server) requireWorker(next http.Handler) http.Handler {
 			WorkerGroupID:    strings.TrimSpace(row.WorkerGroupID),
 			ClaimVersion:     row.ClaimVersion,
 			ResourceID:       strings.TrimSpace(row.ResourceID),
+			WorkerEpoch:      payload.WorkerEpoch,
+			ProtocolVersion:  payload.ProtocolVersion,
+			Roles:            append([]string(nil), payload.Roles...),
+			State:            row.WorkerState,
+			EpochStartedAt:   pgvalue.Time(row.EpochStartedAt),
 		}
-		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID {
+		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != payload.WorkerGroupID {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		if worker.WorkerGroupID != s.workerGroupID || payload.WorkerGroupID != worker.WorkerGroupID || payload.ClaimVersion != worker.ClaimVersion {
+		if payload.WorkerGroupID != worker.WorkerGroupID || payload.ClaimVersion != worker.ClaimVersion {
+			writeError(w, unauthorized(errors.New("worker authentication is required")))
+			return
+		}
+		expectedRoles := make([]string, 0, 2)
+		if row.SupportsBuild {
+			expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
+		}
+		if row.SupportsRun {
+			expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
+		}
+		if !slices.Equal(payload.Roles, expectedRoles) {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker)))
+	})
+}
+
+func requireActiveWorkerRole(role string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		worker := workerFromContext(r.Context())
+		if worker.State != db.WorkerInstanceStateActive || !slices.Contains(worker.Roles, role) {
+			writeError(w, forbidden(errors.New("active worker role is required")))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// requireWorkerRole authorizes an already authenticated worker for one
+// execution domain without imposing lifecycle state. In-flight work must be
+// able to renew and complete while the worker is draining; only new claims use
+// requireActiveWorkerRole.
+func requireWorkerRole(role string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !slices.Contains(workerFromContext(r.Context()).Roles, role) {
+			writeError(w, forbidden(errors.New("worker role is required")))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

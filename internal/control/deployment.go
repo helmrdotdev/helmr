@@ -187,10 +187,6 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, notFound(errors.New("deployment not found")))
 		return
 	}
-	if err := s.requireEnvironmentPlacementWorkerGroup(r.Context(), s.db, actor.OrgID, deployment.ProjectID, deployment.EnvironmentID); err != nil {
-		writeError(w, err)
-		return
-	}
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get deployment artifacts failed", "deployment_id", deploymentID.String(), "error", err)
@@ -413,7 +409,7 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, workerGroupID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(orgID),
 		Digest:    artifact.Digest,
@@ -423,23 +419,23 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, workerG
 		return api.DeploymentResponse{}, err
 	}
 	if err := store.LockDeploymentReusableBuildKey(ctx, db.LockDeploymentReusableBuildKeyParams{
-		OrgID:              pgvalue.UUID(orgID),
-		BuildWorkerGroupID: workerGroupID,
-		ProjectID:          projectID,
-		EnvironmentID:      environmentID,
-		ContentHash:        contentHash,
+		OrgID:         pgvalue.UUID(orgID),
+		BuildRegionID: buildRegionID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ContentHash:   contentHash,
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	deployment, err := store.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
-		OrgID:              pgvalue.UUID(orgID),
-		BuildWorkerGroupID: workerGroupID,
-		ProjectID:          projectID,
-		EnvironmentID:      environmentID,
-		ContentHash:        contentHash,
+		OrgID:         pgvalue.UUID(orgID),
+		BuildRegionID: buildRegionID,
+		ProjectID:     projectID,
+		EnvironmentID: environmentID,
+		ContentHash:   contentHash,
 	})
 	if isNoRows(err) {
-		deployment, err = createQueuedDeployment(ctx, store, workerGroupID, orgID, projectID, environmentID, contentHash, artifact, metadata)
+		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, orgID, projectID, environmentID, contentHash, artifact, metadata)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -451,7 +447,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, workerG
 	return response, nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, workerGroupID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
+func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -475,7 +471,7 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, workerGr
 			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
 			PublicID:                   publicID,
 			OrgID:                      pgvalue.UUID(orgID),
-			BuildWorkerGroupID:         workerGroupID,
+			BuildRegionID:              buildRegionID,
 			ProjectID:                  projectID,
 			EnvironmentID:              environmentID,
 			Version:                    version,
@@ -529,9 +525,6 @@ func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentSta
 		scope, projectID, environmentID, err := s.secretRequestScope(ctx, orgID, projectRef, environmentRef)
 		if err != nil {
 			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-		}
-		if placementErr := s.requireEnvironmentPlacementWorkerGroup(ctx, s.db, orgID, projectID, environmentID); placementErr != nil {
-			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, placementErr
 		}
 		deployment, err := deploymentByIDOrVersion(ctx, store, orgID, projectID, environmentID, deploymentRef)
 		return deployment, scope, projectID, environmentID, err

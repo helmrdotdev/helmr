@@ -58,28 +58,13 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker token request JSON: %w", err)))
 		return
 	}
-	worker := workerFromContext(r.Context())
-	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
-		writeError(w, forbidden(errors.New("worker lease does not belong to this worker")))
+	_, leaseIDs, ok := s.workerRunLeaseForWrite(w, r, request.Lease)
+	if !ok {
 		return
 	}
-	orgID, runID, runLeaseID, err := workerWaitLeaseIDs(request.Lease)
+	run, err := s.db.GetRun(r.Context(), db.GetRunParams{OrgID: pgvalue.UUID(leaseIDs.orgID), ID: pgvalue.UUID(leaseIDs.runID)})
 	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	scope, err := s.db.GetWorkerRunWaitScope(r.Context(), db.GetWorkerRunWaitScopeParams{
-		OrgID:            pgvalue.UUID(orgID),
-		RunID:            pgvalue.UUID(runID),
-		RunLeaseID:       pgvalue.UUID(runLeaseID),
-		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-	})
-	if isNoRows(err) {
-		writeError(w, conflict(errors.New("worker run lease is not active")))
-		return
-	}
-	if err != nil {
-		writeError(w, errors.New("load worker token scope"))
+		writeError(w, conflict(errors.New("worker run lease is stale")))
 		return
 	}
 	timeout := json.RawMessage(`"7d"`)
@@ -90,7 +75,7 @@ func (s *Server) workerCreateToken(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(map[string]int32{"seconds": *request.TimeoutInSeconds})
 		timeout = b
 	}
-	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: orgID}, scope.ProjectID, scope.EnvironmentID, api.CreateTokenRequest{
+	token, publicToken, err := s.createTokenRecord(r.Context(), s.db, auth.Actor{OrgID: leaseIDs.orgID}, run.ProjectID, run.EnvironmentID, api.CreateTokenRequest{
 		Timeout:  timeout,
 		Tags:     request.Tags,
 		Metadata: request.Metadata,

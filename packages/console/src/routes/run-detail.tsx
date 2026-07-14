@@ -4,8 +4,15 @@ import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative, StatusBadge } from "../features/runs/display";
 import { sessionHref } from "../features/sessions/navigation";
 import { ApiError } from "../lib/api";
+import {
+  parsePendingWaitCompletion,
+  pendingTokenID,
+  pendingWaitCompletionErrorMessage,
+  pendingWaitForm,
+} from "../lib/pending-wait-form";
 import { formatTaskOutput, hasRunOutput, taskOutputKind, taskOutputRenderMode, taskOutputTable } from "../lib/run-output";
 import {
+	completePendingToken,
 	getRun,
 	getRunEvents,
 	getRunLogs,
@@ -364,7 +371,51 @@ function EventTimeline(props: {
 
 function PendingWaitPanel(props: {
   wait: PendingWait;
+  projectID: string;
+  environmentID: string;
+  onCompleted: () => void;
 }) {
+  const form = createMemo(() => pendingWaitForm(props.wait.metadata));
+  const tokenID = createMemo(() => pendingTokenID(props.wait.params));
+  const actionable = createMemo(() => props.wait.kind === "token" && tokenID() !== null);
+  const [input, setInput] = createSignal("");
+  const [submitting, setSubmitting] = createSignal(false);
+  const [submissionError, setSubmissionError] = createSignal<string | null>(null);
+  const [submissionStatus, setSubmissionStatus] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    props.wait.id;
+    const nextForm = form();
+    setInput(nextForm.kind === "json" ? "{}" : "");
+    setSubmitting(false);
+    setSubmissionError(null);
+    setSubmissionStatus(null);
+  });
+
+  async function submit(approved?: boolean) {
+    const currentTokenID = tokenID();
+    if (currentTokenID === null || submitting()) return;
+    setSubmissionError(null);
+    setSubmissionStatus(null);
+    let data: unknown;
+    try {
+      data = parsePendingWaitCompletion(form().kind, input(), approved);
+    } catch (error) {
+      setSubmissionError(error instanceof Error ? error.message : "Invalid completion data.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const response = await completePendingToken(currentTokenID, data, props.projectID, props.environmentID);
+      setSubmissionStatus(response.status === "already_completed" ? "Already completed with the same data." : "Wait completed.");
+      props.onCompleted();
+    } catch (error) {
+      setSubmissionError(pendingWaitCompletionErrorMessage(error));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <section class={"mb-3 border border-[#e5c26e] bg-[#fffaf0] p-4"}>
       <div class={"mb-3 flex items-center justify-between gap-3"}>
@@ -399,6 +450,63 @@ function PendingWaitPanel(props: {
               {formatJSON(props.wait.tags ?? [])}
             </pre>
           </div>
+        </Show>
+        <Show when={actionable()}>
+          <div class="mt-1 border-t border-[#e5c26e] pt-3">
+            <h3 class={ui.h3}>Complete wait</h3>
+            <Show when={form().kind === "approval"}>
+              <div class={cx(ui.actionRow, "justify-start")}>
+                <button class={ui.button} type="button" disabled={submitting()} onClick={() => submit(true)}>
+                  Approve
+                </button>
+                <button class={ui.dangerOutlineButton} type="button" disabled={submitting()} onClick={() => submit(false)}>
+                  Reject
+                </button>
+              </div>
+            </Show>
+            <Show when={form().kind === "message"}>
+              <label class={cx(ui.field, "mt-3")}>
+                <span>Message</span>
+                <textarea
+                  class={ui.textarea}
+                  value={input()}
+                  disabled={submitting()}
+                  onInput={(event) => setInput(event.currentTarget.value)}
+                />
+              </label>
+              <div class={ui.actionRow}>
+                <button class={ui.button} type="button" disabled={submitting()} onClick={() => submit()}>
+                  Send message
+                </button>
+              </div>
+            </Show>
+            <Show when={form().kind === "json"}>
+              <label class={cx(ui.field, "mt-3")}>
+                <span>JSON value</span>
+                <textarea
+                  class={cx(ui.textarea, "min-h-28 font-mono")}
+                  value={input()}
+                  disabled={submitting()}
+                  spellcheck={false}
+                  onInput={(event) => setInput(event.currentTarget.value)}
+                />
+              </label>
+              <div class={ui.actionRow}>
+                <button class={ui.button} type="button" disabled={submitting()} onClick={() => submit()}>
+                  Submit JSON
+                </button>
+              </div>
+            </Show>
+            <Show when={submissionStatus()}>
+              {(message) => <p class={ui.inlineState} role="status">{message()}</p>}
+            </Show>
+            <Show when={submissionError()}>
+              {(message) => <p class={ui.error} role="alert">{message()}</p>}
+            </Show>
+          </div>
+        </Show>
+        <Show when={props.wait.kind === "token" && tokenID() === null}>
+          <p class={ui.warning}>This token wait cannot be completed because its token ID is unavailable.</p>
         </Show>
       </div>
     </section>
@@ -514,6 +622,9 @@ export function RunDetail() {
                     {(wait) => (
                       <PendingWaitPanel
                         wait={wait()}
+                        projectID={projectID()}
+                        environmentID={environmentID()}
+                        onCompleted={() => void run.refetch()}
                       />
                     )}
                   </Show>

@@ -111,8 +111,8 @@ func (f *fakeStore) CreateRunOperation(_ context.Context, arg db.CreateRunOperat
 	f.runOperation = db.RunOperation{
 		ID:             arg.ID,
 		OrgID:          arg.OrgID,
-		ProjectID:      arg.ProjectID,
-		EnvironmentID:  arg.EnvironmentID,
+		ProjectID:      fakeRunProjectID(f.run),
+		EnvironmentID:  fakeRunEnvironmentID(f.run),
 		RunID:          arg.RunID,
 		Kind:           arg.Kind,
 		Status:         db.RunOperationStatusRequested,
@@ -144,18 +144,13 @@ func (f *fakeStore) CancelRun(_ context.Context, arg db.CancelRunParams) (db.Can
 		return db.CancelRunRow{}, f.cancelRunErr
 	}
 	f.run.Status = db.RunStatusCancelled
-	if f.run.ExecutionStatus == db.RunExecutionStatusExecuting && !arg.Force {
-		f.run.ExecutionStatus = db.RunExecutionStatusPendingCancel
-	} else {
-		f.run.ExecutionStatus = db.RunExecutionStatusFinished
-	}
+	f.run.ExecutionStatus = db.RunExecutionStatusFinished
 	f.runOperation.Status = db.RunOperationStatusApplied
 	f.runOperation.Result = []byte(`{"status":"cancelled"}`)
 	f.runOperation.AppliedAt = testTime()
 	return db.CancelRunRow{
 		ID:                   f.run.ID,
 		OrgID:                f.run.OrgID,
-		WorkerGroupID:        fakeRunWorkerGroupID(f.run),
 		ProjectID:            f.run.ProjectID,
 		EnvironmentID:        f.run.EnvironmentID,
 		DeploymentID:         fakeRunDeploymentID(f.run),

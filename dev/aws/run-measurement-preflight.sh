@@ -3,14 +3,14 @@ set -euo pipefail
 
 usage() {
   cat <<'EOF'
-usage: dev/aws/run-measurement-preflight.sh [--require-deployments]
+usage: dev/aws/run-measurement-preflight.sh [--setup-only] [--require-deployments]
 
 Validate AWS dev state before interpreting runtime latency measurements.
 
 Checks:
   - browser setup created an organization
   - project and staging/production environments exist
-  - at least one active worker has a recent heartbeat after DB reset
+  - unless --setup-only is used, at least one active worker has a recent heartbeat after DB reset
   - worker capacity is visible to the scheduler
   - optionally, staging/production have current deployments
 
@@ -28,8 +28,13 @@ EOF
 }
 
 require_deployments=0
+setup_only=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --setup-only)
+      setup_only=1
+      shift
+      ;;
     --require-deployments)
       require_deployments=1
       shift
@@ -125,95 +130,30 @@ CREATE TEMP TABLE preflight_target_environments AS
 
 CREATE TEMP TABLE preflight_worker_summary AS
 WITH active_workers AS (
-    SELECT *
+    SELECT worker_instances.*
       FROM worker_instances
-     WHERE status = 'active'
+     WHERE state = 'active'
 ),
 recent_workers AS (
     SELECT *
       FROM active_workers
-     WHERE last_seen_at >= now() - ${heartbeat_lit}::interval
-),
-worker_capacity AS (
-    SELECT recent_workers.id,
-           recent_workers.last_seen_at,
-           recent_workers.available_memory_mib,
-           recent_workers.available_disk_mib,
-           recent_workers.available_execution_slots,
-           recent_workers.available_milli_cpu,
-           active_run_usage.used_milli_cpu,
-           active_run_usage.used_memory_mib,
-           active_run_usage.used_disk_mib,
-           active_run_usage.used_slots,
-           active_runtime_instance_usage.used_milli_cpu AS used_runtime_instance_milli_cpu,
-           active_runtime_instance_usage.used_memory_mib AS used_runtime_instance_memory_mib,
-           active_runtime_instance_usage.used_disk_mib AS used_runtime_instance_disk_mib,
-           active_runtime_instance_usage.used_slots AS used_runtime_instance_slots,
-           GREATEST(
-             recent_workers.available_execution_slots
-             - active_run_usage.used_slots
-             - active_runtime_instance_usage.used_slots,
-             0
-           ) AS effective_available_slots,
-           GREATEST(
-             recent_workers.available_milli_cpu
-             - active_run_usage.used_milli_cpu
-             - active_runtime_instance_usage.used_milli_cpu,
-             0
-           ) AS effective_available_milli_cpu,
-           GREATEST(
-             recent_workers.available_memory_mib
-             - active_run_usage.used_memory_mib
-             - active_runtime_instance_usage.used_memory_mib,
-             0
-           ) AS effective_available_memory_mib,
-           GREATEST(
-             recent_workers.available_disk_mib
-             - active_run_usage.used_disk_mib
-             - active_runtime_instance_usage.used_disk_mib,
-             0
-           ) AS effective_available_disk_mib
-      FROM recent_workers
-      LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(runs.requested_milli_cpu), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(runs.requested_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(runs.requested_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(runs.requested_execution_slots), 0)::int AS used_slots
-            FROM run_leases
-            JOIN runs ON runs.org_id = run_leases.org_id
-                     AND runs.id = run_leases.run_id
-           WHERE run_leases.worker_instance_id = recent_workers.id
-             AND run_leases.status IN ('leased', 'running')
-      ) active_run_usage ON true
-      LEFT JOIN LATERAL (
-          SELECT COALESCE(sum(runtime_instances.reserved_cpu_millis), 0)::bigint AS used_milli_cpu,
-                 COALESCE(sum(runtime_instances.reserved_memory_mib), 0)::bigint AS used_memory_mib,
-                 COALESCE(sum(runtime_instances.reserved_disk_mib), 0)::bigint AS used_disk_mib,
-                 COALESCE(sum(runtime_instances.reserved_execution_slots), 0)::int AS used_slots
-            FROM runtime_instances
-           WHERE runtime_instances.worker_instance_id = recent_workers.id
-             AND runtime_instances.state IN ('preparing', 'ready', 'binding', 'running', 'waiting_hot', 'checkpointing', 'stopping')
-             AND (
-                 runtime_instances.expires_at IS NULL
-                 OR runtime_instances.expires_at > now()
-             )
-      ) active_runtime_instance_usage ON true
+     WHERE updated_at >= now() - ${heartbeat_lit}::interval
 )
 SELECT (SELECT count(*) FROM active_workers) AS active_workers,
        (SELECT count(*) FROM recent_workers) AS recent_active_workers,
-       max(last_seen_at) AS latest_worker_heartbeat_at,
+       max(updated_at) AS latest_worker_heartbeat_at,
        count(*) FILTER (
-           WHERE effective_available_slots >= ${required_execution_slots}
-             AND effective_available_milli_cpu >= ${required_milli_cpu}
-             AND effective_available_memory_mib >= ${required_memory_mib}
-             AND effective_available_disk_mib >= ${required_disk_mib}
+           WHERE max_vm_slots >= ${required_execution_slots}
+             AND certified_cpu_millis >= ${required_milli_cpu}
+             AND certified_memory_bytes >= ${required_memory_mib} * 1048576::bigint
+             AND certified_workload_disk_bytes >= ${required_disk_mib} * 1048576::bigint
        ) AS recent_schedulable_workers,
-       COALESCE(sum(available_execution_slots), 0)::bigint AS recent_raw_available_slots,
-       COALESCE(sum(effective_available_slots), 0)::bigint AS recent_effective_available_slots,
-       COALESCE(sum(effective_available_milli_cpu), 0)::bigint AS recent_effective_available_milli_cpu,
-       COALESCE(sum(effective_available_memory_mib), 0)::bigint AS recent_effective_available_memory_mib,
-       COALESCE(sum(effective_available_disk_mib), 0)::bigint AS recent_effective_available_disk_mib
-  FROM worker_capacity;
+       COALESCE(sum(max_vm_slots), 0)::bigint AS recent_raw_available_slots,
+       COALESCE(sum(max_vm_slots), 0)::bigint AS recent_effective_available_slots,
+       COALESCE(sum(certified_cpu_millis), 0)::bigint AS recent_effective_available_milli_cpu,
+       COALESCE(sum(certified_memory_bytes / 1048576), 0)::bigint AS recent_effective_available_memory_mib,
+       COALESCE(sum(certified_workload_disk_bytes / 1048576), 0)::bigint AS recent_effective_available_disk_mib
+  FROM recent_workers;
 
 SELECT 'setup' AS section,
        (SELECT count(*) FROM organizations) AS organizations,
@@ -272,6 +212,7 @@ BEGIN
         RAISE EXCEPTION 'measurement preflight failed: expected environments %, %, got %', ${staging_lit}, ${production_lit}, environment_count;
     END IF;
 
+    IF ${setup_only} = 0 THEN
     SELECT preflight_worker_summary.recent_active_workers,
            preflight_worker_summary.recent_effective_available_slots,
            preflight_worker_summary.recent_effective_available_milli_cpu,
@@ -302,6 +243,7 @@ BEGIN
     END IF;
     IF recent_schedulable_workers < 1 THEN
         RAISE EXCEPTION 'measurement preflight failed: no single recent active worker fits required vector % milli CPU, % memory MiB, % disk MiB, % slot(s)', ${required_milli_cpu}, ${required_memory_mib}, ${required_disk_mib}, ${required_execution_slots};
+    END IF;
     END IF;
 
     IF ${require_deployments} = 1 THEN

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -10,12 +11,10 @@ import (
 func LoadWorker() (Worker, error) {
 	cfg := Worker{
 		ControlURL:                   envString("HELMR_CONTROL_URL"),
+		WorkerGroupID:                envString("HELMR_WORKER_GROUP_ID"),
 		CASURI:                       envString("HELMR_CAS_URI"),
-		WorkerBootstrapToken:         envString("HELMR_WORKER_BOOTSTRAP_TOKEN"),
-		WorkerBootstrapTokenPath:     envString("HELMR_WORKER_BOOTSTRAP_TOKEN_PATH"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
 		CheckpointKey:                envString("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
-		WorkerResourceID:             env("HELMR_WORKER_RESOURCE_ID", hostname()),
 		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
 		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
@@ -39,12 +38,16 @@ func LoadWorker() (Worker, error) {
 		VMVCPUCount:                  2,
 		VMMemoryMiB:                  2048,
 		VMScratchDiskMiB:             8192,
+		WorkerDiskReserveMiB:         1024,
 		VMHealthTimeout:              30 * time.Second,
 		VMHealthAttemptTimeout:       5 * time.Second,
 		WorkspaceMountStartupTimeout: 20 * time.Minute,
-		PreparedBasePoolSize:         0,
 		PreparedRuntimePoolSize:      0,
+		WorkerCertificationTTL:       24 * time.Hour,
 		PollEvery:                    2 * time.Second,
+	}
+	if cfg.WorkerGroupID == "" {
+		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	var err error
 	if cfg.WorkerLabels, err = envLabels("HELMR_WORKER_LABELS"); err != nil {
@@ -86,6 +89,12 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkerDiskMiB < 0 {
 		return cfg, errors.New("HELMR_WORKER_DISK_MIB must be non-negative")
 	}
+	if cfg.WorkerDiskReserveMiB, err = envInt64("HELMR_WORKER_DISK_RESERVE_MIB", cfg.WorkerDiskReserveMiB); err != nil {
+		return cfg, err
+	}
+	if cfg.WorkerDiskReserveMiB <= 0 {
+		return cfg, errors.New("HELMR_WORKER_DISK_RESERVE_MIB must be positive")
+	}
 	if cfg.SubstrateCacheMaxMiB, err = envInt64("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", cfg.SubstrateCacheMaxMiB); err != nil {
 		return cfg, err
 	}
@@ -112,6 +121,44 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_EXECUTION_SLOTS must fit in int32")
 	}
 	cfg.WorkerExecutionSlots = int32(workerExecutionSlots)
+	cfg.WorkerRoles, err = parseWorkerRoles(envString("HELMR_WORKER_ROLES"))
+	if err != nil {
+		return cfg, err
+	}
+	var buildExecutors int
+	if buildExecutors, err = envInt("HELMR_WORKER_BUILD_EXECUTORS", int(cfg.WorkerBuildExecutors)); err != nil {
+		return cfg, err
+	}
+	if buildExecutors == 0 && slices.Contains(cfg.WorkerRoles, "build") {
+		buildExecutors = 1
+	}
+	if buildExecutors < 0 || buildExecutors > 1<<31-1 {
+		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be non-negative and fit in int32")
+	}
+	if !slices.Contains(cfg.WorkerRoles, "build") && buildExecutors != 0 {
+		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be zero when build role is disabled")
+	}
+	cfg.WorkerBuildExecutors = int32(buildExecutors)
+	var runtimeStarts int
+	if runtimeStarts, err = envInt("HELMR_WORKER_RUNTIME_STARTS", int(cfg.WorkerRuntimeStarts)); err != nil {
+		return cfg, err
+	}
+	if runtimeStarts == 0 && slices.Contains(cfg.WorkerRoles, "run") {
+		runtimeStarts = int(cfg.WorkerExecutionSlots)
+	}
+	if runtimeStarts < 0 || runtimeStarts > 1<<31-1 {
+		return cfg, errors.New("HELMR_WORKER_RUNTIME_STARTS must be non-negative and fit in int32")
+	}
+	if !slices.Contains(cfg.WorkerRoles, "run") && runtimeStarts != 0 {
+		return cfg, errors.New("HELMR_WORKER_RUNTIME_STARTS must be zero when run role is disabled")
+	}
+	cfg.WorkerRuntimeStarts = int32(runtimeStarts)
+	if cfg.WorkerCertificationTTL, err = envDuration("HELMR_WORKER_CERTIFICATION_TTL", cfg.WorkerCertificationTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.WorkerCertificationTTL <= 0 {
+		return cfg, errors.New("HELMR_WORKER_CERTIFICATION_TTL must be positive")
+	}
 	if cfg.VMHealthTimeout, err = envDuration("HELMR_VM_HEALTH_TIMEOUT", cfg.VMHealthTimeout); err != nil {
 		return cfg, err
 	}
@@ -137,17 +184,17 @@ func LoadWorker() (Worker, error) {
 	if cfg.WorkspaceMountStartupTimeout <= 0 {
 		return cfg, errors.New("HELMR_WORKSPACE_MOUNT_STARTUP_TIMEOUT must be positive")
 	}
-	if cfg.PreparedBasePoolSize, err = envInt("HELMR_WORKER_PREPARED_BASE_POOL_SIZE", cfg.PreparedBasePoolSize); err != nil {
-		return cfg, err
-	}
-	if cfg.PreparedBasePoolSize < 0 {
-		return cfg, errors.New("HELMR_WORKER_PREPARED_BASE_POOL_SIZE must be non-negative")
-	}
 	if cfg.PreparedRuntimePoolSize, err = envInt("HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE", cfg.PreparedRuntimePoolSize); err != nil {
 		return cfg, err
 	}
 	if cfg.PreparedRuntimePoolSize < 0 {
 		return cfg, errors.New("HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE must be non-negative")
+	}
+	if slices.Contains(cfg.WorkerRoles, "run") && cfg.PreparedRuntimePoolSize == 0 {
+		cfg.PreparedRuntimePoolSize = int(cfg.WorkerRuntimeStarts)
+	}
+	if slices.Contains(cfg.WorkerRoles, "run") && cfg.PreparedRuntimePoolSize < int(cfg.WorkerRuntimeStarts) {
+		return cfg, errors.New("HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE must cover HELMR_WORKER_RUNTIME_STARTS")
 	}
 	if cfg.JailerUID, err = envInt("HELMR_WORKER_FIRECRACKER_JAILER_UID", cfg.JailerUID); err != nil {
 		return cfg, err
@@ -180,6 +227,27 @@ func LoadWorker() (Worker, error) {
 		return cfg, errors.New("HELMR_WORKER_FIRECRACKER_JAILER_GID is required")
 	}
 	return cfg, nil
+}
+
+func parseWorkerRoles(value string) ([]string, error) {
+	seen := map[string]bool{}
+	for part := range strings.SplitSeq(value, ",") {
+		role := strings.ToLower(strings.TrimSpace(part))
+		if role != "run" && role != "build" {
+			return nil, fmt.Errorf("HELMR_WORKER_ROLES contains unsupported role %q", role)
+		}
+		seen[role] = true
+	}
+	roles := make([]string, 0, 2)
+	for _, role := range []string{"build", "run"} {
+		if seen[role] {
+			roles = append(roles, role)
+		}
+	}
+	if len(roles) == 0 {
+		return nil, errors.New("HELMR_WORKER_ROLES must enable run, build, or both")
+	}
+	return roles, nil
 }
 
 func envLabels(name string) (map[string]string, error) {

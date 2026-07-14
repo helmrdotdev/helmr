@@ -53,7 +53,7 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{Network: compute.DefaultNetworkPolicy()})
+	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{OwnerKind: vm.RuntimeOwnerBuild, Network: compute.DefaultNetworkPolicy()})
 	if err != nil {
 		return nil, fmt.Errorf("connect task compiler guest: %w", err)
 	}

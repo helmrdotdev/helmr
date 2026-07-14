@@ -38,7 +38,7 @@ type Control struct {
 	ClickHousePassword      string
 	CASURI                  string
 	WorkerTokenSigningKey   string
-	WorkerBootstrapToken    string
+	WorkerGroupsJSON        string
 	SetupToken              string
 	AuthSecret              string
 	SecretEncryptionKey     string
@@ -59,6 +59,8 @@ type Control struct {
 }
 
 type Dispatcher struct {
+	WorkerFleets               []WorkerFleet
+	FleetMetricsNamespace      string
 	DatabaseURL                string
 	RedisURL                   string
 	WorkerGroupID              string
@@ -87,6 +89,37 @@ type Dispatcher struct {
 	RuntimePrepareEvery        time.Duration
 }
 
+type WorkerFleet struct {
+	GroupID               string
+	Role                  string
+	ASGName               string
+	CompatibilityKeys     []string
+	MilliCPU              uint64
+	MemoryBytes           uint64
+	WorkloadDiskBytes     uint64
+	ScratchBytes          uint64
+	BuildCacheBytes       uint64
+	ArtifactCacheBytes    uint64
+	VMSlots               uint64
+	BuildExecutors        uint64
+	QueuedRunScratchBytes uint64
+	MinWorkers            int
+	WarmWorkers           int
+	MaxWorkers            int
+	MaxScaleOutPerCycle   int
+	MaxPending            int
+	MaxPackingItems       int
+	ScaleOutCooldown      time.Duration
+	ScaleInCooldown       time.Duration
+	ScaleInHysteresis     time.Duration
+	StaleWorkerTimeout    time.Duration
+	ReadinessTimeout      time.Duration
+	DrainTimeout          time.Duration
+	EmergencyStop         bool
+	ControllerInterval    time.Duration
+	MetricsInterval       time.Duration
+}
+
 type Database struct {
 	URL string
 }
@@ -103,17 +136,14 @@ type WorkerGroupBootstrap struct {
 	Provider          string
 	ProviderRegion    string
 	RegionDisplayName string
-	WorkerGroupID     string
 }
 
 type Worker struct {
 	ControlURL                   string
+	WorkerGroupID                string
 	CASURI                       string
-	WorkerBootstrapToken         string
-	WorkerBootstrapTokenPath     string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                string
-	WorkerResourceID             string
 	WorkerProviderRegion         string
 	WorkerLabels                 map[string]string
 	WorkDir                      string
@@ -143,13 +173,17 @@ type Worker struct {
 	WorkerCapacityVCPUs          int64
 	WorkerCapacityMemoryMiB      int64
 	WorkerDiskMiB                int64
+	WorkerDiskReserveMiB         int64
 	SubstrateCacheMaxMiB         int64
 	ArtifactCacheMaxMiB          int64
 	WorkerExecutionSlots         int32
+	WorkerRoles                  []string
+	WorkerBuildExecutors         int32
+	WorkerRuntimeStarts          int32
+	WorkerCertificationTTL       time.Duration
 	VMHealthTimeout              time.Duration
 	VMHealthAttemptTimeout       time.Duration
 	WorkspaceMountStartupTimeout time.Duration
-	PreparedBasePoolSize         int
 	PreparedRuntimePoolSize      int
 	PollEvery                    time.Duration
 }
@@ -190,7 +224,6 @@ func LoadWorkerGroupBootstrap() (WorkerGroupBootstrap, error) {
 		Provider:          envString("HELMR_PROVIDER"),
 		ProviderRegion:    envString("HELMR_PROVIDER_REGION"),
 		RegionDisplayName: envString("HELMR_REGION_DISPLAY_NAME"),
-		WorkerGroupID:     envString("HELMR_WORKER_GROUP_ID"),
 	}
 	if cfg.RegionID == "" {
 		return cfg, errors.New("HELMR_REGION_ID is required")
@@ -206,9 +239,6 @@ func LoadWorkerGroupBootstrap() (WorkerGroupBootstrap, error) {
 	}
 	if cfg.RegionDisplayName == "" {
 		cfg.RegionDisplayName = cfg.RegionID
-	}
-	if cfg.WorkerGroupID == "" {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
 	}
 	return cfg, nil
 }
@@ -317,12 +347,4 @@ func envBool(name string, fallback bool) (bool, error) {
 		return false, fmt.Errorf("%s must be a boolean: %w", name, err)
 	}
 	return parsed, nil
-}
-
-func hostname() string {
-	name, err := os.Hostname()
-	if err != nil || name == "" {
-		return "worker"
-	}
-	return name
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"unicode/utf8"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -18,8 +18,74 @@ var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 type EnqueuerStore interface {
 	PrepareQueuedRunDispatch(context.Context, db.PrepareQueuedRunDispatchParams) (db.PrepareQueuedRunDispatchRow, error)
 	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
-	MarkRunDispatchEnqueued(context.Context, db.MarkRunDispatchEnqueuedParams) (db.Run, error)
-	MarkRunDispatchEnqueueError(context.Context, db.MarkRunDispatchEnqueueErrorParams) (db.Run, error)
+	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
+	ListQueuedDeploymentBuildRegions(context.Context, int32) ([]string, error)
+}
+
+func (e *Enqueuer) ReconcileBuildReady(ctx context.Context, regionLimit, candidateLimit int32) (QueueReconcileStats, error) {
+	regions, err := e.store.ListQueuedDeploymentBuildRegions(ctx, regionLimit)
+	if err != nil {
+		return QueueReconcileStats{}, err
+	}
+	var stats QueueReconcileStats
+	var problems []error
+	remaining := candidateLimit
+	for _, region := range regions {
+		if remaining <= 0 {
+			break
+		}
+		rows, err := e.store.ListQueuedDeploymentBuildCandidates(ctx, db.ListQueuedDeploymentBuildCandidatesParams{BuildRegionID: region, LimitCount: remaining})
+		if err != nil {
+			problems = append(problems, err)
+			continue
+		}
+		stats.Scanned += len(rows)
+		for _, row := range rows {
+			message, err := buildQueueMessage(row)
+			if err == nil {
+				_, err = e.queue.Enqueue(ctx, message)
+			}
+			if err != nil {
+				stats.Failed++
+				problems = append(problems, err)
+			} else {
+				stats.Enqueued++
+			}
+			remaining--
+		}
+	}
+	return stats, errors.Join(problems...)
+}
+
+func buildQueueMessage(row db.ListQueuedDeploymentBuildCandidatesRow) (Message, error) {
+	deploymentID, err := pgUUIDString(row.DeploymentID)
+	if err != nil {
+		return Message{}, err
+	}
+	orgID, err := pgUUIDString(row.OrgID)
+	if err != nil {
+		return Message{}, err
+	}
+	projectID, err := pgUUIDString(row.ProjectID)
+	if err != nil {
+		return Message{}, err
+	}
+	environmentID, err := pgUUIDString(row.EnvironmentID)
+	if err != nil {
+		return Message{}, err
+	}
+	message := Message{WorkKind: WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
+		ProjectID: projectID, EnvironmentID: environmentID, RegionID: row.BuildRegionID,
+		QueueClass: "build", QueueName: "deployment-build", BuildAttemptNumber: row.BuildAttemptNumber,
+		LeaseSequence: row.LeaseSequence, QueueTimestamp: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
+		BuildResources: BuildResourceVector{CPUMillis: row.BuildRequestedCpuMillis, MemoryBytes: row.BuildRequestedMemoryBytes,
+			WorkloadDiskBytes: row.BuildRequestedWorkloadDiskBytes, ScratchBytes: row.BuildRequestedScratchBytes,
+			BuildCacheBytes: row.BuildRequestedBuildCacheBytes, ArtifactCacheBytes: row.BuildRequestedArtifactCacheBytes,
+			Executors: row.BuildRequestedExecutors}}
+	if err := message.Validate(); err != nil {
+		return Message{}, err
+	}
+	return message, nil
 }
 
 type Enqueuer struct {
@@ -68,23 +134,6 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgty
 	}
 	result, err := e.queue.Enqueue(ctx, message)
 	if err != nil {
-		_, markErr := e.store.MarkRunDispatchEnqueueError(ctx, db.MarkRunDispatchEnqueueErrorParams{
-			OrgID:                      orgID,
-			RunID:                      runID,
-			WorkerGroupID:              row.WorkerGroupID,
-			QueueClass:                 row.QueueClass,
-			LastError:                  truncateError(err, e.errorSize),
-			ExpectedDispatchGeneration: row.DispatchGeneration,
-		})
-		return EnqueueResult{}, errors.Join(err, markErr)
-	}
-	if _, err := e.store.MarkRunDispatchEnqueued(ctx, db.MarkRunDispatchEnqueuedParams{
-		OrgID:                      orgID,
-		RunID:                      runID,
-		WorkerGroupID:              row.WorkerGroupID,
-		QueueClass:                 row.QueueClass,
-		ExpectedDispatchGeneration: row.DispatchGeneration,
-	}); err != nil {
 		return EnqueueResult{}, err
 	}
 	return result, nil
@@ -103,7 +152,7 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	}
 	candidates, err := e.store.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
 		OrgID:         scope.OrgID,
-		WorkerGroupID: scope.WorkerGroupID,
+		RegionID:      scope.RegionID,
 		ProjectID:     scope.ProjectID,
 		EnvironmentID: scope.EnvironmentID,
 		QueueClass:    scope.QueueClass,
@@ -135,7 +184,7 @@ func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 	if err != nil {
 		return Message{}, err
 	}
-	runID, err := pgUUIDString(row.RunID)
+	runID, err := pgUUIDString(row.ID)
 	if err != nil {
 		return Message{}, fmt.Errorf("run id: %w", err)
 	}
@@ -156,9 +205,10 @@ func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 		limit = row.QueueConcurrencyLimit.Int32
 	}
 	return Message{
+		WorkKind:              WorkKindRun,
 		RunID:                 runID,
 		OrgID:                 orgID,
-		WorkerGroupID:         row.WorkerGroupID,
+		RegionID:              row.RegionID,
 		ProjectID:             projectID,
 		EnvironmentID:         environmentID,
 		QueueClass:            row.QueueClass,
@@ -166,12 +216,12 @@ func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 		QueueConcurrencyScope: row.QueueName,
 		QueueConcurrencyLimit: limit,
 		ConcurrencyKey:        row.ConcurrencyKey.String,
-		DispatchGeneration:    row.DispatchGeneration,
+		RunStateVersion:       row.StateVersion,
 		Requirements:          requirements,
 		Priority:              row.Priority,
 		QueueTimestamp:        row.QueueTimestamp.Time,
 		QueuedExpiresAt:       row.QueuedExpiresAt.Time,
-		EnqueuedAt:            row.EnqueuedAt.Time,
+		EnqueuedAt:            time.Now().UTC(),
 	}, nil
 }
 
@@ -181,7 +231,7 @@ func requirementsFromRow(row db.PrepareQueuedRunDispatchRow) (compute.RunRuntime
 		RequestedMemoryMiB:      row.RequestedMemoryMib,
 		RequestedDiskMiB:        row.RequestedDiskMib,
 		RequestedExecutionSlots: row.RequestedExecutionSlots,
-		RuntimeID:               row.RuntimeID,
+		RuntimeID:               row.RuntimeIdentityID,
 		RuntimeArch:             row.RuntimeArch,
 		RuntimeABI:              row.RuntimeABI,
 		KernelDigest:            row.KernelDigest,
@@ -189,7 +239,7 @@ func requirementsFromRow(row db.PrepareQueuedRunDispatchRow) (compute.RunRuntime
 		RootfsDigest:            row.RootfsDigest,
 		CNIProfile:              row.CniProfile,
 		NetworkPolicyJSON:       row.NetworkPolicy,
-		PlacementJSON:           row.Placement,
+		PlacementJSON:           row.ResourcePlacementPolicy,
 	})
 }
 
@@ -199,21 +249,4 @@ func pgUUIDString(value pgtype.UUID) (string, error) {
 		return "", err
 	}
 	return parsed.String(), nil
-}
-
-func truncateError(err error, limit int) string {
-	if err == nil {
-		return ""
-	}
-	text := err.Error()
-	if limit <= 0 {
-		return ""
-	}
-	if len(text) <= limit {
-		return text
-	}
-	for limit > 0 && !utf8.ValidString(text[:limit]) {
-		limit--
-	}
-	return text[:limit]
 }

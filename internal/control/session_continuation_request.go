@@ -26,20 +26,18 @@ const (
 var errSessionContinuationRequestLost = errors.New("session continuation request claim lost")
 
 type sessionContinuationRequestWorkflow struct {
-	log           *slog.Logger
-	workerGroupID string
-	db            db.Querier
-	tx            TxBeginner
-	enqueuer      RunEnqueuer
+	log      *slog.Logger
+	db       db.Querier
+	tx       TxBeginner
+	enqueuer RunEnqueuer
 }
 
 func (s *Server) sessionContinuationRequestWorkflow() sessionContinuationRequestWorkflow {
 	return sessionContinuationRequestWorkflow{
-		log:           s.log,
-		workerGroupID: s.workerGroupID,
-		db:            s.db,
-		tx:            s.tx,
-		enqueuer:      s.runEnqueuer,
+		log:      s.log,
+		db:       s.db,
+		tx:       s.tx,
+		enqueuer: s.runEnqueuer,
 	}
 }
 
@@ -69,7 +67,6 @@ func (w sessionContinuationRequestWorkflow) reconcileDue(ctx context.Context, or
 		ClaimTtl:      pgvalue.Interval(sessionContinuationRequestClaimTTL),
 		ClaimOwner:    claimOwner,
 		OrgID:         orgID,
-		WorkerGroupID: w.workerGroupID,
 		ProjectID:     projectID,
 		EnvironmentID: environmentID,
 		SessionID:     sessionID,
@@ -102,7 +99,6 @@ func (w sessionContinuationRequestWorkflow) reconcileClaimed(ctx context.Context
 	session := db.Session{
 		ID:            request.SessionID,
 		OrgID:         request.OrgID,
-		WorkerGroupID: request.WorkerGroupID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 	}
@@ -117,7 +113,6 @@ func (w sessionContinuationRequestWorkflow) reconcileClaimed(ctx context.Context
 		if isNoRows(err) {
 			if _, markErr := work.q.MarkSessionContinuationRequestFailed(ctx, db.MarkSessionContinuationRequestFailedParams{
 				OrgID:         request.OrgID,
-				WorkerGroupID: request.WorkerGroupID,
 				ProjectID:     request.ProjectID,
 				EnvironmentID: request.EnvironmentID,
 				ID:            request.ID,
@@ -134,7 +129,7 @@ func (w sessionContinuationRequestWorkflow) reconcileClaimed(ctx context.Context
 			}
 			return nil
 		}
-		createdRunID, status, err := tryCreateContinuationRunForRequest(ctx, work.q, w.workerGroupID, session, request, record)
+		createdRunID, status, err := tryCreateContinuationRunForRequest(ctx, work.q, session, request, record)
 		if err != nil {
 			if errors.Is(err, errSessionContinuationRequestLost) {
 				return err
@@ -164,7 +159,6 @@ func releaseSessionContinuationRequestForRetry(ctx context.Context, store db.Que
 		LastErrorCode:    lastErrorCode,
 		LastErrorMessage: lastErrorMessage,
 		OrgID:            request.OrgID,
-		WorkerGroupID:    request.WorkerGroupID,
 		ProjectID:        request.ProjectID,
 		EnvironmentID:    request.EnvironmentID,
 		ID:               request.ID,
@@ -189,7 +183,7 @@ func sessionContinuationRequestRetryAfter(request db.SessionContinuationRequest,
 	}
 }
 
-func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, servingWorkerGroupID string, session db.Session, request db.SessionContinuationRequest, record db.StreamRecord) (pgtype.UUID, string, error) {
+func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, session db.Session, request db.SessionContinuationRequest, record db.StreamRecord) (pgtype.UUID, string, error) {
 	if request.Status == "created" && request.CreatedRunID.Valid {
 		return request.CreatedRunID, "duplicate", nil
 	}
@@ -212,7 +206,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 		}
 		if _, err := store.MarkSessionContinuationRequestSkipped(ctx, db.MarkSessionContinuationRequestSkippedParams{
 			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -226,7 +219,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if locked.ExpiresAt.Valid && !locked.ExpiresAt.Time.After(time.Now()) {
 		if _, err := store.MarkSessionContinuationRequestSkipped(ctx, db.MarkSessionContinuationRequestSkippedParams{
 			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -240,7 +232,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if !locked.CurrentRunID.Valid {
 		if _, err := store.MarkSessionContinuationRequestFailed(ctx, db.MarkSessionContinuationRequestFailedParams{
 			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
 			ProjectID:     request.ProjectID,
 			EnvironmentID: request.EnvironmentID,
 			ID:            request.ID,
@@ -268,39 +259,8 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	if err != nil {
 		return pgtype.UUID{}, "", err
 	}
-	if locked.WorkerGroupID != servingWorkerGroupID {
-		if _, err := store.MarkSessionContinuationRequestFailed(ctx, db.MarkSessionContinuationRequestFailedParams{
-			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
-			ProjectID:     request.ProjectID,
-			EnvironmentID: request.EnvironmentID,
-			ID:            request.ID,
-			ClaimOwner:    request.ClaimOwner,
-			Reason:        "session_worker_group_mismatch",
-		}); err != nil {
-			return pgtype.UUID{}, "", err
-		}
-		return pgtype.UUID{}, "failed", nil
-	}
-	if _, err := store.GetWorkerGroupPlacementForRecord(ctx, locked.WorkerGroupID); isNoRows(err) {
-		if _, err := store.MarkSessionContinuationRequestFailed(ctx, db.MarkSessionContinuationRequestFailedParams{
-			OrgID:         request.OrgID,
-			WorkerGroupID: request.WorkerGroupID,
-			ProjectID:     request.ProjectID,
-			EnvironmentID: request.EnvironmentID,
-			ID:            request.ID,
-			ClaimOwner:    request.ClaimOwner,
-			Reason:        "session_route_unavailable",
-		}); err != nil {
-			return pgtype.UUID{}, "", err
-		}
-		return pgtype.UUID{}, "failed", nil
-	} else if err != nil {
-		return pgtype.UUID{}, "", err
-	}
 	deploymentTask, err := store.GetDeploymentTask(ctx, db.GetDeploymentTaskParams{
 		OrgID:         locked.OrgID,
-		WorkerGroupID: locked.WorkerGroupID,
 		ProjectID:     locked.ProjectID,
 		EnvironmentID: locked.EnvironmentID,
 		DeploymentID:  locked.ActiveDeploymentID,
@@ -379,40 +339,9 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 			TraceID:               pgtype.Text{String: traceID, Valid: true},
 			RootSpanID:            rootSpanID,
 			EventPayload:          createdPayload,
-			AllowDrainingRoute:    true,
 		})
 	})
 	if err != nil {
-		return pgtype.UUID{}, "", err
-	}
-	workspaceMountRequest, err := json.Marshal(map[string]string{
-		"source": "session_input",
-		"run_id": pgvalue.MustUUIDValue(run.ID).String(),
-	})
-	if err != nil {
-		return pgtype.UUID{}, "", err
-	}
-	mount, err := store.EnsureWorkspaceMountRequested(ctx, db.EnsureWorkspaceMountRequestedParams{
-		ID:              pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:           locked.OrgID,
-		ProjectID:       locked.ProjectID,
-		EnvironmentID:   locked.EnvironmentID,
-		WorkspaceID:     locked.WorkspaceID,
-		RequestPriority: scheduling.priority,
-		Request:         workspaceMountRequest,
-	})
-	if err != nil {
-		if isNoRows(err) {
-			return pgtype.UUID{}, "", workspaceMountPrerequisiteErrorWithStore(ctx, store, locked.OrgID, locked.ProjectID, locked.EnvironmentID, locked.WorkspaceID)
-		}
-		return pgtype.UUID{}, "", err
-	}
-	if err := store.SetQueuedRunWorkspaceMount(ctx, db.SetQueuedRunWorkspaceMountParams{
-		OrgID:            locked.OrgID,
-		RunID:            run.ID,
-		WorkspaceID:      locked.WorkspaceID,
-		WorkspaceMountID: mount.ID,
-	}); err != nil {
 		return pgtype.UUID{}, "", err
 	}
 	var sessionRunPublicID string
@@ -444,7 +373,6 @@ func tryCreateContinuationRunForRequest(ctx context.Context, store db.Querier, s
 	}
 	if _, err := store.MarkSessionContinuationRequestCreated(ctx, db.MarkSessionContinuationRequestCreatedParams{
 		OrgID:         request.OrgID,
-		WorkerGroupID: request.WorkerGroupID,
 		ProjectID:     request.ProjectID,
 		EnvironmentID: request.EnvironmentID,
 		ID:            request.ID,
@@ -471,7 +399,6 @@ func (w sessionContinuationRequestWorkflow) consumeByActiveRun(ctx context.Conte
 		}
 		if _, err := work.q.MarkSessionContinuationRequestConsumedByActiveRun(ctx, db.MarkSessionContinuationRequestConsumedByActiveRunParams{
 			OrgID:          session.OrgID,
-			WorkerGroupID:  session.WorkerGroupID,
 			ProjectID:      session.ProjectID,
 			EnvironmentID:  session.EnvironmentID,
 			ActiveRunID:    activeRunID,

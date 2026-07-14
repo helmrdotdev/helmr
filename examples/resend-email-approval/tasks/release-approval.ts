@@ -102,6 +102,7 @@ export const releaseApproval = task({
     const decision = await tokens.wait(token, {
       schema: approvalDecision,
       timeout: "1d",
+      metadata: { form: { version: 1, type: "approval" } },
     }).unwrap()
 
     return {

@@ -203,7 +203,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 	if direction == db.StreamDirectionInput {
 		resolved, err := store.ResolveStreamWaitsForStream(ctx, db.ResolveStreamWaitsForStreamParams{
 			OrgID:         session.OrgID,
-			WorkerGroupID: session.WorkerGroupID,
 			ProjectID:     session.ProjectID,
 			EnvironmentID: session.EnvironmentID,
 			StreamID:      stream.ID,
@@ -212,15 +211,6 @@ func (s *Server) appendStreamRecord(ctx context.Context, store db.Querier, sessi
 			return appendedStreamRecord{}, err
 		}
 		appended.resolvedWaitCount = len(resolved)
-		if appended.resolvedWaitCount > 0 {
-			if _, err := store.CreateResolvedLiveRunResumeWaitCommandsForOrg(ctx, db.CreateResolvedLiveRunResumeWaitCommandsForOrgParams{
-				OrgID:         session.OrgID,
-				WorkerGroupID: session.WorkerGroupID,
-				LimitCount:    int32(appended.resolvedWaitCount),
-			}); err != nil {
-				return appendedStreamRecord{}, err
-			}
-		}
 		if !row.IsCached && appended.resolvedWaitCount == 0 {
 			if _, err := store.EnsureSessionContinuationRequestForStreamRecord(ctx, db.EnsureSessionContinuationRequestForStreamRecordParams{
 				ID:             pgvalue.UUID(uuid.Must(uuid.NewV7())),
