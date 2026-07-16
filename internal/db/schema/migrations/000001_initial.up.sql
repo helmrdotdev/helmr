@@ -332,6 +332,8 @@ CREATE TYPE artifact_kind AS ENUM (
     'deployment_source',
     'build_manifest',
     'deployment_manifest',
+    'deployment_program',
+    'workspace_image',
     'sandbox_image',
     'task_bundle',
     'runtime_substrate',
@@ -594,6 +596,7 @@ CREATE TABLE artifacts (
     created_by_worker_instance_id UUID REFERENCES worker_instances(id) ON DELETE SET NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
+    CONSTRAINT artifacts_environment_id_id_key UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id, digest),
     FOREIGN KEY (org_id, project_id)
@@ -878,6 +881,9 @@ CREATE TABLE deployments (
     deployment_source_artifact_id UUID NOT NULL,
     build_manifest_artifact_id UUID,
     deployment_manifest_artifact_id UUID,
+    program_artifact_id UUID,
+    program_runtime_contract_digest BYTEA,
+    program_supported_architectures TEXT[],
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_attempt_number INTEGER NOT NULL DEFAULT 0 CHECK (build_attempt_number >= 0),
@@ -896,6 +902,7 @@ CREATE TABLE deployments (
     deployed_at TIMESTAMPTZ,
     failed_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
+    CONSTRAINT deployments_environment_id_id_key UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id, build_region_id),
     UNIQUE (org_id, project_id, environment_id, version),
@@ -913,8 +920,84 @@ CREATE TABLE deployments (
         DEFERRABLE INITIALLY DEFERRED,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_manifest_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
-        DEFERRABLE INITIALLY DEFERRED
+        DEFERRABLE INITIALLY DEFERRED,
+    CONSTRAINT deployments_program_artifact_fk
+        FOREIGN KEY (environment_id, program_artifact_id)
+        REFERENCES artifacts(environment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT deployments_program_tuple_check CHECK (
+        (program_artifact_id IS NULL
+         AND program_runtime_contract_digest IS NULL
+         AND program_supported_architectures IS NULL)
+        OR
+        (program_artifact_id IS NOT NULL
+         AND program_runtime_contract_digest IS NOT NULL
+         AND octet_length(program_runtime_contract_digest) = 32
+         AND program_supported_architectures IS NOT NULL
+         AND program_supported_architectures IN (
+             ARRAY['aarch64']::TEXT[],
+             ARRAY['x86_64']::TEXT[],
+             ARRAY['aarch64', 'x86_64']::TEXT[]
+         ))
+    )
 );
+
+CREATE INDEX deployments_program_artifact_idx
+    ON deployments (environment_id, program_artifact_id);
+
+CREATE TABLE deployment_definitions (
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
+    environment_id UUID NOT NULL,
+    deployment_id UUID NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('task', 'actor', 'workspace', 'run_stream')),
+    declared_id TEXT NOT NULL CHECK (
+        declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
+        AND octet_length(declared_id) BETWEEN 1 AND 128
+    ),
+    manifest_version INTEGER NOT NULL CHECK (manifest_version = 1),
+    manifest JSONB NOT NULL CHECK (jsonb_typeof(manifest) = 'object'),
+    manifest_digest BYTEA NOT NULL CHECK (octet_length(manifest_digest) = 32),
+    runtime_contract_digest BYTEA,
+    workspace_architecture TEXT,
+    artifact_id UUID,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT deployment_definitions_environment_id_id_key
+        UNIQUE (environment_id, id),
+    CONSTRAINT deployment_definitions_membership_key
+        UNIQUE (deployment_id, kind, declared_id),
+    CONSTRAINT deployment_definitions_runtime_pin_key
+        UNIQUE (environment_id, id, kind, declared_id),
+    CONSTRAINT deployment_definitions_owned_runtime_pin_key
+        UNIQUE (environment_id, deployment_id, id, kind, declared_id),
+    CONSTRAINT deployment_definitions_deployment_fk
+        FOREIGN KEY (environment_id, deployment_id)
+        REFERENCES deployments(environment_id, id)
+        ON DELETE CASCADE,
+    CONSTRAINT deployment_definitions_artifact_fk
+        FOREIGN KEY (environment_id, artifact_id)
+        REFERENCES artifacts(environment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT deployment_definitions_projection_check CHECK (
+        (
+            kind = 'workspace'
+            AND runtime_contract_digest IS NOT NULL
+            AND octet_length(runtime_contract_digest) = 32
+            AND workspace_architecture IS NOT NULL
+            AND workspace_architecture IN ('aarch64', 'x86_64')
+            AND artifact_id IS NOT NULL
+        )
+        OR
+        (
+            kind IN ('task', 'actor', 'run_stream')
+            AND runtime_contract_digest IS NULL
+            AND workspace_architecture IS NULL
+            AND artifact_id IS NULL
+        )
+    )
+);
+
+CREATE INDEX deployment_definitions_artifact_idx
+    ON deployment_definitions (environment_id, artifact_id);
 
 CREATE TABLE deployment_build_leases (
     id UUID PRIMARY KEY DEFAULT uuidv7(),

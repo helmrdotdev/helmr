@@ -19,6 +19,8 @@ const (
 	ArtifactKindDeploymentSource         ArtifactKind = "deployment_source"
 	ArtifactKindBuildManifest            ArtifactKind = "build_manifest"
 	ArtifactKindDeploymentManifest       ArtifactKind = "deployment_manifest"
+	ArtifactKindDeploymentProgram        ArtifactKind = "deployment_program"
+	ArtifactKindWorkspaceImage           ArtifactKind = "workspace_image"
 	ArtifactKindSandboxImage             ArtifactKind = "sandbox_image"
 	ArtifactKindTaskBundle               ArtifactKind = "task_bundle"
 	ArtifactKindRuntimeSubstrate         ArtifactKind = "runtime_substrate"
@@ -2209,6 +2211,9 @@ type Deployment struct {
 	DeploymentSourceArtifactID       pgtype.UUID        `json:"deployment_source_artifact_id"`
 	BuildManifestArtifactID          pgtype.UUID        `json:"build_manifest_artifact_id"`
 	DeploymentManifestArtifactID     pgtype.UUID        `json:"deployment_manifest_artifact_id"`
+	ProgramArtifactID                pgtype.UUID        `json:"program_artifact_id"`
+	ProgramRuntimeContractDigest     []byte             `json:"program_runtime_contract_digest"`
+	ProgramSupportedArchitectures    []string           `json:"program_supported_architectures"`
 	Status                           DeploymentStatus   `json:"status"`
 	Failure                          []byte             `json:"failure"`
 	BuildAttemptNumber               int32              `json:"build_attempt_number"`
@@ -2267,6 +2272,21 @@ type DeploymentBuildLease struct {
 	TerminalRequestFingerprint  pgtype.Text               `json:"terminal_request_fingerprint"`
 	CreatedAt                   pgtype.Timestamptz        `json:"created_at"`
 	UpdatedAt                   pgtype.Timestamptz        `json:"updated_at"`
+}
+
+type DeploymentDefinition struct {
+	ID                    pgtype.UUID        `json:"id"`
+	EnvironmentID         pgtype.UUID        `json:"environment_id"`
+	DeploymentID          pgtype.UUID        `json:"deployment_id"`
+	Kind                  string             `json:"kind"`
+	DeclaredID            string             `json:"declared_id"`
+	ManifestVersion       int32              `json:"manifest_version"`
+	Manifest              []byte             `json:"manifest"`
+	ManifestDigest        []byte             `json:"manifest_digest"`
+	RuntimeContractDigest []byte             `json:"runtime_contract_digest"`
+	WorkspaceArchitecture pgtype.Text        `json:"workspace_architecture"`
+	ArtifactID            pgtype.UUID        `json:"artifact_id"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
 }
 
 type DeploymentPromotion struct {

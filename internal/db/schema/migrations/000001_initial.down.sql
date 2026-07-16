@@ -186,6 +186,7 @@ DROP TABLE IF EXISTS runs;
 DROP TABLE IF EXISTS task_schedule_instances;
 DROP TABLE IF EXISTS task_schedules;
 DROP TYPE IF EXISTS task_schedule_type;
+DROP TABLE IF EXISTS deployment_definitions;
 DROP TABLE IF EXISTS deployment_tasks;
 DROP TABLE IF EXISTS deployment_queues;
 DROP TRIGGER IF EXISTS runtime_substrates_set_updated_at ON runtime_substrates;
