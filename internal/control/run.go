@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -505,23 +505,15 @@ func activeDurationMsToSeconds(value int64) int32 {
 }
 
 func normalizedJSONObject(raw json.RawMessage, label string) ([]byte, error) {
-	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
 		return []byte("{}"), nil
 	}
-	if !json.Valid(raw) {
-		return nil, fmt.Errorf("%s must be valid JSON", label)
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return nil, fmt.Errorf("%s decode failed: %w", label, err)
-	}
-	if _, ok := value.(map[string]any); !ok {
-		return nil, fmt.Errorf("%s must be a JSON object", label)
-	}
-	canonical, err := json.Marshal(value)
+	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return nil, fmt.Errorf("%s canonicalization failed: %w", label, err)
+	}
+	if canonical[0] != '{' {
+		return nil, fmt.Errorf("%s must be a JSON object", label)
 	}
 	return canonical, nil
 }

@@ -194,7 +194,7 @@ func (s *Server) createWorkspaceForRequest(ctx context.Context, actor auth.Actor
 	}
 	metadata, err := normalizedJSONObject(request.Metadata, "metadata")
 	if err != nil {
-		return db.Workspace{}, false, err
+		return db.Workspace{}, false, badRequest(err)
 	}
 	tags, err := normalizedRunTags(request.Tags)
 	if err != nil {
@@ -554,7 +554,10 @@ func workspaceIdempotencyTTL(raw string) (time.Duration, error) {
 }
 
 func (s *Server) writeWorkspaceError(w http.ResponseWriter, operation string, err error) {
+	var apiErr apiError
 	switch {
+	case errors.As(err, &apiErr):
+		writeError(w, err)
 	case isNoRows(err):
 		writeError(w, notFound(errors.New("workspace not found")))
 	case isUniqueViolation(err):

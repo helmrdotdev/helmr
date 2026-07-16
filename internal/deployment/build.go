@@ -21,8 +21,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
-	"github.com/helmrdotdev/helmr/internal/stablejson"
 	"github.com/helmrdotdev/helmr/internal/task"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -403,7 +403,7 @@ func sandboxContractFingerprint(bundle *bundlev0.Bundle) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	canonical, err := stablejson.Encode(body)
+	canonical, err := jsoncanon.Transform(body)
 	if err != nil {
 		return "", err
 	}

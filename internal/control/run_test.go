@@ -182,6 +182,54 @@ func TestAPIKeyRunCreateRejectsActorWithoutEnvironmentScope(t *testing.T) {
 	}
 }
 
+func TestAPIKeyRunCreateRejectsDuplicatePayloadMembers(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsCreate},
+	}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","payload":{"value":1,"value":2}}`))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate object name") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
+func TestAPIKeyRunCreateRejectsDuplicateMetadataMembers(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		kind:          auth.ActorKindAPIKey,
+		projectID:     testProjectIDString(),
+		environmentID: testEnvironmentIDString(),
+		permissions:   []auth.Permission{auth.PermissionRunsCreate},
+	}})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions", strings.NewReader(`{"task_id":"deploy","metadata":{"value":1,"value":2}}`))
+	req.Header.Set("authorization", "Bearer machine-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate object name") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.createRun.ID.Valid {
+		t.Fatalf("run was created: %+v", store.createRun)
+	}
+}
+
 func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
@@ -628,6 +676,25 @@ func TestWorkspaceCreateResolvesSandboxSelectorAndReplaysIdempotency(t *testing.
 	}
 	if response.Workspace.ID != pgvalue.MustUUIDValue(store.workspace.ID).String() {
 		t.Fatalf("retry workspace id = %q, want %s", response.Workspace.ID, pgvalue.MustUUIDValue(store.workspace.ID))
+	}
+}
+
+func TestWorkspaceCreateRejectsDuplicateMetadataMembers(t *testing.T) {
+	store := &fakeStore{}
+	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, CAS: &fakeCAS{}, Secrets: fakeSecrets{}, EventStream: newTestEventStream(t)})
+	req := httptest.NewRequest(http.MethodPost, "/api/workspaces", strings.NewReader(`{"sandbox_id":"test-sandbox","metadata":{"value":1,"value":2}}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "duplicate object name") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+	if store.resolveDeploymentSandboxCalls != 0 || store.createWorkspaceCalls != 0 {
+		t.Fatalf("workspace mutation calls = resolve %d create %d", store.resolveDeploymentSandboxCalls, store.createWorkspaceCalls)
 	}
 }
 

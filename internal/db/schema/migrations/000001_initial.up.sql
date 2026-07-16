@@ -954,7 +954,7 @@ CREATE TABLE deployment_definitions (
         declared_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'
         AND octet_length(declared_id) BETWEEN 1 AND 128
     ),
-    manifest_version INTEGER NOT NULL CHECK (manifest_version = 1),
+    manifest_version INTEGER NOT NULL CHECK (manifest_version = 0),
     manifest JSONB NOT NULL CHECK (jsonb_typeof(manifest) = 'object'),
     manifest_digest BYTEA NOT NULL CHECK (octet_length(manifest_digest) = 32),
     runtime_contract_digest BYTEA,

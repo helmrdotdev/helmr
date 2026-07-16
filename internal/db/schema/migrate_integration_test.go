@@ -174,15 +174,15 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-one', 1, 'application/x-tar'),
 		('00000000-0000-0000-0000-000000001000', 'sha256:definition-source-two', 1, 'application/x-tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program', 1, 'application/vnd.helmr.deployment-program.v1+tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-one', 1, 'application/vnd.helmr.workspace-image.v1.oci-tar'),
-		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-two', 1, 'application/vnd.helmr.workspace-image.v1.oci-tar');
+		('00000000-0000-0000-0000-000000001000', 'sha256:definition-program', 1, 'application/vnd.helmr.deployment-program.v0+tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-one', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
+		('00000000-0000-0000-0000-000000001000', 'sha256:definition-workspace-two', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar');
 		INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES
 		('00000000-0000-0000-0000-000000004001', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-source-one', 'deployment_source', 1, 'application/x-tar'),
 		('00000000-0000-0000-0000-000000004002', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-source-two', 'deployment_source', 1, 'application/x-tar'),
-		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program', 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v1+tar'),
-		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v1.oci-tar'),
-		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v1.oci-tar');
+		('00000000-0000-0000-0000-000000004003', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program', 'deployment_program', 1, 'application/vnd.helmr.deployment-program.v0+tar'),
+		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
+		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar');
 		INSERT INTO deployments (id, public_id, org_id, project_id, environment_id, build_region_id, version, content_hash, deployment_source_artifact_id) VALUES
 		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'definition-one', 'sha256:definition-one', '00000000-0000-0000-0000-000000004001'),
 		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'definition-two', 'sha256:definition-two', '00000000-0000-0000-0000-000000004002');
@@ -214,35 +214,39 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest) VALUES
-		('00000000-0000-0000-0000-000000006001', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 1, '{}'::jsonb, decode(repeat('02', 32), 'hex')),
-		('00000000-0000-0000-0000-000000006002', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'actor', 'constructor', 1, '{}'::jsonb, decode(repeat('03', 32), 'hex')),
-		('00000000-0000-0000-0000-000000006003', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'run_stream', 'Build-', 1, '{}'::jsonb, decode(repeat('04', 32), 'hex'));
+		('00000000-0000-0000-0000-000000006001', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('02', 32), 'hex')),
+		('00000000-0000-0000-0000-000000006002', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'actor', 'constructor', 0, '{}'::jsonb, decode(repeat('03', 32), 'hex')),
+		('00000000-0000-0000-0000-000000006003', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'run_stream', 'Build-', 0, '{}'::jsonb, decode(repeat('04', 32), 'hex'));
 		INSERT INTO deployment_definitions (id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, runtime_contract_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000006004', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'Repository.Workspace', 1, '{}'::jsonb, decode(repeat('05', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004004');
+		VALUES ('00000000-0000-0000-0000-000000006004', '00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'Repository.Workspace', 0, '{}'::jsonb, decode(repeat('05', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004004');
 	`); err != nil {
 		t.Fatal(err)
 	}
 	assertStatementRejected(t, ctx, tx, `
 		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 1, '{}'::jsonb, decode(repeat('06', 32), 'hex'))
+		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'constructor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))
 	`)
 	for _, invalidID := range []string{" invalid", "invalid/name", "_invalid", "café", strings.Repeat("a", 129)} {
 		assertStatementRejected(t, ctx, tx, `
 			INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-			VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', $1, 1, '{}'::jsonb, decode(repeat('07', 32), 'hex'))
+			VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', $1, 0, '{}'::jsonb, decode(repeat('07', 32), 'hex'))
 		`, invalidID)
 	}
 	assertStatementRejected(t, ctx, tx, `
 		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, runtime_contract_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'partial-workspace', 1, '{}'::jsonb, decode(repeat('08', 32), 'hex'), NULL, 'x86_64', '00000000-0000-0000-0000-000000004004')
+		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'partial-workspace', 0, '{}'::jsonb, decode(repeat('08', 32), 'hex'), NULL, 'x86_64', '00000000-0000-0000-0000-000000004004')
 	`)
 	assertStatementRejected(t, ctx, tx, `
 		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest, runtime_contract_digest, workspace_architecture, artifact_id)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'cross-environment', 1, '{}'::jsonb, decode(repeat('09', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004005')
+		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'workspace', 'cross-environment', 0, '{}'::jsonb, decode(repeat('09', 32), 'hex'), decode(repeat('01', 32), 'hex'), 'x86_64', '00000000-0000-0000-0000-000000004005')
 	`)
 	assertStatementRejected(t, ctx, tx, `
 		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
-		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'array-manifest', 1, '[]'::jsonb, decode(repeat('0a', 32), 'hex'))
+		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'array-manifest', 0, '[]'::jsonb, decode(repeat('0a', 32), 'hex'))
+	`)
+	assertStatementRejected(t, ctx, tx, `
+		INSERT INTO deployment_definitions (environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest)
+		VALUES ('00000000-0000-0000-0000-000000003001', '00000000-0000-0000-0000-000000005001', 'task', 'unsupported-manifest-version', 1, '{}'::jsonb, decode(repeat('0b', 32), 'hex'))
 	`)
 
 	var workspaceOnlyProgramArtifactID *string

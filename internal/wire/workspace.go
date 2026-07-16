@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/helmrdotdev/helmr/internal/stablejson"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
 const (
@@ -32,7 +32,7 @@ func GuestVerb(operationKind string) (string, error) {
 }
 
 func RequestFingerprint(operationKind string, requestJSON []byte) (string, error) {
-	stable, err := stablejson.Encode(requestJSON)
+	stable, err := jsoncanon.Transform(requestJSON)
 	if err != nil {
 		return "", err
 	}

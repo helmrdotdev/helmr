@@ -205,7 +205,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	metadata, err := normalizedJSONObject(request.Options.Metadata, "metadata")
 	if err != nil {
-		return sessionStartResult{}, err
+		return sessionStartResult{}, badRequest(err)
 	}
 	tags, err := normalizedRunTags(request.Options.Tags)
 	if err != nil {
@@ -213,7 +213,7 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 	}
 	startFingerprint, err := sessionStartRequestFingerprint(taskID, payload, request.Options, externalID, request.Options.ExpiresAt)
 	if err != nil {
-		return sessionStartResult{}, err
+		return sessionStartResult{}, badRequest(err)
 	}
 	var attachedWorkspace db.GetWorkspaceSourceForSessionStartRow
 	if requestedWorkspaceID.Valid {
