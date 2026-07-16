@@ -15,40 +15,26 @@ import (
 const (
 	ProgramIndexFormatVersion = 0
 
-	ProgramBundleFormatVersion   = "helmr.program-bundle.v0"
-	RuntimeAPIVersion            = "helmr.runtime-api.v0"
-	CheckpointProtocolVersion    = "helmr.checkpoint.v0"
-	manifestDigestDomain         = "helmr.deployment-definition-manifest.v0\x00"
-	runtimeContractDigestDomain  = "helmr.program-runtime-abi.v0\x00"
-	ArchitectureAArch64          = RuntimeArchitecture("aarch64")
-	ArchitectureX8664            = RuntimeArchitecture("x86_64")
-	DeclarationKindTask          = DeclarationKind("task")
-	DeclarationKindActor         = DeclarationKind("actor")
-	DeclarationKindRunStream     = DeclarationKind("run_stream")
-	DeclarationSlotHandler       = DeclarationSlot("handler")
-	DeclarationSlotPayloadSchema = DeclarationSlot("payloadSchema")
-	DeclarationSlotSchema        = DeclarationSlot("schema")
+	RuntimeAPIVersion                        = "helmr.runtime.v0"
+	ProgramDependencyArtifactMediaType       = "application/vnd.helmr.deployment-program-dependencies.v0+squashfs"
+	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
+	maxJSONSafeInteger                 int64 = 9007199254740991
+	ArchitectureAArch64                      = RuntimeArchitecture("aarch64")
+	ArchitectureX8664                        = RuntimeArchitecture("x86_64")
+	DeclarationKindTask                      = DeclarationKind("task")
+	DeclarationKindActor                     = DeclarationKind("actor")
+	DeclarationKindRunStream                 = DeclarationKind("run_stream")
+	DeclarationSlotHandler                   = DeclarationSlot("handler")
+	DeclarationSlotPayloadSchema             = DeclarationSlot("payloadSchema")
+	DeclarationSlotSchema                    = DeclarationSlot("schema")
 )
 
 var declaredIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
+var sha256DigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 type RuntimeArchitecture string
 type DeclarationKind string
 type DeclarationSlot string
-
-type ProgramRuntimeABI struct {
-	BundleFormatVersion       string `json:"bundleFormatVersion"`
-	RuntimeAPIVersion         string `json:"runtimeApiVersion"`
-	CheckpointProtocolVersion string `json:"checkpointProtocolVersion"`
-}
-
-func CurrentProgramRuntimeABI() ProgramRuntimeABI {
-	return ProgramRuntimeABI{
-		BundleFormatVersion:       ProgramBundleFormatVersion,
-		RuntimeAPIVersion:         RuntimeAPIVersion,
-		CheckpointProtocolVersion: CheckpointProtocolVersion,
-	}
-}
 
 type ProgramDeclaration struct {
 	Kind       DeclarationKind   `json:"kind"`
@@ -56,11 +42,19 @@ type ProgramDeclaration struct {
 	Slots      []DeclarationSlot `json:"slots"`
 }
 
+type ProgramDependencies struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"sizeBytes"`
+	MediaType string `json:"mediaType"`
+}
+
 type ProgramIndex struct {
-	FormatVersion          int                   `json:"formatVersion"`
-	RuntimeContract        ProgramRuntimeABI     `json:"runtimeContract"`
-	SupportedArchitectures []RuntimeArchitecture `json:"supportedArchitectures"`
-	Declarations           []ProgramDeclaration  `json:"declarations"`
+	FormatVersion     int                  `json:"formatVersion"`
+	RuntimeAPIVersion string               `json:"runtimeApiVersion"`
+	RuntimeDigest     string               `json:"runtimeDigest"`
+	Architecture      RuntimeArchitecture  `json:"architecture"`
+	Dependencies      ProgramDependencies  `json:"dependencies"`
+	Declarations      []ProgramDeclaration `json:"declarations"`
 }
 
 func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
@@ -113,11 +107,23 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.FormatVersion != ProgramIndexFormatVersion {
 		return fmt.Errorf("program index formatVersion = %d, want %d", index.FormatVersion, ProgramIndexFormatVersion)
 	}
-	if err := ValidateCurrentProgramRuntimeABI(index.RuntimeContract); err != nil {
-		return fmt.Errorf("program index runtimeContract: %w", err)
+	if index.RuntimeAPIVersion != RuntimeAPIVersion {
+		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
 	}
-	if !validArchitectures(index.SupportedArchitectures) {
-		return fmt.Errorf("program index supportedArchitectures is not a non-empty canonical architecture set")
+	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
+		return fmt.Errorf("program index runtimeDigest is not a lowercase SHA-256 digest")
+	}
+	if !validArchitecture(index.Architecture) {
+		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
+	}
+	if !sha256DigestPattern.MatchString(index.Dependencies.Digest) {
+		return fmt.Errorf("program index dependencies.digest is not a lowercase SHA-256 digest")
+	}
+	if index.Dependencies.SizeBytes < 1 || index.Dependencies.SizeBytes > maxJSONSafeInteger {
+		return fmt.Errorf("program index dependencies.sizeBytes is not a positive JavaScript-safe integer")
+	}
+	if index.Dependencies.MediaType != ProgramDependencyArtifactMediaType {
+		return fmt.Errorf("program index dependencies.mediaType = %q, want %q", index.Dependencies.MediaType, ProgramDependencyArtifactMediaType)
 	}
 	if len(index.Declarations) == 0 {
 		return fmt.Errorf("program index declarations must not be empty")
@@ -133,28 +139,6 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func ValidateCurrentProgramRuntimeABI(abi ProgramRuntimeABI) error {
-	if abi != CurrentProgramRuntimeABI() {
-		return fmt.Errorf("program runtime ABI does not match the toolchain-owned v0 tuple")
-	}
-	return nil
-}
-
-func ProgramRuntimeABIDigest(abi ProgramRuntimeABI) ([sha256.Size]byte, error) {
-	if err := ValidateCurrentProgramRuntimeABI(abi); err != nil {
-		return [sha256.Size]byte{}, err
-	}
-	raw, err := json.Marshal(abi)
-	if err != nil {
-		return [sha256.Size]byte{}, fmt.Errorf("encode program runtime ABI: %w", err)
-	}
-	canonical, err := jsoncanon.Transform(raw)
-	if err != nil {
-		return [sha256.Size]byte{}, fmt.Errorf("canonicalize program runtime ABI: %w", err)
-	}
-	return domainDigest(runtimeContractDigestDomain, canonical), nil
-}
-
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
@@ -166,10 +150,8 @@ func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
 	return canonical, domainDigest(manifestDigestDomain, canonical), nil
 }
 
-func validArchitectures(architectures []RuntimeArchitecture) bool {
-	return slices.Equal(architectures, []RuntimeArchitecture{ArchitectureAArch64}) ||
-		slices.Equal(architectures, []RuntimeArchitecture{ArchitectureX8664}) ||
-		slices.Equal(architectures, []RuntimeArchitecture{ArchitectureAArch64, ArchitectureX8664})
+func validArchitecture(architecture RuntimeArchitecture) bool {
+	return architecture == ArchitectureAArch64 || architecture == ArchitectureX8664
 }
 
 func validateDeclaration(declaration ProgramDeclaration) error {

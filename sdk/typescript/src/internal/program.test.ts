@@ -6,10 +6,7 @@ import { canonicalizeJson } from "./jsoncanon"
 import {
   canonicalManifestAndDigest,
   canonicalProgramIndex,
-  currentProgramRuntimeAbi,
   parseProgramIndex,
-  programRuntimeAbiDigest,
-  validateCurrentProgramRuntimeAbi,
   validateProgramIndex,
   type ProgramIndex,
 } from "./program"
@@ -29,10 +26,6 @@ interface GoldenFixture {
     readonly name: string
     readonly mutation: string
   }[]
-  readonly runtimeAbi: {
-    readonly canonical: string
-    readonly digestHex: string
-  }
   readonly manifest: {
     readonly input: string
     readonly canonical: string
@@ -60,14 +53,9 @@ describe("canonical deployment contract", async () => {
   test("parses and emits the shared canonical program index", () => {
     const index = parseProgramIndex(fixture.programIndex.canonical)
     expect(decoder.decode(canonicalProgramIndex(index))).toBe(fixture.programIndex.canonical)
-    expect(index.declarations.filter((item) => item.kind === "task").map((item) => item.declaredId)).toEqual([
-      "Build-",
-      "Build.",
-      "Build0",
-      "BuildA",
-      "Build_",
-      "Builda",
-    ])
+    expect(
+      index.declarations.filter((item) => item.kind === "task").map((item) => item.declaredId),
+    ).toEqual(["Build-", "Build.", "Build0", "BuildA", "Build_", "Builda"])
   })
 
   test("rejects the shared invalid program mutations", () => {
@@ -92,17 +80,55 @@ describe("canonical deployment contract", async () => {
           expect(() => parseProgramIndex(input), item.name).toThrow()
           continue
         }
+        case "dependency_size_fractional": {
+          const value = JSON.parse(fixture.programIndex.canonical) as Record<string, unknown>
+          const dependencies = value["dependencies"] as Record<string, unknown>
+          dependencies["sizeBytes"] = 1.5
+          const input = decoder.decode(canonicalizeJson(JSON.stringify(value)))
+          expect(() => parseProgramIndex(input), item.name).toThrow()
+          continue
+        }
         case "declaration_order":
-          [index.declarations[0], index.declarations[1]] = [index.declarations[1], index.declarations[0]]
+          ;[index.declarations[0], index.declarations[1]] = [index.declarations[1], index.declarations[0]]
           break
         case "task_slots":
-          index.declarations[0] = { ...index.declarations[0], slots: ["payloadSchema", "handler"] }
+          index.declarations[0] = {
+            ...index.declarations[0],
+            slots: ["payloadSchema", "handler"],
+          }
           break
         case "duplicate_declaration":
           index.declarations[1] = structuredClone(index.declarations[0])
           break
-        case "runtime_abi":
-          index.runtimeContract.runtimeApiVersion = "helmr.runtime-api.v2"
+        case "runtime_api":
+          index.runtimeApiVersion = "helmr.runtime.v1"
+          break
+        case "runtime_digest":
+          index.runtimeDigest = `sha256:${"A".repeat(64)}`
+          break
+        case "dependency_digest":
+          index.dependencies.digest = "sha256:invalid"
+          break
+        case "dependency_size_zero":
+          index.dependencies.sizeBytes = 0
+          break
+        case "dependency_size_negative":
+          index.dependencies.sizeBytes = -1
+          break
+        case "dependency_size_unsafe":
+          index.dependencies.sizeBytes = 9007199254740992
+          break
+        case "dependency_media_type":
+          index.dependencies.mediaType += "; charset=binary"
+          break
+        case "architecture":
+          index.architecture = "amd64"
+          break
+        case "declared_id":
+          index.declarations[0] = {
+            ...index.declarations[0],
+            declaredId: "invalid/id",
+          }
           break
         default:
           throw new Error(`unknown fixture mutation ${item.mutation}`)
@@ -115,21 +141,7 @@ describe("canonical deployment contract", async () => {
     expect(() => parseProgramIndex(` ${fixture.programIndex.canonical}`)).toThrow(/canonical/)
   })
 
-  test("rejects every single-field ABI mismatch", () => {
-    for (const field of ["bundleFormatVersion", "runtimeApiVersion", "checkpointProtocolVersion"] as const) {
-      const abi = { ...currentProgramRuntimeAbi, [field]: `${currentProgramRuntimeAbi[field]}.mismatch` }
-      expect(() => validateCurrentProgramRuntimeAbi(abi), field).toThrow()
-    }
-
-    const abiWithUnknownMember = { ...currentProgramRuntimeAbi, unknown: "value" }
-    expect(() => validateCurrentProgramRuntimeAbi(abiWithUnknownMember)).toThrow(/unknown or missing members/)
-    expect(() => programRuntimeAbiDigest(abiWithUnknownMember)).toThrow(/unknown or missing members/)
-  })
-
-  test("matches the shared ABI and manifest digests", () => {
-    expect(toHex(programRuntimeAbiDigest(currentProgramRuntimeAbi))).toBe(fixture.runtimeAbi.digestHex)
-    expect(decoder.decode(canonicalizeJson(JSON.stringify(currentProgramRuntimeAbi)))).toBe(fixture.runtimeAbi.canonical)
-
+  test("matches the shared manifest digest", () => {
     const manifest = canonicalManifestAndDigest(fixture.manifest.input)
     expect(decoder.decode(manifest.canonical)).toBe(fixture.manifest.canonical)
     expect(toHex(manifest.digest)).toBe(fixture.manifest.digestHex)
@@ -138,12 +150,14 @@ describe("canonical deployment contract", async () => {
 
 type MutableProgramIndex = {
   formatVersion: number
-  runtimeContract: {
-    bundleFormatVersion: string
-    runtimeApiVersion: string
-    checkpointProtocolVersion: string
+  runtimeApiVersion: string
+  runtimeDigest: string
+  architecture: string
+  dependencies: {
+    digest: string
+    sizeBytes: number
+    mediaType: string
   }
-  supportedArchitectures: string[]
   declarations: Array<{
     kind: string
     declaredId: string

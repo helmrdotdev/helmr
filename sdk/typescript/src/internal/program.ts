@@ -8,36 +8,40 @@ import {
 } from "./jsoncanon"
 
 export const PROGRAM_INDEX_FORMAT_VERSION = 0 as const
-export const PROGRAM_BUNDLE_FORMAT_VERSION = "helmr.program-bundle.v0" as const
-export const RUNTIME_API_VERSION = "helmr.runtime-api.v0" as const
-export const CHECKPOINT_PROTOCOL_VERSION = "helmr.checkpoint.v0" as const
+export const RUNTIME_API_VERSION = "helmr.runtime.v0" as const
+export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
+  "application/vnd.helmr.deployment-program-dependencies.v0+squashfs" as const
 
 const declaredIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
 const manifestDigestDomain = "helmr.deployment-definition-manifest.v0\0"
-const runtimeContractDigestDomain = "helmr.program-runtime-abi.v0\0"
-
-export interface ProgramRuntimeAbi {
-  readonly bundleFormatVersion: string
-  readonly runtimeApiVersion: string
-  readonly checkpointProtocolVersion: string
-}
-
-export const currentProgramRuntimeAbi: Readonly<ProgramRuntimeAbi> = Object.freeze({
-  bundleFormatVersion: PROGRAM_BUNDLE_FORMAT_VERSION,
-  runtimeApiVersion: RUNTIME_API_VERSION,
-  checkpointProtocolVersion: CHECKPOINT_PROTOCOL_VERSION,
-})
 
 export type RuntimeArchitecture = "aarch64" | "x86_64"
 export type ProgramDeclaration =
-  | Readonly<{ kind: "task"; declaredId: string; slots: readonly ["handler"] | readonly ["handler", "payloadSchema"] }>
+  | Readonly<{
+      kind: "task"
+      declaredId: string
+      slots: readonly ["handler"] | readonly ["handler", "payloadSchema"]
+    }>
   | Readonly<{ kind: "actor"; declaredId: string; slots: readonly ["handler"] }>
-  | Readonly<{ kind: "run_stream"; declaredId: string; slots: readonly ["schema"] }>
+  | Readonly<{
+      kind: "run_stream"
+      declaredId: string
+      slots: readonly ["schema"]
+    }>
+
+export interface ProgramDependencies {
+  readonly digest: string
+  readonly sizeBytes: number
+  readonly mediaType: typeof PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE
+}
 
 export interface ProgramIndex {
   readonly formatVersion: 0
-  readonly runtimeContract: ProgramRuntimeAbi
-  readonly supportedArchitectures: readonly RuntimeArchitecture[]
+  readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
+  readonly runtimeDigest: string
+  readonly architecture: RuntimeArchitecture
+  readonly dependencies: ProgramDependencies
   readonly declarations: readonly ProgramDeclaration[]
 }
 
@@ -61,25 +65,6 @@ export function validateProgramIndex(index: ProgramIndex): void {
   validateProgramIndexValue(index as unknown as JsonValue)
 }
 
-export function validateCurrentProgramRuntimeAbi(abi: ProgramRuntimeAbi): void {
-  canonicalizeJsonValue(abi as unknown as JsonValue)
-  const value = requireObject(abi as unknown as JsonValue, "program runtime ABI")
-  requireKeys(value, ["bundleFormatVersion", "checkpointProtocolVersion", "runtimeApiVersion"], "program runtime ABI")
-  if (
-    value["bundleFormatVersion"] !== PROGRAM_BUNDLE_FORMAT_VERSION ||
-    value["runtimeApiVersion"] !== RUNTIME_API_VERSION ||
-    value["checkpointProtocolVersion"] !== CHECKPOINT_PROTOCOL_VERSION
-  ) {
-    throw new Error("program runtime ABI does not match the toolchain-owned v0 tuple")
-  }
-}
-
-export function programRuntimeAbiDigest(abi: ProgramRuntimeAbi): Uint8Array {
-  validateCurrentProgramRuntimeAbi(abi)
-  const canonical = canonicalizeJsonValue(abi as unknown as JsonValue)
-  return domainDigest(runtimeContractDigestDomain, canonical)
-}
-
 export function canonicalManifestAndDigest(raw: string | Uint8Array): {
   readonly canonical: Uint8Array
   readonly digest: Uint8Array
@@ -94,24 +79,44 @@ export function canonicalManifestAndDigest(raw: string | Uint8Array): {
 
 function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   const root = requireObject(value, "program index")
-  requireKeys(root, ["declarations", "formatVersion", "runtimeContract", "supportedArchitectures"], "program index")
+  requireKeys(
+    root,
+    [
+      "architecture",
+      "declarations",
+      "dependencies",
+      "formatVersion",
+      "runtimeApiVersion",
+      "runtimeDigest",
+    ],
+    "program index",
+  )
   if (root["formatVersion"] !== PROGRAM_INDEX_FORMAT_VERSION) {
     throw new Error(`program index formatVersion must be ${PROGRAM_INDEX_FORMAT_VERSION}`)
   }
 
-  const runtimeContract = requireObject(root["runtimeContract"], "program index runtimeContract")
-  requireKeys(runtimeContract, ["bundleFormatVersion", "checkpointProtocolVersion", "runtimeApiVersion"], "program index runtimeContract")
-  const abi: ProgramRuntimeAbi = {
-    bundleFormatVersion: requireString(runtimeContract["bundleFormatVersion"], "bundleFormatVersion"),
-    runtimeApiVersion: requireString(runtimeContract["runtimeApiVersion"], "runtimeApiVersion"),
-    checkpointProtocolVersion: requireString(runtimeContract["checkpointProtocolVersion"], "checkpointProtocolVersion"),
+  const runtimeApiVersion = requireString(root["runtimeApiVersion"], "program index runtimeApiVersion")
+  if (runtimeApiVersion !== RUNTIME_API_VERSION) {
+    throw new Error(`program index runtimeApiVersion must be ${RUNTIME_API_VERSION}`)
   }
-  validateCurrentProgramRuntimeAbi(abi)
-
-  const architectureValues = requireArray(root["supportedArchitectures"], "program index supportedArchitectures")
-  const architectures = architectureValues.map((item) => requireArchitecture(item))
-  if (!validArchitectures(architectures)) {
-    throw new Error("program index supportedArchitectures is not a non-empty canonical architecture set")
+  const runtimeDigest = requireDigest(root["runtimeDigest"], "program index runtimeDigest")
+  const architecture = requireArchitecture(root["architecture"])
+  const dependencyValue = requireObject(root["dependencies"], "program index dependencies")
+  requireKeys(dependencyValue, ["digest", "mediaType", "sizeBytes"], "program index dependencies")
+  const dependencyMediaType = requireString(
+    dependencyValue["mediaType"],
+    "program index dependencies.mediaType",
+  )
+  if (dependencyMediaType !== PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE) {
+    throw new Error(`program index dependencies.mediaType must be ${PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE}`)
+  }
+  const dependencies: ProgramDependencies = {
+    digest: requireDigest(dependencyValue["digest"], "program index dependencies.digest"),
+    mediaType: dependencyMediaType,
+    sizeBytes: requirePositiveSafeInteger(
+      dependencyValue["sizeBytes"],
+      "program index dependencies.sizeBytes",
+    ),
   }
 
   const declarationValues = requireArray(root["declarations"], "program index declarations")
@@ -120,15 +125,22 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   }
   const declarations = declarationValues.map((item, position) => parseDeclaration(item, position))
   for (let position = 1; position < declarations.length; position++) {
-    if (compareDeclarations(declarations[position - 1] as ProgramDeclaration, declarations[position] as ProgramDeclaration) >= 0) {
+    if (
+      compareDeclarations(
+        declarations[position - 1] as ProgramDeclaration,
+        declarations[position] as ProgramDeclaration,
+      ) >= 0
+    ) {
       throw new Error(`program index declarations are not in canonical order at position ${position}`)
     }
   }
 
   return {
     formatVersion: PROGRAM_INDEX_FORMAT_VERSION,
-    runtimeContract: abi,
-    supportedArchitectures: architectures,
+    runtimeApiVersion,
+    runtimeDigest,
+    architecture,
+    dependencies,
     declarations,
   }
 }
@@ -141,9 +153,18 @@ function parseDeclaration(value: JsonValue, position: number): ProgramDeclaratio
   if (!declaredIdPattern.test(declaredId)) {
     throw new Error(`program index declaredId ${JSON.stringify(declaredId)} is outside the exact ASCII ID domain`)
   }
-  const slots = requireArray(declaration["slots"], "declaration slots").map((slot) => requireString(slot, "declaration slot"))
-  if (kind === "task" && (sameStrings(slots, ["handler"]) || sameStrings(slots, ["handler", "payloadSchema"]))) {
-    return { kind, declaredId, slots: slots as ["handler"] | ["handler", "payloadSchema"] }
+  const slots = requireArray(declaration["slots"], "declaration slots").map((slot) =>
+    requireString(slot, "declaration slot"),
+  )
+  if (
+    kind === "task" &&
+    (sameStrings(slots, ["handler"]) || sameStrings(slots, ["handler", "payloadSchema"]))
+  ) {
+    return {
+      kind,
+      declaredId,
+      slots: slots as ["handler"] | ["handler", "payloadSchema"],
+    }
   }
   if (kind === "actor" && sameStrings(slots, ["handler"])) {
     return { kind, declaredId, slots: slots as ["handler"] }
@@ -190,6 +211,21 @@ function requireString(value: JsonValue | undefined, label: string): string {
   return value
 }
 
+function requireDigest(value: JsonValue | undefined, label: string): string {
+  const digest = requireString(value, label)
+  if (!sha256DigestPattern.test(digest)) {
+    throw new Error(`${label} must be a lowercase SHA-256 digest`)
+  }
+  return digest
+}
+
+function requirePositiveSafeInteger(value: JsonValue | undefined, label: string): number {
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new Error(`${label} must be a positive JavaScript-safe integer`)
+  }
+  return value
+}
+
 function requireKeys(value: JsonObject, expected: readonly string[], label: string): void {
   const keys = Object.keys(value).sort()
   if (!sameStrings(keys, expected)) {
@@ -197,17 +233,11 @@ function requireKeys(value: JsonObject, expected: readonly string[], label: stri
   }
 }
 
-function requireArchitecture(value: JsonValue): RuntimeArchitecture {
+function requireArchitecture(value: JsonValue | undefined): RuntimeArchitecture {
   if (value !== "aarch64" && value !== "x86_64") {
     throw new Error(`unsupported runtime architecture ${JSON.stringify(value)}`)
   }
   return value
-}
-
-function validArchitectures(value: readonly RuntimeArchitecture[]): boolean {
-  return sameStrings(value, ["aarch64"]) ||
-    sameStrings(value, ["x86_64"]) ||
-    sameStrings(value, ["aarch64", "x86_64"])
 }
 
 function sameStrings(left: readonly string[], right: readonly string[]): boolean {

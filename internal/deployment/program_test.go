@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
@@ -20,10 +21,6 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"programRejections"`
-	RuntimeABI struct {
-		Canonical string `json:"canonical"`
-		DigestHex string `json:"digestHex"`
-	} `json:"runtimeAbi"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`
@@ -64,6 +61,27 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 	}
 	for _, test := range fixture.ProgramRejections {
 		t.Run(test.Name, func(t *testing.T) {
+			if test.Mutation == "dependency_size_fractional" {
+				var value map[string]any
+				if err := json.Unmarshal([]byte(fixture.ProgramIndex.Canonical), &value); err != nil {
+					t.Fatal(err)
+				}
+				dependencies := value["dependencies"].(map[string]any)
+				dependencies["sizeBytes"] = 1.5
+				raw, err := json.Marshal(value)
+				if err != nil {
+					t.Fatal(err)
+				}
+				canonical, err := canonicalProgramInput(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := ParseProgramIndex(canonical); err == nil {
+					t.Fatal("ParseProgramIndex returned nil error")
+				}
+				return
+			}
+
 			index := cloneProgramIndex(base)
 			switch test.Mutation {
 			case "empty_declarations":
@@ -102,8 +120,24 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.Declarations[0].Slots = []DeclarationSlot{DeclarationSlotPayloadSchema, DeclarationSlotHandler}
 			case "duplicate_declaration":
 				index.Declarations[1] = index.Declarations[0]
-			case "runtime_abi":
-				index.RuntimeContract.RuntimeAPIVersion = "helmr.runtime-api.v2"
+			case "runtime_api":
+				index.RuntimeAPIVersion = "helmr.runtime.v1"
+			case "runtime_digest":
+				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
+			case "dependency_digest":
+				index.Dependencies.Digest = "sha256:invalid"
+			case "dependency_size_zero":
+				index.Dependencies.SizeBytes = 0
+			case "dependency_size_negative":
+				index.Dependencies.SizeBytes = -1
+			case "dependency_size_unsafe":
+				index.Dependencies.SizeBytes = 9007199254740992
+			case "dependency_media_type":
+				index.Dependencies.MediaType += "; charset=binary"
+			case "architecture":
+				index.Architecture = "amd64"
+			case "declared_id":
+				index.Declarations[0].DeclaredID = "invalid/id"
 			default:
 				t.Fatalf("unknown fixture mutation %q", test.Mutation)
 			}
@@ -121,47 +155,8 @@ func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
 	}
 }
 
-func TestRuntimeABIRejectsEverySingleFieldMismatch(t *testing.T) {
-	tests := []struct {
-		name   string
-		mutate func(*ProgramRuntimeABI)
-	}{
-		{name: "bundle format", mutate: func(abi *ProgramRuntimeABI) { abi.BundleFormatVersion = "helmr.program-bundle.v2" }},
-		{name: "runtime API", mutate: func(abi *ProgramRuntimeABI) { abi.RuntimeAPIVersion = "helmr.runtime-api.v2" }},
-		{name: "checkpoint protocol", mutate: func(abi *ProgramRuntimeABI) { abi.CheckpointProtocolVersion = "helmr.checkpoint.v2" }},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			abi := CurrentProgramRuntimeABI()
-			test.mutate(&abi)
-			if err := ValidateCurrentProgramRuntimeABI(abi); err == nil {
-				t.Fatal("ValidateCurrentProgramRuntimeABI returned nil error")
-			}
-		})
-	}
-}
-
-func TestRuntimeABIAndManifestDigestsMatchSharedGoldenFixture(t *testing.T) {
+func TestManifestDigestMatchesSharedGoldenFixture(t *testing.T) {
 	fixture := loadContractFixture(t)
-	digest, err := ProgramRuntimeABIDigest(CurrentProgramRuntimeABI())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hex.EncodeToString(digest[:]) != fixture.RuntimeABI.DigestHex {
-		t.Fatalf("runtime ABI digest = %x, want %s", digest, fixture.RuntimeABI.DigestHex)
-	}
-	abiRaw, err := json.Marshal(CurrentProgramRuntimeABI())
-	if err != nil {
-		t.Fatal(err)
-	}
-	abiCanonical, err := canonicalProgramInput(abiRaw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(abiCanonical) != fixture.RuntimeABI.Canonical {
-		t.Fatalf("runtime ABI canonical JSON = %q, want %q", abiCanonical, fixture.RuntimeABI.Canonical)
-	}
-
 	canonical, manifestDigest, err := CanonicalManifestAndDigest([]byte(fixture.Manifest.Input))
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +171,6 @@ func TestRuntimeABIAndManifestDigestsMatchSharedGoldenFixture(t *testing.T) {
 
 func cloneProgramIndex(index ProgramIndex) ProgramIndex {
 	cloned := index
-	cloned.SupportedArchitectures = slices.Clone(index.SupportedArchitectures)
 	cloned.Declarations = make([]ProgramDeclaration, len(index.Declarations))
 	for position, declaration := range index.Declarations {
 		cloned.Declarations[position] = declaration

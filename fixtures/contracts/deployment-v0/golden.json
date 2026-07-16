@@ -27,7 +27,7 @@
     { "name": "non-finite-double", "inputHex": "7b2278223a31653430307d" }
   ],
   "programIndex": {
-    "canonical": "{\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"formatVersion\":0,\"runtimeContract\":{\"bundleFormatVersion\":\"helmr.program-bundle.v0\",\"checkpointProtocolVersion\":\"helmr.checkpoint.v0\",\"runtimeApiVersion\":\"helmr.runtime-api.v0\"},\"supportedArchitectures\":[\"aarch64\",\"x86_64\"]}"
+    "canonical": "{\"architecture\":\"x86_64\",\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"dependencies\":{\"digest\":\"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"mediaType\":\"application/vnd.helmr.deployment-program-dependencies.v0+squashfs\",\"sizeBytes\":483183820},\"formatVersion\":0,\"runtimeApiVersion\":\"helmr.runtime.v0\",\"runtimeDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
   },
   "programRejections": [
     { "name": "empty-declarations", "mutation": "empty_declarations" },
@@ -36,12 +36,17 @@
     { "name": "noncanonical-declaration-order", "mutation": "declaration_order" },
     { "name": "invalid-task-slots", "mutation": "task_slots" },
     { "name": "duplicate-declaration", "mutation": "duplicate_declaration" },
-    { "name": "runtime-abi-mismatch", "mutation": "runtime_abi" }
+    { "name": "runtime-api-mismatch", "mutation": "runtime_api" },
+    { "name": "runtime-digest-mismatch", "mutation": "runtime_digest" },
+    { "name": "dependency-digest-mismatch", "mutation": "dependency_digest" },
+    { "name": "dependency-size-zero", "mutation": "dependency_size_zero" },
+    { "name": "dependency-size-negative", "mutation": "dependency_size_negative" },
+    { "name": "dependency-size-fractional", "mutation": "dependency_size_fractional" },
+    { "name": "dependency-size-unsafe", "mutation": "dependency_size_unsafe" },
+    { "name": "dependency-media-type-mismatch", "mutation": "dependency_media_type" },
+    { "name": "architecture-mismatch", "mutation": "architecture" },
+    { "name": "declared-id-mismatch", "mutation": "declared_id" }
   ],
-  "runtimeAbi": {
-    "canonical": "{\"bundleFormatVersion\":\"helmr.program-bundle.v0\",\"checkpointProtocolVersion\":\"helmr.checkpoint.v0\",\"runtimeApiVersion\":\"helmr.runtime-api.v0\"}",
-    "digestHex": "6b807805169043834a58e5c0285e6036e1da3c2dc8c520f072adddd8c2271ce4"
-  },
   "manifest": {
     "input": "{ \"run\": { \"retry\": { \"enabled\": false }, \"queue\": \"task/Build-\", \"maxDurationMs\": 900000 }, \"payload\": { \"kind\": \"standard_schema\" } }",
     "canonical": "{\"payload\":{\"kind\":\"standard_schema\"},\"run\":{\"maxDurationMs\":900000,\"queue\":\"task/Build-\",\"retry\":{\"enabled\":false}}}",
