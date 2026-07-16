@@ -28,6 +28,17 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"moduleMapRejections"`
+	DependencyIndex struct {
+		Canonical string `json:"canonical"`
+	} `json:"dependencyIndex"`
+	DependencyIndexRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"dependencyIndexRejections"`
+	DependencyIndexRawRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"dependencyIndexRawRejections"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`
