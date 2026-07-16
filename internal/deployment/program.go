@@ -80,7 +80,7 @@ func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
 	if err := decoder.Decode(&index); err != nil {
 		return ProgramIndex{}, fmt.Errorf("decode program index: %w", err)
 	}
-	if err := ensureEOF(decoder); err != nil {
+	if err := ensureEOF(decoder, "program index"); err != nil {
 		return ProgramIndex{}, err
 	}
 	if err := ValidateProgramIndex(index); err != nil {
@@ -236,12 +236,12 @@ func domainDigest(domain string, canonical []byte) [sha256.Size]byte {
 	return digest
 }
 
-func ensureEOF(decoder *json.Decoder) error {
+func ensureEOF(decoder *json.Decoder, label string) error {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
-			return fmt.Errorf("program index contains trailing data")
+			return fmt.Errorf("%s contains trailing data", label)
 		}
-		return fmt.Errorf("decode program index trailing data: %w", err)
+		return fmt.Errorf("decode %s trailing data: %w", label, err)
 	}
 	return nil
 }

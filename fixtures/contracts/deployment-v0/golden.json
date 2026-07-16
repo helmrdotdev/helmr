@@ -55,6 +55,30 @@
     { "name": "architecture-mismatch", "mutation": "architecture" },
     { "name": "declared-id-mismatch", "mutation": "declared_id" }
   ],
+  "moduleMap": {
+    "canonical": "{\"formatVersion\":0,\"modules\":[{\"codeDigest\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"codePath\":\"helmr/files/modules/c67b36ce19fafccad50f7cbec2c76793581b4283bbdf4c97383e29920c21dc25.cjs\",\"format\":\"commonjs\",\"path\":\"packages/shared/src/legacy.cts\",\"sourceDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\"},{\"codeDigest\":\"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"codePath\":\"helmr/files/modules/006dc11259e8d34bde5916daf0ebf9a1ad20c97c9de096d0140af41ea104b9b5.mjs\",\"format\":\"module\",\"path\":\"packages/shared/src/module.mts\",\"sourceDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"},{\"codeDigest\":\"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc\",\"codePath\":\"helmr/files/modules/04538799976410743e47020f017d6d26dfe18553e01872df5b1d9bf2d62fdfa0.mjs\",\"format\":\"module\",\"path\":\"packages/shared/src/.ts\",\"sourceDigest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\"},{\"codeDigest\":\"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"codePath\":\"helmr/files/modules/4d50fdcdadd65fdbed4f6ee2bdc9e013e32880155623596e84e9f22d187940a8.cjs\",\"format\":\"commonjs\",\"path\":\"packages/shared/src/😀.ts\",\"sourceDigest\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}],\"transformer\":\"helmr.typescript.v0\"}"
+  },
+  "moduleMapRejections": [
+    { "name": "missing-format-version", "mutation": "missing_format_version" },
+    { "name": "unknown-root-member", "mutation": "unknown_root_member" },
+    { "name": "transformer-mismatch", "mutation": "transformer" },
+    { "name": "noncanonical-module-order", "mutation": "module_order" },
+    { "name": "duplicate-module-path", "mutation": "duplicate_path" },
+    { "name": "absolute-module-path", "mutation": "absolute_path" },
+    { "name": "escaping-module-path", "mutation": "escaping_path" },
+    { "name": "backslash-module-path", "mutation": "backslash_path" },
+    { "name": "reserved-helmr-root", "mutation": "reserved_helmr_root" },
+    { "name": "reserved-dot-helmr-root", "mutation": "reserved_dot_helmr_root" },
+    { "name": "reserved-node-modules-root", "mutation": "reserved_node_modules_root" },
+    { "name": "declaration-only-module", "mutation": "declaration_path" },
+    { "name": "unsupported-module-extension", "mutation": "unsupported_extension" },
+    { "name": "source-digest-mismatch", "mutation": "source_digest" },
+    { "name": "code-digest-mismatch", "mutation": "code_digest" },
+    { "name": "format-mismatch", "mutation": "format" },
+    { "name": "code-path-key-mismatch", "mutation": "code_path_key" },
+    { "name": "code-path-extension-mismatch", "mutation": "code_path_extension" },
+    { "name": "unknown-module-member", "mutation": "unknown_module_member" }
+  ],
   "manifest": {
     "input": "{ \"run\": { \"retry\": { \"enabled\": false }, \"queue\": \"task/Build-\", \"maxDurationMs\": 900000 }, \"payload\": { \"kind\": \"standard_schema\" } }",
     "canonical": "{\"payload\":{\"kind\":\"standard_schema\"},\"run\":{\"maxDurationMs\":900000,\"queue\":\"task/Build-\",\"retry\":{\"enabled\":false}}}",

@@ -55,7 +55,7 @@ export interface ProgramIndex {
 
 export function parseProgramIndex(raw: string | Uint8Array): ProgramIndex {
   const input = typeof raw === "string" ? new TextEncoder().encode(raw) : raw
-  const value = parseJson(input)
+  const value = parseJson(raw)
   const canonical = canonicalizeJsonValue(value)
   if (!bytesEqual(input, canonical)) {
     throw new Error("program index is not RFC 8785 canonical JSON")
