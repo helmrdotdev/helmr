@@ -332,7 +332,8 @@ CREATE TYPE artifact_kind AS ENUM (
     'deployment_source',
     'build_manifest',
     'deployment_manifest',
-    'deployment_program',
+    'deployment_program_code',
+    'deployment_program_dependencies',
     'workspace_image',
     'sandbox_image',
     'task_bundle',
@@ -881,9 +882,10 @@ CREATE TABLE deployments (
     deployment_source_artifact_id UUID NOT NULL,
     build_manifest_artifact_id UUID,
     deployment_manifest_artifact_id UUID,
-    program_artifact_id UUID,
-    program_runtime_contract_digest BYTEA,
-    program_supported_architectures TEXT[],
+    program_code_artifact_id UUID,
+    program_dependency_artifact_id UUID,
+    program_runtime_digest BYTEA,
+    program_architecture TEXT,
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     build_attempt_number INTEGER NOT NULL DEFAULT 0 CHECK (build_attempt_number >= 0),
@@ -921,29 +923,34 @@ CREATE TABLE deployments (
     FOREIGN KEY (org_id, project_id, environment_id, deployment_manifest_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
         DEFERRABLE INITIALLY DEFERRED,
-    CONSTRAINT deployments_program_artifact_fk
-        FOREIGN KEY (environment_id, program_artifact_id)
+    CONSTRAINT deployments_program_code_artifact_fk
+        FOREIGN KEY (environment_id, program_code_artifact_id)
+        REFERENCES artifacts(environment_id, id)
+        ON DELETE RESTRICT,
+    CONSTRAINT deployments_program_dependency_artifact_fk
+        FOREIGN KEY (environment_id, program_dependency_artifact_id)
         REFERENCES artifacts(environment_id, id)
         ON DELETE RESTRICT,
     CONSTRAINT deployments_program_tuple_check CHECK (
-        (program_artifact_id IS NULL
-         AND program_runtime_contract_digest IS NULL
-         AND program_supported_architectures IS NULL)
+        (program_code_artifact_id IS NULL
+         AND program_dependency_artifact_id IS NULL
+         AND program_runtime_digest IS NULL
+         AND program_architecture IS NULL)
         OR
-        (program_artifact_id IS NOT NULL
-         AND program_runtime_contract_digest IS NOT NULL
-         AND octet_length(program_runtime_contract_digest) = 32
-         AND program_supported_architectures IS NOT NULL
-         AND program_supported_architectures IN (
-             ARRAY['aarch64']::TEXT[],
-             ARRAY['x86_64']::TEXT[],
-             ARRAY['aarch64', 'x86_64']::TEXT[]
-         ))
+        (program_code_artifact_id IS NOT NULL
+         AND program_dependency_artifact_id IS NOT NULL
+         AND program_runtime_digest IS NOT NULL
+         AND octet_length(program_runtime_digest) = 32
+         AND program_architecture IS NOT NULL
+         AND program_architecture IN ('aarch64', 'x86_64'))
     )
 );
 
-CREATE INDEX deployments_program_artifact_idx
-    ON deployments (environment_id, program_artifact_id);
+CREATE INDEX deployments_program_code_artifact_idx
+    ON deployments (environment_id, program_code_artifact_id);
+
+CREATE INDEX deployments_program_dependency_artifact_idx
+    ON deployments (environment_id, program_dependency_artifact_id);
 
 CREATE TABLE deployment_definitions (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -957,7 +964,6 @@ CREATE TABLE deployment_definitions (
     manifest_version INTEGER NOT NULL CHECK (manifest_version = 0),
     manifest JSONB NOT NULL CHECK (jsonb_typeof(manifest) = 'object'),
     manifest_digest BYTEA NOT NULL CHECK (octet_length(manifest_digest) = 32),
-    runtime_contract_digest BYTEA,
     workspace_architecture TEXT,
     artifact_id UUID,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -980,8 +986,6 @@ CREATE TABLE deployment_definitions (
     CONSTRAINT deployment_definitions_projection_check CHECK (
         (
             kind = 'workspace'
-            AND runtime_contract_digest IS NOT NULL
-            AND octet_length(runtime_contract_digest) = 32
             AND workspace_architecture IS NOT NULL
             AND workspace_architecture IN ('aarch64', 'x86_64')
             AND artifact_id IS NOT NULL
@@ -989,7 +993,6 @@ CREATE TABLE deployment_definitions (
         OR
         (
             kind IN ('task', 'actor', 'run_stream')
-            AND runtime_contract_digest IS NULL
             AND workspace_architecture IS NULL
             AND artifact_id IS NULL
         )
