@@ -19,6 +19,7 @@ const (
 	ProgramDependencyArtifactMediaType       = "application/vnd.helmr.deployment-program-dependencies.v0+squashfs"
 	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger                 int64 = 9007199254740991
+	maxProgramFileSizeBytes            int64 = 16777216
 	ArchitectureAArch64                      = RuntimeArchitecture("aarch64")
 	ArchitectureX8664                        = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                      = DeclarationKind("task")
@@ -48,12 +49,19 @@ type ProgramDependencies struct {
 	MediaType string `json:"mediaType"`
 }
 
+type ProgramFile struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"sizeBytes"`
+}
+
 type ProgramIndex struct {
 	FormatVersion     int                  `json:"formatVersion"`
 	RuntimeAPIVersion string               `json:"runtimeApiVersion"`
 	RuntimeDigest     string               `json:"runtimeDigest"`
 	Architecture      RuntimeArchitecture  `json:"architecture"`
 	Dependencies      ProgramDependencies  `json:"dependencies"`
+	PackageGraph      ProgramFile          `json:"packageGraph"`
+	Modules           ProgramFile          `json:"modules"`
 	Declarations      []ProgramDeclaration `json:"declarations"`
 }
 
@@ -125,6 +133,12 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.Dependencies.MediaType != ProgramDependencyArtifactMediaType {
 		return fmt.Errorf("program index dependencies.mediaType = %q, want %q", index.Dependencies.MediaType, ProgramDependencyArtifactMediaType)
 	}
+	if err := validateProgramFile(index.PackageGraph, "packageGraph"); err != nil {
+		return err
+	}
+	if err := validateProgramFile(index.Modules, "modules"); err != nil {
+		return err
+	}
 	if len(index.Declarations) == 0 {
 		return fmt.Errorf("program index declarations must not be empty")
 	}
@@ -135,6 +149,16 @@ func ValidateProgramIndex(index ProgramIndex) error {
 		if position > 0 && compareDeclarations(index.Declarations[position-1], declaration) >= 0 {
 			return fmt.Errorf("program index declarations are not in canonical order at position %d", position)
 		}
+	}
+	return nil
+}
+
+func validateProgramFile(file ProgramFile, name string) error {
+	if !sha256DigestPattern.MatchString(file.Digest) {
+		return fmt.Errorf("program index %s.digest is not a lowercase SHA-256 digest", name)
+	}
+	if file.SizeBytes < 1 || file.SizeBytes > maxProgramFileSizeBytes {
+		return fmt.Errorf("program index %s.sizeBytes is outside [1,%d]", name, maxProgramFileSizeBytes)
 	}
 	return nil
 }

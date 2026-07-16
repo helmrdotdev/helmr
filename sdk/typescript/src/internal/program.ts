@@ -15,6 +15,7 @@ export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
 const declaredIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
 const manifestDigestDomain = "helmr.deployment-definition-manifest.v0\0"
+const maxProgramFileSizeBytes = 16777216
 
 export type RuntimeArchitecture = "aarch64" | "x86_64"
 export type ProgramDeclaration =
@@ -36,12 +37,19 @@ export interface ProgramDependencies {
   readonly mediaType: typeof PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE
 }
 
+export interface ProgramFile {
+  readonly digest: string
+  readonly sizeBytes: number
+}
+
 export interface ProgramIndex {
   readonly formatVersion: 0
   readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
   readonly runtimeDigest: string
   readonly architecture: RuntimeArchitecture
   readonly dependencies: ProgramDependencies
+  readonly packageGraph: ProgramFile
+  readonly modules: ProgramFile
   readonly declarations: readonly ProgramDeclaration[]
 }
 
@@ -86,6 +94,8 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       "declarations",
       "dependencies",
       "formatVersion",
+      "modules",
+      "packageGraph",
       "runtimeApiVersion",
       "runtimeDigest",
     ],
@@ -118,6 +128,8 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       "program index dependencies.sizeBytes",
     ),
   }
+  const packageGraph = parseProgramFile(root["packageGraph"], "program index packageGraph")
+  const modules = parseProgramFile(root["modules"], "program index modules")
 
   const declarationValues = requireArray(root["declarations"], "program index declarations")
   if (declarationValues.length === 0) {
@@ -141,7 +153,22 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     runtimeDigest,
     architecture,
     dependencies,
+    packageGraph,
+    modules,
     declarations,
+  }
+}
+
+function parseProgramFile(value: JsonValue | undefined, label: string): ProgramFile {
+  const file = requireObject(value, label)
+  requireKeys(file, ["digest", "sizeBytes"], label)
+  const sizeBytes = requirePositiveSafeInteger(file["sizeBytes"], `${label}.sizeBytes`)
+  if (sizeBytes > maxProgramFileSizeBytes) {
+    throw new Error(`${label}.sizeBytes must be at most ${maxProgramFileSizeBytes}`)
+  }
+  return {
+    digest: requireDigest(file["digest"], `${label}.digest`),
+    sizeBytes,
   }
 }
 

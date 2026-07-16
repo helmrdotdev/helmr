@@ -80,10 +80,17 @@ describe("canonical deployment contract", async () => {
           expect(() => parseProgramIndex(input), item.name).toThrow()
           continue
         }
-        case "dependency_size_fractional": {
+        case "dependency_size_fractional":
+        case "package_graph_size_fractional":
+        case "modules_size_fractional": {
           const value = JSON.parse(fixture.programIndex.canonical) as Record<string, unknown>
-          const dependencies = value["dependencies"] as Record<string, unknown>
-          dependencies["sizeBytes"] = 1.5
+          const field = {
+            dependency_size_fractional: "dependencies",
+            package_graph_size_fractional: "packageGraph",
+            modules_size_fractional: "modules",
+          }[item.mutation] as string
+          const file = value[field] as Record<string, unknown>
+          file["sizeBytes"] = 1.5
           const input = decoder.decode(canonicalizeJson(JSON.stringify(value)))
           expect(() => parseProgramIndex(input), item.name).toThrow()
           continue
@@ -121,6 +128,24 @@ describe("canonical deployment contract", async () => {
         case "dependency_media_type":
           index.dependencies.mediaType += "; charset=binary"
           break
+        case "package_graph_digest":
+          index.packageGraph.digest = "sha256:invalid"
+          break
+        case "package_graph_size_zero":
+          index.packageGraph.sizeBytes = 0
+          break
+        case "package_graph_size_oversize":
+          index.packageGraph.sizeBytes = 16777217
+          break
+        case "modules_digest":
+          index.modules.digest = "sha256:invalid"
+          break
+        case "modules_size_zero":
+          index.modules.sizeBytes = 0
+          break
+        case "modules_size_oversize":
+          index.modules.sizeBytes = 16777217
+          break
         case "architecture":
           index.architecture = "amd64"
           break
@@ -141,6 +166,13 @@ describe("canonical deployment contract", async () => {
     expect(() => parseProgramIndex(` ${fixture.programIndex.canonical}`)).toThrow(/canonical/)
   })
 
+  test("accepts program file size bounds", () => {
+    const index = structuredClone(parseProgramIndex(fixture.programIndex.canonical)) as MutableProgramIndex
+    index.packageGraph.sizeBytes = 1
+    index.modules.sizeBytes = 16777216
+    expect(() => parseProgramIndex(canonicalProgramIndex(index as ProgramIndex))).not.toThrow()
+  })
+
   test("matches the shared manifest digest", () => {
     const manifest = canonicalManifestAndDigest(fixture.manifest.input)
     expect(decoder.decode(manifest.canonical)).toBe(fixture.manifest.canonical)
@@ -157,6 +189,14 @@ type MutableProgramIndex = {
     digest: string
     sizeBytes: number
     mediaType: string
+  }
+  packageGraph: {
+    digest: string
+    sizeBytes: number
+  }
+  modules: {
+    digest: string
+    sizeBytes: number
   }
   declarations: Array<{
     kind: string

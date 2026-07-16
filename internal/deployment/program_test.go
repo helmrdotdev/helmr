@@ -61,13 +61,17 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 	}
 	for _, test := range fixture.ProgramRejections {
 		t.Run(test.Name, func(t *testing.T) {
-			if test.Mutation == "dependency_size_fractional" {
+			fractionalField, fractional := map[string]string{
+				"dependency_size_fractional":    "dependencies",
+				"package_graph_size_fractional": "packageGraph",
+				"modules_size_fractional":       "modules",
+			}[test.Mutation]
+			if fractional {
 				var value map[string]any
 				if err := json.Unmarshal([]byte(fixture.ProgramIndex.Canonical), &value); err != nil {
 					t.Fatal(err)
 				}
-				dependencies := value["dependencies"].(map[string]any)
-				dependencies["sizeBytes"] = 1.5
+				value[fractionalField].(map[string]any)["sizeBytes"] = 1.5
 				raw, err := json.Marshal(value)
 				if err != nil {
 					t.Fatal(err)
@@ -134,6 +138,18 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.Dependencies.SizeBytes = 9007199254740992
 			case "dependency_media_type":
 				index.Dependencies.MediaType += "; charset=binary"
+			case "package_graph_digest":
+				index.PackageGraph.Digest = "sha256:invalid"
+			case "package_graph_size_zero":
+				index.PackageGraph.SizeBytes = 0
+			case "package_graph_size_oversize":
+				index.PackageGraph.SizeBytes = maxProgramFileSizeBytes + 1
+			case "modules_digest":
+				index.Modules.Digest = "sha256:invalid"
+			case "modules_size_zero":
+				index.Modules.SizeBytes = 0
+			case "modules_size_oversize":
+				index.Modules.SizeBytes = maxProgramFileSizeBytes + 1
 			case "architecture":
 				index.Architecture = "amd64"
 			case "declared_id":
@@ -152,6 +168,23 @@ func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
 	fixture := loadContractFixture(t)
 	if _, err := ParseProgramIndex([]byte(" " + fixture.ProgramIndex.Canonical)); err == nil {
 		t.Fatal("ParseProgramIndex returned nil error")
+	}
+}
+
+func TestProgramIndexAcceptsFileSizeBounds(t *testing.T) {
+	fixture := loadContractFixture(t)
+	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index.PackageGraph.SizeBytes = 1
+	index.Modules.SizeBytes = maxProgramFileSizeBytes
+	canonical, err := CanonicalProgramIndex(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseProgramIndex(canonical); err != nil {
+		t.Fatal(err)
 	}
 }
 
