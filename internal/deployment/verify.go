@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 	"unicode"
@@ -33,33 +34,55 @@ const (
 	artifactEntryRegular   = artifactEntryKind("regular")
 	artifactEntryDirectory = artifactEntryKind("directory")
 	artifactEntrySymlink   = artifactEntryKind("symlink")
+	artifactEntryBlock     = artifactEntryKind("block-device")
+	artifactEntryCharacter = artifactEntryKind("character-device")
+	artifactEntryFIFO      = artifactEntryKind("fifo")
+	artifactEntrySocket    = artifactEntryKind("socket")
 )
 
 type artifactFilesystem struct {
+	Magic               uint32
+	InodeCount          uint32
+	CreatedAtUnix       uint32
+	BlockSize           uint32
+	FragmentCount       uint32
+	Compressor          uint16
+	BlockLog            uint16
+	Flags               uint16
+	IDCount             uint16
 	Major               uint16
 	Minor               uint16
-	Compression         string
-	BlockSize           uint32
-	CreatedAtUnix       int64
-	HasFragments        bool
-	HasDuplicatePacking bool
+	RootInodeReference  uint64
+	BytesUsed           uint64
+	PhysicalSize        uint64
+	IDTableStart        uint64
+	XattrIDTableStart   uint64
+	InodeTableStart     uint64
+	DirectoryTableStart uint64
+	FragmentTableStart  uint64
+	ExportTableStart    uint64
+	IDs                 []uint32
+	HasZeroPadding      bool
+	HasFragmentRefs     bool
 	HasOverlappingData  bool
-	HasExportTable      bool
-	HasXattrs           bool
 }
 
 type artifactEntry struct {
 	Path        string
 	Kind        artifactEntryKind
+	Form        uint16
 	Mode        uint32
 	SizeBytes   int64
+	UIDIndex    uint16
+	GIDIndex    uint16
 	UID         uint32
 	GID         uint32
-	ModTimeUnix int64
+	ModTimeUnix uint32
+	XattrIndex  uint32
 	LinkTarget  string
 	Inode       uint64
+	InodeNumber uint32
 	LinkCount   uint32
-	HasXattrs   bool
 }
 
 type artifactReader interface {
@@ -111,7 +134,13 @@ func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*v
 		return nil, err
 	}
 
-	code, err := inspectArtifact(ctx, artifacts.Code.Reader, codeArtifact, maxCodeLogicalBytes)
+	code, err := inspectArtifact(
+		ctx,
+		artifacts.Code.Reader,
+		codeArtifact,
+		maxCodeLogicalBytes,
+		artifacts.Code.SizeBytes,
+	)
 	if err != nil {
 		return nil, fmt.Errorf("code Artifact: %w", err)
 	}
@@ -120,6 +149,7 @@ func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*v
 		artifacts.Dependencies.Reader,
 		dependencyArtifact,
 		maxDependencyLogicalBytes,
+		artifacts.Dependencies.SizeBytes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("dependency Artifact: %w", err)
@@ -198,14 +228,11 @@ func inspectArtifact(
 	reader artifactReader,
 	role artifactRole,
 	maxLogicalBytes int64,
+	physicalSize int64,
 ) (*inspectedArtifact, error) {
 	filesystem := reader.Filesystem()
-	if filesystem.Major != 4 || filesystem.Minor != 0 ||
-		filesystem.Compression != "zstd" || filesystem.BlockSize != 131072 ||
-		filesystem.CreatedAtUnix != 0 || filesystem.HasFragments ||
-		filesystem.HasDuplicatePacking || filesystem.HasOverlappingData ||
-		filesystem.HasExportTable || filesystem.HasXattrs {
-		return nil, fmt.Errorf("filesystem facts are outside the exact SquashFS v0 contract")
+	if err := validateArtifactFilesystem(filesystem, physicalSize, false); err != nil {
+		return nil, err
 	}
 
 	entries, err := reader.Entries(ctx)
@@ -215,6 +242,10 @@ func inspectArtifact(
 	if len(entries) == 0 || len(entries) > maxArtifactEntries {
 		return nil, fmt.Errorf("entry count is outside [1,%d]", maxArtifactEntries)
 	}
+	filesystem = reader.Filesystem()
+	if err := validateArtifactFilesystem(filesystem, physicalSize, true); err != nil {
+		return nil, err
+	}
 
 	inspected := &inspectedArtifact{
 		reader:  reader,
@@ -223,6 +254,7 @@ func inspectArtifact(
 		ordered: make([]artifactEntry, 0, len(entries)),
 	}
 	inodes := make(map[uint64]string)
+	inodeNumbers := make(map[uint32]string)
 	var logicalBytes int64
 	var nameBytes int64
 	for position, entry := range entries {
@@ -233,15 +265,31 @@ func inspectArtifact(
 		if err := validateArtifactEntry(entry, role); err != nil {
 			return nil, fmt.Errorf("entry %d %q: %w", position, entry.Path, err)
 		}
+		if entry.InodeNumber > filesystem.InodeCount {
+			return nil, fmt.Errorf(
+				"entry %d %q inode number %d exceeds superblock count %d",
+				position,
+				entry.Path,
+				entry.InodeNumber,
+				filesystem.InodeCount,
+			)
+		}
 		if _, exists := inspected.entries[entry.Path]; exists {
 			return nil, fmt.Errorf("duplicate path %q", entry.Path)
 		}
-		if entry.Kind != artifactEntryDirectory {
-			if previous, exists := inodes[entry.Inode]; exists {
-				return nil, fmt.Errorf("paths %q and %q share inode %d", previous, entry.Path, entry.Inode)
-			}
-			inodes[entry.Inode] = entry.Path
+		if previous, exists := inodes[entry.Inode]; exists {
+			return nil, fmt.Errorf("paths %q and %q share inode reference %#x", previous, entry.Path, entry.Inode)
 		}
+		inodes[entry.Inode] = entry.Path
+		if previous, exists := inodeNumbers[entry.InodeNumber]; exists {
+			return nil, fmt.Errorf(
+				"paths %q and %q share inode number %d",
+				previous,
+				entry.Path,
+				entry.InodeNumber,
+			)
+		}
+		inodeNumbers[entry.InodeNumber] = entry.Path
 		if entry.Kind == artifactEntryRegular {
 			if logicalBytes > maxLogicalBytes-entry.SizeBytes {
 				return nil, fmt.Errorf("aggregate logical regular-file bytes exceed %d", maxLogicalBytes)
@@ -255,6 +303,20 @@ func inspectArtifact(
 	if !exists || root.Kind != artifactEntryDirectory {
 		return nil, fmt.Errorf("filesystem root must be an enumerated directory")
 	}
+	if root.Inode != filesystem.RootInodeReference {
+		return nil, fmt.Errorf(
+			"filesystem root inode reference = %#x, enumerated root = %#x",
+			filesystem.RootInodeReference,
+			root.Inode,
+		)
+	}
+	if uint64(len(inodes)) != uint64(filesystem.InodeCount) {
+		return nil, fmt.Errorf(
+			"enumerated unique inode count = %d, superblock declares %d",
+			len(inodes),
+			filesystem.InodeCount,
+		)
+	}
 	for _, entry := range inspected.ordered {
 		if entry.Path == "." {
 			continue
@@ -266,6 +328,46 @@ func inspectArtifact(
 		}
 	}
 	return inspected, nil
+}
+
+func validateArtifactFilesystem(
+	filesystem artifactFilesystem,
+	physicalSize int64,
+	complete bool,
+) error {
+	if filesystem.Magic != squashFSMagic ||
+		filesystem.Major != 4 ||
+		filesystem.Minor != 0 ||
+		filesystem.Compressor != squashFSZstandardCompressor ||
+		filesystem.BlockSize != squashFSDataBlockSize ||
+		filesystem.BlockLog != 17 ||
+		filesystem.CreatedAtUnix != 0 ||
+		filesystem.Flags != squashFSV0Flags ||
+		filesystem.FragmentCount != 0 ||
+		filesystem.IDCount != 1 ||
+		filesystem.XattrIDTableStart != math.MaxUint64 ||
+		filesystem.ExportTableStart != math.MaxUint64 {
+		return fmt.Errorf("filesystem facts are outside the exact SquashFS v0 contract")
+	}
+	if physicalSize < 0 || filesystem.PhysicalSize != uint64(physicalSize) {
+		return fmt.Errorf(
+			"filesystem physical size = %d, descriptor declares %d",
+			filesystem.PhysicalSize,
+			physicalSize,
+		)
+	}
+	expected, ok := roundUpSquashFSSize(filesystem.BytesUsed, squashFSPhysicalAlign)
+	if !ok || filesystem.PhysicalSize != expected || !filesystem.HasZeroPadding {
+		return fmt.Errorf("filesystem tail is outside the exact SquashFS v0 contract")
+	}
+	if !complete {
+		return nil
+	}
+	if len(filesystem.IDs) != 1 || filesystem.IDs[0] != 0 ||
+		filesystem.HasFragmentRefs || filesystem.HasOverlappingData {
+		return fmt.Errorf("filesystem contents are outside the exact SquashFS v0 contract")
+	}
+	return nil
 }
 
 func chargeArtifactNameBytes(total int64, entry artifactEntry) (int64, error) {
@@ -286,14 +388,23 @@ func chargeArtifactNameBytes(total int64, entry artifactEntry) (int64, error) {
 }
 
 func validateArtifactEntry(entry artifactEntry, role artifactRole) error {
-	if entry.UID != 0 || entry.GID != 0 || entry.ModTimeUnix != 0 || entry.HasXattrs {
+	if entry.UIDIndex != 0 || entry.GIDIndex != 0 ||
+		entry.UID != 0 || entry.GID != 0 ||
+		entry.ModTimeUnix != 0 || entry.XattrIndex != squashFSInvalidXattr {
 		return fmt.Errorf("ownership, timestamp, or xattr metadata is not normalized")
+	}
+	if entry.InodeNumber == 0 {
+		return fmt.Errorf("inode number is zero")
 	}
 	if entry.SizeBytes < 0 {
 		return fmt.Errorf("logical size is negative")
 	}
 	switch entry.Kind {
 	case artifactEntryRegular:
+		if entry.Form != squashFSBasicRegularForm &&
+			entry.Form != squashFSExtendedRegularForm {
+			return fmt.Errorf("regular-file inode form %d is unsupported", entry.Form)
+		}
 		if entry.Mode != 0644 && entry.Mode != 0755 {
 			return fmt.Errorf("regular-file mode %#o is unsupported", entry.Mode)
 		}
@@ -304,10 +415,17 @@ func validateArtifactEntry(entry artifactEntry, role artifactRole) error {
 			return fmt.Errorf("regular-file link metadata is invalid")
 		}
 	case artifactEntryDirectory:
+		if entry.Form != squashFSBasicDirectoryForm &&
+			entry.Form != squashFSExtendedDirectoryForm {
+			return fmt.Errorf("directory inode form %d is unsupported", entry.Form)
+		}
 		if entry.Mode != 0755 || entry.LinkTarget != "" {
 			return fmt.Errorf("directory metadata is invalid")
 		}
 	case artifactEntrySymlink:
+		if entry.Form != squashFSBasicSymlinkForm {
+			return fmt.Errorf("symbolic-link inode form %d is unsupported", entry.Form)
+		}
 		if entry.Mode != 0777 || entry.LinkCount != 1 {
 			return fmt.Errorf("symbolic-link metadata is invalid")
 		}

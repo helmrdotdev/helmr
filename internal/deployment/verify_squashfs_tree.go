@@ -149,7 +149,7 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 		inode: root,
 	}}
 	expandedDirectories := make(map[uint64]struct{})
-	reached := map[uint64]struct{}{
+	reachedDirectories := map[uint64]struct{}{
 		root.Reference: {},
 	}
 	facts := squashFSTreeFacts{
@@ -199,14 +199,6 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 			if pending.path != "." {
 				childPath = pending.path + "/" + entry.Name
 			}
-			if _, ok := reached[entry.Reference]; ok {
-				return squashFSTreeFacts{}, &artifactContentError{
-					cause: fmt.Errorf(
-						"SquashFS inode reference %#x is reachable more than once",
-						entry.Reference,
-					),
-				}
-			}
 			child, err := reader.inodeAt(entry.Reference)
 			if err != nil {
 				return squashFSTreeFacts{}, fmt.Errorf(
@@ -237,7 +229,17 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 					),
 				}
 			}
-			reached[entry.Reference] = struct{}{}
+			if child.Kind == squashFSDirectoryKind {
+				if _, ok := reachedDirectories[entry.Reference]; ok {
+					return squashFSTreeFacts{}, &artifactContentError{
+						cause: fmt.Errorf(
+							"SquashFS directory inode reference %#x is reachable more than once",
+							entry.Reference,
+						),
+					}
+				}
+				reachedDirectories[entry.Reference] = struct{}{}
+			}
 			facts.Edges = append(facts.Edges, entry)
 			children = append(children, pendingPath{
 				path:            childPath,

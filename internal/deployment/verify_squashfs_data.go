@@ -54,6 +54,7 @@ func newSquashFSDataReader(
 			decoder.Close()
 		}
 	}()
+	inodes := make(map[uint64]squashFSRegularFacts)
 	for _, path := range tree.Paths {
 		if err := checkSquashFSContext(ctx); err != nil {
 			return nil, err
@@ -71,35 +72,39 @@ func newSquashFSDataReader(
 				cause: fmt.Errorf("SquashFS path %q has no regular-file facts", path.Path),
 			}
 		}
-		regular := cloneSquashFSRegularFacts(*path.Inode.Regular)
-		if err := validateSquashFSRegularDescriptors(path.Inode.Form, regular); err != nil {
-			return nil, fmt.Errorf("validate SquashFS path %q descriptors: %w", path.Path, err)
-		}
-		for position, block := range regular.Blocks {
-			if block.Sparse || reader.hasOverlappingData {
-				continue
+		regular, retained := inodes[path.Inode.Reference]
+		if !retained {
+			regular = cloneSquashFSRegularFacts(*path.Inode.Regular)
+			if err := validateSquashFSRegularDescriptors(path.Inode.Form, regular); err != nil {
+				return nil, fmt.Errorf("validate SquashFS path %q descriptors: %w", path.Path, err)
 			}
-			if !block.Uncompressed && decoder == nil {
-				var err error
-				decoder, err = newSquashFSDataDecoder()
-				if err != nil {
-					return nil, err
+			for position, block := range regular.Blocks {
+				if block.Sparse || reader.hasOverlappingData {
+					continue
+				}
+				if !block.Uncompressed && decoder == nil {
+					var err error
+					decoder, err = newSquashFSDataDecoder()
+					if err != nil {
+						return nil, err
+					}
+				}
+				if err := validateSquashFSDataBlock(
+					ctx,
+					source,
+					reader.region,
+					decoder,
+					block,
+				); err != nil {
+					return nil, fmt.Errorf(
+						"validate SquashFS path %q block %d: %w",
+						path.Path,
+						position,
+						err,
+					)
 				}
 			}
-			if err := validateSquashFSDataBlock(
-				ctx,
-				source,
-				reader.region,
-				decoder,
-				block,
-			); err != nil {
-				return nil, fmt.Errorf(
-					"validate SquashFS path %q block %d: %w",
-					path.Path,
-					position,
-					err,
-				)
-			}
+			inodes[path.Inode.Reference] = regular
 		}
 		if _, exists := reader.files[path.Path]; exists {
 			return nil, &artifactInfrastructureError{

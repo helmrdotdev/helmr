@@ -315,6 +315,58 @@ func TestSquashFSDataReaderDoesNotReadOverlappingPayloads(t *testing.T) {
 	}
 }
 
+func TestSquashFSDataReaderValidatesRepeatedInodeOnce(t *testing.T) {
+	payload := []byte("content")
+	image := append(make([]byte, squashFSSuperblockSize), payload...)
+	source := &countingSquashFSReader{raw: image}
+	regular := squashFSRegularFacts{
+		Size:     uint64(len(payload)),
+		Fragment: squashFSInvalidFragment,
+		Blocks: []squashFSBlockFacts{{
+			StoredSize:   uint32(len(payload)),
+			LogicalSize:  uint32(len(payload)),
+			Uncompressed: true,
+			Start:        squashFSSuperblockSize,
+			End:          uint64(len(image)),
+		}},
+	}
+	inode := &squashFSInodeFacts{
+		Reference: 17,
+		Form:      squashFSBasicRegularForm,
+		Kind:      squashFSRegularKind,
+		Regular:   &regular,
+	}
+	reader, err := newSquashFSDataReader(
+		context.Background(),
+		source,
+		squashFSSuperblockFacts{InodeTableStart: uint64(len(image))},
+		squashFSTreeFacts{Paths: []squashFSPathFacts{
+			{Path: "a", Inode: inode},
+			{Path: "b", Inode: inode},
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if source.ReadCount() != 1 {
+		t.Fatalf("payload reads = %d, want 1", source.ReadCount())
+	}
+	for _, path := range []string{"a", "b"} {
+		opened, err := reader.Open(context.Background(), path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(opened)
+		opened.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(raw, payload) {
+			t.Fatalf("Open(%q) = %q", path, raw)
+		}
+	}
+}
+
 func TestSquashFSDataReaderPreservesInfrastructureErrors(t *testing.T) {
 	payload := []byte("content")
 	regular := squashFSRegularFacts{

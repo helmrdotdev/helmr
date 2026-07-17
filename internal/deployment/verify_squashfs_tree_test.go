@@ -262,6 +262,41 @@ func TestReadSquashFSTreeRetainsKnownForbiddenRoot(t *testing.T) {
 	}
 }
 
+func TestReadSquashFSTreeRetainsRepeatedNonDirectoryReference(t *testing.T) {
+	directoryEntries := []squashFSTestDirectoryEntry{
+		{name: "a", form: squashFSBasicRegularForm, reference: 32, inodeNumber: 2},
+		{name: "b", form: squashFSBasicRegularForm, reference: 32, inodeNumber: 2},
+	}
+	root := squashFSTestDirectoryInode(
+		1,
+		2,
+		uint16(3+squashFSTestDirectoryRecordSize(directoryEntries)),
+		0,
+	)
+	file := squashFSTestBasicRegularBody(
+		squashFSTestInodeBase(squashFSBasicRegularForm, 2),
+	)
+	directory := squashFSTestDirectoryRecord(directoryEntries)
+	decoder, superblock := squashFSTestTreeDecoder(t, append(root, file...), directory, 2)
+
+	facts, err := readSquashFSTree(
+		context.Background(),
+		decoder,
+		superblock,
+		[]uint32{0, 0},
+		uint64(maxCodeLogicalBytes),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(facts.Paths) != 3 ||
+		facts.Paths[1].Inode != facts.Paths[2].Inode ||
+		facts.Paths[1].Path != "a" ||
+		facts.Paths[2].Path != "b" {
+		t.Fatalf("paths = %#v", facts.Paths)
+	}
+}
+
 func TestReadSquashFSTreeRejectsUnusedDecodedMetadata(t *testing.T) {
 	root := append(squashFSTestDirectoryInode(1, 1, 3, 0), 0)
 	decoder, superblock := squashFSTestTreeDecoder(t, root, nil, 1)
@@ -334,14 +369,6 @@ func TestReadSquashFSTreeRejectsGraphAndDirectoryViolations(t *testing.T) {
 				name: "file", form: squashFSBasicSymlinkForm, reference: 32, inodeNumber: 2,
 			}},
 			inodeCount: 2,
-		},
-		{
-			name: "repeated reference",
-			entries: []squashFSTestDirectoryEntry{
-				{name: "a", form: squashFSBasicRegularForm, reference: 32, inodeNumber: 2},
-				{name: "b", form: squashFSBasicRegularForm, reference: 32, inodeNumber: 2},
-			},
-			inodeCount: 3,
 		},
 		{
 			name: "directory cycle",

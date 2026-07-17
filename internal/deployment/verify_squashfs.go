@@ -7,8 +7,11 @@ import (
 )
 
 const (
-	squashFSSuperblockSize = 96
-	squashFSPhysicalAlign  = 4096
+	squashFSMagic               = 0x73717368
+	squashFSZstandardCompressor = 6
+	squashFSV0Flags             = 0x0210
+	squashFSSuperblockSize      = 96
+	squashFSPhysicalAlign       = 4096
 )
 
 type squashFSSuperblockFacts struct {

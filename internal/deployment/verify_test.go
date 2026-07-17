@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"testing"
 )
@@ -237,21 +238,34 @@ func TestProgramArtifactsRejectsRegistryLinkIntoCodeArtifact(t *testing.T) {
 func TestArtifactResourceBounds(t *testing.T) {
 	entry := func(path string, size int64, inode uint64) artifactEntry {
 		return artifactEntry{
-			Path:      path,
-			Kind:      artifactEntryRegular,
-			Mode:      0644,
-			SizeBytes: size,
-			Inode:     inode,
-			LinkCount: 1,
+			Path:        path,
+			Kind:        artifactEntryRegular,
+			Form:        squashFSBasicRegularForm,
+			Mode:        0644,
+			SizeBytes:   size,
+			XattrIndex:  squashFSInvalidXattr,
+			Inode:       inode,
+			InodeNumber: uint32(inode),
+			LinkCount:   1,
 		}
 	}
-	root := artifactEntry{Path: ".", Kind: artifactEntryDirectory, Mode: 0755, Inode: 1}
+	root := artifactEntry{
+		Path:        ".",
+		Kind:        artifactEntryDirectory,
+		Form:        squashFSBasicDirectoryForm,
+		Mode:        0755,
+		XattrIndex:  squashFSInvalidXattr,
+		Inode:       1,
+		InodeNumber: 1,
+	}
 	reader := func(entries []artifactEntry) *memoryArtifact {
+		filesystem := exactTestFilesystem()
+		filesystem.InodeCount = uint32(len(entries))
 		return &memoryArtifact{
 			files:      map[string][]byte{},
 			entries:    entries,
 			nextInode:  uint64(len(entries) + 1),
-			filesystem: exactTestFilesystem(),
+			filesystem: filesystem,
 		}
 	}
 
@@ -264,6 +278,7 @@ func TestArtifactResourceBounds(t *testing.T) {
 		}),
 		codeArtifact,
 		maxCodeLogicalBytes,
+		4096,
 	); err != nil {
 		t.Fatalf("exact code logical bound: %v", err)
 	}
@@ -312,6 +327,7 @@ func TestArtifactResourceBounds(t *testing.T) {
 				reader(test.entries),
 				test.role,
 				test.limit,
+				4096,
 			); err == nil {
 				t.Fatal("inspectArtifact returned nil error")
 			}
@@ -324,6 +340,7 @@ func TestArtifactResourceBounds(t *testing.T) {
 		reader(tooMany),
 		codeArtifact,
 		maxCodeLogicalBytes,
+		4096,
 	); err == nil {
 		t.Fatal("inspectArtifact accepted too many entries")
 	}
@@ -410,19 +427,22 @@ func TestProgramArtifactPhysicalPolicyWiring(t *testing.T) {
 func TestArtifactFilesystemRejectsForbiddenFacts(t *testing.T) {
 	for name, mutate := range map[string]func(*artifactFilesystem){
 		"fragments": func(filesystem *artifactFilesystem) {
-			filesystem.HasFragments = true
+			filesystem.FragmentCount = 1
 		},
 		"duplicate packing": func(filesystem *artifactFilesystem) {
-			filesystem.HasDuplicatePacking = true
+			filesystem.Flags ^= 1
+		},
+		"fragment references": func(filesystem *artifactFilesystem) {
+			filesystem.HasFragmentRefs = true
 		},
 		"overlapping data": func(filesystem *artifactFilesystem) {
 			filesystem.HasOverlappingData = true
 		},
 		"export table": func(filesystem *artifactFilesystem) {
-			filesystem.HasExportTable = true
+			filesystem.ExportTableStart = 0
 		},
 		"xattrs": func(filesystem *artifactFilesystem) {
-			filesystem.HasXattrs = true
+			filesystem.XattrIDTableStart = 0
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -433,10 +453,46 @@ func TestArtifactFilesystemRejectsForbiddenFacts(t *testing.T) {
 				reader,
 				codeArtifact,
 				maxCodeLogicalBytes,
+				4096,
 			); err == nil {
 				t.Fatal("forbidden filesystem fact was accepted")
 			}
 		})
+	}
+}
+
+func TestInspectArtifactRejectsRepeatedInodeReference(t *testing.T) {
+	reader := newMemoryArtifact()
+	reader.addFile("a", []byte("content"), 0644)
+	repeated := reader.entries[len(reader.entries)-1]
+	repeated.Path = "b"
+	reader.entries = append(reader.entries, repeated)
+	_, err := inspectArtifact(
+		context.Background(),
+		reader,
+		codeArtifact,
+		maxCodeLogicalBytes,
+		4096,
+	)
+	if err == nil || !strings.Contains(err.Error(), "share inode reference") {
+		t.Fatalf("repeated inode reference error = %v", err)
+	}
+}
+
+func TestInspectArtifactRejectsInodeNumberAboveSuperblockCount(t *testing.T) {
+	reader := newMemoryArtifact()
+	reader.addFile("file", []byte("content"), 0644)
+	reader.mutate("file", func(entry *artifactEntry) {
+		entry.InodeNumber = reader.filesystem.InodeCount + 1
+	})
+	if _, err := inspectArtifact(
+		context.Background(),
+		reader,
+		codeArtifact,
+		maxCodeLogicalBytes,
+		4096,
+	); err == nil {
+		t.Fatal("inode number above the superblock count was accepted")
 	}
 }
 
@@ -565,6 +621,7 @@ func TestPairVerifierDerivesCanonicalBinShim(t *testing.T) {
 		newMemoryArtifact(),
 		codeArtifact,
 		maxCodeLogicalBytes,
+		4096,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -574,6 +631,7 @@ func TestPairVerifierDerivesCanonicalBinShim(t *testing.T) {
 		dependencies,
 		dependencyArtifact,
 		maxDependencyLogicalBytes,
+		4096,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -1023,10 +1081,22 @@ func testBinShim(target string) []byte {
 
 func exactTestFilesystem() artifactFilesystem {
 	return artifactFilesystem{
-		Major:       4,
-		Minor:       0,
-		Compression: "zstd",
-		BlockSize:   131072,
+		Magic:              squashFSMagic,
+		InodeCount:         1,
+		BlockSize:          squashFSDataBlockSize,
+		Compressor:         squashFSZstandardCompressor,
+		BlockLog:           17,
+		Flags:              squashFSV0Flags,
+		IDCount:            1,
+		Major:              4,
+		Minor:              0,
+		RootInodeReference: 1,
+		BytesUsed:          squashFSSuperblockSize,
+		PhysicalSize:       squashFSPhysicalAlign,
+		XattrIDTableStart:  math.MaxUint64,
+		ExportTableStart:   math.MaxUint64,
+		IDs:                []uint32{0},
+		HasZeroPadding:     true,
 	}
 }
 
@@ -1044,16 +1114,19 @@ func newMemoryArtifact() *memoryArtifact {
 		filesystem: exactTestFilesystem(),
 	}
 	artifact.entries = append(artifact.entries, artifactEntry{
-		Path:  ".",
-		Kind:  artifactEntryDirectory,
-		Mode:  0755,
-		Inode: 1,
+		Path:        ".",
+		Kind:        artifactEntryDirectory,
+		Form:        squashFSBasicDirectoryForm,
+		Mode:        0755,
+		XattrIndex:  squashFSInvalidXattr,
+		Inode:       1,
+		InodeNumber: 1,
 	})
 	return artifact
 }
 
 func (artifact *memoryArtifact) Filesystem() artifactFilesystem {
-	return artifact.filesystem
+	return cloneArtifactFilesystem(artifact.filesystem)
 }
 
 func (artifact *memoryArtifact) Entries(context.Context) ([]artifactEntry, error) {
@@ -1069,35 +1142,47 @@ func (artifact *memoryArtifact) Open(_ context.Context, path string) (io.ReadClo
 }
 
 func (artifact *memoryArtifact) addDirectory(path string) {
+	inode := artifact.takeInode()
 	artifact.entries = append(artifact.entries, artifactEntry{
-		Path:  path,
-		Kind:  artifactEntryDirectory,
-		Mode:  0755,
-		Inode: artifact.takeInode(),
+		Path:        path,
+		Kind:        artifactEntryDirectory,
+		Form:        squashFSBasicDirectoryForm,
+		Mode:        0755,
+		XattrIndex:  squashFSInvalidXattr,
+		Inode:       inode,
+		InodeNumber: uint32(inode),
 	})
 }
 
 func (artifact *memoryArtifact) addFile(path string, raw []byte, mode uint32) {
 	artifact.files[path] = append([]byte(nil), raw...)
+	inode := artifact.takeInode()
 	artifact.entries = append(artifact.entries, artifactEntry{
-		Path:      path,
-		Kind:      artifactEntryRegular,
-		Mode:      mode,
-		SizeBytes: int64(len(raw)),
-		Inode:     artifact.takeInode(),
-		LinkCount: 1,
+		Path:        path,
+		Kind:        artifactEntryRegular,
+		Form:        squashFSBasicRegularForm,
+		Mode:        mode,
+		SizeBytes:   int64(len(raw)),
+		XattrIndex:  squashFSInvalidXattr,
+		Inode:       inode,
+		InodeNumber: uint32(inode),
+		LinkCount:   1,
 	})
 }
 
 func (artifact *memoryArtifact) addLink(path, target string) {
+	inode := artifact.takeInode()
 	artifact.entries = append(artifact.entries, artifactEntry{
-		Path:       path,
-		Kind:       artifactEntrySymlink,
-		Mode:       0777,
-		SizeBytes:  int64(len(target)),
-		LinkTarget: target,
-		Inode:      artifact.takeInode(),
-		LinkCount:  1,
+		Path:        path,
+		Kind:        artifactEntrySymlink,
+		Form:        squashFSBasicSymlinkForm,
+		Mode:        0777,
+		SizeBytes:   int64(len(target)),
+		XattrIndex:  squashFSInvalidXattr,
+		LinkTarget:  target,
+		Inode:       inode,
+		InodeNumber: uint32(inode),
+		LinkCount:   1,
 	})
 }
 
@@ -1114,6 +1199,7 @@ func (artifact *memoryArtifact) mutate(path string, mutate func(*artifactEntry))
 func (artifact *memoryArtifact) takeInode() uint64 {
 	inode := artifact.nextInode
 	artifact.nextInode++
+	artifact.filesystem.InodeCount++
 	return inode
 }
 
