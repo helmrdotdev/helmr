@@ -5,13 +5,14 @@ import (
 	"testing"
 )
 
-func TestParsePackageManifest(t *testing.T) {
-	manifest, err := parsePackageManifest([]byte(`{
+func TestParseLocalPackageManifest(t *testing.T) {
+	manifest, err := parseLocalPackageManifest([]byte(`{
 		"name":"@scope/tool",
 		"version":"1.2.3",
 		"type":"module",
+		"packageManager":"bun@1.3.10",
 		"bin":{"Build":"./bin/build.mjs","check":"bin/check"}
-	}`))
+	}`), true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,13 +25,19 @@ func TestParsePackageManifest(t *testing.T) {
 	if manifest.Type != "module" {
 		t.Fatalf("type = %q", manifest.Type)
 	}
+	if manifest.PackageManager == nil || *manifest.PackageManager != "bun@1.3.10" {
+		t.Fatalf("package manager = %v", manifest.PackageManager)
+	}
 	if manifest.Bins["Build"] != "bin/build.mjs" || manifest.Bins["check"] != "bin/check" {
 		t.Fatalf("bins = %#v", manifest.Bins)
 	}
 }
 
-func TestParsePackageManifestDerivesStringBinCommand(t *testing.T) {
-	manifest, err := parsePackageManifest([]byte(`{"name":"@scope/tool","bin":"./cli.js"}`))
+func TestParseLocalPackageManifestDerivesStringBinCommand(t *testing.T) {
+	manifest, err := parseLocalPackageManifest(
+		[]byte(`{"name":"@scope/tool","bin":"./cli.js"}`),
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,14 +46,14 @@ func TestParsePackageManifestDerivesStringBinCommand(t *testing.T) {
 	}
 }
 
-func TestParsePackageManifestRecordsAutomaticScripts(t *testing.T) {
-	manifest, err := parsePackageManifest([]byte(`{
+func TestParseLocalPackageManifestRecordsAutomaticScripts(t *testing.T) {
+	manifest, err := parseLocalPackageManifest([]byte(`{
 		"scripts":{
 			"test":"bun test",
 			"prepare":null,
 			"preinstall":"node setup.js"
 		}
-	}`))
+	}`), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,20 +62,20 @@ func TestParsePackageManifestRecordsAutomaticScripts(t *testing.T) {
 	}
 }
 
-func TestParsePackageManifestRejectsDuplicateMembersAtEveryDepth(t *testing.T) {
+func TestParsePackageScopeRejectsDuplicateMembersAtEveryDepth(t *testing.T) {
 	for _, raw := range []string{
 		`{"name":"tool","name":"other"}`,
 		`{"name":"tool","config":{"mode":1,"mode":2}}`,
 		`{"name":"tool","config":[{"mode":1,"mode":2}]}`,
 	} {
-		if _, err := parsePackageManifest([]byte(raw)); err == nil ||
+		if _, err := parsePackageScope([]byte(raw)); err == nil ||
 			!strings.Contains(err.Error(), "duplicate object member") {
-			t.Fatalf("parsePackageManifest(%q) error = %v", raw, err)
+			t.Fatalf("parsePackageScope(%q) error = %v", raw, err)
 		}
 	}
 }
 
-func TestParsePackageManifestRejectsUnsupportedShape(t *testing.T) {
+func TestParseLocalPackageManifestRejectsUnsupportedShape(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  string
@@ -89,18 +96,43 @@ func TestParsePackageManifestRejectsUnsupportedShape(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if _, err := parsePackageManifest([]byte(test.raw)); err == nil {
-				t.Fatal("parsePackageManifest returned nil error")
+			if _, err := parseLocalPackageManifest([]byte(test.raw), true); err == nil {
+				t.Fatal("parseLocalPackageManifest returned nil error")
 			}
 		})
 	}
 }
 
-func TestParsePackageManifestRejectsOversize(t *testing.T) {
+func TestParsePackageScopeRejectsOversize(t *testing.T) {
 	raw := make([]byte, maxPackageManifestSizeBytes+1)
 	raw[0] = '{'
 	raw[len(raw)-1] = '}'
-	if _, err := parsePackageManifest(raw); err == nil {
-		t.Fatal("parsePackageManifest returned nil error")
+	if _, err := parsePackageScope(raw); err == nil {
+		t.Fatal("parsePackageScope returned nil error")
+	}
+}
+
+func TestParsePackageScopeIgnoresGraphRootFields(t *testing.T) {
+	manifest, err := parsePackageScope([]byte(`{
+		"bin":null,
+		"name":null,
+		"packageManager":null,
+		"scripts":{"prepare":"node generate.js"},
+		"type":"module",
+		"version":null
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.Type != "module" || len(manifest.Bins) != 0 ||
+		manifest.Name != nil || manifest.Version != nil || manifest.PackageManager != nil ||
+		len(manifest.AutomaticScripts) != 0 {
+		t.Fatalf("manifest = %#v", manifest)
+	}
+}
+
+func TestParsePackageScopeRejectsInvalidType(t *testing.T) {
+	if _, err := parsePackageScope([]byte(`{"type":"dual"}`)); err == nil {
+		t.Fatal("parsePackageScope returned nil error")
 	}
 }

@@ -23,33 +23,38 @@ type packageManifest struct {
 	Type             string
 	Bins             map[string]string
 	AutomaticScripts []string
+	PackageManager   *string
 }
 
-func parsePackageManifest(raw []byte) (packageManifest, error) {
-	if len(raw) == 0 || len(raw) > maxPackageManifestSizeBytes {
-		return packageManifest{}, fmt.Errorf(
-			"package manifest size is outside [1,%d]",
-			maxPackageManifestSizeBytes,
-		)
-	}
-	if !utf8.Valid(raw) {
-		return packageManifest{}, fmt.Errorf("package manifest is not valid UTF-8")
-	}
-
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	value, err := decodeUniqueJSON(decoder)
+func parsePackageScope(raw []byte) (packageManifest, error) {
+	object, err := decodePackageManifest(raw)
 	if err != nil {
 		return packageManifest{}, err
 	}
-	if err := ensureEOF(decoder, "package manifest"); err != nil {
+	manifest := packageManifest{}
+	if err := parsePackageType(object, &manifest); err != nil {
 		return packageManifest{}, err
 	}
-	object, ok := value.(map[string]any)
-	if !ok {
-		return packageManifest{}, fmt.Errorf("package manifest root must be an object")
-	}
+	return manifest, nil
+}
 
+func parseLocalPackageManifest(raw []byte, root bool) (packageManifest, error) {
+	return parseOwnedPackageManifest(raw, root, true)
+}
+
+func parseRegistryPackageManifest(raw []byte) (packageManifest, error) {
+	return parseOwnedPackageManifest(raw, false, false)
+}
+
+func parseOwnedPackageManifest(
+	raw []byte,
+	packageManagerContract bool,
+	lifecycleContract bool,
+) (packageManifest, error) {
+	object, err := decodePackageManifest(raw)
+	if err != nil {
+		return packageManifest{}, err
+	}
 	manifest := packageManifest{Bins: map[string]string{}}
 	if value, exists := object["name"]; exists {
 		name, ok := value.(string)
@@ -71,16 +76,19 @@ func parsePackageManifest(raw []byte) (packageManifest, error) {
 		}
 		manifest.Version = &version
 	}
-	if value, exists := object["type"]; exists {
-		moduleType, ok := value.(string)
-		if !ok || (moduleType != "module" && moduleType != "commonjs") {
+	if err := parsePackageType(object, &manifest); err != nil {
+		return packageManifest{}, err
+	}
+	if value, exists := object["packageManager"]; exists && packageManagerContract {
+		packageManager, ok := value.(string)
+		if !ok {
 			return packageManifest{}, fmt.Errorf(
-				`package manifest type must be "module" or "commonjs" when present`,
+				"package manifest packageManager must be a string when present",
 			)
 		}
-		manifest.Type = moduleType
+		manifest.PackageManager = &packageManager
 	}
-	if value, exists := object["scripts"]; exists {
+	if value, exists := object["scripts"]; exists && lifecycleContract {
 		scripts, ok := value.(map[string]any)
 		if ok {
 			for _, name := range []string{
@@ -152,6 +160,45 @@ func parsePackageManifest(raw []byte) (packageManifest, error) {
 		return packageManifest{}, fmt.Errorf("package manifest bin must be a string or object when present")
 	}
 	return manifest, nil
+}
+
+func decodePackageManifest(raw []byte) (map[string]any, error) {
+	if len(raw) == 0 || len(raw) > maxPackageManifestSizeBytes {
+		return nil, fmt.Errorf(
+			"package manifest size is outside [1,%d]",
+			maxPackageManifestSizeBytes,
+		)
+	}
+	if !utf8.Valid(raw) {
+		return nil, fmt.Errorf("package manifest is not valid UTF-8")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	value, err := decodeUniqueJSON(decoder)
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureEOF(decoder, "package manifest"); err != nil {
+		return nil, err
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("package manifest root must be an object")
+	}
+	return object, nil
+}
+
+func parsePackageType(object map[string]any, manifest *packageManifest) error {
+	value, exists := object["type"]
+	if !exists {
+		return nil
+	}
+	moduleType, ok := value.(string)
+	if !ok || (moduleType != "module" && moduleType != "commonjs") {
+		return fmt.Errorf(`package manifest type must be "module" or "commonjs" when present`)
+	}
+	manifest.Type = moduleType
+	return nil
 }
 
 func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
