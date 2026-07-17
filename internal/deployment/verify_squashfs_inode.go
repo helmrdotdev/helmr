@@ -26,6 +26,7 @@ const (
 	squashFSInvalidFragment      = math.MaxUint32
 	squashFSInvalidXattr         = math.MaxUint32
 	squashFSDataUncompressedBit  = uint32(1 << 24)
+	squashFSDataBlockSize        = 131072
 	squashFSMetadataCacheEntries = 64
 	squashFSMetadataBlockLimit   = maxArtifactEntries
 )
@@ -574,7 +575,6 @@ func (decoder *squashFSInodeDecoder) read(
 	case squashFSBasicRegularForm:
 		facts.Kind = squashFSRegularKind
 		facts.LinkCount = 1
-		facts.LinkCount = 1
 		var encoded [16]byte
 		if err := cursor.readFull(encoded[:]); err != nil {
 			return squashFSInodeFacts{}, err
@@ -740,16 +740,11 @@ func (decoder *squashFSInodeDecoder) readRegularBlocks(
 		regular.Size%blockSize != 0 {
 		blockCount++
 	}
-	if blockCount > uint64(maxArtifactFileSize)/blockSize+1 {
-		return &artifactContentError{
-			cause: fmt.Errorf(
-				"SquashFS regular-file block count = %d exceeds bounds",
-				blockCount,
-			),
-		}
-	}
 	descriptorLimit := uint64(maxArtifactEntries)
-	additional, ok := ceilSquashFSDivide(decoder.maxLogicalBytes, blockSize)
+	additional, ok := ceilSquashFSDivide(
+		decoder.maxLogicalBytes,
+		squashFSDataBlockSize,
+	)
 	if !ok || descriptorLimit > math.MaxUint64-additional {
 		return &artifactInfrastructureError{
 			cause: fmt.Errorf("derive SquashFS block descriptor bound: overflow"),
@@ -792,11 +787,13 @@ func (decoder *squashFSInodeDecoder) readRegularBlocks(
 
 		block.Uncompressed = encoded&squashFSDataUncompressedBit != 0
 		block.StoredSize = encoded &^ squashFSDataUncompressedBit
-		if block.StoredSize == 0 {
+		if block.StoredSize == 0 || block.StoredSize > squashFSDataBlockSize {
 			return &artifactContentError{
 				cause: fmt.Errorf(
-					"SquashFS regular-file block %d has zero stored size",
+					"SquashFS regular-file block %d stored size = %d, want within [1, %d]",
 					position,
+					block.StoredSize,
+					squashFSDataBlockSize,
 				),
 			}
 		}

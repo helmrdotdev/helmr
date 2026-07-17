@@ -65,6 +65,83 @@ func TestReadSquashFSTreeAcceptsEmptyDirectoryWithoutDirectoryTable(t *testing.T
 	}
 }
 
+func TestReadSquashFSTreeSurfacesFragmentReferences(t *testing.T) {
+	root := squashFSTestDirectoryInode(1, 2, 27, 0)
+	file := squashFSTestInodeBase(squashFSBasicRegularForm, 2)
+	body := make([]byte, 16)
+	binary.LittleEndian.PutUint32(body[4:8], 0)
+	binary.LittleEndian.PutUint32(body[12:16], 1)
+	file = append(file, body...)
+	directory := squashFSTestDirectoryRecord([]squashFSTestDirectoryEntry{{
+		name:        "file",
+		form:        squashFSBasicRegularForm,
+		reference:   uint64(len(root)),
+		inodeNumber: 2,
+	}})
+	decoder, superblock := squashFSTestTreeDecoder(
+		t,
+		append(root, file...),
+		directory,
+		2,
+	)
+
+	facts, err := readSquashFSTree(
+		context.Background(),
+		decoder,
+		superblock,
+		[]uint32{0, 0},
+		uint64(maxCodeLogicalBytes),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !facts.HasFragmentReferences {
+		t.Fatal("fragment reference was not surfaced")
+	}
+}
+
+func TestReadSquashFSTreeSurfacesOverlappingData(t *testing.T) {
+	root := squashFSTestDirectoryInode(1, 2, 3, 0)
+	first := squashFSTestRegularInodeWithExtent(2, squashFSSuperblockSize)
+	second := squashFSTestRegularInodeWithExtent(3, squashFSSuperblockSize)
+	directory := squashFSTestDirectoryRecord([]squashFSTestDirectoryEntry{
+		{
+			name:        "first",
+			form:        squashFSBasicRegularForm,
+			reference:   uint64(len(root)),
+			inodeNumber: 2,
+		},
+		{
+			name:        "second",
+			form:        squashFSBasicRegularForm,
+			reference:   uint64(len(root) + len(first)),
+			inodeNumber: 3,
+		},
+	})
+	root = squashFSTestDirectoryInode(
+		1,
+		2,
+		uint16(len(directory)+3),
+		0,
+	)
+	inodes := append(append(root, first...), second...)
+	decoder, superblock := squashFSTestTreeDecoder(t, inodes, directory, 3)
+
+	facts, err := readSquashFSTree(
+		context.Background(),
+		decoder,
+		superblock,
+		[]uint32{0, 0},
+		uint64(maxCodeLogicalBytes),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !facts.HasOverlappingData {
+		t.Fatal("overlapping data extents were not surfaced")
+	}
+}
+
 func TestReadSquashFSTreeReadsDirectoryAcrossMetadataBlocks(t *testing.T) {
 	const inodeStart = uint64(256)
 	const fileCount = 420
@@ -441,6 +518,24 @@ func squashFSTestTreeDecoder(
 	}
 	t.Cleanup(decoder.Close)
 	return decoder, superblock
+}
+
+func squashFSTestRegularInodeWithExtent(
+	inodeNumber uint32,
+	start uint32,
+) []byte {
+	encoded := squashFSTestInodeBase(squashFSBasicRegularForm, inodeNumber)
+	body := make([]byte, 16)
+	binary.LittleEndian.PutUint32(body[0:4], start)
+	binary.LittleEndian.PutUint32(body[4:8], squashFSInvalidFragment)
+	binary.LittleEndian.PutUint32(body[12:16], 1)
+	encoded = append(encoded, body...)
+	var descriptor [4]byte
+	binary.LittleEndian.PutUint32(
+		descriptor[:],
+		squashFSDataUncompressedBit|1,
+	)
+	return append(encoded, descriptor[:]...)
 }
 
 func squashFSTestDirectoryInode(

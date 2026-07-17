@@ -34,15 +34,17 @@ type squashFSPathFacts struct {
 }
 
 type squashFSTreeFacts struct {
-	RootReference        uint64
-	Paths                []squashFSPathFacts
-	Edges                []squashFSDirectoryEntryFacts
-	Inodes               map[uint64]*squashFSInodeFacts
-	DataExtents          []squashFSBlockFacts
-	LogicalBytes         uint64
-	RetainedRawBytes     uint64
-	DirectoryIndexCount  uint64
-	BlockDescriptorCount uint64
+	RootReference         uint64
+	Paths                 []squashFSPathFacts
+	Edges                 []squashFSDirectoryEntryFacts
+	Inodes                map[uint64]*squashFSInodeFacts
+	DataExtents           []squashFSBlockFacts
+	LogicalBytes          uint64
+	RetainedRawBytes      uint64
+	DirectoryIndexCount   uint64
+	BlockDescriptorCount  uint64
+	HasFragmentReferences bool
+	HasOverlappingData    bool
 }
 
 type squashFSTreeReader struct {
@@ -305,7 +307,35 @@ func (reader *squashFSTreeReader) read() (squashFSTreeFacts, error) {
 	facts.RetainedRawBytes = reader.inode.retainedRawBytes
 	facts.DirectoryIndexCount = reader.inode.indexCount
 	facts.BlockDescriptorCount = reader.inode.blockCount
+	for _, inode := range facts.Inodes {
+		if inode.Regular != nil &&
+			inode.Regular.Fragment != squashFSInvalidFragment {
+			facts.HasFragmentReferences = true
+			break
+		}
+	}
+	facts.HasOverlappingData = squashFSDataExtentsOverlap(facts.DataExtents)
 	return facts, nil
+}
+
+func squashFSDataExtentsOverlap(extents []squashFSBlockFacts) bool {
+	ordered := append([]squashFSBlockFacts(nil), extents...)
+	sort.Slice(ordered, func(left, right int) bool {
+		if ordered[left].Start == ordered[right].Start {
+			return ordered[left].End < ordered[right].End
+		}
+		return ordered[left].Start < ordered[right].Start
+	})
+	var previousEnd uint64
+	for position, extent := range ordered {
+		if position > 0 && extent.Start < previousEnd {
+			return true
+		}
+		if extent.End > previousEnd {
+			previousEnd = extent.End
+		}
+	}
+	return false
 }
 
 func (reader *squashFSTreeReader) inodeAt(
