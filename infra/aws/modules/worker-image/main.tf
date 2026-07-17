@@ -142,6 +142,12 @@ resource "aws_imagebuilder_component" "worker" {
                 "test -r /etc/cni/conf.d/helmr.conflist",
                 "systemctl cat buildkit.service >/dev/null",
                 "systemctl cat helmr-worker.service >/dev/null",
+                "systemd-analyze verify /etc/systemd/system/helmr-worker.service",
+                "test \"$(systemctl show helmr-worker.service -p Delegate --value)\" = yes",
+                "test \"$(systemctl show helmr-worker.service -p DelegateSubgroup --value)\" = supervisor",
+                "test \"$(systemctl show helmr-worker.service -p KillMode --value)\" = mixed",
+                "test \"$(systemctl show helmr-worker.service -p TasksMax --value)\" = infinity",
+                "getent passwd helmr-verifier >/dev/null",
               ]
             }
           }

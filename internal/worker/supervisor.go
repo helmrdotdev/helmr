@@ -575,11 +575,9 @@ func (s *Supervisor) observation(state State, evidence RecoveryEvidence) api.Wor
 				observation.HealthDetails = combined
 			}
 		}
-		if admissionObservation.RunPausedReason != "" {
-			observation.RunPausedReason = admissionObservation.RunPausedReason
-			observation.BuildPausedReason = admissionObservation.BuildPausedReason
-			observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
-		}
+		observation.RunPausedReason = admissionObservation.RunPausedReason
+		observation.BuildPausedReason = admissionObservation.BuildPausedReason
+		observation.RuntimePausedReason = admissionObservation.RuntimePausedReason
 	}
 	if observation.LeakedSlotCount > 0 {
 		observation.RunPausedReason = "startup_recovery_leak"

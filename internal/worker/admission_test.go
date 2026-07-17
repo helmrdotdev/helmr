@@ -19,7 +19,8 @@ func healthyHost(now time.Time) HostHealth {
 	return HostHealth{
 		ObservedAt: now, AvailableDiskBytes: 20 << 30, DiskCapacityBytes: 40 << 30,
 		OpenFileDescriptors: 100, FileDescriptorLimit: 4096,
-		CgroupHealthy: true, KVMHealthy: true, FirecrackerHealthy: true,
+		CgroupHealthy: true, ProgramVerifierHealthy: true,
+		KVMHealthy: true, FirecrackerHealthy: true,
 	}
 }
 
@@ -42,6 +43,13 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 		{name: "disk", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.AvailableDiskBytes = 7 << 30 }, want: AdmissionDiskFloor},
 		{name: "fd", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.OpenFileDescriptors = 3900 }, want: AdmissionFileDescriptorPressure},
 		{name: "cgroup", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.CgroupHealthy = false }, want: AdmissionCgroupUnavailable},
+		{name: "program verifier for build", mutate: func(h *HostHealth, c *AdmissionCheck) {
+			h.ProgramVerifierHealthy = false
+			c.Consumer = "build"
+		}, want: AdmissionProgramVerifierUnavailable},
+		{name: "program verifier does not own run admission", mutate: func(h *HostHealth, _ *AdmissionCheck) {
+			h.ProgramVerifierHealthy = false
+		}, want: AdmissionAllowed},
 		{name: "kvm", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.KVMHealthy = false }, want: AdmissionKVMUnavailable},
 		{name: "firecracker", mutate: func(h *HostHealth, _ *AdmissionCheck) { h.FirecrackerHealthy = false }, want: AdmissionFirecrackerUnavailable},
 		{name: "slots", mutate: func(_ *HostHealth, c *AdmissionCheck) {
@@ -68,6 +76,36 @@ func TestHardAdmissionFailClosedChecks(t *testing.T) {
 				t.Fatalf("decision = %+v, want reason %q", decision, tt.want)
 			}
 		})
+	}
+}
+
+func TestHardAdmissionKeepsVerifierFailureInBuildDomain(t *testing.T) {
+	now := time.Now()
+	health := healthyHost(now)
+	health.ProgramVerifierHealthy = false
+	probe := &staticHealthProbe{health: health}
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe: probe, DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	check := AdmissionCheck{State: StateActive, CertifiedAt: now, CertificationTTL: time.Hour}
+	for _, consumer := range []string{"run", "workspace", "build"} {
+		check.Consumer = consumer
+		evaluator.Evaluate(context.Background(), check)
+	}
+	observation := evaluator.Observation()
+	if observation.RunPausedReason != "" ||
+		observation.RuntimePausedReason != "" ||
+		observation.BuildPausedReason != string(AdmissionProgramVerifierUnavailable) {
+		t.Fatalf(
+			"domain pauses = run:%q runtime:%q build:%q",
+			observation.RunPausedReason,
+			observation.RuntimePausedReason,
+			observation.BuildPausedReason,
+		)
 	}
 }
 

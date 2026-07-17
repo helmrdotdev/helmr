@@ -356,6 +356,41 @@ func TestSupervisorHardAdmissionPausesClaimsButNotShutdown(t *testing.T) {
 	}
 }
 
+func TestSupervisorObservationKeepsBuildOnlyAdmissionPause(t *testing.T) {
+	now := time.Now()
+	health := healthyHost(now)
+	health.ProgramVerifierHealthy = false
+	evaluator, err := NewHardAdmission(HardAdmissionConfig{
+		Probe:          &staticHealthProbe{health: health},
+		DiskFloorBytes: 1, FDHeadroom: 1, RuntimeSlotCount: 1,
+		Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	evaluator.Evaluate(context.Background(), AdmissionCheck{
+		Consumer: "build", State: StateActive,
+		CertifiedAt: now, CertificationTTL: time.Hour,
+	})
+	supervisor, err := New(Config{
+		Control: &testControl{}, AdmissionEvaluator: evaluator,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := supervisor.observation(StateActive, RecoveryEvidence{})
+	if observation.RunPausedReason != "" ||
+		observation.RuntimePausedReason != "" ||
+		observation.BuildPausedReason != string(AdmissionProgramVerifierUnavailable) {
+		t.Fatalf(
+			"domain pauses = run:%q runtime:%q build:%q",
+			observation.RunPausedReason,
+			observation.RuntimePausedReason,
+			observation.BuildPausedReason,
+		)
+	}
+}
+
 func TestSupervisorRenewsCertificationBeforeExpiry(t *testing.T) {
 	control := &testControl{}
 	s, err := New(Config{Control: control, ObservationEvery: time.Millisecond, CertificationTTL: 10 * time.Millisecond})

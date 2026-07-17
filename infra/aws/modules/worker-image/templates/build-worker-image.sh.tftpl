@@ -101,6 +101,8 @@ useradd --system --uid 1001 --gid 1001 --groups kvm --no-create-home --shell /us
 groupadd --system helmr-buildkit 2>/dev/null || true
 useradd --system --gid helmr-buildkit --home-dir /var/lib/helmr/buildkit-home --create-home --shell /usr/sbin/nologin helmr-buildkit 2>/dev/null || true
 usermod --add-subuids 200000-265535 --add-subgids 200000-265535 helmr-buildkit
+groupadd --system helmr-verifier 2>/dev/null || true
+useradd --system --gid helmr-verifier --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin helmr-verifier 2>/dev/null || true
 cat >/etc/udev/rules.d/99-helmr-kvm.rules <<'EOF'
 KERNEL=="kvm", GROUP="helmr-vmm", MODE="0660"
 EOF
@@ -186,6 +188,10 @@ EnvironmentFile=/etc/helmr/worker.env
 ExecStart=/usr/local/bin/helmr-worker
 Restart=on-failure
 RestartSec=5
+Delegate=yes
+DelegateSubgroup=supervisor
+KillMode=mixed
+TasksMax=infinity
 
 [Install]
 WantedBy=multi-user.target

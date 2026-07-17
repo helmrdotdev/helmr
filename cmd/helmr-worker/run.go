@@ -51,6 +51,11 @@ func run(log *slog.Logger) error {
 	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
+	if supportsBuild {
+		if err := workerdaemon.PrepareProgramVerifierHost(); err != nil {
+			return fmt.Errorf("prepare program verifier host: %w", err)
+		}
+	}
 	serviceID := uuid.NewString()
 	process, err := workerdaemon.Acquire(workDir, workerdaemon.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
 	if err != nil {
