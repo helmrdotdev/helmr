@@ -3,9 +3,11 @@
 package deployment
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -201,6 +203,55 @@ func TestOpenProgramVerifierSnapshotRequiresReadOnlyIndependentDescriptor(t *tes
 	defer writable.Close()
 	if _, err := openProgramVerifierSnapshot(writable); err == nil {
 		t.Fatal("writable Artifact descriptor was accepted")
+	}
+}
+
+func TestProgramVerifierReadinessDeadline(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	if err := reader.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	if err := readProgramVerifierReady(reader); err == nil {
+		t.Fatal("missing readiness did not time out")
+	}
+}
+
+func TestProgramVerifierTerminalDrainRejectsLeakedWriter(t *testing.T) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	canonical := canonicalVerifierProgramIndex(t)
+	var output bytes.Buffer
+	if err := writeProgramVerifierVerified(&output, canonical); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(output.Bytes()); err != nil {
+		t.Fatal(err)
+	}
+	wait := make(chan error, 1)
+	wait <- nil
+	_, resultErr, waitErr := awaitProgramVerifierTerminal(
+		context.Background(),
+		reader,
+		wait,
+		20*time.Millisecond,
+		func() {
+			_ = reader.Close()
+		},
+	)
+	if waitErr != nil {
+		t.Fatalf("wait error = %v", waitErr)
+	}
+	if resultErr == nil || !strings.Contains(resultErr.Error(), "remained open") {
+		t.Fatalf("result error = %v", resultErr)
 	}
 }
 

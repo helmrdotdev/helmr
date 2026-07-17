@@ -37,12 +37,17 @@ var programVerifierCgroupLimits = []struct {
 	{"pids.max", programVerifierPIDsMax},
 }
 
+type programVerifierTerminalRead struct {
+	result programVerifierProcessResult
+	err    error
+}
+
 func runProgramVerifierProcess(
 	ctx context.Context,
 	config programVerifierProcessConfig,
-) (result []byte, returnErr error) {
+) (result programVerifierProcessResult, returnErr error) {
 	if err := validateProgramVerifierProcessConfig(ctx, config); err != nil {
-		return nil, err
+		return programVerifierProcessResult{}, err
 	}
 
 	processContext, cancel := context.WithTimeout(ctx, programVerifierDeadline)
@@ -53,7 +58,7 @@ func runProgramVerifierProcess(
 		config.leaseIdentity,
 	)
 	if err != nil {
-		return nil, err
+		return programVerifierProcessResult{}, err
 	}
 	killForCleanup := false
 	pidFD := -1
@@ -78,18 +83,18 @@ func runProgramVerifierProcess(
 
 	code, err := openProgramVerifierSnapshot(config.code)
 	if err != nil {
-		return nil, fmt.Errorf("open program verifier code snapshot: %w", err)
+		return programVerifierProcessResult{}, fmt.Errorf("open program verifier code snapshot: %w", err)
 	}
 	defer code.Close()
 	dependencies, err := openProgramVerifierSnapshot(config.dependencies)
 	if err != nil {
-		return nil, fmt.Errorf("open program verifier dependency snapshot: %w", err)
+		return programVerifierProcessResult{}, fmt.Errorf("open program verifier dependency snapshot: %w", err)
 	}
 	defer dependencies.Close()
 
 	resultReader, resultWriter, err := os.Pipe()
 	if err != nil {
-		return nil, fmt.Errorf("create program verifier result pipe: %w", err)
+		return programVerifierProcessResult{}, fmt.Errorf("create program verifier result pipe: %w", err)
 	}
 	defer resultReader.Close()
 	defer resultWriter.Close()
@@ -108,44 +113,113 @@ func runProgramVerifierProcess(
 	}
 	command.WaitDelay = programVerifierDrainTimeout
 	if err := command.Start(); err != nil {
-		return nil, fmt.Errorf("start program verifier: %w", err)
+		return programVerifierProcessResult{}, fmt.Errorf("start program verifier: %w", err)
 	}
 	if err := resultWriter.Close(); err != nil {
 		killForCleanup = true
 		_ = killProgramVerifierCgroup(cgroupPath)
 		_ = command.Wait()
-		return nil, fmt.Errorf("close parent program verifier result writer: %w", err)
+		return programVerifierProcessResult{}, fmt.Errorf("close parent program verifier result writer: %w", err)
 	}
 
 	wait := make(chan error, 1)
 	go func() {
 		wait <- command.Wait()
 	}()
-	result, resultErr := readProgramVerifierResult(resultReader)
-	if resultErr != nil {
+	readyDeadline := time.Now().Add(programVerifierBootstrapDeadline)
+	if processDeadline, ok := processContext.Deadline(); ok && processDeadline.Before(readyDeadline) {
+		readyDeadline = processDeadline
+	}
+	resultErr := resultReader.SetReadDeadline(readyDeadline)
+	if resultErr == nil {
+		resultErr = readProgramVerifierReady(resultReader)
+	}
+	if clearErr := resultReader.SetReadDeadline(time.Time{}); resultErr == nil && clearErr != nil {
+		resultErr = fmt.Errorf("clear program verifier readiness deadline: %w", clearErr)
+	}
+	if resultErr == nil {
+		stop := func() {
+			killForCleanup = true
+			_ = killProgramVerifierCgroup(cgroupPath)
+			_ = resultReader.Close()
+		}
+		result, resultErr, err = awaitProgramVerifierTerminal(
+			processContext,
+			resultReader,
+			wait,
+			programVerifierDrainTimeout,
+			stop,
+		)
+	} else {
 		killForCleanup = true
 		_ = killProgramVerifierCgroup(cgroupPath)
+		err = <-wait
 	}
-	waitErr := <-wait
 	if processContext.Err() != nil {
 		killForCleanup = true
-		return nil, fmt.Errorf("program verifier context: %w", processContext.Err())
+		return programVerifierProcessResult{}, fmt.Errorf("program verifier context: %w", processContext.Err())
 	}
 	if resultErr != nil {
 		killForCleanup = true
-		if waitErr != nil {
-			return nil, errors.Join(
+		if err != nil {
+			return programVerifierProcessResult{}, errors.Join(
 				resultErr,
-				fmt.Errorf("wait for program verifier: %w", waitErr),
+				fmt.Errorf("wait for program verifier: %w", err),
 			)
 		}
-		return nil, resultErr
+		return programVerifierProcessResult{}, resultErr
 	}
-	if waitErr != nil {
+	if err != nil {
 		killForCleanup = true
-		return nil, fmt.Errorf("wait for program verifier: %w", waitErr)
+		return programVerifierProcessResult{}, fmt.Errorf("wait for program verifier: %w", err)
 	}
 	return result, nil
+}
+
+func awaitProgramVerifierTerminal(
+	ctx context.Context,
+	reader *os.File,
+	wait <-chan error,
+	drainTimeout time.Duration,
+	stop func(),
+) (programVerifierProcessResult, error, error) {
+	terminal := make(chan programVerifierTerminalRead, 1)
+	go func() {
+		result, err := readProgramVerifierTerminal(reader)
+		terminal <- programVerifierTerminalRead{result: result, err: err}
+	}()
+
+	select {
+	case outcome := <-terminal:
+		select {
+		case waitErr := <-wait:
+			return outcome.result, outcome.err, waitErr
+		case <-ctx.Done():
+			stop()
+			return outcome.result, outcome.err, <-wait
+		}
+	case waitErr := <-wait:
+		timer := time.NewTimer(drainTimeout)
+		defer timer.Stop()
+		select {
+		case outcome := <-terminal:
+			return outcome.result, outcome.err, waitErr
+		case <-timer.C:
+			stop()
+			<-terminal
+			return programVerifierProcessResult{},
+				errors.New("program verifier result stream remained open after process exit"),
+				waitErr
+		case <-ctx.Done():
+			stop()
+			<-terminal
+			return programVerifierProcessResult{}, ctx.Err(), waitErr
+		}
+	case <-ctx.Done():
+		stop()
+		outcome := <-terminal
+		return outcome.result, ctx.Err(), <-wait
+	}
 }
 
 func validateProgramVerifierProcessConfig(

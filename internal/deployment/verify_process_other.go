@@ -10,6 +10,6 @@ import (
 func runProgramVerifierProcess(
 	context.Context,
 	programVerifierProcessConfig,
-) ([]byte, error) {
-	return nil, errors.New("program verifier requires Linux cgroup v2")
+) (programVerifierProcessResult, error) {
+	return programVerifierProcessResult{}, errors.New("program verifier requires Linux cgroup v2")
 }
