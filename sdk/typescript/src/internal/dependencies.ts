@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto"
+
 import {
   canonicalizeJsonValue,
   parseJson,
@@ -6,8 +8,10 @@ import {
 } from "./jsoncanon"
 
 export const DEPENDENCY_INDEX_FORMAT_VERSION = 0 as const
+export const DEPENDENCY_CACHE_FORMAT_VERSION = 0 as const
 export const DEPENDENCY_MATERIALIZER_VERSION = "helmr.dependencies.v0" as const
 
+const dependencyCacheKeyDomain = "helmr.deployment-program-dependencies-cache.v0\0"
 const maxDependencyIndexSizeBytes = 4096
 const maxPackageGraphSizeBytes = 16777216
 const maxPackageManagerVersionBytes = 64
@@ -40,6 +44,16 @@ export interface DependencyIndex {
   readonly architecture: DependencyArchitecture
 }
 
+export interface DependencyCacheInput {
+  readonly formatVersion: 0
+  readonly packageManager: DependencyPackageManager
+  readonly lockfile: DependencyLockfile
+  readonly localManifestsDigest: string
+  readonly materializerVersion: typeof DEPENDENCY_MATERIALIZER_VERSION
+  readonly runtimeDigest: string
+  readonly architecture: DependencyArchitecture
+}
+
 export function parseDependencyIndex(raw: string | Uint8Array): DependencyIndex {
   const input = typeof raw === "string" ? textEncoder.encode(raw) : raw
   if (input.length === 0 || input.length > maxDependencyIndexSizeBytes) {
@@ -67,6 +81,37 @@ export function validateDependencyIndex(index: DependencyIndex): void {
   validateDependencyIndexValue(index as unknown as JsonValue)
 }
 
+export function canonicalDependencyCacheInput(input: DependencyCacheInput): Uint8Array {
+  validateDependencyCacheInput(input)
+  return canonicalizeJsonValue(input as unknown as JsonValue)
+}
+
+export function dependencyCacheKey(input: DependencyCacheInput): string {
+  const canonical = canonicalDependencyCacheInput(input)
+  return `sha256:${createHash("sha256").update(dependencyCacheKeyDomain).update(canonical).digest("hex")}`
+}
+
+export function validateDependencyCacheInput(input: DependencyCacheInput): void {
+  const root = requireObject(input as unknown as JsonValue, "dependency cache input")
+  requireKeys(
+    root,
+    [
+      "architecture",
+      "formatVersion",
+      "localManifestsDigest",
+      "lockfile",
+      "materializerVersion",
+      "packageManager",
+      "runtimeDigest",
+    ],
+    "dependency cache input",
+  )
+  if (root["formatVersion"] !== DEPENDENCY_CACHE_FORMAT_VERSION) {
+    throw new Error(`dependency cache input formatVersion must be ${DEPENDENCY_CACHE_FORMAT_VERSION}`)
+  }
+  validateDependencyInputs(root, "dependency cache input")
+}
+
 function validateDependencyIndexValue(value: JsonValue): DependencyIndex {
   const root = requireObject(value, "dependency index")
   requireKeys(
@@ -87,25 +132,7 @@ function validateDependencyIndexValue(value: JsonValue): DependencyIndex {
   if (root["formatVersion"] !== DEPENDENCY_INDEX_FORMAT_VERSION) {
     throw new Error(`dependency index formatVersion must be ${DEPENDENCY_INDEX_FORMAT_VERSION}`)
   }
-  const managerValue = requireObject(root["packageManager"], "dependency index packageManager")
-  requireKeys(managerValue, ["name", "version"], "dependency index packageManager")
-  const managerName = requirePackageManagerName(managerValue["name"])
-  const managerVersion = requireString(managerValue["version"], "dependency index packageManager.version")
-  const versionMatch = packageManagerVersionPattern.exec(managerVersion)
-  if (
-    textEncoder.encode(managerVersion).length > maxPackageManagerVersionBytes ||
-    versionMatch?.[0] !== managerVersion
-  ) {
-    throw new Error("dependency index packageManager.version is not an admitted SemVer")
-  }
-
-  const lockfileValue = requireObject(root["lockfile"], "dependency index lockfile")
-  requireKeys(lockfileValue, ["digest", "name"], "dependency index lockfile")
-  const lockfileName = requireString(lockfileValue["name"], "dependency index lockfile.name")
-  const expectedLockfileName = managerName === "bun" ? "bun.lock" : "package-lock.json"
-  if (lockfileName !== expectedLockfileName) {
-    throw new Error(`dependency index lockfile.name must be ${expectedLockfileName}`)
-  }
+  const inputs = validateDependencyInputs(root, "dependency index")
   const packageGraphSizeBytes = requirePositiveSafeInteger(
     root["packageGraphSizeBytes"],
     "dependency index packageGraphSizeBytes",
@@ -113,28 +140,61 @@ function validateDependencyIndexValue(value: JsonValue): DependencyIndex {
   if (packageGraphSizeBytes > maxPackageGraphSizeBytes) {
     throw new Error(`dependency index packageGraphSizeBytes must be at most ${maxPackageGraphSizeBytes}`)
   }
-  if (root["materializerVersion"] !== DEPENDENCY_MATERIALIZER_VERSION) {
-    throw new Error(`dependency index materializerVersion must be ${DEPENDENCY_MATERIALIZER_VERSION}`)
-  }
-  const architecture = root["architecture"]
-  if (architecture !== "aarch64" && architecture !== "x86_64") {
-    throw new Error(`dependency index architecture ${JSON.stringify(architecture)} is unsupported`)
-  }
   return {
     formatVersion: DEPENDENCY_INDEX_FORMAT_VERSION,
-    packageManager: { name: managerName, version: managerVersion },
-    lockfile: {
-      name: lockfileName,
-      digest: requireDigest(lockfileValue["digest"], "dependency index lockfile.digest"),
-    },
-    localManifestsDigest: requireDigest(
-      root["localManifestsDigest"],
-      "dependency index localManifestsDigest",
-    ),
+    packageManager: inputs.packageManager,
+    lockfile: inputs.lockfile,
+    localManifestsDigest: inputs.localManifestsDigest,
     packageGraphDigest: requireDigest(root["packageGraphDigest"], "dependency index packageGraphDigest"),
     packageGraphSizeBytes,
     materializerVersion: DEPENDENCY_MATERIALIZER_VERSION,
-    runtimeDigest: requireDigest(root["runtimeDigest"], "dependency index runtimeDigest"),
+    runtimeDigest: inputs.runtimeDigest,
+    architecture: inputs.architecture,
+  }
+}
+
+function validateDependencyInputs(
+  root: JsonObject,
+  label: string,
+): Omit<DependencyCacheInput, "formatVersion"> {
+  const managerValue = requireObject(root["packageManager"], `${label} packageManager`)
+  requireKeys(managerValue, ["name", "version"], `${label} packageManager`)
+  const managerName = requirePackageManagerName(managerValue["name"], label)
+  const managerVersion = requireString(managerValue["version"], `${label} packageManager.version`)
+  const versionMatch = packageManagerVersionPattern.exec(managerVersion)
+  if (
+    textEncoder.encode(managerVersion).length > maxPackageManagerVersionBytes ||
+    versionMatch?.[0] !== managerVersion
+  ) {
+    throw new Error(`${label} packageManager.version is not an admitted SemVer`)
+  }
+
+  const lockfileValue = requireObject(root["lockfile"], `${label} lockfile`)
+  requireKeys(lockfileValue, ["digest", "name"], `${label} lockfile`)
+  const lockfileName = requireString(lockfileValue["name"], `${label} lockfile.name`)
+  const expectedLockfileName = managerName === "bun" ? "bun.lock" : "package-lock.json"
+  if (lockfileName !== expectedLockfileName) {
+    throw new Error(`${label} lockfile.name must be ${expectedLockfileName}`)
+  }
+  if (root["materializerVersion"] !== DEPENDENCY_MATERIALIZER_VERSION) {
+    throw new Error(`${label} materializerVersion must be ${DEPENDENCY_MATERIALIZER_VERSION}`)
+  }
+  const architecture = root["architecture"]
+  if (architecture !== "aarch64" && architecture !== "x86_64") {
+    throw new Error(`${label} architecture ${JSON.stringify(architecture)} is unsupported`)
+  }
+  return {
+    packageManager: { name: managerName, version: managerVersion },
+    lockfile: {
+      name: lockfileName,
+      digest: requireDigest(lockfileValue["digest"], `${label} lockfile.digest`),
+    },
+    localManifestsDigest: requireDigest(
+      root["localManifestsDigest"],
+      `${label} localManifestsDigest`,
+    ),
+    materializerVersion: DEPENDENCY_MATERIALIZER_VERSION,
+    runtimeDigest: requireDigest(root["runtimeDigest"], `${label} runtimeDigest`),
     architecture,
   }
 }
@@ -161,9 +221,9 @@ function requireDigest(value: JsonValue | undefined, label: string): string {
   return digest
 }
 
-function requirePackageManagerName(value: JsonValue | undefined): PackageManagerName {
+function requirePackageManagerName(value: JsonValue | undefined, label: string): PackageManagerName {
   if (value !== "bun" && value !== "npm") {
-    throw new Error(`dependency index packageManager.name ${JSON.stringify(value)} is unsupported`)
+    throw new Error(`${label} packageManager.name ${JSON.stringify(value)} is unsupported`)
   }
   return value
 }

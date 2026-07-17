@@ -195,6 +195,107 @@ func TestDependencyIndexRejectsNonCanonicalAndBoundedInput(t *testing.T) {
 	}
 }
 
+func TestDependencyCacheInputMatchesSharedGoldenFixture(t *testing.T) {
+	fixture := loadContractFixture(t)
+	var input DependencyCacheInput
+	if err := json.Unmarshal([]byte(fixture.DependencyCacheInput.Canonical), &input); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := CanonicalDependencyCacheInput(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(canonical) != fixture.DependencyCacheInput.Canonical {
+		t.Fatalf("canonical dependency cache input = %q, want %q", canonical, fixture.DependencyCacheInput.Canonical)
+	}
+	key, err := DependencyCacheKey(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if key != fixture.DependencyCacheInput.Key {
+		t.Fatalf("dependency cache key = %q, want %q", key, fixture.DependencyCacheInput.Key)
+	}
+}
+
+func TestDependencyCacheInputRejectsSharedMutations(t *testing.T) {
+	fixture := loadContractFixture(t)
+	for _, test := range fixture.DependencyCacheInputRejections {
+		t.Run(test.Name, func(t *testing.T) {
+			var input DependencyCacheInput
+			if err := json.Unmarshal([]byte(fixture.DependencyCacheInput.Canonical), &input); err != nil {
+				t.Fatal(err)
+			}
+			switch test.Mutation {
+			case "invalid_format_version":
+				input.FormatVersion = 1
+			case "invalid_manager":
+				input.PackageManager.Name = PackageManagerName("pnpm")
+			case "invalid_manager_version":
+				input.PackageManager.Version = "^1.3.10"
+			case "mismatched_lockfile":
+				input.Lockfile.Name = "package-lock.json"
+			case "invalid_lockfile_digest":
+				input.Lockfile.Digest = "sha256:invalid"
+			case "invalid_local_manifests_digest":
+				input.LocalManifestsDigest = "sha256:invalid"
+			case "invalid_materializer_version":
+				input.MaterializerVersion = "helmr.dependencies.v1"
+			case "invalid_runtime_digest":
+				input.RuntimeDigest = "sha256:invalid"
+			case "invalid_architecture":
+				input.Architecture = RuntimeArchitecture("amd64")
+			default:
+				t.Fatalf("unknown fixture mutation %q", test.Mutation)
+			}
+			if _, err := DependencyCacheKey(input); err == nil {
+				t.Fatal("DependencyCacheKey returned nil error")
+			}
+		})
+	}
+}
+
+func TestDependencyCacheKeyBindsEveryInput(t *testing.T) {
+	fixture := loadContractFixture(t)
+	var base DependencyCacheInput
+	if err := json.Unmarshal([]byte(fixture.DependencyCacheInput.Canonical), &base); err != nil {
+		t.Fatal(err)
+	}
+	baseKey, err := DependencyCacheKey(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(*DependencyCacheInput){
+		"architecture": func(input *DependencyCacheInput) {
+			input.Architecture = ArchitectureAArch64
+		},
+		"local manifests": func(input *DependencyCacheInput) {
+			input.LocalManifestsDigest = "sha256:" + strings.Repeat("5", 64)
+		},
+		"lockfile": func(input *DependencyCacheInput) {
+			input.Lockfile.Digest = "sha256:" + strings.Repeat("6", 64)
+		},
+		"manager": func(input *DependencyCacheInput) {
+			input.PackageManager.Version = "1.3.11"
+		},
+		"runtime": func(input *DependencyCacheInput) {
+			input.RuntimeDigest = "sha256:" + strings.Repeat("7", 64)
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			input := base
+			mutate(&input)
+			key, err := DependencyCacheKey(input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if key == baseKey {
+				t.Fatalf("dependency cache key did not bind %s", name)
+			}
+		})
+	}
+}
+
 func cloneJSONMap(t *testing.T, value map[string]any) map[string]any {
 	t.Helper()
 	raw, err := json.Marshal(value)

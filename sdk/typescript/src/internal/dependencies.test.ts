@@ -3,8 +3,11 @@ import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 
 import {
+  canonicalDependencyCacheInput,
   canonicalDependencyIndex,
+  dependencyCacheKey,
   parseDependencyIndex,
+  type DependencyCacheInput,
   type DependencyIndex,
 } from "./dependencies"
 import { canonicalizeJson } from "./jsoncanon"
@@ -16,6 +19,14 @@ interface DependencyIndexFixture {
     readonly mutation: string
   }[]
   readonly dependencyIndexRawRejections: readonly {
+    readonly name: string
+    readonly mutation: string
+  }[]
+  readonly dependencyCacheInput: {
+    readonly canonical: string
+    readonly key: string
+  }
+  readonly dependencyCacheInputRejections: readonly {
     readonly name: string
     readonly mutation: string
   }[]
@@ -192,6 +203,89 @@ describe("deployment dependency index", async () => {
     expect(() => parseDependencyIndex(new Uint8Array())).toThrow(/size/)
     expect(() => parseDependencyIndex(new Uint8Array(4097))).toThrow(/size/)
   })
+
+  test("matches the shared dependency cache input and key", () => {
+    const input = JSON.parse(fixture.dependencyCacheInput.canonical) as DependencyCacheInput
+    expect(decoder.decode(canonicalDependencyCacheInput(input))).toBe(
+      fixture.dependencyCacheInput.canonical,
+    )
+    expect(dependencyCacheKey(input)).toBe(fixture.dependencyCacheInput.key)
+  })
+
+  test("rejects shared dependency cache input mutations", () => {
+    for (const item of fixture.dependencyCacheInputRejections) {
+      const input = JSON.parse(fixture.dependencyCacheInput.canonical) as MutableDependencyCacheInput
+      switch (item.mutation) {
+        case "invalid_format_version":
+          input.formatVersion = 1
+          break
+        case "invalid_manager":
+          input.packageManager.name = "pnpm"
+          break
+        case "invalid_manager_version":
+          input.packageManager.version = "^1.3.10"
+          break
+        case "mismatched_lockfile":
+          input.lockfile.name = "package-lock.json"
+          break
+        case "invalid_lockfile_digest":
+          input.lockfile.digest = "sha256:invalid"
+          break
+        case "invalid_local_manifests_digest":
+          input.localManifestsDigest = "sha256:invalid"
+          break
+        case "invalid_materializer_version":
+          input.materializerVersion = "helmr.dependencies.v1"
+          break
+        case "invalid_runtime_digest":
+          input.runtimeDigest = "sha256:invalid"
+          break
+        case "invalid_architecture":
+          input.architecture = "amd64"
+          break
+        default:
+          throw new Error(`unknown fixture mutation ${item.mutation}`)
+      }
+      expect(
+        () => dependencyCacheKey(input as DependencyCacheInput),
+        item.name,
+      ).toThrow()
+    }
+  })
+
+  test("dependency cache key binds every admitted input and excludes graph output", () => {
+    const base = JSON.parse(fixture.dependencyCacheInput.canonical) as MutableDependencyCacheInput
+    const baseKey = dependencyCacheKey(base as DependencyCacheInput)
+    const mutations: Record<string, (input: MutableDependencyCacheInput) => void> = {
+      architecture: (input) => {
+        input.architecture = "aarch64"
+      },
+      localManifests: (input) => {
+        input.localManifestsDigest = `sha256:${"5".repeat(64)}`
+      },
+      lockfile: (input) => {
+        input.lockfile.digest = `sha256:${"6".repeat(64)}`
+      },
+      manager: (input) => {
+        input.packageManager.version = "1.3.11"
+      },
+      runtime: (input) => {
+        input.runtimeDigest = `sha256:${"7".repeat(64)}`
+      },
+    }
+    for (const [name, mutate] of Object.entries(mutations)) {
+      const input = structuredClone(base)
+      mutate(input)
+      expect(dependencyCacheKey(input as DependencyCacheInput), name).not.toBe(baseKey)
+    }
+
+    const graphOutput = {
+      ...base,
+      packageGraphDigest: `sha256:${"8".repeat(64)}`,
+      packageGraphSizeBytes: 1,
+    }
+    expect(() => dependencyCacheKey(graphOutput as DependencyCacheInput)).toThrow(/member/)
+  })
 })
 
 type MutableDependencyIndex = {
@@ -201,6 +295,16 @@ type MutableDependencyIndex = {
   localManifestsDigest: string
   packageGraphDigest: string
   packageGraphSizeBytes: number
+  materializerVersion: string
+  runtimeDigest: string
+  architecture: string
+}
+
+type MutableDependencyCacheInput = {
+  formatVersion: number
+  packageManager: { name: string; version: string }
+  lockfile: { name: string; digest: string }
+  localManifestsDigest: string
   materializerVersion: string
   runtimeDigest: string
   architecture: string

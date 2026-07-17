@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"regexp"
@@ -11,11 +12,13 @@ import (
 
 const (
 	DependencyIndexFormatVersion  = 0
+	DependencyCacheFormatVersion  = 0
 	DependencyMaterializerVersion = "helmr.dependencies.v0"
 	PackageManagerBun             = PackageManagerName("bun")
 	PackageManagerNPM             = PackageManagerName("npm")
 	maxDependencyIndexSizeBytes   = 4096
 	maxPackageManagerVersionBytes = 64
+	dependencyCacheKeyDomain      = "helmr.deployment-program-dependencies-cache.v0\x00"
 )
 
 var packageManagerVersionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$`)
@@ -42,6 +45,16 @@ type DependencyIndex struct {
 	MaterializerVersion   string              `json:"materializerVersion"`
 	RuntimeDigest         string              `json:"runtimeDigest"`
 	Architecture          RuntimeArchitecture `json:"architecture"`
+}
+
+type DependencyCacheInput struct {
+	FormatVersion        int                 `json:"formatVersion"`
+	PackageManager       PackageManager      `json:"packageManager"`
+	Lockfile             DependencyLockfile  `json:"lockfile"`
+	LocalManifestsDigest string              `json:"localManifestsDigest"`
+	MaterializerVersion  string              `json:"materializerVersion"`
+	RuntimeDigest        string              `json:"runtimeDigest"`
+	Architecture         RuntimeArchitecture `json:"architecture"`
 }
 
 func ParseDependencyIndex(raw []byte) (DependencyIndex, error) {
@@ -100,24 +113,16 @@ func ValidateDependencyIndex(index DependencyIndex) error {
 	if index.FormatVersion != DependencyIndexFormatVersion {
 		return fmt.Errorf("dependency index formatVersion = %d, want %d", index.FormatVersion, DependencyIndexFormatVersion)
 	}
-	if index.PackageManager.Name != PackageManagerBun && index.PackageManager.Name != PackageManagerNPM {
-		return fmt.Errorf("dependency index packageManager.name %q is unsupported", index.PackageManager.Name)
-	}
-	if len(index.PackageManager.Version) == 0 || len(index.PackageManager.Version) > maxPackageManagerVersionBytes || !packageManagerVersionPattern.MatchString(index.PackageManager.Version) {
-		return fmt.Errorf("dependency index packageManager.version %q is not an admitted SemVer", index.PackageManager.Version)
-	}
-	wantLockfile := "bun.lock"
-	if index.PackageManager.Name == PackageManagerNPM {
-		wantLockfile = "package-lock.json"
-	}
-	if index.Lockfile.Name != wantLockfile {
-		return fmt.Errorf("dependency index lockfile.name = %q, want %q", index.Lockfile.Name, wantLockfile)
-	}
-	if !sha256DigestPattern.MatchString(index.Lockfile.Digest) {
-		return fmt.Errorf("dependency index lockfile.digest is not a lowercase SHA-256 digest")
-	}
-	if !sha256DigestPattern.MatchString(index.LocalManifestsDigest) {
-		return fmt.Errorf("dependency index localManifestsDigest is not a lowercase SHA-256 digest")
+	if err := validateDependencyInputs(
+		index.PackageManager,
+		index.Lockfile,
+		index.LocalManifestsDigest,
+		index.MaterializerVersion,
+		index.RuntimeDigest,
+		index.Architecture,
+		"dependency index",
+	); err != nil {
+		return err
 	}
 	if !sha256DigestPattern.MatchString(index.PackageGraphDigest) {
 		return fmt.Errorf("dependency index packageGraphDigest is not a lowercase SHA-256 digest")
@@ -125,14 +130,95 @@ func ValidateDependencyIndex(index DependencyIndex) error {
 	if index.PackageGraphSizeBytes < 1 || index.PackageGraphSizeBytes > maxProgramFileSizeBytes {
 		return fmt.Errorf("dependency index packageGraphSizeBytes is outside [1,%d]", maxProgramFileSizeBytes)
 	}
-	if index.MaterializerVersion != DependencyMaterializerVersion {
-		return fmt.Errorf("dependency index materializerVersion = %q, want %q", index.MaterializerVersion, DependencyMaterializerVersion)
+	return nil
+}
+
+func CanonicalDependencyCacheInput(input DependencyCacheInput) ([]byte, error) {
+	if err := ValidateDependencyCacheInput(input); err != nil {
+		return nil, err
 	}
-	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
-		return fmt.Errorf("dependency index runtimeDigest is not a lowercase SHA-256 digest")
+	raw, err := json.Marshal(input)
+	if err != nil {
+		return nil, fmt.Errorf("encode dependency cache input: %w", err)
 	}
-	if !validArchitecture(index.Architecture) {
-		return fmt.Errorf("dependency index architecture %q is unsupported", index.Architecture)
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize dependency cache input: %w", err)
+	}
+	return canonical, nil
+}
+
+func DependencyCacheKey(input DependencyCacheInput) (string, error) {
+	canonical, err := CanonicalDependencyCacheInput(input)
+	if err != nil {
+		return "", err
+	}
+	digest := domainDigest(dependencyCacheKeyDomain, canonical)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+func ValidateDependencyCacheInput(input DependencyCacheInput) error {
+	if input.FormatVersion != DependencyCacheFormatVersion {
+		return fmt.Errorf(
+			"dependency cache input formatVersion = %d, want %d",
+			input.FormatVersion,
+			DependencyCacheFormatVersion,
+		)
+	}
+	return validateDependencyInputs(
+		input.PackageManager,
+		input.Lockfile,
+		input.LocalManifestsDigest,
+		input.MaterializerVersion,
+		input.RuntimeDigest,
+		input.Architecture,
+		"dependency cache input",
+	)
+}
+
+func validateDependencyInputs(
+	manager PackageManager,
+	lockfile DependencyLockfile,
+	localManifestsDigest string,
+	materializerVersion string,
+	runtimeDigest string,
+	architecture RuntimeArchitecture,
+	label string,
+) error {
+	if manager.Name != PackageManagerBun && manager.Name != PackageManagerNPM {
+		return fmt.Errorf("%s packageManager.name %q is unsupported", label, manager.Name)
+	}
+	if len(manager.Version) == 0 ||
+		len(manager.Version) > maxPackageManagerVersionBytes ||
+		!packageManagerVersionPattern.MatchString(manager.Version) {
+		return fmt.Errorf("%s packageManager.version %q is not an admitted SemVer", label, manager.Version)
+	}
+	wantLockfile := "bun.lock"
+	if manager.Name == PackageManagerNPM {
+		wantLockfile = "package-lock.json"
+	}
+	if lockfile.Name != wantLockfile {
+		return fmt.Errorf("%s lockfile.name = %q, want %q", label, lockfile.Name, wantLockfile)
+	}
+	if !sha256DigestPattern.MatchString(lockfile.Digest) {
+		return fmt.Errorf("%s lockfile.digest is not a lowercase SHA-256 digest", label)
+	}
+	if !sha256DigestPattern.MatchString(localManifestsDigest) {
+		return fmt.Errorf("%s localManifestsDigest is not a lowercase SHA-256 digest", label)
+	}
+	if materializerVersion != DependencyMaterializerVersion {
+		return fmt.Errorf(
+			"%s materializerVersion = %q, want %q",
+			label,
+			materializerVersion,
+			DependencyMaterializerVersion,
+		)
+	}
+	if !sha256DigestPattern.MatchString(runtimeDigest) {
+		return fmt.Errorf("%s runtimeDigest is not a lowercase SHA-256 digest", label)
+	}
+	if !validArchitecture(architecture) {
+		return fmt.Errorf("%s architecture %q is unsupported", label, architecture)
 	}
 	return nil
 }

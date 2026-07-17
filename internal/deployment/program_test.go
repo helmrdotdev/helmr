@@ -39,6 +39,14 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"dependencyIndexRawRejections"`
+	DependencyCacheInput struct {
+		Canonical string `json:"canonical"`
+		Key       string `json:"key"`
+	} `json:"dependencyCacheInput"`
+	DependencyCacheInputRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"dependencyCacheInputRejections"`
 	PackageGraph struct {
 		Canonical         string `json:"canonical"`
 		DigestHex         string `json:"digestHex"`
