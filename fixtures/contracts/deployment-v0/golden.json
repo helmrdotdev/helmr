@@ -157,6 +157,21 @@
     { "name": "duplicate-local-member", "mutation": "duplicate_local_member" },
     { "name": "duplicate-endpoint-member", "mutation": "duplicate_endpoint_member" }
   ],
+  "localManifests": {
+    "canonical": "{\"entries\":[{\"manifestDigest\":\"sha256:0000000000000000000000000000000000000000000000000000000000000000\",\"path\":\".\"},{\"manifestDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"path\":\"packages/shared\"}],\"formatVersion\":0}",
+    "digestHex": "13dff308bcf579ccc4f185398812428f37b28dc1f57ac75b10184cfacc1b964f"
+  },
+  "localManifestsRejections": [
+    { "name": "invalid-format-version", "mutation": "invalid_format_version" },
+    { "name": "root-not-first", "mutation": "root_not_first" },
+    { "name": "duplicate-root", "mutation": "duplicate_root" },
+    { "name": "entry-order", "mutation": "entry_order" },
+    { "name": "overlapping-path", "mutation": "overlapping_path" },
+    { "name": "non-adjacent-overlapping-path", "mutation": "non_adjacent_overlapping_path" },
+    { "name": "reserved-path", "mutation": "reserved_path" },
+    { "name": "absolute-path", "mutation": "absolute_path" },
+    { "name": "invalid-manifest-digest", "mutation": "invalid_manifest_digest" }
+  ],
   "manifest": {
     "input": "{ \"run\": { \"retry\": { \"enabled\": false }, \"queue\": \"task/Build-\", \"maxDurationMs\": 900000 }, \"payload\": { \"kind\": \"standard_schema\" } }",
     "canonical": "{\"payload\":{\"kind\":\"standard_schema\"},\"run\":{\"maxDurationMs\":900000,\"queue\":\"task/Build-\",\"retry\":{\"enabled\":false}}}",

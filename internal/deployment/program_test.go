@@ -53,6 +53,14 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"packageGraphRawRejections"`
+	LocalManifests struct {
+		Canonical string `json:"canonical"`
+		DigestHex string `json:"digestHex"`
+	} `json:"localManifests"`
+	LocalManifestsRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"localManifestsRejections"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`

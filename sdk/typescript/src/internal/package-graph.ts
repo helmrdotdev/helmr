@@ -360,6 +360,10 @@ function validatePackageIntegrity(integrity: string): void {
   }
 }
 
+export function validateLocalPackagePath(path: string, label: string): void {
+  validatePackagePath(path, programMountPath, true, label)
+}
+
 function validatePackagePath(path: string, mountPath: string, local: boolean, label: string): void {
   if (path.length === 0 || path.startsWith("/") || path.includes("\\") || /[\p{Cc}]/u.test(path)) {
     throw new Error(`${label} ${JSON.stringify(path)} is not a confined relative POSIX path`)
@@ -428,7 +432,7 @@ function relationshipOrder(relationship: PackageRelationship): number {
   }
 }
 
-function compareUtf8(left: string, right: string): number {
+export function compareUtf8(left: string, right: string): number {
   const leftBytes = textEncoder.encode(left)
   const rightBytes = textEncoder.encode(right)
   const length = Math.min(leftBytes.length, rightBytes.length)
