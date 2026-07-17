@@ -39,6 +39,20 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"dependencyIndexRawRejections"`
+	PackageGraph struct {
+		Canonical         string `json:"canonical"`
+		DigestHex         string `json:"digestHex"`
+		RootOnlyCanonical string `json:"rootOnlyCanonical"`
+		RootOnlyDigestHex string `json:"rootOnlyDigestHex"`
+	} `json:"packageGraph"`
+	PackageGraphRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"packageGraphRejections"`
+	PackageGraphRawRejections []struct {
+		Name     string `json:"name"`
+		Mutation string `json:"mutation"`
+	} `json:"packageGraphRawRejections"`
 	Manifest struct {
 		Input     string `json:"input"`
 		Canonical string `json:"canonical"`
