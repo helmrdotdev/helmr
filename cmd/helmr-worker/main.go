@@ -3,9 +3,17 @@ package main
 import (
 	"log/slog"
 	"os"
+
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func main() {
+	if handled, err := deployment.RunProgramVerifierChild(os.Args); handled {
+		if err != nil {
+			os.Exit(1)
+		}
+		return
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 	if len(os.Args) > 1 {
 		switch os.Args[1] {

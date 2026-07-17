@@ -73,7 +73,7 @@ install -d -m 0755 /usr/local/bin /opt/cni/bin /etc/cni/conf.d
 bun install --frozen-lockfile --ignore-scripts
 make console-build
 retry 4 go mod download
-go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
+CGO_ENABLED=0 go build -tags embed_console -o /usr/local/bin/helmr-worker ./cmd/helmr-worker
 go build -tags embed_console -o /usr/local/bin/helmr ./cmd/helmr
 go build -tags embed_console -o /usr/local/bin/helmr-control ./cmd/helmr-control
 go build -tags embed_console -o /usr/local/bin/helmr-dispatcher ./cmd/helmr-dispatcher

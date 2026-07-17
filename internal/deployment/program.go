@@ -13,7 +13,8 @@ import (
 )
 
 const (
-	ProgramIndexFormatVersion = 0
+	ProgramIndexFormatVersion   = 0
+	ProgramReceiptFormatVersion = 0
 
 	RuntimeAPIVersion                        = "helmr.runtime.v0"
 	ProgramCodeArtifactMediaType             = "application/vnd.helmr.deployment-program-code.v0+squashfs"
@@ -21,6 +22,7 @@ const (
 	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger                 int64 = 9007199254740991
 	maxProgramFileSizeBytes            int64 = 16777216
+	maxProgramReceiptSizeBytes               = 17825792
 	ArchitectureAArch64                      = RuntimeArchitecture("aarch64")
 	ArchitectureX8664                        = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                      = DeclarationKind("task")
@@ -44,11 +46,13 @@ type ProgramDeclaration struct {
 	Slots      []DeclarationSlot `json:"slots"`
 }
 
-type ProgramDependencies struct {
+type ProgramDescriptor struct {
 	Digest    string `json:"digest"`
 	SizeBytes int64  `json:"sizeBytes"`
 	MediaType string `json:"mediaType"`
 }
+
+type ProgramDependencies = ProgramDescriptor
 
 type ProgramFile struct {
 	Digest    string `json:"digest"`
@@ -64,6 +68,152 @@ type ProgramIndex struct {
 	PackageGraph      ProgramFile          `json:"packageGraph"`
 	Modules           ProgramFile          `json:"modules"`
 	Declarations      []ProgramDeclaration `json:"declarations"`
+}
+
+type ProgramReceipt struct {
+	FormatVersion int               `json:"formatVersion"`
+	Code          ProgramDescriptor `json:"code"`
+	Dependencies  ProgramDescriptor `json:"dependencies"`
+	Index         ProgramIndex      `json:"index"`
+}
+
+func ParseProgramReceipt(raw []byte) (ProgramReceipt, error) {
+	if len(raw) == 0 || len(raw) > maxProgramReceiptSizeBytes {
+		return ProgramReceipt{}, fmt.Errorf(
+			"program receipt size is outside [1,%d]",
+			maxProgramReceiptSizeBytes,
+		)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return ProgramReceipt{}, fmt.Errorf("canonicalize program receipt: %w", err)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return ProgramReceipt{}, fmt.Errorf("program receipt is not RFC 8785 canonical JSON")
+	}
+
+	var receipt ProgramReceipt
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&receipt); err != nil {
+		return ProgramReceipt{}, fmt.Errorf("decode program receipt: %w", err)
+	}
+	if err := ensureEOF(decoder, "program receipt"); err != nil {
+		return ProgramReceipt{}, err
+	}
+	if err := ValidateProgramReceipt(receipt); err != nil {
+		return ProgramReceipt{}, err
+	}
+	complete, err := CanonicalProgramReceipt(receipt)
+	if err != nil {
+		return ProgramReceipt{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return ProgramReceipt{}, fmt.Errorf(
+			"program receipt does not match the complete canonical v0 shape",
+		)
+	}
+	return cloneProgramReceipt(receipt), nil
+}
+
+func CanonicalProgramReceipt(receipt ProgramReceipt) ([]byte, error) {
+	if err := ValidateProgramReceipt(receipt); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(receipt)
+	if err != nil {
+		return nil, fmt.Errorf("encode program receipt: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize program receipt: %w", err)
+	}
+	if len(canonical) > maxProgramReceiptSizeBytes {
+		return nil, fmt.Errorf(
+			"program receipt size is outside [1,%d]",
+			maxProgramReceiptSizeBytes,
+		)
+	}
+	return canonical, nil
+}
+
+func ValidateProgramReceipt(receipt ProgramReceipt) error {
+	if receipt.FormatVersion != ProgramReceiptFormatVersion {
+		return fmt.Errorf(
+			"program receipt formatVersion = %d, want %d",
+			receipt.FormatVersion,
+			ProgramReceiptFormatVersion,
+		)
+	}
+	if err := validateProgramDescriptor(
+		receipt.Code,
+		"code",
+		ProgramCodeArtifactMediaType,
+		maxCodePhysicalBytes,
+	); err != nil {
+		return err
+	}
+	if err := validateProgramDescriptor(
+		receipt.Dependencies,
+		"dependencies",
+		ProgramDependencyArtifactMediaType,
+		maxDependencyPhysicalBytes,
+	); err != nil {
+		return err
+	}
+	if err := ValidateProgramIndex(receipt.Index); err != nil {
+		return fmt.Errorf("program receipt index: %w", err)
+	}
+	if receipt.Index.Dependencies != receipt.Dependencies {
+		return fmt.Errorf(
+			"program receipt index dependency descriptor does not match dependencies",
+		)
+	}
+	return nil
+}
+
+func validateProgramDescriptor(
+	descriptor ProgramDescriptor,
+	name string,
+	mediaType string,
+	maxSize int64,
+) error {
+	if !sha256DigestPattern.MatchString(descriptor.Digest) {
+		return fmt.Errorf(
+			"program receipt %s.digest is not a lowercase SHA-256 digest",
+			name,
+		)
+	}
+	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > maxSize {
+		return fmt.Errorf(
+			"program receipt %s.sizeBytes is outside [1,%d]",
+			name,
+			maxSize,
+		)
+	}
+	if descriptor.MediaType != mediaType {
+		return fmt.Errorf(
+			"program receipt %s.mediaType = %q, want %q",
+			name,
+			descriptor.MediaType,
+			mediaType,
+		)
+	}
+	return nil
+}
+
+func cloneProgramReceipt(receipt ProgramReceipt) ProgramReceipt {
+	receipt.Index.Declarations = append(
+		[]ProgramDeclaration(nil),
+		receipt.Index.Declarations...,
+	)
+	for position := range receipt.Index.Declarations {
+		receipt.Index.Declarations[position].Slots = append(
+			[]DeclarationSlot(nil),
+			receipt.Index.Declarations[position].Slots...,
+		)
+	}
+	return receipt
 }
 
 func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
