@@ -329,6 +329,135 @@ func TestArtifactResourceBounds(t *testing.T) {
 	}
 }
 
+func TestArtifactPhysicalBounds(t *testing.T) {
+	reader := newMemoryArtifact()
+	for _, test := range []struct {
+		name  string
+		role  artifactRole
+		limit int64
+	}{
+		{
+			name:  "code",
+			role:  codeArtifact,
+			limit: maxCodePhysicalBytes,
+		},
+		{
+			name:  "dependency",
+			role:  dependencyArtifact,
+			limit: maxDependencyPhysicalBytes,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mediaType := ProgramCodeArtifactMediaType
+			if test.role == dependencyArtifact {
+				mediaType = ProgramDependencyArtifactMediaType
+			}
+			artifact := programArtifact{
+				Digest:    testDigest(test.name),
+				SizeBytes: test.limit,
+				MediaType: mediaType,
+				Reader:    reader,
+			}
+			if err := validateArtifactDescriptor(artifact, test.role); err != nil {
+				t.Fatalf("exact physical bound: %v", err)
+			}
+			artifact.SizeBytes++
+			if err := validateArtifactDescriptor(artifact, test.role); err == nil {
+				t.Fatal("descriptor above physical bound was accepted")
+			}
+		})
+	}
+
+	dependency := programArtifact{
+		Digest:    testDigest("dependency above code limit"),
+		SizeBytes: maxCodePhysicalBytes + 1,
+		MediaType: ProgramDependencyArtifactMediaType,
+		Reader:    reader,
+	}
+	if err := validateArtifactDescriptor(dependency, dependencyArtifact); err != nil {
+		t.Fatalf("dependency above code physical bound: %v", err)
+	}
+}
+
+func TestProgramArtifactPhysicalPolicyWiring(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*programArtifacts)
+	}{
+		{
+			name: "code",
+			mutate: func(artifacts *programArtifacts) {
+				artifacts.Code.SizeBytes = maxCodePhysicalBytes + 1
+			},
+		},
+		{
+			name: "dependency",
+			mutate: func(artifacts *programArtifacts) {
+				artifacts.Dependencies.SizeBytes = maxDependencyPhysicalBytes + 1
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pair := newCompleteProgramPair(t)
+			test.mutate(&pair.artifacts)
+			if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err == nil {
+				t.Fatal("Program accepted an Artifact above its role-specific physical bound")
+			}
+		})
+	}
+}
+
+func TestArtifactFilesystemRejectsForbiddenFacts(t *testing.T) {
+	for name, mutate := range map[string]func(*artifactFilesystem){
+		"fragments": func(filesystem *artifactFilesystem) {
+			filesystem.HasFragments = true
+		},
+		"duplicate packing": func(filesystem *artifactFilesystem) {
+			filesystem.HasDuplicatePacking = true
+		},
+		"overlapping data": func(filesystem *artifactFilesystem) {
+			filesystem.HasOverlappingData = true
+		},
+		"export table": func(filesystem *artifactFilesystem) {
+			filesystem.HasExportTable = true
+		},
+		"xattrs": func(filesystem *artifactFilesystem) {
+			filesystem.HasXattrs = true
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := newMemoryArtifact()
+			mutate(&reader.filesystem)
+			if _, err := inspectArtifact(
+				context.Background(),
+				reader,
+				codeArtifact,
+				maxCodeLogicalBytes,
+			); err == nil {
+				t.Fatal("forbidden filesystem fact was accepted")
+			}
+		})
+	}
+}
+
+func TestArtifactAggregateNameBound(t *testing.T) {
+	entry := artifactEntry{
+		Path:       "path",
+		LinkTarget: strings.Repeat("x", maxSymlinkTargetBytes),
+	}
+	charge := int64(len(entry.Path) + len(entry.LinkTarget))
+	total, err := chargeArtifactNameBytes(maxArtifactNameBytes-charge, entry)
+	if err != nil {
+		t.Fatalf("exact aggregate name bound: %v", err)
+	}
+	if total != maxArtifactNameBytes {
+		t.Fatalf("total = %d, want %d", total, maxArtifactNameBytes)
+	}
+	if _, err := chargeArtifactNameBytes(maxArtifactNameBytes-charge+1, entry); err == nil {
+		t.Fatal("aggregate name bytes above bound were accepted")
+	}
+}
+
 func TestArtifactDepthBounds(t *testing.T) {
 	for _, test := range []struct {
 		name string

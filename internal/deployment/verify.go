@@ -13,15 +13,18 @@ import (
 )
 
 const (
-	maxArtifactEntries              = 200000
-	maxArtifactDepth                = 128
-	maxArtifactFileSize       int64 = 1 << 30
-	maxCodeLogicalBytes       int64 = 2 << 30
-	maxDependencyLogicalBytes int64 = 8 << 30
-	maxPackageJSONBytes       int64 = 256 << 20
-	maxLockfileBytes          int64 = 64 << 20
-	maxSymlinkTargetBytes           = 4095
-	maxSymlinkHops                  = 40
+	maxArtifactEntries               = 200000
+	maxArtifactDepth                 = 128
+	maxArtifactFileSize        int64 = 1 << 30
+	maxArtifactNameBytes       int64 = 128 << 20
+	maxCodeLogicalBytes        int64 = 2 << 30
+	maxDependencyLogicalBytes  int64 = 8 << 30
+	maxCodePhysicalBytes       int64 = 3 << 30
+	maxDependencyPhysicalBytes int64 = 10 << 30
+	maxPackageJSONBytes        int64 = 256 << 20
+	maxLockfileBytes           int64 = 64 << 20
+	maxSymlinkTargetBytes            = 4095
+	maxSymlinkHops                   = 40
 )
 
 type artifactEntryKind string
@@ -33,12 +36,16 @@ const (
 )
 
 type artifactFilesystem struct {
-	Major          uint16
-	Minor          uint16
-	Compression    string
-	BlockSize      uint32
-	CreatedAtUnix  int64
-	HasExportTable bool
+	Major               uint16
+	Minor               uint16
+	Compression         string
+	BlockSize           uint32
+	CreatedAtUnix       int64
+	HasFragments        bool
+	HasDuplicatePacking bool
+	HasOverlappingData  bool
+	HasExportTable      bool
+	HasXattrs           bool
 }
 
 type artifactEntry struct {
@@ -97,14 +104,10 @@ func (program *verifiedProgram) DependencyIndex() DependencyIndex {
 }
 
 func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*verifiedProgram, error) {
-	if err := validateArtifactDescriptor(artifacts.Code, ProgramCodeArtifactMediaType, "code"); err != nil {
+	if err := validateArtifactDescriptor(artifacts.Code, codeArtifact); err != nil {
 		return nil, err
 	}
-	if err := validateArtifactDescriptor(
-		artifacts.Dependencies,
-		ProgramDependencyArtifactMediaType,
-		"dependency",
-	); err != nil {
+	if err := validateArtifactDescriptor(artifacts.Dependencies, dependencyArtifact); err != nil {
 		return nil, err
 	}
 
@@ -153,12 +156,33 @@ type inspectedArtifact struct {
 	ordered []artifactEntry
 }
 
-func validateArtifactDescriptor(artifact programArtifact, mediaType, label string) error {
+func validateArtifactDescriptor(
+	artifact programArtifact,
+	role artifactRole,
+) error {
+	var label, mediaType string
+	var maxPhysicalBytes int64
+	switch role {
+	case codeArtifact:
+		label = "code"
+		mediaType = ProgramCodeArtifactMediaType
+		maxPhysicalBytes = maxCodePhysicalBytes
+	case dependencyArtifact:
+		label = "dependency"
+		mediaType = ProgramDependencyArtifactMediaType
+		maxPhysicalBytes = maxDependencyPhysicalBytes
+	default:
+		return fmt.Errorf("Artifact role = %d", role)
+	}
 	if !sha256DigestPattern.MatchString(artifact.Digest) {
 		return fmt.Errorf("%s Artifact digest is not a lowercase SHA-256 digest", label)
 	}
-	if artifact.SizeBytes < 1 || artifact.SizeBytes > maxJSONSafeInteger {
-		return fmt.Errorf("%s Artifact size is not a positive JavaScript-safe integer", label)
+	if artifact.SizeBytes < 1 || artifact.SizeBytes > maxPhysicalBytes {
+		return fmt.Errorf(
+			"%s Artifact size is outside [1,%d]",
+			label,
+			maxPhysicalBytes,
+		)
 	}
 	if artifact.MediaType != mediaType {
 		return fmt.Errorf("%s Artifact media type = %q, want %q", label, artifact.MediaType, mediaType)
@@ -178,8 +202,10 @@ func inspectArtifact(
 	filesystem := reader.Filesystem()
 	if filesystem.Major != 4 || filesystem.Minor != 0 ||
 		filesystem.Compression != "zstd" || filesystem.BlockSize != 131072 ||
-		filesystem.CreatedAtUnix != 0 || filesystem.HasExportTable {
-		return nil, fmt.Errorf("filesystem superblock is outside the exact SquashFS v0 contract")
+		filesystem.CreatedAtUnix != 0 || filesystem.HasFragments ||
+		filesystem.HasDuplicatePacking || filesystem.HasOverlappingData ||
+		filesystem.HasExportTable || filesystem.HasXattrs {
+		return nil, fmt.Errorf("filesystem facts are outside the exact SquashFS v0 contract")
 	}
 
 	entries, err := reader.Entries(ctx)
@@ -194,11 +220,16 @@ func inspectArtifact(
 		reader:  reader,
 		role:    role,
 		entries: make(map[string]artifactEntry, len(entries)),
-		ordered: append([]artifactEntry(nil), entries...),
+		ordered: make([]artifactEntry, 0, len(entries)),
 	}
 	inodes := make(map[uint64]string)
 	var logicalBytes int64
+	var nameBytes int64
 	for position, entry := range entries {
+		nameBytes, err = chargeArtifactNameBytes(nameBytes, entry)
+		if err != nil {
+			return nil, fmt.Errorf("entry %d: %w", position, err)
+		}
 		if err := validateArtifactEntry(entry, role); err != nil {
 			return nil, fmt.Errorf("entry %d %q: %w", position, entry.Path, err)
 		}
@@ -218,6 +249,7 @@ func inspectArtifact(
 			logicalBytes += entry.SizeBytes
 		}
 		inspected.entries[entry.Path] = entry
+		inspected.ordered = append(inspected.ordered, entry)
 	}
 	root, exists := inspected.entries["."]
 	if !exists || root.Kind != artifactEntryDirectory {
@@ -234,6 +266,23 @@ func inspectArtifact(
 		}
 	}
 	return inspected, nil
+}
+
+func chargeArtifactNameBytes(total int64, entry artifactEntry) (int64, error) {
+	if total < 0 {
+		return 0, fmt.Errorf("aggregate raw path and symbolic-link-target bytes are negative")
+	}
+	for _, size := range []int{len(entry.Path), len(entry.LinkTarget)} {
+		bytes := int64(size)
+		if total > maxArtifactNameBytes-bytes {
+			return 0, fmt.Errorf(
+				"aggregate raw path and symbolic-link-target bytes exceed %d",
+				maxArtifactNameBytes,
+			)
+		}
+		total += bytes
+	}
+	return total, nil
 }
 
 func validateArtifactEntry(entry artifactEntry, role artifactRole) error {
