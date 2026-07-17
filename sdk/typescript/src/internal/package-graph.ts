@@ -1,11 +1,6 @@
 import { createHash } from "node:crypto"
 
-import {
-  canonicalizeJsonValue,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "./jsoncanon"
+import { canonicalizeJsonValue, parseJson, type JsonObject, type JsonValue } from "./jsoncanon"
 
 export const PACKAGE_GRAPH_FORMAT_VERSION = 0 as const
 
@@ -42,8 +37,7 @@ export interface RegistryPackage {
 }
 
 export type PackageEndpoint =
-  | Readonly<{ kind: "local"; path: string }>
-  | Readonly<{ installPath: string; kind: "registry" }>
+  Readonly<{ kind: "local"; path: string }> | Readonly<{ installPath: string; kind: "registry" }>
 
 export interface PackageResolution {
   readonly dependency: string
@@ -115,31 +109,41 @@ function validatePackageGraphValue(value: JsonValue): PackageGraph {
     const local = localPackages[position]!
     validateLocalPackage(local, position === 0)
     if (locals.has(local.path)) {
-      throw new Error(`package graph localPackages contains duplicate path ${JSON.stringify(local.path)}`)
+      throw new Error(
+        `package graph localPackages contains duplicate path ${JSON.stringify(local.path)}`,
+      )
     }
     locals.set(local.path, local)
     if (local.name !== null) {
       if (localNames.has(local.name)) {
-        throw new Error(`package graph localPackages contains ambiguous name ${JSON.stringify(local.name)}`)
+        throw new Error(
+          `package graph localPackages contains ambiguous name ${JSON.stringify(local.name)}`,
+        )
       }
       localNames.add(local.name)
     }
     if (local.viewKey !== null) {
       if (viewKeys.has(local.viewKey)) {
-        throw new Error(`package graph localPackages contains colliding viewKey ${JSON.stringify(local.viewKey)}`)
+        throw new Error(
+          `package graph localPackages contains colliding viewKey ${JSON.stringify(local.viewKey)}`,
+        )
       }
       viewKeys.add(local.viewKey)
     }
     if (position > 1) {
       const previous = localPackages[position - 1]!.path
       if (compareUtf8(previous, local.path) >= 0) {
-        throw new Error(`package graph localPackages are not in canonical path order at position ${position}`)
+        throw new Error(
+          `package graph localPackages are not in canonical path order at position ${position}`,
+        )
       }
     }
-    for (let separator = local.path.indexOf("/"); separator >= 0; ) {
+    for (let separator = local.path.indexOf("/"); separator >= 0;) {
       const ancestor = local.path.slice(0, separator)
       if (locals.has(ancestor)) {
-        throw new Error(`package graph non-root local paths ${JSON.stringify(ancestor)} and ${JSON.stringify(local.path)} overlap`)
+        throw new Error(
+          `package graph non-root local paths ${JSON.stringify(ancestor)} and ${JSON.stringify(local.path)} overlap`,
+        )
       }
       separator = local.path.indexOf("/", separator + 1)
     }
@@ -150,14 +154,18 @@ function validatePackageGraphValue(value: JsonValue): PackageGraph {
     const registry = registryPackages[position]!
     validateRegistryPackage(registry)
     if (registries.has(registry.installPath)) {
-      throw new Error(`package graph registryPackages contains duplicate installPath ${JSON.stringify(registry.installPath)}`)
+      throw new Error(
+        `package graph registryPackages contains duplicate installPath ${JSON.stringify(registry.installPath)}`,
+      )
     }
     registries.add(registry.installPath)
     if (
       position > 0 &&
       compareUtf8(registryPackages[position - 1]!.installPath, registry.installPath) >= 0
     ) {
-      throw new Error(`package graph registryPackages are not in canonical installPath order at position ${position}`)
+      throw new Error(
+        `package graph registryPackages are not in canonical installPath order at position ${position}`,
+      )
     }
   }
 
@@ -166,7 +174,9 @@ function validatePackageGraphValue(value: JsonValue): PackageGraph {
   )
   for (let position = 1; position < resolutions.length; position++) {
     if (compareResolutions(resolutions[position - 1]!, resolutions[position]!) >= 0) {
-      throw new Error(`package graph resolutions are not in canonical order at position ${position}`)
+      throw new Error(
+        `package graph resolutions are not in canonical order at position ${position}`,
+      )
     }
   }
 
@@ -261,12 +271,19 @@ function parseResolution(
     registries,
   )
   if (to.kind === "local") {
+    if (from.kind !== "local") {
+      throw new Error(
+        `package graph resolutions[${position}] registry-to-local resolution is unsupported`,
+      )
+    }
     const local = locals.get(to.path)!
     if (local.name === null) {
       throw new Error(`package graph local target ${JSON.stringify(to.path)} has no name`)
     }
     if (dependency !== local.name) {
-      throw new Error(`package graph dependency ${JSON.stringify(dependency)} does not equal local target name ${JSON.stringify(local.name)}`)
+      throw new Error(
+        `package graph dependency ${JSON.stringify(dependency)} does not equal local target name ${JSON.stringify(local.name)}`,
+      )
     }
   }
   return { dependency, from, relationship, to }
@@ -291,7 +308,9 @@ function parseEndpoint(
     requireKeys(endpoint, ["installPath", "kind"], label)
     const installPath = requireString(endpoint["installPath"], `${label}.installPath`)
     if (!registries.has(installPath)) {
-      throw new Error(`${label}.installPath ${JSON.stringify(installPath)} does not name a graph node`)
+      throw new Error(
+        `${label}.installPath ${JSON.stringify(installPath)} does not name a graph node`,
+      )
     }
     return { installPath, kind: "registry" }
   }
@@ -345,7 +364,9 @@ function validatePackageName(name: string, label: string): void {
 function validatePackageVersion(version: string, label: string): void {
   const length = textEncoder.encode(version).length
   if (length === 0 || length > maxPackageVersionBytes) {
-    throw new Error(`${label} ${JSON.stringify(version)} is outside the exact package-version domain`)
+    throw new Error(
+      `${label} ${JSON.stringify(version)} is outside the exact package-version domain`,
+    )
   }
 }
 
@@ -378,11 +399,15 @@ function validatePackagePath(path: string, mountPath: string, local: boolean, la
         textEncoder.encode(component).length > maxPackagePathComponentBytes,
     )
   ) {
-    throw new Error(`${label} ${JSON.stringify(path)} is not normalized or exceeds a component bound`)
+    throw new Error(
+      `${label} ${JSON.stringify(path)} is not normalized or exceeds a component bound`,
+    )
   }
   const root = components[0]!
   if (local && (root === "helmr" || root === ".helmr" || root === "node_modules")) {
-    throw new Error(`${label} ${JSON.stringify(path)} uses reserved Deployment root ${JSON.stringify(root)}`)
+    throw new Error(
+      `${label} ${JSON.stringify(path)} uses reserved Deployment root ${JSON.stringify(root)}`,
+    )
   }
   if (!local && root === ".helmr") {
     throw new Error(`${label} ${JSON.stringify(path)} uses the reserved dependency root`)

@@ -290,6 +290,9 @@ func validatePackageResolution(
 		return fmt.Errorf("to: %w", err)
 	}
 	if resolution.To.Kind == PackageKindLocal {
+		if resolution.From.Kind != PackageKindLocal {
+			return fmt.Errorf("registry-to-local resolution is unsupported")
+		}
 		local := locals[*resolution.To.Path]
 		if local.Name == nil {
 			return fmt.Errorf("local target %q has no name", *resolution.To.Path)

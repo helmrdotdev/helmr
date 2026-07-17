@@ -229,8 +229,50 @@ func TestPackageGraphAcceptsRootOnlyCyclesAndOpaqueVersions(t *testing.T) {
 	localVersion := "file:opaque"
 	graph.LocalPackages[1].Version = &localVersion
 	graph.RegistryPackages[0].Version = "link:opaque"
+	root := graph.LocalPackages[0]
+	local := graph.LocalPackages[1]
+	graph.Resolutions = []PackageResolution{
+		{
+			Dependency:   *local.Name,
+			From:         PackageEndpoint{Kind: PackageKindLocal, Path: &root.Path},
+			Relationship: PackageRelationshipProduction,
+			To:           PackageEndpoint{Kind: PackageKindLocal, Path: &local.Path},
+		},
+		{
+			Dependency:   *root.Name,
+			From:         PackageEndpoint{Kind: PackageKindLocal, Path: &local.Path},
+			Relationship: PackageRelationshipProduction,
+			To:           PackageEndpoint{Kind: PackageKindLocal, Path: &root.Path},
+		},
+	}
 	if _, err := CanonicalPackageGraph(graph); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPackageGraphRejectsRegistryToLocalResolution(t *testing.T) {
+	fixture := loadContractFixture(t)
+	graph, err := ParsePackageGraph([]byte(fixture.PackageGraph.Canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	local := graph.LocalPackages[1]
+	registry := graph.RegistryPackages[0]
+	graph.Resolutions = []PackageResolution{{
+		Dependency: *local.Name,
+		From: PackageEndpoint{
+			InstallPath: &registry.InstallPath,
+			Kind:        PackageKindRegistry,
+		},
+		Relationship: PackageRelationshipProduction,
+		To: PackageEndpoint{
+			Kind: PackageKindLocal,
+			Path: &local.Path,
+		},
+	}}
+	if err := ValidatePackageGraph(graph); err == nil ||
+		!strings.Contains(err.Error(), "registry-to-local resolution is unsupported") {
+		t.Fatalf("ValidatePackageGraph error = %v", err)
 	}
 }
 

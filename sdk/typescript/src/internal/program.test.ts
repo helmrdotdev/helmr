@@ -96,7 +96,10 @@ describe("canonical deployment contract", async () => {
           continue
         }
         case "declaration_order":
-          ;[index.declarations[0], index.declarations[1]] = [index.declarations[1], index.declarations[0]]
+          ;[index.declarations[0], index.declarations[1]] = [
+            index.declarations[1],
+            index.declarations[0],
+          ]
           break
         case "task_slots":
           index.declarations[0] = {
@@ -166,8 +169,25 @@ describe("canonical deployment contract", async () => {
     expect(() => parseProgramIndex(` ${fixture.programIndex.canonical}`)).toThrow(/canonical/)
   })
 
+  test("enforces the program index size bound", () => {
+    expect(() => parseProgramIndex(new Uint8Array())).toThrow(/size/)
+    expect(() => parseProgramIndex(new Uint8Array(16_777_217))).toThrow(/size/)
+
+    const index = structuredClone(
+      parseProgramIndex(fixture.programIndex.canonical),
+    ) as MutableProgramIndex
+    index.declarations = Array.from({ length: 100_000 }, (_, position) => ({
+      kind: "task",
+      declaredId: `${position.toString().padStart(6, "0")}${"a".repeat(122)}`,
+      slots: ["handler"],
+    }))
+    expect(() => canonicalProgramIndex(index as ProgramIndex)).toThrow(/size/)
+  })
+
   test("accepts program file size bounds", () => {
-    const index = structuredClone(parseProgramIndex(fixture.programIndex.canonical)) as MutableProgramIndex
+    const index = structuredClone(
+      parseProgramIndex(fixture.programIndex.canonical),
+    ) as MutableProgramIndex
     index.packageGraph.sizeBytes = 1
     index.modules.sizeBytes = 16777216
     expect(() => parseProgramIndex(canonicalProgramIndex(index as ProgramIndex))).not.toThrow()

@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto"
 
-import {
-  canonicalizeJsonValue,
-  parseJson,
-  type JsonObject,
-  type JsonValue,
-} from "./jsoncanon"
+import { canonicalizeJsonValue, parseJson, type JsonObject, type JsonValue } from "./jsoncanon"
 
 export const PROGRAM_INDEX_FORMAT_VERSION = 0 as const
 export const RUNTIME_API_VERSION = "helmr.runtime.v0" as const
+export const PROGRAM_CODE_ARTIFACT_MEDIA_TYPE =
+  "application/vnd.helmr.deployment-program-code.v0+squashfs" as const
 export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
   "application/vnd.helmr.deployment-program-dependencies.v0+squashfs" as const
 
@@ -55,6 +52,9 @@ export interface ProgramIndex {
 
 export function parseProgramIndex(raw: string | Uint8Array): ProgramIndex {
   const input = typeof raw === "string" ? new TextEncoder().encode(raw) : raw
+  if (input.length === 0 || input.length > maxProgramFileSizeBytes) {
+    throw new Error(`program index size is outside [1,${maxProgramFileSizeBytes}]`)
+  }
   const value = parseJson(raw)
   const canonical = canonicalizeJsonValue(value)
   if (!bytesEqual(input, canonical)) {
@@ -65,7 +65,11 @@ export function parseProgramIndex(raw: string | Uint8Array): ProgramIndex {
 
 export function canonicalProgramIndex(index: ProgramIndex): Uint8Array {
   validateProgramIndex(index)
-  return canonicalizeJsonValue(index as unknown as JsonValue)
+  const canonical = canonicalizeJsonValue(index as unknown as JsonValue)
+  if (canonical.length > maxProgramFileSizeBytes) {
+    throw new Error(`program index size is outside [1,${maxProgramFileSizeBytes}]`)
+  }
+  return canonical
 }
 
 export function validateProgramIndex(index: ProgramIndex): void {
@@ -105,7 +109,10 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     throw new Error(`program index formatVersion must be ${PROGRAM_INDEX_FORMAT_VERSION}`)
   }
 
-  const runtimeApiVersion = requireString(root["runtimeApiVersion"], "program index runtimeApiVersion")
+  const runtimeApiVersion = requireString(
+    root["runtimeApiVersion"],
+    "program index runtimeApiVersion",
+  )
   if (runtimeApiVersion !== RUNTIME_API_VERSION) {
     throw new Error(`program index runtimeApiVersion must be ${RUNTIME_API_VERSION}`)
   }
@@ -118,7 +125,9 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     "program index dependencies.mediaType",
   )
   if (dependencyMediaType !== PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE) {
-    throw new Error(`program index dependencies.mediaType must be ${PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE}`)
+    throw new Error(
+      `program index dependencies.mediaType must be ${PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE}`,
+    )
   }
   const dependencies: ProgramDependencies = {
     digest: requireDigest(dependencyValue["digest"], "program index dependencies.digest"),
@@ -143,7 +152,9 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
         declarations[position] as ProgramDeclaration,
       ) >= 0
     ) {
-      throw new Error(`program index declarations are not in canonical order at position ${position}`)
+      throw new Error(
+        `program index declarations are not in canonical order at position ${position}`,
+      )
     }
   }
 
@@ -178,7 +189,9 @@ function parseDeclaration(value: JsonValue, position: number): ProgramDeclaratio
   const kind = requireString(declaration["kind"], "declaration kind")
   const declaredId = requireString(declaration["declaredId"], "declaration declaredId")
   if (!declaredIdPattern.test(declaredId)) {
-    throw new Error(`program index declaredId ${JSON.stringify(declaredId)} is outside the exact ASCII ID domain`)
+    throw new Error(
+      `program index declaredId ${JSON.stringify(declaredId)} is outside the exact ASCII ID domain`,
+    )
   }
   const slots = requireArray(declaration["slots"], "declaration slots").map((slot) =>
     requireString(slot, "declaration slot"),

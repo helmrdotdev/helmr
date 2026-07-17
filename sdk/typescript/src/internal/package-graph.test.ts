@@ -37,7 +37,9 @@ describe("deployment package graph", async () => {
     const graph = parsePackageGraph(fixture.packageGraph.canonical)
     const canonical = canonicalPackageGraph(graph)
     expect(decoder.decode(canonical)).toBe(fixture.packageGraph.canonical)
-    expect(createHash("sha256").update(canonical).digest("hex")).toBe(fixture.packageGraph.digestHex)
+    expect(createHash("sha256").update(canonical).digest("hex")).toBe(
+      fixture.packageGraph.digestHex,
+    )
   })
 
   test("rejects the shared invalid mutations", () => {
@@ -150,7 +152,11 @@ describe("deployment package graph", async () => {
           setFixtureLocalPath(value, "packages/shared", `packages/${"a".repeat(256)}`)
           break
         case "oversized_mounted_path":
-          setFixtureLocalPath(value, "packages/shared", pathWithLength(4096 - programMountPath.length - 1))
+          setFixtureLocalPath(
+            value,
+            "packages/shared",
+            pathWithLength(4096 - programMountPath.length - 1),
+          )
           break
         default:
           throw new Error(`unknown fixture mutation ${item.mutation}`)
@@ -170,20 +176,36 @@ describe("deployment package graph", async () => {
     }
 
     const objects = [
-      { array: "localPackages", position: 1, members: ["manifestDigest", "name", "path", "version", "viewKey"] },
-      { array: "registryPackages", position: 0, members: ["installPath", "integrity", "name", "version"] },
-      { array: "resolutions", position: 0, members: ["dependency", "from", "relationship", "to"] },
+      {
+        array: "localPackages",
+        position: 1,
+        members: ["manifestDigest", "name", "path", "version", "viewKey"],
+      },
+      {
+        array: "registryPackages",
+        position: 0,
+        members: ["installPath", "integrity", "name", "version"],
+      },
+      {
+        array: "resolutions",
+        position: 0,
+        members: ["dependency", "from", "relationship", "to"],
+      },
     ] as const
     for (const object of objects) {
       for (const member of object.members) {
         const missing = packageGraphFixtureValue(fixture.packageGraph.canonical)
-        const missingEntry = (missing[object.array] as Array<Record<string, unknown>>)[object.position]!
+        const missingEntry = (missing[object.array] as Array<Record<string, unknown>>)[
+          object.position
+        ]!
         delete missingEntry[member]
         expectPackageGraphRejection(missing, `missing ${object.array}.${member}`)
 
         if (object.array !== "localPackages" || (member !== "name" && member !== "version")) {
           const nullValue = packageGraphFixtureValue(fixture.packageGraph.canonical)
-          const nullEntry = (nullValue[object.array] as Array<Record<string, unknown>>)[object.position]!
+          const nullEntry = (nullValue[object.array] as Array<Record<string, unknown>>)[
+            object.position
+          ]!
           nullEntry[member] = null
           expectPackageGraphRejection(nullValue, `null ${object.array}.${member}`)
         }
@@ -250,7 +272,39 @@ describe("deployment package graph", async () => {
     const value = packageGraphFixtureValue(fixture.packageGraph.canonical)
     ;(value["localPackages"] as Array<Record<string, unknown>>)[1]!["version"] = "file:opaque"
     ;(value["registryPackages"] as Array<Record<string, unknown>>)[0]!["version"] = "link:opaque"
+    const locals = value["localPackages"] as Array<Record<string, unknown>>
+    value["resolutions"] = [
+      {
+        dependency: locals[1]!["name"],
+        from: { kind: "local", path: locals[0]!["path"] },
+        relationship: "production",
+        to: { kind: "local", path: locals[1]!["path"] },
+      },
+      {
+        dependency: locals[0]!["name"],
+        from: { kind: "local", path: locals[1]!["path"] },
+        relationship: "production",
+        to: { kind: "local", path: locals[0]!["path"] },
+      },
+    ]
     expect(() => parsePackageGraph(canonicalizeJson(JSON.stringify(value)))).not.toThrow()
+  })
+
+  test("rejects registry-to-local resolutions", () => {
+    const value = packageGraphFixtureValue(fixture.packageGraph.canonical)
+    const locals = value["localPackages"] as Array<Record<string, unknown>>
+    const registries = value["registryPackages"] as Array<Record<string, unknown>>
+    value["resolutions"] = [
+      {
+        dependency: locals[1]!["name"],
+        from: { installPath: registries[0]!["installPath"], kind: "registry" },
+        relationship: "production",
+        to: { kind: "local", path: locals[1]!["path"] },
+      },
+    ]
+    expect(() => parsePackageGraph(canonicalizeJson(JSON.stringify(value)))).toThrow(
+      /registry-to-local/,
+    )
   })
 
   test("uses unsigned UTF-8 path order without Unicode normalization", () => {
@@ -342,7 +396,11 @@ function setFixtureLocalPath(
   }
 }
 
-function localFixture(path: string, name: string | null, version: string | null): Record<string, unknown> {
+function localFixture(
+  path: string,
+  name: string | null,
+  version: string | null,
+): Record<string, unknown> {
   return {
     manifestDigest: `sha256:${"2".repeat(64)}`,
     name,

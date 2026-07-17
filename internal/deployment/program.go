@@ -16,6 +16,7 @@ const (
 	ProgramIndexFormatVersion = 0
 
 	RuntimeAPIVersion                        = "helmr.runtime.v0"
+	ProgramCodeArtifactMediaType             = "application/vnd.helmr.deployment-program-code.v0+squashfs"
 	ProgramDependencyArtifactMediaType       = "application/vnd.helmr.deployment-program-dependencies.v0+squashfs"
 	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger                 int64 = 9007199254740991
@@ -66,6 +67,9 @@ type ProgramIndex struct {
 }
 
 func ParseProgramIndex(raw []byte) (ProgramIndex, error) {
+	if len(raw) == 0 || len(raw) > int(maxProgramFileSizeBytes) {
+		return ProgramIndex{}, fmt.Errorf("program index size is outside [1,%d]", maxProgramFileSizeBytes)
+	}
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return ProgramIndex{}, fmt.Errorf("canonicalize program index: %w", err)
@@ -107,6 +111,9 @@ func CanonicalProgramIndex(index ProgramIndex) ([]byte, error) {
 	canonical, err := jsoncanon.Transform(raw)
 	if err != nil {
 		return nil, fmt.Errorf("canonicalize program index: %w", err)
+	}
+	if len(canonical) > int(maxProgramFileSizeBytes) {
+		return nil, fmt.Errorf("program index size is outside [1,%d]", maxProgramFileSizeBytes)
 	}
 	return canonical, nil
 }

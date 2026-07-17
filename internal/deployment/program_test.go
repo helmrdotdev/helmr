@@ -219,6 +219,15 @@ func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
 	}
 }
 
+func TestProgramIndexParserEnforcesSizeBound(t *testing.T) {
+	if _, err := ParseProgramIndex(nil); err == nil {
+		t.Fatal("ParseProgramIndex accepted empty input")
+	}
+	if _, err := ParseProgramIndex(make([]byte, maxProgramFileSizeBytes+1)); err == nil {
+		t.Fatal("ParseProgramIndex accepted oversized input")
+	}
+}
+
 func TestProgramIndexAcceptsFileSizeBounds(t *testing.T) {
 	fixture := loadContractFixture(t)
 	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
