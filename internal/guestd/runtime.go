@@ -169,6 +169,44 @@ func imageRuntimeEnv(imageConfig ociRuntimeConfig, runtimeUser *resolvedRuntimeU
 	return env
 }
 
+func managedRuntimeEnv(imageConfig ociRuntimeConfig, runtimeUser *resolvedRuntimeUser, launchCwd string) []string {
+	return sanitizeManagedRuntimeEnv(imageRuntimeEnv(imageConfig, runtimeUser, launchCwd))
+}
+
+func sanitizeManagedRuntimeEnv(env []string) []string {
+	sanitized := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, ok := strings.Cut(entry, "=")
+		if !ok || isManagedRuntimeEnvKey(key) {
+			continue
+		}
+		sanitized = append(sanitized, entry)
+	}
+	return sanitized
+}
+
+func isManagedRuntimeEnvKey(key string) bool {
+	if isDynamicLoaderEnvKey(key) {
+		return true
+	}
+	switch key {
+	case "NODE_OPTIONS",
+		"NODE_PATH",
+		"NODE_EXTRA_CA_CERTS",
+		"NODE_ICU_DATA",
+		"SSL_CERT_FILE",
+		"SSL_CERT_DIR",
+		"OPENSSL_CONF",
+		"OPENSSL_MODULES",
+		"OPENSSL_ENGINES",
+		"GCONV_PATH",
+		"LOCPATH":
+		return true
+	default:
+		return false
+	}
+}
+
 func sanitizeDynamicLoaderEnv(env []string) []string {
 	sanitized := make([]string, 0, len(env))
 	for _, entry := range env {

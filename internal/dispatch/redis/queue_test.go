@@ -345,9 +345,10 @@ func testBuildMessage(deploymentID, orgID, environmentID string, queuedAt time.T
 	return dispatch.Message{WorkKind: dispatch.WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		RegionID: "us-east-1", ProjectID: "project-1", EnvironmentID: environmentID,
 		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: 1,
-		QueueTimestamp: queuedAt, EnqueuedAt: queuedAt,
-		BuildResources: dispatch.BuildResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30,
-			WorkloadDiskBytes: 0, ScratchBytes: 13 << 30, Executors: 1}}
+		BuildArchitecture: "x86_64",
+		QueueTimestamp:    queuedAt, EnqueuedAt: queuedAt,
+		BuildResources: dispatch.BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
+			WorkloadDiskBytes: 0, ScratchBytes: 32 << 30, Executors: 1}}
 }
 
 func containsAny(value string, needles ...string) bool {

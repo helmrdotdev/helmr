@@ -22,8 +22,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
+	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -56,6 +58,8 @@ type Server struct {
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
+	runtimePolicy         *deployment.RuntimePolicy
+	runtimeStore          cas.Reader
 	secrets               SecretManager
 	runEnqueuer           RunEnqueuer
 	preparedRuntimeSupply PreparedRuntimeSupplyReconciler
@@ -79,7 +83,6 @@ type Server struct {
 	devicePollEvery       time.Duration
 }
 
-type apiVersionContextKey struct{}
 type requestVersionMetadataContextKey struct{}
 
 type requestVersionMetadata struct {
@@ -128,6 +131,8 @@ type ServerConfig struct {
 
 	Auth                  auth.Authenticator
 	CAS                   cas.Store
+	RuntimePolicy         *deployment.RuntimePolicy
+	RuntimeStore          cas.Reader
 	Secrets               SecretManager
 	RunEnqueuer           RunEnqueuer
 	PreparedRuntimeSupply PreparedRuntimeSupplyReconciler
@@ -179,13 +184,13 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.WorkerEnrollment == nil {
 		return nil, errors.New("worker enrollment verifier is required")
 	}
-	regionID := strings.TrimSpace(cfg.RegionID)
-	if regionID == "" {
-		return nil, errors.New("control region id is required")
+	regionID := cfg.RegionID
+	if err := region.ValidateID(regionID); err != nil {
+		return nil, fmt.Errorf("control region ID: %w", err)
 	}
-	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
-	if defaultRegionID == "" {
-		return nil, errors.New("control default region id is required")
+	defaultRegionID := cfg.DefaultRegionID
+	if err := region.ValidateID(defaultRegionID); err != nil {
+		return nil, fmt.Errorf("control default region ID: %w", err)
 	}
 	telemetryReader := cfg.TelemetryReader
 	if telemetryReader == nil {
@@ -219,6 +224,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
+		runtimePolicy:         cfg.RuntimePolicy,
+		runtimeStore:          cfg.RuntimeStore,
 		secrets:               cfg.Secrets,
 		runEnqueuer:           cfg.RunEnqueuer,
 		preparedRuntimeSupply: cfg.PreparedRuntimeSupply,
@@ -298,7 +305,7 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitRequestBody(apiRequestBodyLimit))
-	r.Use(s.requireCurrentAPIVersion)
+	r.Use(s.requireRequestVersions)
 	r.Options("/v1/tokens/{tokenID}/complete", s.completeTokenPublicAccessTokenPreflight)
 	r.Post("/v1/tokens/{tokenID}/complete", s.completeTokenWithPublicAccessToken)
 	r.Post("/v1/tokens/{tokenID}/callback/{callbackSecret}", s.completeTokenWithCallbackSecret)
@@ -317,10 +324,10 @@ func (s *Server) mountAPIRoutes(r chi.Router) {
 	s.mountWorkerRoutes(r)
 }
 
-func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
+func (s *Server) requireRequestVersions(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set(api.APIVersionHeader, api.CurrentAPIVersion)
-		requested := strings.TrimSpace(r.Header.Get(api.APIVersionHeader))
+		requested := r.Header.Get(api.APIVersionHeader)
 		if requested != "" && requested != api.CurrentAPIVersion {
 			writeError(w, badRequest(codedError{
 				code:    "unsupported_api_version",
@@ -328,30 +335,47 @@ func (s *Server) requireCurrentAPIVersion(next http.Handler) http.Handler {
 			}))
 			return
 		}
-		ctx := context.WithValue(r.Context(), apiVersionContextKey{}, api.CurrentAPIVersion)
+		sdkVersion := r.Header.Get(api.SDKVersionHeader)
+		if err := api.ValidateClientVersion(sdkVersion); err != nil {
+			writeError(w, badRequest(codedError{
+				code:    "invalid_sdk_version",
+				message: fmt.Sprintf("invalid %s: %v", api.SDKVersionHeader, err),
+			}))
+			return
+		}
+		cliVersion := r.Header.Get(api.CLIVersionHeader)
+		if err := api.ValidateClientVersion(cliVersion); err != nil {
+			writeError(w, badRequest(codedError{
+				code:    "invalid_cli_version",
+				message: fmt.Sprintf("invalid %s: %v", api.CLIVersionHeader, err),
+			}))
+			return
+		}
+		clientVersion := r.Header.Get(api.ClientVersionHeader)
+		if err := api.ValidateClientVersion(clientVersion); err != nil {
+			writeError(w, badRequest(codedError{
+				code:    "invalid_cli_version",
+				message: fmt.Sprintf("invalid %s: %v", api.ClientVersionHeader, err),
+			}))
+			return
+		}
+		cliVersion = firstPresentString(cliVersion, clientVersion)
+		ctx := context.WithValue(r.Context(), requestVersionMetadataContextKey{}, requestVersionMetadata{
+			APIVersion: api.CurrentAPIVersion,
+			SDKVersion: sdkVersion,
+			CLIVersion: cliVersion,
+		})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
 func requestAPIVersion(r *http.Request) string {
-	version, _ := r.Context().Value(apiVersionContextKey{}).(string)
-	if strings.TrimSpace(version) == "" {
-		return api.CurrentAPIVersion
-	}
-	return version
-}
-
-func contextWithRequestVersionMetadata(ctx context.Context, r *http.Request) context.Context {
-	return context.WithValue(ctx, requestVersionMetadataContextKey{}, requestVersionMetadata{
-		APIVersion: requestAPIVersion(r),
-		SDKVersion: strings.TrimSpace(r.Header.Get(api.SDKVersionHeader)),
-		CLIVersion: firstNonEmptyString(r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
-	})
+	return requestVersionMetadataFromContext(r.Context()).APIVersion
 }
 
 func requestVersionMetadataFromContext(ctx context.Context) requestVersionMetadata {
 	metadata, _ := ctx.Value(requestVersionMetadataContextKey{}).(requestVersionMetadata)
-	if strings.TrimSpace(metadata.APIVersion) == "" {
+	if metadata.APIVersion == "" {
 		metadata.APIVersion = api.CurrentAPIVersion
 	}
 	return metadata

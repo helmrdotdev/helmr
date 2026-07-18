@@ -54,6 +54,7 @@ in
         bash tests/release_workflow_test.sh
         bash tests/release_worker_ami_cleanup_test.sh
         bash tests/release_worker_image_identity_test.sh
+        bash tests/worker_release_stage_test.sh
       '';
   ci-generated =
     app "ci-generated" "check generated artifacts and formatting for CI" toolsets.ciChecks
@@ -109,6 +110,18 @@ in
         bun install --frozen-lockfile --ignore-scripts
         make console-build
         CGO_ENABLED=0 GOOS=linux GOARCH=amd64 staticcheck -tags embed_console ./...
+      '';
+  ci-infra-test =
+    app "ci-infra-test" "run AWS module tests with pinned OpenTofu" toolsets.infraTest
+      ''
+        for module in bootstrap control worker worker-image; do
+          (
+            cd "infra/aws/modules/$module"
+            tofu init -backend=false -input=false
+            tofu fmt -check -recursive
+            tofu test
+          )
+        done
       '';
   test = app "test" "run the full Helmr test recipe" toolsets.appRuntime "make test";
   lint = app "lint" "run Go vet with repository lint settings" toolsets.appRuntime "make lint";

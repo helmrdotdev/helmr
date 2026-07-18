@@ -17,7 +17,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -77,6 +79,28 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
+	if s.runtimePolicy == nil || s.runtimeStore == nil {
+		writeError(w, unavailable(errors.New("managed runtime is not configured")))
+		return
+	}
+	project, err := s.db.GetProject(r.Context(), db.GetProjectParams{
+		OrgID: pgvalue.UUID(actor.OrgID),
+		ID:    projectID,
+	})
+	if err != nil {
+		writeError(w, errors.New("resolve deployment build region"))
+		return
+	}
+	buildRegionID := project.DefaultRegionID
+	runtimeTarget, err := s.runtimePolicy.Current(buildRegionID)
+	if err != nil {
+		writeError(w, unavailable(fmt.Errorf("resolve managed runtime: %w", err)))
+		return
+	}
+	if err := validateRuntimeObject(r.Context(), s.runtimeStore, runtimeTarget); err != nil {
+		writeError(w, unavailable(err))
+		return
+	}
 	file, err := os.Open(archivePath)
 	if err != nil {
 		writeError(w, errors.New("open deployment source artifact"))
@@ -112,8 +136,11 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		if project.DefaultRegionID != buildRegionID {
+			return conflict(errors.New("project default region changed; retry deployment creation"))
+		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, project.DefaultRegionID, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(r.Context(), store, buildRegionID, runtimeTarget, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		return createErr
 	})
 	if err != nil {
@@ -124,8 +151,21 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, response)
 }
 
+func validateRuntimeObject(ctx context.Context, store cas.Reader, descriptor deployment.RuntimeDescriptor) error {
+	object, err := store.Stat(ctx, descriptor.Digest)
+	if err != nil {
+		return fmt.Errorf("resolve managed runtime object: %w", err)
+	}
+	if object.Digest != descriptor.Digest ||
+		object.SizeBytes != descriptor.SizeBytes ||
+		object.MediaType != descriptor.MediaType {
+		return errors.New("managed runtime object does not match its descriptor")
+	}
+	return nil
+}
+
 func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeploymentRequest) (deploymentVersionMetadata, error) {
-	apiVersion := firstNonEmptyString(request.APIVersion, requestAPIVersion(r))
+	apiVersion := firstPresentString(request.APIVersion, requestAPIVersion(r))
 	if apiVersion != api.CurrentAPIVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported deployment api_version %q; current version is %s", apiVersion, api.CurrentAPIVersion)
 	}
@@ -136,14 +176,29 @@ func deploymentMetadataFromRequest(r *http.Request, request api.CreateDeployment
 	if bundleFormatVersion != api.CurrentBundleFormatVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported bundle_format_version %d; current version is %d", bundleFormatVersion, api.CurrentBundleFormatVersion)
 	}
-	workerProtocolVersion := firstNonEmptyString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
+	workerProtocolVersion := firstPresentString(request.WorkerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	if workerProtocolVersion != api.CurrentWorkerProtocolVersion {
 		return deploymentVersionMetadata{}, fmt.Errorf("unsupported worker_protocol_version %q; current version is %s", workerProtocolVersion, api.CurrentWorkerProtocolVersion)
 	}
+	versions := requestVersionMetadataFromContext(r.Context())
+	sdkVersion := firstPresentString(request.SDKVersion, versions.SDKVersion)
+	if err := api.ValidateClientVersion(sdkVersion); err != nil {
+		return deploymentVersionMetadata{}, codedError{
+			code:    "invalid_sdk_version",
+			message: fmt.Sprintf("invalid sdk_version: %v", err),
+		}
+	}
+	cliVersion := firstPresentString(request.CLIVersion, versions.CLIVersion)
+	if err := api.ValidateClientVersion(cliVersion); err != nil {
+		return deploymentVersionMetadata{}, codedError{
+			code:    "invalid_cli_version",
+			message: fmt.Sprintf("invalid cli_version: %v", err),
+		}
+	}
 	return deploymentVersionMetadata{
 		APIVersion:            apiVersion,
-		SDKVersion:            firstNonEmptyString(request.SDKVersion, r.Header.Get(api.SDKVersionHeader)),
-		CLIVersion:            firstNonEmptyString(request.CLIVersion, r.Header.Get(api.CLIVersionHeader), r.Header.Get(api.ClientVersionHeader)),
+		SDKVersion:            sdkVersion,
+		CLIVersion:            cliVersion,
 		BundleFormatVersion:   bundleFormatVersion,
 		WorkerProtocolVersion: workerProtocolVersion,
 	}, nil

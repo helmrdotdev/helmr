@@ -139,8 +139,13 @@ variable "region_id" {
   nullable    = true
 
   validation {
-    condition     = var.region_id == null || trimspace(var.region_id) != ""
-    error_message = "region_id must be null or non-empty."
+    condition = var.region_id == null ? true : (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
   }
 }
 
@@ -151,8 +156,13 @@ variable "default_region_id" {
   nullable    = true
 
   validation {
-    condition     = var.default_region_id == null || trimspace(var.default_region_id) != ""
-    error_message = "default_region_id must be null or non-empty."
+    condition = var.default_region_id == null ? true : (
+      var.default_region_id != "" &&
+      var.default_region_id == trimspace(var.default_region_id) &&
+      length(base64encode(var.default_region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.default_region_id)) == 0
+    )
+    error_message = "default_region_id must be null or normalized control-free UTF-8 of 1-255 bytes."
   }
 }
 
@@ -211,6 +221,51 @@ variable "clickhouse_password_kms_key_arns" {
 variable "control_image" {
   description = "Container image URI containing helmr-control and helmr-dispatcher. Managed release flows should pass a digest-pinned image."
   type        = string
+
+  validation {
+    condition     = can(regex("@sha256:[0-9a-f]{64}$", var.control_image))
+    error_message = "control_image must be pinned by a lowercase sha256 digest."
+  }
+}
+
+variable "runtime_store_uri" {
+  description = "Dedicated immutable managed-runtime store URI ending in /objects."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.runtime_store_uri))
+    error_message = "runtime_store_uri must be an S3 bucket URI ending exactly in /objects."
+  }
+}
+
+variable "runtime_store_bucket_arn" {
+  description = "S3 bucket ARN backing runtime_store_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.runtime_store_bucket_arn))
+    error_message = "runtime_store_bucket_arn must be an S3 bucket ARN."
+  }
+}
+
+variable "runtime_store_kms_key_arn" {
+  description = "KMS key ARN used by the dedicated managed-runtime store."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.runtime_store_kms_key_arn))
+    error_message = "runtime_store_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "runtime_policy_digest" {
+  description = "Exact immutable managed-runtime policy object digest installed before Control starts."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
+    error_message = "runtime_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+  }
 }
 
 variable "control_entrypoint" {

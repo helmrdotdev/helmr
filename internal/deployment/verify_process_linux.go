@@ -373,21 +373,21 @@ func configureVerifierCgroup(cgroupFD int) error {
 
 func openVerifierSnapshot(source *os.File) (*os.File, error) {
 	if source == nil {
-		return nil, errors.New("Artifact descriptor is nil")
+		return nil, errors.New("artifact descriptor is nil")
 	}
 	flags, err := unix.FcntlInt(source.Fd(), unix.F_GETFL, 0)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Artifact descriptor: %w", err)
+		return nil, fmt.Errorf("inspect artifact descriptor: %w", err)
 	}
 	if flags&unix.O_ACCMODE != unix.O_RDONLY {
-		return nil, errors.New("Artifact descriptor is not read-only")
+		return nil, errors.New("artifact descriptor is not read-only")
 	}
 	var sourceStat unix.Stat_t
 	if err := unix.Fstat(int(source.Fd()), &sourceStat); err != nil {
-		return nil, fmt.Errorf("stat Artifact descriptor: %w", err)
+		return nil, fmt.Errorf("stat artifact descriptor: %w", err)
 	}
 	if sourceStat.Mode&unix.S_IFMT != unix.S_IFREG {
-		return nil, errors.New("Artifact descriptor is not a regular file")
+		return nil, errors.New("artifact descriptor is not a regular file")
 	}
 	fd, err := unix.Open(
 		"/proc/self/fd/"+strconv.FormatUint(uint64(source.Fd()), 10),
@@ -395,7 +395,7 @@ func openVerifierSnapshot(source *os.File) (*os.File, error) {
 		0,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("reopen Artifact descriptor: %w", err)
+		return nil, fmt.Errorf("reopen artifact descriptor: %w", err)
 	}
 	var reopenedStat unix.Stat_t
 	if err := unix.Fstat(fd, &reopenedStat); err != nil {

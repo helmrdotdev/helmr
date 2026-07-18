@@ -85,6 +85,8 @@ locals {
     HELMR_CONTROL_ADDR           = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE        = var.deployment_mode
     HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_RUNTIME_POLICY_PATH    = "/runtime/runtime-policy.json"
+    HELMR_RUNTIME_STORE_URI      = var.runtime_store_uri
     HELMR_PUBLIC_URL             = local.control_url
     HELMR_REDIS_URL              = local.redis_url
     HELMR_SCHEDULE_JITTER        = var.schedule_jitter
@@ -183,6 +185,8 @@ resource "terraform_data" "bootstrap_preconditions" {
     reserved_dispatcher_env_conflicts = local.dispatcher_environment_conflicts
     email_provider                    = var.email_provider
     worker_fleets                     = var.worker_fleets
+    runtime_store_uri                 = var.runtime_store_uri
+    runtime_store_bucket_arn          = var.runtime_store_bucket_arn
   }
 
   lifecycle {
@@ -194,6 +198,16 @@ resource "terraform_data" "bootstrap_preconditions" {
     precondition {
       condition     = length(local.dispatcher_environment_conflicts) == 0
       error_message = "dispatcher_environment must not set managed Helmr variables. Use explicit module inputs and secret containers for managed settings."
+    }
+
+    precondition {
+      condition     = var.runtime_store_uri == "s3://${trimprefix(var.runtime_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "runtime_store_uri must identify the bucket supplied by runtime_store_bucket_arn and end in /objects."
+    }
+
+    precondition {
+      condition     = var.runtime_store_bucket_arn != aws_s3_bucket.cas.arn
+      error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control CAS bucket."
     }
 
     precondition {
@@ -1033,7 +1047,24 @@ resource "aws_iam_role_policy" "control_task" {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
         }
-      }
+      },
+      {
+        Sid      = "ReadManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
+      },
+      {
+        Sid      = "DecryptManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.runtime_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      },
       ], [for statement in [
         {
           Effect = "Allow"
@@ -1054,6 +1085,22 @@ resource "aws_iam_role_policy" "control_task" {
 
 resource "aws_iam_role" "dispatcher_task" {
   name = "${local.name}-dispatcher-task"
+  tags = var.tags
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role" "migration_task" {
+  name = "${local.name}-migration-task"
   tags = var.tags
 
   assume_role_policy = jsonencode({
@@ -1200,37 +1247,82 @@ resource "aws_ecs_task_definition" "control" {
     cpu_architecture        = var.control_architecture
   }
 
-  container_definitions = jsonencode([{
-    name       = "control"
-    image      = var.control_image
-    essential  = true
-    entryPoint = var.control_entrypoint
-    portMappings = [{
-      containerPort = local.control_port
-      hostPort      = local.control_port
-      protocol      = "tcp"
-    }]
-    environment = [
-      for key, value in local.control_environment : {
-        name  = key
-        value = value
+  volume {
+    name = "runtime-policy"
+  }
+
+  container_definitions = jsonencode([
+    {
+      name       = "runtime-policy-install"
+      image      = var.control_image
+      essential  = false
+      user       = "0"
+      entryPoint = ["helmr-control"]
+      command = [
+        "runtime",
+        "install",
+        "--store",
+        var.runtime_store_uri,
+        "--digest",
+        var.runtime_policy_digest,
+        "--output",
+        "/runtime/runtime-policy.json"
+      ]
+      mountPoints = [{
+        sourceVolume  = "runtime-policy"
+        containerPath = "/runtime"
+        readOnly      = false
+      }]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.control.name
+          awslogs-region        = data.aws_region.current.region
+          awslogs-stream-prefix = "runtime-policy-install"
+        }
       }
-    ]
-    secrets = [
-      for key, value in local.control_secrets : {
-        name      = key
-        valueFrom = value
-      }
-    ]
-    logConfiguration = {
-      logDriver = "awslogs"
-      options = {
-        awslogs-group         = aws_cloudwatch_log_group.control.name
-        awslogs-region        = data.aws_region.current.region
-        awslogs-stream-prefix = "control"
+    },
+    {
+      name       = "control"
+      image      = var.control_image
+      essential  = true
+      entryPoint = var.control_entrypoint
+      dependsOn = [{
+        containerName = "runtime-policy-install"
+        condition     = "SUCCESS"
+      }]
+      mountPoints = [{
+        sourceVolume  = "runtime-policy"
+        containerPath = "/runtime"
+        readOnly      = true
+      }]
+      portMappings = [{
+        containerPort = local.control_port
+        hostPort      = local.control_port
+        protocol      = "tcp"
+      }]
+      environment = [
+        for key, value in local.control_environment : {
+          name  = key
+          value = value
+        }
+      ]
+      secrets = [
+        for key, value in local.control_secrets : {
+          name      = key
+          valueFrom = value
+        }
+      ]
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          awslogs-group         = aws_cloudwatch_log_group.control.name
+          awslogs-region        = data.aws_region.current.region
+          awslogs-stream-prefix = "control"
+        }
       }
     }
-  }])
+  ])
 }
 
 resource "aws_ecs_task_definition" "dispatcher" {
@@ -1283,7 +1375,7 @@ resource "aws_ecs_task_definition" "migration" {
   cpu                      = "256"
   memory                   = "512"
   execution_role_arn       = aws_iam_role.control_execution.arn
-  task_role_arn            = aws_iam_role.control_task.arn
+  task_role_arn            = aws_iam_role.migration_task.arn
   tags                     = var.tags
 
   runtime_platform {

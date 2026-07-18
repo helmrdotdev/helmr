@@ -414,9 +414,9 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	}
 	var cmdEnv []string
 	if imageMode && runtimeUser != nil {
-		cmdEnv = imageRuntimeEnv(imageConfig, runtimeUser, launchCwd)
+		cmdEnv = managedRuntimeEnv(imageConfig, runtimeUser, launchCwd)
 	} else {
-		cmdEnv = mergeEnv(os.Environ(), imageConfig.Env, nil)
+		cmdEnv = sanitizeManagedRuntimeEnv(mergeEnv(os.Environ(), imageConfig.Env, nil))
 	}
 	taskAdapterSourceRoot, err := runtimeSourceHostPath(imageRoot, taskAdapterCwd, imageMode)
 	if err != nil {
@@ -480,6 +480,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
 	}
+	cmd.Env = sanitizeManagedRuntimeEnv(cmd.Env)
 	pipes, err := openAdapterOutputPipes(cmd)
 	if err != nil {
 		return writeRunSetupFailure(conn, err)

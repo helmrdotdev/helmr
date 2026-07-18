@@ -9,7 +9,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	"github.com/helmrdotdev/helmr/internal/region"
 )
 
 const (
@@ -76,20 +78,23 @@ func ValidateReuseDescriptor(descriptor ReuseDescriptor) error {
 			return fmt.Errorf("deployment reuse descriptor %s is not a canonical UUID", name)
 		}
 	}
-	if err := validateReuseText("buildRegionId", descriptor.BuildRegionID, false); err != nil {
-		return err
+	if err := region.ValidateID(descriptor.BuildRegionID); err != nil {
+		return fmt.Errorf("deployment reuse descriptor buildRegionId: %w", err)
 	}
 	if !sha256DigestPattern.MatchString(descriptor.ContentHash) {
 		return fmt.Errorf("deployment reuse descriptor contentHash is not a lowercase SHA-256 digest")
 	}
-	if err := validateReuseText("apiVersion", descriptor.APIVersion, false); err != nil {
+	if err := validateReuseText("apiVersion", descriptor.APIVersion); err != nil {
 		return err
 	}
-	if err := validateReuseText("sdkVersion", descriptor.SDKVersion, true); err != nil {
-		return err
+	if len(descriptor.APIVersion) > api.MaxClientVersionBytes {
+		return fmt.Errorf("deployment reuse descriptor apiVersion exceeds %d bytes", api.MaxClientVersionBytes)
 	}
-	if err := validateReuseText("cliVersion", descriptor.CLIVersion, true); err != nil {
-		return err
+	if err := api.ValidateClientVersion(descriptor.SDKVersion); err != nil {
+		return fmt.Errorf("deployment reuse descriptor sdkVersion: %w", err)
+	}
+	if err := api.ValidateClientVersion(descriptor.CLIVersion); err != nil {
+		return fmt.Errorf("deployment reuse descriptor cliVersion: %w", err)
 	}
 	if descriptor.BundleFormatVersion < 1 {
 		return fmt.Errorf("deployment reuse descriptor bundleFormatVersion must be positive")
@@ -113,10 +118,10 @@ func ValidateReuseDescriptor(descriptor ReuseDescriptor) error {
 	return nil
 }
 
-func validateReuseText(name, value string, allowEmpty bool) error {
+func validateReuseText(name, value string) error {
 	if !utf8.ValidString(value) ||
 		strings.TrimSpace(value) != value ||
-		(!allowEmpty && value == "") {
+		value == "" {
 		return fmt.Errorf("deployment reuse descriptor %s is not normalized", name)
 	}
 	for _, character := range value {

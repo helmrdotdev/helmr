@@ -218,6 +218,10 @@ module "control" {
   additional_control_security_group_ids      = local.control_security_group_ids
   cloudfront_origin_domain_name              = var.cloudfront_origin_domain_name
   control_image                              = var.control_image
+  runtime_store_uri                          = var.runtime_store_uri
+  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
+  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  runtime_policy_digest                      = var.runtime_policy_digest
   create_control_repository                  = true
   create_control_service                     = var.create_control_service
   control_desired_count                      = var.control_desired_count
@@ -262,6 +266,7 @@ module "run_worker" {
 
   name                                       = local.run_worker_name
   worker_group_id                            = local.run_worker_group_id
+  region_id                                  = var.region_id
   worker_roles                               = ["run"]
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids
@@ -291,6 +296,10 @@ module "run_worker" {
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
+  runtime_store_uri                          = var.runtime_store_uri
+  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
+  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  runtime_policy_digest                      = null
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key
@@ -306,6 +315,7 @@ module "build_worker" {
 
   name                                       = local.build_worker_name
   worker_group_id                            = local.build_worker_group_id
+  region_id                                  = var.region_id
   worker_roles                               = ["build"]
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids
@@ -329,12 +339,18 @@ module "build_worker" {
   worker_execution_slots                     = var.build_worker_execution_slots != null ? var.build_worker_execution_slots : var.worker_execution_slots
   substrate_cache_max_mib                    = coalesce(var.build_worker_substrate_cache_max_mib, var.worker_substrate_cache_max_mib)
   artifact_cache_max_mib                     = coalesce(var.build_worker_artifact_cache_max_mib, var.worker_artifact_cache_max_mib)
+  build_cache_mib                            = local.build_worker_build_cache_mib + local.build_worker_artifact_cache_mib
+  build_scratch_mib                          = local.build_worker_scratch_mib
   worker_environment                         = var.worker_environment
   buildkit_slirp_cidr                        = var.worker_buildkit_slirp_cidr
   worker_control_url                         = local.worker_control_url
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
+  runtime_store_uri                          = var.runtime_store_uri
+  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
+  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  runtime_policy_digest                      = var.runtime_policy_digest
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key

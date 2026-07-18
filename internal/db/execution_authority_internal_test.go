@@ -86,7 +86,7 @@ func TestBuildPlacementFreezesResourceVector(t *testing.T) {
 			t.Fatalf("build placement must freeze %s", token)
 		}
 	}
-	if !strings.Contains(claimDeploymentBuildLease, "lease_sequence") ||
+	if !strings.Contains(claimNextDeploymentBuildLease, "lease_sequence") ||
 		!strings.Contains(renewDeploymentBuildLease, "lease_sequence") {
 		t.Fatal("build claim and renewal must share the lease-sequence fence")
 	}

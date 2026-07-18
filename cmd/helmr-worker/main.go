@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
 
@@ -32,6 +33,12 @@ func main() {
 		case "status":
 			if err := runStatus(log); err != nil {
 				log.Error("get worker status", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "runtime":
+			if err := runRuntimeCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("manage runtime", "error", err)
 				os.Exit(1)
 			}
 			return

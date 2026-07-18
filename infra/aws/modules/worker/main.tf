@@ -32,6 +32,7 @@ locals {
   worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
+    HELMR_REGION_ID                         = var.region_id
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
     HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
     HELMR_WORKER_BUILDKIT_ADDR              = "unix:///run/helmr/buildkit/buildkitd.sock"
@@ -43,22 +44,31 @@ locals {
     HELMR_WORKER_FIRECRACKER_CGROUP_VERSION = "2"
     HELMR_WORKER_CNI_NETWORK                = "helmr"
     HELMR_WORKER_CNI_PROFILE                = "helmr/v0"
-    HELMR_WORKER_WORK_DIR                   = "/var/lib/helmr"
+    HELMR_WORKER_WORK_DIR                   = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/worker" : "/var/lib/helmr"
     HELMR_WORKER_INSTANCE_CREDENTIAL_PATH   = "/var/lib/helmr/worker-credential.json"
     HELMR_WORKER_ROLES                      = join(",", sort(tolist(var.worker_roles)))
     HELMR_WORKER_IMAGES_DIR                 = "/var/lib/helmr/images"
-    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = "/var/lib/helmr/jailer"
+    HELMR_WORKER_FIRECRACKER_CHROOT_DIR     = contains(var.worker_roles, "build") ? "/var/lib/helmr/scratch/jailer" : "/var/lib/helmr/jailer"
     HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS = length(var.network_blocked_ipv4_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv4_cidrs)
     HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS = length(var.network_blocked_ipv6_cidrs) == 0 ? "none" : join(",", var.network_blocked_ipv6_cidrs)
     HELMR_VM_VCPUS                          = tostring(var.vm_vcpus)
     HELMR_VM_MEMORY_MIB                     = tostring(var.vm_memory_mib)
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
-  }, local.disk_environment, local.capacity_environment, local.cache_environment)
+    }, contains(var.worker_roles, "build") ? {
+    HELMR_RUNTIME_STORE_URI        = var.runtime_store_uri
+    HELMR_RUNTIME_POLICY_PATH      = "/etc/helmr/runtime-policy.json"
+    HELMR_WORKER_BUILD_CACHE_DIR   = "/var/lib/helmr/cache"
+    HELMR_WORKER_BUILD_SCRATCH_DIR = "/var/lib/helmr/scratch"
+  } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
-  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), ["HELMR_CHECKPOINT_ENCRYPTION_KEY"]))
-  worker_environment_conflicts     = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
-  base_worker_environment          = merge(local.worker_environment, var.worker_environment)
+  reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
+    "HELMR_CHECKPOINT_ENCRYPTION_KEY",
+    "HELMR_RUNTIME_POLICY_PATH",
+    "HELMR_RUNTIME_STORE_URI"
+  ]))
+  worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
+  base_worker_environment      = merge(local.worker_environment, var.worker_environment)
 
   buildkit_slirp_cidr_parts   = regex("^([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.([0-9]+)/([0-9]+)$", var.buildkit_slirp_cidr)
   buildkit_slirp_cidr_prefix  = tonumber(local.buildkit_slirp_cidr_parts[4])
@@ -126,7 +136,7 @@ resource "aws_iam_role_policy" "worker" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Effect = "Allow"
         Action = [
@@ -172,8 +182,26 @@ resource "aws_iam_role_policy" "worker" {
           "secretsmanager:GetSecretValue"
         ]
         Resource = [var.secret_arns.checkpoint_encryption_key]
-      }
-    ]
+      },
+      ], [for statement in [
+        {
+          Sid      = "ReadManagedRuntimeObjects"
+          Effect   = "Allow"
+          Action   = ["s3:GetObject"]
+          Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
+        },
+        {
+          Sid      = "DecryptManagedRuntimeObjects"
+          Effect   = "Allow"
+          Action   = ["kms:Decrypt"]
+          Resource = var.runtime_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+            }
+          }
+        }
+    ] : statement if contains(var.worker_roles, "build")])
   })
 }
 
@@ -212,6 +240,11 @@ resource "aws_launch_template" "worker" {
     network_blocked_ipv4_cidrs           = var.network_blocked_ipv4_cidrs
     network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
     aws_region                           = data.aws_region.current.region
+    runtime_store_uri                    = var.runtime_store_uri
+    runtime_policy_digest                = var.runtime_policy_digest == null ? "" : var.runtime_policy_digest
+    build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
+    build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
+    worker_disk_reserve_mib              = var.worker_disk_reserve_mib
   }))
 
   iam_instance_profile {
@@ -258,12 +291,47 @@ resource "terraform_data" "network_preconditions" {
     buildkit_slirp_cidr        = var.buildkit_slirp_cidr
     network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
     reserved_env_conflicts     = local.worker_environment_conflicts
+    runtime_store_uri          = var.runtime_store_uri
+    runtime_policy_digest      = var.runtime_policy_digest
+    build_cache_mib            = var.build_cache_mib
+    build_scratch_mib          = var.build_scratch_mib
   }
 
   lifecycle {
     precondition {
       condition     = length(local.worker_environment_conflicts) == 0
       error_message = "worker_environment must not set infra-owned HELMR_* routing or security variables. Use explicit worker module inputs instead."
+    }
+
+    precondition {
+      condition     = var.runtime_store_uri == "s3://${trimprefix(var.runtime_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}/objects"
+      error_message = "runtime_store_uri must identify the bucket supplied by runtime_store_bucket_arn and end in /objects."
+    }
+
+    precondition {
+      condition     = var.runtime_store_bucket_arn != var.cas_bucket_arn
+      error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
+    }
+
+    precondition {
+      condition     = contains(var.worker_roles, "build") == (var.runtime_policy_digest != null)
+      error_message = "build-capable workers require runtime_policy_digest; run-only workers must not receive current runtime policy."
+    }
+
+    precondition {
+      condition = contains(var.worker_roles, "build") == (
+        var.build_cache_mib != null &&
+        var.build_scratch_mib != null
+      )
+      error_message = "build-capable workers require build_cache_mib and build_scratch_mib; run-only workers must not allocate build filesystems."
+    }
+
+    precondition {
+      condition = !contains(var.worker_roles, "build") || (
+        var.worker_disk_reserve_mib >= 1024 &&
+        coalesce(var.build_scratch_mib, 0) >= var.vm_scratch_disk_mib
+      )
+      error_message = "build workers require at least 1024 MiB of unadvertised root reserve and a scratch filesystem large enough for one VM scratch disk."
     }
 
     precondition {

@@ -78,6 +78,7 @@ func buildQueueMessage(row db.ListQueuedDeploymentBuildCandidatesRow) (Message, 
 		ProjectID: projectID, EnvironmentID: environmentID, RegionID: row.BuildRegionID,
 		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: row.LeaseSequence,
 		QueueTimestamp: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
+		BuildArchitecture: row.BuildArchitecture,
 		BuildResources: BuildResourceVector{CPUMillis: row.BuildRequestedCpuMillis, MemoryBytes: row.BuildRequestedMemoryBytes,
 			WorkloadDiskBytes: row.BuildRequestedWorkloadDiskBytes, ScratchBytes: row.BuildRequestedScratchBytes,
 			Executors: row.BuildRequestedExecutors}}

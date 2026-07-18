@@ -54,6 +54,8 @@ jobs:
             app: ci-linux-compile
           - name: linux lint
             app: ci-linux-lint
+          - name: infrastructure
+            app: ci-infra-test
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:

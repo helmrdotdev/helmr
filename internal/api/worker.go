@@ -381,6 +381,16 @@ type WorkerDeploymentBuild struct {
 	ProjectID             string                   `json:"project_id"`
 	EnvironmentID         string                   `json:"environment_id"`
 	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
+	Runtime               WorkerRuntimeDescriptor  `json:"runtime"`
+}
+
+type WorkerRuntimeDescriptor struct {
+	Architecture      string `json:"architecture"`
+	Digest            string `json:"digest"`
+	FormatVersion     int    `json:"formatVersion"`
+	MediaType         string `json:"mediaType"`
+	RuntimeAPIVersion string `json:"runtimeApiVersion"`
+	SizeBytes         int64  `json:"sizeBytes"`
 }
 
 type WorkerRun struct {
@@ -624,6 +634,7 @@ type WorkerDeploymentTaskSchedule struct {
 type WorkerDeploymentBuildResult struct {
 	BuildManifestDigest      string                      `json:"build_manifest_digest"`
 	DeploymentManifestDigest string                      `json:"deployment_manifest_digest"`
+	ProgramReceipt           json.RawMessage             `json:"program_receipt,omitempty"`
 	Tasks                    []WorkerDeploymentBuildTask `json:"tasks"`
 	Queues                   []WorkerDeploymentQueue     `json:"queues"`
 	Streams                  []WorkerDeploymentStream    `json:"streams,omitempty"`

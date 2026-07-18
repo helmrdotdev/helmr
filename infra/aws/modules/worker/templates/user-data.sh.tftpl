@@ -43,6 +43,113 @@ chown root:root "$env_tmp"
 chmod 0600 "$env_tmp"
 mv "$env_tmp" /etc/helmr/worker.env
 
+%{ if worker_supports_build ~}
+storage_dir=/var/lib/helmr/storage
+cache_mount=/var/lib/helmr/cache
+scratch_mount=/var/lib/helmr/scratch
+cache_backing="$storage_dir/build-cache.ext4"
+scratch_backing="$storage_dir/build-scratch.ext4"
+cache_usable_bytes=$((${build_cache_mib} * 1048576))
+scratch_usable_bytes=$((${build_scratch_mib} * 1048576))
+filesystem_headroom_bytes=$((256 * 1048576))
+cache_raw_bytes=$((cache_usable_bytes + filesystem_headroom_bytes))
+scratch_raw_bytes=$((scratch_usable_bytes + filesystem_headroom_bytes))
+required_free_bytes=$((${worker_disk_reserve_mib} * 1048576))
+
+for path in "$storage_dir" "$cache_mount" "$scratch_mount" "$cache_backing" "$scratch_backing"; do
+  [ ! -L "$path" ] || {
+    echo "$path must not be a symlink" >&2
+    exit 1
+  }
+done
+install -d -m 0700 -o root -g root "$storage_dir"
+install -d -m 0755 -o root -g root "$cache_mount" "$scratch_mount"
+for mount_path in "$cache_mount" "$scratch_mount"; do
+  if ! mountpoint -q "$mount_path" &&
+    find "$mount_path" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "$mount_path contains data on the parent filesystem" >&2
+    exit 1
+  fi
+done
+[ -e "$cache_backing" ] || required_free_bytes=$((required_free_bytes + cache_raw_bytes))
+[ -e "$scratch_backing" ] || required_free_bytes=$((required_free_bytes + scratch_raw_bytes))
+parent_available_bytes="$(df -B1 --output=avail /var/lib/helmr | tail -n 1 | tr -d ' ')"
+[ "$parent_available_bytes" -ge "$required_free_bytes" ] || {
+  echo "the root data extent cannot allocate both build filesystems while preserving its fixed reserve" >&2
+  exit 1
+}
+
+prepare_backing() {
+  path="$1"
+  raw_bytes="$2"
+
+  if [ -e "$path" ]; then
+    [ -f "$path" ] || {
+      echo "$path is not a regular backing file" >&2
+      exit 1
+    }
+    [ "$(stat -c %s "$path")" -eq "$raw_bytes" ] || {
+      echo "$path has an unexpected size; build filesystems are never resized in place" >&2
+      exit 1
+    }
+  else
+    fallocate --posix -l "$raw_bytes" "$path"
+    mkfs.ext4 -F -q -m 0 -T largefile4 \
+      -E nodiscard,lazy_itable_init=0,lazy_journal_init=0 "$path"
+  fi
+
+  allocated_bytes=$(($(stat -c %b "$path") * 512))
+  [ "$allocated_bytes" -eq "$raw_bytes" ] || {
+    echo "$path allocation does not equal its configured raw size" >&2
+    exit 1
+  }
+  [ "$(blkid -p -s TYPE -o value "$path")" = ext4 ] || {
+    echo "$path is not an ext4 filesystem" >&2
+    exit 1
+  }
+}
+
+prepare_backing "$cache_backing" "$cache_raw_bytes"
+prepare_backing "$scratch_backing" "$scratch_raw_bytes"
+
+cat >/etc/systemd/system/var-lib-helmr-cache.mount <<'EOF'
+[Unit]
+Description=Helmr build cache filesystem
+Before=helmr-buildkit.service ${worker_service_name}.service
+
+[Mount]
+What=/var/lib/helmr/storage/build-cache.ext4
+Where=/var/lib/helmr/cache
+Type=ext4
+Options=loop,nosuid,nodev,nodiscard
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat >/etc/systemd/system/var-lib-helmr-scratch.mount <<'EOF'
+[Unit]
+Description=Helmr build scratch filesystem
+Before=${worker_service_name}.service
+
+[Mount]
+What=/var/lib/helmr/storage/build-scratch.ext4
+Where=/var/lib/helmr/scratch
+Type=ext4
+Options=loop,nosuid,nodev,nodiscard
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+install -d -m 0755 "/etc/systemd/system/${worker_service_name}.service.d"
+cat >"/etc/systemd/system/${worker_service_name}.service.d/20-build-storage.conf" <<'EOF'
+[Unit]
+RequiresMountsFor=/var/lib/helmr/cache /var/lib/helmr/scratch
+After=var-lib-helmr-cache.mount var-lib-helmr-scratch.mount
+EOF
+%{ endif ~}
+
 cat >/usr/local/bin/helmr-asg-lifecycle <<'EOF'
 #!/bin/sh
 set -eu
@@ -190,12 +297,13 @@ esac
 EOF
 chmod 0755 /usr/local/bin/helmr-asg-lifecycle
 
+%{ if worker_supports_build ~}
 install -d -m 0755 /etc/systemd/system/helmr-buildkit.service.d
 cat >/etc/systemd/system/helmr-buildkit.service.d/10-network-policy.conf <<'EOF'
 [Service]
 BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
 ExecStart=
-ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
+ExecStart=/usr/local/bin/rootlesskit --net=slirp4netns --cidr=${buildkit_slirp_cidr} --copy-up=/etc --disable-host-loopback /usr/local/bin/buildkitd --addr unix:///run/helmr/buildkit/buildkitd.sock --root /var/lib/helmr/cache/buildkit --oci-worker=true --oci-worker-snapshotter=fuse-overlayfs
 %{ for cidr in network_blocked_ipv4_cidrs ~}
 IPAddressDeny=${cidr}
 %{ endfor ~}
@@ -205,6 +313,10 @@ IPAddressDeny=${cidr}
 EOF
 
 cat >/etc/systemd/system/helmr-buildkit.service.d/20-resource-limits.conf <<'EOF'
+[Unit]
+RequiresMountsFor=/var/lib/helmr/cache
+After=var-lib-helmr-cache.mount
+
 [Service]
 Delegate=yes
 CPUQuota=100%
@@ -213,6 +325,15 @@ MemorySwapMax=0
 TasksMax=1024
 MemoryOOMGroup=yes
 EOF
+%{ else ~}
+install -d -m 0755 "/etc/systemd/system/${worker_service_name}.service.d"
+cat >"/etc/systemd/system/${worker_service_name}.service.d/20-run-only.conf" <<'EOF'
+[Unit]
+Wants=
+After=
+After=network-online.target
+EOF
+%{ endif ~}
 
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
@@ -232,6 +353,48 @@ EOF
 
 systemctl daemon-reload
 %{ if worker_supports_build ~}
+systemctl enable --now var-lib-helmr-cache.mount var-lib-helmr-scratch.mount
+
+cache_source="$(findmnt -n -o SOURCE --target /var/lib/helmr/cache)"
+scratch_source="$(findmnt -n -o SOURCE --target /var/lib/helmr/scratch)"
+cache_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr/cache)"
+scratch_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr/scratch)"
+parent_device="$(findmnt -n -o MAJ:MIN --target /var/lib/helmr)"
+[ "$cache_source" != "$scratch_source" ] &&
+  [ "$cache_device" != "$scratch_device" ] &&
+  [ "$cache_device" != "$parent_device" ] &&
+  [ "$scratch_device" != "$parent_device" ] || {
+  echo "build cache and scratch must be distinct mounted filesystems" >&2
+  exit 1
+}
+losetup -j "$cache_backing" | cut -d: -f1 | grep -Fx "$cache_source" >/dev/null || {
+  echo "build cache mount source does not match its backing file" >&2
+  exit 1
+}
+losetup -j "$scratch_backing" | cut -d: -f1 | grep -Fx "$scratch_source" >/dev/null || {
+  echo "build scratch mount source does not match its backing file" >&2
+  exit 1
+}
+[ "$(df -B1 --output=avail "$cache_mount" | tail -n 1 | tr -d ' ')" -ge "$cache_usable_bytes" ] || {
+  echo "build cache filesystem has less usable capacity than configured" >&2
+  exit 1
+}
+[ "$(df -B1 --output=avail "$scratch_mount" | tail -n 1 | tr -d ' ')" -ge "$scratch_usable_bytes" ] || {
+  echo "build scratch filesystem has less usable capacity than configured" >&2
+  exit 1
+}
+for path in "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"; do
+  [ ! -L "$path" ] || {
+    echo "$path must not be a symlink" >&2
+    exit 1
+  }
+done
+install -d -m 0755 "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"
+
+"$worker_binary" runtime install \
+  --store '${runtime_store_uri}' \
+  --digest '${runtime_policy_digest}' \
+  --output /etc/helmr/runtime-policy.json
 systemctl enable --now helmr-buildkit.service
 %{ else ~}
 systemctl disable --now helmr-buildkit.service || true

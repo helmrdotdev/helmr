@@ -3,12 +3,13 @@ set -euo pipefail
 
 control_image="${1:-}"
 worker_amis_json="${2:-}"
-output="${3:-aws-artifacts.json}"
+worker_runtime_release_json="${3:-}"
+output="${4:-aws-artifacts.json}"
 required_worker_ami_regions="${REQUIRED_WORKER_AMI_REGIONS:-us-east-1,us-west-2,ap-northeast-1}"
 verify_release_artifacts="${VERIFY_RELEASE_ARTIFACTS:-0}"
 
-if [ -z "$control_image" ] || [ -z "$worker_amis_json" ]; then
-  echo "usage: scripts/write-aws-release-manifest.sh <control-image> <worker-amis-json> [output]" >&2
+if [ -z "$control_image" ] || [ -z "$worker_amis_json" ] || [ -z "$worker_runtime_release_json" ]; then
+  echo "usage: scripts/write-aws-release-manifest.sh <control-image> <worker-amis-json> <worker-runtime-release-json> [output]" >&2
   echo "set VERIFY_RELEASE_ARTIFACTS=1 to verify image and AMI visibility before writing" >&2
   exit 1
 fi
@@ -43,6 +44,17 @@ jq -e --arg required_worker_ami_regions "$required_worker_ami_regions" '
   and all(keys[]; test("^[a-z]{2}-[a-z-]+-[0-9]+$"))
   and all(.[]; type == "string" and test("^ami-[0-9a-f]{8,}$"))
 ' >/dev/null <<<"$worker_amis_json"
+
+jq -e '
+  keys == ["kms_key_arn", "s3_uri", "sha256", "version_id"]
+  and (.s3_uri | type == "string" and test("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^?#]+$"))
+  and (.version_id | type == "string" and length > 0 and . != "null")
+  and (.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
+  and (
+    .kms_key_arn == null or
+    (.kms_key_arn | type == "string" and test("^arn:[^:]+:kms:[a-z0-9-]+:[0-9]{12}:key/[A-Za-z0-9-]+$"))
+  )
+' >/dev/null <<<"$worker_runtime_release_json"
 
 verify_control_image() {
   if command -v docker >/dev/null 2>&1; then
@@ -85,7 +97,9 @@ fi
 jq -n \
   --arg control_image "$control_image" \
   --argjson worker_amis "$worker_amis_json" \
+  --argjson worker_runtime_release "$worker_runtime_release_json" \
   '{
     control_image: $control_image,
-    worker_amis: $worker_amis
+    worker_amis: $worker_amis,
+    worker_runtime_release: $worker_runtime_release
   }' >"$output"

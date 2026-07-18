@@ -216,12 +216,12 @@ func artifactFromDescriptor(
 	var stat unix.Stat_t
 	if err := unix.Fstat(fd, &stat); err != nil {
 		return programArtifact{}, &artifactInfrastructureError{
-			cause: fmt.Errorf("stat Artifact descriptor: %w", err),
+			cause: fmt.Errorf("stat artifact descriptor: %w", err),
 		}
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size < 0 {
 		return programArtifact{}, &artifactInfrastructureError{
-			cause: errors.New("Artifact descriptor is not a regular file"),
+			cause: errors.New("artifact descriptor is not a regular file"),
 		}
 	}
 	physicalLimit, err := artifactPhysicalLimit(role)
@@ -231,7 +231,7 @@ func artifactFromDescriptor(
 	if stat.Size < 1 || stat.Size > physicalLimit {
 		return programArtifact{}, &artifactContentError{
 			cause: fmt.Errorf(
-				"Artifact physical size = %d, want within [1,%d]",
+				"artifact physical size = %d, want within [1,%d]",
 				stat.Size,
 				physicalLimit,
 			),
@@ -262,7 +262,7 @@ func digestVerifierDescriptor(
 ) (string, error) {
 	if size < 0 {
 		return "", &artifactInfrastructureError{
-			cause: fmt.Errorf("Artifact size = %d", size),
+			cause: fmt.Errorf("artifact size = %d", size),
 		}
 	}
 	hash := sha256.New()

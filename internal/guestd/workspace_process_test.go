@@ -14,6 +14,33 @@ type recordingWriteCloser struct {
 	closed bool
 }
 
+func TestWorkspaceProcessEnvPreservesToolRuntimeConfiguration(t *testing.T) {
+	entry := &workspaceMountEntry{
+		imageConfig: ociRuntimeConfig{Env: []string{"PATH=/workspace/bin:/usr/bin"}},
+		runtimeUser: &resolvedRuntimeUser{
+			Name: "helmr",
+			UID:  1000,
+			GID:  1000,
+			Home: "/home/helmr",
+		},
+	}
+	expected := map[string]string{
+		"NODE_OPTIONS": "--trace-warnings",
+		"OPENSSL_CONF": "/workspace/openssl.cnf",
+		"GCONV_PATH":   "/workspace/gconv",
+		"LOCPATH":      "/workspace/locale",
+	}
+	env, err := entry.workspaceProcessEnv("/workspace", expected)
+	if err != nil {
+		t.Fatalf("workspace process env: %v", err)
+	}
+	for key, want := range expected {
+		if got := envValue(env, key); got != want {
+			t.Fatalf("%s = %q, want %q", key, got, want)
+		}
+	}
+}
+
 func (w *recordingWriteCloser) Close() error {
 	w.closed = true
 	return nil

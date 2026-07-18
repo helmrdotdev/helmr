@@ -261,9 +261,7 @@ func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
 }
 
 func normalizeBinTarget(target string) (string, error) {
-	if strings.HasPrefix(target, "./") {
-		target = strings.TrimPrefix(target, "./")
-	}
+	target = strings.TrimPrefix(target, "./")
 	if target == "" || !utf8.ValidString(target) || strings.HasPrefix(target, "/") ||
 		strings.Contains(target, "\\") {
 		return "", fmt.Errorf("bin target %q is not a confined relative POSIX path", target)

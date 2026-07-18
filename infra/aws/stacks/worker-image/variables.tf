@@ -41,6 +41,33 @@ variable "source_bundle_kms_key_arn" {
   nullable    = true
 }
 
+variable "release_package_s3_uri" {
+  description = "Exact S3 URI for the versioned Worker runtime release package."
+  type        = string
+}
+
+variable "release_package_object_arn" {
+  description = "Exact S3 object ARN for release_package_s3_uri."
+  type        = string
+}
+
+variable "release_package_kms_key_arn" {
+  description = "Optional KMS key ARN used to encrypt the Worker runtime release package."
+  type        = string
+  default     = null
+  nullable    = true
+}
+
+variable "release_package_version_id" {
+  description = "Exact S3 object version containing the Worker runtime release package."
+  type        = string
+}
+
+variable "release_package_sha256" {
+  description = "Exact lowercase SHA-256 of the uncompressed Worker runtime release package tar."
+  type        = string
+}
+
 variable "parent_image" {
   description = "Optional parent AMI or Image Builder image ARN."
   type        = string

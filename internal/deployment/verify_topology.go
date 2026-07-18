@@ -2,7 +2,6 @@ package deployment
 
 import (
 	"fmt"
-	"io"
 	"path"
 	"strings"
 )
@@ -10,12 +9,12 @@ import (
 func (verifier *pairVerifier) deriveTopology() error {
 	verifier.codeLinks = make(map[string]string)
 	verifier.depLinks = make(map[string]string)
+	verifier.binLinks = make(map[string]string)
 	verifier.depDirs = map[string]struct{}{
 		".":            {},
 		".helmr":       {},
 		".helmr/views": {},
 	}
-	verifier.shims = make(map[string][]byte)
 	verifier.binRoots = make(map[string]struct{})
 
 	for _, local := range verifier.graph.LocalPackages {
@@ -54,7 +53,7 @@ func (verifier *pairVerifier) deriveTopology() error {
 		} else {
 			verifier.depLinks[logical] = canonicalRelativeTarget(logicalAbsolute, target)
 		}
-		if err := verifier.deriveShims(container, resolution.To); err != nil {
+		if err := verifier.deriveBinLinks(container, resolution.To); err != nil {
 			return fmt.Errorf("dependency %q from %q: %w", resolution.Dependency, container, err)
 		}
 	}
@@ -101,72 +100,40 @@ func (verifier *pairVerifier) endpointManifest(endpoint PackageEndpoint) package
 	return verifier.depManifests[path.Join(*endpoint.InstallPath, "package.json")]
 }
 
-func (verifier *pairVerifier) deriveShims(container string, endpoint PackageEndpoint) error {
+func (verifier *pairVerifier) deriveBinLinks(container string, endpoint PackageEndpoint) error {
 	manifest := verifier.endpointManifest(endpoint)
 	for command, target := range manifest.Bins {
-		shimPath := path.Join(container, ".bin", command)
-		if _, exists := verifier.shims[shimPath]; exists {
+		linkPath := path.Join(container, ".bin", command)
+		if _, exists := verifier.binLinks[linkPath]; exists {
 			return fmt.Errorf("bin command %q collides in container %q", command, container)
 		}
 		targetPath := target
 		var artifact *inspectedArtifact
-		var absolute string
+		var absoluteTarget string
 		if endpoint.Kind == PackageKindLocal {
 			targetPath = joinArtifactPath(*endpoint.Path, target)
 			artifact = verifier.code
-			absolute = absoluteCode(targetPath)
+			absoluteTarget = absoluteCode(targetPath)
 		} else {
 			targetPath = path.Join(*endpoint.InstallPath, target)
 			artifact = verifier.deps
-			absolute = absoluteDependency(targetPath)
+			absoluteTarget = absoluteDependency(targetPath)
 		}
 		entry, err := artifact.require(targetPath, artifactEntryRegular)
 		if err != nil {
 			return fmt.Errorf("bin target %q: %w", targetPath, err)
 		}
-		if err := verifier.validateBinTarget(artifact, entry); err != nil {
-			return fmt.Errorf("bin target %q: %w", targetPath, err)
+		if entry.Mode != 0755 {
+			return fmt.Errorf("bin target %q mode = %#o, want 0755", targetPath, entry.Mode)
 		}
-		escaped := strings.ReplaceAll(absolute, "'", "'\\''")
-		verifier.shims[shimPath] = []byte(
-			"#!/opt/helmr/runtime/bin/helmr-sh\n" +
-				"exec /opt/helmr/runtime/bin/node " +
-				"--import=file:///opt/helmr/runtime/helmr/preload.mjs '" +
-				escaped + "' \"$@\"\n",
+		verifier.binLinks[linkPath] = canonicalRelativeTarget(
+			absoluteDependency(linkPath),
+			absoluteTarget,
 		)
 		verifier.depDirs[path.Join(container, ".bin")] = struct{}{}
-		addAncestorDirectories(verifier.depDirs, shimPath, container)
+		addAncestorDirectories(verifier.depDirs, linkPath, container)
 	}
 	return nil
-}
-
-func (verifier *pairVerifier) validateBinTarget(
-	artifact *inspectedArtifact,
-	entry artifactEntry,
-) error {
-	switch path.Ext(entry.Path) {
-	case ".js", ".mjs", ".cjs":
-		return nil
-	case "":
-	default:
-		return fmt.Errorf("extension %q is unsupported", path.Ext(entry.Path))
-	}
-	reader, err := artifact.reader.Open(verifier.ctx, entry.Path)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	prefix, err := io.ReadAll(io.LimitReader(reader, 21))
-	if err != nil {
-		return err
-	}
-	for _, shebang := range []string{"#!/usr/bin/env node", "#!/usr/bin/node"} {
-		if string(prefix) == shebang && entry.SizeBytes == int64(len(shebang)) ||
-			len(prefix) > len(shebang) && string(prefix[:len(shebang)+1]) == shebang+"\n" {
-			return nil
-		}
-	}
-	return fmt.Errorf("extensionless target has no exact admitted Node shebang")
 }
 
 func addAncestorDirectories(set map[string]struct{}, value, stop string) {

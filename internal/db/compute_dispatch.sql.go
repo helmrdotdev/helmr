@@ -666,6 +666,7 @@ const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
 SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
+       runtime_identities.runtime_arch,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
@@ -745,6 +746,7 @@ type GetWorkerInstanceStateRow struct {
 	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
 	RootfsDigest                pgtype.Text         `json:"rootfs_digest"`
 	RuntimeABI                  pgtype.Text         `json:"runtime_abi"`
+	RuntimeArch                 pgtype.Text         `json:"runtime_arch"`
 	ActiveExecutions            int32               `json:"active_executions"`
 }
 
@@ -799,6 +801,7 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.UpdatedAt,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
+		&i.RuntimeArch,
 		&i.ActiveExecutions,
 	)
 	return i, err

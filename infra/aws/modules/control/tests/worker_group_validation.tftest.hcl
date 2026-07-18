@@ -1,6 +1,80 @@
 mock_provider "aws" {}
 mock_provider "random" {}
 
+override_resource {
+  target = aws_kms_key.helmr
+  values = {
+    arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+  }
+}
+
+override_resource {
+  target = aws_lb.control
+  values = {
+    arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:loadbalancer/app/helmr-test/0000000000000000"
+  }
+}
+
+override_resource {
+  target = aws_lb_target_group.control
+  values = {
+    arn = "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/helmr-test/0000000000000000"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.control_execution
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-control-execution"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.dispatcher_execution
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-dispatcher-execution"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.control_task
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-control-task"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.dispatcher_task
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-dispatcher-task"
+  }
+}
+
+override_resource {
+  target = aws_iam_role.migration_task
+  values = {
+    arn = "arn:aws:iam::000000000000:role/helmr-test-migration-task"
+  }
+}
+
+override_resource {
+  target = aws_db_instance.postgres
+  values = {
+    master_user_secret = [{
+      kms_key_id    = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000000"
+      secret_arn    = "arn:aws:secretsmanager:us-east-1:000000000000:secret:database-master"
+      secret_status = "active"
+    }]
+  }
+}
+
+variables {
+  runtime_store_uri         = "s3://helmr-test-runtime/objects"
+  runtime_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
+  runtime_store_kms_key_arn = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
+  runtime_policy_digest     = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+}
+
 run "worker_group_requires_a_role" {
   command = plan
 

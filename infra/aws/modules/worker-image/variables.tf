@@ -36,6 +36,58 @@ variable "source_bundle_kms_key_arn" {
   nullable    = true
 }
 
+variable "release_package_s3_uri" {
+  description = "Exact S3 URI for the versioned Worker runtime release package."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9._~!$&()+,;=:@%/+\\-]+$", var.release_package_s3_uri))
+    error_message = "release_package_s3_uri must be an exact S3 object URI with a shell-safe bucket and key."
+  }
+}
+
+variable "release_package_object_arn" {
+  description = "Exact S3 object ARN for release_package_s3_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[a-z0-9-]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[A-Za-z0-9._~!$&()+,;=:@%/+\\-]+$", var.release_package_object_arn))
+    error_message = "release_package_object_arn must be an exact S3 object ARN."
+  }
+}
+
+variable "release_package_kms_key_arn" {
+  description = "Optional KMS key ARN used to encrypt the Worker runtime release package."
+  type        = string
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.release_package_kms_key_arn == null || can(regex("^arn:[a-z0-9-]+:kms:[a-z0-9-]+:[0-9]{12}:key/[0-9A-Za-z/_+=,.@:-]+$", var.release_package_kms_key_arn))
+    error_message = "release_package_kms_key_arn must be null or a KMS key ARN."
+  }
+}
+
+variable "release_package_version_id" {
+  description = "Exact S3 object version containing the Worker runtime release package."
+  type        = string
+
+  validation {
+    condition     = var.release_package_version_id != "null" && length(var.release_package_version_id) <= 1024 && can(regex("^[A-Za-z0-9._~+=/-]+$", var.release_package_version_id))
+    error_message = "release_package_version_id must be a non-null, shell-safe S3 version ID."
+  }
+}
+
+variable "release_package_sha256" {
+  description = "Exact lowercase SHA-256 of the uncompressed Worker runtime release package tar."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.release_package_sha256))
+    error_message = "release_package_sha256 must be exactly 64 lowercase hexadecimal characters."
+  }
+}
+
 variable "parent_image" {
   description = "Parent AMI or Image Builder image ARN. Defaults to the latest Ubuntu 24.04 amd64 server AMI."
   type        = string

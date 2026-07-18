@@ -26,16 +26,16 @@ func Ensure(ctx context.Context, store RegionStore, cfg BootstrapConfig) error {
 	if store == nil {
 		return errors.New("region bootstrap store is required")
 	}
-	regionID := strings.TrimSpace(cfg.RegionID)
+	regionID := cfg.RegionID
 	provider := strings.TrimSpace(cfg.Provider)
 	providerRegion := strings.TrimSpace(cfg.ProviderRegion)
 	displayName := strings.TrimSpace(cfg.RegionDisplayName)
-	defaultRegionID := strings.TrimSpace(cfg.DefaultRegionID)
-	if regionID == "" {
-		return errors.New("region id is required")
+	defaultRegionID := cfg.DefaultRegionID
+	if err := ValidateID(regionID); err != nil {
+		return fmt.Errorf("region ID: %w", err)
 	}
-	if defaultRegionID == "" {
-		return errors.New("default region id is required")
+	if err := ValidateID(defaultRegionID); err != nil {
+		return fmt.Errorf("default region ID: %w", err)
 	}
 	if provider == "" {
 		return errors.New("provider is required")

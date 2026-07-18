@@ -21,6 +21,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/jackc/pgx/v5"
@@ -28,13 +29,46 @@ import (
 )
 
 func newDeploymentTestServer(store *fakeStore, casStore cas.Store) *Server {
+	descriptor := testManagedRuntimeDescriptor()
 	return &Server{
-		db:              store,
-		cas:             casStore,
+		db:            store,
+		cas:           casStore,
+		runtimePolicy: testRuntimePolicy(),
+		runtimeStore: &fakeCAS{object: cas.Object{
+			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
+		}},
 		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
+}
+
+func deploymentTestOrgID() uuid.UUID {
+	return uuid.MustParse("00000000-0000-0000-0000-000000000300")
+}
+
+func testManagedRuntimeDescriptor() deployment.RuntimeDescriptor {
+	return deployment.RuntimeDescriptor{
+		Architecture:      deployment.ArchitectureX8664,
+		Digest:            "sha256:" + strings.Repeat("9", 64),
+		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
+		MediaType:         deployment.RuntimeArtifactMediaType,
+		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+		SizeBytes:         4096,
+	}
+}
+
+func testRuntimePolicy() *deployment.RuntimePolicy {
+	descriptor, err := deployment.CanonicalRuntimeDescriptor(testManagedRuntimeDescriptor())
+	if err != nil {
+		panic(err)
+	}
+	raw := []byte(`{"current":{"us-east-1":"` + testManagedRuntimeDescriptor().Digest + `"},"formatVersion":0,"runtimes":[` + string(descriptor) + `]}`)
+	policy, err := deployment.ParseRuntimePolicy(raw)
+	if err != nil {
+		panic(err)
+	}
+	return policy
 }
 
 func TestDeploymentSandboxContractFingerprintCanonicalizesNetworkLists(t *testing.T) {
@@ -113,6 +147,15 @@ func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
 	}
 	if store.deployment.Status != db.DeploymentStatusQueued {
 		t.Fatalf("deployment status = %s", store.deployment.Status)
+	}
+	runtimeDigest, err := deployment.RuntimeDigestBytes(testManagedRuntimeDescriptor().Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.deployment.BuildRegionID != "us-east-1" ||
+		store.deployment.BuildArchitecture != string(deployment.ArchitectureX8664) ||
+		!bytes.Equal(store.deployment.BuildRuntimeDigest, runtimeDigest) {
+		t.Fatalf("deployment build target = %+v", store.deployment)
 	}
 	if len(store.deploymentTasks) != 0 {
 		t.Fatalf("deployment tasks = %+v", store.deploymentTasks)
@@ -238,34 +281,69 @@ func TestCreateDeploymentRejectsUnsupportedVersionMetadata(t *testing.T) {
 	}
 }
 
-func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("9", 64)
+func TestDeploymentMetadataRejectsInvalidClientVersions(t *testing.T) {
+	for name, test := range map[string]struct {
+		request api.CreateDeploymentRequest
+		code    string
+	}{
+		"sdk": {
+			request: api.CreateDeploymentRequest{SDKVersion: strings.Repeat("s", api.MaxClientVersionBytes+1)},
+			code:    "invalid_sdk_version",
+		},
+		"cli": {
+			request: api.CreateDeploymentRequest{CLIVersion: " cli"},
+			code:    "invalid_cli_version",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/deployments", nil)
+			_, err := deploymentMetadataFromRequest(req, test.request)
+			if err == nil {
+				t.Fatal("deploymentMetadataFromRequest returned nil error")
+			}
+			var coded codedError
+			if !errors.As(err, &coded) || coded.code != test.code {
+				t.Fatalf("error = %v, want code %q", err, test.code)
+			}
+		})
+	}
+}
+
+func TestCreateDeploymentReusesQueuedBuild(t *testing.T) {
+	artifactDigest := "sha256:" + strings.Repeat("8", 64)
+	runtimeDigest, err := deployment.RuntimeDigestBytes(testManagedRuntimeDescriptor().Digest)
+	if err != nil {
+		t.Fatal(err)
+	}
 	store := &fakeStore{
-		createDeploymentResult: &db.Deployment{
+		deployment: db.Deployment{
 			ID:                         testDeploymentID(),
-			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
+			OrgID:                      pgvalue.UUID(deploymentTestOrgID()),
 			ProjectID:                  testProjectID(),
 			EnvironmentID:              testEnvironmentID(),
-			ContentHash:                digest,
+			BuildRegionID:              "us-east-1",
+			BuildArchitecture:          string(deployment.ArchitectureX8664),
+			BuildRuntimeDigest:         runtimeDigest,
+			ContentHash:                sha256sum.DigestBytes(validDeploymentSourceTar(t)),
+			ApiVersion:                 api.CurrentAPIVersion,
+			BundleFormatVersion:        api.CurrentBundleFormatVersion,
+			WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
 			DeploymentSourceArtifactID: testArtifactID(),
-			Status:                     db.DeploymentStatusDeployed,
+			Status:                     db.DeploymentStatusQueued,
 			CreatedAt:                  testTime(),
-			BuildingAt:                 testTime(),
-			BuiltAt:                    testTime(),
-			DeployedAt:                 testTime(),
 		},
 		artifacts: []db.Artifact{{
 			ID:            testArtifactID(),
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
+			OrgID:         pgvalue.UUID(deploymentTestOrgID()),
 			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
-			Digest:        digest,
+			Digest:        artifactDigest,
 			Kind:          db.ArtifactKindDeploymentSource,
 			SizeBytes:     12,
 			MediaType:     api.DeploymentSourceArtifactMediaType,
 		}},
 	}
-	server := newDeploymentTestServer(store, &fakeCAS{object: cas.Object{Digest: digest, SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}})
+	server := newDeploymentTestServer(store, &fakeCAS{object: cas.Object{Digest: artifactDigest, SizeBytes: 12, MediaType: api.DeploymentSourceArtifactMediaType}})
 	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
 	req := deploymentRequest(body, contentType)
 	rec := httptest.NewRecorder()
@@ -278,12 +356,84 @@ func TestCreateDeploymentReusesDeployedContentHashWithoutPromotion(t *testing.T)
 	if len(store.deploymentPromotions) != 0 {
 		t.Fatalf("deployment promotions = %+v", store.deploymentPromotions)
 	}
+	if store.createDeploymentCalls != 0 {
+		t.Fatalf("create deployment calls = %d", store.createDeploymentCalls)
+	}
 	var response api.DeploymentResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != string(db.DeploymentStatusDeployed) {
+	if response.Status != string(db.DeploymentStatusQueued) {
 		t.Fatalf("response status = %s", response.Status)
+	}
+}
+
+func TestCreateDeploymentRequiresExactRuntimeObject(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		store cas.Reader
+	}{
+		{
+			name:  "missing",
+			store: &fakeCAS{objects: map[string]cas.Object{}},
+		},
+		{
+			name: "metadata mismatch",
+			store: &fakeCAS{object: cas.Object{
+				Digest:    testManagedRuntimeDescriptor().Digest,
+				SizeBytes: testManagedRuntimeDescriptor().SizeBytes + 1,
+				MediaType: testManagedRuntimeDescriptor().MediaType,
+			}},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &fakeStore{}
+			artifactStore := &fakeCAS{object: cas.Object{
+				Digest:    "sha256:" + strings.Repeat("7", 64),
+				SizeBytes: 12,
+				MediaType: api.DeploymentSourceArtifactMediaType,
+			}}
+			server := newDeploymentTestServer(store, artifactStore)
+			server.runtimeStore = tt.store
+			body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
+			req := deploymentRequest(body, contentType)
+			rec := httptest.NewRecorder()
+
+			server.createDeployment(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if artifactStore.body != nil || store.deployment.ID.Valid {
+				t.Fatalf("runtime rejection left residue: body=%d deployment=%+v", len(artifactStore.body), store.deployment)
+			}
+		})
+	}
+}
+
+func TestCreateDeploymentRejectsProjectRegionChange(t *testing.T) {
+	artifactDigest := "sha256:" + strings.Repeat("6", 64)
+	store := &fakeStore{projectRegions: []string{"us-east-1", "us-east-1", "us-west-2"}}
+	artifactStore := &fakeCAS{object: cas.Object{
+		Digest:    artifactDigest,
+		SizeBytes: 12,
+		MediaType: api.DeploymentSourceArtifactMediaType,
+	}}
+	server := newDeploymentTestServer(store, artifactStore)
+	body, contentType := deploymentMultipart(t, defaultDeploymentMetadata(), validDeploymentSourceTar(t))
+	req := deploymentRequest(body, contentType)
+	rec := httptest.NewRecorder()
+
+	server.createDeployment(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if store.deployment.ID.Valid || len(store.casObjects) != 0 {
+		t.Fatalf("region conflict left database residue: deployment=%+v CAS=%+v", store.deployment, store.casObjects)
+	}
+	if artifactStore.deletedDigest != artifactDigest {
+		t.Fatalf("deleted digest = %q", artifactStore.deletedDigest)
 	}
 }
 
@@ -304,6 +454,7 @@ func TestCreateDeploymentDoesNotValidateTaskIndexMetadata(t *testing.T) {
 func TestDeploymentRouteAllowsAPIKeyWithProjectManage(t *testing.T) {
 	store := &fakeStore{}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		orgID:         deploymentTestOrgID(),
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -330,6 +481,7 @@ func TestDeploymentRouteAuthorizesBeforeReadingDeploymentSource(t *testing.T) {
 	store := &fakeStore{}
 	artifactStore := &fakeCAS{object: cas.Object{Digest: "sha256:" + strings.Repeat("f", 64), MediaType: api.DeploymentSourceArtifactMediaType}}
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{
+		orgID:         deploymentTestOrgID(),
 		kind:          auth.ActorKindAPIKey,
 		projectID:     testProjectIDString(),
 		environmentID: testEnvironmentIDString(),
@@ -818,14 +970,20 @@ func (f *fakeStore) GetProject(_ context.Context, arg db.GetProjectParams) (db.P
 	if arg.ID != testProjectID() {
 		return db.Project{}, pgx.ErrNoRows
 	}
+	regionID := "us-east-1"
+	if f.getProjectCalls < len(f.projectRegions) {
+		regionID = f.projectRegions[f.getProjectCalls]
+	}
+	f.getProjectCalls++
 	return db.Project{
-		ID:        arg.ID,
-		OrgID:     arg.OrgID,
-		Slug:      "main",
-		Name:      "Main",
-		IsDefault: true,
-		CreatedAt: testTime(),
-		UpdatedAt: testTime(),
+		ID:              arg.ID,
+		OrgID:           arg.OrgID,
+		Slug:            "main",
+		Name:            "Main",
+		IsDefault:       true,
+		DefaultRegionID: regionID,
+		CreatedAt:       testTime(),
+		UpdatedAt:       testTime(),
 	}, nil
 }
 
@@ -877,6 +1035,7 @@ func (f *fakeStore) GetEnvironmentBySlug(_ context.Context, arg db.GetEnvironmen
 }
 
 func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentParams) (db.Deployment, error) {
+	f.createDeploymentCalls++
 	if f.createDeploymentErr != nil {
 		return db.Deployment{}, f.createDeploymentErr
 	}
@@ -901,6 +1060,9 @@ func (f *fakeStore) CreateDeployment(_ context.Context, arg db.CreateDeploymentP
 		OrgID:                      arg.OrgID,
 		ProjectID:                  arg.ProjectID,
 		EnvironmentID:              arg.EnvironmentID,
+		BuildRegionID:              arg.BuildRegionID,
+		BuildArchitecture:          arg.BuildArchitecture,
+		BuildRuntimeDigest:         arg.BuildRuntimeDigest,
 		Version:                    arg.Version,
 		ApiVersion:                 arg.ApiVersion,
 		SdkVersion:                 arg.SdkVersion,
@@ -1019,7 +1181,7 @@ func (f *fakeStore) ListArtifactsByIDs(ctx context.Context, arg db.ListArtifacts
 	return artifacts, nil
 }
 
-func (f *fakeStore) LockDeploymentReusableBuildKey(_ context.Context, _ db.LockDeploymentReusableBuildKeyParams) error {
+func (f *fakeStore) LockDeploymentBuildReuseKey(_ context.Context, _ string) error {
 	return nil
 }
 
@@ -1027,8 +1189,20 @@ func (f *fakeStore) AllocateDeploymentVersion(_ context.Context, _ db.AllocateDe
 	return "20260101.1", nil
 }
 
-func (f *fakeStore) GetReusableDeploymentByContentHash(_ context.Context, arg db.GetReusableDeploymentByContentHashParams) (db.Deployment, error) {
-	if f.deployment.OrgID == arg.OrgID && f.deployment.ProjectID == arg.ProjectID && f.deployment.EnvironmentID == arg.EnvironmentID && f.deployment.ContentHash == arg.ContentHash {
+func (f *fakeStore) GetReusableDeploymentBuild(_ context.Context, arg db.GetReusableDeploymentBuildParams) (db.Deployment, error) {
+	if f.deployment.OrgID == arg.OrgID &&
+		f.deployment.ProjectID == arg.ProjectID &&
+		f.deployment.EnvironmentID == arg.EnvironmentID &&
+		f.deployment.BuildRegionID == arg.BuildRegionID &&
+		f.deployment.ContentHash == arg.ContentHash &&
+		f.deployment.ApiVersion == arg.ApiVersion &&
+		f.deployment.SdkVersion == arg.SdkVersion &&
+		f.deployment.CliVersion == arg.CliVersion &&
+		f.deployment.BundleFormatVersion == arg.BundleFormatVersion &&
+		f.deployment.WorkerProtocolVersion == arg.WorkerProtocolVersion &&
+		f.deployment.BuildArchitecture == arg.BuildArchitecture &&
+		bytes.Equal(f.deployment.BuildRuntimeDigest, arg.BuildRuntimeDigest) &&
+		(f.deployment.Status == db.DeploymentStatusQueued || f.deployment.Status == db.DeploymentStatusBuilding) {
 		return f.deployment, nil
 	}
 	return db.Deployment{}, pgx.ErrNoRows

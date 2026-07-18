@@ -3,25 +3,73 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/config"
 )
 
 func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
 	if !fitsBuildHostCompute(compute.ResourceVector{
-		MilliCPU:  2000,
-		MemoryMiB: 2048,
+		MilliCPU:  3000,
+		MemoryMiB: 4096,
 		Slots:     1,
 	}) {
-		t.Fatal("fixed build guest does not fit its exact host compute envelope")
+		t.Fatal("fixed build envelope does not fit its exact host compute capacity")
 	}
 	if fitsBuildHostCompute(compute.ResourceVector{
-		MilliCPU:  1999,
-		MemoryMiB: 2048,
+		MilliCPU:  2999,
+		MemoryMiB: 4096,
 		Slots:     1,
 	}) {
 		t.Fatal("undersized host compute envelope was accepted")
+	}
+}
+
+func TestValidateWorkerStoresRequiresDisjointNamespaces(t *testing.T) {
+	base := config.Worker{
+		CASURI:          "s3://ordinary",
+		RuntimeStoreURI: "s3://runtime/objects",
+	}
+	if err := validateWorkerStores(base); err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(*config.Worker){
+		"ordinary runtime": func(cfg *config.Worker) {
+			cfg.RuntimeStoreURI = "s3://ordinary/runtime"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			cfg := base
+			mutate(&cfg)
+			if err := validateWorkerStores(cfg); err == nil ||
+				!strings.Contains(err.Error(), "distinct bucket authority") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestEnsureBuildCacheDirectoryRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	directory := filepath.Join(root, "cache")
+	if err := ensureBuildCacheDirectory(directory); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(root, "target")
+	if err := os.Mkdir(target, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureBuildCacheDirectory(link); err == nil {
+		t.Fatal("symlink cache directory was accepted")
 	}
 }
 

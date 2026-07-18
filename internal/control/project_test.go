@@ -11,6 +11,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +28,38 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestCreateProjectRejectsInvalidRegionBeforeLookup(t *testing.T) {
+	for name, regionID := range map[string]string{
+		"oversized":  strings.Repeat("r", 256),
+		"control":    "region\n",
+		"whitespace": " region",
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := &Server{db: &fakeStore{}}
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/projects",
+				strings.NewReader(`{"slug":"main","name":"Main","default_region_id":`+strconv.Quote(regionID)+`}`),
+			)
+			req = req.WithContext(context.WithValue(req.Context(), actorContextKey{}, auth.Actor{
+				OrgID: dbtest.DefaultOrgID,
+				Role:  auth.RoleOwner,
+				Kind:  auth.ActorKindSession,
+			}))
+			rec := httptest.NewRecorder()
+
+			server.createProject(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "invalid default_region_id") {
+				t.Fatalf("body = %s", rec.Body.String())
+			}
+		})
+	}
+}
 
 func TestProjectManagementDeletesProject(t *testing.T) {
 	projectID := uuid.Must(uuid.NewV7())
@@ -355,7 +388,7 @@ func deploymentRequest(body []byte, contentType string) *http.Request {
 	routeContext.URLParams.Add("projectID", pgvalue.MustUUIDValue(testProjectID()).String())
 	routeContext.URLParams.Add("environmentID", pgvalue.MustUUIDValue(testEnvironmentID()).String())
 	ctx := context.WithValue(req.Context(), chi.RouteCtxKey, routeContext)
-	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: dbtest.DefaultOrgID, Role: auth.RoleOwner, Kind: auth.ActorKindSession})
+	ctx = context.WithValue(ctx, actorContextKey{}, auth.Actor{OrgID: deploymentTestOrgID(), Role: auth.RoleOwner, Kind: auth.ActorKindSession})
 	return req.WithContext(ctx)
 }
 
@@ -726,6 +759,10 @@ func (f *fakeCAS) Put(_ context.Context, mediaType string, body io.Reader) (cas.
 		return cas.Object{}, err
 	}
 	return f.put(mediaType, content), nil
+}
+
+func (f *fakeCAS) Publish(ctx context.Context, mediaType string, body io.Reader) (cas.Object, error) {
+	return f.Put(ctx, mediaType, body)
 }
 
 func (f *fakeCAS) Stage(_ context.Context, mediaType string) (cas.Stage, error) {

@@ -4,8 +4,8 @@ package worker
 
 import "errors"
 
-func PrepareProgramVerifierHost() error {
-	return errors.New("program verifier requires Linux cgroup v2")
+func PrepareVerifierHost() (string, error) {
+	return "", errors.New("verifier requires Linux cgroup v2")
 }
 
 func programVerifierHostHealthy() bool {

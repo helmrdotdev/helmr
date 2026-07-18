@@ -2,7 +2,6 @@
   lib,
   stdenv,
   stdenvNoCC,
-  pkgsStatic,
   nodejs_24,
   squashfsTools,
   glibc,
@@ -30,24 +29,6 @@ let
     .${stdenv.hostPlatform.system}
       or (throw "managed runtime is unsupported on ${stdenv.hostPlatform.system}");
 
-  helmrShell = pkgsStatic.stdenv.mkDerivation {
-    pname = "helmr-sh";
-    version = "0";
-    src = ../../runtime/managed/helmr-sh.c;
-    dontUnpack = true;
-    strictDeps = true;
-    buildPhase = ''
-      runHook preBuild
-      "$CC" -std=c11 -Wall -Wextra -Werror -Os -static \
-        -Wl,--build-id=none "$src" -o helmr-sh
-      runHook postBuild
-    '';
-    installPhase = ''
-      runHook preInstall
-      install -Dm0755 helmr-sh "$out/bin/helmr-sh"
-      runHook postInstall
-    '';
-  };
 in
 assert lib.assertMsg (
   nodejs_24.version == "24.16.0"
@@ -77,7 +58,6 @@ stdenvNoCC.mkDerivation {
     tree="$TMPDIR/tree"
     install -d -m0755 "$tree/bin" "$tree/helmr" "$tree/lib"
     install -m0755 ${nodejs_24}/bin/node "$tree/bin/node"
-    install -m0755 ${helmrShell}/bin/helmr-sh "$tree/bin/helmr-sh"
     install -m0644 ${../../runtime/typescript/src/preload.mjs} "$tree/helmr/preload.mjs"
     printf '%s' \
       '{"architecture":"${target.architecture}","formatVersion":0,"runtimeApiVersion":"helmr.runtime.v0"}' \
@@ -103,8 +83,6 @@ stdenvNoCC.mkDerivation {
       echo "Node does not use the exact pinned glibc loader" >&2
       exit 1
     fi
-    glibc_root="${lib.getLib glibc}"
-
     while IFS= read -r library; do
       [ -n "$library" ] || continue
       [ "$library" != "${nodejs_24}/bin/node" ] || continue
@@ -112,32 +90,6 @@ stdenvNoCC.mkDerivation {
       copy_file "$library" "$tree/lib/$(basename "$library")"
     done < <(lddtree -l ${nodejs_24}/bin/node | LC_ALL=C sort -u)
     copy_file "$interpreter" "$tree/lib/${target.loader}"
-    for name in libnss_files.so.2 libnss_dns.so.2 libresolv.so.2; do
-      copy_file "$glibc_root/lib/$name" "$tree/lib/$name"
-    done
-
-    install -d -m0755 "$tree/lib/gconv" "$tree/lib/locale"
-    while IFS= read -r source; do
-      relative="''${source#"$glibc_root/lib/gconv/"}"
-      copy_file "$source" "$tree/lib/gconv/$relative"
-    done < <(find "$glibc_root/lib/gconv" \( -type f -o -type l \) -print | LC_ALL=C sort)
-    while IFS= read -r source; do
-      relative="''${source#"$glibc_root/lib/locale/"}"
-      copy_file "$source" "$tree/lib/locale/$relative"
-    done < <(find "$glibc_root/lib/locale/C.utf8" -type f -print | LC_ALL=C sort)
-
-    crypto_path="$(lddtree -l ${nodejs_24}/bin/node | grep '/libcrypto\.so\.' | head -n1)"
-    if [ -z "$crypto_path" ]; then
-      echo "Node has no pinned OpenSSL closure" >&2
-      exit 1
-    fi
-    openssl_root="$(dirname "$(dirname "$crypto_path")")"
-    install -d -m0755 "$tree/lib/openssl" "$tree/lib/ossl-modules"
-    copy_file "$openssl_root/etc/ssl/openssl.cnf" \
-      "$tree/lib/openssl/openssl.cnf"
-    while IFS= read -r provider; do
-      copy_file "$provider" "$tree/lib/ossl-modules/$(basename "$provider")"
-    done < <(find "$openssl_root/lib/ossl-modules" -maxdepth 1 -type f -name '*.so' -print | LC_ALL=C sort)
 
     printf '%s' \
       $'passwd: files\ngroup: files\nshadow: files\ngshadow: files\nhosts: files dns\nnetworks: files dns\nprotocols: files\nservices: files\nethers: files\nrpc: files\nnetgroup: files\n' \
@@ -215,14 +167,6 @@ stdenvNoCC.mkDerivation {
       esac
     done < <(find "$tree/bin/node" "$tree/lib" -type f -print | LC_ALL=C sort)
 
-    if patchelf --print-interpreter "$tree/bin/helmr-sh" >/dev/null 2>&1; then
-      echo "helmr-sh is dynamically interpreted" >&2
-      exit 1
-    fi
-    if [ -n "$(patchelf --print-needed "$tree/bin/helmr-sh")" ]; then
-      echo "helmr-sh has dynamic dependencies" >&2
-      exit 1
-    fi
     if ! cmp -s "$interpreter" "$tree/lib/${target.loader}"; then
       echo "managed loader differs from pinned glibc" >&2
       exit 1
@@ -230,7 +174,7 @@ stdenvNoCC.mkDerivation {
     find "$tree" -type d -exec chmod 0755 {} +
     while IFS= read -r path; do
       case "$path" in
-        "$tree/bin/node"|"$tree/bin/helmr-sh"|"$tree/lib/${target.loader}")
+        "$tree/bin/node"|"$tree/lib/${target.loader}")
           chmod 0755 "$path"
           ;;
         *) chmod 0644 "$path" ;;
@@ -250,7 +194,7 @@ stdenvNoCC.mkDerivation {
       else
         mode=0644
         case "$relative" in
-          bin/node|bin/helmr-sh|lib/${target.loader}) mode=0755 ;;
+          bin/node|lib/${target.loader}) mode=0755 ;;
         esac
         printf 'f\t%s\t%s\t%s\n' \
           "$mode" "$(sha256sum "$path" | cut -d' ' -f1)" "$relative"
@@ -276,6 +220,25 @@ stdenvNoCC.mkDerivation {
       -mkfs-time 0 \
       -all-time 0
 
+    invalid_tree="$TMPDIR/invalid"
+    install -d -m0755 "$invalid_tree"
+    env -u SOURCE_DATE_EPOCH mksquashfs "$invalid_tree" "$out/verifier-invalid.squashfs" \
+      -noappend \
+      -all-root \
+      -no-xattrs \
+      -no-exports \
+      -no-fragments \
+      -no-duplicates \
+      -no-progress \
+      -comp zstd \
+      -b 131072 \
+      -mkfs-time 0 \
+      -all-time 0
+    if [ "$(stat -c %s "$out/verifier-invalid.squashfs")" -ne 4096 ]; then
+      echo "invalid runtime verifier fixture is not exactly 4096 bytes" >&2
+      exit 1
+    fi
+
     digest="$(sha256sum "$out/runtime.squashfs" | cut -d' ' -f1)"
     size="$(stat -c %s "$out/runtime.squashfs")"
     printf '%s' \
@@ -290,7 +253,7 @@ stdenvNoCC.mkDerivation {
   '';
 
   passthru = {
-    inherit helmrShell nodejs_24 squashfsTools;
+    inherit nodejs_24 squashfsTools;
     architecture = target.architecture;
   };
 

@@ -100,20 +100,6 @@ let
         touch "$out"
       '';
 
-  helmrShellCheck =
-    pkgs.runCommand "managed-runtime-shell-check"
-      {
-        nativeBuildInputs = [
-          pkgs.bash
-          pkgs.stdenv.cc
-          pkgs.gnugrep
-        ];
-        src = ../.;
-      }
-      ''
-        bash "$src/runtime/managed/helmr-sh.test.sh"
-        touch "$out"
-      '';
 in
 {
   helmr-package = helmrPackages.helmr;
@@ -137,7 +123,34 @@ in
     fi
   '';
   managed-runtime-preload = preloadCheck;
-  managed-runtime-shell = helmrShellCheck;
+  runtime-trusted-root-contract = commandCheck "runtime-trusted-root-contract-check" ''
+    cat >internal/deployment/runtime_trusted_root_release_test.go <<'EOF'
+    package deployment
+
+    import (
+      "os"
+      "testing"
+    )
+
+    func TestReleaseTrustedRoot(t *testing.T) {
+      raw, err := os.ReadFile(os.Getenv("HELMR_RUNTIME_TRUSTED_ROOT"))
+      if err != nil {
+        t.Fatal(err)
+      }
+      if _, err := parseRuntimeTrustedRoot(raw); err != nil {
+        t.Fatal(err)
+      }
+    }
+    EOF
+    gofmt -w internal/deployment/runtime_trusted_root_release_test.go
+    cp -R ${helmrPackages.helmr.goModules} vendor
+    export GOFLAGS=-mod=vendor
+    export GOPROXY=off
+    export GOSUMDB=off
+    export GOTOOLCHAIN=local
+    HELMR_RUNTIME_TRUSTED_ROOT=${helmrPackages.runtimeTrustedRoot} \
+      go test ./internal/deployment -run '^TestReleaseTrustedRoot$'
+  '';
   squashfs-tools = helmrPackages.squashfsTools;
 }
 // lib.optionalAttrs pkgs.stdenv.isLinux {
@@ -150,7 +163,6 @@ in
           pkgs.go_1_26
           pkgs.proot
           pkgs.stdenv.cc
-          pkgs.patchelf
           pkgs.jq
           helmrPackages.squashfsTools
         ];
@@ -284,7 +296,7 @@ in
           else
             mode=0644
             case "$relative" in
-              bin/node|bin/helmr-sh|lib/$managed_runtime_loader) mode=0755 ;;
+              bin/node|lib/$managed_runtime_loader) mode=0755 ;;
             esac
             printf 'f\t%s\t%s\t%s\n' \
               "$mode" "$(sha256sum "$path" | cut -d' ' -f1)" "$relative"
@@ -301,8 +313,14 @@ in
           "$managed_runtime_loader_source" \
           "$runtime/lib/$managed_runtime_loader"
 
-        cp /etc/hosts "$root/etc/hosts"
-        cp /etc/resolv.conf "$root/etc/resolv.conf"
+        printf '%s\n' \
+          '127.0.0.1 localhost' \
+          '::1 localhost' \
+          >"$root/etc/hosts"
+        printf '%s\n' \
+          'nameserver 127.0.0.1' \
+          'options attempts:1 timeout:1' \
+          >"$root/etc/resolv.conf"
         printf '%s\n' 'hosts: evil files dns' >"$root/etc/nsswitch.conf"
         chmod a-w "$runtime/lib/nsswitch.conf"
         cat >"$program/pkg/esm.ts" <<'EOF'
@@ -334,6 +352,8 @@ in
         EOF
         cat >"$program/probe.mjs" <<'EOF'
         import assert from "node:assert/strict";
+        import { createHash } from "node:crypto";
+        import dgram from "node:dgram";
         import dns from "node:dns/promises";
         import { createRequire } from "node:module";
         import tls from "node:tls";
@@ -346,18 +366,19 @@ in
           "--import=file:///opt/helmr/runtime/helmr/preload.mjs",
         ]);
         assert.equal(process.env.NODE_OPTIONS, undefined);
+        assert.equal(process.env.NODE_PATH, undefined);
+        assert.equal(process.env.NODE_EXTRA_CA_CERTS, undefined);
+        assert.equal(process.env.NODE_ICU_DATA, undefined);
         assert.equal(process.env.LD_PRELOAD, undefined);
         assert.equal(process.env.NODE_ENV, "production");
-        assert.equal(process.env.GCONV_PATH, "/opt/helmr/runtime/lib/gconv");
-        assert.equal(process.env.LOCPATH, "/opt/helmr/runtime/lib/locale");
-        assert.equal(
-          process.env.OPENSSL_CONF,
-          "/opt/helmr/runtime/lib/openssl/openssl.cnf",
-        );
-        assert.equal(
-          process.env.OPENSSL_MODULES,
-          "/opt/helmr/runtime/lib/ossl-modules",
-        );
+        assert.equal(process.env.PATH, "/workspace/bin:/usr/bin");
+        assert.equal(process.env.SSL_CERT_FILE, undefined);
+        assert.equal(process.env.SSL_CERT_DIR, undefined);
+        assert.equal(process.env.OPENSSL_CONF, undefined);
+        assert.equal(process.env.OPENSSL_MODULES, undefined);
+        assert.equal(process.env.OPENSSL_ENGINES, undefined);
+        assert.equal(process.env.GCONV_PATH, undefined);
+        assert.equal(process.env.LOCPATH, undefined);
         assert.equal(
           Boolean(process.config.variables.node_use_openssl_ca),
           false,
@@ -375,38 +396,50 @@ in
           worker.once("error", reject);
         });
         assert.equal(workerValue, "mapped-esm");
-        assert.equal(new Intl.DateTimeFormat("en-US").resolvedOptions().locale, "en-US");
+        assert.equal(new Intl.DateTimeFormat("ja-JP").resolvedOptions().locale, "ja-JP");
+        assert.equal(
+          new TextDecoder("shift_jis").decode(
+            Uint8Array.from([0x82, 0xb1, 0x82, 0xf1, 0x82, 0xc9, 0x82, 0xbf, 0x82, 0xcd]),
+          ),
+          "こんにちは",
+        );
         assert.equal((await dns.lookup("localhost")).address.length > 0, true);
+        const dnsServer = dgram.createSocket("udp4");
+        dnsServer.on("message", (query, remote) => {
+          let offset = 12;
+          while (query[offset] !== 0) {
+            offset += query[offset] + 1;
+          }
+          const questionEnd = offset + 5;
+          const response = Buffer.alloc(questionEnd + 16);
+          query.copy(response, 0, 0, questionEnd);
+          response.writeUInt16BE(0x8180, 2);
+          response.writeUInt16BE(1, 4);
+          response.writeUInt16BE(1, 6);
+          response.writeUInt16BE(0, 8);
+          response.writeUInt16BE(0, 10);
+          response.writeUInt16BE(0xc00c, questionEnd);
+          response.writeUInt16BE(1, questionEnd + 2);
+          response.writeUInt16BE(1, questionEnd + 4);
+          response.writeUInt32BE(60, questionEnd + 6);
+          response.writeUInt16BE(4, questionEnd + 10);
+          response.set([192, 0, 2, 1], questionEnd + 12);
+          dnsServer.send(response, remote.port, remote.address);
+        });
+        await new Promise((resolve) => dnsServer.bind(53535, "127.0.0.1", resolve));
+        assert.deepEqual(
+          await dns.lookup("helmr-runtime.test", { family: 4 }),
+          { address: "192.0.2.1", family: 4 },
+        );
+        await new Promise((resolve) => dnsServer.close(resolve));
         assert.equal(tls.rootCertificates.length > 0, true);
         tls.createSecureContext();
+        assert.equal(
+          createHash("sha256").update("helmr").digest("hex"),
+          "9d06c282b54c131bd2981a2e45b4345c1f3d52d83fddac0fba7d616cc0d61cd3",
+        );
         console.log("runtime probe passed");
         EOF
-        cat >"$root/shim" <<'EOF'
-        #!/opt/helmr/runtime/bin/helmr-sh
-        exec /opt/helmr/runtime/bin/node --import=file:///opt/helmr/runtime/helmr/preload.mjs '/opt/helmr/program/probe.mjs' "$@"
-        EOF
-        chmod 0755 "$root/shim"
-
-        cat >"$TMPDIR/iconv.c" <<'EOF'
-        #include <errno.h>
-        #include <iconv.h>
-        #include <stddef.h>
-
-        int main(void) {
-          iconv_t converter = iconv_open("ISO-8859-1", "UTF-8");
-          if (converter == (iconv_t)-1) {
-            return errno == 0 ? 2 : 1;
-          }
-          return iconv_close(converter) == 0 ? 0 : 3;
-        }
-        EOF
-        "$CC" "$TMPDIR/iconv.c" -o "$root/test-iconv"
-        patchelf \
-          --set-interpreter "/opt/helmr/runtime/lib/${
-            if pkgs.stdenv.hostPlatform.isx86_64 then "ld-linux-x86-64.so.2" else "ld-linux-aarch64.so.1"
-          }" \
-          --set-rpath /opt/helmr/runtime/lib \
-          "$root/test-iconv"
 
         cat >"$TMPDIR/evil.c" <<'EOF'
         #include <fcntl.h>
@@ -424,6 +457,7 @@ in
 
         base_proot=(
           -r "$root"
+          -p 53:53535
           -b /dev
           -b /proc
           -b "$runtime:/opt/helmr/runtime"
@@ -438,30 +472,95 @@ in
           --library-path /opt/helmr/runtime/lib \
           /opt/helmr/runtime/bin/node \
           --version
-        env NODE_ENV=production \
-          proot "''${base_proot[@]}" /opt/helmr/runtime/bin/helmr-sh /shim
+        clean_runtime_env=(
+          -u NODE_OPTIONS
+          -u NODE_PATH
+          -u NODE_EXTRA_CA_CERTS
+          -u NODE_ICU_DATA
+          -u SSL_CERT_FILE
+          -u SSL_CERT_DIR
+          -u OPENSSL_CONF
+          -u OPENSSL_MODULES
+          -u OPENSSL_ENGINES
+          -u GCONV_PATH
+          -u LOCPATH
+          -u LD_PRELOAD
+          -u LD_LIBRARY_PATH
+          NODE_ENV=production
+          PATH=/workspace/bin:/usr/bin
+        )
+        env "''${clean_runtime_env[@]}" \
+          ${pkgs.proot}/bin/proot "''${base_proot[@]}" \
+          /opt/helmr/runtime/bin/node \
+          --import=file:///opt/helmr/runtime/helmr/preload.mjs \
+          /opt/helmr/program/probe.mjs
         test -e "$root/evil-loaded"
         rm "$root/evil-loaded"
-        env \
-          NODE_OPTIONS=hostile \
-          NODE_PATH=hostile \
-          NODE_EXTRA_CA_CERTS=hostile \
-          NODE_ICU_DATA=hostile \
-          SSL_CERT_FILE=hostile \
-          SSL_CERT_DIR=hostile \
-          OPENSSL_CONF=hostile \
-          OPENSSL_MODULES=hostile \
-          OPENSSL_ENGINES=hostile \
-          GCONV_PATH=hostile \
-          LOCPATH=hostile \
-          LD_PRELOAD= \
-          NODE_ENV=production \
-          proot "''${common_proot[@]}" /opt/helmr/runtime/bin/helmr-sh /shim
-        env \
-          GCONV_PATH=/opt/helmr/runtime/lib/gconv \
-          LOCPATH=/opt/helmr/runtime/lib/locale \
-          proot "''${common_proot[@]}" /test-iconv
+        env "''${clean_runtime_env[@]}" \
+          ${pkgs.proot}/bin/proot "''${common_proot[@]}" \
+          /opt/helmr/runtime/bin/node \
+          --import=file:///opt/helmr/runtime/helmr/preload.mjs \
+          /opt/helmr/program/probe.mjs
         test ! -e "$root/evil-loaded"
+
+        cli_root="$TMPDIR/cli-root"
+        cli_program="$TMPDIR/cli-program"
+        install -d \
+          "$cli_root/bin" \
+          "$cli_root/usr/bin" \
+          "$cli_program/node_modules/.bin" \
+          "$cli_program/node_modules/tools"
+        ln -s ${pkgs.bash}/bin/bash "$cli_root/bin/sh"
+        ln -s ${pkgs.coreutils}/bin/env "$cli_root/usr/bin/env"
+        cat >"$cli_program/node_modules/tools/node-tool" <<'EOF'
+        #!/usr/bin/env node
+        process.stdout.write("node-tool\n");
+        EOF
+        cat >"$cli_program/node_modules/tools/shell-tool" <<'EOF'
+        #!/bin/sh
+        printf '%s\n' shell-tool
+        EOF
+        cat >"$cli_program/node_modules/tools/python-tool" <<'EOF'
+        #!/usr/bin/env python3
+        print("python-tool")
+        EOF
+        cat >"$cli_program/node_modules/tools/missing-tool" <<'EOF'
+        #!/workspace/missing-interpreter
+        EOF
+        cp ${pkgs.hello}/bin/hello "$cli_program/node_modules/tools/native-tool"
+        chmod 0755 "$cli_program/node_modules/tools/"*
+        for name in node-tool shell-tool python-tool native-tool missing-tool; do
+          ln -s "../tools/$name" "$cli_program/node_modules/.bin/$name"
+        done
+        cli_proot=(
+          -r "$cli_root"
+          -b /dev
+          -b /proc
+          -b /nix/store
+          -b "$cli_program:/opt/helmr/program"
+        )
+        cli_path="${pkgs.nodejs_24}/bin:${pkgs.python3}/bin:${pkgs.coreutils}/bin"
+        test "$(
+          env PATH="$cli_path" ${pkgs.proot}/bin/proot "''${cli_proot[@]}" \
+            /opt/helmr/program/node_modules/.bin/node-tool
+        )" = node-tool
+        test "$(
+          env PATH="$cli_path" ${pkgs.proot}/bin/proot "''${cli_proot[@]}" \
+            /opt/helmr/program/node_modules/.bin/shell-tool
+        )" = shell-tool
+        test "$(
+          env PATH="$cli_path" ${pkgs.proot}/bin/proot "''${cli_proot[@]}" \
+            /opt/helmr/program/node_modules/.bin/python-tool
+        )" = python-tool
+        test "$(
+          env PATH="$cli_path" ${pkgs.proot}/bin/proot "''${cli_proot[@]}" \
+            /opt/helmr/program/node_modules/.bin/native-tool
+        )" = "Hello, world!"
+        if env PATH="$cli_path" ${pkgs.proot}/bin/proot "''${cli_proot[@]}" \
+          /opt/helmr/program/node_modules/.bin/missing-tool; then
+          echo "package CLI with a missing Workspace interpreter succeeded" >&2
+          exit 1
+        fi
 
         jq -e '
           keys == [
@@ -476,8 +575,15 @@ in
         test "$(tail -c1 ${helmrPackages.managedRuntime}/runtime.descriptor.json | od -An -tuC | tr -d ' ')" != 10
         test "$(tail -c1 "$runtime/helmr/runtime.json" | od -An -tuC | tr -d ' ')" != 10
         test "$(find "$runtime" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "bin helmr lib "
-        test "$(find "$runtime/bin" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "helmr-sh node "
+        test "$(find "$runtime/bin" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "node "
         test "$(find "$runtime/helmr" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "preload.mjs runtime.json "
+        test ! -e "$runtime/lib/gconv"
+        test ! -e "$runtime/lib/locale"
+        test ! -e "$runtime/lib/openssl"
+        test ! -e "$runtime/lib/ossl-modules"
+        test ! -e "$runtime/lib/libnss_files.so.2"
+        test ! -e "$runtime/lib/libnss_dns.so.2"
+        test ! -e "$runtime/lib/libresolv.so.2"
         test "$(grep -Ec '(^|[[:space:]])(compat|db|hesiod|systemd)([[:space:]]|$)' "$runtime/lib/nsswitch.conf")" = 0
 
         touch "$out"

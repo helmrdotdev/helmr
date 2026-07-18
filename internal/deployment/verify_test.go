@@ -610,13 +610,13 @@ func TestPackageManifestAggregateBound(t *testing.T) {
 	}
 }
 
-func TestPairVerifierDerivesCanonicalBinShim(t *testing.T) {
+func TestPairVerifierDerivesCanonicalBinLink(t *testing.T) {
 	root := "."
 	installPath := "tool"
 	dependencies := newMemoryArtifact()
 	dependencies.addDirectory(installPath)
 	dependencies.addDirectory(installPath + "/bin")
-	dependencies.addFile(installPath+"/bin/cli'.js", []byte("export {}\n"), 0755)
+	dependencies.addFile(installPath+"/bin/cli.py", []byte("print('ok')\n"), 0755)
 	code, err := inspectArtifact(
 		context.Background(),
 		newMemoryArtifact(),
@@ -661,7 +661,7 @@ func TestPairVerifierDerivesCanonicalBinShim(t *testing.T) {
 		},
 		depManifests: map[string]packageManifest{
 			"tool/package.json": {
-				Bins: map[string]string{"tool": "bin/cli'.js"},
+				Bins: map[string]string{"tool": "bin/cli.py"},
 			},
 		},
 	}
@@ -670,12 +670,16 @@ func TestPairVerifierDerivesCanonicalBinShim(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := "#!/opt/helmr/runtime/bin/helmr-sh\n" +
-		"exec /opt/helmr/runtime/bin/node " +
-		"--import=file:///opt/helmr/runtime/helmr/preload.mjs " +
-		"'/opt/helmr/program/node_modules/tool/bin/cli'\\''.js' \"$@\"\n"
-	if got := verifier.shims[".bin/tool"]; !bytes.Equal(got, []byte(want)) {
-		t.Fatalf("shim = %q, want %q", got, want)
+	want := "../tool/bin/cli.py"
+	if got := verifier.binLinks[".bin/tool"]; got != want {
+		t.Fatalf("bin link = %q, want %q", got, want)
+	}
+
+	target := dependency.entries[installPath+"/bin/cli.py"]
+	target.Mode = 0644
+	dependency.entries[target.Path] = target
+	if err := verifier.deriveTopology(); err == nil {
+		t.Fatal("deriveTopology accepted a non-executable bin target")
 	}
 }
 
@@ -688,7 +692,7 @@ func TestVerifyDependencyPathRejectsUnlistedRegistryDependency(t *testing.T) {
 			},
 		},
 		depLinks: map[string]string{},
-		shims:    map[string][]byte{},
+		binLinks: map[string]string{},
 		depDirs:  map[string]struct{}{},
 	}
 	verifier.indexGraph()
@@ -1035,20 +1039,26 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 		viewTool,
 		canonicalRelativeTarget(absoluteDependency(viewTool), absoluteDependency(registryPath)),
 	)
-	dependencies.addFile(
+	dependencies.addLink(
 		".bin/local",
-		testBinShim(absoluteCode(localPath+"/bin/cli.js")),
-		0755,
+		canonicalRelativeTarget(
+			absoluteDependency(".bin/local"),
+			absoluteCode(localPath+"/bin/cli.js"),
+		),
 	)
-	dependencies.addFile(
+	dependencies.addLink(
 		".bin/tool",
-		testBinShim(absoluteDependency(registryPath+"/bin/cli.js")),
-		0755,
+		canonicalRelativeTarget(
+			absoluteDependency(".bin/tool"),
+			absoluteDependency(registryPath+"/bin/cli.js"),
+		),
 	)
-	dependencies.addFile(
+	dependencies.addLink(
 		".helmr/views/"+viewKey+"/.bin/tool",
-		testBinShim(absoluteDependency(registryPath+"/bin/cli.js")),
-		0755,
+		canonicalRelativeTarget(
+			absoluteDependency(".helmr/views/"+viewKey+"/.bin/tool"),
+			absoluteDependency(registryPath+"/bin/cli.js"),
+		),
 	)
 
 	return &testProgramPair{
@@ -1069,15 +1079,6 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 		code:         code,
 		dependencies: dependencies,
 	}
-}
-
-func testBinShim(target string) []byte {
-	return []byte(
-		"#!/opt/helmr/runtime/bin/helmr-sh\n" +
-			"exec /opt/helmr/runtime/bin/node " +
-			"--import=file:///opt/helmr/runtime/helmr/preload.mjs '" +
-			target + "' \"$@\"\n",
-	)
 }
 
 func exactTestFilesystem() artifactFilesystem {

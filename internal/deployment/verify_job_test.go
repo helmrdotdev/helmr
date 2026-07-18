@@ -22,12 +22,6 @@ func TestProgramVerifierErrorsPreserveDeliveryBoundary(t *testing.T) {
 	}
 }
 
-func TestVerifiedProgramResultRejectsRuntimePayload(t *testing.T) {
-	if _, err := verifiedProgramResult(canonicalVerifierRuntimeIndex(t)); err == nil {
-		t.Fatal("Runtime payload was accepted as a Program result")
-	}
-}
-
 func TestBuildGuestErrorsPreserveDeliveryBoundary(t *testing.T) {
 	cause := errors.New("guest failed")
 	err := buildGuestDeliveryFailure(cause)

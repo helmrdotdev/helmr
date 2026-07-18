@@ -23,6 +23,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/jackc/pgx/v5"
@@ -89,6 +90,18 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
+	runtimePolicyPath := t.TempDir() + "/runtime-policy.json"
+	runtimePolicy := `{"current":{"us-east-1":"sha256:` + strings.Repeat("9", 64) + `"},"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:` + strings.Repeat("9", 64) + `","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}]}`
+	if err := os.WriteFile(runtimePolicyPath, []byte(runtimePolicy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HELMR_RUNTIME_POLICY_PATH", runtimePolicyPath)
+	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-smoke-runtime")
+	originalRuntimePolicyLoader := loadControlRuntimePolicy
+	loadControlRuntimePolicy = func(string) (*deployment.RuntimePolicy, error) {
+		return deployment.ParseRuntimePolicy([]byte(runtimePolicy))
+	}
+	t.Cleanup(func() { loadControlRuntimePolicy = originalRuntimePolicyLoader })
 	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")

@@ -37,6 +37,8 @@ type Control struct {
 	ClickHouseUser          string
 	ClickHousePassword      string
 	CASURI                  string
+	RuntimePolicyPath       string
+	RuntimeStoreURI         string
 	WorkerTokenSigningKey   string
 	WorkerGroupsJSON        string
 	SetupToken              string
@@ -144,9 +146,14 @@ type Worker struct {
 	CASURI                       string
 	WorkerInstanceCredentialPath string
 	CheckpointKey                string
+	RegionID                     string
 	WorkerProviderRegion         string
+	RuntimePolicyPath            string
+	RuntimeStoreURI              string
 	WorkerLabels                 map[string]string
 	WorkDir                      string
+	BuildCacheDir                string
+	BuildScratchDir              string
 	ImagesDir                    string
 	GitPath                      string
 	BuildKitAddr                 string

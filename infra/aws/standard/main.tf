@@ -199,6 +199,10 @@ module "control" {
   additional_control_security_group_ids  = var.additional_control_security_group_ids
   cloudfront_origin_domain_name          = var.cloudfront_origin_domain_name
   control_image                          = module.release_artifacts.control_image
+  runtime_store_uri                      = var.runtime_store_uri
+  runtime_store_bucket_arn               = var.runtime_store_bucket_arn
+  runtime_store_kms_key_arn              = var.runtime_store_kms_key_arn
+  runtime_policy_digest                  = var.runtime_policy_digest
   create_control_service                 = var.create_control_service
   control_desired_count                  = var.control_desired_count
   dispatcher_desired_count               = var.dispatcher_desired_count
@@ -238,6 +242,7 @@ module "worker_group" {
 
   name                                       = each.value.name
   worker_group_id                            = each.value.group_id
+  region_id                                  = var.region_id
   worker_roles                               = each.value.roles
   vpc_id                                     = module.network.vpc_id
   subnet_ids                                 = module.network.private_subnet_ids
@@ -261,10 +266,16 @@ module "worker_group" {
   worker_execution_slots                     = each.key == "build" && var.build_worker_execution_slots != null ? var.build_worker_execution_slots : var.worker_execution_slots
   substrate_cache_max_mib                    = each.key == "build" && var.build_worker_substrate_cache_max_mib != null ? var.build_worker_substrate_cache_max_mib : var.worker_substrate_cache_max_mib
   artifact_cache_max_mib                     = each.key == "build" && var.build_worker_artifact_cache_max_mib != null ? var.build_worker_artifact_cache_max_mib : var.worker_artifact_cache_max_mib
+  build_cache_mib                            = each.key == "build" ? local.build_worker_build_cache_mib + local.build_worker_artifact_cache_mib : null
+  build_scratch_mib                          = each.key == "build" ? local.build_worker_scratch_mib : null
   worker_control_url                         = local.worker_control_url
   cas_uri                                    = module.control.cas_uri
   cas_bucket_arn                             = module.control.cas_bucket_arn
   kms_key_arn                                = module.control.kms_key_arn
+  runtime_store_uri                          = var.runtime_store_uri
+  runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
+  runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
+  runtime_policy_digest                      = each.key == "build" ? var.runtime_policy_digest : null
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key

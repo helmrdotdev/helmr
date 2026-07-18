@@ -110,6 +110,8 @@ rec {
 
   appRuntime = base ++ image ++ smokeLinux ++ lib.optionals stdenv.isLinux [ pkgs.kmod ];
 
+  infraTest = [ pkgs.opentofu ];
+
   infra = base ++ [
     pkgs.opentofu
     pkgs.awscli2

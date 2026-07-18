@@ -12,6 +12,10 @@ let
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
   squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
+  runtimeTrustedRoot = pkgs.fetchurl {
+    url = "https://raw.githubusercontent.com/sigstore/root-signing/83a0a6eed690d1fa1443e62d3fd3c9a2f85d6147/targets/trusted_root.json";
+    hash = "sha256-ZJTiHqc/p+52n4X1fVo+aghyXq4eOMdV/DUXyea8C2Y=";
+  };
   managedNode =
     let
       source = pkgs.nodejs-slim_24.override { enableNpm = false; };
@@ -82,6 +86,7 @@ in
   inherit staticcheck;
   inherit unparam;
   inherit squashfsTools;
+  inherit runtimeTrustedRoot;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;

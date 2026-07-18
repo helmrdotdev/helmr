@@ -2202,6 +2202,8 @@ type Deployment struct {
 	ProjectID                       pgtype.UUID        `json:"project_id"`
 	EnvironmentID                   pgtype.UUID        `json:"environment_id"`
 	BuildRegionID                   string             `json:"build_region_id"`
+	BuildArchitecture               string             `json:"build_architecture"`
+	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
 	Version                         string             `json:"version"`
 	ContentHash                     string             `json:"content_hash"`
 	ApiVersion                      string             `json:"api_version"`

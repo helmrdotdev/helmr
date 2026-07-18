@@ -24,6 +24,7 @@ type ReadyBuildCandidate struct {
 	OrgID                      pgtype.UUID
 	DeploymentID               pgtype.UUID
 	BuildRegionID              string
+	BuildArchitecture          string
 	LeaseSequence              int64
 	RequestedCPUMillis         int64
 	RequestedMemoryBytes       int64
@@ -41,6 +42,9 @@ const (
 // PlaceReadyBuild chooses certified build capacity in the deployment's frozen
 // region. The worker never scans or chooses deployment work.
 func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate, observationFreshAfter pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
+	if !validBuildArchitecture(candidate.BuildArchitecture) {
+		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("build architecture is outside the closed internal domain")
+	}
 	eligible, err := d.readyBuildCandidateExists(ctx, candidate)
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
@@ -56,6 +60,9 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
        worker_instances.protocol_version
   FROM worker_groups
   JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
+  JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+   AND runtime_identities.runtime_arch = $11
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -66,6 +73,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
  WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
    AND worker_groups.allows_build
    AND worker_instances.state = 'active' AND worker_instances.supports_build
+   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= $2
 	   AND worker_observations.build_paused_reason IS NULL
@@ -114,7 +122,8 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, candidate.RequestedBuildExecutors,
 		candidate.RequestedCPUMillis, candidate.RequestedMemoryBytes,
 		candidate.RequestedWorkloadDiskBytes, candidate.RequestedScratchBytes,
-		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes).Scan(
+		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes,
+		candidate.BuildArchitecture).Scan(
 		&groupID, &workerID, &workerEpoch, &protocolVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -136,8 +145,8 @@ LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, candidate.RequestedBui
 		ExpectedLeaseSequence: candidate.LeaseSequence,
 		Lease: db.LeaseQueuedDeploymentBuildParams{
 			OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
-			BuildRegionID: candidate.BuildRegionID,
-			BuildLeaseID:  pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
+			BuildRegionID: candidate.BuildRegionID, BuildArchitecture: candidate.BuildArchitecture,
+			BuildLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())), LeaseSequence: candidate.LeaseSequence,
 			WorkerGroupID: groupID, BuildWorkerInstanceID: workerID,
 			WorkerEpoch: workerEpoch, WorkerProtocolVersion: protocolVersion,
 			RequestedCpuMillis:         candidate.RequestedCPUMillis,
@@ -175,12 +184,14 @@ SELECT EXISTS (
     AND build_requested_executors = $8
     AND (COALESCE((SELECT max(lease_sequence) FROM deployment_build_leases
                    WHERE deployment_id = deployments.id), 0) + 1) = $9
+    AND build_architecture = $10
     AND $9 BETWEEN 1 AND 3
     AND NOT EXISTS (SELECT 1 FROM deployment_build_leases
                      WHERE deployment_id = deployments.id AND state IN ('assigned','starting','running'))
 )`, candidate.OrgID, candidate.DeploymentID, candidate.BuildRegionID,
 		candidate.RequestedCPUMillis, candidate.RequestedMemoryBytes, candidate.RequestedWorkloadDiskBytes,
-		candidate.RequestedScratchBytes, candidate.RequestedBuildExecutors, candidate.LeaseSequence).Scan(&exists)
+		candidate.RequestedScratchBytes, candidate.RequestedBuildExecutors, candidate.LeaseSequence,
+		candidate.BuildArchitecture).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("revalidate ready build candidate: %w", err)
 	}
@@ -197,16 +208,18 @@ func (d *Authority) placeBuild(ctx context.Context, params placeBuildParams) (db
 	var candidateID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 SELECT deployments.id
-  FROM deployments
+ FROM deployments
  WHERE deployments.id = $2
    AND deployments.status IN ('queued', 'building')
    AND deployments.build_region_id = $1
+   AND deployments.build_architecture = $3
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases
         WHERE deployment_build_leases.deployment_id = deployments.id
           AND deployment_build_leases.state IN ('assigned', 'starting', 'running'))
  ORDER BY deployments.created_at, deployments.id
-LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID).Scan(&candidateID)
+LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
+		params.Lease.BuildArchitecture).Scan(&candidateID)
 	if err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("discover build placement candidate: %w", err)
 	}
@@ -219,6 +232,7 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID).Scan(&candidate
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
 		WorkerProtocolVersion: params.Lease.WorkerProtocolVersion,
 		ObservationFreshAfter: params.ObservationFreshAfter, Role: "build",
+		BuildArchitecture: params.Lease.BuildArchitecture,
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
 	}
@@ -227,10 +241,11 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID).Scan(&candidate
 SELECT (COALESCE((SELECT max(lease_sequence) FROM deployment_build_leases
                   WHERE deployment_id = deployments.id), 0) + 1) = $3
    AND $3 BETWEEN 1 AND 3
-  FROM deployments
- WHERE id = $1 AND build_region_id = $2 AND status IN ('queued','building')
+ FROM deployments
+ WHERE id = $1 AND build_region_id = $2 AND build_architecture = $4
+   AND status IN ('queued','building')
  FOR UPDATE`, candidateID, params.Lease.BuildRegionID,
-		params.ExpectedLeaseSequence).Scan(&deploymentFenceMatches); err != nil {
+		params.ExpectedLeaseSequence, params.Lease.BuildArchitecture).Scan(&deploymentFenceMatches); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("lock build deployment: %w", err)
 	}
 	if !deploymentFenceMatches {

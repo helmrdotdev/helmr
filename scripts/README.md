@@ -124,9 +124,22 @@ only the most recent tagged worker AMIs and delete snapshots for older images.
 
 For official worker AMI releases, `aws-dev-smoke.sh worker-image-wait` records both the provider
 region AMI ID in `.helmr-aws-dev-smoke/worker-ami-id` and the full region-to-AMI map in
-`.helmr-aws-dev-smoke/worker-ami-ids.json`. Use `worker-image-amis` to print the JSON object for
-the release workflow's `worker_amis_json` input. Set `STATE_KEY` for release AMI pipelines so they
-do not share the dev worker-image stack state.
+`.helmr-aws-dev-smoke/worker-ami-ids.json`. Use `worker-image-amis` to inspect that JSON object.
+Set `STATE_KEY` for release AMI pipelines so they do not share the dev worker-image stack state.
+The official release workflow does not accept AMI IDs as input; it always builds AMIs from the
+verified package so the image result and package transport remain one provenance-bound artifact.
+
+`worker-release-stage` accepts the read-only snapshot emitted by `runtime-release verify-worker`
+and the verifier's SHA-256 and byte length. It exact-checks those values before conditionally
+creating the package in a versioned private S3 bucket, then retrieves that exact version and checks
+the bytes again. It records the exact URI, object version, SHA-256, and KMS key for
+`worker-image-apply`; the release workflow carries the same identity into `aws-artifacts.json`.
+There is no mutable package lookup or second read of the verifier's original input path.
+
+`build-control-image.sh` requires `CONTROL_IMAGE_RUNTIME_RELEASE_DIR` to name the output of a
+successful complete runtime-release verification. It copies only the authenticated catalog,
+Sigstore bundle, and trusted root into the image as root-owned read-only files. It does not accept
+an unverified archive or discover a mutable release.
 
 Official public AMI releases should run `release-worker-ami-cleanup.sh` before starting a new Image
 Builder execution. It keeps the newest release AMIs per region and deregisters older public AMIs so

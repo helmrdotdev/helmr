@@ -18,18 +18,21 @@ const DeploymentSourceArtifactMediaType = "application/vnd.helmr.deployment-sour
 const ExpirableTagKey = "helmr-expirable"
 const ExpirableTagValue = "true"
 
-type Store interface {
-	Put(ctx context.Context, mediaType string, body io.Reader) (Object, error)
-	Stage(ctx context.Context, mediaType string) (Stage, error)
+type Reader interface {
 	Stat(ctx context.Context, digest string) (Object, error)
 	Get(ctx context.Context, digest string) (io.ReadCloser, error)
+}
+
+type Store interface {
+	Reader
+	Put(ctx context.Context, mediaType string, body io.Reader) (Object, error)
+	Stage(ctx context.Context, mediaType string) (Stage, error)
 	Delete(ctx context.Context, digest string) error
 }
 
 type ImmutableStore interface {
+	Reader
 	Publish(ctx context.Context, mediaType string, body io.Reader) (Object, error)
-	Stat(ctx context.Context, digest string) (Object, error)
-	Get(ctx context.Context, digest string) (io.ReadCloser, error)
 }
 
 // Stage receives object bytes, hashes and counts them, then publishes on Commit.
@@ -62,6 +65,19 @@ func ObjectKey(prefix, digest string) (string, error) {
 		return "sha256/" + hash, nil
 	}
 	return prefix + "/sha256/" + hash, nil
+}
+
+func ShardedObjectKey(prefix, digest string) (string, error) {
+	hash, ok := strings.CutPrefix(digest, "sha256:")
+	if !ok || len(hash) != 64 {
+		return "", fmt.Errorf("unsupported digest %q", digest)
+	}
+	prefix = strings.Trim(prefix, "/")
+	key := "sha256/" + hash[:2] + "/" + hash[2:]
+	if prefix == "" {
+		return key, nil
+	}
+	return prefix + "/" + key, nil
 }
 
 func putStage(ctx context.Context, stage Stage, body io.Reader) (Object, error) {

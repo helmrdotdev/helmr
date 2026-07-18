@@ -43,7 +43,6 @@ type Querier interface {
 	CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error)
 	CertifyWorkerInstance(ctx context.Context, arg CertifyWorkerInstanceParams) (CertifyWorkerInstanceRow, error)
 	ClaimAssignedRunLease(ctx context.Context, arg ClaimAssignedRunLeaseParams) (ClaimAssignedRunLeaseRow, error)
-	ClaimDeploymentBuildLease(ctx context.Context, arg ClaimDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
 	ClaimDueSessionContinuationRequests(ctx context.Context, arg ClaimDueSessionContinuationRequestsParams) ([]SessionContinuationRequest, error)
 	ClaimEventIngestBatch(ctx context.Context, arg ClaimEventIngestBatchParams) ([]ClaimEventIngestBatchRow, error)
 	ClaimFleetWorkerTermination(ctx context.Context, arg ClaimFleetWorkerTerminationParams) (ClaimFleetWorkerTerminationRow, error)
@@ -195,7 +194,7 @@ type Querier interface {
 	GetPublicAccessTokenTokenScope(ctx context.Context, arg GetPublicAccessTokenTokenScopeParams) (PublicAccessTokenScope, error)
 	GetRegion(ctx context.Context, id string) (Region, error)
 	GetRegionByProviderRegion(ctx context.Context, arg GetRegionByProviderRegionParams) (Region, error)
-	GetReusableDeploymentByContentHash(ctx context.Context, arg GetReusableDeploymentByContentHashParams) (Deployment, error)
+	GetReusableDeploymentBuild(ctx context.Context, arg GetReusableDeploymentBuildParams) (Deployment, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
 	GetRunLeaseRuntimeIdentity(ctx context.Context, arg GetRunLeaseRuntimeIdentityParams) (RuntimeIdentity, error)
@@ -331,8 +330,8 @@ type Querier interface {
 	ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVersionsParams) ([]WorkspaceVersion, error)
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error)
+	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
-	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)

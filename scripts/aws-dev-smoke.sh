@@ -28,6 +28,10 @@ AMI_IDS_FILE="${STATE_DIR}/worker-ami-ids.json"
 SOURCE_BUNDLE_FILE="${STATE_DIR}/source.bundle"
 SOURCE_BUNDLE_URI_FILE="${STATE_DIR}/source-bundle-s3-uri"
 SOURCE_BUNDLE_REF_FILE="${STATE_DIR}/source-bundle-ref"
+RELEASE_PACKAGE_URI_FILE="${STATE_DIR}/worker-release-package-s3-uri"
+RELEASE_PACKAGE_VERSION_FILE="${STATE_DIR}/worker-release-package-version-id"
+RELEASE_PACKAGE_SHA256_FILE="${STATE_DIR}/worker-release-package-sha256"
+RELEASE_PACKAGE_KMS_KEY_FILE="${STATE_DIR}/worker-release-package-kms-key-arn"
 CONTROL_IMAGE_URI_FILE="${STATE_DIR}/control-image-uri"
 DEV_APPLY_MARKER_FILE="${STATE_DIR}/dev-apply-success.json"
 IMAGE_WAIT_INTERVAL_SECONDS="${IMAGE_WAIT_INTERVAL_SECONDS:-60}"
@@ -45,6 +49,7 @@ Commands:
   bootstrap-destroy-prepare
                        Empty versioned bootstrap buckets before destroying them.
   source-bundle         Upload the current Git HEAD as an S3 git bundle.
+  worker-release-stage  Create the exact versioned Worker runtime-release package object.
   worker-image-source-check
                         Check that Image Builder can fetch the configured Git ref.
   worker-image-init     Initialize the worker-image stack backend.
@@ -95,6 +100,16 @@ Worker image optional environment:
   WORKER_IMAGE_SOURCE_REF  Git ref checked out by Image Builder. Defaults to the current branch.
   WORKER_IMAGE_SOURCE_BUNDLE_S3_URI
                            S3 git bundle URI. Defaults to the last source-bundle result.
+  WORKER_IMAGE_RELEASE_PACKAGE
+                           Verified Worker runtime-release package snapshot to stage.
+  WORKER_IMAGE_RELEASE_PACKAGE_BUCKET
+                           Versioned private S3 bucket used for release-package staging.
+  WORKER_IMAGE_RELEASE_PACKAGE_KEY
+                           Optional immutable staging key. Defaults to a revision- and digest-qualified key.
+  WORKER_IMAGE_RELEASE_PACKAGE_SHA256
+                           Verifier-returned raw SHA-256 required by worker-release-stage.
+  WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES
+                           Verifier-returned byte length required by worker-release-stage.
   WORKER_IMAGE_VERSION     Optional Image Builder component/recipe version for immutable updates.
   WORKER_IMAGE_INSTANCE_PROFILE_NAME
                            Existing EC2 instance profile for Image Builder. Defaults to module-managed.
@@ -105,10 +120,12 @@ Worker image optional environment:
                            Set to 0 or false for public official AMIs.
   SKIP_SOURCE_REF_CHECK    Set to 1 to skip the remote ref check.
 
-Control image optional environment:
+Control image environment:
   CONTROL_IMAGE_REPOSITORY  ECR repository URI. Defaults to the dev stack output.
   CONTROL_IMAGE_TAG         Image tag. Defaults to the current short Git revision.
   CONTROL_IMAGE_PLATFORM    Docker platform. Defaults to linux/amd64.
+  CONTROL_IMAGE_RUNTIME_RELEASE_DIR
+                           Verified runtime-release directory required by control-image-build.
   ROTATE_DEV_SECRETS        Set to 1 to replace generated dev secret values.
 
 Dev optional environment:
@@ -175,6 +192,17 @@ sha256_stdin() {
     sha256sum | awk '{print $1}'
   elif command -v shasum >/dev/null 2>&1; then
     shasum -a 256 | awk '{print $1}'
+  else
+    die "sha256sum or shasum is required"
+  fi
+}
+
+sha256_file() {
+  path="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "${path}" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "${path}" | awk '{print $1}'
   else
     die "sha256sum or shasum is required"
   fi
@@ -262,8 +290,36 @@ bootstrap_init() {
   "${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" init -backend=false
 }
 
+bootstrap_principal_arn() {
+  caller_arn="$(aws sts get-caller-identity --region "${AWS_REGION}" --query Arn --output text)"
+  case "${caller_arn}" in
+    arn:*:sts::*:assumed-role/*/*)
+      partition="$(printf '%s\n' "${caller_arn}" | cut -d: -f2)"
+      account_id="$(printf '%s\n' "${caller_arn}" | cut -d: -f5)"
+      role_and_session="${caller_arn#*:assumed-role/}"
+      printf 'arn:%s:iam::%s:role/%s\n' "${partition}" "${account_id}" "${role_and_session%/*}"
+      ;;
+    arn:*:iam::*:role/* | arn:*:iam::*:user/*)
+      printf '%s\n' "${caller_arn}"
+      ;;
+    *)
+      die "bootstrap requires an IAM role or user principal; set the runtime principal JSON overrides when using ${caller_arn}"
+      ;;
+  esac
+}
+
 bootstrap_apply() {
-  tf_apply "${BOOTSTRAP_STACK}" -var="name=${BOOTSTRAP_NAME}"
+  principal_arn="$(bootstrap_principal_arn)"
+  provisioners="${RUNTIME_PROVISIONER_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
+  orchestrators="${RUNTIME_ROLLOUT_ORCHESTRATOR_PRINCIPAL_ARNS_JSON:-$(jq -cn --arg arn "${principal_arn}" '[$arn]')}"
+  printf '%s\n' "${provisioners}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
+    die "RUNTIME_PROVISIONER_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
+  printf '%s\n' "${orchestrators}" | jq -e 'type == "array" and length > 0 and all(.[]; type == "string")' >/dev/null ||
+    die "RUNTIME_ROLLOUT_ORCHESTRATOR_PRINCIPAL_ARNS_JSON must be a non-empty JSON string array"
+  tf_apply "${BOOTSTRAP_STACK}" \
+    -var="name=${BOOTSTRAP_NAME}" \
+    -var="runtime_provisioner_principal_arns=${provisioners}" \
+    -var="runtime_rollout_orchestrator_principal_arns=${orchestrators}"
 }
 
 bootstrap_output() {
@@ -272,6 +328,27 @@ bootstrap_output() {
   printf 'export STATE_BUCKET=%q\n' "${bucket}"
   printf 'export STATE_REGION=%q\n' "${STATE_REGION}"
   printf 'export SOURCE_BUNDLE_BUCKET=%q\n' "${artifact_bucket}"
+  for output_name in \
+    runtime_store_uri \
+    runtime_store_bucket_arn \
+    runtime_store_kms_key_arn \
+    retained_cas_uri \
+    retained_cas_bucket_arn \
+    retained_cas_kms_key_arn; do
+    value="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw "${output_name}")"
+    printf 'export %s=%q\n' "$(printf '%s' "${output_name}" | tr '[:lower:]' '[:upper:]')" "${value}"
+  done
+}
+
+bootstrap_contract_value() {
+  environment_name="$1"
+  output_name="$2"
+  value="${!environment_name:-}"
+  if [ -z "${value}" ]; then
+    value="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw "${output_name}")"
+  fi
+  [ -n "${value}" ] || die "${environment_name} is required"
+  printf '%s\n' "${value}"
 }
 
 delete_all_s3_object_versions() {
@@ -304,6 +381,8 @@ delete_all_s3_object_versions() {
 bootstrap_destroy_prepare() {
   state_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw bucket_name)"
   artifact_bucket="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw source_artifact_bucket_name)"
+  runtime_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw runtime_store_bucket_arn)"
+  retained_bucket_arn="$("${TF_BIN}" -chdir="${BOOTSTRAP_STACK}" output -raw retained_cas_bucket_arn)"
   if [ "${ALLOW_VALIDATION_EVIDENCE_DELETE:-0}" != "1" ]; then
     for protected_prefix in helmr/validation-evidence/ helmr/validation-claims/; do
       evidence_versions="$(
@@ -319,6 +398,15 @@ bootstrap_destroy_prepare() {
       fi
     done
   fi
+  if [ "${ALLOW_RETAINED_STORE_DELETE:-0}" != "1" ]; then
+    die "bootstrap teardown includes retained runtime and deployment artifacts; set ALLOW_RETAINED_STORE_DELETE=1 only for an explicitly approved teardown"
+  fi
+  runtime_bucket="${runtime_bucket_arn##*:}"
+  retained_bucket="${retained_bucket_arn##*:}"
+  aws s3api delete-bucket-policy --region "${STATE_REGION}" --bucket "${runtime_bucket}"
+  aws s3api delete-bucket-policy --region "${STATE_REGION}" --bucket "${retained_bucket}"
+  delete_all_s3_object_versions "${runtime_bucket}"
+  delete_all_s3_object_versions "${retained_bucket}"
   delete_all_s3_object_versions "${artifact_bucket}"
   delete_all_s3_object_versions "${state_bucket}"
 }
@@ -451,6 +539,86 @@ source_bundle() {
   printf '%s\n' "${s3_uri}"
 }
 
+worker_release_stage() {
+  package="${WORKER_IMAGE_RELEASE_PACKAGE:-}"
+  [ -f "${package}" ] || die "WORKER_IMAGE_RELEASE_PACKAGE must name the runtime release package tar"
+  expected_digest="${WORKER_IMAGE_RELEASE_PACKAGE_SHA256:-}"
+  printf '%s\n' "${expected_digest}" | grep -Eq '^[0-9a-f]{64}$' ||
+    die "WORKER_IMAGE_RELEASE_PACKAGE_SHA256 must be 64 lowercase hexadecimal characters"
+  expected_size="${WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES:-}"
+  printf '%s\n' "${expected_size}" | grep -Eq '^[1-9][0-9]*$' ||
+    die "WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES must be a positive integer"
+
+  bucket="${WORKER_IMAGE_RELEASE_PACKAGE_BUCKET:-}"
+  if [ -z "${bucket}" ]; then
+    bucket="$(source_bundle_bucket)"
+  fi
+  digest="$(sha256_file "${package}")"
+  [ "${digest}" = "${expected_digest}" ] ||
+    die "runtime release package SHA-256 differs from verifier output"
+  size="$(wc -c <"${package}" | tr -d '[:space:]')"
+  [ "${size}" = "${expected_size}" ] ||
+    die "runtime release package length differs from verifier output"
+  revision="$(git -C "${ROOT}" rev-parse HEAD)"
+  key="${WORKER_IMAGE_RELEASE_PACKAGE_KEY:-helmr/runtime-release-packages/${revision}/${digest}.tar}"
+  uri="s3://${bucket}/${key}"
+  put_response="${STATE_DIR}/worker-release-package-put.json"
+  response="${STATE_DIR}/worker-release-package-head.json"
+  mkdir -p "${STATE_DIR}"
+
+  if ! aws s3api put-object \
+    --region "${AWS_REGION}" \
+    --bucket "${bucket}" \
+    --key "${key}" \
+    --body "${package}" \
+    --if-none-match '*' \
+    --metadata "sha256=${digest}" \
+    --output json >"${put_response}"; then
+    aws s3api head-object \
+      --region "${AWS_REGION}" \
+      --bucket "${bucket}" \
+      --key "${key}" \
+      --output json >"${put_response}"
+  fi
+
+  version_id="$(jq -er '.VersionId | select(type == "string" and length > 0 and . != "null")' "${put_response}")" ||
+    die "release package staging bucket must have versioning enabled"
+  aws s3api head-object \
+    --region "${AWS_REGION}" \
+    --bucket "${bucket}" \
+    --key "${key}" \
+    --version-id "${version_id}" \
+    --output json >"${response}"
+  metadata_digest="$(jq -er '.Metadata.sha256 | select(type == "string")' "${response}")" ||
+    die "staged release package is missing its SHA-256 metadata"
+  [ "${metadata_digest}" = "${digest}" ] ||
+    die "staged release package metadata does not match the local package"
+  content_length="$(jq -er '.ContentLength | select(type == "number" and . > 0 and floor == .)' "${response}")" ||
+    die "staged release package is missing its content length"
+  [ "${content_length}" = "${expected_size}" ] ||
+    die "staged release package length does not match verifier output"
+
+  staged="${STATE_DIR}/worker-release-package-verify.tar"
+  aws s3api get-object \
+    --region "${AWS_REGION}" \
+    --bucket "${bucket}" \
+    --key "${key}" \
+    --version-id "${version_id}" \
+    "${staged}" >/dev/null
+  [ "$(sha256_file "${staged}")" = "${digest}" ] ||
+    die "staged release package bytes do not match the local package"
+  [ "$(wc -c <"${staged}" | tr -d '[:space:]')" = "${expected_size}" ] ||
+    die "downloaded release package length does not match verifier output"
+  rm -f "${staged}"
+
+  kms_key_arn="$(jq -r '.SSEKMSKeyId // empty' "${response}")"
+  printf '%s\n' "${uri}" >"${RELEASE_PACKAGE_URI_FILE}"
+  printf '%s\n' "${version_id}" >"${RELEASE_PACKAGE_VERSION_FILE}"
+  printf '%s\n' "${digest}" >"${RELEASE_PACKAGE_SHA256_FILE}"
+  printf '%s\n' "${kms_key_arn}" >"${RELEASE_PACKAGE_KMS_KEY_FILE}"
+  info "Worker runtime-release package staged: ${uri}?versionId=${version_id}"
+}
+
 worker_image_source_check() {
   if [ -n "$(source_bundle_uri)" ]; then
     info "using source bundle: $(source_bundle_uri)"
@@ -460,9 +628,37 @@ worker_image_source_check() {
   resolve_remote_source_ref >/dev/null
 }
 
+worker_release_value() {
+  environment_name="$1"
+  state_file="$2"
+  value="${!environment_name:-}"
+  if [ -z "${value}" ] && [ -f "${state_file}" ]; then
+    value="$(cat "${state_file}")"
+  fi
+  [ -n "${value}" ] || die "${environment_name} is required; run worker-release-stage first"
+  printf '%s\n' "${value}"
+}
+
 worker_image_apply() {
   worker_image_source_check
   bundle_uri="$(source_bundle_uri)"
+  release_package_uri="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_S3_URI "${RELEASE_PACKAGE_URI_FILE}")"
+  release_package_version_id="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_VERSION_ID "${RELEASE_PACKAGE_VERSION_FILE}")"
+  release_package_sha256="$(worker_release_value WORKER_IMAGE_RELEASE_PACKAGE_SHA256 "${RELEASE_PACKAGE_SHA256_FILE}")"
+  release_package_object_arn="$(source_bundle_object_arn "${release_package_uri}")"
+  release_package_kms_key_arn="${WORKER_IMAGE_RELEASE_PACKAGE_KMS_KEY_ARN:-}"
+  if [ -z "${release_package_kms_key_arn}" ] && [ -f "${RELEASE_PACKAGE_KMS_KEY_FILE}" ]; then
+    release_package_kms_key_arn="$(cat "${RELEASE_PACKAGE_KMS_KEY_FILE}")"
+  fi
+  release_args=(
+    -var="release_package_s3_uri=${release_package_uri}"
+    -var="release_package_object_arn=${release_package_object_arn}"
+    -var="release_package_version_id=${release_package_version_id}"
+    -var="release_package_sha256=${release_package_sha256}"
+  )
+  if [ -n "${release_package_kms_key_arn}" ]; then
+    release_args+=(-var="release_package_kms_key_arn=${release_package_kms_key_arn}")
+  fi
   version_args=(-var="image_version=$(worker_image_version)")
   instance_profile_args=()
   if [ -n "${WORKER_IMAGE_INSTANCE_PROFILE_NAME}" ]; then
@@ -500,6 +696,7 @@ worker_image_apply() {
       -var="source_bundle_s3_uri=${bundle_uri}" \
       -var="source_bundle_object_arn=$(source_bundle_object_arn "${bundle_uri}")"
     )
+    apply_args+=("${release_args[@]}")
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
     if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
@@ -515,6 +712,7 @@ worker_image_apply() {
       -var="source_repository_url=${WORKER_IMAGE_SOURCE_REPOSITORY_URL}" \
       -var="source_ref=${source_ref}"
     )
+    apply_args+=("${release_args[@]}")
     if ((${#distribution_args[@]})); then apply_args+=("${distribution_args[@]}"); fi
     if ((${#instance_profile_args[@]})); then apply_args+=("${instance_profile_args[@]}"); fi
     if ((${#public_args[@]})); then apply_args+=("${public_args[@]}"); fi
@@ -638,10 +836,14 @@ control_image_build() {
   need_command docker
   image_uri="$(control_image_uri)"
   context="$(control_image_context)"
+  runtime_release_dir="${CONTROL_IMAGE_RUNTIME_RELEASE_DIR:-}"
+  [ -d "${runtime_release_dir}" ] ||
+    die "CONTROL_IMAGE_RUNTIME_RELEASE_DIR must name a verified runtime-release directory"
 
   # shellcheck disable=SC2016
   nix develop "${ROOT}#images" -c env \
     CONTROL_IMAGE_CONTEXT="${context}" \
+    CONTROL_IMAGE_RUNTIME_RELEASE_DIR="${runtime_release_dir}" \
     IMAGE_URI="${image_uri}" \
     bash -ceu '
       cd "$1"
@@ -698,6 +900,21 @@ dev_tfvars() {
   ' "${DEV_TFVARS}" >"${tmp}"
   mv "${tmp}" "${DEV_TFVARS}"
   info "updated ${DEV_TFVARS}"
+}
+
+apply_bootstrap_contract_tfvars() {
+  tfvars_file="$1"
+  runtime_store_uri="$(bootstrap_contract_value RUNTIME_STORE_URI runtime_store_uri)"
+  runtime_store_bucket_arn="$(bootstrap_contract_value RUNTIME_STORE_BUCKET_ARN runtime_store_bucket_arn)"
+  runtime_store_kms_key_arn="$(bootstrap_contract_value RUNTIME_STORE_KMS_KEY_ARN runtime_store_kms_key_arn)"
+  runtime_policy_digest="${DEV_RUNTIME_POLICY_DIGEST:-$(tfvar_value "${tfvars_file}" runtime_policy_digest 2>/dev/null || true)}"
+  printf '%s\n' "${runtime_policy_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+    die "DEV_RUNTIME_POLICY_DIGEST must be sha256:<64 lowercase hexadecimal digits>"
+
+  set_tfvar "${tfvars_file}" "runtime_store_uri" "$(tf_quote "${runtime_store_uri}")"
+  set_tfvar "${tfvars_file}" "runtime_store_bucket_arn" "$(tf_quote "${runtime_store_bucket_arn}")"
+  set_tfvar "${tfvars_file}" "runtime_store_kms_key_arn" "$(tf_quote "${runtime_store_kms_key_arn}")"
+  set_tfvar "${tfvars_file}" "runtime_policy_digest" "$(tf_quote "${runtime_policy_digest}")"
 }
 
 dev_base_tfvars() {
@@ -768,6 +985,7 @@ worker_vm_vcpus                     = ${DEV_WORKER_VM_VCPUS:-2}
 worker_vm_memory_mib                = ${DEV_WORKER_VM_MEMORY_MIB:-4096}
 worker_vm_scratch_disk_mib          = ${DEV_WORKER_VM_SCRATCH_DISK_MIB:-32768}
 EOF
+  apply_bootstrap_contract_tfvars "${DEV_TFVARS}"
   apply_dev_clickhouse_tfvars "${DEV_TFVARS}"
   info "wrote ${DEV_TFVARS}"
 }
@@ -1253,6 +1471,7 @@ EOF
     set_tfvar "${DEV_TFVARS}" "cloudfront_origin_domain_name" "null"
   fi
   set_tfvar "${DEV_TFVARS}" "github_oauth_client_id" "$(tf_quote "${DEV_GITHUB_OAUTH_CLIENT_ID}")"
+  apply_bootstrap_contract_tfvars "${DEV_TFVARS}"
   apply_dev_clickhouse_tfvars "${DEV_TFVARS}"
   set_tfvar "${DEV_TFVARS}" "create_control_service" "true"
   set_tfvar "${DEV_TFVARS}" "control_desired_count" "${DEV_CONTROL_DESIRED_COUNT:-1}"
@@ -1801,6 +2020,7 @@ case "${command}" in
   bootstrap-output) bootstrap_output ;;
   bootstrap-destroy-prepare) bootstrap_destroy_prepare ;;
   source-bundle) source_bundle ;;
+  worker-release-stage) worker_release_stage ;;
   worker-image-source-check) worker_image_source_check ;;
   worker-image-init) tf_init "${WORKER_IMAGE_STACK}" ;;
   worker-image-apply) worker_image_apply ;;

@@ -24,6 +24,11 @@ type BuildResourceVector struct {
 	Executors         int32
 }
 
+const (
+	buildArchitectureAArch64 = "aarch64"
+	buildArchitectureX8664   = "x86_64"
+)
+
 type Message struct {
 	WorkKind              WorkKind
 	RunID                 string
@@ -45,6 +50,7 @@ type Message struct {
 	EnqueuedAt            time.Time
 	Traceparent           string
 	LeaseSequence         int64
+	BuildArchitecture     string
 	BuildResources        BuildResourceVector
 }
 
@@ -144,11 +150,23 @@ func (m Message) Validate() error {
 			problems = append(problems, err)
 		}
 	}
-	if m.WorkKind == WorkKindBuild && (m.LeaseSequence < 1 || m.LeaseSequence > 3 ||
-		m.BuildResources.CPUMillis != 2000 || m.BuildResources.MemoryBytes != 2<<30 ||
-		m.BuildResources.WorkloadDiskBytes != 0 || m.BuildResources.ScratchBytes != 13<<30 ||
-		m.BuildResources.Executors != 1) {
-		problems = append(problems, errors.New("build fence and fixed resource vector must be valid"))
+	if m.WorkKind == WorkKindBuild {
+		envelope := compute.BuildEnvelopeResources()
+		if !validBuildArchitecture(m.BuildArchitecture) {
+			problems = append(problems, errors.New("build architecture must be aarch64 or x86_64"))
+		}
+		if m.LeaseSequence < 1 || m.LeaseSequence > 3 ||
+			m.BuildResources.CPUMillis != envelope.MilliCPU ||
+			m.BuildResources.MemoryBytes != envelope.MemoryMiB<<20 ||
+			m.BuildResources.WorkloadDiskBytes != 0 ||
+			m.BuildResources.ScratchBytes != envelope.DiskMiB<<20 ||
+			m.BuildResources.Executors != 1 {
+			problems = append(problems, errors.New("build fence and fixed resource vector must be valid"))
+		}
 	}
 	return errors.Join(problems...)
+}
+
+func validBuildArchitecture(architecture string) bool {
+	return architecture == buildArchitectureAArch64 || architecture == buildArchitectureX8664
 }

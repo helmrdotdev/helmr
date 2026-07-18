@@ -154,6 +154,7 @@ SELECT * FROM worker_instances
 SELECT worker_instances.*,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
+       runtime_identities.runtime_arch,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch

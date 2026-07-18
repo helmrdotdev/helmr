@@ -3,9 +3,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/region"
 )
 
 func LoadWorker() (Worker, error) {
@@ -15,8 +18,13 @@ func LoadWorker() (Worker, error) {
 		CASURI:                       envString("HELMR_CAS_URI"),
 		WorkerInstanceCredentialPath: envString("HELMR_WORKER_INSTANCE_CREDENTIAL_PATH"),
 		CheckpointKey:                envString("HELMR_CHECKPOINT_ENCRYPTION_KEY"),
+		RegionID:                     envString("HELMR_REGION_ID"),
 		WorkerProviderRegion:         envString("HELMR_WORKER_PROVIDER_REGION"),
+		RuntimePolicyPath:            envString("HELMR_RUNTIME_POLICY_PATH"),
+		RuntimeStoreURI:              envString("HELMR_RUNTIME_STORE_URI"),
 		WorkDir:                      envString("HELMR_WORKER_WORK_DIR"),
+		BuildCacheDir:                envString("HELMR_WORKER_BUILD_CACHE_DIR"),
+		BuildScratchDir:              envString("HELMR_WORKER_BUILD_SCRATCH_DIR"),
 		ImagesDir:                    envString("HELMR_WORKER_IMAGES_DIR"),
 		GitPath:                      env("HELMR_GIT_PATH", "git"),
 		BuildKitAddr:                 envString("HELMR_WORKER_BUILDKIT_ADDR"),
@@ -219,6 +227,35 @@ func LoadWorker() (Worker, error) {
 	}
 	if cfg.WorkerProviderRegion == "" {
 		return cfg, errors.New("HELMR_WORKER_PROVIDER_REGION is required")
+	}
+	if cfg.RegionID == "" {
+		return cfg, errors.New("HELMR_REGION_ID is required")
+	}
+	if err := region.ValidateID(cfg.RegionID); err != nil {
+		return cfg, fmt.Errorf("HELMR_REGION_ID: %w", err)
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.RuntimeStoreURI == "" {
+		return cfg, errors.New("HELMR_RUNTIME_STORE_URI is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.RuntimePolicyPath == "" {
+		return cfg, errors.New("HELMR_RUNTIME_POLICY_PATH is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildCacheDir == "" {
+		return cfg, errors.New("HELMR_WORKER_BUILD_CACHE_DIR is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildScratchDir == "" {
+		return cfg, errors.New("HELMR_WORKER_BUILD_SCRATCH_DIR is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.SubstrateCacheMaxMiB <= 0 {
+		return cfg, errors.New("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB is required for build workers")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && cfg.ArtifactCacheMaxMiB <= 0 {
+		return cfg, errors.New("HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB is required for build workers")
+	}
+	if cfg.SubstrateCacheMaxMiB > math.MaxInt64/(1024*1024) ||
+		cfg.ArtifactCacheMaxMiB > math.MaxInt64/(1024*1024) ||
+		cfg.SubstrateCacheMaxMiB > math.MaxInt64-cfg.ArtifactCacheMaxMiB {
+		return cfg, errors.New("worker cache capacity exceeds the supported byte range")
 	}
 	if cfg.CheckpointKey == "" {
 		return cfg, errors.New("HELMR_CHECKPOINT_ENCRYPTION_KEY is required")

@@ -33,6 +33,9 @@ func (verifier *pairVerifier) verifyLinks() error {
 		if _, generated := verifier.depLinks[entry.Path]; generated {
 			continue
 		}
+		if _, generated := verifier.binLinks[entry.Path]; generated {
+			continue
+		}
 		owner := verifier.registryOwner(entry.Path)
 		if owner == "" || finalArtifact != verifier.deps || verifier.registryOwner(finalPath) != owner {
 			return fmt.Errorf("registry-owned link %q escapes package root %q", entry.Path, owner)

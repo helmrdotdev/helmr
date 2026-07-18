@@ -12,6 +12,20 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
+func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
+	return api.WorkerDeploymentBuild{
+		ID: "deployment-1",
+		Runtime: api.WorkerRuntimeDescriptor{
+			Architecture:      "aarch64",
+			Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			FormatVersion:     0,
+			MediaType:         "application/vnd.helmr.runtime.v0+squashfs",
+			RuntimeAPIVersion: "helmr.runtime.v0",
+			SizeBytes:         1,
+		},
+	}
+}
+
 type consumerTestClient struct {
 	ControlClient
 	runLease        api.WorkerRunLease
@@ -160,13 +174,14 @@ func TestRunConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
+	capabilities.SupportsBuild = true
 	client := &consumerTestClient{
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-			RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 		},
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	executor := &detachedTestExecutor{}
 	builder := &successfulTestBuilder{}
@@ -197,15 +212,16 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
-	capabilities.VMMaxScratchBytes = 8 << 30
-	capabilities.ScratchBytes = 13 << 30
+	capabilities.SupportsBuild = true
+	capabilities.VMMaxScratchBytes = 20 << 30
+	capabilities.ScratchBytes = 32 << 30
 	client := &consumerTestClient{
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-			RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 		},
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	runner, err := NewRunner(
 		client,
@@ -226,25 +242,37 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 	validLease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 	}
 	tests := []struct {
 		name        string
 		reason      string
-		mutate      func(*api.WorkerCapabilities, *api.WorkerDeploymentBuildLease)
+		mutate      func(*api.WorkerCapabilities, *api.WorkerDeploymentBuildLease, *api.WorkerDeploymentBuild)
 		withBuilder bool
 	}{
 		{
 			name: "requirements unsupported", reason: "requirements_unsupported", withBuilder: true,
-			mutate: func(capabilities *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) {
+			mutate: func(capabilities *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
 				capabilities.VMMilliCPU = 1999
+			},
+		},
+		{
+			name: "runtime architecture mismatch", reason: "requirements_unsupported", withBuilder: true,
+			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
+				deployment.Runtime.Architecture = "x86_64"
+			},
+		},
+		{
+			name: "malformed runtime descriptor", reason: "requirements_unsupported", withBuilder: true,
+			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
+				deployment.Runtime.SizeBytes = 0
 			},
 		},
 		{name: "builder unavailable", reason: "builder_unavailable"},
 		{
 			name: "lease deadline too short", reason: "lease_deadline_too_short", withBuilder: true,
-			mutate: func(_ *api.WorkerCapabilities, lease *api.WorkerDeploymentBuildLease) {
+			mutate: func(_ *api.WorkerCapabilities, lease *api.WorkerDeploymentBuildLease, _ *api.WorkerDeploymentBuild) {
 				lease.ExpiresAt = time.Now()
 			},
 		},
@@ -253,13 +281,15 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			capabilities := testCapabilities()
 			capabilities.MaxBuildExecutors = 1
+			capabilities.SupportsBuild = true
 			lease := validLease
+			deployment := testWorkerDeploymentBuild()
 			if tt.mutate != nil {
-				tt.mutate(&capabilities, &lease)
+				tt.mutate(&capabilities, &lease, &deployment)
 			}
 			client := &consumerTestClient{
 				buildLease: lease,
-				deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+				deployment: deployment,
 			}
 			options := []Option{WithCapacity(testCapacity(t, capabilities))}
 			if tt.withBuilder {
@@ -276,6 +306,9 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 			if got := client.rejectReason.Load(); got != tt.reason {
 				t.Fatalf("rejection reason = %v, want %q", got, tt.reason)
 			}
+			if got := client.buildStartCalls.Load(); got != 0 {
+				t.Fatalf("start calls = %d, want 0", got)
+			}
 		})
 	}
 }
@@ -283,11 +316,12 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxVCPUs = 3
-	capabilities.MaxMemoryMiB = 3072
+	capabilities.MaxMemoryMiB = 4096
 	capabilities.MaxDiskMiB = 2048
-	capabilities.VMMaxScratchBytes = 8 << 30
-	capabilities.ScratchBytes = 14 << 30
+	capabilities.VMMaxScratchBytes = 20 << 30
+	capabilities.ScratchBytes = 34 << 30
 	capabilities.MaxBuildExecutors = 1
+	capabilities.SupportsBuild = true
 	resources := testCapacity(t, capabilities)
 	runtimeKey := capacity.Key{Kind: "runtime", Epoch: 1, ID: "runtime-1"}
 	created, err := resources.Reserve(runtimeKey, capacity.Vector{
@@ -300,10 +334,10 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 	client := &consumerTestClient{
 		buildLease: api.WorkerDeploymentBuildLease{
 			ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-			RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+			RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+			RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 		},
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(resources), WithDeploymentBuilder(&successfulTestBuilder{}))
 	if err != nil {
@@ -369,14 +403,15 @@ func TestUnclassifiedBuildFailureWaitsForLeaseExpiry(t *testing.T) {
 func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
+	capabilities.SupportsBuild = true
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	resources := testCapacity(t, capabilities)
 	builder := &cleanupUnprovenTestBuilder{
@@ -416,14 +451,15 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
+	capabilities.SupportsBuild = true
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	resources := testCapacity(t, capabilities)
 	runner, err := NewRunner(
@@ -457,14 +493,15 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 func TestCanceledBuildReleasesReservation(t *testing.T) {
 	capabilities := testCapabilities()
 	capabilities.MaxBuildExecutors = 1
+	capabilities.SupportsBuild = true
 	lease := api.WorkerDeploymentBuildLease{
 		ID: "build-lease-1", WorkerEpoch: 1, DeploymentID: "deployment-1", ExpiresAt: time.Now().Add(time.Minute),
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 	}
 	client := &consumerTestClient{
 		buildLease: lease,
-		deployment: api.WorkerDeploymentBuild{ID: "deployment-1"},
+		deployment: testWorkerDeploymentBuild(),
 	}
 	resources := testCapacity(t, capabilities)
 	runner, err := NewRunner(

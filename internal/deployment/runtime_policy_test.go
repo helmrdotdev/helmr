@@ -61,7 +61,8 @@ func TestLoadRuntimePolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	policy, err := LoadRuntimePolicy(path)
+	catalog := authenticatedRuntimeCatalogForTest(t, document.Runtimes)
+	policy, err := LoadRuntimePolicy(path, catalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +72,42 @@ func TestLoadRuntimePolicy(t *testing.T) {
 	}
 	if current != testRuntimeDescriptor() {
 		t.Fatalf("loaded current descriptor = %#v, want %#v", current, testRuntimeDescriptor())
+	}
+}
+
+func TestLoadRuntimePolicyRequiresAuthenticatedExactCatalog(t *testing.T) {
+	first, second := testRuntimeCatalogDescriptors()
+	document := runtimePolicyDocument{
+		Current:       map[string]string{"us-east-1": first.Digest},
+		FormatVersion: RuntimePolicyFormatVersion,
+		Runtimes:      []RuntimeDescriptor{first},
+	}
+	raw := canonicalRuntimePolicyForTest(t, document)
+	path := filepath.Join(t.TempDir(), "runtime-policy.json")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	unverifiedRaw, err := CanonicalRuntimeCatalog([]RuntimeDescriptor{first})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unverified, err := ParseRuntimeCatalog(unverifiedRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadRuntimePolicy(path, unverified); err == nil {
+		t.Fatal("LoadRuntimePolicy accepted an unauthenticated catalog")
+	}
+
+	mismatch := authenticatedRuntimeCatalogForTest(t, []RuntimeDescriptor{first, second})
+	if _, err := LoadRuntimePolicy(path, mismatch); err == nil {
+		t.Fatal("LoadRuntimePolicy accepted a divergent catalog")
+	}
+
+	exact := authenticatedRuntimeCatalogForTest(t, []RuntimeDescriptor{first})
+	if _, err := LoadRuntimePolicy(path, exact); err != nil {
+		t.Fatalf("LoadRuntimePolicy rejected exact catalog: %v", err)
 	}
 }
 
@@ -157,6 +194,21 @@ func TestRuntimePolicyRejectsInvalidDocuments(t *testing.T) {
 			FormatVersion: RuntimePolicyFormatVersion,
 			Runtimes:      []RuntimeDescriptor{first},
 		},
+		"oversized region": {
+			Current:       map[string]string{strings.Repeat("r", 256): first.Digest},
+			FormatVersion: RuntimePolicyFormatVersion,
+			Runtimes:      []RuntimeDescriptor{first},
+		},
+		"unnormalized region": {
+			Current:       map[string]string{" region": first.Digest},
+			FormatVersion: RuntimePolicyFormatVersion,
+			Runtimes:      []RuntimeDescriptor{first},
+		},
+		"control region": {
+			Current:       map[string]string{"region\n": first.Digest},
+			FormatVersion: RuntimePolicyFormatVersion,
+			Runtimes:      []RuntimeDescriptor{first},
+		},
 		"dangling current": {
 			Current:       map[string]string{"us-east-1": second.Digest},
 			FormatVersion: RuntimePolicyFormatVersion,
@@ -170,6 +222,18 @@ func TestRuntimePolicyRejectsInvalidDocuments(t *testing.T) {
 				t.Fatal("ParseRuntimePolicy returned nil error")
 			}
 		})
+	}
+}
+
+func TestRuntimePolicyAcceptsMaximumOpaqueRegionID(t *testing.T) {
+	regionID := strings.Repeat("r", 255)
+	policy := parseRuntimePolicyDocument(t, runtimePolicyDocument{
+		Current:       map[string]string{regionID: testRuntimeDescriptor().Digest},
+		FormatVersion: RuntimePolicyFormatVersion,
+		Runtimes:      []RuntimeDescriptor{testRuntimeDescriptor()},
+	})
+	if _, err := policy.Current(regionID); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -228,4 +292,21 @@ func canonicalRuntimePolicyForTest(t *testing.T, document runtimePolicyDocument)
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func authenticatedRuntimeCatalogForTest(
+	t *testing.T,
+	runtimes []RuntimeDescriptor,
+) *RuntimeCatalog {
+	t.Helper()
+	raw, err := CanonicalRuntimeCatalog(runtimes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := ParseRuntimeCatalog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog.authenticated = true
+	return catalog
 }

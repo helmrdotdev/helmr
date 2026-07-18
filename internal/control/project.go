@@ -16,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -126,9 +127,9 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	defaultRegionID := strings.TrimSpace(request.DefaultRegionID)
-	if defaultRegionID == "" {
-		writeError(w, badRequest(errors.New("default_region_id is required")))
+	defaultRegionID := request.DefaultRegionID
+	if err := region.ValidateID(defaultRegionID); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid default_region_id: %w", err)))
 		return
 	}
 	var project db.CreateProjectWithDefaultEnvironmentRow

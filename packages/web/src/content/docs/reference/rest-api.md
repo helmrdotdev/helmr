@@ -18,7 +18,7 @@ User, API-key, console, CLI, SDK, and worker API requests use a date-pinned API 
 Helmr-API-Version: 2026-06-06
 ```
 
-The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development.
+The date is a fixed build constant, not the request date. The control plane echoes the effective version in `Helmr-API-Version`. Requests with an unsupported non-empty version return `400 Bad Request`; omitted versions currently default to the current version during pre-release development. Header values are exact and are not trimmed.
 
 Client provenance headers are separate from the API contract:
 
@@ -28,7 +28,7 @@ Client provenance headers are separate from the API contract:
 | `Helmr-CLI-Version` | CLI build version for CLI-originated requests. |
 | `Helmr-SDK-Version` | SDK package version for SDK-originated requests. |
 
-These provenance headers are recorded on deployments and runs where available. They are diagnostic metadata and should not be used as authorization or compatibility gates.
+These provenance headers are recorded on deployments and runs where available. They are opaque diagnostic metadata rather than SemVer or compatibility gates. A value must be valid UTF-8, have no surrounding whitespace or control characters, and be at most 255 bytes. Empty means unknown; invalid values return `400 Bad Request`.
 
 Common user/API-key routes:
 

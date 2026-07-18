@@ -29,6 +29,8 @@ Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hos
 
 `HELMR_WORKER_GROUPS` is the authoritative JSON list of AWS worker-group enrollment policies. Each group identifies its AWS account, region, Auto Scaling group, instance profile, allowed AMIs, and run/build role. The same group and enrollment model is used in both deployment modes.
 
+`HELMR_REGION_ID` and `HELMR_DEFAULT_REGION_ID` are opaque Helmr identifiers, not provider-region or DNS names. Their normalized UTF-8 values must be 1–255 bytes and contain no surrounding whitespace or control characters.
+
 Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_URLS`.
 
 ClickHouse telemetry: `HELMR_CLICKHOUSE_URL` is required. Set `HELMR_CLICKHOUSE_USER` when the service user is not `default`, and set `HELMR_CLICKHOUSE_PASSWORD` when the service requires a password.

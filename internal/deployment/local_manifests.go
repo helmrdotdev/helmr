@@ -76,11 +76,11 @@ func ValidateLocalManifests(manifests LocalManifests) error {
 		}
 		if position == 0 {
 			if entry.Path != "." {
-				return fmt.Errorf("local manifests root path = %q, want .", entry.Path)
+				return fmt.Errorf("local manifests root path = %q, want %q", entry.Path, ".")
 			}
 		} else {
 			if entry.Path == "." {
-				return fmt.Errorf("only the first local manifest may use root path .")
+				return fmt.Errorf("root path may only appear in the first local manifest")
 			}
 			if err := validatePackagePath(entry.Path, programMountPath, true); err != nil {
 				return fmt.Errorf("local manifests entries[%d].path: %w", position, err)

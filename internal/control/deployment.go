@@ -15,6 +15,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -25,9 +26,9 @@ type deploymentStore interface {
 	AppendDeploymentEvent(context.Context, db.AppendDeploymentEventParams) (db.AppendDeploymentEventRow, error)
 	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
 	CreateDeployment(context.Context, db.CreateDeploymentParams) (db.Deployment, error)
-	GetReusableDeploymentByContentHash(context.Context, db.GetReusableDeploymentByContentHashParams) (db.Deployment, error)
+	GetReusableDeploymentBuild(context.Context, db.GetReusableDeploymentBuildParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	LockDeploymentReusableBuildKey(context.Context, db.LockDeploymentReusableBuildKeyParams) error
+	LockDeploymentBuildReuseKey(context.Context, string) error
 	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
 }
 
@@ -409,7 +410,30 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.RuntimeDescriptor, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Digest)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	reuseDescriptor := deployment.ReuseDescriptor{
+		FormatVersion:         deployment.ReuseFormatVersion,
+		OrgID:                 orgID.String(),
+		ProjectID:             pgvalue.MustUUIDValue(projectID).String(),
+		EnvironmentID:         pgvalue.MustUUIDValue(environmentID).String(),
+		BuildRegionID:         buildRegionID,
+		ContentHash:           contentHash,
+		APIVersion:            metadata.APIVersion,
+		SDKVersion:            metadata.SDKVersion,
+		CLIVersion:            metadata.CLIVersion,
+		BundleFormatVersion:   metadata.BundleFormatVersion,
+		WorkerProtocolVersion: metadata.WorkerProtocolVersion,
+		Architecture:          target.Architecture,
+		RuntimeDigest:         target.Digest,
+	}
+	reuseKey, err := deployment.ReuseKey(reuseDescriptor)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID:     pgvalue.UUID(orgID),
 		Digest:    artifact.Digest,
@@ -418,24 +442,25 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	}); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	if err := store.LockDeploymentReusableBuildKey(ctx, db.LockDeploymentReusableBuildKeyParams{
-		OrgID:         pgvalue.UUID(orgID),
-		BuildRegionID: buildRegionID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ContentHash:   contentHash,
-	}); err != nil {
+	if err := store.LockDeploymentBuildReuseKey(ctx, reuseKey); err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	deployment, err := store.GetReusableDeploymentByContentHash(ctx, db.GetReusableDeploymentByContentHashParams{
-		OrgID:         pgvalue.UUID(orgID),
-		BuildRegionID: buildRegionID,
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		ContentHash:   contentHash,
+	deployment, err := store.GetReusableDeploymentBuild(ctx, db.GetReusableDeploymentBuildParams{
+		OrgID:                 pgvalue.UUID(orgID),
+		BuildRegionID:         buildRegionID,
+		ProjectID:             projectID,
+		EnvironmentID:         environmentID,
+		ContentHash:           contentHash,
+		ApiVersion:            metadata.APIVersion,
+		SdkVersion:            metadata.SDKVersion,
+		CliVersion:            metadata.CLIVersion,
+		BundleFormatVersion:   metadata.BundleFormatVersion,
+		WorkerProtocolVersion: metadata.WorkerProtocolVersion,
+		BuildArchitecture:     string(target.Architecture),
+		BuildRuntimeDigest:    runtimeDigest,
 	})
 	if isNoRows(err) {
-		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, orgID, projectID, environmentID, contentHash, artifact, metadata)
+		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -447,7 +472,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	return response, nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
+func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.RuntimeDescriptor, runtimeDigest []byte, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -472,6 +497,8 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, buildReg
 			PublicID:                   publicID,
 			OrgID:                      pgvalue.UUID(orgID),
 			BuildRegionID:              buildRegionID,
+			BuildArchitecture:          string(target.Architecture),
+			BuildRuntimeDigest:         runtimeDigest,
 			ProjectID:                  projectID,
 			EnvironmentID:              environmentID,
 			Version:                    version,
@@ -511,6 +538,15 @@ func firstNonEmptyString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstPresentString(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
 		}
 	}
 	return ""
@@ -640,6 +676,10 @@ func int8Response(value pgtype.Int8) *int32 {
 func writeDeploymentError(w http.ResponseWriter, s *Server, err error) {
 	if isUniqueViolation(err) {
 		writeError(w, badRequest(errors.New("deployment conflicts with existing task metadata")))
+		return
+	}
+	if errorStatus(err) != http.StatusInternalServerError {
+		writeError(w, err)
 		return
 	}
 	s.log.Error("create deployment failed", "error", err)

@@ -571,10 +571,6 @@ func newValidRuntimeELFArtifact(
 		needed:       []string{"libnode.so"},
 		runpath:      []string{runtimeMountPath + "/lib"},
 	}), 0755)
-	artifact.addFile(runtimeShellPath, buildTestELF64(t, testELF64Spec{
-		machine:  machine,
-		fileType: elf.ET_EXEC,
-	}), 0755)
 	artifact.addFile(loaderPath, buildTestELF64(t, testELF64Spec{
 		machine:  machine,
 		fileType: elf.ET_DYN,

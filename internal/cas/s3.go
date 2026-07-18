@@ -44,6 +44,7 @@ type S3 struct {
 	bucket  string
 	prefix  string
 	tempDir string
+	sharded bool
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
@@ -58,6 +59,12 @@ type S3Option func(*S3)
 func WithS3TempDir(path string) S3Option {
 	return func(store *S3) {
 		store.tempDir = strings.TrimSpace(path)
+	}
+}
+
+func WithS3ShardedKeys() S3Option {
+	return func(store *S3) {
+		store.sharded = true
 	}
 }
 
@@ -95,10 +102,66 @@ func NewImmutableS3(ctx context.Context, rawURI string, opts ...S3Option) (*Immu
 	if err != nil {
 		return nil, err
 	}
-	if store.prefix == "" {
-		return nil, errors.New("immutable S3 store requires a distinct prefix")
-	}
 	return &ImmutableS3{store: store}, nil
+}
+
+func ValidateDisjointS3Stores(firstURI, secondURI string) error {
+	first, err := s3Namespace(firstURI)
+	if err != nil {
+		return err
+	}
+	second, err := s3Namespace(secondURI)
+	if err != nil {
+		return err
+	}
+	if first.authority != second.authority {
+		return nil
+	}
+	if first.key == second.key ||
+		strings.HasPrefix(first.key, second.key+"/") ||
+		strings.HasPrefix(second.key, first.key+"/") {
+		return errors.New("S3 stores have overlapping object namespaces")
+	}
+	return nil
+}
+
+func ValidateDistinctS3Stores(firstURI, secondURI string) error {
+	first, err := s3Namespace(firstURI)
+	if err != nil {
+		return err
+	}
+	second, err := s3Namespace(secondURI)
+	if err != nil {
+		return err
+	}
+	if first.authority == second.authority {
+		return errors.New("S3 stores do not have distinct bucket authority")
+	}
+	return nil
+}
+
+type namespace struct {
+	authority string
+	key       string
+}
+
+func s3Namespace(rawURI string) (namespace, error) {
+	uri, err := url.Parse(rawURI)
+	if err != nil {
+		return namespace{}, err
+	}
+	if uri.Scheme != "s3" || uri.Host == "" {
+		return namespace{}, fmt.Errorf("invalid S3 store URI %q", rawURI)
+	}
+	prefix := strings.Trim(uri.Path, "/")
+	key := "sha256"
+	if prefix != "" {
+		key = prefix + "/" + key
+	}
+	return namespace{
+		authority: uri.Host + "\x00" + uri.Query().Get("endpoint"),
+		key:       key,
+	}, nil
 }
 
 func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
@@ -298,7 +361,7 @@ func (c *S3) multipartPartSize(size int64) int64 {
 }
 
 func (c *S3) Stat(ctx context.Context, digest string) (Object, error) {
-	key, err := ObjectKey(c.prefix, digest)
+	key, err := c.objectKey(digest)
 	if err != nil {
 		return Object{}, err
 	}
@@ -318,7 +381,7 @@ func (c *S3) Stat(ctx context.Context, digest string) (Object, error) {
 }
 
 func (c *S3) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
-	key, err := ObjectKey(c.prefix, digest)
+	key, err := c.objectKey(digest)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +396,7 @@ func (c *S3) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 }
 
 func (c *S3) Delete(ctx context.Context, digest string) error {
-	key, err := ObjectKey(c.prefix, digest)
+	key, err := c.objectKey(digest)
 	if err != nil {
 		return err
 	}
@@ -368,7 +431,7 @@ func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	key, err := ObjectKey(s.store.prefix, digest)
+	key, err := s.store.objectKey(digest)
 	if err != nil {
 		return Object{}, err
 	}
@@ -424,6 +487,13 @@ func (c *ImmutableS3) Get(ctx context.Context, digest string) (io.ReadCloser, er
 }
 
 var _ ImmutableStore = (*ImmutableS3)(nil)
+
+func (c *S3) objectKey(digest string) (string, error) {
+	if c.sharded {
+		return ShardedObjectKey(c.prefix, digest)
+	}
+	return ObjectKey(c.prefix, digest)
+}
 
 type verifyingReadCloser struct {
 	body     io.ReadCloser

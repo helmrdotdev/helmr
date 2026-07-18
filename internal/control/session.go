@@ -96,7 +96,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	result, err := s.startSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request, sessionStartSource{})
+	result, err := s.startSessionFromRequestInScope(r.Context(), actor, scope, projectID, environmentID, taskID, request, sessionStartSource{})
 	if err != nil {
 		s.writeSessionStartError(w, err)
 		return
@@ -135,7 +135,7 @@ func (s *Server) startSessionAndWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	result, err := s.startSessionFromRequestInScope(contextWithRequestVersionMetadata(r.Context(), r), actor, scope, projectID, environmentID, taskID, request.SessionStartRequest, sessionStartSource{})
+	result, err := s.startSessionFromRequestInScope(r.Context(), actor, scope, projectID, environmentID, taskID, request.SessionStartRequest, sessionStartSource{})
 	if err != nil {
 		s.writeSessionStartError(w, err)
 		return

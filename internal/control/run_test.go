@@ -245,6 +245,8 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions", bytes.NewReader(bodyBytes))
 	req.Header.Set("authorization", "Bearer machine-key")
+	req.Header.Set(api.SDKVersionHeader, "0.3.0-dev")
+	req.Header.Set(api.ClientVersionHeader, "0.4.0")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
@@ -253,6 +255,16 @@ func TestAPIKeyRunCreateUsesActorEnvironmentScope(t *testing.T) {
 	}
 	if store.run.ProjectID != testProjectID() || store.run.EnvironmentID != testEnvironmentID() {
 		t.Fatalf("run scope = project %v environment %v", store.run.ProjectID, store.run.EnvironmentID)
+	}
+	if store.run.ApiVersion != api.CurrentAPIVersion ||
+		store.run.SdkVersion != "0.3.0-dev" ||
+		store.run.CliVersion != "0.4.0" {
+		t.Fatalf(
+			"run provenance = api:%q sdk:%q cli:%q",
+			store.run.ApiVersion,
+			store.run.SdkVersion,
+			store.run.CliVersion,
+		)
 	}
 }
 
@@ -2436,6 +2448,9 @@ type fakeStore struct {
 	deploymentPromotions                    []db.PromoteDeploymentParams
 	createDeploymentResult                  *db.Deployment
 	createDeploymentErr                     error
+	createDeploymentCalls                   int
+	projectRegions                          []string
+	getProjectCalls                         int
 	deploymentEvents                        []db.ClaimLiveTelemetryOutboxRow
 	deploymentTasks                         []db.DeploymentTask
 	deploymentStreams                       []db.DeploymentStream
@@ -3386,6 +3401,7 @@ func (r *flushRecorder) Flush() {
 type fakeAuth struct {
 	role          auth.Role
 	kind          auth.ActorKind
+	orgID         uuid.UUID
 	userID        uuid.UUID
 	apiKeyID      uuid.UUID
 	projectID     string
@@ -3409,6 +3425,10 @@ func (f *fakeStore) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (
 }
 
 func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
+	orgID := f.orgID
+	if orgID == uuid.Nil {
+		orgID = dbtest.DefaultOrgID
+	}
 	role := f.role
 	if role == "" {
 		role = auth.RoleOwner
@@ -3464,7 +3484,7 @@ func (f fakeAuth) Authenticate(context.Context, string) (auth.Actor, error) {
 		environmentID = testEnvironmentIDString()
 	}
 	return auth.Actor{
-		OrgID:         dbtest.DefaultOrgID,
+		OrgID:         orgID,
 		UserID:        userID,
 		APIKeyID:      apiKeyID,
 		ProjectID:     projectID,

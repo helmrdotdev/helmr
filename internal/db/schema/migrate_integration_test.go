@@ -125,8 +125,8 @@ func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool
 	`).Scan(&cpuDefault, &memoryDefault, &workloadDefault, &scratchDefault, &executorsDefault); err != nil {
 		t.Fatal(err)
 	}
-	if cpuDefault != "2000" || memoryDefault != "'2147483648'::bigint" || workloadDefault != "0" ||
-		scratchDefault != "'13958643712'::bigint" || executorsDefault != "1" {
+	if cpuDefault != "3000" || memoryDefault != "'4294967296'::bigint" || workloadDefault != "0" ||
+		scratchDefault != "'34359738368'::bigint" || executorsDefault != "1" {
 		t.Fatalf(
 			"build defaults = cpu:%s memory:%s workload:%s scratch:%s executors:%s",
 			cpuDefault,
@@ -274,12 +274,88 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		('00000000-0000-0000-0000-000000004004', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-workspace-one', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000004005', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'sha256:definition-workspace-two', 'workspace_image', 1, 'application/vnd.helmr.workspace-image.v0.oci-tar'),
 		('00000000-0000-0000-0000-000000004006', '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'sha256:definition-program-dependencies', 'deployment_program_dependencies', 1, 'application/vnd.helmr.deployment-program-dependencies.v0+squashfs');
-		INSERT INTO deployments (id, public_id, org_id, project_id, environment_id, build_region_id, version, content_hash, deployment_source_artifact_id) VALUES
-		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'definition-one', 'sha256:definition-one', '00000000-0000-0000-0000-000000004001'),
-		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'definition-two', 'sha256:definition-two', '00000000-0000-0000-0000-000000004002');
+		INSERT INTO deployments (id, public_id, org_id, project_id, environment_id, build_region_id, build_architecture, build_runtime_digest, version, content_hash, deployment_source_artifact_id) VALUES
+		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
+		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
+		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
 	`); err != nil {
 		t.Fatal(err)
 	}
+
+	maxRegionID := strings.Repeat("r", 255)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO regions (id, provider, provider_region, display_name)
+		VALUES ($1, 'test', 'max-width-region', 'Max Width Region')
+	`, maxRegionID); err != nil {
+		t.Fatalf("insert maximum-width region: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO deployments (
+		    id, public_id, org_id, project_id, environment_id, build_region_id,
+		    build_architecture, build_runtime_digest, version, content_hash,
+		    api_version, sdk_version, cli_version, deployment_source_artifact_id
+		) VALUES (
+		    '00000000-0000-0000-0000-000000005005',
+		    'dep_' || repeat('c', 26),
+		    '00000000-0000-0000-0000-000000001000',
+		    '00000000-0000-0000-0000-000000002000',
+		    '00000000-0000-0000-0000-000000003001',
+		    $1,
+		    'x86_64',
+		    decode(repeat('03', 32), 'hex'),
+		    'max-width-reuse-key',
+		    'sha256:' || repeat('3', 64),
+		    repeat('a', 255),
+		    repeat('b', 255),
+		    repeat('c', 255),
+		    '00000000-0000-0000-0000-000000004001'
+		)
+	`, maxRegionID); err != nil {
+		t.Fatalf("insert maximum-width deployment reuse tuple: %v", err)
+	}
+	for _, invalidRegionID := range []string{
+		strings.Repeat("r", 256),
+		" padded",
+		"\u00a0padded",
+		"control\x01region",
+		"control\u0085region",
+	} {
+		assertStatementRejected(t, ctx, tx, `
+			INSERT INTO regions (id, provider, provider_region, display_name)
+			VALUES ($1, 'test', $1, 'Invalid Region')
+		`, invalidRegionID)
+	}
+	for column, value := range map[string]string{
+		"api_version":  strings.Repeat("a", 256),
+		"sdk_version":  strings.Repeat("s", 256),
+		"cli_version":  strings.Repeat("c", 256),
+		"content_hash": "sha256:invalid",
+	} {
+		assertStatementRejected(t, ctx, tx, fmt.Sprintf(`
+			UPDATE deployments SET %s = $1
+			 WHERE id = '00000000-0000-0000-0000-000000005005'
+		`, column), value)
+	}
+
+	assertStatementRejected(t, ctx, tx, `
+		INSERT INTO deployments (
+		    id, public_id, org_id, project_id, environment_id, build_region_id,
+		    build_architecture, build_runtime_digest, version, content_hash,
+		    deployment_source_artifact_id
+		) VALUES (
+		    '00000000-0000-0000-0000-000000005004',
+		    'dep_' || repeat('b', 26),
+		    '00000000-0000-0000-0000-000000001000',
+		    '00000000-0000-0000-0000-000000002000',
+		    '00000000-0000-0000-0000-000000003001',
+		    'definition-region',
+		    'x86_64',
+		    decode(repeat('01', 32), 'hex'),
+		    'definition-one-duplicate',
+		    'sha256:' || repeat('1', 64),
+		    '00000000-0000-0000-0000-000000004001'
+		)
+	`)
 
 	assertStatementRejected(t, ctx, tx, `
 		UPDATE deployments

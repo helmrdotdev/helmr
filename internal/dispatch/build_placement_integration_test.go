@@ -1,0 +1,307 @@
+package dispatch
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"net/url"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/publicid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type buildPlacementFixture struct {
+	ctx           context.Context
+	pool          *pgxpool.Pool
+	authority     *Authority
+	orgID         uuid.UUID
+	projectID     uuid.UUID
+	environmentID uuid.UUID
+	deploymentID  uuid.UUID
+	groupID       string
+}
+
+func newBuildPlacementFixture(t *testing.T, architecture string) *buildPlacementFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool := newDispatchIntegrationDB(t, ctx)
+	authority, err := NewAuthority(pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := &buildPlacementFixture{
+		ctx: ctx, pool: pool, authority: authority,
+		orgID: uuid.Must(uuid.NewV7()), projectID: uuid.Must(uuid.NewV7()),
+		environmentID: uuid.Must(uuid.NewV7()), deploymentID: uuid.Must(uuid.NewV7()),
+		groupID: "build-placement-" + strings.ReplaceAll(uuid.NewString(), "-", ""),
+	}
+	sourceArtifactID := uuid.Must(uuid.NewV7())
+	sourceDigest := "sha256:" + strings.Repeat("1", 64)
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO regions (id, provider, provider_region, display_name)
+VALUES ('us-east-1', 'aws', 'us-east-1', 'US East')`)
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO organizations (id, public_id, name, slug) VALUES ($1, $2, 'Org', $3)`,
+		fixture.orgID, dispatchPublicID(t, publicid.Organization), "org-"+fixture.orgID.String())
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO projects (id, public_id, org_id, default_region_id, slug, name)
+VALUES ($1, $2, $3, 'us-east-1', $4, 'Project')`,
+		fixture.projectID, dispatchPublicID(t, publicid.Project), fixture.orgID,
+		"project-"+fixture.projectID.String())
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO environments (id, public_id, org_id, project_id, slug, name, color_hex)
+VALUES ($1, $2, $3, $4, $5, 'Environment', '#3366ff')`,
+		fixture.environmentID, dispatchPublicID(t, publicid.Environment), fixture.orgID,
+		fixture.projectID, "environment-"+fixture.environmentID.String())
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO cas_objects (org_id, digest, size_bytes, media_type)
+VALUES ($1, $2, 1, 'application/vnd.helmr.deployment-source.v0+tar')`,
+		fixture.orgID, sourceDigest)
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deployment-source.v0+tar')`,
+		sourceArtifactID, fixture.orgID, fixture.projectID, fixture.environmentID, sourceDigest)
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO deployments (
+    id, public_id, org_id, project_id, environment_id, build_region_id,
+    build_architecture, build_runtime_digest, version, content_hash,
+    deployment_source_artifact_id, status
+) VALUES ($1, $2, $3, $4, $5, 'us-east-1', $6, $7, 'v1', $8, $9, 'queued')`,
+		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,
+		fixture.projectID, fixture.environmentID, architecture, bytes.Repeat([]byte{1}, 32),
+		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
+	mustDispatchExec(t, ctx, pool, `
+INSERT INTO worker_groups (
+    id, region_id, name, enrollment_policy_fingerprint, allowed_attestation_fingerprints
+) VALUES ($1, 'us-east-1', $1, 'sha256:test-policy', ARRAY['sha256:test-attestation'])`,
+		fixture.groupID)
+	return fixture
+}
+
+func (f *buildPlacementFixture) addWorker(t *testing.T, architecture string, certified bool) uuid.UUID {
+	t.Helper()
+	workerID := uuid.Must(uuid.NewV7())
+	serviceID := uuid.Must(uuid.NewV7())
+	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	mustDispatchExec(t, f.ctx, f.pool, `
+INSERT INTO runtime_identities (
+    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+) VALUES ($1, $2, 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
+		runtimeID, architecture)
+	if certified {
+		mustDispatchExec(t, f.ctx, f.pool, `
+INSERT INTO worker_instances (
+    id, resource_id, worker_group_id, attestation_fingerprint, state,
+    current_epoch, current_service_id, protocol_version, supports_build,
+    runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
+    certified_workload_disk_bytes, certified_scratch_bytes,
+    per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes,
+    per_vm_scratch_bytes, max_build_executors, certification_profile,
+    certification_fingerprint, epoch_started_at, certified_at, activated_at
+) VALUES (
+    $1, $2, $3, 'sha256:test-attestation', 'active',
+    1, $4, 'helmr.worker.v0', true, $5, 3000, 4294967296, 1, 34359738368,
+    2000, 2147483648, 1, 21474836480, 1, 'build-v0',
+    'sha256:test-certification', now(), now(), now()
+)`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
+	} else {
+		mustDispatchExec(t, f.ctx, f.pool, `
+INSERT INTO worker_instances (
+    id, resource_id, worker_group_id, attestation_fingerprint, state,
+    current_epoch, current_service_id, protocol_version, supports_build,
+    runtime_identity_id, epoch_started_at
+) VALUES (
+    $1, $2, $3, 'sha256:test-attestation', 'registering',
+    1, $4, 'helmr.worker.v0', true, $5, now()
+)`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
+	}
+	mustDispatchExec(t, f.ctx, f.pool, `
+INSERT INTO worker_observations (
+    worker_instance_id, worker_epoch, cpu_pressure_bps, memory_pressure_bps,
+    workload_disk_pressure_bps, scratch_pressure_bps, build_cache_pressure_bps,
+    artifact_cache_pressure_bps, checkpoint_pressure_bps, leaked_slot_count,
+    run_queue_depth, build_queue_depth, runtime_start_queue_depth, observed_at
+) VALUES ($1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, now())`, workerID)
+	return workerID
+}
+
+func (f *buildPlacementFixture) candidate(architecture string) ReadyBuildCandidate {
+	return ReadyBuildCandidate{
+		OrgID: pgvalue.UUID(f.orgID), DeploymentID: pgvalue.UUID(f.deploymentID),
+		BuildRegionID: "us-east-1", BuildArchitecture: architecture, LeaseSequence: 1,
+		RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedScratchBytes: 32 << 30, RequestedBuildExecutors: 1,
+	}
+}
+
+func TestPlaceReadyBuildExcludesMismatchedAndUncertifiedWorkers(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		workerArch string
+		certified  bool
+	}{
+		{name: "mismatched architecture", workerArch: "x86_64", certified: true},
+		{name: "uncertified worker", workerArch: "aarch64", certified: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newBuildPlacementFixture(t, "aarch64")
+			fixture.addWorker(t, test.workerArch, test.certified)
+			_, err := fixture.authority.PlaceReadyBuild(
+				fixture.ctx, fixture.candidate("aarch64"),
+				pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
+			)
+			if !errors.Is(err, ErrCapacityUnavailable) {
+				t.Fatalf("PlaceReadyBuild() error = %v, want ErrCapacityUnavailable", err)
+			}
+			var leases int
+			if err := fixture.pool.QueryRow(fixture.ctx,
+				`SELECT count(*) FROM deployment_build_leases WHERE deployment_id = $1`,
+				fixture.deploymentID).Scan(&leases); err != nil {
+				t.Fatal(err)
+			}
+			if leases != 0 {
+				t.Fatalf("created %d build leases for an ineligible worker", leases)
+			}
+		})
+	}
+}
+
+func TestPlaceReadyBuildUsesMatchingCertifiedWorkerArchitecture(t *testing.T) {
+	fixture := newBuildPlacementFixture(t, "x86_64")
+	workerID := fixture.addWorker(t, "x86_64", true)
+	lease, err := fixture.authority.PlaceReadyBuild(
+		fixture.ctx, fixture.candidate("x86_64"),
+		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.WorkerInstanceID != pgvalue.UUID(workerID) {
+		t.Fatalf("placed worker = %v, want %s", lease.WorkerInstanceID, workerID)
+	}
+	var architecture string
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT deployments.build_architecture
+  FROM deployment_build_leases
+  JOIN deployments ON deployments.id = deployment_build_leases.deployment_id
+ WHERE deployment_build_leases.id = $1`, lease.ID).Scan(&architecture); err != nil {
+		t.Fatal(err)
+	}
+	if architecture != "x86_64" {
+		t.Fatalf("leased deployment architecture = %q, want x86_64", architecture)
+	}
+}
+
+func TestPlaceBuildFinalLockRechecksRuntimeIdentityArchitecture(t *testing.T) {
+	fixture := newBuildPlacementFixture(t, "aarch64")
+	workerID := fixture.addWorker(t, "aarch64", true)
+	mismatchedRuntimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	mustDispatchExec(t, fixture.ctx, fixture.pool, `
+INSERT INTO runtime_identities (
+    id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
+) VALUES ($1, 'x86_64', 'helmr.runtime.v0', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'helmr/v0')`,
+		mismatchedRuntimeID)
+	mustDispatchExec(t, fixture.ctx, fixture.pool,
+		`UPDATE worker_instances SET runtime_identity_id = $1 WHERE id = $2`,
+		mismatchedRuntimeID, workerID)
+
+	now := time.Now().UTC()
+	_, err := fixture.authority.placeBuild(fixture.ctx, placeBuildParams{
+		ObservationFreshAfter: pgvalue.Timestamptz(now.Add(-time.Minute)),
+		ExpectedLeaseSequence: 1,
+		Lease: db.LeaseQueuedDeploymentBuildParams{
+			OrgID: pgvalue.UUID(fixture.orgID), DeploymentID: pgvalue.UUID(fixture.deploymentID),
+			BuildRegionID: "us-east-1", BuildArchitecture: "aarch64",
+			RequestedCpuMillis: 3000, RequestedMemoryBytes: 4 << 30,
+			RequestedScratchBytes: 32 << 30, RequestedBuildExecutors: 1,
+			LeaseSequence: 1, BuildLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			WorkerGroupID: fixture.groupID, BuildWorkerInstanceID: pgvalue.UUID(workerID),
+			WorkerEpoch: 1, WorkerProtocolVersion: "helmr.worker.v0",
+			BuildSnapshot:       []byte(`{"source":"test"}`),
+			StartDeadlineAt:     pgvalue.Timestamptz(now.Add(time.Minute)),
+			BuildLeaseExpiresAt: pgvalue.Timestamptz(now.Add(5 * time.Minute)),
+		},
+	})
+	if err == nil {
+		t.Fatal("placeBuild() accepted a worker whose locked runtime identity architecture changed")
+	}
+	var leases int
+	if err := fixture.pool.QueryRow(fixture.ctx,
+		`SELECT count(*) FROM deployment_build_leases WHERE deployment_id = $1`,
+		fixture.deploymentID).Scan(&leases); err != nil {
+		t.Fatal(err)
+	}
+	if leases != 0 {
+		t.Fatalf("created %d build leases after the final architecture recheck failed", leases)
+	}
+}
+
+func newDispatchIntegrationDB(t *testing.T, ctx context.Context) *pgxpool.Pool {
+	t.Helper()
+	dsn := strings.TrimSpace(os.Getenv("HELMR_TEST_DATABASE_URL"))
+	if dsn == "" {
+		t.Skip("HELMR_TEST_DATABASE_URL is not set")
+	}
+	admin, err := pgxpool.New(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var serverVersion int
+	if err := admin.QueryRow(ctx, `SELECT current_setting('server_version_num')::int`).Scan(&serverVersion); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	if serverVersion < 180000 {
+		admin.Close()
+		t.Skipf("Postgres %d does not provide uuidv7(); skipping integration test", serverVersion)
+	}
+	name := "helmr_dispatch_" + strings.ReplaceAll(uuid.NewString(), "-", "_")
+	if _, err := admin.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{name}.Sanitize()); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = admin.Exec(context.Background(), "DROP DATABASE IF EXISTS "+pgx.Identifier{name}.Sanitize()+" WITH (FORCE)")
+		admin.Close()
+	})
+	parsed, err := url.Parse(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed.Path = "/" + name
+	testDSN := parsed.String()
+	if err := schema.Up(ctx, testDSN); err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, testDSN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	return pool
+}
+
+func dispatchPublicID(t *testing.T, prefix publicid.Prefix) string {
+	t.Helper()
+	id, err := publicid.New(prefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+func mustDispatchExec(t *testing.T, ctx context.Context, pool *pgxpool.Pool, sql string, args ...any) {
+	t.Helper()
+	if _, err := pool.Exec(ctx, sql, args...); err != nil {
+		t.Fatal(err)
+	}
+}

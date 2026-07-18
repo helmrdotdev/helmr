@@ -22,7 +22,11 @@ Apply the pipeline:
 tofu apply \
   -var="aws_region=us-east-1" \
   -var="name=helmr-smoke-image" \
-  -var="source_ref=<branch-or-commit>"
+  -var="source_ref=<branch-or-commit>" \
+  -var="release_package_s3_uri=s3://<bucket>/<key>" \
+  -var="release_package_object_arn=arn:aws:s3:::<bucket>/<key>" \
+  -var="release_package_version_id=<version-id>" \
+  -var="release_package_sha256=<lowercase-sha256>"
 ```
 
 Start the build:
@@ -53,6 +57,10 @@ export WORKER_IMAGE_VERSION=0.1.1
 export WORKER_IMAGE_DISTRIBUTION_REGIONS=us-east-1,us-west-2,ap-northeast-1
 export WORKER_IMAGE_AMI_PUBLIC=true
 export WORKER_IMAGE_ROOT_VOLUME_ENCRYPTED=false
+export WORKER_IMAGE_RELEASE_PACKAGE_S3_URI=s3://<bucket>/<key>
+export WORKER_IMAGE_RELEASE_PACKAGE_OBJECT_ARN=arn:aws:s3:::<bucket>/<key>
+export WORKER_IMAGE_RELEASE_PACKAGE_VERSION_ID=<version-id>
+export WORKER_IMAGE_RELEASE_PACKAGE_SHA256=<lowercase-sha256>
 
 scripts/aws-dev-smoke.sh worker-image-init
 scripts/aws-dev-smoke.sh worker-image-apply

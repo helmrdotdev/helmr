@@ -8,13 +8,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: GitHub Release tag to create or update, for example v0.1.1 or v0.1.1-rc.1
+        description: Existing platform release tag to consume for image repair
         required: true
-        default: v0.1.0
-      worker_amis_json:
-        description: Optional JSON object mapping AWS regions to worker AMI IDs. Leave {} to build official worker AMIs.
-        required: false
-        default: "{}"
 
 permissions:
   contents: read
@@ -24,9 +19,272 @@ env:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 jobs:
+  runtime-release-tag:
+    name: runtime release
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    environment: release-production
+    concurrency:
+      group: official-runtime-release
+      queue: max
+      cancel-in-progress: false
+    permissions:
+      contents: write # Needed for create-only runtime release assets.
+      id-token: write # Needed for keyless cosign signing. security-check: allow-id-token
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Compose or consume runtime release
+        run: |
+          nix develop .#images --command bash -seu <<'EOF'
+          set -o pipefail
+
+          descriptor=.github/runtime-release.json
+          jq -e \
+            --arg release "$RELEASE_TAG" \
+            'keys == ["formatVersion", "predecessor", "release"] and
+             .formatVersion == 0 and .release == $release' \
+            "$descriptor" >/dev/null
+
+          work="$RUNNER_TEMP/runtime-release"
+          downloads="$work/releases"
+          release_dir="$work/release"
+          scratch="$work/scratch"
+          dist="$GITHUB_WORKSPACE/dist/runtime-release"
+          verified_complete="$work/verified-complete"
+          verified_worker="$work/verified-worker"
+          tool="$work/runtime-release"
+          rm -rf "$work" "$dist"
+          mkdir -p "$downloads" "$release_dir" "$scratch" "$dist"
+          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
+
+          run_release() {
+            sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" "$@"
+          }
+
+          release_json="$work/github-release.json"
+          complete_published=0
+          if gh release view "$RELEASE_TAG" --json assets >"$release_json" 2>/dev/null &&
+            jq -e 'any(.assets[]; .name == "runtime-release.tar")' "$release_json" >/dev/null; then
+            complete_published=1
+            gh release download "$RELEASE_TAG" \
+              --pattern runtime-release.tar \
+              --dir "$dist"
+            run_release verify-archive \
+              --tag "$RELEASE_TAG" \
+              --input "$dist/runtime-release.tar" \
+              --trusted-root "$trusted_root" \
+              --scratch "$scratch" \
+              --output "$verified_complete" >"$dist/runtime-release-result.json"
+            run_release worker \
+              --tag "$RELEASE_TAG" \
+              --input "$verified_complete" \
+              --architecture x86_64 \
+              --scratch "$scratch" \
+              --output "$dist/runtime-release-x86_64.tar" >/dev/null
+          else
+            published="$work/published-runtime-releases.tsv"
+            gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+              --jq '.[] | .tag_name as $tag | .assets[] |
+                select(.name == "runtime-release.tar") |
+                [$tag, (.id | tostring)] | @tsv' >"$published"
+
+            predecessor_release="$(jq -r '.predecessor.release // empty' "$descriptor")"
+            if [ -z "$predecessor_release" ]; then
+              if [ -s "$published" ]; then
+                echo "initial runtime release requires no previously published managed release" >&2
+                exit 1
+              fi
+            else
+              published_head="$(sort -t $'\t' -k2,2n "$published" | tail -n 1 | cut -f1)"
+              if [ "$published_head" != "$predecessor_release" ]; then
+                echo "runtime release predecessor is not the published lineage head" >&2
+                exit 1
+              fi
+              predecessor_dir="$downloads/$predecessor_release"
+              mkdir -p "$predecessor_dir"
+              gh release download "$predecessor_release" \
+                --pattern runtime-release.tar \
+                --dir "$predecessor_dir"
+              predecessor_path="$predecessor_dir/runtime-release.tar"
+              expected_digest="$(jq -er '.predecessor.digest' "$descriptor")"
+              expected_size="$(jq -er '.predecessor.sizeBytes' "$descriptor")"
+              actual_digest="sha256:$(sha256sum "$predecessor_path" | awk '{print $1}')"
+              actual_size="$(stat -c '%s' "$predecessor_path")"
+              if [ "$actual_digest" != "$expected_digest" ] || [ "$actual_size" != "$expected_size" ]; then
+                echo "published runtime release predecessor differs from the descriptor" >&2
+                exit 1
+              fi
+            fi
+
+            runtime="$(nix build --no-link --print-out-paths .#managedRuntime)"
+            run_release compose \
+              --tag "$RELEASE_TAG" \
+              --releases "$downloads" \
+              --runtime "$runtime/runtime.squashfs" \
+              --descriptor "$runtime/runtime.descriptor.json" \
+              --invalid "$runtime/verifier-invalid.squashfs" \
+              --scratch "$scratch" \
+              --output "$release_dir" >/dev/null
+            sudo chown -R "$(id -u):$(id -g)" "$release_dir"
+            install -m 0444 "$trusted_root" "$release_dir/trusted-root.json"
+            cosign attest-blob \
+              --yes \
+              --new-bundle-format=true \
+              --bundle "$release_dir/catalog.sigstore.json" \
+              --statement "$release_dir/attestation.json"
+            run_release archive \
+              --tag "$RELEASE_TAG" \
+              --input "$release_dir" \
+              --scratch "$scratch" \
+              --output "$dist/runtime-release.tar" >"$dist/runtime-release-result.json"
+            run_release worker \
+              --tag "$RELEASE_TAG" \
+              --input "$release_dir" \
+              --architecture x86_64 \
+              --scratch "$scratch" \
+              --output "$dist/runtime-release-x86_64.tar" >/dev/null
+            run_release verify-archive \
+              --tag "$RELEASE_TAG" \
+              --input "$dist/runtime-release.tar" \
+              --trusted-root "$trusted_root" \
+              --scratch "$scratch" \
+              --output "$verified_complete" >/dev/null
+          fi
+
+          run_release verify-worker \
+            --tag "$RELEASE_TAG" \
+            --input "$dist/runtime-release-x86_64.tar" \
+            --architecture x86_64 \
+            --trusted-root "$trusted_root" \
+            --scratch "$scratch" \
+            --output "$verified_worker" >/dev/null
+          sudo chown "$(id -u):$(id -g)" \
+            "$dist/runtime-release.tar" \
+            "$dist/runtime-release-x86_64.tar"
+          chmod 0444 "$dist/runtime-release.tar" "$dist/runtime-release-x86_64.tar"
+
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            release_args=(--verify-tag --title "$RELEASE_TAG")
+            case "$RELEASE_TAG" in
+              *-*) release_args+=(--prerelease) ;;
+            esac
+            gh release create "$RELEASE_TAG" "${release_args[@]}"
+          fi
+          if [ "$complete_published" = 0 ]; then
+            gh release upload "$RELEASE_TAG" "$dist/runtime-release.tar"
+          fi
+
+          if gh release view "$RELEASE_TAG" --json assets >"$release_json" 2>/dev/null &&
+            jq -e 'any(.assets[]; .name == "runtime-release-x86_64.tar")' "$release_json" >/dev/null; then
+            existing_worker="$work/existing-worker"
+            mkdir -p "$existing_worker"
+            gh release download "$RELEASE_TAG" \
+              --pattern runtime-release-x86_64.tar \
+              --dir "$existing_worker"
+            cmp "$existing_worker/runtime-release-x86_64.tar" "$dist/runtime-release-x86_64.tar"
+          else
+            gh release upload "$RELEASE_TAG" "$dist/runtime-release-x86_64.tar"
+          fi
+          EOF
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: runtime-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/runtime-release/runtime-release.tar
+            dist/runtime-release/runtime-release-x86_64.tar
+            dist/runtime-release/runtime-release-result.json
+
+  runtime-release-dispatch:
+    name: consume runtime release
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: refs/tags/${{ inputs.tag }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup-nix
+
+      - name: Consume published runtime release
+        run: |
+          nix develop .#images --command bash -seu <<'EOF'
+          set -o pipefail
+          work="$RUNNER_TEMP/runtime-release"
+          scratch="$work/scratch"
+          dist="$GITHUB_WORKSPACE/dist/runtime-release"
+          complete="$work/complete"
+          worker="$work/worker"
+          tool="$work/runtime-release"
+          rm -rf "$work" "$dist"
+          mkdir -p "$scratch" "$dist"
+          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
+          jq -e \
+            --arg release "$RELEASE_TAG" \
+            'keys == ["formatVersion", "predecessor", "release"] and
+             .formatVersion == 0 and .release == $release' \
+            .github/runtime-release.json >/dev/null
+          gh release download "$RELEASE_TAG" \
+            --pattern runtime-release.tar \
+            --dir "$dist"
+          sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" verify-archive \
+            --tag "$RELEASE_TAG" \
+            --input "$dist/runtime-release.tar" \
+            --trusted-root "$trusted_root" \
+            --scratch "$scratch" \
+            --output "$complete" >"$dist/runtime-release-result.json"
+          sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" worker \
+            --tag "$RELEASE_TAG" \
+            --input "$complete" \
+            --architecture x86_64 \
+            --scratch "$scratch" \
+            --output "$dist/runtime-release-x86_64.tar" >/dev/null
+          sudo "$GITHUB_WORKSPACE/scripts/run-runtime-release.sh" "$tool" verify-worker \
+            --tag "$RELEASE_TAG" \
+            --input "$dist/runtime-release-x86_64.tar" \
+            --architecture x86_64 \
+            --trusted-root "$trusted_root" \
+            --scratch "$scratch" \
+            --output "$worker" >/dev/null
+          sudo chown "$(id -u):$(id -g)" \
+            "$dist/runtime-release.tar" \
+            "$dist/runtime-release-x86_64.tar"
+          chmod 0444 "$dist/runtime-release.tar" "$dist/runtime-release-x86_64.tar"
+          EOF
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: runtime-release-assets
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            dist/runtime-release/runtime-release.tar
+            dist/runtime-release/runtime-release-x86_64.tar
+            dist/runtime-release/runtime-release-result.json
+
   cli:
     name: cli
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
@@ -49,16 +307,8 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
-
-      - name: Use existing release tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            git checkout --detach "refs/tags/$RELEASE_TAG"
-          fi
 
       - uses: ./.github/actions/setup-nix
 
@@ -101,7 +351,13 @@ jobs:
 
   control-image:
     name: control image
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs:
+      - runtime-release-tag
+      - runtime-release-dispatch
+    if: >-
+      always() &&
+      (needs.runtime-release-tag.result == 'success' ||
+       needs.runtime-release-dispatch.result == 'success')
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -122,27 +378,38 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
 
-      - name: Use existing release tag
-        if: github.event_name == 'workflow_dispatch'
-        run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            git checkout --detach "refs/tags/$RELEASE_TAG"
-          fi
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: runtime-release-assets
+          path: dist/runtime-release
 
       - uses: ./.github/actions/setup-nix
 
-      - name: Build control image
+      - name: Verify runtime release and build control image
         env:
           IMAGE_URI: ${{ env.CONTROL_IMAGE_REPOSITORY }}:${{ env.RELEASE_TAG }}
           HELMR_BUILD_VERSION: ${{ env.RELEASE_TAG }}
         run: |
           nix develop .#images --command bash <<'EOF'
           set -euo pipefail
-          ./scripts/build-control-image.sh "$IMAGE_URI"
+          tool="$RUNNER_TEMP/runtime-release"
+          scratch="$RUNNER_TEMP/control-runtime-scratch"
+          verified="$RUNNER_TEMP/control-runtime-release"
+          mkdir -p "$scratch"
+          CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+          trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
+          sudo scripts/run-runtime-release.sh "$tool" verify-archive \
+            --tag "$RELEASE_TAG" \
+            --input "$GITHUB_WORKSPACE/dist/runtime-release/runtime-release.tar" \
+            --trusted-root "$trusted_root" \
+            --scratch "$scratch" \
+            --output "$verified" >/dev/null
+          sudo chown -R "$(id -u):$(id -g)" "$verified"
+          CONTROL_IMAGE_RUNTIME_RELEASE_DIR="$verified" \
+            ./scripts/build-control-image.sh "$IMAGE_URI"
           EOF
           mkdir -p dist
           docker save "$IMAGE_URI" -o dist/control-image.tar
@@ -189,12 +456,14 @@ jobs:
       - uses: ./.github/actions/setup-nix
 
       - name: Build TypeScript SDK npm packages
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.sdk_version }}
         run: |
-          nix develop --command bash -ceu '
+          nix develop --command bash -seu <<'EOF'
             bun install --frozen-lockfile --ignore-scripts
-            PACKAGE_VERSION="${{ steps.version.outputs.sdk_version }}" bun run build:npm
+            PACKAGE_VERSION="$PACKAGE_VERSION" bun run build:npm
             bun run pack:npm dist/npm-tarballs
-          '
+          EOF
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -280,22 +549,26 @@ jobs:
 
   worker-ami:
     name: worker AMI
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    needs:
+      - runtime-release-tag
+      - runtime-release-dispatch
+    if: >-
+      always() &&
+      (needs.runtime-release-tag.result == 'success' ||
+       needs.runtime-release-dispatch.result == 'success')
     runs-on: ubuntu-24.04
     timeout-minutes: 360
     environment: release-production
     permissions:
       contents: read
       id-token: write # Needed to assume the AWS release role through GitHub OIDC. security-check: allow-id-token
-    outputs:
-      worker_amis_json: ${{ steps.provided_worker_amis.outputs.worker_amis_json || steps.build_worker_amis.outputs.worker_amis_json }}
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.worker_amis_json || '{}' }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_REGION: ${{ vars.RELEASE_AWS_STATE_REGION || vars.RELEASE_AWS_REGION || 'us-east-1' }}
       STATE_BUCKET: ${{ vars.RELEASE_AWS_STATE_BUCKET }}
+      RELEASE_PACKAGE_BUCKET: ${{ vars.RELEASE_AWS_ARTIFACT_BUCKET }}
       STATE_KEY_BASE: ${{ vars.RELEASE_AWS_STATE_KEY || 'helmr/stacks/release-worker-image/terraform.tfstate' }}
       WORKER_IMAGE_NAME_BASE: ${{ vars.RELEASE_WORKER_IMAGE_NAME || 'helmr-release-image' }}
       WORKER_IMAGE_INSTANCE_PROFILE_NAME_OVERRIDE: ${{ vars.RELEASE_WORKER_IMAGE_INSTANCE_PROFILE_NAME }}
@@ -317,43 +590,24 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && '0' || '1' }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
 
-      - name: Use provided worker AMIs
-        id: provided_worker_amis
-        if: env.WORKER_AMIS_INPUT != '' && env.WORKER_AMIS_INPUT != '{}'
-        run: |
-          REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
-            scripts/write-aws-release-manifest.sh \
-              "ghcr.io/helmrdotdev/helmr-control@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" \
-              "$WORKER_AMIS_INPUT" \
-              "$RUNNER_TEMP/provided-aws-artifacts.json"
-          worker_amis_json="$(jq -c '.worker_amis' "$RUNNER_TEMP/provided-aws-artifacts.json")"
-          printf 'worker_amis_json=%s\n' "$worker_amis_json" >> "$GITHUB_OUTPUT"
-
       - name: Check AWS release settings
-        if: steps.provided_worker_amis.outcome == 'skipped'
         env:
           RELEASE_AWS_ROLE_ARN: ${{ vars.RELEASE_AWS_ROLE_ARN }}
         run: |
           [ -n "$RELEASE_AWS_ROLE_ARN" ] || { echo "RELEASE_AWS_ROLE_ARN environment variable is required" >&2; exit 1; }
+          [ -n "$RELEASE_PACKAGE_BUCKET" ] || { echo "RELEASE_AWS_ARTIFACT_BUCKET environment variable is required" >&2; exit 1; }
           [ -n "$STATE_BUCKET" ] || { echo "RELEASE_AWS_STATE_BUCKET environment variable is required" >&2; exit 1; }
 
       - name: Resolve worker AMI source ref
         id: worker_source_ref
-        if: steps.provided_worker_amis.outcome == 'skipped'
         run: |
-          if git show-ref --verify --quiet "refs/tags/$RELEASE_TAG"; then
-            source_ref="$RELEASE_TAG"
-          else
-            source_ref="$GITHUB_SHA"
-          fi
-          printf 'source_ref=%s\n' "$source_ref" >> "$GITHUB_OUTPUT"
+          git show-ref --verify "refs/tags/$RELEASE_TAG" >/dev/null
+          printf 'source_ref=%s\n' "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
 
       - uses: aws-actions/configure-aws-credentials@d979d5b3a71173a29b74b5b88418bfda9437d885
-        if: steps.provided_worker_amis.outcome == 'skipped'
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ vars.RELEASE_AWS_ROLE_ARN }}
@@ -361,11 +615,14 @@ jobs:
           mask-aws-account-id: true
 
       - uses: ./.github/actions/setup-nix
-        if: steps.provided_worker_amis.outcome == 'skipped'
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: runtime-release-assets
+          path: dist/runtime-release
 
       - name: Resolve worker AMI release identity
         id: worker_identity
-        if: steps.provided_worker_amis.outcome == 'skipped'
         run: |
           scripts/release-worker-image-identity.sh \
             "$RELEASE_TAG" \
@@ -397,9 +654,53 @@ jobs:
             esac
           done < "$RUNNER_TEMP/worker-image-identity.env"
 
+      - name: Stage exact worker runtime release
+        run: |
+          nix develop .#infra --command bash -seu <<'EOF'
+            tool="$RUNNER_TEMP/runtime-release"
+            scratch="$RUNNER_TEMP/worker-runtime-scratch"
+            verified_package="$RUNNER_TEMP/runtime-release-x86_64.verified.tar"
+            result="$RUNNER_TEMP/worker-runtime-result.json"
+            trusted_root="$(nix build --no-link --print-out-paths .#runtimeTrustedRoot)"
+            mkdir -p "$scratch"
+            CGO_ENABLED=0 go build -trimpath -o "$tool" ./internal/cmd/runtime-release
+            sudo scripts/run-runtime-release.sh "$tool" verify-worker \
+              --tag "$RELEASE_TAG" \
+              --input "$GITHUB_WORKSPACE/dist/runtime-release/runtime-release-x86_64.tar" \
+              --architecture x86_64 \
+              --trusted-root "$trusted_root" \
+              --scratch "$scratch" \
+              --snapshot "$verified_package" >"$result"
+            sudo chown "$(id -u):$(id -g)" "$verified_package"
+            digest="$(jq -er '.digest | select(test("^sha256:[0-9a-f]{64}$"))' "$result")"
+            size_bytes="$(jq -er '.sizeBytes | select(type == "number" and . > 0 and floor == .)' "$result")"
+            export WORKER_IMAGE_RELEASE_PACKAGE="$verified_package"
+            export WORKER_IMAGE_RELEASE_PACKAGE_BUCKET="$RELEASE_PACKAGE_BUCKET"
+            export WORKER_IMAGE_RELEASE_PACKAGE_SHA256="${digest#sha256:}"
+            export WORKER_IMAGE_RELEASE_PACKAGE_SIZE_BYTES="$size_bytes"
+            scripts/aws-dev-smoke.sh worker-release-stage
+            s3_uri="$(cat .helmr-aws-dev-smoke/worker-release-package-s3-uri)"
+            version_id="$(cat .helmr-aws-dev-smoke/worker-release-package-version-id)"
+            sha256="$(cat .helmr-aws-dev-smoke/worker-release-package-sha256)"
+            kms_key_arn="$(cat .helmr-aws-dev-smoke/worker-release-package-kms-key-arn)"
+            worker_runtime_release_json="$(
+              jq -cn \
+                --arg s3_uri "$s3_uri" \
+                --arg version_id "$version_id" \
+                --arg sha256 "$sha256" \
+                --arg kms_key_arn "$kms_key_arn" \
+                '{
+                  kms_key_arn: (if $kms_key_arn == "" then null else $kms_key_arn end),
+                  s3_uri: $s3_uri,
+                  sha256: $sha256,
+                  version_id: $version_id
+                }'
+            )"
+            printf '%s\n' "$worker_runtime_release_json" >.helmr-aws-dev-smoke/worker-runtime-release.json
+          EOF
+
       - name: Build worker AMIs
         id: build_worker_amis
-        if: steps.provided_worker_amis.outcome == 'skipped'
         env:
           WORKER_IMAGE_SOURCE_REF: ${{ steps.worker_source_ref.outputs.source_ref }}
           WORKER_IMAGE_DISTRIBUTION_REGIONS: ${{ env.WORKER_AMI_REGIONS }}
@@ -418,8 +719,27 @@ jobs:
             printf "worker_amis_json=%s\n" "$worker_amis_json" >> "$GITHUB_OUTPUT"
           EOF
 
+      - name: Write closed worker release artifact
+        env:
+          WORKER_AMIS_JSON: ${{ steps.build_worker_amis.outputs.worker_amis_json }}
+        run: |
+          mkdir -p dist
+          jq -n \
+            --argjson worker_amis "$WORKER_AMIS_JSON" \
+            --slurpfile worker_runtime_release .helmr-aws-dev-smoke/worker-runtime-release.json \
+            '{
+              worker_amis: $worker_amis,
+              worker_runtime_release: $worker_runtime_release[0]
+            }' >dist/worker-artifacts.json
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
-        if: steps.provided_worker_amis.outcome == 'skipped'
+        with:
+          name: worker-release-artifact
+          if-no-files-found: error
+          retention-days: 30
+          path: dist/worker-artifacts.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: worker-ami-release-assets
           if-no-files-found: error
@@ -446,7 +766,6 @@ jobs:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
       CONTROL_IMAGE_REPOSITORY: ghcr.io/${{ github.repository_owner }}/helmr-control
       IMAGE_URI: ghcr.io/${{ github.repository_owner }}/helmr-control:${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-      WORKER_AMIS_JSON: ${{ needs.worker-ami.outputs.worker_amis_json }}
       WORKER_AMI_REGIONS: ${{ vars.RELEASE_WORKER_AMI_REGIONS || 'us-east-1,us-west-2,ap-northeast-1' }}
       AWS_REGION: ${{ vars.RELEASE_AWS_REGION || 'us-east-1' }}
     steps:
@@ -463,7 +782,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.ref }}
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           fetch-depth: 1
           persist-credentials: false
           sparse-checkout: scripts
@@ -478,6 +797,11 @@ jobs:
         with:
           name: control-image
           path: dist/control-image
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: worker-release-artifact
+          path: dist/worker
 
       - name: Push control image
         id: push
@@ -512,18 +836,20 @@ jobs:
         env:
           CONTROL_IMAGE: ${{ steps.push.outputs.control_image }}
         run: |
+          worker_amis_json="$(jq -c '.worker_amis' dist/worker/worker-artifacts.json)"
+          worker_runtime_release_json="$(jq -c '.worker_runtime_release' dist/worker/worker-artifacts.json)"
           REQUIRED_WORKER_AMI_REGIONS="$WORKER_AMI_REGIONS" \
             VERIFY_RELEASE_ARTIFACTS=1 \
             scripts/write-aws-release-manifest.sh \
               "$CONTROL_IMAGE" \
-              "$WORKER_AMIS_JSON" \
+              "$worker_amis_json" \
+              "$worker_runtime_release_json" \
               dist/aws-artifacts.json
 
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda
         if: github.event_name == 'workflow_dispatch'
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          target_commitish: ${{ github.sha }}
           prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           make_latest: ${{ contains(env.RELEASE_TAG, '-') && 'false' || 'true' }}
           files: |

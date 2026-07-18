@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
+	regionpkg "github.com/helmrdotdev/helmr/internal/region"
 )
 
 const (
@@ -22,8 +23,9 @@ var (
 )
 
 type RuntimePolicy struct {
-	current  map[string]string
-	runtimes map[string]RuntimeDescriptor
+	current       map[string]string
+	runtimes      map[string]RuntimeDescriptor
+	runtimesBytes []byte
 }
 
 type runtimePolicyDocument struct {
@@ -32,7 +34,7 @@ type runtimePolicyDocument struct {
 	Runtimes      []RuntimeDescriptor `json:"runtimes"`
 }
 
-func LoadRuntimePolicy(path string) (*RuntimePolicy, error) {
+func LoadRuntimePolicy(path string, catalog *RuntimeCatalog) (*RuntimePolicy, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open runtime policy: %w", err)
@@ -43,9 +45,18 @@ func LoadRuntimePolicy(path string) (*RuntimePolicy, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read runtime policy: %w", err)
 	}
-	return ParseRuntimePolicy(raw)
+	policy, err := ParseRuntimePolicy(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRuntimePolicyCatalog(policy, catalog); err != nil {
+		return nil, err
+	}
+	return policy, nil
 }
 
+// ParseRuntimePolicy validates document shape only. Operational callers must
+// use LoadRuntimePolicy to bind the policy to an authenticated runtime catalog.
 func ParseRuntimePolicy(raw []byte) (*RuntimePolicy, error) {
 	if len(raw) == 0 || int64(len(raw)) > maxRuntimePolicyBytes {
 		return nil, fmt.Errorf(
@@ -81,10 +92,15 @@ func ParseRuntimePolicy(raw []byte) (*RuntimePolicy, error) {
 	if !bytes.Equal(raw, complete) {
 		return nil, fmt.Errorf("runtime policy does not match the complete canonical v0 shape")
 	}
+	runtimesBytes, err := canonicalRuntimeDescriptors(document.Runtimes)
+	if err != nil {
+		return nil, err
+	}
 
 	policy := &RuntimePolicy{
-		current:  make(map[string]string, len(document.Current)),
-		runtimes: make(map[string]RuntimeDescriptor, len(document.Runtimes)),
+		current:       make(map[string]string, len(document.Current)),
+		runtimes:      make(map[string]RuntimeDescriptor, len(document.Runtimes)),
+		runtimesBytes: runtimesBytes,
 	}
 	for region, digest := range document.Current {
 		policy.current[region] = digest
@@ -93,6 +109,19 @@ func ParseRuntimePolicy(raw []byte) (*RuntimePolicy, error) {
 		policy.runtimes[descriptor.Digest] = descriptor
 	}
 	return policy, nil
+}
+
+func validateRuntimePolicyCatalog(policy *RuntimePolicy, catalog *RuntimeCatalog) error {
+	if policy == nil {
+		return errors.New("runtime policy is required")
+	}
+	if catalog == nil || !catalog.authenticated {
+		return errors.New("authenticated runtime catalog is required")
+	}
+	if !bytes.Equal(policy.runtimesBytes, catalog.runtimesBytes) {
+		return errors.New("runtime policy runtimes do not exact-match authenticated catalog")
+	}
+	return nil
 }
 
 func (p *RuntimePolicy) Current(region string) (RuntimeDescriptor, error) {
@@ -144,26 +173,16 @@ func validateRuntimePolicyDocument(document runtimePolicyDocument) error {
 	if document.Current == nil {
 		return fmt.Errorf("runtime policy current must be an object")
 	}
-	if len(document.Runtimes) == 0 {
-		return fmt.Errorf("runtime policy runtimes must be a non-empty array")
-	}
-
 	registered := make(map[string]struct{}, len(document.Runtimes))
-	for position, descriptor := range document.Runtimes {
-		if err := ValidateRuntimeDescriptor(descriptor); err != nil {
-			return fmt.Errorf("runtime policy runtime %d: %w", position, err)
-		}
-		if position > 0 && document.Runtimes[position-1].Digest >= descriptor.Digest {
-			return fmt.Errorf(
-				"runtime policy runtimes are not in digest order at position %d",
-				position,
-			)
-		}
+	if err := validateRuntimeDescriptors("runtime policy", document.Runtimes); err != nil {
+		return err
+	}
+	for _, descriptor := range document.Runtimes {
 		registered[descriptor.Digest] = struct{}{}
 	}
 	for region, digest := range document.Current {
-		if region == "" {
-			return fmt.Errorf("runtime policy current contains an empty region ID")
+		if err := regionpkg.ValidateID(region); err != nil {
+			return fmt.Errorf("runtime policy current region %q: %w", region, err)
 		}
 		if _, ok := registered[digest]; !ok {
 			return fmt.Errorf(

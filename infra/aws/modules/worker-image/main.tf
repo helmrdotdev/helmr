@@ -16,17 +16,37 @@ data "aws_ami" "ubuntu" {
 
 data "aws_region" "current" {}
 
+data "aws_partition" "current" {}
+
 locals {
   name                    = lower(var.name)
   parent_image            = var.parent_image == null ? data.aws_ami.ubuntu[0].id : var.parent_image
   distribution_regions    = length(var.distribution_regions) == 0 ? [data.aws_region.current.region] : var.distribution_regions
   create_instance_profile = var.instance_profile_name == null
   instance_profile_name   = local.create_instance_profile ? aws_iam_instance_profile.image_builder[0].name : var.instance_profile_name
+  release_package_parts   = try(regex("^s3://([^/]+)/(.+)$", var.release_package_s3_uri), ["", ""])
+  release_package_bucket  = local.release_package_parts[0]
+  release_package_key     = local.release_package_parts[1]
+  release_package_arn     = "arn:${data.aws_partition.current.partition}:s3:::${local.release_package_bucket}/${local.release_package_key}"
   build_script = templatefile("${path.module}/templates/build-worker-image.sh.tftpl", {
     source_repository_url = var.source_repository_url
     source_ref            = var.source_ref
     source_bundle_s3_uri  = var.source_bundle_s3_uri == null ? "" : var.source_bundle_s3_uri
     buildkit_slirp_cidr   = var.buildkit_slirp_cidr
+  })
+  install_release_script = templatefile("${path.module}/templates/install-runtime-release.sh.tftpl", {
+    release_package_bucket     = local.release_package_bucket
+    release_package_key        = local.release_package_key
+    release_package_version_id = var.release_package_version_id
+    release_package_sha256     = var.release_package_sha256
+    release_validator          = file("${path.module}/templates/runtime-release.py")
+  })
+  validate_release_script = templatefile("${path.module}/templates/validate-runtime-release.sh.tftpl", {
+    release_package_bucket     = local.release_package_bucket
+    release_package_key        = local.release_package_key
+    release_package_version_id = var.release_package_version_id
+    release_package_sha256     = var.release_package_sha256
+    release_validator          = file("${path.module}/templates/runtime-release.py")
   })
 }
 
@@ -94,6 +114,39 @@ resource "aws_iam_role_policy" "source_bundle" {
   }
 }
 
+resource "aws_iam_role_policy" "release_package" {
+  count = local.create_instance_profile ? 1 : 0
+
+  name = "${local.name}-worker-image-release-package"
+  role = aws_iam_role.image_builder[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat([
+      {
+        Sid      = "ReadExactReleasePackageVersion"
+        Effect   = "Allow"
+        Action   = "s3:GetObjectVersion"
+        Resource = var.release_package_object_arn
+        Condition = {
+          StringEquals = {
+            "s3:VersionId" = var.release_package_version_id
+          }
+        }
+      }
+      ],
+      var.release_package_kms_key_arn == null ? [] : [
+        {
+          Sid      = "DecryptReleasePackage"
+          Effect   = "Allow"
+          Action   = "kms:Decrypt"
+          Resource = var.release_package_kms_key_arn
+        }
+      ]
+    )
+  })
+}
+
 resource "aws_iam_instance_profile" "image_builder" {
   count = local.create_instance_profile ? 1 : 0
 
@@ -140,6 +193,7 @@ resource "aws_imagebuilder_component" "worker" {
                 "test -r /var/lib/helmr/images/guest/out/runtime-artifacts.json",
                 "cd /var/lib/helmr/images/guest/out && jq -e '.schema == \"helmr.runtime-artifacts.v0\" and .arch == \"amd64\" and .runtime_abi == \"helmr.firecracker.snapshot.v0\"' runtime-artifacts.json >/dev/null && test \"$(sha256sum vmlinuz | awk '{print $1}')\" = \"$(jq -r .kernel.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum initramfs | awk '{print $1}')\" = \"$(jq -r .initramfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(sha256sum rootfs.ext4 | awk '{print $1}')\" = \"$(jq -r .rootfs.digest runtime-artifacts.json | sed 's/^sha256://')\" && test \"$(stat -c %s vmlinuz)\" = \"$(jq -r .kernel.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s initramfs)\" = \"$(jq -r .initramfs.size_bytes runtime-artifacts.json)\" && test \"$(stat -c %s rootfs.ext4)\" = \"$(jq -r .rootfs.size_bytes runtime-artifacts.json)\"",
                 "test -r /etc/cni/conf.d/helmr.conflist",
+                "command -v fallocate findmnt losetup mountpoint blkid mkfs.ext4 >/dev/null",
                 "systemctl cat helmr-buildkit.service >/dev/null",
                 "systemctl cat helmr-worker.service >/dev/null",
                 "systemd-analyze verify /etc/systemd/system/helmr-worker.service",
@@ -163,6 +217,53 @@ resource "aws_imagebuilder_component" "worker" {
   }
 }
 
+resource "aws_imagebuilder_component" "runtime_release" {
+  name     = "${local.name}-worker-runtime-release"
+  platform = "Linux"
+  version  = var.image_version
+
+  data = yamlencode({
+    schemaVersion = "1.0"
+    phases = [
+      {
+        name = "build"
+        steps = [
+          {
+            name   = "InstallRuntimeRelease"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [local.install_release_script]
+            }
+          }
+        ]
+      },
+      {
+        name = "validate"
+        steps = [
+          {
+            name   = "ValidateRuntimeRelease"
+            action = "ExecuteBash"
+            inputs = {
+              commands = [local.validate_release_script]
+            }
+          }
+        ]
+      }
+    ]
+  })
+
+  tags = var.tags
+
+  lifecycle {
+    create_before_destroy = true
+
+    precondition {
+      condition     = var.release_package_object_arn == local.release_package_arn
+      error_message = "release_package_object_arn must identify the exact object in release_package_s3_uri."
+    }
+  }
+}
+
 resource "aws_imagebuilder_image_recipe" "worker" {
   name         = "${local.name}-worker"
   parent_image = local.parent_image
@@ -181,6 +282,10 @@ resource "aws_imagebuilder_image_recipe" "worker" {
 
   component {
     component_arn = aws_imagebuilder_component.worker.arn
+  }
+
+  component {
+    component_arn = aws_imagebuilder_component.runtime_release.arn
   }
 
   tags = var.tags

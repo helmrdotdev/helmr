@@ -33,7 +33,7 @@ func applySecretsWithWorkspacePaths(imageRoot, workspaceRoot string, request *ru
 				return nil, fmt.Errorf("secret %s env placement name is required", secret.Name)
 			}
 			envName := strings.TrimSpace(placement.Env.Name)
-			if isDynamicLoaderEnvKey(envName) {
+			if isManagedRuntimeEnvKey(envName) {
 				return nil, fmt.Errorf("secret %s env placement %q conflicts with reserved runtime environment", secret.Name, envName)
 			}
 			*env = setEnvValue(*env, envName, string(secret.ValueBytes))

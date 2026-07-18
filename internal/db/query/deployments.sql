@@ -6,6 +6,8 @@ INSERT INTO deployments (
     project_id,
     environment_id,
     build_region_id,
+    build_architecture,
+    build_runtime_digest,
     version,
     api_version,
     sdk_version,
@@ -22,6 +24,8 @@ SELECT sqlc.arg(id),
        sqlc.arg(project_id),
        sqlc.arg(environment_id),
        sqlc.arg(build_region_id),
+       sqlc.arg(build_architecture),
+       sqlc.arg(build_runtime_digest),
        sqlc.arg(version),
        sqlc.arg(api_version),
        sqlc.arg(sdk_version),
@@ -44,22 +48,12 @@ SELECT sqlc.arg(id),
 	 )
 RETURNING *;
 
--- name: LockDeploymentReusableBuildKey :exec
+-- name: LockDeploymentBuildReuseKey :exec
 SELECT pg_advisory_xact_lock(
-    hashtextextended(
-        concat_ws(
-            ':',
-            sqlc.arg(org_id)::uuid::text,
-            sqlc.arg(build_region_id)::text,
-            sqlc.arg(project_id)::uuid::text,
-            sqlc.arg(environment_id)::uuid::text,
-            sqlc.arg(content_hash)::text
-        ),
-        0
-    )
+    hashtextextended(sqlc.arg(reuse_key)::text, 0)
 );
 
--- name: GetReusableDeploymentByContentHash :one
+-- name: GetReusableDeploymentBuild :one
 SELECT *
   FROM deployments
  WHERE org_id = sqlc.arg(org_id)
@@ -67,6 +61,13 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND content_hash = sqlc.arg(content_hash)
+   AND api_version = sqlc.arg(api_version)
+   AND sdk_version = sqlc.arg(sdk_version)
+   AND cli_version = sqlc.arg(cli_version)
+   AND bundle_format_version = sqlc.arg(bundle_format_version)
+   AND worker_protocol_version = sqlc.arg(worker_protocol_version)
+   AND build_architecture = sqlc.arg(build_architecture)
+   AND build_runtime_digest = sqlc.arg(build_runtime_digest)
    AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
@@ -113,6 +114,7 @@ WITH candidate AS MATERIALIZED (
        AND deployments.id = sqlc.arg(deployment_id)
        AND deployments.status IN ('queued', 'building')
        AND deployments.build_region_id = sqlc.arg(build_region_id)
+       AND deployments.build_architecture = sqlc.arg(build_architecture)
        AND deployments.build_requested_cpu_millis = sqlc.arg(requested_cpu_millis)
        AND deployments.build_requested_memory_bytes = sqlc.arg(requested_memory_bytes)
        AND deployments.build_requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
@@ -171,6 +173,8 @@ SELECT inserted.*,
        advanced.cli_version,
        advanced.bundle_format_version,
        advanced.content_hash,
+       advanced.build_architecture,
+       advanced.build_runtime_digest,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
        source_artifacts.media_type AS source_media_type,
@@ -289,6 +293,7 @@ SELECT deployments.org_id,
        deployments.environment_id,
        deployments.id AS deployment_id,
        deployments.build_region_id,
+       deployments.build_architecture,
        deployments.build_requested_cpu_millis,
        deployments.build_requested_memory_bytes,
        deployments.build_requested_workload_disk_bytes,
@@ -339,23 +344,23 @@ SELECT DISTINCT deployments.build_region_id
  ORDER BY deployments.build_region_id
  LIMIT sqlc.arg(limit_count);
 
--- name: ClaimDeploymentBuildLease :one
-UPDATE deployment_build_leases
-   SET state = 'starting', claimed_at = COALESCE(claimed_at, now()),
-       renewed_at = now(), expires_at = sqlc.arg(expires_at), updated_at = now()
- WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
-   AND id = sqlc.arg(build_lease_id)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND state = 'assigned' AND start_deadline_at > now() AND expires_at > now()
-RETURNING *;
-
 -- name: ClaimNextDeploymentBuildLease :one
 WITH candidate AS (
     SELECT deployment_build_leases.*
       FROM deployment_build_leases
+      JOIN deployments
+        ON deployments.org_id = deployment_build_leases.org_id
+       AND deployments.id = deployment_build_leases.deployment_id
+       AND deployments.current_build_lease_id = deployment_build_leases.id
+      JOIN worker_instances
+        ON worker_instances.id = deployment_build_leases.worker_instance_id
+       AND worker_instances.worker_group_id = deployment_build_leases.worker_group_id
+       AND worker_instances.current_epoch = deployment_build_leases.worker_epoch
+       AND worker_instances.state = 'active'
+       AND worker_instances.supports_build
+      JOIN runtime_identities
+        ON runtime_identities.id = worker_instances.runtime_identity_id
+       AND runtime_identities.runtime_arch = deployments.build_architecture
      WHERE deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
        AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
@@ -376,6 +381,7 @@ WITH candidate AS (
 )
 SELECT claimed.*, deployments.version, deployments.api_version, deployments.sdk_version,
        deployments.cli_version, deployments.bundle_format_version, deployments.content_hash,
+       deployments.build_architecture, deployments.build_runtime_digest,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
        source_artifacts.media_type AS source_media_type,
@@ -509,9 +515,27 @@ WITH completed AS (
 UPDATE deployments
    SET status = 'deployed', build_manifest_artifact_id = sqlc.arg(build_manifest_artifact_id),
        deployment_manifest_artifact_id = sqlc.arg(deployment_manifest_artifact_id),
+       program_code_artifact_id = sqlc.narg(program_code_artifact_id),
+       program_dependency_artifact_id = sqlc.narg(program_dependency_artifact_id),
+       program_runtime_digest = sqlc.narg(program_runtime_digest),
+       program_architecture = sqlc.narg(program_architecture),
        built_at = COALESCE(built_at, now()), deployed_at = now(), updated_at = now()
   FROM completed
  WHERE deployments.id = completed.deployment_id AND deployments.current_build_lease_id = completed.id
+   AND (
+       (
+           sqlc.narg(program_code_artifact_id)::uuid IS NULL
+           AND sqlc.narg(program_dependency_artifact_id)::uuid IS NULL
+           AND sqlc.narg(program_runtime_digest)::bytea IS NULL
+           AND sqlc.narg(program_architecture)::text IS NULL
+       )
+       OR (
+           sqlc.narg(program_code_artifact_id)::uuid IS NOT NULL
+           AND sqlc.narg(program_dependency_artifact_id)::uuid IS NOT NULL
+           AND sqlc.narg(program_runtime_digest)::bytea = deployments.build_runtime_digest
+           AND sqlc.narg(program_architecture)::text = deployments.build_architecture
+       )
+   )
 RETURNING deployments.*
 ), meter_event AS (
     INSERT INTO meter_events (
@@ -592,7 +616,9 @@ WITH locked_deployment AS MATERIALIZED (
 )
 SELECT locked_lease.*,
        locked_deployment.status AS deployment_status,
-       locked_deployment.current_build_lease_id
+       locked_deployment.current_build_lease_id,
+       locked_deployment.build_architecture,
+       locked_deployment.build_runtime_digest
   FROM locked_lease
   JOIN locked_deployment
     ON locked_deployment.org_id = locked_lease.org_id

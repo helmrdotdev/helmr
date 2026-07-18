@@ -132,6 +132,7 @@ func TestVerifierProcessConfigRequiresClosedJobLayout(t *testing.T) {
 			}
 		})
 	}
+	//lint:ignore SA1012 nil is the contract violation under test
 	if err := validateVerifierProcessConfig(nil, valid); err == nil {
 		t.Fatal("nil context was accepted")
 	}

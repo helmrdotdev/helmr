@@ -2,9 +2,13 @@ package deployment
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"strings"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -29,6 +33,83 @@ type RuntimeDescriptor struct {
 	MediaType         string              `json:"mediaType"`
 	RuntimeAPIVersion string              `json:"runtimeApiVersion"`
 	SizeBytes         int64               `json:"sizeBytes"`
+}
+
+func RuntimeDescriptorFromWire(value api.WorkerRuntimeDescriptor) (RuntimeDescriptor, error) {
+	descriptor := RuntimeDescriptor{
+		Architecture:      RuntimeArchitecture(value.Architecture),
+		Digest:            value.Digest,
+		FormatVersion:     value.FormatVersion,
+		MediaType:         value.MediaType,
+		RuntimeAPIVersion: value.RuntimeAPIVersion,
+		SizeBytes:         value.SizeBytes,
+	}
+	if err := ValidateRuntimeDescriptor(descriptor); err != nil {
+		return RuntimeDescriptor{}, err
+	}
+	return descriptor, nil
+}
+
+func RuntimeDescriptorWire(descriptor RuntimeDescriptor) (api.WorkerRuntimeDescriptor, error) {
+	if err := ValidateRuntimeDescriptor(descriptor); err != nil {
+		return api.WorkerRuntimeDescriptor{}, err
+	}
+	return api.WorkerRuntimeDescriptor{
+		Architecture:      string(descriptor.Architecture),
+		Digest:            descriptor.Digest,
+		FormatVersion:     descriptor.FormatVersion,
+		MediaType:         descriptor.MediaType,
+		RuntimeAPIVersion: descriptor.RuntimeAPIVersion,
+		SizeBytes:         descriptor.SizeBytes,
+	}, nil
+}
+
+func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
+	switch value {
+	case "arm64":
+		return ArchitectureAArch64, nil
+	case "amd64":
+		return ArchitectureX8664, nil
+	default:
+		return "", fmt.Errorf("unsupported Go architecture %q", value)
+	}
+}
+
+func RuntimeArchitectureGo(value RuntimeArchitecture) (string, error) {
+	switch value {
+	case ArchitectureAArch64:
+		return "arm64", nil
+	case ArchitectureX8664:
+		return "amd64", nil
+	default:
+		return "", fmt.Errorf("runtime architecture %q is unsupported", value)
+	}
+}
+
+func ValidateRuntimeArchitecture(value RuntimeArchitecture) error {
+	if !validArchitecture(value) {
+		return fmt.Errorf("runtime architecture %q is unsupported", value)
+	}
+	return nil
+}
+
+func RuntimeDigestBytes(value string) ([]byte, error) {
+	if len(value) != len("sha256:")+sha256.Size*2 ||
+		!strings.HasPrefix(value, "sha256:") {
+		return nil, fmt.Errorf("runtime digest is not a lowercase SHA-256 digest")
+	}
+	digest, err := hex.DecodeString(value[len("sha256:"):])
+	if err != nil || len(digest) != sha256.Size {
+		return nil, fmt.Errorf("runtime digest is not a lowercase SHA-256 digest")
+	}
+	return digest, nil
+}
+
+func RuntimeDigestString(value []byte) (string, error) {
+	if len(value) != sha256.Size {
+		return "", fmt.Errorf("runtime digest is not %d bytes", sha256.Size)
+	}
+	return "sha256:" + hex.EncodeToString(value), nil
 }
 
 func ParseRuntimeIndex(raw []byte) (RuntimeIndex, error) {

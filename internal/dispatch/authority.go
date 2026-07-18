@@ -43,6 +43,7 @@ type workerFence struct {
 	WorkerProtocolVersion string
 	ObservationFreshAfter pgtype.Timestamptz
 	Role                  string
+	BuildArchitecture     string
 }
 
 // lockWorkerFence takes the worker-group lock before the worker lock, matching
@@ -65,6 +66,8 @@ SELECT id
 	err = tx.QueryRow(ctx, `
 SELECT worker_instances.id
   FROM worker_instances
+  LEFT JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -72,15 +75,17 @@ SELECT worker_instances.id
    AND worker_instances.worker_group_id = $2
    AND worker_instances.current_epoch = $3
    AND worker_instances.state = 'active'
+   AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = $4
    AND worker_observations.observed_at >= $5
    AND (($6 = 'run' AND worker_instances.supports_run)
         OR ($6 = 'build' AND worker_instances.supports_build))
    AND (($6 = 'run' AND worker_observations.run_paused_reason IS NULL)
         OR ($6 = 'build' AND worker_observations.build_paused_reason IS NULL))
+   AND ($6 <> 'build' OR runtime_identities.runtime_arch = $7)
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.ObservationFreshAfter,
-		fence.Role).Scan(&workerID)
+		fence.Role, fence.BuildArchitecture).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}

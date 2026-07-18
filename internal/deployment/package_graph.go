@@ -221,14 +221,14 @@ func validateLocalPackage(local LocalPackage, root bool) error {
 	}
 	if root {
 		if local.Path != "." {
-			return fmt.Errorf("root path = %q, want .", local.Path)
+			return fmt.Errorf("root path = %q, want %q", local.Path, ".")
 		}
 		if local.ViewKey != nil {
 			return fmt.Errorf("root viewKey must be null")
 		}
 	} else {
 		if local.Path == "." {
-			return fmt.Errorf("only the first local package may use root path .")
+			return fmt.Errorf("root path may only appear in the first local package")
 		}
 		if err := validatePackagePath(local.Path, programMountPath, true); err != nil {
 			return fmt.Errorf("path: %w", err)

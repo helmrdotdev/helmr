@@ -948,6 +948,43 @@ func TestImageModeEnvDropsDynamicLoaderEnv(t *testing.T) {
 	}
 }
 
+func TestManagedRuntimeEnvDropsRuntimeOverrides(t *testing.T) {
+	blocked := []string{
+		"NODE_OPTIONS",
+		"NODE_PATH",
+		"NODE_EXTRA_CA_CERTS",
+		"NODE_ICU_DATA",
+		"SSL_CERT_FILE",
+		"SSL_CERT_DIR",
+		"OPENSSL_CONF",
+		"OPENSSL_MODULES",
+		"OPENSSL_ENGINES",
+		"GCONV_PATH",
+		"LOCPATH",
+		"LD_CUSTOM",
+	}
+	imageEnv := []string{"PATH=/workspace/bin:/usr/bin", "FOO=bar"}
+	for _, key := range blocked {
+		imageEnv = append(imageEnv, key+"=hostile")
+	}
+	env := managedRuntimeEnv(
+		ociRuntimeConfig{Env: imageEnv},
+		&resolvedRuntimeUser{Name: "helmr", UID: 1000, GID: 1000, Home: "/home/helmr"},
+		"/workspace",
+	)
+	for _, key := range blocked {
+		if got := envValue(env, key); got != "" {
+			t.Fatalf("%s = %q", key, got)
+		}
+	}
+	if got := envValue(env, "PATH"); got != "/workspace/bin:/usr/bin" {
+		t.Fatalf("PATH = %q", got)
+	}
+	if got := envValue(env, "FOO"); got != "bar" {
+		t.Fatalf("FOO = %q", got)
+	}
+}
+
 func TestAdapterDependenciesInstalledInImageFindsAncestorNodeModules(t *testing.T) {
 	imageRoot := t.TempDir()
 	sourceRoot := filepath.Join(imageRoot, "workspace", ".helmr", "deployment-source")
@@ -2626,16 +2663,20 @@ func TestApplySecretsRejectsReservedRuntimePlacements(t *testing.T) {
 	}
 }
 
-func TestApplySecretsRejectsDynamicLoaderEnvPlacement(t *testing.T) {
-	err := applySecrets(t.TempDir(), t.TempDir(), &runv0.RunTaskRequest{
-		Secrets: []*runv0.SecretInject{{
-			Name:       "preload",
-			ValueBytes: []byte("/image/lib/libhook.so"),
-			Placement:  &runv0.Placement{Kind: &runv0.Placement_Env{Env: &runv0.EnvPlacement{Name: "LD_PRELOAD"}}},
-		}},
-	}, nil, new([]string))
-	if err == nil || !strings.Contains(err.Error(), "reserved runtime environment") {
-		t.Fatalf("err = %v", err)
+func TestApplySecretsRejectsManagedRuntimeEnvPlacement(t *testing.T) {
+	for _, name := range []string{"LD_PRELOAD", "NODE_OPTIONS"} {
+		t.Run(name, func(t *testing.T) {
+			err := applySecrets(t.TempDir(), t.TempDir(), &runv0.RunTaskRequest{
+				Secrets: []*runv0.SecretInject{{
+					Name:       "override",
+					ValueBytes: []byte("hostile"),
+					Placement:  &runv0.Placement{Kind: &runv0.Placement_Env{Env: &runv0.EnvPlacement{Name: name}}},
+				}},
+			}, nil, new([]string))
+			if err == nil || !strings.Contains(err.Error(), "reserved runtime environment") {
+				t.Fatalf("err = %v", err)
+			}
+		})
 	}
 }
 

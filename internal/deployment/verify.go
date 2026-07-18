@@ -209,10 +209,10 @@ func validateArtifactDescriptor(
 		mediaType = RuntimeArtifactMediaType
 		maxPhysicalBytes = maxRuntimePhysicalBytes
 	default:
-		return fmt.Errorf("Artifact role = %d", role)
+		return fmt.Errorf("artifact role = %d", role)
 	}
 	if !sha256DigestPattern.MatchString(artifact.Digest) {
-		return fmt.Errorf("%s Artifact digest is not a lowercase SHA-256 digest", label)
+		return fmt.Errorf("%s artifact digest is not a lowercase SHA-256 digest", label)
 	}
 	if artifact.SizeBytes < 1 || artifact.SizeBytes > maxPhysicalBytes {
 		return fmt.Errorf(

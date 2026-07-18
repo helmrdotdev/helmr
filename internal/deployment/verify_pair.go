@@ -1,7 +1,6 @@
 package deployment
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"path"
@@ -21,8 +20,8 @@ type pairVerifier struct {
 	depManifests    map[string]packageManifest
 	codeLinks       map[string]string
 	depLinks        map[string]string
+	binLinks        map[string]string
 	depDirs         map[string]struct{}
-	shims           map[string][]byte
 	binRoots        map[string]struct{}
 	localByPath     map[string]LocalPackage
 	registryRoots   map[string]struct{}
@@ -421,12 +420,4 @@ func hasPathComponent(value, component string) bool {
 		}
 	}
 	return false
-}
-
-func isPathWithin(value, root string) bool {
-	return value == root || root == "." || strings.HasPrefix(value, root+"/")
-}
-
-func equalBytes(left, right []byte) bool {
-	return bytes.Equal(left, right)
 }

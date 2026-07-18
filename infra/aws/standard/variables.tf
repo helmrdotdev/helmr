@@ -67,10 +67,18 @@ variable "worker_group_id" {
 }
 
 variable "region_id" {
-  description = "Helmr region primitive for this stack. Defaults to aws_region."
+  description = "Explicit Helmr region primitive for this stack."
   type        = string
-  default     = null
-  nullable    = true
+
+  validation {
+    condition = (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
+  }
 }
 
 variable "default_region_id" {
@@ -78,6 +86,31 @@ variable "default_region_id" {
   type        = string
   default     = null
   nullable    = true
+}
+
+variable "runtime_store_uri" {
+  description = "Dedicated immutable managed-runtime store URI exported by the bootstrap module."
+  type        = string
+}
+
+variable "runtime_store_bucket_arn" {
+  description = "Managed-runtime store bucket ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "runtime_store_kms_key_arn" {
+  description = "Managed-runtime store KMS key ARN exported by the bootstrap module."
+  type        = string
+}
+
+variable "runtime_policy_digest" {
+  description = "Exact committed managed-runtime policy digest for this stack rollout."
+  type        = string
+
+  validation {
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
+    error_message = "runtime_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+  }
 }
 
 variable "clickhouse_url" {

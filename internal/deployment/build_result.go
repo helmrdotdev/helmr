@@ -169,6 +169,34 @@ func ValidateBuildResult(result api.WorkerDeploymentBuildResult) ([]api.CASObjec
 	return casObjects, nil
 }
 
+func ValidateBuildProgram(result api.WorkerDeploymentBuildResult) (ProgramReceipt, error) {
+	receipt, err := ParseProgramReceipt(result.ProgramReceipt)
+	if err != nil {
+		return ProgramReceipt{}, fmt.Errorf("program receipt: %w", err)
+	}
+	objects, _, err := NormalizeBuildCASObjects(result.CASObjects)
+	if err != nil {
+		return ProgramReceipt{}, err
+	}
+	for _, item := range []struct {
+		label      string
+		descriptor ProgramDescriptor
+	}{
+		{label: "program code", descriptor: receipt.Code},
+		{label: "program dependencies", descriptor: receipt.Dependencies},
+	} {
+		object, ok := objects[item.descriptor.Digest]
+		if !ok {
+			return ProgramReceipt{}, fmt.Errorf("%s must be included in cas_objects", item.label)
+		}
+		if object.SizeBytes != item.descriptor.SizeBytes ||
+			object.MediaType != item.descriptor.MediaType {
+			return ProgramReceipt{}, fmt.Errorf("%s metadata does not match program receipt", item.label)
+		}
+	}
+	return receipt, nil
+}
+
 func validateDeploymentQueues(queues []api.WorkerDeploymentQueue) (map[string]*int32, error) {
 	if len(queues) == 0 {
 		return nil, errors.New("deployment build must include queue catalog")

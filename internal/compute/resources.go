@@ -23,7 +23,16 @@ func BuildGuestResources() ResourceVector {
 	return ResourceVector{
 		MilliCPU:  2000,
 		MemoryMiB: 2048,
-		DiskMiB:   8192,
+		DiskMiB:   20480,
+		Slots:     1,
+	}
+}
+
+func BuildEnvelopeResources() ResourceVector {
+	return ResourceVector{
+		MilliCPU:  3000,
+		MemoryMiB: 4096,
+		DiskMiB:   32768,
 		Slots:     1,
 	}
 }

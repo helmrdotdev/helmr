@@ -400,8 +400,9 @@ func TestSquashFSMetadataDecoderAcceptsFullReadWithEOF(t *testing.T) {
 func TestSquashFSMetadataDecoderRejectsNilContext(t *testing.T) {
 	image := squashFSTestMetadataBlock(t, []byte("abc"), false)
 	decoder := newSquashFSTestMetadataDecoder(t, image)
+	var nilContext context.Context
 	_, err := decoder.readBlock(
-		nil,
+		nilContext,
 		squashFSRegion{end: uint64(len(image))},
 		0,
 		3,

@@ -22,7 +22,9 @@ instance family that supports EC2 nested virtualization, such as C8i/M8i/R8i. Le
 metal worker instances and for instance families that do not support the option.
 
 The module writes `/etc/helmr/worker.env` from Terraform inputs and Secrets Manager values, then
-starts BuildKit, `helmr-worker`, and a small lifecycle watcher.
+starts `helmr-worker` and a small lifecycle watcher. Build-capable workers additionally allocate
+and mount fixed build-cache and build-scratch ext4 filesystems before starting BuildKit; run-only
+workers do not start BuildKit or receive build storage paths.
 
 `worker_environment` is only for additional non-secret worker variables. It cannot override
 infra-owned `HELMR_*` routing, storage, enrollment, Firecracker, BuildKit, or network policy

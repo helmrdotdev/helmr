@@ -53,10 +53,13 @@ func run(log *slog.Logger) error {
 	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
-	if supportsBuild {
-		if err := workerdaemon.PrepareProgramVerifierHost(); err != nil {
-			return fmt.Errorf("prepare program verifier host: %w", err)
-		}
+	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
+	if err != nil {
+		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
+	}
+	verifierCgroupRoot, err := workerdaemon.PrepareVerifierHost()
+	if err != nil {
+		return fmt.Errorf("prepare verifier host: %w", err)
 	}
 	serviceID := uuid.NewString()
 	process, err := workerdaemon.Acquire(workDir, workerdaemon.ProcessIdentity{ServiceID: serviceID, Roles: cfg.WorkerRoles})
@@ -67,45 +70,29 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
-	var imageBuilder builder.Engine
-	closeBuilder := func() error { return nil }
+	substrateCacheDir := filepath.Join(workDir, "substrate-cache")
+	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
 	if supportsBuild {
-		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
-			Addr:           cfg.BuildKitAddr,
-			OutputRoot:     filepath.Join(workDir, "builds"),
-			CacheNamespace: cfg.BuildKitCacheNS,
+		const mib = uint64(1024 * 1024)
+		storageProof, err := workerdaemon.ProveBuildStorage(workerdaemon.BuildStorageConfig{
+			CacheRoot:            cfg.BuildCacheDir,
+			ScratchRoot:          cfg.BuildScratchDir,
+			WorkDir:              workDir,
+			JailerRoot:           cfg.JailerChrootDir,
+			RequiredCacheBytes:   uint64(cfg.SubstrateCacheMaxMiB+cfg.ArtifactCacheMaxMiB) * mib,
+			RequiredScratchBytes: uint64(compute.BuildEnvelopeResources().DiskMiB) * mib,
 		})
 		if err != nil {
-			return fmt.Errorf("configure buildkit: %w", err)
+			return fmt.Errorf("prove build storage: %w", err)
 		}
-	}
-	defer func() {
-		if err := closeBuilder(); err != nil {
-			log.Warn("close buildkit", "error", err)
+		if err := ensureBuildCacheDirectory(storageProof.SubstrateCacheDir); err != nil {
+			return fmt.Errorf("prepare substrate cache: %w", err)
 		}
-	}()
-	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
-	if err != nil {
-		return fmt.Errorf("configure CAS: %w", err)
-	}
-	var controlClient *client.Client
-	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
-		candidate, candidateErr := client.New(cfg.ControlURL,
-			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
-			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
-			client.WithClientIdentity("worker", version.Version),
-		)
-		if candidateErr != nil {
-			return candidateErr
+		if err := ensureBuildCacheDirectory(storageProof.ArtifactCacheDir); err != nil {
+			return fmt.Errorf("prepare Artifact cache: %w", err)
 		}
-		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
-			return candidateErr
-		}
-		controlClient = candidate
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("configure authenticated control client: %w", err)
+		substrateCacheDir = storageProof.SubstrateCacheDir
+		artifactCacheDir = storageProof.ArtifactCacheDir
 	}
 	imagesDir := cfg.ImagesDir
 	if imagesDir == "" {
@@ -151,6 +138,137 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect firecracker runtime: %w", err)
 	}
+	runtimeArchitecture, err := deployment.RuntimeArchitectureFromGo(runtimeCapabilities.Arch)
+	if err != nil {
+		return fmt.Errorf("normalize firecracker runtime architecture: %w", err)
+	}
+	runtimeIdentity := compute.RuntimeSelector{
+		Arch:            string(runtimeArchitecture),
+		ABI:             runtimeCapabilities.ABI,
+		KernelDigest:    runtimeCapabilities.KernelDigest,
+		InitramfsDigest: runtimeCapabilities.InitramfsDigest,
+		RootfsDigest:    runtimeCapabilities.RootfsDigest,
+		CNIProfile:      runtimeCapabilities.CNIProfile,
+	}
+	runtimeIdentity.ID, err = compute.RuntimeIdentityDigest(runtimeIdentity)
+	if err != nil {
+		return fmt.Errorf("derive normalized firecracker runtime identity: %w", err)
+	}
+	corpusScratch := filepath.Join(workDir, "tmp", "runtime-verifier")
+	if err := os.MkdirAll(corpusScratch, 0o700); err != nil {
+		return fmt.Errorf("create runtime verifier scratch: %w", err)
+	}
+	if err := deployment.VerifyRuntimeVerifierCorpus(
+		ctx,
+		runtimeCatalog,
+		runtimeArchitecture,
+		verifierCgroupRoot,
+		corpusScratch,
+	); err != nil {
+		return fmt.Errorf("verify managed runtime corpus: %w", err)
+	}
+	if supportsBuild {
+		if err := validateWorkerStores(cfg); err != nil {
+			return err
+		}
+		runtimePolicy, err := deployment.LoadRuntimePolicy(cfg.RuntimePolicyPath, runtimeCatalog)
+		if err != nil {
+			return fmt.Errorf("load managed runtime policy: %w", err)
+		}
+		currentRuntime, err := runtimePolicy.Current(cfg.RegionID)
+		if err != nil {
+			return fmt.Errorf("resolve regional managed runtime: %w", err)
+		}
+		if currentRuntime.Architecture != runtimeArchitecture {
+			return fmt.Errorf(
+				"regional managed runtime architecture = %q, worker architecture is %q",
+				currentRuntime.Architecture,
+				runtimeArchitecture,
+			)
+		}
+		runtimeStore, err := cas.NewImmutableS3(
+			ctx,
+			cfg.RuntimeStoreURI,
+			cas.WithS3TempDir(corpusScratch),
+		)
+		if err != nil {
+			return fmt.Errorf("configure managed runtime store: %w", err)
+		}
+		runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
+			ctx,
+			runtimeStore,
+			corpusScratch,
+			currentRuntime,
+		)
+		if err != nil {
+			return fmt.Errorf("snapshot regional managed runtime: %w", err)
+		}
+		runtimeIndex, verifyErr := deployment.VerifyRuntimeArtifact(
+			ctx,
+			verifierCgroupRoot,
+			"startup-current",
+			runtimeSnapshot,
+		)
+		closeErr := runtimeSnapshot.Close()
+		if verifyErr != nil {
+			return fmt.Errorf("verify regional managed runtime: %w", verifyErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close regional managed runtime snapshot: %w", closeErr)
+		}
+		expectedIndex := deployment.RuntimeIndex{
+			Architecture:      currentRuntime.Architecture,
+			FormatVersion:     deployment.RuntimeIndexFormatVersion,
+			RuntimeAPIVersion: currentRuntime.RuntimeAPIVersion,
+		}
+		if runtimeIndex != expectedIndex {
+			return fmt.Errorf(
+				"regional managed runtime index = %#v, want %#v",
+				runtimeIndex,
+				expectedIndex,
+			)
+		}
+	}
+	var imageBuilder builder.Engine
+	closeBuilder := func() error { return nil }
+	if supportsBuild {
+		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
+			Addr:           cfg.BuildKitAddr,
+			OutputRoot:     filepath.Join(workDir, "builds"),
+			CacheNamespace: cfg.BuildKitCacheNS,
+		})
+		if err != nil {
+			return fmt.Errorf("configure buildkit: %w", err)
+		}
+	}
+	defer func() {
+		if err := closeBuilder(); err != nil {
+			log.Warn("close buildkit", "error", err)
+		}
+	}()
+	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
+	if err != nil {
+		return fmt.Errorf("configure CAS: %w", err)
+	}
+	var controlClient *client.Client
+	workerCredential, err := resolveAuthenticatedWorkerCredential(ctx, cfg, workDir, func(credential workerCredentialFile) error {
+		candidate, candidateErr := client.New(cfg.ControlURL,
+			client.WithWorkerAuth(credential.WorkerInstanceID, credential.WorkerInstanceSecret),
+			client.WithWorkerService(serviceID, api.CurrentWorkerProtocolVersion, supportsRun, supportsBuild),
+			client.WithClientIdentity("worker", version.Version),
+		)
+		if candidateErr != nil {
+			return candidateErr
+		}
+		if candidateErr = candidate.AuthenticateWorker(ctx); candidateErr != nil {
+			return candidateErr
+		}
+		controlClient = candidate
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("configure authenticated control client: %w", err)
+	}
 	certifiedVM := compute.ResourceVector{
 		MilliCPU:  cfg.VMVCPUCount * 1000,
 		MemoryMiB: cfg.VMMemoryMiB,
@@ -194,14 +312,14 @@ func run(log *slog.Logger) error {
 	workerCapabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
 		WorkerVersion:           version.Version,
-		RuntimeID:               runtimeCapabilities.ID,
-		RuntimeArch:             runtimeCapabilities.Arch,
+		RuntimeID:               runtimeIdentity.ID,
+		RuntimeArch:             runtimeIdentity.Arch,
 		RuntimeABI:              runtimeCapabilities.ABI,
 		KernelDigest:            runtimeCapabilities.KernelDigest,
 		InitramfsDigest:         runtimeCapabilities.InitramfsDigest,
 		RootfsDigest:            runtimeCapabilities.RootfsDigest,
 		CNIProfile:              runtimeCapabilities.CNIProfile,
-		Region:                  cfg.WorkerProviderRegion,
+		Region:                  cfg.RegionID,
 		Labels:                  cfg.WorkerLabels,
 		MaxVCPUs:                allocatable.MilliCPU / 1000,
 		MaxMemoryMiB:            allocatable.MemoryMiB,
@@ -240,7 +358,7 @@ func run(log *slog.Logger) error {
 		TempDir:   filepath.Join(workDir, "tmp"),
 	}
 	substrateResolver := &substrate.Resolver{
-		CacheDir:      filepath.Join(workDir, "substrate-cache"),
+		CacheDir:      substrateCacheDir,
 		MkfsExt4Path:  "mkfs.ext4",
 		MaxCacheBytes: substrateCacheMaxBytes,
 	}
@@ -263,7 +381,7 @@ func run(log *slog.Logger) error {
 	if cfg.PreparedRuntimePoolSize > 0 {
 		preparedRuntimePool = executor.NewPreparedRuntimePool(workspaceMountConnector, store, cfg.PreparedRuntimePoolSize, log)
 		preparedRuntimePool.TempDir = filepath.Join(workDir, "tmp")
-		preparedRuntimePool.ArtifactCacheDir = filepath.Join(workDir, "artifact-cache")
+		preparedRuntimePool.ArtifactCacheDir = artifactCacheDir
 		preparedRuntimePool.ArtifactCacheMaxBytes = artifactCacheMaxBytes
 		preparedRuntimePool.Substrates = substrateResolver
 		preparedRuntimePool.RuntimeSubstrates = controlClient
@@ -292,7 +410,7 @@ func run(log *slog.Logger) error {
 				WorkspaceMounts:       workspaceMountSessions,
 				Events:                controlClient,
 				TempDir:               filepath.Join(workDir, "tmp"),
-				ArtifactCacheDir:      filepath.Join(workDir, "artifact-cache"),
+				ArtifactCacheDir:      artifactCacheDir,
 				ArtifactCacheMaxBytes: artifactCacheMaxBytes,
 				Substrates:            substrateResolver,
 				RuntimeSubstrates:     controlClient,
@@ -319,7 +437,7 @@ func run(log *slog.Logger) error {
 			CAS:                   store,
 			Sessions:              workspaceMountSessions,
 			TempDir:               filepath.Join(workDir, "tmp"),
-			ArtifactCacheDir:      filepath.Join(workDir, "artifact-cache"),
+			ArtifactCacheDir:      artifactCacheDir,
 			ArtifactCacheMaxBytes: artifactCacheMaxBytes,
 			Substrates:            substrateResolver,
 			StartupTimeout:        cfg.WorkspaceMountStartupTimeout,
@@ -432,9 +550,44 @@ func run(log *slog.Logger) error {
 }
 
 func fitsBuildHostCompute(resources compute.ResourceVector) bool {
-	guest := compute.BuildGuestResources()
-	guest.DiskMiB = 0
-	return resources.Fits(guest)
+	envelope := compute.BuildEnvelopeResources()
+	envelope.DiskMiB = 0
+	return resources.Fits(envelope)
+}
+
+func validateWorkerStores(cfg config.Worker) error {
+	pairs := []struct {
+		label  string
+		first  string
+		second string
+	}{
+		{
+			label:  "ordinary CAS and managed runtime store",
+			first:  cfg.CASURI,
+			second: cfg.RuntimeStoreURI,
+		},
+	}
+	for _, pair := range pairs {
+		if err := cas.ValidateDistinctS3Stores(pair.first, pair.second); err != nil {
+			return fmt.Errorf("validate %s: %w", pair.label, err)
+		}
+	}
+	return nil
+}
+
+func ensureBuildCacheDirectory(path string) error {
+	err := os.Mkdir(path, 0o750)
+	if err != nil && !os.IsExist(err) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%q is not a cache directory", path)
+	}
+	return nil
 }
 
 type retryableWorkerCloser struct {

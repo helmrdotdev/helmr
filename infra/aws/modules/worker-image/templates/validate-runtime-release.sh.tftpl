@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+release_dir=/usr/lib/helmr/runtime-release
+umask 077
+release_stage=$(mktemp -d /tmp/helmr-runtime-release-validation.XXXXXXXX)
+trap 'rm -rf -- "$release_stage"' EXIT
+release_archive="$release_stage/release.tar"
+release_extract="$release_stage/extracted"
+files=(
+  catalog.json
+  catalog.sigstore.json
+  trusted-root.json
+  verifier-corpus.json
+  verifier-invalid.squashfs
+  verifier-valid.squashfs
+)
+
+aws s3api get-object \
+  --bucket '${release_package_bucket}' \
+  --key '${release_package_key}' \
+  --version-id '${release_package_version_id}' \
+  "$release_archive" >/dev/null
+printf '%s  %s\n' '${release_package_sha256}' "$release_archive" | sha256sum --check --strict -
+
+python3 - "$release_archive" "$release_extract" x86_64 <<'PY'
+${release_validator}
+PY
+
+test -d "$release_dir"
+test ! -L "$release_dir"
+test "$(stat -c '%u:%g' "$release_dir")" = "0:0"
+test "$(stat -c '%a' "$release_dir")" = "755"
+test "$(find "$release_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = "$(printf '%s\n' "$${files[@]}")"
+
+for file in "$${files[@]}"; do
+  path="$release_dir/$file"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%g' "$path")" = "0:0"
+  test "$(stat -c '%a' "$path")" = "444"
+  test "$(sha256sum "$path" | awk '{print $1}')" = "$(sha256sum "$release_extract/$file" | awk '{print $1}')"
+done

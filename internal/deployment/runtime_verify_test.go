@@ -28,6 +28,7 @@ func TestRuntimeTopologyAcceptsClosedLayout(t *testing.T) {
 }
 
 func TestVerifyRuntimeArtifactRejectsNilContextAndSnapshot(t *testing.T) {
+	//lint:ignore SA1012 nil is the contract violation under test
 	if _, err := VerifyRuntimeArtifact(nil, "/sys/fs/cgroup", "lease", nil); err == nil {
 		t.Fatal("nil context was accepted")
 	}
@@ -175,7 +176,6 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("lib")
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
-	artifact.addFile(runtimeShellPath, []byte("helmr-sh"), 0755)
 	artifact.addFile(runtimeIndexPath, index, 0644)
 	artifact.addFile(runtimePreloadPath, []byte("preload"), 0644)
 	artifact.addFile(runtimeLibcPath, []byte("libc"), 0644)

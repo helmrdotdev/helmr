@@ -26,6 +26,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/email"
@@ -38,6 +39,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
+
+var loadControlRuntimePolicy = func(path string) (*deployment.RuntimePolicy, error) {
+	catalog, err := deployment.LoadRuntimeCatalog()
+	if err != nil {
+		return nil, fmt.Errorf("authenticate managed runtime catalog: %w", err)
+	}
+	policy, err := deployment.LoadRuntimePolicy(path, catalog)
+	if err != nil {
+		return nil, fmt.Errorf("load managed runtime policy: %w", err)
+	}
+	return policy, nil
+}
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -52,6 +65,12 @@ func main() {
 		case "secrets":
 			if err := runSecretsCommand(log, os.Args[2:]); err != nil {
 				log.Error("manage secrets", "error", err)
+				os.Exit(1)
+			}
+			return
+		case "runtime":
+			if err := runRuntimeCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("manage runtime", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -70,6 +89,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	cfg, err := config.LoadControl()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+	runtimePolicy, err := loadControlRuntimePolicy(cfg.RuntimePolicyPath)
+	if err != nil {
+		return err
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -217,6 +240,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
 	}
+	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.RuntimeStoreURI); err != nil {
+		return fmt.Errorf("validate managed runtime store: %w", err)
+	}
+	runtimeStore, err := cas.NewImmutableS3(ctx, cfg.RuntimeStoreURI)
+	if err != nil {
+		return fmt.Errorf("configure managed runtime store: %w", err)
+	}
 	var authProvider control.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
@@ -232,6 +262,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadinessDB:           pool,
 		Auth:                  auth.NewDBAuthenticator(queries),
 		CAS:                   casStore,
+		RuntimePolicy:         runtimePolicy,
+		RuntimeStore:          runtimeStore,
 		Secrets:               secretStore,
 		RunEnqueuer:           runEnqueuer,
 		PreparedRuntimeSupply: preparedRuntimeSupply,

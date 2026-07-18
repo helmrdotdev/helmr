@@ -51,6 +51,56 @@ func TestRuntimeDescriptorRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRuntimeDescriptorWireRoundTrip(t *testing.T) {
+	descriptor := testRuntimeDescriptor()
+	wire, err := RuntimeDescriptorWire(descriptor)
+	if err != nil {
+		t.Fatalf("RuntimeDescriptorWire: %v", err)
+	}
+	parsed, err := RuntimeDescriptorFromWire(wire)
+	if err != nil {
+		t.Fatalf("RuntimeDescriptorFromWire: %v", err)
+	}
+	if parsed != descriptor {
+		t.Fatalf("descriptor = %#v, want %#v", parsed, descriptor)
+	}
+	wire.MediaType = "application/octet-stream"
+	if _, err := RuntimeDescriptorFromWire(wire); err == nil {
+		t.Fatal("RuntimeDescriptorFromWire accepted an invalid descriptor")
+	}
+}
+
+func TestRuntimeArchitectureGoBoundary(t *testing.T) {
+	tests := map[string]RuntimeArchitecture{
+		"arm64": ArchitectureAArch64,
+		"amd64": ArchitectureX8664,
+	}
+	for goArchitecture, architecture := range tests {
+		t.Run(goArchitecture, func(t *testing.T) {
+			parsed, err := RuntimeArchitectureFromGo(goArchitecture)
+			if err != nil {
+				t.Fatalf("RuntimeArchitectureFromGo: %v", err)
+			}
+			if parsed != architecture {
+				t.Fatalf("architecture = %q, want %q", parsed, architecture)
+			}
+			rendered, err := RuntimeArchitectureGo(parsed)
+			if err != nil {
+				t.Fatalf("RuntimeArchitectureGo: %v", err)
+			}
+			if rendered != goArchitecture {
+				t.Fatalf("Go architecture = %q, want %q", rendered, goArchitecture)
+			}
+		})
+	}
+	if _, err := RuntimeArchitectureFromGo("x86_64"); err == nil {
+		t.Fatal("RuntimeArchitectureFromGo accepted a Helmr architecture")
+	}
+	if _, err := RuntimeArchitectureGo("amd64"); err == nil {
+		t.Fatal("RuntimeArchitectureGo accepted a Go architecture")
+	}
+}
+
 func TestRuntimeDescriptorDomainIsIndependentFromArtifactAdmission(t *testing.T) {
 	descriptor := testRuntimeDescriptor()
 	descriptor.SizeBytes = maxRuntimePhysicalBytes + 1

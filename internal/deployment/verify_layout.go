@@ -73,20 +73,18 @@ func (verifier *pairVerifier) verifyLayouts() error {
 			)
 		}
 	}
-	for shim, expected := range verifier.shims {
-		entry, err := verifier.deps.require(shim, artifactEntryRegular)
+	for link, target := range verifier.binLinks {
+		entry, err := verifier.deps.require(link, artifactEntrySymlink)
 		if err != nil {
-			return fmt.Errorf("generated bin shim: %w", err)
+			return fmt.Errorf("generated bin link: %w", err)
 		}
-		if entry.Mode != 0755 {
-			return fmt.Errorf("generated bin shim %q mode = %#o, want 0755", shim, entry.Mode)
-		}
-		raw, err := verifier.deps.read(verifier.ctx, shim, int64(len(expected)))
-		if err != nil {
-			return err
-		}
-		if !equalBytes(raw, expected) {
-			return fmt.Errorf("generated bin shim %q bytes are not canonical", shim)
+		if entry.LinkTarget != target {
+			return fmt.Errorf(
+				"generated bin link %q target = %q, want %q",
+				link,
+				entry.LinkTarget,
+				target,
+			)
 		}
 	}
 	for _, entry := range verifier.deps.ordered {
@@ -160,7 +158,7 @@ func (verifier *pairVerifier) verifyDependencyPath(entry artifactEntry) error {
 	if _, exists := verifier.depLinks[entry.Path]; exists {
 		return nil
 	}
-	if _, exists := verifier.shims[entry.Path]; exists {
+	if _, exists := verifier.binLinks[entry.Path]; exists {
 		return nil
 	}
 	if _, exists := verifier.depDirs[entry.Path]; exists {

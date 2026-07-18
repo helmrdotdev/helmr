@@ -105,6 +105,11 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	}
 	if testCfg.CAS != nil {
 		cfg.CAS = testCfg.CAS
+		descriptor := testManagedRuntimeDescriptor()
+		cfg.RuntimePolicy = testRuntimePolicy()
+		cfg.RuntimeStore = &fakeCAS{object: cas.Object{
+			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
+		}}
 	}
 	if testCfg.Secrets != nil {
 		cfg.Secrets = testCfg.Secrets
@@ -375,6 +380,59 @@ func TestAPIRejectsUnsupportedAPIVersion(t *testing.T) {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
 	requireErrorCode(t, rec.Body.Bytes(), "unsupported_api_version")
+}
+
+func TestAPIRejectsInvalidClientVersionHeaders(t *testing.T) {
+	for name, test := range map[string]struct {
+		header string
+		value  string
+		code   string
+	}{
+		"sdk": {
+			header: api.SDKVersionHeader,
+			value:  strings.Repeat("s", api.MaxClientVersionBytes+1),
+			code:   "invalid_sdk_version",
+		},
+		"cli": {
+			header: api.CLIVersionHeader,
+			value:  " cli",
+			code:   "invalid_cli_version",
+		},
+		"legacy client": {
+			header: api.ClientVersionHeader,
+			value:  strings.Repeat("c", api.MaxClientVersionBytes+1),
+			code:   "invalid_cli_version",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			handler := newTestServer(testServerConfig{DB: &fakeStore{}, Auth: fakeAuth{}})
+			req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"task_id":"deploy"}`))
+			req.Header.Set("authorization", "Bearer test-key")
+			req.Header.Set(test.header, test.value)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			requireErrorCode(t, rec.Body.Bytes(), test.code)
+		})
+	}
+
+	handler := newTestServer(testServerConfig{DB: &fakeStore{}, Auth: fakeAuth{}})
+	req := httptest.NewRequest(http.MethodPost, "/api/runs", strings.NewReader(`{"task_id":"deploy"}`))
+	req.Header.Set("authorization", "Bearer test-key")
+	req.Header.Set(api.CLIVersionHeader, "1.0.0")
+	req.Header.Set(api.ClientVersionHeader, " legacy")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	requireErrorCode(t, rec.Body.Bytes(), "invalid_cli_version")
 }
 
 func TestRecoverPanicsWritesJSONError(t *testing.T) {

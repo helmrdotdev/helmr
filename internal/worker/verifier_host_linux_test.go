@@ -10,9 +10,9 @@ import (
 	"testing"
 )
 
-func TestPrepareProgramVerifierHostRequiresDelegatedSupervisor(t *testing.T) {
+func TestPrepareVerifierHostRequiresDelegatedSupervisor(t *testing.T) {
 	root := verifierHostFixture(t, "/system.slice/helmr-worker.service/supervisor", 42)
-	if err := checkProgramVerifierHost(
+	if _, err := checkVerifierHost(
 		filepath.Join(root, "proc-cgroup"),
 		filepath.Join(root, "cgroup"),
 		42,
@@ -20,12 +20,17 @@ func TestPrepareProgramVerifierHostRequiresDelegatedSupervisor(t *testing.T) {
 	); err == nil || !strings.Contains(err.Error(), `"cpu" was not enabled`) {
 		t.Fatalf("error before prepare = %v", err)
 	}
-	if err := prepareProgramVerifierHost(
+	cgroupRoot, err := prepareVerifierHost(
 		filepath.Join(root, "proc-cgroup"),
 		filepath.Join(root, "cgroup"),
 		42,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatal(err)
+	}
+	wantRoot := filepath.Join(root, "cgroup/system.slice/helmr-worker.service")
+	if cgroupRoot != wantRoot {
+		t.Fatalf("cgroup root = %q, want %q", cgroupRoot, wantRoot)
 	}
 	raw, err := os.ReadFile(filepath.Join(
 		root,
@@ -41,25 +46,25 @@ func TestPrepareProgramVerifierHostRequiresDelegatedSupervisor(t *testing.T) {
 	}
 }
 
-func TestPrepareProgramVerifierHostRejectsProcessInUnitRoot(t *testing.T) {
+func TestPrepareVerifierHostRejectsProcessInUnitRoot(t *testing.T) {
 	root := verifierHostFixture(t, "/system.slice/helmr-worker.service/supervisor", 42)
 	unit := filepath.Join(root, "cgroup/system.slice/helmr-worker.service")
 	if err := os.WriteFile(filepath.Join(unit, "cgroup.procs"), []byte("7\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := prepareProgramVerifierHost(filepath.Join(root, "proc-cgroup"), filepath.Join(root, "cgroup"), 42)
+	_, err := prepareVerifierHost(filepath.Join(root, "proc-cgroup"), filepath.Join(root, "cgroup"), 42)
 	if err == nil || !strings.Contains(err.Error(), "not process-free") {
 		t.Fatalf("error = %v", err)
 	}
 }
 
-func TestPrepareProgramVerifierHostRejectsMissingController(t *testing.T) {
+func TestPrepareVerifierHostRejectsMissingController(t *testing.T) {
 	root := verifierHostFixture(t, "/system.slice/helmr-worker.service/supervisor", 42)
 	unit := filepath.Join(root, "cgroup/system.slice/helmr-worker.service")
 	if err := os.WriteFile(filepath.Join(unit, "cgroup.controllers"), []byte("cpu memory"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := prepareProgramVerifierHost(filepath.Join(root, "proc-cgroup"), filepath.Join(root, "cgroup"), 42)
+	_, err := prepareVerifierHost(filepath.Join(root, "proc-cgroup"), filepath.Join(root, "cgroup"), 42)
 	if err == nil || !strings.Contains(err.Error(), `"pids" is not delegated`) {
 		t.Fatalf("error = %v", err)
 	}

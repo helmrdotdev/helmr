@@ -19,6 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -759,8 +760,8 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if capabilities.RuntimeID == "" {
 		return api.WorkerCapabilities{}, errors.New("worker runtime_id is required")
 	}
-	if capabilities.RuntimeArch == "" {
-		return api.WorkerCapabilities{}, errors.New("worker runtime_arch is required")
+	if err := deployment.ValidateRuntimeArchitecture(deployment.RuntimeArchitecture(capabilities.RuntimeArch)); err != nil {
+		return api.WorkerCapabilities{}, fmt.Errorf("worker runtime_arch: %w", err)
 	}
 	if capabilities.RuntimeABI == "" {
 		return api.WorkerCapabilities{}, errors.New("worker runtime_abi is required")

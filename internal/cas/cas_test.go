@@ -20,6 +20,20 @@ func TestObjectKey(t *testing.T) {
 	}
 }
 
+func TestShardedObjectKey(t *testing.T) {
+	key, err := ShardedObjectKey(
+		"retained",
+		"sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "retained/sha256/7b/927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
+	if key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+}
+
 func TestObjectTaggingKeepsDeploymentSourcesNonExpirable(t *testing.T) {
 	if got := objectTagging(DeploymentSourceArtifactMediaType); got != "" {
 		t.Fatalf("deployment source tagging = %q", got)

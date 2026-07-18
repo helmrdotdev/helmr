@@ -40,56 +40,82 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	row, err := s.db.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-		ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
+	var response api.WorkerDeploymentBuildLeaseResponse
+	err := s.inTx(r.Context(), func(work *txWork) error {
+		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
+			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
+			ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
+		})
+		if isNoRows(err) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("claim assigned deployment build: %w", err)
+		}
+		runtimeDigest, err := deployment.RuntimeDigestString(row.BuildRuntimeDigest)
+		if err != nil {
+			return fmt.Errorf("read deployment build runtime digest: %w", err)
+		}
+		if s.runtimePolicy == nil {
+			return errors.New("managed runtime policy is not configured")
+		}
+		runtimeTarget, err := s.runtimePolicy.Resolve(runtimeDigest)
+		if err != nil {
+			return fmt.Errorf("resolve deployment build runtime: %w", err)
+		}
+		if string(runtimeTarget.Architecture) != row.BuildArchitecture {
+			return errors.New("deployment build runtime descriptor does not match persisted architecture")
+		}
+		runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeTarget)
+		if err != nil {
+			return fmt.Errorf("encode deployment build runtime descriptor: %w", err)
+		}
+		deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
+		lease := api.WorkerDeploymentBuildLease{
+			ID:                         pgvalue.MustUUIDValue(row.ID).String(),
+			OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
+			ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
+			EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+			DeploymentID:               deploymentID,
+			WorkerGroupID:              row.WorkerGroupID,
+			WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
+			WorkerEpoch:                row.WorkerEpoch,
+			LeaseSequence:              row.LeaseSequence,
+			WorkerProtocolVersion:      row.WorkerProtocolVersion,
+			ExpiresAt:                  leaseExpiresAt,
+			RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
+			RequestedScratchBytes:      row.RequestedScratchBytes,
+			RequestedCPUMillis:         row.RequestedCpuMillis,
+			RequestedMemoryBytes:       row.RequestedMemoryBytes,
+			RequestedBuildExecutors:    row.RequestedBuildExecutors,
+		}
+		build := api.WorkerDeploymentBuild{
+			ID:                    deploymentID,
+			Version:               row.Version,
+			APIVersion:            row.ApiVersion,
+			SDKVersion:            row.SdkVersion,
+			CLIVersion:            row.CliVersion,
+			BundleFormatVersion:   row.BundleFormatVersion,
+			WorkerProtocolVersion: row.WorkerProtocolVersion,
+			ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
+			EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
+			DeploymentSource: api.DeploymentSourceArtifact{
+				Digest:    row.DeploymentSourceDigest,
+				SizeBytes: row.SourceSizeBytes,
+				MediaType: row.SourceMediaType,
+			},
+			Runtime: runtimeWire,
+		}
+		response = api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}
+		return nil
 	})
-	if isNoRows(err) {
-		writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{})
-		return
-	}
 	if err != nil {
 		s.log.Error("claim assigned deployment build failed", "worker_instance_id", worker.WorkerInstanceID.String(), "error", err)
 		writeError(w, errors.New("claim assigned deployment build"))
 		return
 	}
-	deploymentID := pgvalue.MustUUIDValue(row.DeploymentID).String()
-	lease := api.WorkerDeploymentBuildLease{
-		ID:                         pgvalue.MustUUIDValue(row.ID).String(),
-		OrgID:                      pgvalue.MustUUIDValue(row.OrgID).String(),
-		ProjectID:                  pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:              pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		DeploymentID:               deploymentID,
-		WorkerGroupID:              row.WorkerGroupID,
-		WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
-		WorkerEpoch:                row.WorkerEpoch,
-		LeaseSequence:              row.LeaseSequence,
-		WorkerProtocolVersion:      row.WorkerProtocolVersion,
-		ExpiresAt:                  leaseExpiresAt,
-		RequestedWorkloadDiskBytes: row.RequestedWorkloadDiskBytes,
-		RequestedScratchBytes:      row.RequestedScratchBytes,
-		RequestedCPUMillis:         row.RequestedCpuMillis,
-		RequestedMemoryBytes:       row.RequestedMemoryBytes,
-		RequestedBuildExecutors:    row.RequestedBuildExecutors,
-	}
-	deployment := api.WorkerDeploymentBuild{
-		ID:                    deploymentID,
-		Version:               row.Version,
-		APIVersion:            row.ApiVersion,
-		SDKVersion:            row.SdkVersion,
-		CLIVersion:            row.CliVersion,
-		BundleFormatVersion:   row.BundleFormatVersion,
-		WorkerProtocolVersion: row.WorkerProtocolVersion,
-		ProjectID:             pgvalue.MustUUIDValue(row.ProjectID).String(),
-		EnvironmentID:         pgvalue.MustUUIDValue(row.EnvironmentID).String(),
-		DeploymentSource: api.DeploymentSourceArtifact{
-			Digest:    row.DeploymentSourceDigest,
-			SizeBytes: row.SourceSizeBytes,
-			MediaType: row.SourceMediaType,
-		},
-	}
-	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &deployment})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -521,7 +547,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			return failBuild(err.Error())
 		}
 		if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
-			return failBuild(err.Error())
+			var mismatch *deploymentBuildArtifactMismatch
+			if errors.As(err, &mismatch) {
+				return failBuild(err.Error())
+			}
+			return fmt.Errorf("verify deployment build artifacts: %w", err)
 		}
 		workerGroupID := locked.WorkerGroupID
 		workerState, err := work.q.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
@@ -533,6 +563,11 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		if err != nil {
 			return errors.New("get deployment build worker state")
+		}
+		if !workerState.SupportsBuild ||
+			!workerState.RuntimeArch.Valid ||
+			workerState.RuntimeArch.String != locked.BuildArchitecture {
+			return failBuild("deployment build worker certification does not match the deployment target")
 		}
 		casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
 		for _, object := range casObjects {
@@ -884,7 +919,7 @@ func createDeploymentBuildArtifact(ctx context.Context, queries db.Querier, orgI
 
 func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []api.CASObject) error {
 	if s.cas == nil {
-		return nil
+		return errors.New("deployment build CAS is not configured")
 	}
 	for _, object := range objects {
 		stat, err := s.cas.Stat(ctx, object.Digest)
@@ -892,11 +927,23 @@ func (s *Server) verifyDeploymentBuildArtifacts(ctx context.Context, objects []a
 			return fmt.Errorf("deployment build artifact %s is missing from CAS: %w", object.Digest, err)
 		}
 		if stat.SizeBytes != object.SizeBytes {
-			return fmt.Errorf("deployment build artifact %s size mismatch", object.Digest)
+			return &deploymentBuildArtifactMismatch{
+				message: fmt.Sprintf("deployment build artifact %s size mismatch", object.Digest),
+			}
 		}
 		if strings.TrimSpace(stat.MediaType) != object.MediaType {
-			return fmt.Errorf("deployment build artifact %s media_type mismatch", object.Digest)
+			return &deploymentBuildArtifactMismatch{
+				message: fmt.Sprintf("deployment build artifact %s media_type mismatch", object.Digest),
+			}
 		}
 	}
 	return nil
+}
+
+type deploymentBuildArtifactMismatch struct {
+	message string
+}
+
+func (err *deploymentBuildArtifactMismatch) Error() string {
+	return err.message
 }

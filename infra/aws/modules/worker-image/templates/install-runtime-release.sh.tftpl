@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+command -v aws python3 >/dev/null
+
+umask 077
+release_stage=$(mktemp -d /tmp/helmr-runtime-release.XXXXXXXX)
+trap 'rm -rf -- "$release_stage"' EXIT
+release_archive="$release_stage/release.tar"
+release_extract="$release_stage/extracted"
+
+aws s3api get-object \
+  --bucket '${release_package_bucket}' \
+  --key '${release_package_key}' \
+  --version-id '${release_package_version_id}' \
+  "$release_archive" >/dev/null
+printf '%s  %s\n' '${release_package_sha256}' "$release_archive" | sha256sum --check --strict -
+
+python3 - "$release_archive" "$release_extract" x86_64 <<'PY'
+${release_validator}
+PY
+
+release_dir=/usr/lib/helmr/runtime-release
+files=(
+  catalog.json
+  catalog.sigstore.json
+  trusted-root.json
+  verifier-corpus.json
+  verifier-invalid.squashfs
+  verifier-valid.squashfs
+)
+
+rm -rf -- "$release_dir"
+install -d -o root -g root -m 0755 "$release_dir"
+for file in "$${files[@]}"; do
+  install -o root -g root -m 0444 "$release_extract/$file" "$release_dir/$file"
+done

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"io"
 	"os"
 	"sync"
@@ -13,7 +12,73 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
+
+func TestValidateDisjointS3Stores(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		first  string
+		second string
+		wantOK bool
+	}{
+		{name: "separate prefixes", first: "s3://bucket/cas", second: "s3://bucket/runtimes", wantOK: true},
+		{name: "root and separate prefix", first: "s3://bucket", second: "s3://bucket/runtimes", wantOK: true},
+		{name: "different buckets", first: "s3://first/cas", second: "s3://second/cas", wantOK: true},
+		{name: "different endpoints", first: "s3://bucket/cas?endpoint=https://first.example", second: "s3://bucket/cas?endpoint=https://second.example", wantOK: true},
+		{name: "equal", first: "s3://bucket/cas", second: "s3://bucket/cas"},
+		{name: "first contains second", first: "s3://bucket/cas", second: "s3://bucket/cas/sha256/runtimes"},
+		{name: "second contains first", first: "s3://bucket/cas/sha256/runtimes", second: "s3://bucket/cas"},
+		{name: "root CAS contains nested namespace", first: "s3://bucket", second: "s3://bucket/sha256/runtimes"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDisjointS3Stores(tt.first, tt.second)
+			if tt.wantOK && err != nil {
+				t.Fatal(err)
+			}
+			if !tt.wantOK && err == nil {
+				t.Fatal("expected overlapping namespace error")
+			}
+		})
+	}
+}
+
+func TestValidateDistinctS3Stores(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		first  string
+		second string
+		wantOK bool
+	}{
+		{name: "different buckets", first: "s3://first/cas", second: "s3://second/cas", wantOK: true},
+		{name: "different endpoints", first: "s3://bucket/cas?endpoint=https://first.example", second: "s3://bucket/cas?endpoint=https://second.example", wantOK: true},
+		{name: "same bucket separate prefixes", first: "s3://bucket/cas", second: "s3://bucket/runtimes"},
+		{name: "same bucket root and prefix", first: "s3://bucket", second: "s3://bucket/runtimes"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateDistinctS3Stores(tt.first, tt.second)
+			if tt.wantOK && err != nil {
+				t.Fatal(err)
+			}
+			if !tt.wantOK && err == nil {
+				t.Fatal("expected distinct bucket authority error")
+			}
+		})
+	}
+}
+
+func TestS3ShardedObjectKey(t *testing.T) {
+	store := &S3{prefix: "retained"}
+	WithS3ShardedKeys()(store)
+	key, err := store.objectKey("sha256:7b927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "retained/sha256/7b/927bbd759163db342b22ac0329b49998afa33e911c060e112998b1a7d5339e"
+	if key != want {
+		t.Fatalf("key = %q, want %q", key, want)
+	}
+}
 
 func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	client := &fakeS3Client{}

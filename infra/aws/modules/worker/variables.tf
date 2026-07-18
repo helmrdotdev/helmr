@@ -13,6 +13,21 @@ variable "worker_group_id" {
   }
 }
 
+variable "region_id" {
+  description = "Explicit Helmr region ID advertised by this worker group."
+  type        = string
+
+  validation {
+    condition = (
+      var.region_id != "" &&
+      var.region_id == trimspace(var.region_id) &&
+      length(base64encode(var.region_id)) <= 340 &&
+      length(regexall("[[:cntrl:]]", var.region_id)) == 0
+    )
+    error_message = "region_id must be normalized control-free UTF-8 of 1-255 bytes."
+  }
+}
+
 variable "worker_roles" {
   description = "Roles this worker group is permitted to advertise."
   type        = set(string)
@@ -267,6 +282,30 @@ variable "artifact_cache_max_mib" {
   }
 }
 
+variable "build_cache_mib" {
+  description = "Usable MiB allocated to the physically isolated build-cache filesystem."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.build_cache_mib == null || var.build_cache_mib > 0
+    error_message = "build_cache_mib must be null or positive."
+  }
+}
+
+variable "build_scratch_mib" {
+  description = "Usable MiB allocated to the physically isolated build-scratch filesystem."
+  type        = number
+  default     = null
+  nullable    = true
+
+  validation {
+    condition     = var.build_scratch_mib == null || var.build_scratch_mib > 0
+    error_message = "build_scratch_mib must be null or positive."
+  }
+}
+
 variable "worker_control_url" {
   description = "Worker-facing control-plane API URL for HELMR_CONTROL_URL. Prefer a private DNS name that matches the HTTPS certificate."
   type        = string
@@ -285,6 +324,47 @@ variable "cas_bucket_arn" {
 variable "kms_key_arn" {
   description = "KMS key ARN for encrypted Helmr storage."
   type        = string
+}
+
+variable "runtime_store_uri" {
+  description = "Dedicated immutable managed-runtime store URI ending in /objects."
+  type        = string
+
+  validation {
+    condition     = can(regex("^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/objects$", var.runtime_store_uri))
+    error_message = "runtime_store_uri must be an S3 bucket URI ending exactly in /objects."
+  }
+}
+
+variable "runtime_store_bucket_arn" {
+  description = "S3 bucket ARN backing runtime_store_uri."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:s3:::[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$", var.runtime_store_bucket_arn))
+    error_message = "runtime_store_bucket_arn must be an S3 bucket ARN."
+  }
+}
+
+variable "runtime_store_kms_key_arn" {
+  description = "KMS key ARN used by the dedicated managed-runtime store."
+  type        = string
+
+  validation {
+    condition     = can(regex("^arn:[^:]+:kms:[^:]+:[0-9]{12}:key/[0-9a-fA-F-]+$", var.runtime_store_kms_key_arn))
+    error_message = "runtime_store_kms_key_arn must be a KMS key ARN."
+  }
+}
+
+variable "runtime_policy_digest" {
+  description = "Exact policy digest installed by build-capable workers; must be null for run-only workers."
+  type        = string
+  nullable    = true
+
+  validation {
+    condition     = var.runtime_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
+    error_message = "runtime_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
+  }
 }
 
 variable "secret_arns" {

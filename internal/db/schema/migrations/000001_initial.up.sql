@@ -52,7 +52,12 @@ CREATE TYPE telemetry_outbox_state AS ENUM (
 );
 
 CREATE TABLE regions (
-    id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
+    id TEXT PRIMARY KEY CHECK (
+        id = btrim(id)
+        AND octet_length(id) BETWEEN 1 AND 255
+        AND id !~ '[[:cntrl:]]'
+        AND id !~ '(^[[:space:]])|([[:space:]]$)'
+    ),
     provider TEXT NOT NULL CHECK (btrim(provider) <> ''),
     provider_region TEXT NOT NULL CHECK (btrim(provider_region) <> ''),
     display_name TEXT NOT NULL CHECK (btrim(display_name) <> ''),
@@ -396,7 +401,7 @@ CREATE TRIGGER worker_groups_set_updated_at
 
 CREATE TABLE runtime_identities (
     id TEXT PRIMARY KEY CHECK (btrim(id) <> ''),
-    runtime_arch TEXT NOT NULL CHECK (btrim(runtime_arch) <> ''),
+    runtime_arch TEXT NOT NULL CHECK (runtime_arch IN ('aarch64', 'x86_64')),
     runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
     kernel_digest TEXT NOT NULL CHECK (btrim(kernel_digest) <> ''),
     initramfs_digest TEXT NOT NULL CHECK (btrim(initramfs_digest) <> ''),
@@ -872,11 +877,19 @@ CREATE TABLE deployments (
     project_id UUID NOT NULL,
     environment_id UUID NOT NULL,
     build_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
+    build_architecture TEXT NOT NULL CHECK (build_architecture IN ('aarch64', 'x86_64')),
+    build_runtime_digest BYTEA NOT NULL CHECK (octet_length(build_runtime_digest) = 32),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
-    content_hash TEXT NOT NULL CHECK (btrim(content_hash) <> ''),
-    api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (btrim(api_version) <> ''),
-    sdk_version TEXT NOT NULL DEFAULT '',
-    cli_version TEXT NOT NULL DEFAULT '',
+    content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
+    api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
+        btrim(api_version) <> '' AND octet_length(api_version) <= 255
+    ),
+    sdk_version TEXT NOT NULL DEFAULT '' CHECK (
+        sdk_version = btrim(sdk_version) AND octet_length(sdk_version) <= 255
+    ),
+    cli_version TEXT NOT NULL DEFAULT '' CHECK (
+        cli_version = btrim(cli_version) AND octet_length(cli_version) <= 255
+    ),
     bundle_format_version INTEGER NOT NULL DEFAULT 2 CHECK (bundle_format_version > 0),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
     deployment_source_artifact_id UUID NOT NULL,
@@ -889,10 +902,10 @@ CREATE TABLE deployments (
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
     current_build_lease_id UUID,
-    build_requested_cpu_millis BIGINT NOT NULL DEFAULT 2000 CHECK (build_requested_cpu_millis = 2000),
-    build_requested_memory_bytes BIGINT NOT NULL DEFAULT 2147483648 CHECK (build_requested_memory_bytes = 2147483648),
+    build_requested_cpu_millis BIGINT NOT NULL DEFAULT 3000 CHECK (build_requested_cpu_millis = 3000),
+    build_requested_memory_bytes BIGINT NOT NULL DEFAULT 4294967296 CHECK (build_requested_memory_bytes = 4294967296),
     build_requested_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_workload_disk_bytes = 0),
-    build_requested_scratch_bytes BIGINT NOT NULL DEFAULT 13958643712 CHECK (build_requested_scratch_bytes = 13958643712),
+    build_requested_scratch_bytes BIGINT NOT NULL DEFAULT 34359738368 CHECK (build_requested_scratch_bytes = 34359738368),
     build_requested_executors INTEGER NOT NULL DEFAULT 1 CHECK (build_requested_executors = 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -939,7 +952,9 @@ CREATE TABLE deployments (
          AND program_runtime_digest IS NOT NULL
          AND octet_length(program_runtime_digest) = 32
          AND program_architecture IS NOT NULL
-         AND program_architecture IN ('aarch64', 'x86_64'))
+         AND program_architecture IN ('aarch64', 'x86_64')
+         AND program_architecture = build_architecture
+         AND program_runtime_digest = build_runtime_digest)
     )
 );
 
@@ -1011,10 +1026,10 @@ CREATE TABLE deployment_build_leases (
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
-    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 2000),
-    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 2147483648),
+    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 3000),
+    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 4294967296),
     requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes = 0),
-    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes = 13958643712),
+    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes = 34359738368),
     requested_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (requested_build_executors = 1),
     build_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     trace_id TEXT,
@@ -1474,9 +1489,15 @@ CREATE TABLE runs (
     deployment_task_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     deployment_version TEXT NOT NULL DEFAULT 'unknown' CHECK (btrim(deployment_version) <> ''),
-    api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (btrim(api_version) <> ''),
-    sdk_version TEXT NOT NULL DEFAULT '',
-    cli_version TEXT NOT NULL DEFAULT '',
+    api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
+        btrim(api_version) <> '' AND octet_length(api_version) <= 255
+    ),
+    sdk_version TEXT NOT NULL DEFAULT '' CHECK (
+        sdk_version = btrim(sdk_version) AND octet_length(sdk_version) <= 255
+    ),
+    cli_version TEXT NOT NULL DEFAULT '' CHECK (
+        cli_version = btrim(cli_version) AND octet_length(cli_version) <= 255
+    ),
     task_id TEXT NOT NULL CHECK (btrim(task_id) <> ''),
     session_id UUID NOT NULL,
     schedule_id UUID,
@@ -3381,7 +3402,20 @@ CREATE INDEX deployment_promotions_deployment_idx
 CREATE INDEX deployment_promotions_environment_created_idx
     ON deployment_promotions(org_id, project_id, environment_id, created_at DESC);
 CREATE UNIQUE INDEX deployments_reusable_build_key_idx
-    ON deployments(org_id, build_region_id, project_id, environment_id, content_hash)
+    ON deployments(
+        org_id,
+        build_region_id,
+        project_id,
+        environment_id,
+        content_hash,
+        api_version,
+        sdk_version,
+        cli_version,
+        bundle_format_version,
+        worker_protocol_version,
+        build_architecture,
+        build_runtime_digest
+    )
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_build_region_status_idx
     ON deployments(build_region_id, status, created_at)

@@ -16,7 +16,6 @@ import (
 
 const (
 	runtimeNodePath    = "bin/node"
-	runtimeShellPath   = "bin/helmr-sh"
 	runtimeIndexPath   = "helmr/runtime.json"
 	runtimePreloadPath = "helmr/preload.mjs"
 	runtimeLibcPath    = "lib/libc.so.6"
@@ -174,7 +173,6 @@ func verifyRuntimeTopology(
 	}
 	requiredFiles := map[string]uint32{
 		runtimeNodePath:    0755,
-		runtimeShellPath:   0755,
 		runtimeIndexPath:   0644,
 		runtimePreloadPath: 0644,
 		runtimeLibcPath:    0644,
@@ -248,17 +246,6 @@ func verifyRuntimeExecutables(
 		true,
 	); err != nil {
 		return fmt.Errorf("runtime Node: %w", err)
-	}
-	if err := verifyRuntimeExecutable(
-		ctx,
-		artifact,
-		runtimeShellPath,
-		machine,
-		"",
-		loader,
-		false,
-	); err != nil {
-		return fmt.Errorf("runtime helmr-sh: %w", err)
 	}
 	loaderPath := strings.TrimPrefix(loader, runtimeMountPath+"/")
 	loaderEntry, err := artifact.require(loaderPath, artifactEntryRegular)

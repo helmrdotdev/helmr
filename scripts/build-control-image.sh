@@ -3,11 +3,20 @@ set -euo pipefail
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 image_uri="${1:-}"
+runtime_release_dir="${CONTROL_IMAGE_RUNTIME_RELEASE_DIR:-}"
 
 if [ -z "$image_uri" ]; then
   echo "usage: scripts/build-control-image.sh <image-uri>" >&2
   exit 1
 fi
+if [ -z "$runtime_release_dir" ]; then
+  echo "CONTROL_IMAGE_RUNTIME_RELEASE_DIR is required" >&2
+  exit 1
+fi
+runtime_release_dir=$(cd -- "$runtime_release_dir" 2>/dev/null && pwd -P) || {
+  echo "CONTROL_IMAGE_RUNTIME_RELEASE_DIR must be an existing directory" >&2
+  exit 1
+}
 
 platform="${CONTROL_IMAGE_PLATFORM:-linux/amd64}"
 os="${platform%%/*}"
@@ -33,6 +42,15 @@ fi
 
 rm -rf "$context"
 mkdir -p "$context"
+mkdir -p "$context/runtime-release"
+for name in catalog.json catalog.sigstore.json trusted-root.json; do
+  source_path="$runtime_release_dir/$name"
+  if [ ! -f "$source_path" ] || [ -L "$source_path" ]; then
+    echo "verified runtime release is missing regular file: $name" >&2
+    exit 1
+  fi
+  install -m 0444 "$source_path" "$context/runtime-release/$name"
+done
 
 cd "$repo_root"
 bun install --frozen-lockfile --ignore-scripts
@@ -55,6 +73,9 @@ cat >"$context/Dockerfile" <<'EOF'
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY helmr-control /usr/local/bin/helmr-control
 COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
+COPY --chown=0:0 --chmod=0444 runtime-release/catalog.json /usr/lib/helmr/runtime-release/catalog.json
+COPY --chown=0:0 --chmod=0444 runtime-release/catalog.sigstore.json /usr/lib/helmr/runtime-release/catalog.sigstore.json
+COPY --chown=0:0 --chmod=0444 runtime-release/trusted-root.json /usr/lib/helmr/runtime-release/trusted-root.json
 ENTRYPOINT ["/usr/local/bin/helmr-control"]
 EOF
 

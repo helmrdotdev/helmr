@@ -11,6 +11,8 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -141,6 +143,9 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		return nil, false, nil
 	}
 	lease, deployment := *leased.Lease, *leased.Deployment
+	if err := validateBuildEnvelope(r.capabilities, deployment); err != nil {
+		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
+	}
 	if err := validateBuildLeaseShape(r.capabilities, lease); err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
 	}
@@ -194,18 +199,40 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}, true, nil
 }
 
+func validateBuildEnvelope(capabilities api.WorkerCapabilities, build api.WorkerDeploymentBuild) error {
+	runtime, err := deployment.RuntimeDescriptorFromWire(build.Runtime)
+	if err != nil {
+		return fmt.Errorf("deployment runtime descriptor: %w", err)
+	}
+	if string(runtime.Architecture) != capabilities.RuntimeArch {
+		return fmt.Errorf(
+			"deployment runtime architecture %q does not match worker architecture %q",
+			runtime.Architecture,
+			capabilities.RuntimeArch,
+		)
+	}
+	if !capabilities.SupportsBuild {
+		return errors.New("worker is not certified for builds")
+	}
+	return nil
+}
+
 func validateBuildLeaseShape(capabilities api.WorkerCapabilities, lease api.WorkerDeploymentBuildLease) error {
-	if lease.RequestedCPUMillis != 2000 ||
-		lease.RequestedMemoryBytes != 2<<30 ||
+	envelope := compute.BuildEnvelopeResources()
+	guest := compute.BuildGuestResources()
+	if lease.RequestedCPUMillis != envelope.MilliCPU ||
+		lease.RequestedMemoryBytes != envelope.MemoryMiB<<20 ||
 		lease.RequestedWorkloadDiskBytes != 0 ||
-		lease.RequestedScratchBytes != 13<<30 ||
+		lease.RequestedScratchBytes != envelope.DiskMiB<<20 ||
 		lease.RequestedBuildExecutors != 1 {
 		return errors.New("build lease does not match the fixed build envelope")
 	}
 	if capabilities.MaxBuildExecutors != 1 {
 		return errors.New("build worker must expose exactly one build executor")
 	}
-	if capabilities.VMMilliCPU < 2000 || capabilities.VMMemoryMiB < 2048 || capabilities.VMMaxScratchBytes < 8<<30 {
+	if capabilities.VMMilliCPU < guest.MilliCPU ||
+		capabilities.VMMemoryMiB < guest.MemoryMiB ||
+		capabilities.VMMaxScratchBytes < guest.DiskMiB<<20 {
 		return errors.New("worker VM shape cannot host the fixed build guest")
 	}
 	return nil

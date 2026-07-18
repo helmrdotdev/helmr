@@ -93,17 +93,20 @@ ON CONFLICT (id) DO UPDATE
        media_type = EXCLUDED.media_type;
 
 INSERT INTO deployments (
-    id, public_id, org_id, build_region_id, project_id, environment_id, version, content_hash,
+    id, public_id, org_id, build_region_id, build_architecture, build_runtime_digest,
+    project_id, environment_id, version, content_hash,
     deployment_source_artifact_id, deployment_manifest_artifact_id, status, built_at, deployed_at
 )
 SELECT '00000000-0000-0000-0000-000000000601',
        'dep_aaaaaaaaaaaaaaaaaaaaaaaaaa',
        '00000000-0000-0000-0000-000000000201',
        current_setting('helmr.seed_region_id'),
+       'x86_64',
+       decode(repeat('01', 32), 'hex'),
        '00000000-0000-0000-0000-000000000301',
        '00000000-0000-0000-0000-000000000401',
        'dev-2026-06-22',
-       'sha256:dev-console-demo',
+       'sha256:' || repeat('d', 64),
        '00000000-0000-0000-0000-000000000501',
        '00000000-0000-0000-0000-000000000502',
        'deployed',
@@ -111,6 +114,8 @@ SELECT '00000000-0000-0000-0000-000000000601',
        now() - interval '3 hours'
 ON CONFLICT (id) DO UPDATE
    SET build_region_id = EXCLUDED.build_region_id,
+       build_architecture = EXCLUDED.build_architecture,
+       build_runtime_digest = EXCLUDED.build_runtime_digest,
        version = EXCLUDED.version,
        content_hash = EXCLUDED.content_hash,
        status = EXCLUDED.status,

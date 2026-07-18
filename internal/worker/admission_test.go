@@ -170,11 +170,11 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
 	capabilities := api.WorkerCapabilities{
 		VMMilliCPU: 2000, VMMemoryMiB: 2048, VMMaxDiskMiB: 1,
-		VMMaxScratchBytes: 8 << 30, MaxBuildExecutors: 1,
+		VMMaxScratchBytes: 20 << 30, MaxBuildExecutors: 1,
 	}
 	lease := api.WorkerDeploymentBuildLease{
-		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
-		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 3000, RequestedMemoryBytes: 4 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 32 << 30,
 	}
 	if err := validateBuildLeaseShape(capabilities, lease); err != nil {
 		t.Fatal(err)
