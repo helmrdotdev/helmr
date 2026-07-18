@@ -8,7 +8,7 @@ import (
 )
 
 func main() {
-	if handled, err := deployment.RunProgramVerifierChild(os.Args); handled {
+	if handled, err := deployment.RunVerifierChild(os.Args); handled {
 		if err != nil {
 			os.Exit(1)
 		}

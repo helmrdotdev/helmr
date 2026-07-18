@@ -4,6 +4,6 @@ package deployment
 
 import "errors"
 
-func runProgramVerifierChild() error {
-	return errors.New("program verifier requires Linux")
+func runVerifierChild(verifierJob) error {
+	return errors.New("artifact verifier requires Linux")
 }

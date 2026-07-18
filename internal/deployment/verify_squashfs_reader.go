@@ -176,6 +176,8 @@ func artifactLogicalLimit(role artifactRole) (int64, error) {
 		return maxCodeLogicalBytes, nil
 	case dependencyArtifact:
 		return maxDependencyLogicalBytes, nil
+	case runtimeArtifact:
+		return maxRuntimeLogicalBytes, nil
 	default:
 		return 0, &artifactInfrastructureError{
 			cause: fmt.Errorf("Artifact role = %d", role),
@@ -189,6 +191,8 @@ func artifactPhysicalLimit(role artifactRole) (int64, error) {
 		return maxCodePhysicalBytes, nil
 	case dependencyArtifact:
 		return maxDependencyPhysicalBytes, nil
+	case runtimeArtifact:
+		return maxRuntimePhysicalBytes, nil
 	default:
 		return 0, &artifactInfrastructureError{
 			cause: fmt.Errorf("Artifact role = %d", role),

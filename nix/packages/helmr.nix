@@ -8,28 +8,13 @@
 }:
 
 let
-  packageFiles = lib.fileset.unions [
+  moduleFiles = lib.fileset.unions [
     ../../cmd/helmr
     ../../go.mod
     ../../go.sum
-    ../../internal/adapter
-    ../../internal/api
-    ../../internal/archive
-    ../../internal/cas
-    ../../internal/cli/browser
-    ../../internal/cli/format
-    ../../internal/cli/session
-    ../../internal/cli/ui
-    ../../internal/client
-    ../../internal/compute
-    ../../internal/db
-    ../../internal/pgvalue
-    ../../internal/safepath
-    ../../internal/secret
-    ../../internal/sha256sum
-    ../../internal/version
+    ../../internal
   ];
-  runtimeFiles = lib.fileset.intersection packageFiles (
+  runtimeFiles = lib.fileset.intersection moduleFiles (
     lib.fileset.fileFilter (file: file.type != "regular" || !(lib.hasSuffix "_test.go" file.name)) ../..
   );
 in
@@ -42,7 +27,7 @@ buildGoModule {
     fileset = runtimeFiles;
   };
 
-  vendorHash = "sha256-LRr9Fvd0xD+rLZX0RefL6j342eu+0NU09hMOltVF9kE=";
+  vendorHash = "sha256-NKFVYiRGUy3a9BRXkUSKEmzEqTzfY7+F/w0H3JntEEA=";
   subPackages = [ "cmd/helmr" ];
 
   ldflags = [

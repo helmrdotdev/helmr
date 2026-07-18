@@ -7,100 +7,142 @@ import (
 	"testing"
 )
 
-func TestProgramVerifierResultRoundTrip(t *testing.T) {
-	canonical := canonicalVerifierProgramIndex(t)
-	tests := []struct {
+func TestVerifierResultRoundTrip(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		job     verifierJob
+		payload []byte
+	}{
+		{
+			name:    "program",
+			job:     programVerifierJob,
+			payload: canonicalVerifierProgramIndex(t),
+		},
+		{
+			name:    "runtime",
+			job:     runtimeVerifierJob,
+			payload: canonicalVerifierRuntimeIndex(t),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output bytes.Buffer
+			if err := writeVerifierReady(&output); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeVerifierVerified(&output, test.job, test.payload); err != nil {
+				t.Fatal(err)
+			}
+			result, err := readVerifierResult(bytes.NewReader(output.Bytes()), test.job)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.kind != verifierVerified || !bytes.Equal(result.payload, test.payload) {
+				t.Fatalf("result = %#v", result)
+			}
+		})
+	}
+
+	for _, test := range []struct {
 		name       string
 		write      func(*bytes.Buffer) error
-		kind       programVerifierRecordKind
-		index      []byte
+		kind       verifierRecordKind
 		diagnostic string
 	}{
 		{
-			name: "verified",
-			write: func(output *bytes.Buffer) error {
-				return writeProgramVerifierVerified(output, canonical)
-			},
-			kind:  programVerifierVerified,
-			index: canonical,
-		},
-		{
 			name: "invalid",
 			write: func(output *bytes.Buffer) error {
-				return writeProgramVerifierInvalid(output, "program index is missing")
+				return writeVerifierInvalid(output, "program index is missing")
 			},
-			kind:       programVerifierInvalid,
+			kind:       verifierInvalid,
 			diagnostic: "program index is missing",
 		},
 		{
 			name: "failed",
 			write: func(output *bytes.Buffer) error {
-				return writeProgramVerifierFailed(output, "artifact read failed")
+				return writeVerifierFailed(output, "artifact read failed")
 			},
-			kind:       programVerifierFailed,
+			kind:       verifierFailed,
 			diagnostic: "artifact read failed",
 		},
-	}
-	for _, test := range tests {
+	} {
 		t.Run(test.name, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := writeProgramVerifierReady(&output); err != nil {
+			if err := writeVerifierReady(&output); err != nil {
 				t.Fatal(err)
 			}
 			if err := test.write(&output); err != nil {
 				t.Fatal(err)
 			}
-			result, err := readProgramVerifierResult(bytes.NewReader(output.Bytes()))
+			result, err := readVerifierResult(bytes.NewReader(output.Bytes()), programVerifierJob)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.kind != test.kind ||
-				!bytes.Equal(result.index, test.index) ||
-				result.diagnostic != test.diagnostic {
+			if result.kind != test.kind || result.diagnostic != test.diagnostic {
 				t.Fatalf("result = %#v", result)
 			}
 		})
 	}
 }
 
-func TestProgramVerifierResultRejectsMalformedOutput(t *testing.T) {
+func TestVerifierFramingLeavesVerifiedPayloadOpaque(t *testing.T) {
+	payload := []byte(`{"opaque":true}`)
+	var output bytes.Buffer
+	if err := writeVerifierReady(&output); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeVerifierVerified(&output, runtimeVerifierJob, payload); err != nil {
+		t.Fatal(err)
+	}
+	result, err := readVerifierResult(bytes.NewReader(output.Bytes()), runtimeVerifierJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(result.payload, payload) {
+		t.Fatalf("payload = %q", result.payload)
+	}
+}
+
+func TestVerifierResultRejectsMalformedOutput(t *testing.T) {
 	canonical := canonicalVerifierProgramIndex(t)
 	valid := func() []byte {
 		var output bytes.Buffer
-		if err := writeProgramVerifierReady(&output); err != nil {
+		if err := writeVerifierReady(&output); err != nil {
 			t.Fatal(err)
 		}
-		if err := writeProgramVerifierVerified(&output, canonical); err != nil {
+		if err := writeVerifierVerified(&output, programVerifierJob, canonical); err != nil {
 			t.Fatal(err)
 		}
 		return output.Bytes()
 	}()
-	ready := recordBytes(programVerifierReady, nil)
+	ready := verifierRecordBytes(verifierReady, nil)
 	tests := map[string][]byte{
 		"empty":             nil,
-		"unknown readiness": recordBytes(0xff, nil),
-		"readiness payload": recordBytes(programVerifierReady, []byte("x")),
+		"unknown readiness": verifierRecordBytes(0xff, nil),
+		"readiness payload": verifierRecordBytes(verifierReady, []byte("x")),
 		"missing terminal":  ready,
-		"unknown terminal":  append(ready, recordBytes(0xff, []byte("x"))...),
-		"empty terminal":    append(ready, recordBytes(programVerifierVerified, nil)...),
-		"truncated header":  valid[:programVerifierHeaderBytes+2],
+		"unknown terminal":  append(ready, verifierRecordBytes(0xff, []byte("x"))...),
+		"empty terminal":    append(ready, verifierRecordBytes(verifierVerified, nil)...),
+		"truncated header":  valid[:verifierHeaderBytes+2],
 		"truncated payload": valid[:len(valid)-1],
 		"trailing":          append(append([]byte(nil), valid...), 'x'),
 		"duplicate terminal": append(
 			append([]byte(nil), valid...),
-			recordBytes(programVerifierVerified, canonical)...,
+			verifierRecordBytes(verifierVerified, canonical)...,
 		),
-		"verified before ready": recordBytes(programVerifierVerified, canonical),
+		"verified before ready": verifierRecordBytes(verifierVerified, canonical),
 	}
-	var oversized [programVerifierHeaderBytes]byte
-	oversized[0] = byte(programVerifierVerified)
-	binary.BigEndian.PutUint32(oversized[1:], uint32(maxProgramFileSizeBytes+1))
-	tests["oversized verified"] = append(append([]byte(nil), ready...), oversized[:]...)
-	var oversizedDiagnostic [programVerifierHeaderBytes]byte
-	oversizedDiagnostic[0] = byte(programVerifierInvalid)
+	var oversized [verifierHeaderBytes]byte
+	oversized[0] = byte(verifierVerified)
+	binary.BigEndian.PutUint32(oversized[1:], uint32(maxRuntimeDocumentBytes+1))
+	tests["runtime verified bound"] = append(
+		append([]byte(nil), ready...),
+		oversized[:]...,
+	)
+	var oversizedDiagnostic [verifierHeaderBytes]byte
+	oversizedDiagnostic[0] = byte(verifierInvalid)
 	binary.BigEndian.PutUint32(
 		oversizedDiagnostic[1:],
-		uint32(programVerifierDiagnosticMaxBytes+1),
+		uint32(verifierDiagnosticMaxBytes+1),
 	)
 	tests["oversized diagnostic"] = append(
 		append([]byte(nil), ready...),
@@ -108,45 +150,55 @@ func TestProgramVerifierResultRejectsMalformedOutput(t *testing.T) {
 	)
 	tests["invalid UTF-8 diagnostic"] = append(
 		append([]byte(nil), ready...),
-		recordBytes(programVerifierInvalid, []byte{0xff})...,
+		verifierRecordBytes(verifierInvalid, []byte{0xff})...,
 	)
 	tests["control character diagnostic"] = append(
 		append([]byte(nil), ready...),
-		recordBytes(programVerifierInvalid, []byte("first\nsecond"))...,
+		verifierRecordBytes(verifierInvalid, []byte("first\nsecond"))...,
 	)
 	for name, input := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := readProgramVerifierResult(bytes.NewReader(input)); err == nil {
+			job := programVerifierJob
+			if name == "runtime verified bound" {
+				job = runtimeVerifierJob
+			}
+			if _, err := readVerifierResult(bytes.NewReader(input), job); err == nil {
 				t.Fatal("malformed result was accepted")
 			}
 		})
 	}
 }
 
-func TestProgramVerifierResultValidatesPayloads(t *testing.T) {
+func TestVerifierResultValidatesPayloadBoundsAndDiagnostics(t *testing.T) {
 	var output bytes.Buffer
-	if err := writeProgramVerifierVerified(&output, []byte(`{"not":"a program index"}`)); err == nil ||
-		!strings.Contains(err.Error(), "program verifier result") {
-		t.Fatalf("verified error = %v", err)
+	if err := writeVerifierVerified(&output, runtimeVerifierJob, nil); err == nil {
+		t.Fatal("empty verified payload was accepted")
+	}
+	if err := writeVerifierVerified(
+		&output,
+		runtimeVerifierJob,
+		make([]byte, maxRuntimeDocumentBytes+1),
+	); err == nil {
+		t.Fatal("oversized Runtime payload was accepted")
 	}
 	for name, diagnostic := range map[string]string{
 		"empty":       "",
 		"control":     "first\nsecond",
 		"invalidUTF8": string([]byte{0xff}),
-		"oversized":   strings.Repeat("x", programVerifierDiagnosticMaxBytes+1),
+		"oversized":   strings.Repeat("x", verifierDiagnosticMaxBytes+1),
 	} {
 		t.Run(name, func(t *testing.T) {
 			var output bytes.Buffer
-			if err := writeProgramVerifierInvalid(&output, diagnostic); err == nil {
+			if err := writeVerifierInvalid(&output, diagnostic); err == nil {
 				t.Fatal("invalid diagnostic was accepted")
 			}
 		})
 	}
 }
 
-func recordBytes(kind programVerifierRecordKind, payload []byte) []byte {
+func verifierRecordBytes(kind verifierRecordKind, payload []byte) []byte {
 	var output bytes.Buffer
-	var header [programVerifierHeaderBytes]byte
+	var header [verifierHeaderBytes]byte
 	header[0] = byte(kind)
 	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
 	output.Write(header[:])
@@ -179,6 +231,19 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			DeclaredID: "verify",
 			Slots:      []DeclarationSlot{DeclarationSlotHandler},
 		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func canonicalVerifierRuntimeIndex(t *testing.T) []byte {
+	t.Helper()
+	canonical, err := CanonicalRuntimeIndex(RuntimeIndex{
+		Architecture:      ArchitectureX8664,
+		FormatVersion:     RuntimeIndexFormatVersion,
+		RuntimeAPIVersion: RuntimeAPIVersion,
 	})
 	if err != nil {
 		t.Fatal(err)

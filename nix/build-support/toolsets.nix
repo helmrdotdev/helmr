@@ -79,7 +79,7 @@ rec {
     pkgs.cosign
     pkgs.docker
     pkgs.e2fsprogs
-    pkgs.squashfsTools
+    helmrPackages.squashfsTools
     pkgs.cpio
     pkgs.gzip
     pkgs.ruby

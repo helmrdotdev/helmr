@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-func TestProgramVerifierProcessFailsClosedOffLinux(t *testing.T) {
-	_, err := runProgramVerifierProcess(context.Background(), programVerifierProcessConfig{})
+func TestVerifierProcessFailsClosedOffLinux(t *testing.T) {
+	_, err := runVerifierProcess(context.Background(), verifierProcessConfig{})
 	if err == nil || !strings.Contains(err.Error(), "requires Linux cgroup v2") {
 		t.Fatalf("error = %v", err)
 	}

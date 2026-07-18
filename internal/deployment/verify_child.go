@@ -1,17 +1,26 @@
 package deployment
 
+import "fmt"
+
 const (
-	programVerifierExecutable    = "/proc/self/exe"
-	programVerifierChildArgument = "__helmr-program-verifier"
+	verifierExecutable    = "/proc/self/exe"
+	verifierChildArgument = "__helmr-verifier"
 )
 
-func RunProgramVerifierChild(arguments []string) (bool, error) {
-	if len(arguments) != 2 || arguments[1] != programVerifierChildArgument {
+func RunVerifierChild(arguments []string) (bool, error) {
+	if len(arguments) < 2 || arguments[1] != verifierChildArgument {
 		return false, nil
 	}
-	return true, runProgramVerifierChild()
+	if len(arguments) != 3 {
+		return true, fmt.Errorf("artifact verifier requires exactly one job argument")
+	}
+	job, err := parseVerifierJob(arguments[2])
+	if err != nil {
+		return true, err
+	}
+	return true, runVerifierChild(job)
 }
 
-func programVerifierChildArguments() []string {
-	return []string{programVerifierChildArgument}
+func verifierChildArguments(job verifierJob) []string {
+	return []string{verifierChildArgument, string(job)}
 }

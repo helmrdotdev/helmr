@@ -17,7 +17,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestProgramSnapshotOwnsImmutableUnnamedBytes(t *testing.T) {
+func TestArtifactSnapshotOwnsImmutableUnnamedBytes(t *testing.T) {
 	directory := t.TempDir()
 	sourcePath := filepath.Join(directory, "encoder-output")
 	if err := os.WriteFile(sourcePath, []byte("original"), 0o600); err != nil {
@@ -29,11 +29,11 @@ func TestProgramSnapshotOwnsImmutableUnnamedBytes(t *testing.T) {
 	}
 	defer source.Close()
 
-	snapshot, err := snapshotProgram(
+	snapshot, err := snapshotArtifact(
 		context.Background(),
 		directory,
 		codeArtifact,
-		programSnapshotDescriptor(codeArtifact, []byte("original")),
+		artifactSnapshotDescriptor(testProgramDescriptor(codeArtifact, []byte("original"))),
 		source,
 	)
 	if err != nil {
@@ -69,8 +69,8 @@ func TestProgramSnapshotOwnsImmutableUnnamedBytes(t *testing.T) {
 	}
 }
 
-func TestProgramSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
-	snapshot := newTestProgramSnapshot(t, []byte("abcdef"))
+func TestArtifactSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
+	snapshot := newTestArtifactSnapshot(t, []byte("abcdef"))
 	verifier, err := snapshot.verifierFile()
 	if err != nil {
 		t.Fatal(err)
@@ -96,6 +96,13 @@ func TestProgramSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 	}
 	if verifierStat.Dev != uploadStat.Dev || verifierStat.Ino != uploadStat.Ino {
 		t.Fatal("snapshot descriptors do not identify the same inode")
+	}
+	if verifierStat.Mode&0o777 != 0o400 || uploadStat.Mode&0o777 != 0o400 {
+		t.Fatalf(
+			"snapshot modes = %#o/%#o, want 0400/0400",
+			verifierStat.Mode&0o777,
+			uploadStat.Mode&0o777,
+		)
 	}
 	matches := 0
 	descriptors, err := os.ReadDir("/proc/self/fd")
@@ -138,9 +145,18 @@ func TestProgramSnapshotDescriptorsAreReadOnlyAndIndependent(t *testing.T) {
 	if string(first) != "ab" || string(second) != "ab" {
 		t.Fatalf("independent reads = %q/%q, want ab/ab", first, second)
 	}
+
+	if os.Geteuid() != 0 {
+		path := fmt.Sprintf("/proc/self/fd/%d", snapshot.upload.Fd())
+		writer, err := os.OpenFile(path, os.O_WRONLY, 0)
+		if err == nil {
+			writer.Close()
+			t.Fatal("snapshot inode reopened for writing")
+		}
+	}
 }
 
-func TestProgramSnapshotUploadRevalidatesDescriptor(t *testing.T) {
+func TestArtifactSnapshotUploadRejectsTrustedOwnerMutation(t *testing.T) {
 	for _, test := range []struct {
 		name      string
 		mutate    func(*testing.T, *os.File)
@@ -168,7 +184,10 @@ func TestProgramSnapshotUploadRevalidatesDescriptor(t *testing.T) {
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			snapshot := newTestProgramSnapshot(t, []byte("verified"))
+			snapshot := newTestArtifactSnapshot(t, []byte("verified"))
+			if err := snapshot.upload.Chmod(0o600); err != nil {
+				t.Fatal(err)
+			}
 			path := fmt.Sprintf("/proc/self/fd/%d", snapshot.upload.Fd())
 			writer, err := os.OpenFile(path, os.O_WRONLY, 0)
 			if err != nil {
@@ -190,7 +209,7 @@ func TestProgramSnapshotUploadRevalidatesDescriptor(t *testing.T) {
 	}
 }
 
-func TestProgramSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing.T) {
+func TestArtifactSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing.T) {
 	for _, test := range []struct {
 		name       string
 		descriptor ProgramDescriptor
@@ -198,7 +217,7 @@ func TestProgramSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing
 	}{
 		{
 			name:       "size mismatch",
-			descriptor: programSnapshotDescriptor(codeArtifact, []byte("short")),
+			descriptor: testProgramDescriptor(codeArtifact, []byte("short")),
 			source:     []byte("longer"),
 		},
 		{
@@ -222,11 +241,11 @@ func TestProgramSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			directory := t.TempDir()
-			snapshot, err := snapshotProgram(
+			snapshot, err := snapshotArtifact(
 				context.Background(),
 				directory,
 				codeArtifact,
-				test.descriptor,
+				artifactSnapshotDescriptor(test.descriptor),
 				bytes.NewReader(test.source),
 			)
 			if snapshot != nil {
@@ -247,8 +266,8 @@ func TestProgramSnapshotRejectsMismatchAndOversizeWithoutVisibleFiles(t *testing
 	}
 }
 
-func TestProgramSnapshotCloseFailsAccess(t *testing.T) {
-	snapshot := newTestProgramSnapshot(t, []byte("closed"))
+func TestArtifactSnapshotCloseFailsAccess(t *testing.T) {
+	snapshot := newTestArtifactSnapshot(t, []byte("closed"))
 	if err := snapshot.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -263,13 +282,13 @@ func TestProgramSnapshotCloseFailsAccess(t *testing.T) {
 	}
 }
 
-func newTestProgramSnapshot(t *testing.T, content []byte) *programSnapshot {
+func newTestArtifactSnapshot(t *testing.T, content []byte) *artifactSnapshot {
 	t.Helper()
-	snapshot, err := snapshotProgram(
+	snapshot, err := snapshotArtifact(
 		context.Background(),
 		t.TempDir(),
 		codeArtifact,
-		programSnapshotDescriptor(codeArtifact, content),
+		artifactSnapshotDescriptor(testProgramDescriptor(codeArtifact, content)),
 		bytes.NewReader(content),
 	)
 	if err != nil {
@@ -283,7 +302,7 @@ func newTestProgramSnapshot(t *testing.T, content []byte) *programSnapshot {
 	return snapshot
 }
 
-func programSnapshotDescriptor(role artifactRole, content []byte) ProgramDescriptor {
+func testProgramDescriptor(role artifactRole, content []byte) ProgramDescriptor {
 	digest := sha256.Sum256(content)
 	mediaType := ProgramCodeArtifactMediaType
 	if role == dependencyArtifact {

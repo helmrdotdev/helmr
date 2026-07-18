@@ -12,172 +12,170 @@ import (
 )
 
 const (
-	programVerifierCodeFD             = 3
-	programVerifierDependencyFD       = 4
-	programVerifierResultFD           = 5
-	programVerifierHeaderBytes        = 5
-	programVerifierDiagnosticMaxBytes = 65536
-	programVerifierBootstrapDeadline  = 10 * time.Second
-	programVerifierDeadline           = 5 * time.Minute
+	verifierResultFD           = 3
+	verifierArtifactBaseFD     = 4
+	verifierHeaderBytes        = 5
+	verifierDiagnosticMaxBytes = 65536
+	verifierBootstrapDeadline  = 10 * time.Second
+	verifierDeadline           = 5 * time.Minute
 )
 
-type programVerifierRecordKind uint8
+type verifierRecordKind uint8
 
 const (
-	programVerifierReady programVerifierRecordKind = iota + 1
-	programVerifierVerified
-	programVerifierInvalid
-	programVerifierFailed
+	verifierReady verifierRecordKind = iota + 1
+	verifierVerified
+	verifierInvalid
+	verifierFailed
 )
 
-type programVerifierProcessResult struct {
-	kind       programVerifierRecordKind
-	index      []byte
+type verifierProcessResult struct {
+	kind       verifierRecordKind
+	payload    []byte
 	diagnostic string
 }
 
-type programVerifierProcessConfig struct {
-	executable     string
-	arguments      []string
+type verifierProcessConfig struct {
+	job            verifierJob
 	unitCgroupRoot string
 	leaseIdentity  string
-	code           *os.File
-	dependencies   *os.File
+	artifacts      []*os.File
 }
 
-func writeProgramVerifierReady(writer io.Writer) error {
-	return writeProgramVerifierRecord(writer, programVerifierReady, nil)
+func writeVerifierReady(writer io.Writer) error {
+	return writeVerifierRecord(writer, verifierReady, nil)
 }
 
-func writeProgramVerifierVerified(writer io.Writer, index []byte) error {
-	if _, err := ParseProgramIndex(index); err != nil {
-		return fmt.Errorf("program verifier result: %w", err)
+func writeVerifierVerified(writer io.Writer, job verifierJob, payload []byte) error {
+	limit := job.verifiedPayloadLimit()
+	if len(payload) == 0 || int64(len(payload)) > limit {
+		return fmt.Errorf("%s verifier result size is outside [1,%d]", job, limit)
 	}
-	return writeProgramVerifierRecord(writer, programVerifierVerified, index)
+	return writeVerifierRecord(writer, verifierVerified, payload)
 }
 
-func writeProgramVerifierInvalid(writer io.Writer, diagnostic string) error {
-	if err := validateProgramVerifierDiagnostic(diagnostic); err != nil {
-		return fmt.Errorf("program invalid diagnostic: %w", err)
+func writeVerifierInvalid(writer io.Writer, diagnostic string) error {
+	if err := validateVerifierDiagnostic(diagnostic); err != nil {
+		return fmt.Errorf("artifact invalid diagnostic: %w", err)
 	}
-	return writeProgramVerifierRecord(writer, programVerifierInvalid, []byte(diagnostic))
+	return writeVerifierRecord(writer, verifierInvalid, []byte(diagnostic))
 }
 
-func writeProgramVerifierFailed(writer io.Writer, diagnostic string) error {
-	if err := validateProgramVerifierDiagnostic(diagnostic); err != nil {
-		return fmt.Errorf("program verifier failure diagnostic: %w", err)
+func writeVerifierFailed(writer io.Writer, diagnostic string) error {
+	if err := validateVerifierDiagnostic(diagnostic); err != nil {
+		return fmt.Errorf("artifact verifier failure diagnostic: %w", err)
 	}
-	return writeProgramVerifierRecord(writer, programVerifierFailed, []byte(diagnostic))
+	return writeVerifierRecord(writer, verifierFailed, []byte(diagnostic))
 }
 
-func writeProgramVerifierRecord(
+func writeVerifierRecord(
 	writer io.Writer,
-	kind programVerifierRecordKind,
+	kind verifierRecordKind,
 	payload []byte,
 ) error {
 	switch kind {
-	case programVerifierReady:
+	case verifierReady:
 		if len(payload) != 0 {
-			return errors.New("program verifier READY payload is not empty")
+			return errors.New("artifact verifier READY payload is not empty")
 		}
-	case programVerifierVerified, programVerifierInvalid, programVerifierFailed:
+	case verifierVerified, verifierInvalid, verifierFailed:
 		if len(payload) == 0 {
-			return errors.New("program verifier terminal payload is empty")
+			return errors.New("artifact verifier terminal payload is empty")
 		}
 	default:
-		return fmt.Errorf("program verifier record kind = %#x", kind)
+		return fmt.Errorf("artifact verifier record kind = %#x", kind)
 	}
-	var header [programVerifierHeaderBytes]byte
+	var header [verifierHeaderBytes]byte
 	header[0] = byte(kind)
 	binary.BigEndian.PutUint32(header[1:], uint32(len(payload)))
 	if err := writeAll(writer, header[:]); err != nil {
-		return fmt.Errorf("write program verifier record header: %w", err)
+		return fmt.Errorf("write artifact verifier record header: %w", err)
 	}
 	if err := writeAll(writer, payload); err != nil {
-		return fmt.Errorf("write program verifier record payload: %w", err)
+		return fmt.Errorf("write artifact verifier record payload: %w", err)
 	}
 	return nil
 }
 
-func readProgramVerifierReady(reader io.Reader) error {
-	kind, size, err := readProgramVerifierRecordHeader(reader)
+func readVerifierReady(reader io.Reader) error {
+	kind, size, err := readVerifierRecordHeader(reader)
 	if err != nil {
 		return err
 	}
-	if kind != programVerifierReady || size != 0 {
-		return errors.New("program verifier result does not begin with empty READY")
+	if kind != verifierReady || size != 0 {
+		return errors.New("artifact verifier result does not begin with empty READY")
 	}
 	return nil
 }
 
-func readProgramVerifierTerminal(reader io.Reader) (programVerifierProcessResult, error) {
-	kind, size, err := readProgramVerifierRecordHeader(reader)
+func readVerifierTerminal(reader io.Reader, job verifierJob) (verifierProcessResult, error) {
+	kind, size, err := readVerifierRecordHeader(reader)
 	if err != nil {
-		return programVerifierProcessResult{}, err
+		return verifierProcessResult{}, err
 	}
 	var limit int64
 	switch kind {
-	case programVerifierVerified:
-		limit = maxProgramFileSizeBytes
-	case programVerifierInvalid, programVerifierFailed:
-		limit = programVerifierDiagnosticMaxBytes
+	case verifierVerified:
+		limit = job.verifiedPayloadLimit()
+	case verifierInvalid, verifierFailed:
+		limit = verifierDiagnosticMaxBytes
 	default:
-		return programVerifierProcessResult{}, fmt.Errorf("program verifier terminal kind = %#x", kind)
+		return verifierProcessResult{}, fmt.Errorf("artifact verifier terminal kind = %#x", kind)
+	}
+	if limit < 1 {
+		return verifierProcessResult{}, fmt.Errorf("artifact verifier job = %q", job)
 	}
 	if size == 0 || int64(size) > limit {
-		return programVerifierProcessResult{}, fmt.Errorf(
-			"program verifier terminal size is outside [1,%d]",
+		return verifierProcessResult{}, fmt.Errorf(
+			"artifact verifier terminal size is outside [1,%d]",
 			limit,
 		)
 	}
 	payload := make([]byte, int(size))
 	if _, err := io.ReadFull(reader, payload); err != nil {
-		return programVerifierProcessResult{}, fmt.Errorf("read program verifier terminal payload: %w", err)
+		return verifierProcessResult{}, fmt.Errorf("read artifact verifier terminal payload: %w", err)
 	}
 	var trailing [1]byte
 	if count, err := io.ReadFull(reader, trailing[:]); err != io.EOF {
 		if err != nil {
-			return programVerifierProcessResult{}, fmt.Errorf("close program verifier result: %w", err)
+			return verifierProcessResult{}, fmt.Errorf("close artifact verifier result: %w", err)
 		}
 		if count != 0 {
-			return programVerifierProcessResult{}, errors.New("program verifier result has trailing output")
+			return verifierProcessResult{}, errors.New("artifact verifier result has trailing output")
 		}
-		return programVerifierProcessResult{}, errors.New("program verifier result did not close")
+		return verifierProcessResult{}, errors.New("artifact verifier result did not close")
 	}
-	result := programVerifierProcessResult{kind: kind}
+	result := verifierProcessResult{kind: kind}
 	switch kind {
-	case programVerifierVerified:
-		if _, err := ParseProgramIndex(payload); err != nil {
-			return programVerifierProcessResult{}, fmt.Errorf("program verifier result: %w", err)
-		}
-		result.index = payload
-	case programVerifierInvalid, programVerifierFailed:
+	case verifierVerified:
+		result.payload = payload
+	case verifierInvalid, verifierFailed:
 		result.diagnostic = string(payload)
-		if err := validateProgramVerifierDiagnostic(result.diagnostic); err != nil {
-			return programVerifierProcessResult{}, fmt.Errorf("program verifier diagnostic: %w", err)
+		if err := validateVerifierDiagnostic(result.diagnostic); err != nil {
+			return verifierProcessResult{}, fmt.Errorf("artifact verifier diagnostic: %w", err)
 		}
 	}
 	return result, nil
 }
 
-func readProgramVerifierResult(reader io.Reader) (programVerifierProcessResult, error) {
-	if err := readProgramVerifierReady(reader); err != nil {
-		return programVerifierProcessResult{}, err
+func readVerifierResult(reader io.Reader, job verifierJob) (verifierProcessResult, error) {
+	if err := readVerifierReady(reader); err != nil {
+		return verifierProcessResult{}, err
 	}
-	return readProgramVerifierTerminal(reader)
+	return readVerifierTerminal(reader, job)
 }
 
-func readProgramVerifierRecordHeader(reader io.Reader) (programVerifierRecordKind, uint32, error) {
-	var header [programVerifierHeaderBytes]byte
+func readVerifierRecordHeader(reader io.Reader) (verifierRecordKind, uint32, error) {
+	var header [verifierHeaderBytes]byte
 	if _, err := io.ReadFull(reader, header[:]); err != nil {
-		return 0, 0, fmt.Errorf("read program verifier record header: %w", err)
+		return 0, 0, fmt.Errorf("read artifact verifier record header: %w", err)
 	}
-	return programVerifierRecordKind(header[0]), binary.BigEndian.Uint32(header[1:]), nil
+	return verifierRecordKind(header[0]), binary.BigEndian.Uint32(header[1:]), nil
 }
 
-func validateProgramVerifierDiagnostic(diagnostic string) error {
-	if len(diagnostic) == 0 || len(diagnostic) > programVerifierDiagnosticMaxBytes {
-		return fmt.Errorf("size is outside [1,%d]", programVerifierDiagnosticMaxBytes)
+func validateVerifierDiagnostic(diagnostic string) error {
+	if len(diagnostic) == 0 || len(diagnostic) > verifierDiagnosticMaxBytes {
+		return fmt.Errorf("size is outside [1,%d]", verifierDiagnosticMaxBytes)
 	}
 	if !utf8.ValidString(diagnostic) {
 		return errors.New("value is not valid UTF-8")

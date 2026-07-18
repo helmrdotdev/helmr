@@ -17,8 +17,14 @@ func TestProgramVerifierErrorsPreserveDeliveryBoundary(t *testing.T) {
 	if got := deliveryFailure.DeploymentBuildDeliveryFailureReason(); got != api.WorkerDeploymentBuildDeliveryProgramVerifierFailed {
 		t.Fatalf("delivery failure reason = %q", got)
 	}
-	if errors.As(&programInvalidError{diagnostic: "invalid program"}, &deliveryFailure) {
+	if errors.As(&verifierInvalidError{diagnostic: "invalid program"}, &deliveryFailure) {
 		t.Fatal("deterministic program invalidity was classified as delivery failure")
+	}
+}
+
+func TestVerifiedProgramResultRejectsRuntimePayload(t *testing.T) {
+	if _, err := verifiedProgramResult(canonicalVerifierRuntimeIndex(t)); err == nil {
+		t.Fatal("Runtime payload was accepted as a Program result")
 	}
 }
 

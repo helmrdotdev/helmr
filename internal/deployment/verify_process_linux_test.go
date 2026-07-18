@@ -13,72 +13,133 @@ import (
 	"time"
 )
 
-func TestProgramVerifierCommandUsesFixedDescriptorsAndNamespaces(t *testing.T) {
-	code := verifierTestFile(t, "code")
-	dependencies := verifierTestFile(t, "dependencies")
-	result := verifierTestFile(t, "result")
-	pidFD := -1
-	command := newProgramVerifierCommand(
-		context.Background(),
-		programVerifierProcessConfig{
-			executable: "/proc/self/exe",
-			arguments:  []string{"--verifier"},
-		},
-		17,
-		&pidFD,
-		code,
-		dependencies,
-		result,
-	)
-	if command.Env == nil || len(command.Env) != 0 {
-		t.Fatalf("environment = %#v, want a non-nil empty environment", command.Env)
-	}
-	if command.Stdin != nil {
-		t.Fatalf("stdin = %#v, want nil", command.Stdin)
-	}
-	if len(command.ExtraFiles) != 3 ||
-		command.ExtraFiles[programVerifierCodeFD-3] != code ||
-		command.ExtraFiles[programVerifierDependencyFD-3] != dependencies ||
-		command.ExtraFiles[programVerifierResultFD-3] != result {
-		t.Fatalf("extra files = %#v", command.ExtraFiles)
-	}
-	if command.SysProcAttr == nil {
-		t.Fatal("SysProcAttr is nil")
-	}
-	wantCloneNamespaces := uintptr(
-		syscall.CLONE_NEWNET |
-			syscall.CLONE_NEWPID |
-			syscall.CLONE_NEWIPC,
-	)
-	if command.SysProcAttr.Cloneflags != wantCloneNamespaces {
-		t.Fatalf(
-			"clone flags = %#x, want %#x",
-			command.SysProcAttr.Cloneflags,
-			wantCloneNamespaces,
-		)
-	}
-	if command.SysProcAttr.Unshareflags != syscall.CLONE_NEWNS {
-		t.Fatalf(
-			"unshare flags = %#x, want %#x",
-			command.SysProcAttr.Unshareflags,
-			syscall.CLONE_NEWNS,
-		)
-	}
-	if !command.SysProcAttr.UseCgroupFD || command.SysProcAttr.CgroupFD != 17 {
-		t.Fatalf(
-			"cgroup placement = (%t, %d), want (true, 17)",
-			command.SysProcAttr.UseCgroupFD,
-			command.SysProcAttr.CgroupFD,
-		)
-	}
-	if command.SysProcAttr.PidFD != &pidFD {
-		t.Fatal("PidFD pointer was not installed")
+func TestVerifierCommandUsesJobFDLayoutAndNamespaces(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		job   verifierJob
+		count int
+	}{
+		{name: "runtime", job: runtimeVerifierJob, count: 1},
+		{name: "program", job: programVerifierJob, count: 2},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			result := verifierTestFile(t, "result")
+			artifacts := make([]*os.File, test.count)
+			for index := range artifacts {
+				artifacts[index] = verifierTestFile(t, "artifact")
+			}
+			pidFD := -1
+			command := newVerifierCommand(
+				context.Background(),
+				verifierProcessConfig{job: test.job},
+				17,
+				&pidFD,
+				result,
+				artifacts,
+			)
+			if command.Path != verifierExecutable ||
+				len(command.Args) != 3 ||
+				command.Args[1] != verifierChildArgument ||
+				command.Args[2] != string(test.job) {
+				t.Fatalf("command = (%q, %q)", command.Path, command.Args)
+			}
+			if command.Env == nil || len(command.Env) != 0 {
+				t.Fatalf("environment = %#v, want a non-nil empty environment", command.Env)
+			}
+			if command.Stdin != nil {
+				t.Fatalf("stdin = %#v, want nil", command.Stdin)
+			}
+			if len(command.ExtraFiles) != test.count+1 ||
+				command.ExtraFiles[verifierResultFD-3] != result {
+				t.Fatalf("extra files = %#v", command.ExtraFiles)
+			}
+			for index, artifact := range artifacts {
+				if command.ExtraFiles[verifierArtifactBaseFD-3+index] != artifact {
+					t.Fatalf("artifact %d has the wrong child descriptor", index)
+				}
+			}
+			if command.SysProcAttr == nil {
+				t.Fatal("SysProcAttr is nil")
+			}
+			wantCloneNamespaces := uintptr(
+				syscall.CLONE_NEWNET |
+					syscall.CLONE_NEWPID |
+					syscall.CLONE_NEWIPC,
+			)
+			if command.SysProcAttr.Cloneflags != wantCloneNamespaces {
+				t.Fatalf(
+					"clone flags = %#x, want %#x",
+					command.SysProcAttr.Cloneflags,
+					wantCloneNamespaces,
+				)
+			}
+			if command.SysProcAttr.Unshareflags != syscall.CLONE_NEWNS {
+				t.Fatalf(
+					"unshare flags = %#x, want %#x",
+					command.SysProcAttr.Unshareflags,
+					syscall.CLONE_NEWNS,
+				)
+			}
+			if !command.SysProcAttr.UseCgroupFD || command.SysProcAttr.CgroupFD != 17 {
+				t.Fatalf(
+					"cgroup placement = (%t, %d), want (true, 17)",
+					command.SysProcAttr.UseCgroupFD,
+					command.SysProcAttr.CgroupFD,
+				)
+			}
+			if command.SysProcAttr.PidFD != &pidFD {
+				t.Fatal("PidFD pointer was not installed")
+			}
+		})
 	}
 }
 
-func TestProgramVerifierCgroupLimits(t *testing.T) {
+func TestVerifierProcessConfigRequiresClosedJobLayout(t *testing.T) {
+	artifact := verifierTestFile(t, "artifact")
+	valid := verifierProcessConfig{
+		job:            runtimeVerifierJob,
+		unitCgroupRoot: "/sys/fs/cgroup/helmr-worker.service",
+		leaseIdentity:  "lease-123",
+		artifacts:      []*os.File{artifact},
+	}
+	if err := validateVerifierProcessConfig(context.Background(), valid); err != nil {
+		t.Fatal(err)
+	}
+	tests := map[string]func(*verifierProcessConfig){
+		"invalid job": func(config *verifierProcessConfig) {
+			config.job = "other"
+		},
+		"wrong count": func(config *verifierProcessConfig) {
+			config.artifacts = append(config.artifacts, artifact)
+		},
+		"nil artifact": func(config *verifierProcessConfig) {
+			config.artifacts[0] = nil
+		},
+		"relative cgroup": func(config *verifierProcessConfig) {
+			config.unitCgroupRoot = "cgroup"
+		},
+		"unsafe lease": func(config *verifierProcessConfig) {
+			config.leaseIdentity = "../lease"
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			config := valid
+			config.artifacts = append([]*os.File(nil), valid.artifacts...)
+			mutate(&config)
+			if err := validateVerifierProcessConfig(context.Background(), config); err == nil {
+				t.Fatal("invalid config was accepted")
+			}
+		})
+	}
+	if err := validateVerifierProcessConfig(nil, valid); err == nil {
+		t.Fatal("nil context was accepted")
+	}
+}
+
+func TestVerifierCgroupLimits(t *testing.T) {
 	path := t.TempDir()
-	for _, limit := range programVerifierCgroupLimits {
+	for _, limit := range verifierCgroupLimits {
 		if err := os.WriteFile(filepath.Join(path, limit.file), nil, 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -88,10 +149,10 @@ func TestProgramVerifierCgroupLimits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cgroup.Close()
-	if err := configureProgramVerifierCgroup(int(cgroup.Fd())); err != nil {
+	if err := configureVerifierCgroup(int(cgroup.Fd())); err != nil {
 		t.Fatal(err)
 	}
-	for _, limit := range programVerifierCgroupLimits {
+	for _, limit := range verifierCgroupLimits {
 		raw, err := os.ReadFile(filepath.Join(path, limit.file))
 		if err != nil {
 			t.Fatal(err)
@@ -102,44 +163,45 @@ func TestProgramVerifierCgroupLimits(t *testing.T) {
 	}
 }
 
-func TestProgramVerifierCgroupRejectsUnsafeLeaseIdentity(t *testing.T) {
+func TestVerifierCgroupRejectsUnsafeLeaseIdentity(t *testing.T) {
 	for _, identity := range []string{"", "..", "../lease", "lease/name", "lease_name"} {
 		t.Run(identity, func(t *testing.T) {
-			if _, err := programVerifierCgroupLeaf(identity); err == nil {
+			if _, err := verifierCgroupLeaf(programVerifierJob, identity); err == nil {
 				t.Fatalf("lease identity %q was accepted", identity)
 			}
 		})
 	}
-}
-
-func TestProgramVerifierCgroupLeafPreservesLeaseIdentity(t *testing.T) {
-	leaf, err := programVerifierCgroupLeaf("lease-123")
+	leaf, err := verifierCgroupLeaf(runtimeVerifierJob, "lease-123")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if leaf != "verifier-lease-123" {
+	if leaf != "verifier-runtime-lease-123" {
 		t.Fatalf("leaf = %q", leaf)
 	}
 }
 
-func TestCreateProgramVerifierCgroupRejectsSymlinkRoot(t *testing.T) {
+func TestCreateVerifierCgroupRejectsSymlinkRoot(t *testing.T) {
 	realRoot := t.TempDir()
 	linkRoot := filepath.Join(t.TempDir(), "cgroup")
 	if err := os.Symlink(realRoot, linkRoot); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := createProgramVerifierCgroup(linkRoot, "lease-123"); err == nil {
+	if _, _, err := createVerifierCgroup(
+		programVerifierJob,
+		linkRoot,
+		"lease-123",
+	); err == nil {
 		t.Fatal("symlinked unit cgroup root was accepted")
 	}
 }
 
-func TestProgramVerifierCgroupCleanupHelpers(t *testing.T) {
+func TestVerifierCgroupCleanupHelpers(t *testing.T) {
 	path := t.TempDir()
 	killPath := filepath.Join(path, "cgroup.kill")
 	if err := os.WriteFile(killPath, nil, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := killProgramVerifierCgroup(path); err != nil {
+	if err := killVerifierCgroup(path); err != nil {
 		t.Fatal(err)
 	}
 	if raw, err := os.ReadFile(killPath); err != nil {
@@ -160,12 +222,12 @@ func TestProgramVerifierCgroupCleanupHelpers(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	if err := waitProgramVerifierCgroupEmpty(ctx, path); err != nil {
+	if err := waitVerifierCgroupEmpty(ctx, path); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestOpenProgramVerifierSnapshotRequiresReadOnlyIndependentDescriptor(t *testing.T) {
+func TestOpenVerifierSnapshotRequiresReadOnlyIndependentDescriptor(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "snapshot")
 	if err := os.WriteFile(path, []byte("abcdef"), 0o600); err != nil {
 		t.Fatal(err)
@@ -178,7 +240,7 @@ func TestOpenProgramVerifierSnapshotRequiresReadOnlyIndependentDescriptor(t *tes
 	if _, err := source.Seek(3, 0); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := openProgramVerifierSnapshot(source)
+	snapshot, err := openVerifierSnapshot(source)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,12 +263,12 @@ func TestOpenProgramVerifierSnapshotRequiresReadOnlyIndependentDescriptor(t *tes
 		t.Fatal(err)
 	}
 	defer writable.Close()
-	if _, err := openProgramVerifierSnapshot(writable); err == nil {
+	if _, err := openVerifierSnapshot(writable); err == nil {
 		t.Fatal("writable Artifact descriptor was accepted")
 	}
 }
 
-func TestProgramVerifierReadinessDeadline(t *testing.T) {
+func TestVerifierReadinessDeadline(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
@@ -216,21 +278,24 @@ func TestProgramVerifierReadinessDeadline(t *testing.T) {
 	if err := reader.SetReadDeadline(time.Now().Add(20 * time.Millisecond)); err != nil {
 		t.Fatal(err)
 	}
-	if err := readProgramVerifierReady(reader); err == nil {
+	if err := readVerifierReady(reader); err == nil {
 		t.Fatal("missing readiness did not time out")
 	}
 }
 
-func TestProgramVerifierTerminalDrainRejectsLeakedWriter(t *testing.T) {
+func TestVerifierTerminalDrainRejectsLeakedWriter(t *testing.T) {
 	reader, writer, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reader.Close()
 	defer writer.Close()
-	canonical := canonicalVerifierProgramIndex(t)
 	var output bytes.Buffer
-	if err := writeProgramVerifierVerified(&output, canonical); err != nil {
+	if err := writeVerifierVerified(
+		&output,
+		programVerifierJob,
+		canonicalVerifierProgramIndex(t),
+	); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := writer.Write(output.Bytes()); err != nil {
@@ -238,9 +303,10 @@ func TestProgramVerifierTerminalDrainRejectsLeakedWriter(t *testing.T) {
 	}
 	wait := make(chan error, 1)
 	wait <- nil
-	_, resultErr, waitErr := awaitProgramVerifierTerminal(
+	_, resultErr, waitErr := awaitVerifierTerminal(
 		context.Background(),
 		reader,
+		programVerifierJob,
 		wait,
 		20*time.Millisecond,
 		func() {

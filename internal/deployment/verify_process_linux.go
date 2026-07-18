@@ -18,175 +18,180 @@ import (
 )
 
 const (
-	programVerifierMemoryMax    = "2147483648"
-	programVerifierSwapMax      = "0"
-	programVerifierOOMGroup     = "1"
-	programVerifierCPUMax       = "100000 100000"
-	programVerifierPIDsMax      = "32"
-	programVerifierDrainTimeout = 10 * time.Second
+	verifierMemoryMax    = "2147483648"
+	verifierSwapMax      = "0"
+	verifierOOMGroup     = "1"
+	verifierCPUMax       = "100000 100000"
+	verifierPIDsMax      = "32"
+	verifierDrainTimeout = 10 * time.Second
 )
 
-var programVerifierCgroupLimits = []struct {
+var verifierCgroupLimits = []struct {
 	file  string
 	value string
 }{
-	{"memory.max", programVerifierMemoryMax},
-	{"memory.swap.max", programVerifierSwapMax},
-	{"memory.oom.group", programVerifierOOMGroup},
-	{"cpu.max", programVerifierCPUMax},
-	{"pids.max", programVerifierPIDsMax},
+	{"memory.max", verifierMemoryMax},
+	{"memory.swap.max", verifierSwapMax},
+	{"memory.oom.group", verifierOOMGroup},
+	{"cpu.max", verifierCPUMax},
+	{"pids.max", verifierPIDsMax},
 }
 
-type programVerifierTerminalRead struct {
-	result programVerifierProcessResult
+type verifierTerminalRead struct {
+	result verifierProcessResult
 	err    error
 }
 
-func runProgramVerifierProcess(
+func runVerifierProcess(
 	ctx context.Context,
-	config programVerifierProcessConfig,
-) (result programVerifierProcessResult, returnErr error) {
-	if err := validateProgramVerifierProcessConfig(ctx, config); err != nil {
-		return programVerifierProcessResult{}, err
+	config verifierProcessConfig,
+) (result verifierProcessResult, returnErr error) {
+	if err := validateVerifierProcessConfig(ctx, config); err != nil {
+		return verifierProcessResult{}, err
 	}
 
-	processContext, cancel := context.WithTimeout(ctx, programVerifierDeadline)
+	processContext, cancel := context.WithTimeout(ctx, verifierDeadline)
 	defer cancel()
 
-	cgroupPath, cgroup, err := createProgramVerifierCgroup(
+	cgroupPath, cgroup, err := createVerifierCgroup(
+		config.job,
 		config.unitCgroupRoot,
 		config.leaseIdentity,
 	)
 	if err != nil {
-		return programVerifierProcessResult{}, err
+		return verifierProcessResult{}, err
 	}
 	killForCleanup := false
 	pidFD := -1
 	defer func() {
 		if pidFD >= 0 {
 			if err := unix.Close(pidFD); err != nil {
-				returnErr = errors.Join(returnErr, fmt.Errorf("close program verifier pidfd: %w", err))
+				returnErr = errors.Join(returnErr, fmt.Errorf("close artifact verifier pidfd: %w", err))
 			}
 		}
 		if err := cgroup.Close(); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("close program verifier cgroup: %w", err))
+			returnErr = errors.Join(returnErr, fmt.Errorf("close artifact verifier cgroup: %w", err))
 		}
 		cleanupContext, cleanupCancel := context.WithTimeout(
 			context.Background(),
-			programVerifierDrainTimeout,
+			verifierDrainTimeout,
 		)
 		defer cleanupCancel()
-		if err := cleanupProgramVerifierCgroup(cleanupContext, cgroupPath, killForCleanup); err != nil {
+		if err := cleanupVerifierCgroup(cleanupContext, cgroupPath, killForCleanup); err != nil {
 			returnErr = errors.Join(returnErr, err)
 		}
 	}()
 
-	code, err := openProgramVerifierSnapshot(config.code)
-	if err != nil {
-		return programVerifierProcessResult{}, fmt.Errorf("open program verifier code snapshot: %w", err)
+	artifacts := make([]*os.File, 0, len(config.artifacts))
+	for index, source := range config.artifacts {
+		artifact, err := openVerifierSnapshot(source)
+		if err != nil {
+			return verifierProcessResult{}, fmt.Errorf(
+				"open artifact verifier snapshot %d: %w",
+				index,
+				err,
+			)
+		}
+		artifacts = append(artifacts, artifact)
+		defer artifact.Close()
 	}
-	defer code.Close()
-	dependencies, err := openProgramVerifierSnapshot(config.dependencies)
-	if err != nil {
-		return programVerifierProcessResult{}, fmt.Errorf("open program verifier dependency snapshot: %w", err)
-	}
-	defer dependencies.Close()
 
 	resultReader, resultWriter, err := os.Pipe()
 	if err != nil {
-		return programVerifierProcessResult{}, fmt.Errorf("create program verifier result pipe: %w", err)
+		return verifierProcessResult{}, fmt.Errorf("create artifact verifier result pipe: %w", err)
 	}
 	defer resultReader.Close()
 	defer resultWriter.Close()
 
-	command := newProgramVerifierCommand(
+	command := newVerifierCommand(
 		processContext,
 		config,
 		int(cgroup.Fd()),
 		&pidFD,
-		code,
-		dependencies,
 		resultWriter,
+		artifacts,
 	)
 	command.Cancel = func() error {
-		return killProgramVerifierCgroup(cgroupPath)
+		return killVerifierCgroup(cgroupPath)
 	}
-	command.WaitDelay = programVerifierDrainTimeout
+	command.WaitDelay = verifierDrainTimeout
 	if err := command.Start(); err != nil {
-		return programVerifierProcessResult{}, fmt.Errorf("start program verifier: %w", err)
+		return verifierProcessResult{}, fmt.Errorf("start artifact verifier: %w", err)
 	}
 	if err := resultWriter.Close(); err != nil {
 		killForCleanup = true
-		_ = killProgramVerifierCgroup(cgroupPath)
+		_ = killVerifierCgroup(cgroupPath)
 		_ = command.Wait()
-		return programVerifierProcessResult{}, fmt.Errorf("close parent program verifier result writer: %w", err)
+		return verifierProcessResult{}, fmt.Errorf("close parent artifact verifier result writer: %w", err)
 	}
 
 	wait := make(chan error, 1)
 	go func() {
 		wait <- command.Wait()
 	}()
-	readyDeadline := time.Now().Add(programVerifierBootstrapDeadline)
+	readyDeadline := time.Now().Add(verifierBootstrapDeadline)
 	if processDeadline, ok := processContext.Deadline(); ok && processDeadline.Before(readyDeadline) {
 		readyDeadline = processDeadline
 	}
 	resultErr := resultReader.SetReadDeadline(readyDeadline)
 	if resultErr == nil {
-		resultErr = readProgramVerifierReady(resultReader)
+		resultErr = readVerifierReady(resultReader)
 	}
 	if clearErr := resultReader.SetReadDeadline(time.Time{}); resultErr == nil && clearErr != nil {
-		resultErr = fmt.Errorf("clear program verifier readiness deadline: %w", clearErr)
+		resultErr = fmt.Errorf("clear artifact verifier readiness deadline: %w", clearErr)
 	}
 	if resultErr == nil {
 		stop := func() {
 			killForCleanup = true
-			_ = killProgramVerifierCgroup(cgroupPath)
+			_ = killVerifierCgroup(cgroupPath)
 			_ = resultReader.Close()
 		}
-		result, resultErr, err = awaitProgramVerifierTerminal(
+		result, resultErr, err = awaitVerifierTerminal(
 			processContext,
 			resultReader,
+			config.job,
 			wait,
-			programVerifierDrainTimeout,
+			verifierDrainTimeout,
 			stop,
 		)
 	} else {
 		killForCleanup = true
-		_ = killProgramVerifierCgroup(cgroupPath)
+		_ = killVerifierCgroup(cgroupPath)
 		err = <-wait
 	}
 	if processContext.Err() != nil {
 		killForCleanup = true
-		return programVerifierProcessResult{}, fmt.Errorf("program verifier context: %w", processContext.Err())
+		return verifierProcessResult{}, fmt.Errorf("artifact verifier context: %w", processContext.Err())
 	}
 	if resultErr != nil {
 		killForCleanup = true
 		if err != nil {
-			return programVerifierProcessResult{}, errors.Join(
+			return verifierProcessResult{}, errors.Join(
 				resultErr,
-				fmt.Errorf("wait for program verifier: %w", err),
+				fmt.Errorf("wait for artifact verifier: %w", err),
 			)
 		}
-		return programVerifierProcessResult{}, resultErr
+		return verifierProcessResult{}, resultErr
 	}
 	if err != nil {
 		killForCleanup = true
-		return programVerifierProcessResult{}, fmt.Errorf("wait for program verifier: %w", err)
+		return verifierProcessResult{}, fmt.Errorf("wait for artifact verifier: %w", err)
 	}
 	return result, nil
 }
 
-func awaitProgramVerifierTerminal(
+func awaitVerifierTerminal(
 	ctx context.Context,
 	reader *os.File,
+	job verifierJob,
 	wait <-chan error,
 	drainTimeout time.Duration,
 	stop func(),
-) (programVerifierProcessResult, error, error) {
-	terminal := make(chan programVerifierTerminalRead, 1)
+) (verifierProcessResult, error, error) {
+	terminal := make(chan verifierTerminalRead, 1)
 	go func() {
-		result, err := readProgramVerifierTerminal(reader)
-		terminal <- programVerifierTerminalRead{result: result, err: err}
+		result, err := readVerifierTerminal(reader, job)
+		terminal <- verifierTerminalRead{result: result, err: err}
 	}()
 
 	select {
@@ -207,13 +212,13 @@ func awaitProgramVerifierTerminal(
 		case <-timer.C:
 			stop()
 			<-terminal
-			return programVerifierProcessResult{},
-				errors.New("program verifier result stream remained open after process exit"),
+			return verifierProcessResult{},
+				errors.New("artifact verifier result stream remained open after process exit"),
 				waitErr
 		case <-ctx.Done():
 			stop()
 			<-terminal
-			return programVerifierProcessResult{}, ctx.Err(), waitErr
+			return verifierProcessResult{}, ctx.Err(), waitErr
 		}
 	case <-ctx.Done():
 		stop()
@@ -222,41 +227,51 @@ func awaitProgramVerifierTerminal(
 	}
 }
 
-func validateProgramVerifierProcessConfig(
+func validateVerifierProcessConfig(
 	ctx context.Context,
-	config programVerifierProcessConfig,
+	config verifierProcessConfig,
 ) error {
 	if ctx == nil {
-		return errors.New("program verifier context is nil")
+		return errors.New("artifact verifier context is nil")
 	}
-	if config.executable == "" {
-		return errors.New("program verifier executable is empty")
+	count := config.job.artifactCount()
+	if count == 0 {
+		return fmt.Errorf("artifact verifier job = %q", config.job)
 	}
-	if config.code == nil || config.dependencies == nil {
-		return errors.New("program verifier Artifact descriptors are required")
+	if len(config.artifacts) != count {
+		return fmt.Errorf(
+			"%s verifier artifact descriptor count = %d, want %d",
+			config.job,
+			len(config.artifacts),
+			count,
+		)
+	}
+	for _, artifact := range config.artifacts {
+		if artifact == nil {
+			return fmt.Errorf("%s verifier Artifact descriptors are required", config.job)
+		}
 	}
 	if !filepath.IsAbs(config.unitCgroupRoot) {
-		return errors.New("program verifier unit cgroup root is not absolute")
+		return errors.New("artifact verifier unit cgroup root is not absolute")
 	}
-	if _, err := programVerifierCgroupLeaf(config.leaseIdentity); err != nil {
+	if _, err := verifierCgroupLeaf(config.job, config.leaseIdentity); err != nil {
 		return err
 	}
 	return nil
 }
 
-func newProgramVerifierCommand(
+func newVerifierCommand(
 	ctx context.Context,
-	config programVerifierProcessConfig,
+	config verifierProcessConfig,
 	cgroupFD int,
 	pidFD *int,
-	code *os.File,
-	dependencies *os.File,
 	result *os.File,
+	artifacts []*os.File,
 ) *exec.Cmd {
-	command := exec.CommandContext(ctx, config.executable, config.arguments...)
+	command := exec.CommandContext(ctx, verifierExecutable, verifierChildArguments(config.job)...)
 	command.Dir = "/"
 	command.Env = []string{}
-	command.ExtraFiles = []*os.File{code, dependencies, result}
+	command.ExtraFiles = append([]*os.File{result}, artifacts...)
 	command.SysProcAttr = &syscall.SysProcAttr{
 		Cloneflags: syscall.CLONE_NEWNET |
 			syscall.CLONE_NEWPID |
@@ -269,14 +284,18 @@ func newProgramVerifierCommand(
 	return command
 }
 
-func createProgramVerifierCgroup(unitRoot, leaseIdentity string) (string, *os.File, error) {
-	leaf, err := programVerifierCgroupLeaf(leaseIdentity)
+func createVerifierCgroup(
+	job verifierJob,
+	unitRoot string,
+	leaseIdentity string,
+) (string, *os.File, error) {
+	leaf, err := verifierCgroupLeaf(job, leaseIdentity)
 	if err != nil {
 		return "", nil, err
 	}
 	root := filepath.Clean(unitRoot)
 	if !filepath.IsAbs(root) {
-		return "", nil, errors.New("program verifier unit cgroup root is not absolute")
+		return "", nil, errors.New("artifact verifier unit cgroup root is not absolute")
 	}
 	rootFD, err := unix.Open(
 		root,
@@ -284,11 +303,11 @@ func createProgramVerifierCgroup(unitRoot, leaseIdentity string) (string, *os.Fi
 		0,
 	)
 	if err != nil {
-		return "", nil, fmt.Errorf("open program verifier unit cgroup root: %w", err)
+		return "", nil, fmt.Errorf("open artifact verifier unit cgroup root: %w", err)
 	}
 	defer unix.Close(rootFD)
 	if err := unix.Mkdirat(rootFD, leaf, 0o755); err != nil {
-		return "", nil, fmt.Errorf("create program verifier cgroup: %w", err)
+		return "", nil, fmt.Errorf("create artifact verifier cgroup: %w", err)
 	}
 	cgroupFD, err := unix.Openat(
 		rootFD,
@@ -298,9 +317,9 @@ func createProgramVerifierCgroup(unitRoot, leaseIdentity string) (string, *os.Fi
 	)
 	if err != nil {
 		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
-		return "", nil, fmt.Errorf("open program verifier cgroup: %w", err)
+		return "", nil, fmt.Errorf("open artifact verifier cgroup: %w", err)
 	}
-	if err := configureProgramVerifierCgroup(cgroupFD); err != nil {
+	if err := configureVerifierCgroup(cgroupFD); err != nil {
 		unix.Close(cgroupFD)
 		_ = unix.Unlinkat(rootFD, leaf, unix.AT_REMOVEDIR)
 		return "", nil, err
@@ -309,9 +328,12 @@ func createProgramVerifierCgroup(unitRoot, leaseIdentity string) (string, *os.Fi
 	return path, os.NewFile(uintptr(cgroupFD), path), nil
 }
 
-func programVerifierCgroupLeaf(leaseIdentity string) (string, error) {
+func verifierCgroupLeaf(job verifierJob, leaseIdentity string) (string, error) {
+	if job.artifactCount() == 0 {
+		return "", fmt.Errorf("artifact verifier job = %q", job)
+	}
 	if len(leaseIdentity) == 0 || len(leaseIdentity) > 128 {
-		return "", errors.New("program verifier lease identity is outside [1,128] bytes")
+		return "", errors.New("artifact verifier lease identity is outside [1,128] bytes")
 	}
 	for _, value := range []byte(leaseIdentity) {
 		if (value >= 'a' && value <= 'z') ||
@@ -320,13 +342,13 @@ func programVerifierCgroupLeaf(leaseIdentity string) (string, error) {
 			value == '-' {
 			continue
 		}
-		return "", errors.New("program verifier lease identity is outside the exact ASCII domain")
+		return "", errors.New("artifact verifier lease identity is outside the exact ASCII domain")
 	}
-	return "verifier-" + leaseIdentity, nil
+	return "verifier-" + string(job) + "-" + leaseIdentity, nil
 }
 
-func configureProgramVerifierCgroup(cgroupFD int) error {
-	for _, limit := range programVerifierCgroupLimits {
+func configureVerifierCgroup(cgroupFD int) error {
+	for _, limit := range verifierCgroupLimits {
 		controlFD, err := unix.Openat(
 			cgroupFD,
 			limit.file,
@@ -334,22 +356,22 @@ func configureProgramVerifierCgroup(cgroupFD int) error {
 			0,
 		)
 		if err != nil {
-			return fmt.Errorf("open program verifier %s: %w", limit.file, err)
+			return fmt.Errorf("open artifact verifier %s: %w", limit.file, err)
 		}
 		control := os.NewFile(uintptr(controlFD), limit.file)
 		err = writeAll(control, []byte(limit.value))
 		closeErr := control.Close()
 		if err != nil {
-			return fmt.Errorf("set program verifier %s: %w", limit.file, err)
+			return fmt.Errorf("set artifact verifier %s: %w", limit.file, err)
 		}
 		if closeErr != nil {
-			return fmt.Errorf("close program verifier %s: %w", limit.file, closeErr)
+			return fmt.Errorf("close artifact verifier %s: %w", limit.file, closeErr)
 		}
 	}
 	return nil
 }
 
-func openProgramVerifierSnapshot(source *os.File) (*os.File, error) {
+func openVerifierSnapshot(source *os.File) (*os.File, error) {
 	if source == nil {
 		return nil, errors.New("Artifact descriptor is nil")
 	}
@@ -387,22 +409,22 @@ func openProgramVerifierSnapshot(source *os.File) (*os.File, error) {
 	return os.NewFile(uintptr(fd), source.Name()), nil
 }
 
-func killProgramVerifierCgroup(path string) error {
+func killVerifierCgroup(path string) error {
 	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil {
-		return fmt.Errorf("kill program verifier cgroup: %w", err)
+		return fmt.Errorf("kill artifact verifier cgroup: %w", err)
 	}
 	return nil
 }
 
-func waitProgramVerifierCgroupEmpty(ctx context.Context, path string) error {
+func waitVerifierCgroupEmpty(ctx context.Context, path string) error {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		raw, err := os.ReadFile(filepath.Join(path, "cgroup.events"))
 		if err != nil {
-			return fmt.Errorf("read program verifier cgroup events: %w", err)
+			return fmt.Errorf("read artifact verifier cgroup events: %w", err)
 		}
-		populated, err := parseProgramVerifierCgroupPopulated(raw)
+		populated, err := parseVerifierCgroupPopulated(raw)
 		if err != nil {
 			return err
 		}
@@ -411,13 +433,13 @@ func waitProgramVerifierCgroupEmpty(ctx context.Context, path string) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("wait for program verifier cgroup to empty: %w", ctx.Err())
+			return fmt.Errorf("wait for artifact verifier cgroup to empty: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-func parseProgramVerifierCgroupPopulated(raw []byte) (bool, error) {
+func parseVerifierCgroupPopulated(raw []byte) (bool, error) {
 	found := false
 	populated := false
 	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
@@ -426,7 +448,7 @@ func parseProgramVerifierCgroupPopulated(raw []byte) (bool, error) {
 			continue
 		}
 		if found {
-			return false, errors.New("program verifier cgroup events repeats populated")
+			return false, errors.New("artifact verifier cgroup events repeats populated")
 		}
 		found = true
 		switch fields[1] {
@@ -435,27 +457,27 @@ func parseProgramVerifierCgroupPopulated(raw []byte) (bool, error) {
 		case "1":
 			populated = true
 		default:
-			return false, fmt.Errorf("program verifier cgroup populated = %q", fields[1])
+			return false, fmt.Errorf("artifact verifier cgroup populated = %q", fields[1])
 		}
 	}
 	if !found {
-		return false, errors.New("program verifier cgroup events omits populated")
+		return false, errors.New("artifact verifier cgroup events omits populated")
 	}
 	return populated, nil
 }
 
-func cleanupProgramVerifierCgroup(ctx context.Context, path string, kill bool) error {
+func cleanupVerifierCgroup(ctx context.Context, path string, kill bool) error {
 	var cleanupErr error
 	if kill {
-		cleanupErr = errors.Join(cleanupErr, killProgramVerifierCgroup(path))
+		cleanupErr = errors.Join(cleanupErr, killVerifierCgroup(path))
 	}
-	if err := waitProgramVerifierCgroupEmpty(ctx, path); err != nil {
+	if err := waitVerifierCgroupEmpty(ctx, path); err != nil {
 		return errors.Join(cleanupErr, err)
 	}
 	if err := os.Remove(path); err != nil {
 		cleanupErr = errors.Join(
 			cleanupErr,
-			fmt.Errorf("remove program verifier cgroup: %w", err),
+			fmt.Errorf("remove artifact verifier cgroup: %w", err),
 		)
 	}
 	return cleanupErr

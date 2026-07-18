@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-func TestParseProgramVerifierIdentity(t *testing.T) {
+func TestParseVerifierIdentity(t *testing.T) {
 	passwd := []byte(strings.Join([]string{
 		"root:x:0:0:root:/root:/bin/sh",
 		"helmr-verifier:x:992:991::/nonexistent:/usr/sbin/nologin",
@@ -26,11 +26,11 @@ func TestParseProgramVerifierIdentity(t *testing.T) {
 		"",
 	}, "\n"))
 
-	uid, primaryGID, err := parseProgramVerifierPasswd(passwd)
+	uid, primaryGID, err := parseVerifierPasswd(passwd)
 	if err != nil {
 		t.Fatal(err)
 	}
-	gid, err := parseProgramVerifierGroup(group)
+	gid, err := parseVerifierGroup(group)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestParseProgramVerifierIdentity(t *testing.T) {
 	}
 }
 
-func TestParseProgramVerifierIdentityRejectsMissingDuplicateAndRoot(t *testing.T) {
+func TestParseVerifierIdentityRejectsMissingDuplicateAndRoot(t *testing.T) {
 	tests := map[string]struct {
 		passwd []byte
 		group  []byte
@@ -62,19 +62,49 @@ func TestParseProgramVerifierIdentityRejectsMissingDuplicateAndRoot(t *testing.T
 	}
 	for name, test := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := parseProgramVerifierPasswd(test.passwd); err == nil {
+			if _, _, err := parseVerifierPasswd(test.passwd); err == nil {
 				t.Fatal("passwd entry was accepted")
 			}
-			if _, err := parseProgramVerifierGroup(test.group); err == nil {
+			if _, err := parseVerifierGroup(test.group); err == nil {
 				t.Fatal("group entry was accepted")
 			}
 		})
 	}
 }
 
-func TestDigestProgramVerifierDescriptorUsesExactBytes(t *testing.T) {
+func TestVerifierArtifactDescriptorRequiresWriteProtectedNonOwnerInode(t *testing.T) {
+	path := t.TempDir() + "/artifact"
+	if err := os.WriteFile(path, []byte("artifact"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+
+	owner := uint32(os.Geteuid())
+	if err := validateVerifierArtifactDescriptor(int(file.Fd()), &owner); err == nil ||
+		!strings.Contains(err.Error(), "owned by the verifier") {
+		t.Fatalf("owner validation error = %v", err)
+	}
+	nonOwner := owner ^ 1
+	if err := validateVerifierArtifactDescriptor(int(file.Fd()), &nonOwner); err != nil {
+		t.Fatalf("non-owner validation = %v", err)
+	}
+
+	if err := file.Chmod(0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateVerifierArtifactDescriptor(int(file.Fd()), &nonOwner); err == nil ||
+		!strings.Contains(err.Error(), "write permission") {
+		t.Fatalf("write permission validation error = %v", err)
+	}
+}
+
+func TestDigestVerifierDescriptorUsesExactBytes(t *testing.T) {
 	raw := bytes.Repeat([]byte("artifact"), 32769)
-	digest, err := digestProgramVerifierDescriptor(
+	digest, err := digestVerifierDescriptor(
 		context.Background(),
 		bytes.NewReader(raw),
 		int64(len(raw)),
@@ -98,7 +128,7 @@ func TestProgramArtifactFromDescriptorRejectsPhysicalBoundBeforeRead(t *testing.
 		t.Fatal(err)
 	}
 
-	_, err = programArtifactFromDescriptor(
+	_, err = artifactFromDescriptor(
 		context.Background(),
 		int(file.Fd()),
 		codeArtifact,
@@ -110,29 +140,29 @@ func TestProgramArtifactFromDescriptorRejectsPhysicalBoundBeforeRead(t *testing.
 	}
 }
 
-func TestClassifyProgramVerifierError(t *testing.T) {
+func TestClassifyVerifierError(t *testing.T) {
 	tests := []struct {
 		name       string
 		err        error
-		kind       programVerifierRecordKind
+		kind       verifierRecordKind
 		diagnostic string
 	}{
 		{
 			name:       "content",
 			err:        &artifactContentError{cause: errors.New("invalid image")},
-			kind:       programVerifierInvalid,
+			kind:       verifierInvalid,
 			diagnostic: "program is invalid",
 		},
 		{
 			name:       "infrastructure",
 			err:        &artifactInfrastructureError{cause: io.ErrUnexpectedEOF},
-			kind:       programVerifierFailed,
+			kind:       verifierFailed,
 			diagnostic: "program verifier infrastructure failure",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			kind, diagnostic := classifyProgramVerifierError(test.err)
+			kind, diagnostic := classifyVerifierError(programVerifierJob, test.err)
 			if kind != test.kind || diagnostic != test.diagnostic {
 				t.Fatalf(
 					"classification = (%d, %q), want (%d, %q)",

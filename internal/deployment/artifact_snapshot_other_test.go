@@ -9,12 +9,12 @@ import (
 	"testing"
 )
 
-func TestProgramSnapshotFailsClosedOutsideLinux(t *testing.T) {
-	_, err := snapshotProgram(
+func TestArtifactSnapshotFailsClosedOutsideLinux(t *testing.T) {
+	_, err := snapshotArtifact(
 		context.Background(),
 		t.TempDir(),
 		codeArtifact,
-		ProgramDescriptor{},
+		artifactSnapshotDescriptor{},
 		bytes.NewReader(nil),
 	)
 	if err == nil || !strings.Contains(err.Error(), "Linux O_TMPFILE") {

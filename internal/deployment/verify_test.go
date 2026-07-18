@@ -550,6 +550,7 @@ func TestMountedPathByteBounds(t *testing.T) {
 	}{
 		{name: "code", role: codeArtifact, mount: programMountPath},
 		{name: "dependency", role: dependencyArtifact, mount: dependencyMountPath},
+		{name: "runtime", role: runtimeArtifact, mount: runtimeMountPath},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			atLimit := testPathOfLength(maxMountedPackagePath - len(test.mount) - 2)

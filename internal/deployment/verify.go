@@ -22,6 +22,8 @@ const (
 	maxDependencyLogicalBytes  int64 = 8 << 30
 	maxCodePhysicalBytes       int64 = 3 << 30
 	maxDependencyPhysicalBytes int64 = 10 << 30
+	maxRuntimeLogicalBytes           = maxCodeLogicalBytes
+	maxRuntimePhysicalBytes          = maxCodePhysicalBytes
 	maxPackageJSONBytes        int64 = 256 << 20
 	maxLockfileBytes           int64 = 64 << 20
 	maxSymlinkTargetBytes            = 4095
@@ -177,6 +179,7 @@ type artifactRole uint8
 const (
 	codeArtifact artifactRole = iota
 	dependencyArtifact
+	runtimeArtifact
 )
 
 type inspectedArtifact struct {
@@ -201,6 +204,10 @@ func validateArtifactDescriptor(
 		label = "dependency"
 		mediaType = ProgramDependencyArtifactMediaType
 		maxPhysicalBytes = maxDependencyPhysicalBytes
+	case runtimeArtifact:
+		label = "runtime"
+		mediaType = RuntimeArtifactMediaType
+		maxPhysicalBytes = maxRuntimePhysicalBytes
 	default:
 		return fmt.Errorf("Artifact role = %d", role)
 	}
@@ -464,8 +471,11 @@ func validateArtifactPath(value string, role artifactRole) error {
 		}
 	}
 	mount := programMountPath
-	if role == dependencyArtifact {
+	switch role {
+	case dependencyArtifact:
 		mount = dependencyMountPath
+	case runtimeArtifact:
+		mount = runtimeMountPath
 	}
 	if len(mount)+1+len(value)+1 > maxMountedPackagePath {
 		return fmt.Errorf("mounted path exceeds %d bytes", maxMountedPackagePath)

@@ -20,21 +20,21 @@ import (
 )
 
 const (
-	programVerifierIdentity       = "helmr-verifier"
-	programVerifierIdentityMax    = 1 << 20
-	programVerifierRoot           = "/tmp"
-	programVerifierOldRoot        = "/.helmr-old-root"
-	programVerifierSecureNoRoot   = 1 << 0
-	programVerifierSecureNoRootL  = 1 << 1
-	programVerifierSecureNoFixup  = 1 << 2
-	programVerifierSecureNoFixupL = 1 << 3
+	verifierIdentity       = "helmr-verifier"
+	verifierIdentityMax    = 1 << 20
+	verifierRoot           = "/tmp"
+	verifierOldRoot        = "/.helmr-old-root"
+	verifierSecureNoRoot   = 1 << 0
+	verifierSecureNoRootL  = 1 << 1
+	verifierSecureNoFixup  = 1 << 2
+	verifierSecureNoFixupL = 1 << 3
 )
 
-type programVerifierFDReader struct {
+type verifierFDReader struct {
 	fd int
 }
 
-func (reader programVerifierFDReader) ReadAt(destination []byte, offset int64) (int, error) {
+func (reader verifierFDReader) ReadAt(destination []byte, offset int64) (int, error) {
 	total := 0
 	for total < len(destination) {
 		count, err := unix.Pread(reader.fd, destination[total:], offset+int64(total))
@@ -52,11 +52,11 @@ func (reader programVerifierFDReader) ReadAt(destination []byte, offset int64) (
 	return total, nil
 }
 
-type programVerifierFDWriter struct {
+type verifierFDWriter struct {
 	fd int
 }
 
-func (writer programVerifierFDWriter) Write(source []byte) (int, error) {
+func (writer verifierFDWriter) Write(source []byte) (int, error) {
 	for {
 		count, err := unix.Write(writer.fd, source)
 		if errors.Is(err, syscall.EINTR) {
@@ -66,50 +66,50 @@ func (writer programVerifierFDWriter) Write(source []byte) (int, error) {
 	}
 }
 
-func runProgramVerifierChild() (returnErr error) {
+func runVerifierChild(job verifierJob) (returnErr error) {
 	os.Clearenv()
 	defer func() {
-		if err := unix.Close(programVerifierResultFD); err != nil &&
+		if err := unix.Close(verifierResultFD); err != nil &&
 			!errors.Is(err, syscall.EBADF) {
 			returnErr = errors.Join(returnErr, fmt.Errorf("close verifier result: %w", err))
 		}
 	}()
 
 	if os.Getpid() != 1 || os.Geteuid() != 0 {
-		return errors.New("program verifier did not start as namespaced root PID 1")
+		return errors.New("artifact verifier did not start as namespaced root PID 1")
 	}
-	uid, gid, err := resolveProgramVerifierIdentity()
+	uid, gid, err := resolveVerifierIdentity()
 	if err != nil {
 		return err
 	}
-	if err := validateProgramVerifierDescriptors(); err != nil {
+	if err := validateVerifierDescriptors(job, nil); err != nil {
 		return err
 	}
-	if err := isolateProgramVerifierRoot(); err != nil {
+	if err := isolateVerifierRoot(); err != nil {
 		return err
 	}
-	if err := applyProgramVerifierIdentity(uid, gid); err != nil {
+	if err := applyVerifierIdentity(uid, gid); err != nil {
 		return err
 	}
-	if err := closeProgramVerifierAmbientDescriptors(); err != nil {
+	if err := closeVerifierAmbientDescriptors(job); err != nil {
 		return err
 	}
-	if err := validateProgramVerifierDescriptors(); err != nil {
+	if err := validateVerifierDescriptors(job, &uid); err != nil {
 		return err
 	}
 
 	// Artifact bytes must not be read before root isolation and privilege removal complete.
-	result := programVerifierFDWriter{fd: programVerifierResultFD}
-	if err := writeProgramVerifierReady(result); err != nil {
+	result := verifierFDWriter{fd: verifierResultFD}
+	if err := writeVerifierReady(result); err != nil {
 		return err
 	}
-	return executeProgramVerifierJob(result)
+	return executeVerifierJob(job, result)
 }
 
-func executeProgramVerifierJob(result io.Writer) (returnErr error) {
+func executeVerifierJob(job verifierJob, result io.Writer) (returnErr error) {
 	defer func() {
 		if recover() != nil {
-			if err := writeProgramVerifierFailed(result, "program verifier panicked"); err != nil {
+			if err := writeVerifierFailed(result, "artifact verifier panicked"); err != nil {
 				returnErr = err
 			} else {
 				returnErr = nil
@@ -117,23 +117,36 @@ func executeProgramVerifierJob(result io.Writer) (returnErr error) {
 		}
 	}()
 
-	canonical, err := verifyProgramDescriptorPair(
-		context.Background(),
-		programVerifierCodeFD,
-		programVerifierDependencyFD,
-	)
+	canonical, err := verifyVerifierJob(context.Background(), job)
 	if err == nil {
-		return writeProgramVerifierVerified(result, canonical)
+		return writeVerifierVerified(result, job, canonical)
 	}
-	kind, diagnostic := classifyProgramVerifierError(err)
-	if kind == programVerifierFailed {
-		return writeProgramVerifierFailed(result, diagnostic)
+	kind, diagnostic := classifyVerifierError(job, err)
+	if kind == verifierFailed {
+		return writeVerifierFailed(result, diagnostic)
 	}
-	return writeProgramVerifierInvalid(result, diagnostic)
+	return writeVerifierInvalid(result, diagnostic)
+}
+
+func verifyVerifierJob(ctx context.Context, job verifierJob) ([]byte, error) {
+	switch job {
+	case programVerifierJob:
+		return verifyProgramDescriptorPair(
+			ctx,
+			verifierArtifactBaseFD,
+			verifierArtifactBaseFD+1,
+		)
+	case runtimeVerifierJob:
+		return verifyRuntimeDescriptor(ctx, verifierArtifactBaseFD)
+	default:
+		return nil, &artifactInfrastructureError{
+			cause: fmt.Errorf("artifact verifier job = %q", job),
+		}
+	}
 }
 
 func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) ([]byte, error) {
-	code, err := programArtifactFromDescriptor(
+	code, err := artifactFromDescriptor(
 		ctx,
 		codeFD,
 		codeArtifact,
@@ -142,7 +155,7 @@ func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) 
 	if err != nil {
 		return nil, fmt.Errorf("code Artifact: %w", err)
 	}
-	dependencies, err := programArtifactFromDescriptor(
+	dependencies, err := artifactFromDescriptor(
 		ctx,
 		dependencyFD,
 		dependencyArtifact,
@@ -168,7 +181,30 @@ func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) 
 	return canonical, nil
 }
 
-func programArtifactFromDescriptor(
+func verifyRuntimeDescriptor(ctx context.Context, fd int) ([]byte, error) {
+	artifact, err := artifactFromDescriptor(
+		ctx,
+		fd,
+		runtimeArtifact,
+		RuntimeArtifactMediaType,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("runtime Artifact: %w", err)
+	}
+	index, err := verifyRuntimeArtifact(ctx, artifact)
+	if err != nil {
+		return nil, err
+	}
+	canonical, err := CanonicalRuntimeIndex(index)
+	if err != nil {
+		return nil, &artifactInfrastructureError{
+			cause: fmt.Errorf("canonicalize verified Runtime index: %w", err),
+		}
+	}
+	return canonical, nil
+}
+
+func artifactFromDescriptor(
 	ctx context.Context,
 	fd int,
 	role artifactRole,
@@ -202,8 +238,8 @@ func programArtifactFromDescriptor(
 		}
 	}
 
-	source := programVerifierFDReader{fd: fd}
-	digest, err := digestProgramVerifierDescriptor(ctx, source, stat.Size)
+	source := verifierFDReader{fd: fd}
+	digest, err := digestVerifierDescriptor(ctx, source, stat.Size)
 	if err != nil {
 		return programArtifact{}, err
 	}
@@ -219,7 +255,7 @@ func programArtifactFromDescriptor(
 	}, nil
 }
 
-func digestProgramVerifierDescriptor(
+func digestVerifierDescriptor(
 	ctx context.Context,
 	source io.ReaderAt,
 	size int64,
@@ -252,29 +288,29 @@ func digestProgramVerifierDescriptor(
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func classifyProgramVerifierError(err error) (programVerifierRecordKind, string) {
+func classifyVerifierError(job verifierJob, err error) (verifierRecordKind, string) {
 	var infrastructure *artifactInfrastructureError
 	if errors.As(err, &infrastructure) || errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {
-		return programVerifierFailed, "program verifier infrastructure failure"
+		return verifierFailed, job.failedDiagnostic()
 	}
-	return programVerifierInvalid, "program is invalid"
+	return verifierInvalid, job.invalidDiagnostic()
 }
 
-func resolveProgramVerifierIdentity() (uint32, uint32, error) {
-	passwd, err := readProgramVerifierIdentityFile("/etc/passwd")
+func resolveVerifierIdentity() (uint32, uint32, error) {
+	passwd, err := readVerifierIdentityFile("/etc/passwd")
 	if err != nil {
 		return 0, 0, err
 	}
-	group, err := readProgramVerifierIdentityFile("/etc/group")
+	group, err := readVerifierIdentityFile("/etc/group")
 	if err != nil {
 		return 0, 0, err
 	}
-	uid, primaryGID, err := parseProgramVerifierPasswd(passwd)
+	uid, primaryGID, err := parseVerifierPasswd(passwd)
 	if err != nil {
 		return 0, 0, err
 	}
-	gid, err := parseProgramVerifierGroup(group)
+	gid, err := parseVerifierGroup(group)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -284,38 +320,38 @@ func resolveProgramVerifierIdentity() (uint32, uint32, error) {
 	return uid, gid, nil
 }
 
-func readProgramVerifierIdentityFile(path string) ([]byte, error) {
+func readVerifierIdentityFile(path string) ([]byte, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open verifier identity file: %w", err)
 	}
 	defer file.Close()
-	raw, err := io.ReadAll(io.LimitReader(file, programVerifierIdentityMax+1))
+	raw, err := io.ReadAll(io.LimitReader(file, verifierIdentityMax+1))
 	if err != nil {
 		return nil, fmt.Errorf("read verifier identity file: %w", err)
 	}
-	if len(raw) > programVerifierIdentityMax {
+	if len(raw) > verifierIdentityMax {
 		return nil, errors.New("verifier identity file exceeds its bound")
 	}
 	return raw, nil
 }
 
-func parseProgramVerifierPasswd(raw []byte) (uint32, uint32, error) {
+func parseVerifierPasswd(raw []byte) (uint32, uint32, error) {
 	var uid, gid uint32
 	found := false
 	for _, line := range bytes.Split(raw, []byte{'\n'}) {
 		fields := bytes.Split(line, []byte{':'})
-		if len(fields) == 0 || string(fields[0]) != programVerifierIdentity {
+		if len(fields) == 0 || string(fields[0]) != verifierIdentity {
 			continue
 		}
 		if found || len(fields) != 7 {
 			return 0, 0, errors.New("helmr-verifier passwd entry is not unique and complete")
 		}
-		parsedUID, err := parseProgramVerifierIdentityValue(fields[2])
+		parsedUID, err := parseVerifierIdentityValue(fields[2])
 		if err != nil {
 			return 0, 0, fmt.Errorf("parse helmr-verifier UID: %w", err)
 		}
-		parsedGID, err := parseProgramVerifierIdentityValue(fields[3])
+		parsedGID, err := parseVerifierIdentityValue(fields[3])
 		if err != nil {
 			return 0, 0, fmt.Errorf("parse helmr-verifier primary GID: %w", err)
 		}
@@ -327,18 +363,18 @@ func parseProgramVerifierPasswd(raw []byte) (uint32, uint32, error) {
 	return uid, gid, nil
 }
 
-func parseProgramVerifierGroup(raw []byte) (uint32, error) {
+func parseVerifierGroup(raw []byte) (uint32, error) {
 	var gid uint32
 	found := false
 	for _, line := range bytes.Split(raw, []byte{'\n'}) {
 		fields := bytes.Split(line, []byte{':'})
-		if len(fields) == 0 || string(fields[0]) != programVerifierIdentity {
+		if len(fields) == 0 || string(fields[0]) != verifierIdentity {
 			continue
 		}
 		if found || len(fields) != 4 {
 			return 0, errors.New("helmr-verifier group entry is not unique and complete")
 		}
-		parsed, err := parseProgramVerifierIdentityValue(fields[2])
+		parsed, err := parseVerifierIdentityValue(fields[2])
 		if err != nil {
 			return 0, fmt.Errorf("parse helmr-verifier group GID: %w", err)
 		}
@@ -350,7 +386,7 @@ func parseProgramVerifierGroup(raw []byte) (uint32, error) {
 	return gid, nil
 }
 
-func parseProgramVerifierIdentityValue(raw []byte) (uint32, error) {
+func parseVerifierIdentityValue(raw []byte) (uint32, error) {
 	value, err := strconv.ParseUint(string(raw), 10, 32)
 	if err != nil || value == 0 {
 		if err == nil {
@@ -361,14 +397,20 @@ func parseProgramVerifierIdentityValue(raw []byte) (uint32, error) {
 	return uint32(value), nil
 }
 
-func validateProgramVerifierDescriptors() error {
-	if err := validateProgramVerifierArtifactDescriptor(programVerifierCodeFD); err != nil {
-		return fmt.Errorf("code Artifact descriptor: %w", err)
+func validateVerifierDescriptors(job verifierJob, forbiddenOwner *uint32) error {
+	count := job.artifactCount()
+	if count == 0 {
+		return fmt.Errorf("artifact verifier job = %q", job)
 	}
-	if err := validateProgramVerifierArtifactDescriptor(programVerifierDependencyFD); err != nil {
-		return fmt.Errorf("dependency Artifact descriptor: %w", err)
+	for index := 0; index < count; index++ {
+		if err := validateVerifierArtifactDescriptor(
+			verifierArtifactBaseFD+index,
+			forbiddenOwner,
+		); err != nil {
+			return fmt.Errorf("%s Artifact descriptor %d: %w", job, index, err)
+		}
 	}
-	flags, err := unix.FcntlInt(uintptr(programVerifierResultFD), unix.F_GETFL, 0)
+	flags, err := unix.FcntlInt(uintptr(verifierResultFD), unix.F_GETFL, 0)
 	if err != nil {
 		return fmt.Errorf("inspect verifier result descriptor: %w", err)
 	}
@@ -376,7 +418,7 @@ func validateProgramVerifierDescriptors() error {
 		return errors.New("verifier result descriptor is not write-only")
 	}
 	var stat unix.Stat_t
-	if err := unix.Fstat(programVerifierResultFD, &stat); err != nil {
+	if err := unix.Fstat(verifierResultFD, &stat); err != nil {
 		return fmt.Errorf("stat verifier result descriptor: %w", err)
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFIFO {
@@ -385,7 +427,7 @@ func validateProgramVerifierDescriptors() error {
 	return nil
 }
 
-func validateProgramVerifierArtifactDescriptor(fd int) error {
+func validateVerifierArtifactDescriptor(fd int, forbiddenOwner *uint32) error {
 	flags, err := unix.FcntlInt(uintptr(fd), unix.F_GETFL, 0)
 	if err != nil {
 		return err
@@ -400,12 +442,18 @@ func validateProgramVerifierArtifactDescriptor(fd int) error {
 	if stat.Mode&unix.S_IFMT != unix.S_IFREG {
 		return errors.New("descriptor is not a regular file")
 	}
+	if stat.Mode&0o222 != 0 {
+		return errors.New("snapshot inode retains write permission")
+	}
+	if forbiddenOwner != nil && stat.Uid == *forbiddenOwner {
+		return errors.New("snapshot inode is owned by the verifier identity")
+	}
 	return nil
 }
 
-func isolateProgramVerifierRoot() error {
+func isolateVerifierRoot() error {
 	var stat unix.Stat_t
-	if err := unix.Lstat(programVerifierRoot, &stat); err != nil {
+	if err := unix.Lstat(verifierRoot, &stat); err != nil {
 		return fmt.Errorf("stat verifier root mount point: %w", err)
 	}
 	if stat.Mode&unix.S_IFMT != unix.S_IFDIR {
@@ -416,27 +464,27 @@ func isolateProgramVerifierRoot() error {
 	}
 	if err := unix.Mount(
 		"tmpfs",
-		programVerifierRoot,
+		verifierRoot,
 		"tmpfs",
 		unix.MS_NOSUID|unix.MS_NODEV|unix.MS_NOEXEC,
 		"mode=0755,size=1048576,nr_inodes=16",
 	); err != nil {
 		return fmt.Errorf("mount verifier root: %w", err)
 	}
-	putOld := programVerifierRoot + programVerifierOldRoot
+	putOld := verifierRoot + verifierOldRoot
 	if err := unix.Mkdir(putOld, 0o700); err != nil {
 		return fmt.Errorf("create verifier old root: %w", err)
 	}
-	if err := unix.PivotRoot(programVerifierRoot, putOld); err != nil {
+	if err := unix.PivotRoot(verifierRoot, putOld); err != nil {
 		return fmt.Errorf("pivot verifier root: %w", err)
 	}
 	if err := unix.Chdir("/"); err != nil {
 		return fmt.Errorf("chdir verifier root: %w", err)
 	}
-	if err := unix.Unmount(programVerifierOldRoot, unix.MNT_DETACH); err != nil {
+	if err := unix.Unmount(verifierOldRoot, unix.MNT_DETACH); err != nil {
 		return fmt.Errorf("unmount verifier old root: %w", err)
 	}
-	if err := unix.Rmdir(programVerifierOldRoot); err != nil {
+	if err := unix.Rmdir(verifierOldRoot); err != nil {
 		return fmt.Errorf("remove verifier old root: %w", err)
 	}
 	if err := unix.Mount(
@@ -451,18 +499,18 @@ func isolateProgramVerifierRoot() error {
 	return nil
 }
 
-func applyProgramVerifierIdentity(uid, gid uint32) error {
+func applyVerifierIdentity(uid, gid uint32) error {
 	if uid == 0 || gid == 0 {
-		return errors.New("program verifier identity must be unprivileged")
+		return errors.New("artifact verifier identity must be unprivileged")
 	}
-	if err := programVerifierAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
+	if err := verifierAllThreadsPrctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		return fmt.Errorf("set verifier no_new_privs: %w", err)
 	}
-	secureBits := programVerifierSecureNoRoot |
-		programVerifierSecureNoRootL |
-		programVerifierSecureNoFixup |
-		programVerifierSecureNoFixupL
-	if err := programVerifierAllThreadsPrctl(
+	secureBits := verifierSecureNoRoot |
+		verifierSecureNoRootL |
+		verifierSecureNoFixup |
+		verifierSecureNoFixupL
+	if err := verifierAllThreadsPrctl(
 		unix.PR_SET_SECUREBITS,
 		uintptr(secureBits),
 		0,
@@ -471,7 +519,7 @@ func applyProgramVerifierIdentity(uid, gid uint32) error {
 	); err != nil {
 		return fmt.Errorf("lock verifier securebits: %w", err)
 	}
-	if err := programVerifierAllThreadsPrctl(
+	if err := verifierAllThreadsPrctl(
 		unix.PR_CAP_AMBIENT,
 		unix.PR_CAP_AMBIENT_CLEAR_ALL,
 		0,
@@ -480,7 +528,7 @@ func applyProgramVerifierIdentity(uid, gid uint32) error {
 	); err != nil {
 		return fmt.Errorf("clear verifier ambient capabilities: %w", err)
 	}
-	lastCapability, err := dropProgramVerifierBoundingCapabilities()
+	lastCapability, err := dropVerifierBoundingCapabilities()
 	if err != nil {
 		return err
 	}
@@ -495,13 +543,13 @@ func applyProgramVerifierIdentity(uid, gid uint32) error {
 	}
 	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
 	data := [2]unix.CapUserData{}
-	if err := programVerifierAllThreadsCapset(&header, &data[0]); err != nil {
+	if err := verifierAllThreadsCapset(&header, &data[0]); err != nil {
 		return fmt.Errorf("clear verifier capabilities: %w", err)
 	}
-	return validateProgramVerifierIdentity(uid, gid, lastCapability)
+	return validateVerifierIdentity(uid, gid, lastCapability)
 }
 
-func programVerifierAllThreadsPrctl(
+func verifierAllThreadsPrctl(
 	option int,
 	argument2 uintptr,
 	argument3 uintptr,
@@ -523,10 +571,10 @@ func programVerifierAllThreadsPrctl(
 	return nil
 }
 
-func dropProgramVerifierBoundingCapabilities() (uintptr, error) {
+func dropVerifierBoundingCapabilities() (uintptr, error) {
 	const capabilitySearchLimit = 1024
 	for capability := uintptr(0); capability < capabilitySearchLimit; capability++ {
-		err := programVerifierAllThreadsPrctl(
+		err := verifierAllThreadsPrctl(
 			unix.PR_CAPBSET_DROP,
 			capability,
 			0,
@@ -549,7 +597,7 @@ func dropProgramVerifierBoundingCapabilities() (uintptr, error) {
 	)
 }
 
-func programVerifierAllThreadsCapset(
+func verifierAllThreadsCapset(
 	header *unix.CapUserHeader,
 	data *unix.CapUserData,
 ) error {
@@ -567,16 +615,16 @@ func programVerifierAllThreadsCapset(
 	return nil
 }
 
-func validateProgramVerifierIdentity(uid, gid uint32, lastCapability uintptr) error {
+func validateVerifierIdentity(uid, gid uint32, lastCapability uintptr) error {
 	ruid, euid, suid := unix.Getresuid()
 	rgid, egid, sgid := unix.Getresgid()
 	if ruid != int(uid) || euid != int(uid) || suid != int(uid) ||
 		rgid != int(gid) || egid != int(gid) || sgid != int(gid) {
-		return errors.New("program verifier identity did not become permanent")
+		return errors.New("artifact verifier identity did not become permanent")
 	}
 	noNewPrivileges, err := unix.PrctlRetInt(unix.PR_GET_NO_NEW_PRIVS, 0, 0, 0, 0)
 	if err != nil || noNewPrivileges != 1 {
-		return errors.New("program verifier no_new_privs is not active")
+		return errors.New("artifact verifier no_new_privs is not active")
 	}
 	header := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
 	data := [2]unix.CapUserData{}
@@ -585,23 +633,24 @@ func validateProgramVerifierIdentity(uid, gid uint32, lastCapability uintptr) er
 	}
 	for _, word := range data {
 		if word.Effective != 0 || word.Permitted != 0 || word.Inheritable != 0 {
-			return errors.New("program verifier retained process capabilities")
+			return errors.New("artifact verifier retained process capabilities")
 		}
 	}
 	for capability := uintptr(0); capability <= lastCapability; capability++ {
 		present, err := unix.PrctlRetInt(unix.PR_CAPBSET_READ, capability, 0, 0, 0)
 		if err != nil || present != 0 {
-			return fmt.Errorf("program verifier retained bounding capability %d", capability)
+			return fmt.Errorf("artifact verifier retained bounding capability %d", capability)
 		}
 	}
 	return nil
 }
 
-func closeProgramVerifierAmbientDescriptors() error {
+func closeVerifierAmbientDescriptors(job verifierJob) error {
 	if err := unix.CloseRange(0, 2, 0); err != nil {
 		return fmt.Errorf("close verifier standard descriptors: %w", err)
 	}
-	if err := unix.CloseRange(programVerifierResultFD+1, ^uint(0), 0); err != nil {
+	firstAmbient := verifierArtifactBaseFD + job.artifactCount()
+	if err := unix.CloseRange(uint(firstAmbient), ^uint(0), 0); err != nil {
 		return fmt.Errorf("close verifier ambient descriptors: %w", err)
 	}
 	for fd := 0; fd <= 2; fd++ {
@@ -609,7 +658,7 @@ func closeProgramVerifierAmbientDescriptors() error {
 			return fmt.Errorf("verifier standard descriptor %d remains open", fd)
 		}
 	}
-	for fd := programVerifierCodeFD; fd <= programVerifierResultFD; fd++ {
+	for fd := verifierResultFD; fd < firstAmbient; fd++ {
 		if _, err := unix.FcntlInt(uintptr(fd), unix.F_GETFD, 0); err != nil {
 			return fmt.Errorf("verifier contract descriptor %d is closed: %w", fd, err)
 		}

@@ -11,6 +11,21 @@ let
   inherit (pkgs) lib;
   pkgsUnstable = import nixpkgs-unstable { inherit system; };
   pkgsBun = import nixpkgs-bun { inherit system; };
+  squashfsTools = pkgs.callPackage ./squashfs-tools.nix { };
+  managedNode =
+    let
+      source = pkgs.nodejs-slim_24.override { enableNpm = false; };
+    in
+    assert lib.assertMsg (
+      source.version == "24.16.0"
+    ) "managed runtime requires pinned nodejs_24 24.16.0";
+    source.overrideAttrs (old: {
+      configureFlags = builtins.filter (flag: flag != "--openssl-use-def-ca-store") old.configureFlags;
+      postInstall = (old.postInstall or "") + ''
+        test "$("$out/bin/node" -p \
+          'String(Boolean(process.config.variables.node_use_openssl_ca))')" = false
+      '';
+    });
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
   };
@@ -66,10 +81,26 @@ in
   inherit helmr;
   inherit staticcheck;
   inherit unparam;
+  inherit squashfsTools;
   default = helmr;
   bun = pkgsBun.bun;
   apko = if pkgsUnstable ? apko then pkgsUnstable.apko else pkgs.apko;
 }
+//
+  lib.optionalAttrs
+    (
+      pkgs.stdenv.isLinux
+      && builtins.elem system [
+        "x86_64-linux"
+        "aarch64-linux"
+      ]
+    )
+    {
+      managedRuntime = pkgs.callPackage ./runtime.nix {
+        nodejs_24 = managedNode;
+        inherit squashfsTools;
+      };
+    }
 // lib.optionalAttrs (firecrackerRelease != null) {
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
     pname = "firecracker-runtime";

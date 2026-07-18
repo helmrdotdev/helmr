@@ -2,24 +2,36 @@ package deployment
 
 import "testing"
 
-func TestProgramVerifierChildModeRequiresExactPrivateArgument(t *testing.T) {
-	if programVerifierExecutable != "/proc/self/exe" {
-		t.Fatalf("child executable = %q", programVerifierExecutable)
+func TestVerifierChildModeRequiresExactPrivateArguments(t *testing.T) {
+	if verifierExecutable != "/proc/self/exe" {
+		t.Fatalf("child executable = %q", verifierExecutable)
 	}
 	for _, arguments := range [][]string{
 		nil,
 		{"helmr-worker"},
 		{"helmr-worker", "status"},
-		{"helmr-worker", programVerifierChildArgument, "extra"},
 	} {
-		handled, err := RunProgramVerifierChild(arguments)
+		handled, err := RunVerifierChild(arguments)
 		if handled || err != nil {
-			t.Fatalf("RunProgramVerifierChild(%q) = (%t, %v), want (false, nil)", arguments, handled, err)
+			t.Fatalf("RunVerifierChild(%q) = (%t, %v), want (false, nil)", arguments, handled, err)
 		}
 	}
-
-	arguments := programVerifierChildArguments()
-	if len(arguments) != 1 || arguments[0] != programVerifierChildArgument {
-		t.Fatalf("child arguments = %q", arguments)
+	for _, arguments := range [][]string{
+		{"helmr-worker", verifierChildArgument},
+		{"helmr-worker", verifierChildArgument, "unknown"},
+		{"helmr-worker", verifierChildArgument, "program", "extra"},
+	} {
+		handled, err := RunVerifierChild(arguments)
+		if !handled || err == nil {
+			t.Fatalf("RunVerifierChild(%q) = (%t, %v), want handled error", arguments, handled, err)
+		}
+	}
+	for _, job := range []verifierJob{programVerifierJob, runtimeVerifierJob} {
+		arguments := verifierChildArguments(job)
+		if len(arguments) != 2 ||
+			arguments[0] != verifierChildArgument ||
+			arguments[1] != string(job) {
+			t.Fatalf("%s child arguments = %q", job, arguments)
+		}
 	}
 }

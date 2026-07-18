@@ -7,9 +7,9 @@ import (
 	"errors"
 )
 
-func runProgramVerifierProcess(
+func runVerifierProcess(
 	context.Context,
-	programVerifierProcessConfig,
-) (programVerifierProcessResult, error) {
-	return programVerifierProcessResult{}, errors.New("program verifier requires Linux cgroup v2")
+	verifierProcessConfig,
+) (verifierProcessResult, error) {
+	return verifierProcessResult{}, errors.New("artifact verifier requires Linux cgroup v2")
 }
