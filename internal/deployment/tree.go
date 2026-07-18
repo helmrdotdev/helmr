@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"strconv"
 )
 
@@ -30,7 +31,7 @@ func writeProgramArchive(
 	ctx context.Context,
 	destination io.Writer,
 	role artifactRole,
-	entries []treeEntry,
+	entries iter.Seq2[treeEntry, error],
 ) error {
 	if ctx == nil {
 		return errors.New("program archive context is nil")
@@ -38,19 +39,34 @@ func writeProgramArchive(
 	if destination == nil {
 		return errors.New("program archive destination is nil")
 	}
+	if entries == nil {
+		return errors.New("program archive entries are nil")
+	}
 	maxBytes, err := programArchiveLimit(role)
 	if err != nil {
 		return err
 	}
-	if err := validateProgramArchive(entries, role, maxBytes); err != nil {
-		return err
-	}
 
-	for position := range entries {
+	state := programArchiveState{
+		directories:  map[string]struct{}{".": {}},
+		nameBytes:    1,
+		archiveBytes: 2 * tarBlockBytes,
+	}
+	if role == dependencyArtifact {
+		state.logicalLimit = maxDependencyLogicalBytes
+	} else {
+		state.logicalLimit = maxCodeLogicalBytes
+	}
+	for entry, sourceErr := range entries {
+		if sourceErr != nil {
+			return fmt.Errorf("read program archive entry %d: %w", state.count, sourceErr)
+		}
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("write program archive: %w", err)
 		}
-		entry := &entries[position]
+		if err := state.accept(entry, role, maxBytes); err != nil {
+			return err
+		}
 		digest := sha256.Sum256([]byte(entry.Path))
 		suffix := hex.EncodeToString(digest[:])
 		pax := paxRecord("path", entry.Path)
@@ -95,6 +111,9 @@ func writeProgramArchive(
 			}
 		}
 	}
+	if state.count == 0 {
+		return fmt.Errorf("program archive entry count is outside [1,%d]", maxArtifactEntries-1)
+	}
 	var end [2 * tarBlockBytes]byte
 	if _, err := destination.Write(end[:]); err != nil {
 		return fmt.Errorf("write program archive end marker: %w", err)
@@ -102,70 +121,75 @@ func writeProgramArchive(
 	return nil
 }
 
-func validateProgramArchive(entries []treeEntry, role artifactRole, maxBytes int64) error {
-	if len(entries) == 0 || len(entries) >= maxArtifactEntries {
-		return fmt.Errorf("program archive entry count is outside [1,%d]", maxArtifactEntries-1)
+type programArchiveState struct {
+	directories  map[string]struct{}
+	previous     string
+	count        int
+	nameBytes    int64
+	logicalBytes int64
+	archiveBytes int64
+	logicalLimit int64
+}
+
+func (state *programArchiveState) accept(
+	entry treeEntry,
+	role artifactRole,
+	maxBytes int64,
+) error {
+	if state.count >= maxArtifactEntries-1 {
+		return fmt.Errorf("program archive entry count exceeds %d", maxArtifactEntries-1)
 	}
-	directories := map[string]struct{}{".": {}}
-	var previous string
-	var nameBytes int64 = 1
-	var logicalBytes int64
-	var archiveBytes int64 = 2 * tarBlockBytes
-	logicalLimit := maxCodeLogicalBytes
-	if role == dependencyArtifact {
-		logicalLimit = maxDependencyLogicalBytes
+	if entry.Path == "." {
+		return fmt.Errorf("program archive entry %d explicitly represents the root", state.count)
+	}
+	if state.count > 0 && bytes.Compare([]byte(state.previous), []byte(entry.Path)) >= 0 {
+		return fmt.Errorf("program archive entries are duplicate or out of order at %q", entry.Path)
+	}
+	if err := validateTreeEntry(entry, role); err != nil {
+		return fmt.Errorf("program archive entry %d %q: %w", state.count, entry.Path, err)
+	}
+	parent := pathDir(entry.Path)
+	if _, exists := state.directories[parent]; !exists {
+		return fmt.Errorf("program archive entry %q has no preceding directory parent %q", entry.Path, parent)
 	}
 
-	for position := range entries {
-		entry := entries[position]
-		if entry.Path == "." {
-			return fmt.Errorf("program archive entry %d explicitly represents the root", position)
-		}
-		if position > 0 && bytes.Compare([]byte(previous), []byte(entry.Path)) >= 0 {
-			return fmt.Errorf("program archive entries are duplicate or out of order at %q", entry.Path)
-		}
-		previous = entry.Path
-		if err := validateTreeEntry(entry, role); err != nil {
-			return fmt.Errorf("program archive entry %d %q: %w", position, entry.Path, err)
-		}
-		parent := pathDir(entry.Path)
-		if _, exists := directories[parent]; !exists {
-			return fmt.Errorf("program archive entry %q has no preceding directory parent %q", entry.Path, parent)
-		}
-		if entry.Kind == artifactEntryDirectory {
-			directories[entry.Path] = struct{}{}
-		}
-
-		entryNameBytes := int64(len(entry.Path) + len(entry.LinkTarget))
-		if nameBytes > maxArtifactNameBytes-entryNameBytes {
+	entryNameBytes := int64(len(entry.Path) + len(entry.LinkTarget))
+	if state.nameBytes > maxArtifactNameBytes-entryNameBytes {
+		return fmt.Errorf(
+			"program archive raw path and symbolic-link-target bytes exceed %d",
+			maxArtifactNameBytes,
+		)
+	}
+	if entry.Kind == artifactEntryRegular {
+		if state.logicalBytes > state.logicalLimit-entry.SizeBytes {
 			return fmt.Errorf(
-				"program archive raw path and symbolic-link-target bytes exceed %d",
-				maxArtifactNameBytes,
+				"program archive logical regular-file bytes exceed %d",
+				state.logicalLimit,
 			)
 		}
-		nameBytes += entryNameBytes
-		if entry.Kind == artifactEntryRegular {
-			if logicalBytes > logicalLimit-entry.SizeBytes {
-				return fmt.Errorf(
-					"program archive logical regular-file bytes exceed %d",
-					logicalLimit,
-				)
-			}
-			logicalBytes += entry.SizeBytes
-		}
+	}
 
-		paxBytes := int64(len(paxRecord("path", entry.Path)))
-		if entry.Kind == artifactEntrySymlink {
-			paxBytes += int64(len(paxRecord("linkpath", entry.LinkTarget)))
-		}
-		increment := 2*tarBlockBytes + roundTarBytes(paxBytes)
-		if entry.Kind == artifactEntryRegular {
-			increment += roundTarBytes(entry.SizeBytes)
-		}
-		if archiveBytes > maxBytes-increment {
-			return fmt.Errorf("program archive exceeds %d bytes", maxBytes)
-		}
-		archiveBytes += increment
+	paxBytes := int64(len(paxRecord("path", entry.Path)))
+	if entry.Kind == artifactEntrySymlink {
+		paxBytes += int64(len(paxRecord("linkpath", entry.LinkTarget)))
+	}
+	increment := 2*tarBlockBytes + roundTarBytes(paxBytes)
+	if entry.Kind == artifactEntryRegular {
+		increment += roundTarBytes(entry.SizeBytes)
+	}
+	if state.archiveBytes > maxBytes-increment {
+		return fmt.Errorf("program archive exceeds %d bytes", maxBytes)
+	}
+
+	state.previous = entry.Path
+	state.count++
+	state.nameBytes += entryNameBytes
+	state.archiveBytes += increment
+	if entry.Kind == artifactEntryRegular {
+		state.logicalBytes += entry.SizeBytes
+	}
+	if entry.Kind == artifactEntryDirectory {
+		state.directories[entry.Path] = struct{}{}
 	}
 	return nil
 }
