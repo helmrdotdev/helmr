@@ -13,7 +13,7 @@ import (
 
 func TestSnapshotRuntimeObjectBindsStoreMetadataAndBytes(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("runtime snapshots require Linux O_TMPFILE")
+		t.Skip("runtime snapshots require Linux")
 	}
 	body := []byte("managed runtime")
 	descriptor := testRuntimeDescriptor()

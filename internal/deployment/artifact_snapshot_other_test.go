@@ -17,7 +17,7 @@ func TestArtifactSnapshotFailsClosedOutsideLinux(t *testing.T) {
 		artifactSnapshotDescriptor{},
 		bytes.NewReader(nil),
 	)
-	if err == nil || !strings.Contains(err.Error(), "Linux O_TMPFILE") {
+	if err == nil || !strings.Contains(err.Error(), "require Linux") {
 		t.Fatalf("snapshot error = %v", err)
 	}
 }

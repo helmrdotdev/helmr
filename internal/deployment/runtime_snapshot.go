@@ -52,7 +52,7 @@ func (snapshot *RuntimeArtifactSnapshot) verifier() (*os.File, RuntimeDescriptor
 	if snapshot == nil || snapshot.content == nil {
 		return nil, RuntimeDescriptor{}, errors.New("runtime Artifact snapshot is closed")
 	}
-	// snapshotArtifact binds the descriptor to an immutable inode; the isolated
+	// snapshotArtifact binds the descriptor to a sealed inode; the isolated
 	// child re-reads all bytes while the parent retains this outer identity.
 	file, err := snapshot.content.verifierFile()
 	if err != nil {

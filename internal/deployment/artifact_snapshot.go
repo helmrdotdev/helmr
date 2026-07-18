@@ -15,6 +15,7 @@ type artifactSnapshotDescriptor ProgramDescriptor
 
 type artifactSnapshot struct {
 	descriptor artifactSnapshotDescriptor
+	platform   artifactSnapshotPlatform
 	verifier   *os.File
 	upload     *os.File
 }
@@ -33,6 +34,9 @@ func (snapshot *artifactSnapshot) uploadReader(ctx context.Context) (io.Reader, 
 	if snapshot == nil || snapshot.upload == nil {
 		return nil, errors.New("artifact snapshot is closed")
 	}
+	if err := validateArtifactSnapshotPlatform(snapshot); err != nil {
+		return nil, err
+	}
 	return &artifactSnapshotReader{
 		ctx:         ctx,
 		source:      io.NewSectionReader(snapshot.upload, 0, snapshot.descriptor.SizeBytes+1),
@@ -40,6 +44,9 @@ func (snapshot *artifactSnapshot) uploadReader(ctx context.Context) (io.Reader, 
 		digest:      sha256.New(),
 		sizeBytes:   0,
 		terminalErr: nil,
+		finalCheck: func() error {
+			return validateArtifactSnapshotPlatform(snapshot)
+		},
 	}, nil
 }
 
@@ -56,6 +63,7 @@ func (snapshot *artifactSnapshot) Close() error {
 		closeErr = errors.Join(closeErr, snapshot.upload.Close())
 		snapshot.upload = nil
 	}
+	closeErr = errors.Join(closeErr, closeArtifactSnapshotPlatform(snapshot))
 	return closeErr
 }
 
@@ -67,6 +75,7 @@ type artifactSnapshotReader struct {
 	sizeBytes   int64
 	complete    bool
 	terminalErr error
+	finalCheck  func() error
 }
 
 func (reader *artifactSnapshotReader) Read(buffer []byte) (int, error) {
@@ -109,6 +118,10 @@ func (reader *artifactSnapshotReader) Read(buffer []byte) (int, error) {
 				digest,
 				reader.expected.Digest,
 			)
+			return count, reader.terminalErr
+		}
+		if err := reader.finalCheck(); err != nil {
+			reader.terminalErr = err
 			return count, reader.terminalErr
 		}
 		reader.complete = true
