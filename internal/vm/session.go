@@ -61,11 +61,27 @@ type CheckpointableSession interface {
 }
 
 type ConnectRequest struct {
-	ID        string
-	OwnerKind OwnerKind
-	Resources compute.ResourceVector
-	Network   compute.NetworkPolicy
-	Topology  RuntimeTopology
+	ID          string
+	OwnerKind   OwnerKind
+	Resources   compute.ResourceVector
+	Network     compute.NetworkPolicy
+	Topology    RuntimeTopology
+	BuildDrives []ReadOnlyDrive
+}
+
+type ReadOnlyDrive struct {
+	ID     string
+	Source ReadOnlyDriveSource
+}
+
+const (
+	ProgramRuntimeDrive      = "program_runtime"
+	ProgramCodeDrive         = "program_code"
+	ProgramDependenciesDrive = "program_dependencies"
+)
+
+type ReadOnlyDriveSource interface {
+	LinkInto(directory string, name string, uid int, gid int) error
 }
 
 type RuntimeTopology struct {

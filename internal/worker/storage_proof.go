@@ -114,6 +114,32 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 	if cacheIdentity == scratchIdentity {
 		return BuildStorageProof{}, errors.New("build cache and scratch share a device source")
 	}
+	jailerMount, err := mountContaining(config.JailerRoot, mounts)
+	if err != nil {
+		return BuildStorageProof{}, fmt.Errorf("prove Firecracker jailer root mount: %w", err)
+	}
+	if jailerMount.ID != scratch.MountID {
+		return BuildStorageProof{}, errors.New("firecracker jailer root is not on the build scratch mount")
+	}
+	workMount, err := mountContaining(config.WorkDir, mounts)
+	if err != nil {
+		return BuildStorageProof{}, fmt.Errorf("prove worker work directory mount: %w", err)
+	}
+	if workMount.ID != scratch.MountID {
+		return BuildStorageProof{}, errors.New("worker work directory is not on the build scratch mount")
+	}
+	if nested, ok := nestedMount(config.WorkDir, mounts); ok {
+		return BuildStorageProof{}, fmt.Errorf(
+			"worker work directory contains nested mount %q",
+			nested.MountPoint,
+		)
+	}
+	if nested, ok := nestedMount(config.JailerRoot, mounts); ok {
+		return BuildStorageProof{}, fmt.Errorf(
+			"firecracker jailer root contains nested mount %q",
+			nested.MountPoint,
+		)
+	}
 
 	return BuildStorageProof{
 		Cache:             cache,
@@ -124,6 +150,40 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 		SubstrateCacheDir: substrateCache,
 		ArtifactCacheDir:  artifactCache,
 	}, nil
+}
+
+func nestedMount(root string, mounts []storageMountInfo) (storageMountInfo, bool) {
+	for _, mount := range mounts {
+		if strictDescendant(root, mount.MountPoint) {
+			return mount, true
+		}
+	}
+	return storageMountInfo{}, false
+}
+
+func mountContaining(path string, mounts []storageMountInfo) (storageMountInfo, error) {
+	var match storageMountInfo
+	found := false
+	for _, mount := range mounts {
+		if path != mount.MountPoint && !strictDescendant(mount.MountPoint, path) {
+			continue
+		}
+		if !found || len(mount.MountPoint) > len(match.MountPoint) {
+			match = mount
+			found = true
+			continue
+		}
+		if len(mount.MountPoint) == len(match.MountPoint) {
+			return storageMountInfo{}, fmt.Errorf(
+				"%q matches duplicate mountpoints",
+				path,
+			)
+		}
+	}
+	if !found {
+		return storageMountInfo{}, fmt.Errorf("%q has no containing mount", path)
+	}
+	return match, nil
 }
 
 func validateStoragePath(name, path string, probe storageProbe) error {

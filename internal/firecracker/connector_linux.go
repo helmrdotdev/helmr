@@ -94,6 +94,9 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
 	cfg := c.cfg
 	if request.OwnerKind == vm.OwnerBuild {
+		if err := validateReadOnlyDrives(request.BuildDrives); err != nil {
+			return nil, err
+		}
 		if request.Resources != compute.BuildGuestResources() {
 			return nil, errors.New("build guest resources do not match the platform profile")
 		}
@@ -102,12 +105,29 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		if err != nil {
 			return nil, err
 		}
-	} else if request.Resources != (compute.ResourceVector{}) {
-		return nil, errors.New("runtime attachment cannot change resources")
+	} else {
+		if len(request.BuildDrives) != 0 {
+			return nil, errors.New("runtime attachment cannot add build drives")
+		}
+		if request.Resources != (compute.ResourceVector{}) {
+			return nil, errors.New("runtime attachment cannot change resources")
+		}
 	}
 	child := *c
 	child.cfg = cfg
-	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
+	return child.start(
+		ctx,
+		request.ID,
+		request.OwnerKind,
+		"",
+		"",
+		"",
+		nil,
+		request.Network,
+		request.Topology,
+		request.BuildDrives,
+		nil,
+	)
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -120,7 +140,7 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 	}
 	child := *c
 	child.cfg = cfg
-	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
+	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil, nil)
 }
 
 func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
@@ -435,7 +455,7 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	cleanup := []string{rawScratch, rawMemory}
 	child := *c
 	child.cfg = restoreCfg
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, recordPhase)
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, nil, recordPhase)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -603,7 +623,7 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, recordPhase func(vm.RuntimePhase)) (_ vm.CheckpointableSession, retErr error) {
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ vm.CheckpointableSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	if ownerKind == vm.OwnerBuild && instanceID == "" {
 		instanceID = uuid.NewString()
@@ -654,6 +674,15 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 
 	vsockHostPath := filepath.Join(jailRoot, vsockSocketName)
 	guestCID := allocateGuestCID()
+	var chrootStrategy firecracker.HandlersAdapter = firecracker.NewNaiveChrootStrategy(
+		c.cfg.KernelPath,
+	)
+	if len(readOnlyDrives) != 0 {
+		chrootStrategy = sealedDriveChrootStrategy{
+			kernelImagePath: c.cfg.KernelPath,
+			drives:          readOnlyDrives,
+		}
+	}
 	machineCfg := firecracker.Config{
 		VMID:            instanceID,
 		SocketPath:      apiSocketName,
@@ -673,13 +702,13 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 			ExecFile:       c.cfg.FirecrackerPath,
 			JailerBinary:   c.cfg.JailerPath,
 			ChrootBaseDir:  c.cfg.JailerChrootBaseDir,
-			ChrootStrategy: firecracker.NewNaiveChrootStrategy(c.cfg.KernelPath),
+			ChrootStrategy: chrootStrategy,
 			CgroupVersion:  c.cfg.CgroupVersion,
 			Stdin:          nil,
 			Stdout:         os.Stderr,
 			Stderr:         os.Stderr,
 		},
-		Drives: runtimeDrives(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath),
+		Drives: runtimeDrives(c.cfg.RootfsPath, scratchDiskPath, substrateDiskPath, readOnlyDrives),
 		VsockDevices: []firecracker.VsockDevice{{
 			ID:   "guest-vsock",
 			Path: vsockSocketName,
@@ -810,7 +839,12 @@ func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath strin
 	return nil
 }
 
-func runtimeDrives(rootfsPath string, scratchDiskPath string, substrateDiskPath string) []models.Drive {
+func runtimeDrives(
+	rootfsPath string,
+	scratchDiskPath string,
+	substrateDiskPath string,
+	readOnlyDrives []vm.ReadOnlyDrive,
+) []models.Drive {
 	drives := []models.Drive{{
 		DriveID:      firecracker.String("rootfs"),
 		PathOnHost:   firecracker.String(rootfsPath),
@@ -830,7 +864,54 @@ func runtimeDrives(rootfsPath string, scratchDiskPath string, substrateDiskPath 
 			IsReadOnly:   firecracker.Bool(true),
 		})
 	}
+	byID := make(map[string]vm.ReadOnlyDrive, len(readOnlyDrives))
+	for _, drive := range readOnlyDrives {
+		byID[drive.ID] = drive
+	}
+	for _, id := range []string{
+		vm.ProgramRuntimeDrive,
+		vm.ProgramCodeDrive,
+		vm.ProgramDependenciesDrive,
+	} {
+		if _, exists := byID[id]; exists {
+			drives = append(drives, models.Drive{
+				DriveID:      firecracker.String(id),
+				PathOnHost:   firecracker.String(readOnlyDriveName(id)),
+				IsRootDevice: firecracker.Bool(false),
+				IsReadOnly:   firecracker.Bool(true),
+			})
+		}
+	}
 	return drives
+}
+
+func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
+	ids := make(map[string]struct{}, len(drives))
+	for index, drive := range drives {
+		switch drive.ID {
+		case vm.ProgramRuntimeDrive,
+			vm.ProgramCodeDrive,
+			vm.ProgramDependenciesDrive:
+		default:
+			return fmt.Errorf(
+				"read-only drive %d ID %q is invalid",
+				index,
+				drive.ID,
+			)
+		}
+		if drive.Source == nil {
+			return fmt.Errorf("read-only drive %q source is nil", drive.ID)
+		}
+		if _, exists := ids[drive.ID]; exists {
+			return fmt.Errorf("read-only drive ID %q is duplicated", drive.ID)
+		}
+		ids[drive.ID] = struct{}{}
+	}
+	return nil
+}
+
+func readOnlyDriveName(id string) string {
+	return id + ".squashfs"
 }
 
 func (c *Connector) prepareScratchDiskForJailer(scratchDiskPath string) error {
@@ -1891,6 +1972,82 @@ func withSnapshotRestore(memoryPath string, statePath string) firecracker.Opt {
 	return func(machine *firecracker.Machine) {
 		firecracker.WithSnapshot(memoryPath, statePath)(machine)
 		machine.Handlers.FcInit = machine.Handlers.FcInit.Remove(firecracker.AddVsocksHandlerName)
+	}
+}
+
+type sealedDriveChrootStrategy struct {
+	kernelImagePath string
+	drives          []vm.ReadOnlyDrive
+}
+
+func (strategy sealedDriveChrootStrategy) AdaptHandlers(
+	handlers *firecracker.Handlers,
+) error {
+	if !handlers.FcInit.Has(firecracker.CreateLogFilesHandlerName) {
+		return firecracker.ErrRequiredHandlerMissing
+	}
+	base := firecracker.LinkFilesHandler(filepath.Base(strategy.kernelImagePath))
+	base.Fn = strategy.linkFiles(base.Fn)
+	handlers.FcInit = handlers.FcInit.AppendAfter(
+		firecracker.CreateLogFilesHandlerName,
+		base,
+	)
+	return nil
+}
+
+func (strategy sealedDriveChrootStrategy) linkFiles(
+	linkOrdinary func(context.Context, *firecracker.Machine) error,
+) func(context.Context, *firecracker.Machine) error {
+	return func(ctx context.Context, machine *firecracker.Machine) error {
+		sources := make(map[string]vm.ReadOnlyDriveSource, len(strategy.drives))
+		for _, drive := range strategy.drives {
+			sources[drive.ID] = drive.Source
+		}
+		ordinary := make([]models.Drive, 0, len(machine.Cfg.Drives))
+		sealed := make(map[string]models.Drive, len(strategy.drives))
+		for _, drive := range machine.Cfg.Drives {
+			id := firecracker.StringValue(drive.DriveID)
+			if _, exists := sources[id]; exists {
+				sealed[id] = drive
+				continue
+			}
+			ordinary = append(ordinary, drive)
+		}
+		machine.Cfg.Drives = ordinary
+		if err := linkOrdinary(ctx, machine); err != nil {
+			return err
+		}
+
+		root := jailRootPath(Config{
+			FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
+			JailerChrootBaseDir: machine.Cfg.JailerCfg.ChrootBaseDir,
+		}, machine.Cfg.JailerCfg.ID)
+		for _, id := range []string{
+			vm.ProgramRuntimeDrive,
+			vm.ProgramCodeDrive,
+			vm.ProgramDependenciesDrive,
+		} {
+			source, exists := sources[id]
+			if !exists {
+				continue
+			}
+			drive, exists := sealed[id]
+			if !exists {
+				return fmt.Errorf("sealed drive %q is absent from machine config", id)
+			}
+			name := readOnlyDriveName(id)
+			if err := source.LinkInto(
+				root,
+				name,
+				*machine.Cfg.JailerCfg.UID,
+				*machine.Cfg.JailerCfg.GID,
+			); err != nil {
+				return fmt.Errorf("link sealed drive %q into jail: %w", id, err)
+			}
+			drive.PathOnHost = firecracker.String(name)
+			machine.Cfg.Drives = append(machine.Cfg.Drives, drive)
+		}
+		return nil
 	}
 }
 
