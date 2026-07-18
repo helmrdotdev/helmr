@@ -26,6 +26,12 @@ type Store interface {
 	Delete(ctx context.Context, digest string) error
 }
 
+type ImmutableStore interface {
+	Publish(ctx context.Context, mediaType string, body io.Reader) (Object, error)
+	Stat(ctx context.Context, digest string) (Object, error)
+	Get(ctx context.Context, digest string) (io.ReadCloser, error)
+}
+
 // Stage receives object bytes, hashes and counts them, then publishes on Commit.
 type Stage interface {
 	io.WriteCloser

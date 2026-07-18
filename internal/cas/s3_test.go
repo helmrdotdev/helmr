@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/smithy-go"
 )
 
 func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
@@ -46,6 +47,149 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 	}
 	if string(client.putObjectBody) != "hello" {
 		t.Fatalf("body = %q", client.putObjectBody)
+	}
+}
+
+func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
+	client := &fakeS3Client{}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 10,
+	}}
+
+	object, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.Digest != "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824" {
+		t.Fatalf("digest = %s", object.Digest)
+	}
+	if got := aws.ToString(client.putObject.IfNoneMatch); got != "*" {
+		t.Fatalf("If-None-Match = %q", got)
+	}
+	if client.putObject.Tagging != nil {
+		t.Fatalf("tagging = %q", aws.ToString(client.putObject.Tagging))
+	}
+}
+
+func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
+	const digest = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	client := &fakeS3Client{
+		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
+		headObject: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(5),
+			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+		},
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 10,
+	}}
+
+	object, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object.Digest != digest || object.SizeBytes != 5 {
+		t.Fatalf("object = %+v", object)
+	}
+}
+
+func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
+	client := &fakeS3Client{
+		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
+		headObject: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(5),
+			ContentType:   aws.String("application/octet-stream"),
+		},
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 10,
+	}}
+
+	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err == nil {
+		t.Fatal("expected metadata mismatch")
+	}
+}
+
+func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
+	client := &fakeS3Client{
+		putObjectErrors: []error{
+			&smithy.GenericAPIError{Code: "ConditionalRequestConflict", Message: "racing writer"},
+			&smithy.GenericAPIError{Code: "PreconditionFailed", Message: "writer won"},
+		},
+		headObject: &s3.HeadObjectOutput{
+			ContentLength: aws.Int64(5),
+			ContentType:   aws.String("application/vnd.helmr.runtime.v0+squashfs"),
+		},
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 10,
+	}}
+
+	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+		t.Fatal(err)
+	}
+	if client.putObjectCalls != 2 {
+		t.Fatalf("PutObject calls = %d", client.putObjectCalls)
+	}
+}
+
+func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
+	client := &fakeS3Client{uploadID: "upload-1"}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 1,
+		multipartPartSizeBytes:  4,
+	}}
+
+	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+		t.Fatal(err)
+	}
+	if client.createMultipart.Tagging != nil {
+		t.Fatalf("tagging = %q", aws.ToString(client.createMultipart.Tagging))
+	}
+	if got := aws.ToString(client.completedMultipart.IfNoneMatch); got != "*" {
+		t.Fatalf("If-None-Match = %q", got)
+	}
+}
+
+func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.T) {
+	client := &fakeS3Client{
+		uploadID: "upload-1",
+		completeMultipartErrors: []error{
+			&smithy.GenericAPIError{Code: "ConditionalRequestConflict", Message: "racing writer"},
+			nil,
+		},
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 1,
+		multipartPartSizeBytes:  4,
+	}}
+
+	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+		t.Fatal(err)
+	}
+	if client.createMultipartCalls != 2 || client.completeMultipartCalls != 2 {
+		t.Fatalf("multipart calls: create=%d complete=%d", client.createMultipartCalls, client.completeMultipartCalls)
+	}
+	if !client.abortedMultipart {
+		t.Fatal("first multipart upload was not aborted")
 	}
 }
 
@@ -324,31 +468,46 @@ func (r *trackingReadCloser) Close() error {
 }
 
 type fakeS3Client struct {
-	mu                 sync.Mutex
-	putObject          *s3.PutObjectInput
-	putObjectBody      []byte
-	createMultipart    *s3.CreateMultipartUploadInput
-	createdMultipart   bool
-	completedMultipart *s3.CompleteMultipartUploadInput
-	abortedMultipart   bool
-	uploadedParts      []uploadedPart
-	uploadID           string
-	uploadPartErr      error
-	getObjectBody      []byte
+	mu                      sync.Mutex
+	putObject               *s3.PutObjectInput
+	putObjectBody           []byte
+	createMultipart         *s3.CreateMultipartUploadInput
+	createdMultipart        bool
+	completedMultipart      *s3.CompleteMultipartUploadInput
+	abortedMultipart        bool
+	uploadedParts           []uploadedPart
+	uploadID                string
+	uploadPartErr           error
+	getObjectBody           []byte
+	putObjectErr            error
+	putObjectErrors         []error
+	putObjectCalls          int
+	headObject              *s3.HeadObjectOutput
+	headObjectErr           error
+	createMultipartCalls    int
+	completeMultipartCalls  int
+	completeMultipartErrors []error
 }
 
 func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+	f.putObjectCalls++
 	f.putObject = input
 	body, err := io.ReadAll(input.Body)
 	if err != nil {
 		return nil, err
 	}
 	f.putObjectBody = body
-	return &s3.PutObjectOutput{}, nil
+	if f.putObjectCalls <= len(f.putObjectErrors) {
+		return &s3.PutObjectOutput{}, f.putObjectErrors[f.putObjectCalls-1]
+	}
+	return &s3.PutObjectOutput{}, f.putObjectErr
 }
 
 func (f *fakeS3Client) HeadObject(context.Context, *s3.HeadObjectInput, ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
-	return nil, fmt.Errorf("not implemented")
+	if f.headObject == nil && f.headObjectErr == nil {
+		return nil, fmt.Errorf("not implemented")
+	}
+	return f.headObject, f.headObjectErr
 }
 
 func (f *fakeS3Client) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
@@ -360,6 +519,7 @@ func (f *fakeS3Client) DeleteObject(context.Context, *s3.DeleteObjectInput, ...f
 }
 
 func (f *fakeS3Client) CreateMultipartUpload(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+	f.createMultipartCalls++
 	f.createMultipart = input
 	f.createdMultipart = true
 	uploadID := f.uploadID
@@ -387,7 +547,11 @@ func (f *fakeS3Client) UploadPart(_ context.Context, input *s3.UploadPartInput, 
 }
 
 func (f *fakeS3Client) CompleteMultipartUpload(_ context.Context, input *s3.CompleteMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CompleteMultipartUploadOutput, error) {
+	f.completeMultipartCalls++
 	f.completedMultipart = input
+	if f.completeMultipartCalls <= len(f.completeMultipartErrors) {
+		return &s3.CompleteMultipartUploadOutput{}, f.completeMultipartErrors[f.completeMultipartCalls-1]
+	}
 	return &s3.CompleteMultipartUploadOutput{}, nil
 }
 

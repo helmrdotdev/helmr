@@ -16,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -24,6 +25,7 @@ const (
 	s3MultipartPartSizeBytes     = 64 << 20
 	s3MultipartMaxParts          = 10000
 	s3MultipartUploadConcurrency = 4
+	immutablePublishAttempts     = 3
 )
 
 type s3Client interface {
@@ -45,6 +47,10 @@ type S3 struct {
 
 	multipartThresholdBytes int64
 	multipartPartSizeBytes  int64
+}
+
+type ImmutableS3 struct {
+	store *S3
 }
 
 type S3Option func(*S3)
@@ -84,6 +90,17 @@ func NewS3(ctx context.Context, rawURI string, opts ...S3Option) (*S3, error) {
 	return store, nil
 }
 
+func NewImmutableS3(ctx context.Context, rawURI string, opts ...S3Option) (*ImmutableS3, error) {
+	store, err := NewS3(ctx, rawURI, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if store.prefix == "" {
+		return nil, errors.New("immutable S3 store requires a distinct prefix")
+	}
+	return &ImmutableS3{store: store}, nil
+}
+
 func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
 	stage, err := c.Stage(ctx, mediaType)
 	if err != nil {
@@ -93,6 +110,10 @@ func (c *S3) Put(ctx context.Context, mediaType string, body io.Reader) (Object,
 }
 
 func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
+	return c.stage(ctx, mediaType, false)
+}
+
+func (c *S3) stage(ctx context.Context, mediaType string, createOnly bool) (Stage, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -105,17 +126,17 @@ func (c *S3) Stage(ctx context.Context, mediaType string) (Stage, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &s3Stage{store: c, stageFile: newStageFile(mediaType, tmp)}, nil
+	return &s3Stage{store: c, stageFile: newStageFile(mediaType, tmp), createOnly: createOnly}, nil
 }
 
-func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64) error {
+func (c *S3) uploadFile(ctx context.Context, key, mediaType, path string, size int64, createOnly bool) error {
 	if size < c.multipartThreshold() {
-		return c.putObject(ctx, key, mediaType, path, size)
+		return c.putObject(ctx, key, mediaType, path, size, createOnly)
 	}
-	return c.putMultipartObject(ctx, key, mediaType, path, size)
+	return c.putMultipartObject(ctx, key, mediaType, path, size, createOnly)
 }
 
-func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size int64) error {
+func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size int64, createOnly bool) error {
 	file, err := os.Open(path)
 	if err != nil {
 		return err
@@ -128,20 +149,31 @@ func (c *S3) putObject(ctx context.Context, key, mediaType, path string, size in
 		ContentLength: aws.Int64(size),
 		ContentType:   aws.String(mediaType),
 	}
-	if tagging := objectTagging(mediaType); tagging != "" {
+	if tagging := objectTagging(mediaType); !createOnly && tagging != "" {
 		input.Tagging = aws.String(tagging)
 	}
+	if createOnly {
+		input.IfNoneMatch = aws.String("*")
+	}
 	_, err = c.client.PutObject(ctx, input)
+	if createOnly {
+		switch conditionalWriteError(err) {
+		case conditionalWriteExists:
+			return errImmutableObjectExists
+		case conditionalWriteConflict:
+			return errImmutableObjectConflict
+		}
+	}
 	return err
 }
 
-func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string, size int64) error {
+func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string, size int64, createOnly bool) error {
 	createInput := &s3.CreateMultipartUploadInput{
 		Bucket:      aws.String(c.bucket),
 		Key:         aws.String(key),
 		ContentType: aws.String(mediaType),
 	}
-	if tagging := objectTagging(mediaType); tagging != "" {
+	if tagging := objectTagging(mediaType); !createOnly && tagging != "" {
 		createInput.Tagging = aws.String(tagging)
 	}
 	created, err := c.client.CreateMultipartUpload(ctx, createInput)
@@ -196,19 +228,54 @@ func (c *S3) putMultipartObject(ctx context.Context, key, mediaType, path string
 	if err := group.Wait(); err != nil {
 		return err
 	}
-	_, err = c.client.CompleteMultipartUpload(ctx, &s3.CompleteMultipartUploadInput{
+	completeInput := &s3.CompleteMultipartUploadInput{
 		Bucket:   aws.String(c.bucket),
 		Key:      aws.String(key),
 		UploadId: aws.String(uploadID),
 		MultipartUpload: &types.CompletedMultipartUpload{
 			Parts: parts,
 		},
-	})
+	}
+	if createOnly {
+		completeInput.IfNoneMatch = aws.String("*")
+	}
+	_, err = c.client.CompleteMultipartUpload(ctx, completeInput)
+	if createOnly {
+		switch conditionalWriteError(err) {
+		case conditionalWriteExists:
+			return errImmutableObjectExists
+		case conditionalWriteConflict:
+			return errImmutableObjectConflict
+		}
+	}
 	if err != nil {
 		return err
 	}
 	completed = true
 	return nil
+}
+
+type conditionalWriteResult int
+
+const (
+	conditionalWriteOther conditionalWriteResult = iota
+	conditionalWriteExists
+	conditionalWriteConflict
+)
+
+func conditionalWriteError(err error) conditionalWriteResult {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return conditionalWriteOther
+	}
+	switch apiErr.ErrorCode() {
+	case "PreconditionFailed":
+		return conditionalWriteExists
+	case "ConditionalRequestConflict":
+		return conditionalWriteConflict
+	default:
+		return conditionalWriteOther
+	}
 }
 
 func (c *S3) multipartThreshold() int64 {
@@ -287,6 +354,7 @@ func objectTagging(mediaType string) string {
 type s3Stage struct {
 	store *S3
 	*stageFile
+	createOnly bool
 }
 
 func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
@@ -304,7 +372,27 @@ func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
 	if err != nil {
 		return Object{}, err
 	}
-	if err := s.store.uploadFile(ctx, key, s.mediaType, s.path, s.size); err != nil {
+	var uploadErr error
+	for attempt := 0; attempt < immutablePublishAttempts; attempt++ {
+		uploadErr = s.store.uploadFile(ctx, key, s.mediaType, s.path, s.size, s.createOnly)
+		if !s.createOnly || !errors.Is(uploadErr, errImmutableObjectConflict) {
+			break
+		}
+	}
+	if uploadErr != nil {
+		err := uploadErr
+		if s.createOnly && errors.Is(err, errImmutableObjectExists) {
+			existing, statErr := s.store.Stat(ctx, digest)
+			if statErr != nil {
+				return Object{}, fmt.Errorf("stat existing immutable object: %w", statErr)
+			}
+			if existing.SizeBytes != s.size || existing.MediaType != s.mediaType {
+				return Object{}, fmt.Errorf("immutable object %s metadata differs from published content", digest)
+			}
+			_ = os.Remove(s.path)
+			cleanup = false
+			return existing, nil
+		}
 		return Object{}, err
 	}
 	_ = os.Remove(s.path)
@@ -313,6 +401,29 @@ func (s *s3Stage) Commit(ctx context.Context) (Object, error) {
 }
 
 var _ Store = (*S3)(nil)
+
+var (
+	errImmutableObjectExists   = errors.New("immutable object already exists")
+	errImmutableObjectConflict = errors.New("immutable object publication conflict")
+)
+
+func (c *ImmutableS3) Publish(ctx context.Context, mediaType string, body io.Reader) (Object, error) {
+	stage, err := c.store.stage(ctx, mediaType, true)
+	if err != nil {
+		return Object{}, err
+	}
+	return putStage(ctx, stage, body)
+}
+
+func (c *ImmutableS3) Stat(ctx context.Context, digest string) (Object, error) {
+	return c.store.Stat(ctx, digest)
+}
+
+func (c *ImmutableS3) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
+	return c.store.Get(ctx, digest)
+}
+
+var _ ImmutableStore = (*ImmutableS3)(nil)
 
 type verifyingReadCloser struct {
 	body     io.ReadCloser
