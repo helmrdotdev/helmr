@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type Control interface {
@@ -24,6 +25,11 @@ type Control interface {
 }
 
 type Work func(context.Context) error
+
+type FatalWorkError interface {
+	error
+	FatalWorker() bool
+}
 
 type Consumer interface {
 	Claim(context.Context) (Work, bool, error)
@@ -196,8 +202,15 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		return fmt.Errorf("record worker startup recovery: %w", err)
 	}
 	capabilities := s.cfg.Capabilities
-	if capabilities.SupportsRun && len(evidence.Quarantined) != 0 {
-		capabilities.ExecutionSlotsAvailable -= int32(len(evidence.Quarantined))
+	runtimeQuarantines, err := activationQuarantines(evidence)
+	if err != nil {
+		return err
+	}
+	if runtimeQuarantines != 0 && !capabilities.SupportsRun {
+		return errors.New("runtime residue cannot be quarantined on a worker without runtime capacity")
+	}
+	if capabilities.SupportsRun && runtimeQuarantines != 0 {
+		capabilities.ExecutionSlotsAvailable -= int32(runtimeQuarantines)
 		if capabilities.MaxRuntimeStarts > capabilities.ExecutionSlotsAvailable {
 			capabilities.MaxRuntimeStarts = capabilities.ExecutionSlotsAvailable
 		}
@@ -236,13 +249,14 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	var consumerWG sync.WaitGroup
 	var backgroundWG sync.WaitGroup
 	var observeWG sync.WaitGroup
+	fatalWork := make(chan error, 1)
 	for _, spec := range s.cfg.Consumers {
 		claimCtx := activeClaimCtx
 		if spec.DrainEligible {
 			claimCtx = drainClaimCtx
 		}
 		for range spec.Concurrency {
-			consumerWG.Go(func() { s.consume(claimCtx, workCtx, spec, evidence) })
+			consumerWG.Go(func() { s.consume(claimCtx, workCtx, spec, evidence, fatalWork) })
 		}
 	}
 	for _, background := range s.cfg.Background {
@@ -272,6 +286,22 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	signalDrain(status)
 	if status.Status == api.WorkerStatusActive {
 		select {
+		case fatalErr := <-fatalWork:
+			cancelActiveClaims()
+			cancelDrainClaims()
+			cancelActiveBackground()
+			cancelDrainBackground()
+			cancelObserve()
+			cancelWork()
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), s.cfg.DrainTimeout)
+			defer cancel()
+			if !waitGroup(shutdownCtx, &consumerWG) ||
+				!waitGroup(shutdownCtx, &backgroundWG) ||
+				!waitGroup(shutdownCtx, &observeWG) {
+				return fmt.Errorf("worker fatal execution did not stop all local work: %w", fatalErr)
+			}
+			s.state.Store(StateStopped)
+			return fmt.Errorf("worker fatal execution: %w", fatalErr)
 		case <-ctx.Done():
 			// A returned draining response stores StateDraining before publishing
 			// drainRequested. If shutdown and that response become ready together,
@@ -282,7 +312,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		case <-drainRequested:
 		}
 	}
-	return s.completeServerDirectedDrain(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG, evidence)
+	return s.completeServerDirectedDrain(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG, evidence, fatalWork)
 }
 
 func (s *Supervisor) shutdownProcess(
@@ -320,6 +350,7 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork context.CancelFunc,
 	consumerWG, backgroundWG, observeWG *sync.WaitGroup,
 	startupEvidence RecoveryEvidence,
+	fatalWork <-chan error,
 ) error {
 	s.state.Store(StateDraining)
 	cancelActiveClaims()
@@ -337,7 +368,21 @@ func (s *Supervisor) completeServerDirectedDrain(
 		s.state.Store(StateStopped)
 		return err
 	}
+	checkFatalWork := func() error {
+		select {
+		case err := <-fatalWork:
+			return fmt.Errorf("worker fatal execution during drain: %w", err)
+		default:
+			return nil
+		}
+	}
+	if err := checkFatalWork(); err != nil {
+		return fail(err)
+	}
 	if err := s.waitForDrainReady(drainCtx, startupEvidence); err != nil {
+		return fail(err)
+	}
+	if err := checkFatalWork(); err != nil {
 		return fail(err)
 	}
 	// Freeze cleanup admission before final proof. Claim consumers finish before
@@ -346,6 +391,9 @@ func (s *Supervisor) completeServerDirectedDrain(
 	cancelDrainClaims()
 	if !waitGroup(drainCtx, consumerWG) {
 		return fail(fmt.Errorf("worker durable drain timed out waiting for cleanup claims: %w", drainCtx.Err()))
+	}
+	if err := checkFatalWork(); err != nil {
+		return fail(err)
 	}
 	cancelDrainBackground()
 	if !waitGroup(drainCtx, backgroundWG) {
@@ -394,6 +442,24 @@ func (s *Supervisor) completeServerDirectedDrain(
 	return nil
 }
 
+func activationQuarantines(evidence RecoveryEvidence) (int, error) {
+	if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
+		return 0, errors.New("worker activation is blocked by residue without exact VM ownership")
+	}
+	runtimeCount := 0
+	for _, owner := range evidence.QuarantinedOwners {
+		switch owner.Kind {
+		case vm.OwnerRuntime:
+			runtimeCount++
+		case vm.OwnerBuild:
+			return 0, errors.New("worker activation is blocked by quarantined build residue")
+		default:
+			return 0, errors.New("worker activation is blocked by unknown VM owner kind")
+		}
+	}
+	return runtimeCount, nil
+}
+
 func (s *Supervisor) waitForDrainReady(ctx context.Context, evidence RecoveryEvidence) error {
 	ticker := time.NewTicker(s.cfg.PollEvery)
 	defer ticker.Stop()
@@ -427,7 +493,13 @@ func waitGroup(ctx context.Context, wg *sync.WaitGroup) bool {
 	}
 }
 
-func (s *Supervisor) consume(claimCtx context.Context, workCtx context.Context, spec ConsumerSpec, evidence RecoveryEvidence) {
+func (s *Supervisor) consume(
+	claimCtx context.Context,
+	workCtx context.Context,
+	spec ConsumerSpec,
+	evidence RecoveryEvidence,
+	fatalWork chan<- error,
+) {
 	timer := time.NewTimer(0)
 	defer timer.Stop()
 	for {
@@ -481,8 +553,23 @@ func (s *Supervisor) consume(claimCtx context.Context, workCtx context.Context, 
 			timer.Reset(s.cfg.PollEvery)
 			continue
 		}
+		if work == nil {
+			releaseAdmission()
+			timer.Reset(s.cfg.PollEvery)
+			continue
+		}
 		finish := s.registry.begin(spec.Name)
 		if err := work(workCtx); err != nil && !errors.Is(err, context.Canceled) {
+			var fatal FatalWorkError
+			if errors.As(err, &fatal) && fatal.FatalWorker() {
+				select {
+				case fatalWork <- err:
+				default:
+				}
+				finish()
+				releaseAdmission()
+				return
+			}
 			s.cfg.Log.Error("worker execution failed", "consumer", spec.Name, "error", err)
 		}
 		finish()

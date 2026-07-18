@@ -33,7 +33,7 @@ type GuestCompiler struct {
 	RunID     string
 }
 
-func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bundlev0.Bundle, error) {
+func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (_ *bundlev0.Bundle, returnErr error) {
 	if p.Connector == nil {
 		return nil, errors.New("task compiler guest connector is required")
 	}
@@ -53,11 +53,19 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{OwnerKind: vm.RuntimeOwnerBuild, Network: compute.DefaultNetworkPolicy()})
+	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{
+		OwnerKind: vm.OwnerBuild,
+		Resources: compute.BuildGuestResources(),
+		Network:   compute.DefaultNetworkPolicy(),
+	})
 	if err != nil {
-		return nil, fmt.Errorf("connect task compiler guest: %w", err)
+		return nil, vm.NewGuestError(fmt.Errorf("connect task compiler guest: %w", err))
 	}
-	defer session.Close(context.Background())
+	defer func() {
+		if err := session.Close(context.Background()); err != nil {
+			returnErr = errors.Join(returnErr, vm.NewGuestError(fmt.Errorf("close task compiler guest: %w", err)))
+		}
+	}()
 	stream := session.Stream()
 
 	runID := strings.TrimSpace(p.RunID)
@@ -65,13 +73,21 @@ func (p GuestCompiler) Compile(ctx context.Context, request CompileRequest) (*bu
 		runID = "parse"
 	}
 	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeCompileTaskBundle, RunID: runID, TaskID: taskID}, sourceTar.Path); err != nil {
-		return nil, fmt.Errorf("write compiler source: %w", err)
+		return nil, vm.NewGuestError(fmt.Errorf("write compiler source: %w", err))
 	}
 	body, err := frameio.ReadMessageFrame(stream)
 	if err != nil {
-		return nil, fmt.Errorf("read parsed task bundle: %w", err)
+		return nil, vm.NewGuestError(fmt.Errorf("read parsed task bundle: %w", err))
 	}
-	return decodeTaskBundleResponse(body)
+	bundle, err := decodeTaskBundleResponse(body)
+	if err != nil {
+		var parseError ParseError
+		if errors.As(err, &parseError) {
+			return nil, err
+		}
+		return nil, vm.NewGuestError(fmt.Errorf("decode compiled task: %w", err))
+	}
+	return bundle, nil
 }
 
 type ParseError struct {

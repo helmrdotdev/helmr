@@ -888,15 +888,12 @@ CREATE TABLE deployments (
     program_architecture TEXT,
     status deployment_status NOT NULL DEFAULT 'queued',
     failure JSONB NOT NULL DEFAULT '{}'::jsonb,
-    build_attempt_number INTEGER NOT NULL DEFAULT 0 CHECK (build_attempt_number >= 0),
     current_build_lease_id UUID,
-    build_requested_cpu_millis BIGINT NOT NULL DEFAULT 1000 CHECK (build_requested_cpu_millis > 0),
-    build_requested_memory_bytes BIGINT NOT NULL DEFAULT 1073741824 CHECK (build_requested_memory_bytes > 0),
-    build_requested_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_workload_disk_bytes >= 0),
-    build_requested_scratch_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_scratch_bytes >= 0),
-    build_requested_build_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_build_cache_bytes >= 0),
-    build_requested_artifact_cache_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_artifact_cache_bytes >= 0),
-    build_requested_executors INTEGER NOT NULL DEFAULT 1 CHECK (build_requested_executors > 0),
+    build_requested_cpu_millis BIGINT NOT NULL DEFAULT 2000 CHECK (build_requested_cpu_millis = 2000),
+    build_requested_memory_bytes BIGINT NOT NULL DEFAULT 2147483648 CHECK (build_requested_memory_bytes = 2147483648),
+    build_requested_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (build_requested_workload_disk_bytes = 0),
+    build_requested_scratch_bytes BIGINT NOT NULL DEFAULT 13958643712 CHECK (build_requested_scratch_bytes = 13958643712),
+    build_requested_executors INTEGER NOT NULL DEFAULT 1 CHECK (build_requested_executors = 1),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     building_at TIMESTAMPTZ,
@@ -1009,19 +1006,16 @@ CREATE TABLE deployment_build_leases (
     environment_id UUID NOT NULL,
     deployment_id UUID NOT NULL,
     build_region_id TEXT NOT NULL,
-    build_attempt_number INTEGER NOT NULL CHECK (build_attempt_number > 0),
-    lease_sequence BIGINT NOT NULL CHECK (lease_sequence > 0),
+    lease_sequence BIGINT NOT NULL CHECK (lease_sequence BETWEEN 1 AND 3),
     worker_group_id TEXT NOT NULL,
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     worker_protocol_version TEXT NOT NULL DEFAULT 'helmr.worker.v0' CHECK (worker_protocol_version = 'helmr.worker.v0'),
-    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis > 0),
-    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes > 0),
-    requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes >= 0),
-    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes >= 0),
-    requested_build_cache_bytes BIGINT NOT NULL CHECK (requested_build_cache_bytes >= 0),
-    requested_artifact_cache_bytes BIGINT NOT NULL CHECK (requested_artifact_cache_bytes >= 0),
-    requested_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (requested_build_executors > 0),
+    requested_cpu_millis BIGINT NOT NULL CHECK (requested_cpu_millis = 2000),
+    requested_memory_bytes BIGINT NOT NULL CHECK (requested_memory_bytes = 2147483648),
+    requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes = 0),
+    requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes = 13958643712),
+    requested_build_executors INTEGER NOT NULL DEFAULT 1 CHECK (requested_build_executors = 1),
     build_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     trace_id TEXT,
     span_id TEXT,
@@ -1034,7 +1028,6 @@ CREATE TABLE deployment_build_leases (
     started_at TIMESTAMPTZ,
     renewed_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL,
-    committed_artifact_id UUID,
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
     terminal_error JSONB,
@@ -1042,8 +1035,8 @@ CREATE TABLE deployment_build_leases (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, deployment_id, id),
-    UNIQUE (deployment_id, build_attempt_number, lease_sequence),
-    UNIQUE (org_id, project_id, environment_id, deployment_id, id, build_attempt_number),
+    UNIQUE (deployment_id, lease_sequence),
+    UNIQUE (org_id, project_id, environment_id, deployment_id, id),
     FOREIGN KEY (org_id, project_id, environment_id, deployment_id, build_region_id)
         REFERENCES deployments(org_id, project_id, environment_id, id, build_region_id)
         ON DELETE RESTRICT,
@@ -1052,9 +1045,6 @@ CREATE TABLE deployment_build_leases (
         ON DELETE RESTRICT,
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, committed_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
     CHECK (jsonb_typeof(build_snapshot) = 'object'),
     CHECK (octet_length(build_snapshot::text) <= 16384),
@@ -1070,8 +1060,8 @@ CREATE TABLE deployment_build_leases (
         (state = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)
         OR (state = 'starting' AND claimed_at IS NOT NULL AND started_at IS NULL)
         OR (state IN ('running', 'succeeded', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
-        OR (state IN ('cancelled', 'lost'))
-        OR (state IN ('rejected', 'expired') AND started_at IS NULL)
+        OR (state IN ('cancelled', 'lost', 'expired'))
+        OR (state = 'rejected' AND started_at IS NULL)
     ),
     CHECK (
         (state IN ('assigned', 'starting', 'running') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
@@ -1088,8 +1078,13 @@ CREATE TABLE deployment_build_leases (
         btrim(terminal_request_fingerprint) <> '' AND octet_length(terminal_request_fingerprint) <= 128
     )),
     CHECK (
-        (state = 'succeeded' AND committed_artifact_id IS NOT NULL AND terminal_error IS NULL)
-        OR (state <> 'succeeded' AND committed_artifact_id IS NULL)
+        (state IN ('succeeded', 'failed', 'rejected') AND terminal_request_fingerprint IS NOT NULL)
+        OR
+        (state IN ('assigned', 'starting', 'running', 'cancelled', 'lost', 'expired')
+         AND terminal_request_fingerprint IS NULL)
+    ),
+    CHECK (
+        state <> 'succeeded' OR terminal_error IS NULL
     )
 );
 
@@ -1110,7 +1105,7 @@ CREATE INDEX deployment_build_leases_capacity_idx
     WHERE state IN ('assigned', 'starting', 'running');
 
 CREATE INDEX deployment_build_leases_history_idx
-    ON deployment_build_leases (deployment_id, build_attempt_number, lease_sequence DESC);
+    ON deployment_build_leases (deployment_id, lease_sequence DESC);
 
 ALTER TABLE deployments
     ADD CONSTRAINT deployments_current_build_lease_id_fkey
@@ -2472,9 +2467,11 @@ CREATE TABLE telemetry_outbox (
         OR (
             meter_event_id IS NOT NULL
             AND (
-                (run_id IS NOT NULL AND deployment_id IS NULL AND source_kind = 'run_lease')
+                (run_id IS NOT NULL AND deployment_id IS NULL
+                 AND source_kind = 'run_lease' AND attempt_number IS NOT NULL)
                 OR
-                (deployment_id IS NOT NULL AND run_id IS NULL AND source_kind = 'deployment_build_lease')
+                (deployment_id IS NOT NULL AND run_id IS NULL
+                 AND source_kind = 'deployment_build_lease' AND attempt_number IS NULL)
             )
             AND idempotency_key IS NOT NULL
             AND btrim(kind) <> ''
@@ -2810,7 +2807,7 @@ CREATE TABLE meter_events (
     run_lease_id UUID,
     deployment_id UUID,
     deployment_build_lease_id UUID,
-    attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    attempt_number INTEGER CHECK (attempt_number IS NULL OR attempt_number > 0),
     source_type TEXT GENERATED ALWAYS AS (
         CASE WHEN run_lease_id IS NOT NULL
              THEN 'run_lease'::text
@@ -2836,13 +2833,17 @@ CREATE TABLE meter_events (
     FOREIGN KEY (org_id, project_id, environment_id, run_id, run_lease_id, attempt_number)
         REFERENCES run_leases(org_id, project_id, environment_id, run_id, id, task_attempt_number)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, deployment_build_lease_id, attempt_number)
-        REFERENCES deployment_build_leases(org_id, project_id, environment_id, deployment_id, id, build_attempt_number)
+    FOREIGN KEY (org_id, project_id, environment_id, deployment_id, deployment_build_lease_id)
+        REFERENCES deployment_build_leases(org_id, project_id, environment_id, deployment_id, id)
         ON DELETE RESTRICT,
     CHECK (
-        (run_id IS NOT NULL AND run_lease_id IS NOT NULL AND deployment_id IS NULL AND deployment_build_lease_id IS NULL)
+        (run_id IS NOT NULL AND run_lease_id IS NOT NULL
+         AND deployment_id IS NULL AND deployment_build_lease_id IS NULL
+         AND attempt_number IS NOT NULL)
         OR
-        (run_id IS NULL AND run_lease_id IS NULL AND deployment_id IS NOT NULL AND deployment_build_lease_id IS NOT NULL)
+        (run_id IS NULL AND run_lease_id IS NULL
+         AND deployment_id IS NOT NULL AND deployment_build_lease_id IS NOT NULL
+         AND attempt_number IS NULL)
     ),
     CHECK (
         (measured_from IS NULL AND measured_to IS NULL)

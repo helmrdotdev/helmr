@@ -499,7 +499,7 @@ func meterEventRecord(row db.ClaimMeterEventIngestBatchRow) MeterEventRecord {
 		SourceID:       pgvalue.MustUUIDValue(row.SourceID),
 		RunID:          optionalUUID(row.RunID),
 		DeploymentID:   optionalUUID(row.DeploymentID),
-		AttemptNumber:  row.AttemptNumber,
+		AttemptNumber:  optionalInt32(row.AttemptNumber),
 		TraceID:        pgvalue.TextValue(row.TraceID),
 		SpanID:         pgvalue.TextValue(row.SpanID),
 		Meter:          row.Meter,

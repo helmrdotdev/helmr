@@ -16,13 +16,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type RecoveryEvidence struct {
-	ObservedAt       time.Time `json:"observed_at"`
-	Reclaimed        []string  `json:"reclaimed,omitempty"`
-	Quarantined      []string  `json:"quarantined,omitempty"`
-	QuarantineErrors []string  `json:"quarantine_errors,omitempty"`
+	ObservedAt        time.Time  `json:"observed_at"`
+	Reclaimed         []string   `json:"reclaimed,omitempty"`
+	ReclaimedOwners   []vm.Owner `json:"reclaimed_owners,omitempty"`
+	Quarantined       []string   `json:"quarantined,omitempty"`
+	QuarantinedOwners []vm.Owner `json:"quarantined_owners,omitempty"`
+	QuarantineErrors  []string   `json:"quarantine_errors,omitempty"`
 }
 
 func (e RecoveryEvidence) HealthDetails() json.RawMessage {
@@ -33,33 +36,40 @@ func (e RecoveryEvidence) HealthDetails() json.RawMessage {
 	return payload
 }
 
-type runtimeRecoveryOps struct {
-	candidates     func(context.Context) ([]string, error)
-	ownedProcesses func(context.Context) ([]ownedRuntimeProcess, error)
-	netnsNames     func(context.Context) ([]string, error)
-	matchingPIDs   func(string) ([]int, error)
-	stopPID        func(context.Context, int) error
-	netnsExists    func(context.Context, string) (bool, error)
-	deleteNetns    func(context.Context, string) error
-	removeAll      func(string) error
+type vmRecoveryOps struct {
+	ownerCandidates func(context.Context) ([]ownerCandidate, error)
+	ownedProcesses  func(context.Context) ([]ownedVMProcess, error)
+	netnsNames      func(context.Context) ([]string, error)
+	matchingPIDs    func(string) ([]int, error)
+	stopPID         func(context.Context, int) error
+	netnsExists     func(context.Context, string) (bool, error)
+	deleteNetns     func(context.Context, string) error
+	removeAll       func(string) error
+	removeState     func(string, vm.Owner) error
 }
 
-type ownedRuntimeProcess struct {
+type ownerCandidate struct {
+	Owner   vm.Owner
+	Label   string
+	Problem string
+}
+
+type ownedVMProcess struct {
 	PID     int
 	ID      string
 	Problem string
 }
 
-func RecoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir string, ipPath string) (RecoveryEvidence, error) {
+func RecoverLocalVMState(ctx context.Context, workDir string, jailerDir string, ipPath string) (RecoveryEvidence, error) {
 	if strings.TrimSpace(ipPath) == "" {
 		ipPath = "ip"
 	}
-	ops := runtimeRecoveryOps{
-		candidates:     func(context.Context) ([]string, error) { return runtimeCandidates(workDir, jailerDir) },
-		ownedProcesses: func(context.Context) ([]ownedRuntimeProcess, error) { return ownedRuntimeProcesses(jailerDir) },
-		netnsNames:     func(ctx context.Context) ([]string, error) { return runtimeNetNSNames(ctx, ipPath) },
+	ops := vmRecoveryOps{
+		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return ownedVMCandidates(workDir, jailerDir) },
+		ownedProcesses:  func(context.Context) ([]ownedVMProcess, error) { return ownedVMProcesses(jailerDir) },
+		netnsNames:      func(ctx context.Context) ([]string, error) { return vmNetNSNames(ctx, ipPath) },
 		matchingPIDs: func(id string) ([]int, error) {
-			processes, err := ownedRuntimeProcesses(jailerDir)
+			processes, err := ownedVMProcesses(jailerDir)
 			if err != nil {
 				return nil, err
 			}
@@ -71,7 +81,7 @@ func RecoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir str
 			}
 			return pids, nil
 		},
-		stopPID: stopRuntimePID,
+		stopPID: stopVMPID,
 		netnsExists: func(ctx context.Context, id string) (bool, error) {
 			output, err := exec.CommandContext(ctx, ipPath, "netns", "list").Output()
 			if err != nil {
@@ -88,30 +98,59 @@ func RecoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir str
 		deleteNetns: func(ctx context.Context, id string) error {
 			return exec.CommandContext(ctx, ipPath, "netns", "delete", id).Run()
 		},
-		removeAll: os.RemoveAll,
+		removeAll:   os.RemoveAll,
+		removeState: removeOwnedRecoveryState,
 	}
-	return recoverLocalRuntimeState(ctx, workDir, jailerDir, ops)
+	return recoverLocalVMState(ctx, workDir, jailerDir, ops)
 }
 
-func recoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir string, ops runtimeRecoveryOps) (RecoveryEvidence, error) {
+func recoverLocalVMState(ctx context.Context, workDir string, jailerDir string, ops vmRecoveryOps) (RecoveryEvidence, error) {
 	evidence := RecoveryEvidence{ObservedAt: time.Now().UTC()}
 	liveDir := filepath.Join(workDir, "vms", "guest")
 	var candidates []string
+	owners := make(map[string]vm.Owner)
 	var err error
-	if ops.candidates != nil {
-		candidates, err = ops.candidates(ctx)
-	} else {
-		entries, readErr := os.ReadDir(liveDir)
-		if readErr == nil {
-			for _, entry := range entries {
-				candidates = append(candidates, entry.Name())
+	if ops.ownerCandidates != nil {
+		owned, ownerErr := ops.ownerCandidates(ctx)
+		if ownerErr != nil {
+			err = ownerErr
+		} else {
+			rejected := make(map[string]struct{})
+			for _, candidate := range owned {
+				label := candidate.Label
+				if label == "" {
+					label = candidate.Owner.String()
+				}
+				if candidate.Problem != "" {
+					if candidate.Owner.ID != "" {
+						rejected[candidate.Owner.ID] = struct{}{}
+						delete(owners, candidate.Owner.ID)
+					}
+					evidence.Quarantined = append(evidence.Quarantined, label)
+					evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": "+candidate.Problem)
+					continue
+				}
+				if previous, ok := owners[candidate.Owner.ID]; ok && previous != candidate.Owner {
+					rejected[candidate.Owner.ID] = struct{}{}
+					delete(owners, candidate.Owner.ID)
+					evidence.Quarantined = append(evidence.Quarantined, label)
+					evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": conflicting ownership evidence")
+					continue
+				}
+				if _, ok := rejected[candidate.Owner.ID]; ok {
+					continue
+				}
+				owners[candidate.Owner.ID] = candidate.Owner
 			}
-		} else if !os.IsNotExist(readErr) {
-			err = readErr
+			for id := range owners {
+				candidates = append(candidates, id)
+			}
 		}
+	} else {
+		return evidence, errors.New("VM owner inventory is required")
 	}
 	if err != nil {
-		return evidence, fmt.Errorf("inventory local runtime ownership: %w", err)
+		return evidence, fmt.Errorf("inventory local VM ownership: %w", err)
 	}
 	seen := make(map[string]struct{}, len(candidates))
 	for _, id := range candidates {
@@ -120,18 +159,26 @@ func recoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir str
 	if ops.ownedProcesses != nil {
 		processes, processErr := ops.ownedProcesses(ctx)
 		if processErr != nil {
-			return evidence, fmt.Errorf("inventory owned runtime processes: %w", processErr)
+			return evidence, fmt.Errorf("inventory owned VM processes: %w", processErr)
 		}
 		for _, process := range processes {
-			if process.Problem != "" || !canonicalRuntimeID(process.ID) {
+			if process.Problem != "" || !canonicalVMID(process.ID) {
 				label := fmt.Sprintf("process:%d", process.PID)
 				evidence.Quarantined = append(evidence.Quarantined, label)
 				problem := process.Problem
 				if problem == "" {
-					problem = fmt.Sprintf("owned process has non-canonical runtime id %q", process.ID)
+					problem = fmt.Sprintf("owned process has non-canonical VM id %q", process.ID)
 				}
 				evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": "+problem)
 				continue
+			}
+			if ops.ownerCandidates != nil {
+				if _, ok := owners[process.ID]; !ok {
+					label := fmt.Sprintf("process:%d", process.PID)
+					evidence.Quarantined = append(evidence.Quarantined, label)
+					evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": exact VM owner marker is missing")
+					continue
+				}
 			}
 			seen[process.ID] = struct{}{}
 		}
@@ -171,27 +218,58 @@ func recoverLocalRuntimeState(ctx context.Context, workDir string, jailerDir str
 				cleanupErrs = append(cleanupErrs, fmt.Errorf("delete netns: %w", err))
 			}
 		}
-		if len(cleanupErrs) == 0 {
-			if err := ops.removeAll(filepath.Join(liveDir, id)); err != nil {
-				cleanupErrs = append(cleanupErrs, err)
+		owner, hasOwner := owners[id]
+		if hasOwner && len(cleanupErrs) == 0 {
+			remaining, verifyErr := ops.matchingPIDs(id)
+			if verifyErr != nil || len(remaining) != 0 {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("verify process absence: pids=%v: %v", remaining, verifyErr))
 			}
+			exists, verifyErr = ops.netnsExists(ctx, id)
+			if verifyErr != nil || exists {
+				cleanupErrs = append(cleanupErrs, fmt.Errorf("verify netns absence: exists=%t: %v", exists, verifyErr))
+			}
+		}
+		if len(cleanupErrs) == 0 {
 			if jailerDir != "" {
 				if err := ops.removeAll(filepath.Join(jailerDir, "firecracker", id)); err != nil {
 					cleanupErrs = append(cleanupErrs, err)
 				}
+				if _, err := os.Lstat(filepath.Join(jailerDir, "firecracker", id)); !os.IsNotExist(err) {
+					cleanupErrs = append(cleanupErrs, fmt.Errorf("verify jailer state absence: %v", err))
+				}
 			}
 		}
 		if len(cleanupErrs) == 0 {
-			evidence.Reclaimed = append(evidence.Reclaimed, id)
+			statePath := filepath.Join(liveDir, id)
+			if hasOwner && ops.removeState != nil {
+				if err := ops.removeState(statePath, owner); err != nil {
+					cleanupErrs = append(cleanupErrs, err)
+				}
+			} else if err := ops.removeAll(statePath); err != nil {
+				cleanupErrs = append(cleanupErrs, err)
+			}
+		}
+		if len(cleanupErrs) == 0 {
+			label := id
+			if hasOwner {
+				label = owner.String()
+				evidence.ReclaimedOwners = append(evidence.ReclaimedOwners, owner)
+			}
+			evidence.Reclaimed = append(evidence.Reclaimed, label)
 			continue
 		}
-		evidence.Quarantined = append(evidence.Quarantined, id)
-		evidence.QuarantineErrors = append(evidence.QuarantineErrors, id+": "+errors.Join(cleanupErrs...).Error())
+		label := id
+		if hasOwner {
+			label = owner.String()
+			evidence.QuarantinedOwners = append(evidence.QuarantinedOwners, owner)
+		}
+		evidence.Quarantined = append(evidence.Quarantined, label)
+		evidence.QuarantineErrors = append(evidence.QuarantineErrors, label+": "+errors.Join(cleanupErrs...).Error())
 	}
 	return evidence, nil
 }
 
-func runtimeNetNSNames(ctx context.Context, ipPath string) ([]string, error) {
+func vmNetNSNames(ctx context.Context, ipPath string) ([]string, error) {
 	output, err := exec.CommandContext(ctx, ipPath, "netns", "list").Output()
 	if err != nil {
 		return nil, err
@@ -206,7 +284,7 @@ func runtimeNetNSNames(ctx context.Context, ipPath string) ([]string, error) {
 	return names, nil
 }
 
-func ownedRuntimeProcesses(jailerDir string) ([]ownedRuntimeProcess, error) {
+func ownedVMProcesses(jailerDir string) ([]ownedVMProcess, error) {
 	entries, err := os.ReadDir("/proc")
 	if os.IsNotExist(err) {
 		return nil, nil
@@ -214,7 +292,7 @@ func ownedRuntimeProcesses(jailerDir string) ([]ownedRuntimeProcess, error) {
 	if err != nil {
 		return nil, err
 	}
-	var processes []ownedRuntimeProcess
+	var processes []ownedVMProcess
 	for _, entry := range entries {
 		pid, parseErr := strconv.Atoi(entry.Name())
 		if parseErr != nil {
@@ -225,15 +303,15 @@ func ownedRuntimeProcesses(jailerDir string) ([]ownedRuntimeProcess, error) {
 			continue
 		}
 		root, _ := os.Readlink(filepath.Join("/proc", entry.Name(), "root"))
-		id, owned, problem := helmrOwnedRuntimeProcess(cmdline, root, jailerDir)
+		id, owned, problem := helmrOwnedVMProcess(cmdline, root, jailerDir)
 		if owned {
-			processes = append(processes, ownedRuntimeProcess{PID: pid, ID: id, Problem: problem})
+			processes = append(processes, ownedVMProcess{PID: pid, ID: id, Problem: problem})
 		}
 	}
 	return processes, nil
 }
 
-func helmrOwnedRuntimeProcess(cmdline []byte, processRoot string, jailerDir string) (string, bool, string) {
+func helmrOwnedVMProcess(cmdline []byte, processRoot string, jailerDir string) (string, bool, string) {
 	args := strings.Split(strings.TrimSuffix(string(cmdline), "\x00"), "\x00")
 	if len(args) == 0 || strings.TrimSpace(jailerDir) == "" {
 		return "", false, ""
@@ -245,7 +323,7 @@ func helmrOwnedRuntimeProcess(cmdline []byte, processRoot string, jailerDir stri
 			return "", false, ""
 		}
 		id := commandFlag(args[1:], "--id")
-		if !canonicalRuntimeID(id) {
+		if !canonicalVMID(id) {
 			return id, true, fmt.Sprintf("owned jailer process has non-canonical --id %q", id)
 		}
 		return id, true, ""
@@ -261,8 +339,8 @@ func helmrOwnedRuntimeProcess(cmdline []byte, processRoot string, jailerDir stri
 		}
 		parts := strings.Split(rel, string(os.PathSeparator))
 		id := parts[0]
-		if len(parts) < 2 || parts[1] != "root" || !canonicalRuntimeID(id) {
-			return id, true, fmt.Sprintf("owned firecracker root has non-canonical runtime identity %q", rel)
+		if len(parts) < 2 || parts[1] != "root" || !canonicalVMID(id) {
+			return id, true, fmt.Sprintf("owned firecracker root has non-canonical VM identity %q", rel)
 		}
 		return id, true, ""
 	default:
@@ -282,52 +360,117 @@ func commandFlag(args []string, name string) string {
 	return ""
 }
 
-var runtimeIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
+var vmIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
-func canonicalRuntimeID(name string) bool {
-	if !runtimeIDPattern.MatchString(name) {
+func canonicalVMID(name string) bool {
+	if !vmIDPattern.MatchString(name) {
 		return false
 	}
 	id, err := uuid.Parse(name)
 	return err == nil && id.String() == name
 }
 
-func runtimeCandidates(workDir string, jailerDir string) ([]string, error) {
-	seen := map[string]struct{}{}
-	addRoot := func(path string) error {
-		entries, err := os.ReadDir(path)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			if !canonicalRuntimeID(name) {
-				return fmt.Errorf("runtime ownership root %s contains non-canonical runtime id %q", path, name)
-			}
-			seen[name] = struct{}{}
-		}
-		return nil
-	}
-	if err := addRoot(filepath.Join(workDir, "vms", "guest")); err != nil {
+func ownedVMCandidates(workDir string, jailerDir string) ([]ownerCandidate, error) {
+	liveDir := filepath.Join(workDir, "vms", "guest")
+	entries, err := os.ReadDir(liveDir)
+	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	if jailerDir != "" {
-		if err := addRoot(filepath.Join(jailerDir, "firecracker")); err != nil {
-			return nil, err
+	var candidates []ownerCandidate
+	owned := make(map[string]vm.Owner)
+	for _, entry := range entries {
+		id := entry.Name()
+		label := "state:" + id
+		if !canonicalVMID(id) {
+			candidates = append(candidates, ownerCandidate{Label: label, Problem: fmt.Sprintf("state root has non-canonical VM id %q", id)})
+			continue
+		}
+		marker, readErr := os.ReadFile(filepath.Join(liveDir, id, "owner"))
+		if readErr != nil {
+			candidates = append(candidates, ownerCandidate{Owner: vm.Owner{ID: id}, Label: label, Problem: "read exact VM owner marker: " + readErr.Error()})
+			continue
+		}
+		owner, parseErr := parseOwnerMarker(marker)
+		if parseErr != nil {
+			candidates = append(candidates, ownerCandidate{Owner: vm.Owner{ID: id}, Label: label, Problem: parseErr.Error()})
+			continue
+		}
+		if owner.ID != id {
+			candidates = append(candidates, ownerCandidate{Owner: owner, Label: label, Problem: fmt.Sprintf("owner marker id %q conflicts with state root id %q", owner.ID, id)})
+			continue
+		}
+		owned[id] = owner
+		candidates = append(candidates, ownerCandidate{Owner: owner})
+	}
+	if strings.TrimSpace(jailerDir) == "" {
+		return candidates, nil
+	}
+	jailerRoot := filepath.Join(jailerDir, "firecracker")
+	jailerEntries, err := os.ReadDir(jailerRoot)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, entry := range jailerEntries {
+		id := entry.Name()
+		if !canonicalVMID(id) {
+			candidates = append(candidates, ownerCandidate{Label: "jailer:" + id, Problem: fmt.Sprintf("jailer root has non-canonical VM id %q", id)})
+			continue
+		}
+		if _, ok := owned[id]; !ok {
+			candidates = append(candidates, ownerCandidate{Owner: vm.Owner{ID: id}, Label: "jailer:" + id, Problem: "exact VM owner marker is missing"})
 		}
 	}
-	ids := make([]string, 0, len(seen))
-	for id := range seen {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	return ids, nil
+	return candidates, nil
 }
 
-func stopRuntimePID(ctx context.Context, pid int) error {
+func parseOwnerMarker(marker []byte) (vm.Owner, error) {
+	lines := strings.Split(string(marker), "\n")
+	if len(lines) != 3 || lines[2] != "" {
+		return vm.Owner{}, errors.New("VM owner marker has invalid format")
+	}
+	owner := vm.Owner{Kind: vm.OwnerKind(lines[0]), ID: lines[1]}
+	if err := owner.Validate(); err != nil {
+		return vm.Owner{}, err
+	}
+	return owner, nil
+}
+
+func removeOwnedRecoveryState(statePath string, owner vm.Owner) error {
+	marker, err := os.ReadFile(filepath.Join(statePath, "owner"))
+	if err != nil {
+		return fmt.Errorf("read VM owner marker before cleanup: %w", err)
+	}
+	recorded, err := parseOwnerMarker(marker)
+	if err != nil {
+		return err
+	}
+	if recorded != owner {
+		return fmt.Errorf("VM owner marker changed from %s to %s", owner, recorded)
+	}
+	entries, err := os.ReadDir(statePath)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.Name() == "owner" {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(statePath, entry.Name())); err != nil {
+			return err
+		}
+	}
+	markerPath := filepath.Join(statePath, "owner")
+	if err := os.Remove(markerPath); err != nil {
+		return err
+	}
+	if err := os.Remove(statePath); err != nil {
+		restoreErr := os.WriteFile(markerPath, marker, 0o600)
+		return errors.Join(err, restoreErr)
+	}
+	return nil
+}
+
+func stopVMPID(ctx context.Context, pid int) error {
 	process, err := os.FindProcess(pid)
 	if err != nil {
 		return err

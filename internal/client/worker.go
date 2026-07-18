@@ -68,6 +68,17 @@ func (c *Client) RejectDeploymentBuild(ctx context.Context, request api.WorkerDe
 	return c.postWorkerJSON(ctx, "/api/worker/deployments/reject", request, nil)
 }
 
+func (c *Client) ReportDeploymentBuildDeliveryFailure(
+	ctx context.Context,
+	request api.WorkerDeploymentBuildDeliveryFailureRequest,
+) (api.WorkerDeploymentBuildResponse, error) {
+	var response api.WorkerDeploymentBuildResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/deployments/delivery-failed", request, &response); err != nil {
+		return api.WorkerDeploymentBuildResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error) {
 	var response api.WorkerWorkspaceMountClaimResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/workspaces/mounts/claim", api.WorkerWorkspaceMountClaimRequest{Capabilities: capabilities}, &response); err != nil {

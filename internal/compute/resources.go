@@ -19,6 +19,35 @@ func DefaultRunResources() ResourceVector {
 	}
 }
 
+func BuildGuestResources() ResourceVector {
+	return ResourceVector{
+		MilliCPU:  2000,
+		MemoryMiB: 2048,
+		DiskMiB:   8192,
+		Slots:     1,
+	}
+}
+
+func BuildHostReserve() ResourceVector {
+	return ResourceVector{
+		MilliCPU:  1000,
+		MemoryMiB: 2048,
+	}
+}
+
+func BuildAllocatableResources(hostPool ResourceVector) (ResourceVector, error) {
+	reserve := BuildHostReserve()
+	if err := hostPool.Validate(true); err != nil {
+		return ResourceVector{}, err
+	}
+	if hostPool.MilliCPU <= reserve.MilliCPU || hostPool.MemoryMiB <= reserve.MemoryMiB {
+		return ResourceVector{}, ErrNoCapacity
+	}
+	hostPool.MilliCPU -= reserve.MilliCPU
+	hostPool.MemoryMiB -= reserve.MemoryMiB
+	return hostPool, nil
+}
+
 func (r ResourceVector) Validate(requirePositive bool) error {
 	var problems []error
 	if requirePositive {

@@ -316,10 +316,9 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 				attempted[message.DeploymentID] = struct{}{}
 				remaining--
 				if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{OrgID: orgID, DeploymentID: deploymentID,
-					BuildRegionID: message.RegionID, BuildAttemptNumber: message.BuildAttemptNumber, LeaseSequence: message.LeaseSequence,
+					BuildRegionID: message.RegionID, LeaseSequence: message.LeaseSequence,
 					RequestedCPUMillis: message.BuildResources.CPUMillis, RequestedMemoryBytes: message.BuildResources.MemoryBytes,
 					RequestedWorkloadDiskBytes: message.BuildResources.WorkloadDiskBytes, RequestedScratchBytes: message.BuildResources.ScratchBytes,
-					RequestedBuildCacheBytes: message.BuildResources.BuildCacheBytes, RequestedArtifactCacheBytes: message.BuildResources.ArtifactCacheBytes,
 					RequestedBuildExecutors: message.BuildResources.Executors}, freshAfter, message.DeploymentID); err != nil {
 					problems = append(problems, err)
 				}
@@ -352,14 +351,12 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 			remaining--
 			if err := r.placeBuildCandidate(ctx, ReadyBuildCandidate{
 				OrgID: candidate.OrgID, DeploymentID: candidate.DeploymentID,
-				BuildRegionID: candidate.BuildRegionID, BuildAttemptNumber: candidate.BuildAttemptNumber, LeaseSequence: candidate.LeaseSequence,
-				RequestedCPUMillis:          candidate.BuildRequestedCpuMillis,
-				RequestedMemoryBytes:        candidate.BuildRequestedMemoryBytes,
-				RequestedWorkloadDiskBytes:  candidate.BuildRequestedWorkloadDiskBytes,
-				RequestedScratchBytes:       candidate.BuildRequestedScratchBytes,
-				RequestedBuildCacheBytes:    candidate.BuildRequestedBuildCacheBytes,
-				RequestedArtifactCacheBytes: candidate.BuildRequestedArtifactCacheBytes,
-				RequestedBuildExecutors:     candidate.BuildRequestedExecutors,
+				BuildRegionID: candidate.BuildRegionID, LeaseSequence: candidate.LeaseSequence,
+				RequestedCPUMillis:         candidate.BuildRequestedCpuMillis,
+				RequestedMemoryBytes:       candidate.BuildRequestedMemoryBytes,
+				RequestedWorkloadDiskBytes: candidate.BuildRequestedWorkloadDiskBytes,
+				RequestedScratchBytes:      candidate.BuildRequestedScratchBytes,
+				RequestedBuildExecutors:    candidate.BuildRequestedExecutors,
 			}, freshAfter, deploymentID); err != nil {
 				problems = append(problems, err)
 			}
@@ -370,7 +367,7 @@ func (r *PlacementReconciler) ReconcileBuilds(ctx context.Context) error {
 
 func (r *PlacementReconciler) placeBuildCandidate(ctx context.Context, candidate ReadyBuildCandidate, freshAfter pgtype.Timestamptz, deploymentID string) error {
 	lease, err := r.buildAuthority.PlaceReadyBuild(ctx, candidate, freshAfter)
-	fence := fmt.Sprintf("build:%d:%d", candidate.BuildAttemptNumber, candidate.LeaseSequence)
+	fence := fmt.Sprintf("build:%d", candidate.LeaseSequence)
 	if err != nil {
 		if errors.Is(err, ErrCandidateChanged) {
 			return r.ready.RemoveReady(ctx, WorkKindBuild, deploymentID, fence)

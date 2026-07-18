@@ -4,7 +4,26 @@ import (
 	"context"
 	"errors"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
+
+func TestFitsBuildHostComputeUsesDiskIndependentHostPool(t *testing.T) {
+	if !fitsBuildHostCompute(compute.ResourceVector{
+		MilliCPU:  2000,
+		MemoryMiB: 2048,
+		Slots:     1,
+	}) {
+		t.Fatal("fixed build guest does not fit its exact host compute envelope")
+	}
+	if fitsBuildHostCompute(compute.ResourceVector{
+		MilliCPU:  1999,
+		MemoryMiB: 2048,
+		Slots:     1,
+	}) {
+		t.Fatal("undersized host compute envelope was accepted")
+	}
+}
 
 func TestRetryableWorkerCloserRetriesFailureAndMemoizesOnlySuccess(t *testing.T) {
 	calls := 0

@@ -386,6 +386,12 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
        OR
        (runtime_instances.observed_state = 'failed'
         AND runtime_instances.reclaimed_at IS NULL
+        AND NOT EXISTS (
+            SELECT 1
+              FROM run_leases
+             WHERE run_leases.runtime_instance_id = runtime_instances.id
+               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+        )
         AND worker_network_slots.state IN ('reclaiming', 'quarantined'))
    )
  ORDER BY runtime_instances.desired_at, runtime_instances.id

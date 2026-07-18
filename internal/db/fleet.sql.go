@@ -333,8 +333,6 @@ WITH target_group AS (
            deployments.build_requested_memory_bytes AS memory_bytes,
            deployments.build_requested_workload_disk_bytes AS workload_disk_bytes,
            deployments.build_requested_scratch_bytes AS scratch_bytes,
-           deployments.build_requested_build_cache_bytes AS build_cache_bytes,
-           deployments.build_requested_artifact_cache_bytes AS artifact_cache_bytes,
            deployments.build_requested_executors::bigint AS build_executors,
            count(*)::bigint AS demand_count
       FROM deployments
@@ -347,7 +345,6 @@ WITH target_group AS (
        )
      GROUP BY deployments.build_requested_cpu_millis, deployments.build_requested_memory_bytes,
               deployments.build_requested_workload_disk_bytes, deployments.build_requested_scratch_bytes,
-              deployments.build_requested_build_cache_bytes, deployments.build_requested_artifact_cache_bytes,
               deployments.build_requested_executors
     UNION ALL
     SELECT 'active'::text,
@@ -355,8 +352,6 @@ WITH target_group AS (
            deployment_build_leases.requested_memory_bytes,
            deployment_build_leases.requested_workload_disk_bytes,
            deployment_build_leases.requested_scratch_bytes,
-           deployment_build_leases.requested_build_cache_bytes,
-           deployment_build_leases.requested_artifact_cache_bytes,
            deployment_build_leases.requested_build_executors::bigint,
            count(*)::bigint
       FROM deployment_build_leases
@@ -364,23 +359,20 @@ WITH target_group AS (
      WHERE deployment_build_leases.state IN ('assigned', 'starting', 'running')
      GROUP BY deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes,
               deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes,
-              deployment_build_leases.requested_build_cache_bytes, deployment_build_leases.requested_artifact_cache_bytes,
               deployment_build_leases.requested_build_executors
 )
-SELECT demand_state, milli_cpu, memory_bytes, workload_disk_bytes, scratch_bytes, build_cache_bytes, artifact_cache_bytes, build_executors, demand_count FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, workload_disk_bytes,
-                              scratch_bytes, build_cache_bytes, artifact_cache_bytes, build_executors
+SELECT demand_state, milli_cpu, memory_bytes, workload_disk_bytes, scratch_bytes, build_executors, demand_count FROM demand ORDER BY demand_state, milli_cpu, memory_bytes, workload_disk_bytes,
+                              scratch_bytes, build_executors
 `
 
 type ListFleetBuildDemandRow struct {
-	DemandState        string `json:"demand_state"`
-	MilliCpu           int64  `json:"milli_cpu"`
-	MemoryBytes        int64  `json:"memory_bytes"`
-	WorkloadDiskBytes  int64  `json:"workload_disk_bytes"`
-	ScratchBytes       int64  `json:"scratch_bytes"`
-	BuildCacheBytes    int64  `json:"build_cache_bytes"`
-	ArtifactCacheBytes int64  `json:"artifact_cache_bytes"`
-	BuildExecutors     int64  `json:"build_executors"`
-	DemandCount        int64  `json:"demand_count"`
+	DemandState       string `json:"demand_state"`
+	MilliCpu          int64  `json:"milli_cpu"`
+	MemoryBytes       int64  `json:"memory_bytes"`
+	WorkloadDiskBytes int64  `json:"workload_disk_bytes"`
+	ScratchBytes      int64  `json:"scratch_bytes"`
+	BuildExecutors    int64  `json:"build_executors"`
+	DemandCount       int64  `json:"demand_count"`
 }
 
 func (q *Queries) ListFleetBuildDemand(ctx context.Context, workerGroupID string) ([]ListFleetBuildDemandRow, error) {
@@ -398,8 +390,6 @@ func (q *Queries) ListFleetBuildDemand(ctx context.Context, workerGroupID string
 			&i.MemoryBytes,
 			&i.WorkloadDiskBytes,
 			&i.ScratchBytes,
-			&i.BuildCacheBytes,
-			&i.ArtifactCacheBytes,
 			&i.BuildExecutors,
 			&i.DemandCount,
 		); err != nil {

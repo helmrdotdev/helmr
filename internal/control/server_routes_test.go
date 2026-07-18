@@ -234,6 +234,7 @@ POST /api/worker/activate
 POST /api/worker/auth/token
 POST /api/worker/certification/renew
 POST /api/worker/deployments/complete
+POST /api/worker/deployments/delivery-failed
 POST /api/worker/deployments/lease
 POST /api/worker/deployments/reject
 POST /api/worker/deployments/renew

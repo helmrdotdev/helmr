@@ -141,6 +141,7 @@ type Querier interface {
 	ExpireWorkspaceLeases(ctx context.Context, limitCount int32) ([]ExpireWorkspaceLeasesRow, error)
 	FailDeletionJob(ctx context.Context, arg FailDeletionJobParams) (DeletionJob, error)
 	FailDeploymentBuild(ctx context.Context, arg FailDeploymentBuildParams) (FailDeploymentBuildRow, error)
+	FailDeploymentBuildDelivery(ctx context.Context, arg FailDeploymentBuildDeliveryParams) (FailDeploymentBuildDeliveryRow, error)
 	FailQueuedRun(ctx context.Context, arg FailQueuedRunParams) error
 	FailRunCheckpointAttempt(ctx context.Context, arg FailRunCheckpointAttemptParams) (FailRunCheckpointAttemptRow, error)
 	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error)
@@ -165,7 +166,6 @@ type Querier interface {
 	GetDefaultEnvironment(ctx context.Context, arg GetDefaultEnvironmentParams) (Environment, error)
 	GetDefaultProjectEnvironment(ctx context.Context, orgID pgtype.UUID) (GetDefaultProjectEnvironmentRow, error)
 	GetDeployment(ctx context.Context, arg GetDeploymentParams) (Deployment, error)
-	GetDeploymentBuildLease(ctx context.Context, arg GetDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
 	GetDeploymentBuildTerminalResult(ctx context.Context, arg GetDeploymentBuildTerminalResultParams) (GetDeploymentBuildTerminalResultRow, error)
 	GetDeploymentByVersion(ctx context.Context, arg GetDeploymentByVersionParams) (Deployment, error)
 	GetDeploymentForOrg(ctx context.Context, arg GetDeploymentForOrgParams) (Deployment, error)
@@ -331,6 +331,7 @@ type Querier interface {
 	ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVersionsParams) ([]WorkspaceVersion, error)
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error)
+	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentReusableBuildKey(ctx context.Context, arg LockDeploymentReusableBuildKeyParams) error
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
@@ -391,7 +392,7 @@ type Querier interface {
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerObservation, error)
 	RecordWorkerStartupRecovery(ctx context.Context, arg RecordWorkerStartupRecoveryParams) (WorkerInstance, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
-	RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
+	RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (RejectDeploymentBuildLeaseRow, error)
 	ReleaseRunLease(ctx context.Context, arg ReleaseRunLeaseParams) (ReleaseRunLeaseRow, error)
 	ReleaseSessionContinuationRequestForRetry(ctx context.Context, arg ReleaseSessionContinuationRequestForRetryParams) (SessionContinuationRequest, error)
 	ReleaseWorkspaceLease(ctx context.Context, arg ReleaseWorkspaceLeaseParams) (WorkspaceLease, error)

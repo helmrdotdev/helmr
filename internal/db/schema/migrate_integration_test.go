@@ -83,6 +83,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkspaceStreamSchema(t, dbctx, pool)
 	assertTelemetrySchema(t, dbctx, pool)
 	assertWorkerSchema(t, dbctx, pool)
+	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	if !verifyDown {
 		return
@@ -106,6 +107,66 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 		t.Fatal("runs table was not recreated after down migration")
 	}
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
+}
+
+func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var cpuDefault, memoryDefault, workloadDefault, scratchDefault, executorsDefault string
+	if err := pool.QueryRow(ctx, `
+		SELECT
+		    max(column_default) FILTER (WHERE column_name = 'build_requested_cpu_millis'),
+		    max(column_default) FILTER (WHERE column_name = 'build_requested_memory_bytes'),
+		    max(column_default) FILTER (WHERE column_name = 'build_requested_workload_disk_bytes'),
+		    max(column_default) FILTER (WHERE column_name = 'build_requested_scratch_bytes'),
+		    max(column_default) FILTER (WHERE column_name = 'build_requested_executors')
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'deployments'
+	`).Scan(&cpuDefault, &memoryDefault, &workloadDefault, &scratchDefault, &executorsDefault); err != nil {
+		t.Fatal(err)
+	}
+	if cpuDefault != "2000" || memoryDefault != "'2147483648'::bigint" || workloadDefault != "0" ||
+		scratchDefault != "'13958643712'::bigint" || executorsDefault != "1" {
+		t.Fatalf(
+			"build defaults = cpu:%s memory:%s workload:%s scratch:%s executors:%s",
+			cpuDefault,
+			memoryDefault,
+			workloadDefault,
+			scratchDefault,
+			executorsDefault,
+		)
+	}
+	var cacheColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name IN ('deployments', 'deployment_build_leases')
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"build_requested_build_cache_bytes",
+		"build_requested_artifact_cache_bytes",
+		"requested_build_cache_bytes",
+		"requested_artifact_cache_bytes",
+	}).Scan(&cacheColumns); err != nil {
+		t.Fatal(err)
+	}
+	if cacheColumns != 0 {
+		t.Fatalf("per-delivery cache columns = %d, want 0", cacheColumns)
+	}
+	var executorConstraints int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_constraint
+		 WHERE conrelid IN ('deployments'::regclass, 'deployment_build_leases'::regclass)
+		   AND contype = 'c'
+		   AND pg_get_constraintdef(oid) ~ '(build_requested_executors|requested_build_executors) = 1'
+	`).Scan(&executorConstraints); err != nil {
+		t.Fatal(err)
+	}
+	if executorConstraints != 2 {
+		t.Fatalf("exact-one build executor constraints = %d, want 2", executorConstraints)
+	}
 }
 
 func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -352,11 +413,18 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	var exactFit, overShape bool
-	if err := pool.QueryRow(ctx, `SELECT 4000::bigint <= per_vm_cpu_millis * 2, 4001::bigint <= per_vm_cpu_millis * 2 FROM worker_instances WHERE id='00000000-0000-0000-0000-000000000099'`).Scan(&exactFit, &overShape); err != nil {
+	if err := pool.QueryRow(ctx, `
+		SELECT per_vm_cpu_millis >= 2000
+		       AND per_vm_memory_bytes >= 2147483648
+		       AND per_vm_scratch_bytes >= 8589934592,
+		       per_vm_cpu_millis >= 2001
+		  FROM worker_instances
+		 WHERE id = '00000000-0000-0000-0000-000000000099'
+	`).Scan(&exactFit, &overShape); err != nil {
 		t.Fatal(err)
 	}
 	if !exactFit || overShape {
-		t.Fatalf("per-executor exact/over shape fence = %t/%t", exactFit, overShape)
+		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
 	var beforeFull, replacementAllowed, replacementRefillsCap, withinVMSlots bool
 	var selectedWorker string

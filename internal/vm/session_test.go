@@ -29,3 +29,29 @@ func TestRuntimeErrorClass(t *testing.T) {
 		})
 	}
 }
+
+func TestOwnerValidation(t *testing.T) {
+	valid := Owner{Kind: OwnerBuild, ID: "00000000-0000-0000-0000-000000000001"}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, owner := range []Owner{
+		{Kind: "other", ID: valid.ID},
+		{Kind: OwnerRuntime, ID: "not-a-uuid"},
+		{Kind: OwnerRuntime, ID: "00000000-0000-0000-0000-000000000ABC"},
+	} {
+		if err := owner.Validate(); err == nil {
+			t.Fatalf("Owner.Validate() accepted %+v", owner)
+		}
+	}
+}
+
+func TestCleanupUnprovenErrorPreservesOwnerAndCause(t *testing.T) {
+	cause := errors.New("marker mismatch")
+	owner := Owner{Kind: OwnerRuntime, ID: "00000000-0000-0000-0000-000000000002"}
+	err := &CleanupUnprovenError{Owner: owner, Cause: cause}
+	var got *CleanupUnprovenError
+	if !errors.As(err, &got) || got.Owner != owner || !errors.Is(err, cause) {
+		t.Fatalf("CleanupUnprovenError = %#v", err)
+	}
+}

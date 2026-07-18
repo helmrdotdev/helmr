@@ -206,6 +206,18 @@ type WorkerDeploymentBuildRejectRequest struct {
 	Error      json.RawMessage            `json:"error,omitempty"`
 }
 
+type WorkerDeploymentBuildDeliveryFailureReason string
+
+const (
+	WorkerDeploymentBuildDeliveryBuildGuestFailed      WorkerDeploymentBuildDeliveryFailureReason = "build_guest_failed"
+	WorkerDeploymentBuildDeliveryProgramVerifierFailed WorkerDeploymentBuildDeliveryFailureReason = "program_verifier_failed"
+)
+
+type WorkerDeploymentBuildDeliveryFailureRequest struct {
+	Lease      WorkerDeploymentBuildLease                 `json:"lease"`
+	ReasonCode WorkerDeploymentBuildDeliveryFailureReason `json:"reasonCode"`
+}
+
 type WorkerStatus string
 
 const (
@@ -348,7 +360,6 @@ type WorkerDeploymentBuildLease struct {
 	WorkerGroupID              string    `json:"worker_group_id"`
 	WorkerInstanceID           string    `json:"worker_instance_id"`
 	WorkerEpoch                int64     `json:"worker_epoch"`
-	BuildAttemptNumber         int32     `json:"build_attempt_number"`
 	LeaseSequence              int64     `json:"lease_sequence"`
 	WorkerProtocolVersion      string    `json:"worker_protocol_version"`
 	ExpiresAt                  time.Time `json:"expires_at"`

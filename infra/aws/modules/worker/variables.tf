@@ -175,7 +175,7 @@ variable "worker_disk_reserve_mib" {
 }
 
 variable "vm_vcpus" {
-  description = "vCPU count assigned to each Firecracker task VM and advertised as worker CPU capacity."
+  description = "Maximum vCPU count assigned to one Firecracker VM."
   type        = number
   default     = 2
 
@@ -186,7 +186,7 @@ variable "vm_vcpus" {
 }
 
 variable "vm_memory_mib" {
-  description = "Memory in MiB assigned to each Firecracker task VM and advertised as worker memory capacity."
+  description = "Maximum memory in MiB assigned to one Firecracker VM."
   type        = number
   default     = 4096
 
@@ -208,7 +208,7 @@ variable "vm_scratch_disk_mib" {
 }
 
 variable "worker_capacity_vcpus" {
-  description = "Total vCPU capacity advertised by the worker for concurrent materializations and runs."
+  description = "Worker host vCPU pool after kernel and supervisor reserves. Build workers subtract the fixed BuildKit service reserve before certification."
   type        = number
   default     = null
   nullable    = true
@@ -220,7 +220,7 @@ variable "worker_capacity_vcpus" {
 }
 
 variable "worker_capacity_memory_mib" {
-  description = "Total memory capacity in MiB advertised by the worker for concurrent materializations and runs."
+  description = "Worker host memory pool after kernel and supervisor reserves. Build workers subtract the fixed BuildKit service reserve before certification."
   type        = number
   default     = null
   nullable    = true
@@ -232,7 +232,7 @@ variable "worker_capacity_memory_mib" {
 }
 
 variable "worker_execution_slots" {
-  description = "Total execution slots advertised by the worker for concurrent materializations and runs."
+  description = "Maximum concurrent Firecracker VM slots. Build execution has an independent fixed single-executor limit."
   type        = number
   default     = null
   nullable    = true
@@ -304,12 +304,6 @@ variable "jailer_gid" {
   description = "GID used by the Firecracker jailer."
   type        = number
   default     = 1001
-}
-
-variable "buildkit_service_name" {
-  description = "systemd service name for BuildKit on the worker AMI."
-  type        = string
-  default     = "buildkit"
 }
 
 variable "worker_service_name" {

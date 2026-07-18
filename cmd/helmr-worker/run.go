@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/builder"
 	"github.com/helmrdotdev/helmr/internal/buildkit"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/client"
@@ -65,6 +67,23 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
+	var imageBuilder builder.Engine
+	closeBuilder := func() error { return nil }
+	if supportsBuild {
+		imageBuilder, closeBuilder, err = buildkit.OpenFresh(ctx, buildkit.Config{
+			Addr:           cfg.BuildKitAddr,
+			OutputRoot:     filepath.Join(workDir, "builds"),
+			CacheNamespace: cfg.BuildKitCacheNS,
+		})
+		if err != nil {
+			return fmt.Errorf("configure buildkit: %w", err)
+		}
+	}
+	defer func() {
+		if err := closeBuilder(); err != nil {
+			log.Warn("close buildkit", "error", err)
+		}
+	}()
 	store, err := cas.NewS3(ctx, cfg.CASURI, cas.WithS3TempDir(filepath.Join(workDir, "tmp", "cas")))
 	if err != nil {
 		return fmt.Errorf("configure CAS: %w", err)
@@ -88,23 +107,6 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure authenticated control client: %w", err)
 	}
-	var imageBuilder builder.Engine
-	closeBuilder := func() error { return nil }
-	if supportsBuild {
-		imageBuilder, closeBuilder, err = buildkit.Open(ctx, buildkit.Config{
-			Addr:           cfg.BuildKitAddr,
-			OutputRoot:     filepath.Join(workDir, "builds"),
-			CacheNamespace: cfg.BuildKitCacheNS,
-		})
-		if err != nil {
-			return fmt.Errorf("configure buildkit: %w", err)
-		}
-	}
-	defer func() {
-		if err := closeBuilder(); err != nil {
-			log.Warn("close buildkit", "error", err)
-		}
-	}()
 	imagesDir := cfg.ImagesDir
 	if imagesDir == "" {
 		imagesDir = filepath.Join(workDir, "images")
@@ -149,6 +151,18 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("inspect firecracker runtime: %w", err)
 	}
+	certifiedVM := compute.ResourceVector{
+		MilliCPU:  cfg.VMVCPUCount * 1000,
+		MemoryMiB: cfg.VMMemoryMiB,
+		DiskMiB:   cfg.VMScratchDiskMiB,
+		Slots:     1,
+	}
+	if supportsBuild && !certifiedVM.Fits(compute.BuildGuestResources()) {
+		return errors.New("configured VM shape cannot host the fixed build guest")
+	}
+	if supportsBuild && !supportsRun {
+		certifiedVM = compute.BuildGuestResources()
+	}
 	runtimeStartLimit := max(int(cfg.WorkerRuntimeStarts), int(cfg.WorkerBuildExecutors))
 	runtimeConnector, err := vm.NewStartLimiter(connector, runtimeStartLimit)
 	if err != nil {
@@ -159,9 +173,23 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("inspect worker disk capacity: %w", err)
 	}
 	substrateCacheMaxBytes, artifactCacheMaxBytes := workerCacheBudgetsBytes(cfg.SubstrateCacheMaxMiB, cfg.ArtifactCacheMaxMiB, hostDiskMiB)
-	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, cfg.VMScratchDiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
+	diskCapacity, err := compute.PartitionWorkerDiskCapacity(hostDiskMiB, certifiedVM.DiskMiB, substrateCacheMaxBytes+artifactCacheMaxBytes)
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
+	}
+	allocatable := compute.ResourceVector{
+		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
+		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
+		Slots:     cfg.WorkerExecutionSlots,
+	}
+	if supportsBuild {
+		allocatable, err = compute.BuildAllocatableResources(allocatable)
+		if err != nil {
+			return fmt.Errorf("reserve build worker service capacity: %w", err)
+		}
+		if !fitsBuildHostCompute(allocatable) {
+			return errors.New("build worker allocatable capacity cannot host the fixed build guest")
+		}
 	}
 	workerCapabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
@@ -175,10 +203,10 @@ func run(log *slog.Logger) error {
 		CNIProfile:              runtimeCapabilities.CNIProfile,
 		Region:                  cfg.WorkerProviderRegion,
 		Labels:                  cfg.WorkerLabels,
-		MaxVCPUs:                cfg.WorkerCapacityVCPUs,
-		MaxMemoryMiB:            cfg.WorkerCapacityMemoryMiB,
-		VMMilliCPU:              cfg.VMVCPUCount * 1000,
-		VMMemoryMiB:             cfg.VMMemoryMiB,
+		MaxVCPUs:                allocatable.MilliCPU / 1000,
+		MaxMemoryMiB:            allocatable.MemoryMiB,
+		VMMilliCPU:              certifiedVM.MilliCPU,
+		VMMemoryMiB:             certifiedVM.MemoryMiB,
 		MaxDiskMiB:              diskCapacity.HostWorkloadMiB,
 		VMMaxDiskMiB:            diskCapacity.VMWorkloadDiskMiB,
 		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
@@ -195,6 +223,17 @@ func run(log *slog.Logger) error {
 			BlockInternet: true,
 			DenyCIDRs:     true,
 		},
+	}
+	hostCapacity, err := capacity.New(capacity.Vector{
+		CPUMillis:         workerCapabilities.MaxVCPUs * 1000,
+		MemoryBytes:       workerCapabilities.MaxMemoryMiB * 1024 * 1024,
+		WorkloadDiskBytes: workerCapabilities.MaxDiskMiB * 1024 * 1024,
+		ScratchBytes:      workerCapabilities.ScratchBytes,
+		VMSlots:           int64(workerCapabilities.ExecutionSlotsAvailable),
+		BuildSlots:        int64(workerCapabilities.MaxBuildExecutors),
+	})
+	if err != nil {
+		return fmt.Errorf("configure worker capacity: %w", err)
 	}
 	compiler := task.GuestCompiler{
 		Connector: runtimeConnector,
@@ -232,6 +271,8 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.Network = compute.DefaultNetworkPolicy()
 		preparedRuntimePool.RuntimeInstances = controlClient
 		preparedRuntimePool.BackgroundGate = backgroundGate
+		preparedRuntimePool.Capacity = hostCapacity
+		preparedRuntimePool.RuntimeScratchBytes = workerCapabilities.VMMaxScratchBytes
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
 	}
 	runner, err := workerdaemon.NewRunner(
@@ -258,9 +299,12 @@ func run(log *slog.Logger) error {
 				Log:                   log,
 				Stdout:                os.Stdout,
 				Stderr:                os.Stderr,
+				Capacity:              hostCapacity,
+				RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
 			},
 		},
 		workerCapabilities,
+		workerdaemon.WithCapacity(hostCapacity),
 		workerdaemon.WithPollEvery(cfg.PollEvery),
 		workerdaemon.WithLogger(log),
 		workerdaemon.WithDeploymentBuilder(deployment.Builder{
@@ -282,6 +326,8 @@ func run(log *slog.Logger) error {
 			Log:                   log,
 			RuntimePool:           preparedRuntimePool,
 			BackgroundGate:        backgroundGate,
+			Capacity:              hostCapacity,
+			RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
 		}),
 	)
 	if err != nil {
@@ -323,13 +369,41 @@ func run(log *slog.Logger) error {
 		Background: background, PollEvery: cfg.PollEvery, CertificationTTL: cfg.WorkerCertificationTTL,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
-			return workerdaemon.RecoverLocalRuntimeState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			evidence, err := workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			if err != nil {
+				return evidence, err
+			}
+			if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
+				return evidence, errors.New("startup recovery found VM residue without exact ownership")
+			}
+			for _, owner := range evidence.QuarantinedOwners {
+				if owner.Kind != vm.OwnerRuntime {
+					continue
+				}
+				created, err := hostCapacity.Reserve(
+					capacity.Key{Kind: "quarantine", Epoch: 1, ID: owner.ID},
+					capacity.Vector{
+						CPUMillis:         workerCapabilities.VMMilliCPU,
+						MemoryBytes:       workerCapabilities.VMMemoryMiB * 1024 * 1024,
+						WorkloadDiskBytes: workerCapabilities.VMMaxDiskMiB * 1024 * 1024,
+						ScratchBytes:      workerCapabilities.VMMaxScratchBytes,
+						VMSlots:           1,
+					},
+				)
+				if err != nil {
+					return evidence, fmt.Errorf("reserve quarantined runtime capacity: %w", err)
+				}
+				if !created {
+					return evidence, errors.New("quarantined runtime is already reserved")
+				}
+			}
+			return evidence, nil
 		},
 		FinalizeDrain: func(finalizeCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
 			if err := closePreparedRuntime.Close(finalizeCtx); err != nil {
 				return workerdaemon.RecoveryEvidence{}, fmt.Errorf("close prepared runtime pool: %w", err)
 			}
-			first, err := workerdaemon.RecoverLocalRuntimeState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			first, err := workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
 			if err != nil {
 				return workerdaemon.RecoveryEvidence{}, err
 			}
@@ -338,7 +412,7 @@ func run(log *slog.Logger) error {
 			}
 			// The first pass reclaims any residue. A second complete inventory is
 			// the proof submitted to control and therefore must be empty.
-			return workerdaemon.RecoverLocalRuntimeState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+			return workerdaemon.RecoverLocalVMState(finalizeCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
 		},
 		DrainCompleted: func(status api.WorkerStatusResponse) error {
 			return writeDrainCompleteMarker(workDir, status.WorkerInstanceID)
@@ -355,6 +429,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func fitsBuildHostCompute(resources compute.ResourceVector) bool {
+	guest := compute.BuildGuestResources()
+	guest.DiskMiB = 0
+	return resources.Fits(guest)
 }
 
 type retryableWorkerCloser struct {

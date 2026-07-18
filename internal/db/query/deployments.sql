@@ -106,7 +106,7 @@ UPDATE deployments
 RETURNING *;
 
 -- name: LeaseQueuedDeploymentBuild :one
-WITH candidate AS (
+WITH candidate AS MATERIALIZED (
     SELECT deployments.*
       FROM deployments
      WHERE deployments.org_id = sqlc.arg(org_id)
@@ -117,9 +117,14 @@ WITH candidate AS (
        AND deployments.build_requested_memory_bytes = sqlc.arg(requested_memory_bytes)
        AND deployments.build_requested_workload_disk_bytes = sqlc.arg(requested_workload_disk_bytes)
        AND deployments.build_requested_scratch_bytes = sqlc.arg(requested_scratch_bytes)
-       AND deployments.build_requested_build_cache_bytes = sqlc.arg(requested_build_cache_bytes)
-       AND deployments.build_requested_artifact_cache_bytes = sqlc.arg(requested_artifact_cache_bytes)
        AND deployments.build_requested_executors = sqlc.arg(requested_build_executors)
+       AND deployments.current_build_lease_id IS NULL
+       AND sqlc.arg(lease_sequence)::bigint = (
+           SELECT COALESCE(max(deployment_build_leases.lease_sequence), 0) + 1
+             FROM deployment_build_leases
+            WHERE deployment_build_leases.deployment_id = deployments.id
+       )
+       AND sqlc.arg(lease_sequence)::bigint BETWEEN 1 AND 3
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases
             WHERE deployment_build_leases.deployment_id = deployments.id
@@ -127,45 +132,37 @@ WITH candidate AS (
        )
      FOR UPDATE OF deployments
 ),
+inserted AS (
+    INSERT INTO deployment_build_leases (
+        id, org_id, project_id, environment_id, deployment_id, build_region_id,
+        lease_sequence, worker_group_id, worker_instance_id,
+        worker_epoch, worker_protocol_version, requested_cpu_millis,
+        requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
+        requested_build_executors, build_snapshot, trace_id, span_id,
+        parent_span_id, traceparent, start_deadline_at, expires_at
+    )
+    SELECT sqlc.arg(build_lease_id), candidate.org_id, candidate.project_id,
+           candidate.environment_id, candidate.id, candidate.build_region_id,
+           sqlc.arg(lease_sequence), sqlc.arg(worker_group_id),
+           sqlc.arg(build_worker_instance_id),
+           sqlc.arg(worker_epoch), sqlc.arg(worker_protocol_version),
+           sqlc.arg(requested_cpu_millis), sqlc.arg(requested_memory_bytes),
+           sqlc.arg(requested_workload_disk_bytes), sqlc.arg(requested_scratch_bytes),
+           sqlc.arg(requested_build_executors), sqlc.arg(build_snapshot),
+           sqlc.narg(trace_id), sqlc.narg(span_id), sqlc.narg(parent_span_id),
+           sqlc.narg(traceparent), sqlc.arg(start_deadline_at), sqlc.arg(build_lease_expires_at)
+      FROM candidate
+    RETURNING *
+),
 advanced AS (
     UPDATE deployments
        SET status = 'building',
            building_at = COALESCE(deployments.building_at, now()),
-           -- queued -> building begins a product attempt; a replacement lease
-           -- while already building is delivery replay and retains the attempt.
-           build_attempt_number = CASE
-               WHEN deployments.status = 'queued' THEN deployments.build_attempt_number + 1
-               ELSE deployments.build_attempt_number
-           END,
-           current_build_lease_id = sqlc.arg(build_lease_id),
+           current_build_lease_id = inserted.id,
            updated_at = now()
-      FROM candidate
-     WHERE deployments.id = candidate.id
+      FROM inserted
+     WHERE deployments.id = inserted.deployment_id
     RETURNING deployments.*
-),
-inserted AS (
-    INSERT INTO deployment_build_leases (
-        id, org_id, project_id, environment_id, deployment_id, build_region_id,
-        build_attempt_number, lease_sequence, worker_group_id, worker_instance_id,
-        worker_epoch, worker_protocol_version, requested_cpu_millis,
-        requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes,
-        requested_build_cache_bytes, requested_artifact_cache_bytes,
-        requested_build_executors, build_snapshot, trace_id, span_id,
-        parent_span_id, traceparent, start_deadline_at, expires_at
-    )
-    SELECT sqlc.arg(build_lease_id), advanced.org_id, advanced.project_id,
-           advanced.environment_id, advanced.id, advanced.build_region_id,
-           advanced.build_attempt_number, sqlc.arg(lease_sequence),
-           sqlc.arg(worker_group_id), sqlc.arg(build_worker_instance_id),
-           sqlc.arg(worker_epoch), sqlc.arg(worker_protocol_version),
-           sqlc.arg(requested_cpu_millis), sqlc.arg(requested_memory_bytes),
-           sqlc.arg(requested_workload_disk_bytes), sqlc.arg(requested_scratch_bytes),
-           sqlc.arg(requested_build_cache_bytes), sqlc.arg(requested_artifact_cache_bytes),
-           sqlc.arg(requested_build_executors), sqlc.arg(build_snapshot),
-           sqlc.narg(trace_id), sqlc.narg(span_id), sqlc.narg(parent_span_id),
-           sqlc.narg(traceparent), sqlc.arg(start_deadline_at), sqlc.arg(build_lease_expires_at)
-      FROM advanced
-    RETURNING *
 )
 SELECT inserted.*,
        advanced.version,
@@ -187,11 +184,29 @@ SELECT inserted.*,
    AND source_artifacts.id = advanced.deployment_source_artifact_id;
 
 -- name: RequeueExpiredDeploymentBuildLeases :exec
-WITH expired AS (
+WITH locked_deployments AS MATERIALIZED (
+    SELECT deployments.org_id,
+           deployments.id,
+           deployments.current_build_lease_id
+      FROM deployments
+      JOIN deployment_build_leases
+        ON deployment_build_leases.org_id = deployments.org_id
+       AND deployment_build_leases.deployment_id = deployments.id
+       AND deployment_build_leases.id = deployments.current_build_lease_id
+     WHERE deployments.status = 'building'
+       AND deployment_build_leases.state IN ('assigned','starting','running')
+       AND deployment_build_leases.expires_at <= now()
+     ORDER BY deployments.id
+     FOR UPDATE OF deployments SKIP LOCKED
+), expired AS (
     UPDATE deployment_build_leases
        SET state = 'expired', terminal_at = now(),
            terminal_reason_code = 'lease_expired', updated_at = now()
-     WHERE deployment_build_leases.state IN ('assigned','starting','running')
+      FROM locked_deployments
+     WHERE deployment_build_leases.org_id = locked_deployments.org_id
+       AND deployment_build_leases.deployment_id = locked_deployments.id
+       AND deployment_build_leases.id = locked_deployments.current_build_lease_id
+       AND deployment_build_leases.state IN ('assigned','starting','running')
        AND deployment_build_leases.expires_at <= now()
     RETURNING deployment_build_leases.*
 ), meter_event AS (
@@ -202,7 +217,7 @@ WITH expired AS (
         idempotency_key, idempotency_fingerprint
     )
     SELECT expired.org_id, expired.project_id, expired.environment_id,
-           expired.deployment_id, expired.id, expired.build_attempt_number,
+           expired.deployment_id, expired.id, NULL::int,
            expired.trace_id, expired.span_id, 'active_time',
            GREATEST((extract(epoch FROM (expired.expires_at - expired.started_at)) * 1000)::bigint, 0),
            'milliseconds', expired.started_at, expired.expires_at,
@@ -211,8 +226,6 @@ WITH expired AS (
                'memory_bytes',expired.requested_memory_bytes,
                'workload_disk_bytes',expired.requested_workload_disk_bytes,
                'scratch_bytes',expired.requested_scratch_bytes,
-               'build_cache_bytes',expired.requested_build_cache_bytes,
-               'artifact_cache_bytes',expired.requested_artifact_cache_bytes,
                'build_executors',expired.requested_build_executors),
            'build-lease-lost:' || expired.id::text,
            jsonb_build_object('quantity',GREATEST((extract(epoch FROM (expired.expires_at - expired.started_at)) * 1000)::bigint, 0),
@@ -221,8 +234,6 @@ WITH expired AS (
                'memory_bytes',expired.requested_memory_bytes,
                'workload_disk_bytes',expired.requested_workload_disk_bytes,
                'scratch_bytes',expired.requested_scratch_bytes,
-               'build_cache_bytes',expired.requested_build_cache_bytes,
-               'artifact_cache_bytes',expired.requested_artifact_cache_bytes,
                'build_executors',expired.requested_build_executors)::text
       FROM expired
      WHERE expired.started_at IS NOT NULL AND expired.started_at < expired.expires_at
@@ -244,7 +255,23 @@ WITH expired AS (
     RETURNING meter_event_id
 )
 UPDATE deployments
-   SET current_build_lease_id = NULL, updated_at = now()
+   SET current_build_lease_id = CASE
+           WHEN expired.lease_sequence < 3 THEN NULL
+           ELSE deployments.current_build_lease_id
+       END,
+       status = CASE
+           WHEN expired.lease_sequence < 3 THEN 'building'::deployment_status
+           ELSE 'failed'::deployment_status
+       END,
+       failure = CASE
+           WHEN expired.lease_sequence < 3 THEN deployments.failure
+           ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+       END,
+       failed_at = CASE
+           WHEN expired.lease_sequence < 3 THEN deployments.failed_at
+           ELSE now()
+       END,
+       updated_at = now()
   FROM expired
  WHERE deployments.org_id = expired.org_id
    AND deployments.id = expired.deployment_id
@@ -266,26 +293,22 @@ SELECT deployments.org_id,
        deployments.build_requested_memory_bytes,
        deployments.build_requested_workload_disk_bytes,
        deployments.build_requested_scratch_bytes,
-       deployments.build_requested_build_cache_bytes,
-       deployments.build_requested_artifact_cache_bytes,
        deployments.build_requested_executors,
-       CASE WHEN deployments.status = 'queued'
-            THEN deployments.build_attempt_number + 1
-            ELSE deployments.build_attempt_number
-       END::int AS build_attempt_number,
        (COALESCE((
            SELECT max(deployment_build_leases.lease_sequence)
              FROM deployment_build_leases
             WHERE deployment_build_leases.deployment_id = deployments.id
-              AND deployment_build_leases.build_attempt_number = CASE
-                  WHEN deployments.status = 'queued' THEN deployments.build_attempt_number + 1
-                  ELSE deployments.build_attempt_number
-              END
        ), 0) + 1)::bigint AS lease_sequence,
        deployments.created_at AS queue_timestamp
   FROM deployments
  WHERE deployments.build_region_id = sqlc.arg(build_region_id)
    AND deployments.status IN ('queued', 'building')
+   AND deployments.current_build_lease_id IS NULL
+   AND COALESCE((
+       SELECT max(deployment_build_leases.lease_sequence)
+         FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+   ), 0) < 3
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases
         WHERE deployment_build_leases.deployment_id = deployments.id
@@ -302,6 +325,12 @@ SELECT deployments.org_id,
 SELECT DISTINCT deployments.build_region_id
   FROM deployments
  WHERE deployments.status IN ('queued','building')
+   AND deployments.current_build_lease_id IS NULL
+   AND COALESCE((
+       SELECT max(deployment_build_leases.lease_sequence)
+         FROM deployment_build_leases
+        WHERE deployment_build_leases.deployment_id = deployments.id
+   ), 0) < 3
    AND NOT EXISTS (
        SELECT 1 FROM deployment_build_leases
         WHERE deployment_build_leases.deployment_id = deployments.id
@@ -316,7 +345,6 @@ UPDATE deployment_build_leases
        renewed_at = now(), expires_at = sqlc.arg(expires_at), updated_at = now()
  WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
    AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -368,7 +396,6 @@ UPDATE deployment_build_leases
        renewed_at = now(), expires_at = sqlc.arg(expires_at), updated_at = now()
  WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
    AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -386,7 +413,6 @@ SELECT *
   FROM deployment_build_leases
  WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
    AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -404,7 +430,6 @@ UPDATE deployment_build_leases
    SET renewed_at = now(), expires_at = sqlc.arg(expires_at), updated_at = now()
  WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
    AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -413,32 +438,70 @@ UPDATE deployment_build_leases
 RETURNING *;
 
 -- name: RejectDeploymentBuildLease :one
-UPDATE deployment_build_leases
-   SET state = 'rejected', terminal_at = now(),
-       terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
-       terminal_request_fingerprint = NULLIF(sqlc.arg(terminal_request_fingerprint)::text, ''),
-       updated_at = now()
- WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
-   AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
-   AND lease_sequence = sqlc.arg(lease_sequence)
-   AND worker_group_id = sqlc.arg(worker_group_id)
-   AND worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND state IN ('assigned', 'starting')
-RETURNING *;
+WITH target_deployment AS MATERIALIZED (
+    SELECT deployments.id
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.id = sqlc.arg(deployment_id)
+       AND deployments.status = 'building'
+       AND deployments.current_build_lease_id = sqlc.arg(build_lease_id)
+     FOR UPDATE
+), rejected AS (
+    UPDATE deployment_build_leases
+       SET state = 'rejected', terminal_at = now(),
+           terminal_reason_code = sqlc.arg(reason_code),
+           terminal_error = sqlc.narg(error),
+           terminal_request_fingerprint = NULLIF(sqlc.arg(terminal_request_fingerprint)::text, ''),
+           updated_at = now()
+      FROM target_deployment
+     WHERE deployment_build_leases.deployment_id = target_deployment.id
+       AND deployment_build_leases.org_id = sqlc.arg(org_id)
+       AND deployment_build_leases.id = sqlc.arg(build_lease_id)
+       AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
+       AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND deployment_build_leases.state IN ('assigned', 'starting')
+    RETURNING deployment_build_leases.*
+), transitioned AS (
+    UPDATE deployments
+       SET current_build_lease_id = CASE
+               WHEN rejected.lease_sequence < 3 THEN NULL
+               ELSE deployments.current_build_lease_id
+           END,
+           status = CASE
+               WHEN rejected.lease_sequence < 3 THEN 'building'::deployment_status
+               ELSE 'failed'::deployment_status
+           END,
+           failure = CASE
+               WHEN rejected.lease_sequence < 3 THEN deployments.failure
+               ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+           END,
+           failed_at = CASE
+               WHEN rejected.lease_sequence < 3 THEN deployments.failed_at
+               ELSE now()
+           END,
+           updated_at = now()
+      FROM rejected
+     WHERE deployments.org_id = rejected.org_id
+       AND deployments.id = rejected.deployment_id
+       AND deployments.current_build_lease_id = rejected.id
+    RETURNING deployments.id
+)
+SELECT rejected.*
+  FROM rejected
+ WHERE EXISTS (SELECT 1 FROM transitioned);
 
 -- name: CompleteDeploymentBuild :one
 WITH completed AS (
     UPDATE deployment_build_leases
-       SET state = 'succeeded', committed_artifact_id = sqlc.arg(deployment_manifest_artifact_id),
-           terminal_at = now(), terminal_reason_code = 'completed', terminal_error = NULL,
+       SET state = 'succeeded', terminal_at = now(),
+           terminal_reason_code = 'completed', terminal_error = NULL,
            terminal_request_fingerprint = NULLIF(sqlc.arg(terminal_request_fingerprint)::text, ''),
            updated_at = now()
      WHERE deployment_build_leases.org_id = sqlc.arg(org_id) AND deployment_build_leases.deployment_id = sqlc.arg(id)
        AND deployment_build_leases.id = sqlc.arg(build_lease_id) AND deployment_build_leases.worker_instance_id = sqlc.arg(build_worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND deployment_build_leases.build_attempt_number = sqlc.arg(build_attempt_number)
        AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
        AND deployment_build_leases.state = 'running' AND deployment_build_leases.expires_at > now()
     RETURNING *
@@ -458,7 +521,7 @@ RETURNING deployments.*
         idempotency_key, idempotency_fingerprint
     )
     SELECT completed.org_id, completed.project_id, completed.environment_id,
-           completed.deployment_id, completed.id, completed.build_attempt_number,
+           completed.deployment_id, completed.id, NULL::int,
            completed.trace_id, completed.span_id, 'active_time',
            extract(epoch FROM (completed.terminal_at - completed.started_at)) * 1000,
            'milliseconds', completed.started_at, completed.terminal_at,
@@ -467,8 +530,6 @@ RETURNING deployments.*
                'memory_bytes',completed.requested_memory_bytes,
                'workload_disk_bytes',completed.requested_workload_disk_bytes,
                'scratch_bytes',completed.requested_scratch_bytes,
-               'build_cache_bytes',completed.requested_build_cache_bytes,
-               'artifact_cache_bytes',completed.requested_artifact_cache_bytes,
                'build_executors',completed.requested_build_executors
            ),
            'build-active:' || completed.id::text,
@@ -480,8 +541,6 @@ RETURNING deployments.*
                'memory_bytes',completed.requested_memory_bytes,
                'workload_disk_bytes',completed.requested_workload_disk_bytes,
                'scratch_bytes',completed.requested_scratch_bytes,
-               'build_cache_bytes',completed.requested_build_cache_bytes,
-               'artifact_cache_bytes',completed.requested_artifact_cache_bytes,
                'build_executors',completed.requested_build_executors
            )::text
       FROM completed
@@ -506,21 +565,44 @@ RETURNING deployments.*
 SELECT deployed.* FROM deployed, completed
  WHERE completed.started_at IS NULL OR EXISTS (SELECT 1 FROM meter_outbox);
 
--- name: GetDeploymentBuildLease :one
-SELECT *
- FROM deployment_build_leases
- WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(id)
-   AND id = sqlc.arg(build_lease_id) AND worker_instance_id = sqlc.arg(build_worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch)
-   AND state IN ('assigned', 'starting', 'running') AND expires_at > now()
- FOR UPDATE;
+-- name: LockDeploymentBuildTerminalFence :one
+WITH locked_deployment AS MATERIALIZED (
+    SELECT deployments.*
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.project_id = sqlc.arg(project_id)
+       AND deployments.environment_id = sqlc.arg(environment_id)
+       AND deployments.id = sqlc.arg(deployment_id)
+     FOR UPDATE
+), locked_lease AS MATERIALIZED (
+    SELECT deployment_build_leases.*
+      FROM deployment_build_leases
+      JOIN locked_deployment
+        ON locked_deployment.org_id = deployment_build_leases.org_id
+       AND locked_deployment.project_id = deployment_build_leases.project_id
+       AND locked_deployment.environment_id = deployment_build_leases.environment_id
+       AND locked_deployment.id = deployment_build_leases.deployment_id
+     WHERE deployment_build_leases.id = sqlc.arg(build_lease_id)
+       AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
+       AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
+     FOR UPDATE OF deployment_build_leases
+)
+SELECT locked_lease.*,
+       locked_deployment.status AS deployment_status,
+       locked_deployment.current_build_lease_id
+  FROM locked_lease
+  JOIN locked_deployment
+    ON locked_deployment.org_id = locked_lease.org_id
+   AND locked_deployment.id = locked_lease.deployment_id;
 
 -- name: GetDeploymentBuildTerminalResult :one
 SELECT state, terminal_request_fingerprint
   FROM deployment_build_leases
  WHERE org_id = sqlc.arg(org_id) AND deployment_id = sqlc.arg(deployment_id)
    AND id = sqlc.arg(build_lease_id)
-   AND build_attempt_number = sqlc.arg(build_attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
    AND worker_group_id = sqlc.arg(worker_group_id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -538,9 +620,8 @@ WITH failed AS (
      WHERE deployment_build_leases.org_id = sqlc.arg(org_id) AND deployment_build_leases.deployment_id = sqlc.arg(id)
        AND deployment_build_leases.id = sqlc.arg(build_lease_id) AND deployment_build_leases.worker_instance_id = sqlc.arg(build_worker_instance_id)
        AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
-       AND deployment_build_leases.build_attempt_number = sqlc.arg(build_attempt_number)
        AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
-       AND deployment_build_leases.state IN ('starting', 'running') AND deployment_build_leases.expires_at > now()
+       AND deployment_build_leases.state = 'running' AND deployment_build_leases.expires_at > now()
     RETURNING *
 ), failed_deployment AS (
 UPDATE deployments
@@ -556,7 +637,7 @@ RETURNING deployments.*
         idempotency_key, idempotency_fingerprint
     )
     SELECT failed.org_id, failed.project_id, failed.environment_id,
-           failed.deployment_id, failed.id, failed.build_attempt_number,
+           failed.deployment_id, failed.id, NULL::int,
            failed.trace_id, failed.span_id, 'active_time',
            extract(epoch FROM (failed.terminal_at - failed.started_at)) * 1000,
            'milliseconds', failed.started_at, failed.terminal_at,
@@ -566,8 +647,6 @@ RETURNING deployments.*
                'memory_bytes',failed.requested_memory_bytes,
                'workload_disk_bytes',failed.requested_workload_disk_bytes,
                'scratch_bytes',failed.requested_scratch_bytes,
-               'build_cache_bytes',failed.requested_build_cache_bytes,
-               'artifact_cache_bytes',failed.requested_artifact_cache_bytes,
                'build_executors',failed.requested_build_executors
            ),
            'build-active:' || failed.id::text,
@@ -580,8 +659,6 @@ RETURNING deployments.*
                'memory_bytes',failed.requested_memory_bytes,
                'workload_disk_bytes',failed.requested_workload_disk_bytes,
                'scratch_bytes',failed.requested_scratch_bytes,
-               'build_cache_bytes',failed.requested_build_cache_bytes,
-               'artifact_cache_bytes',failed.requested_artifact_cache_bytes,
                'build_executors',failed.requested_build_executors
            )::text
       FROM failed
@@ -605,6 +682,172 @@ RETURNING deployments.*
 )
 SELECT failed_deployment.* FROM failed_deployment, failed
  WHERE failed.started_at IS NULL OR EXISTS (SELECT 1 FROM meter_outbox);
+
+-- name: FailDeploymentBuildDelivery :one
+WITH locked_deployment AS MATERIALIZED (
+    SELECT deployments.*
+      FROM deployments
+     WHERE deployments.org_id = sqlc.arg(org_id)
+       AND deployments.project_id = sqlc.arg(project_id)
+       AND deployments.environment_id = sqlc.arg(environment_id)
+       AND deployments.id = sqlc.arg(deployment_id)
+     FOR UPDATE
+), locked_lease AS MATERIALIZED (
+    SELECT deployment_build_leases.*
+      FROM deployment_build_leases
+      JOIN locked_deployment
+        ON locked_deployment.org_id = deployment_build_leases.org_id
+       AND locked_deployment.project_id = deployment_build_leases.project_id
+       AND locked_deployment.environment_id = deployment_build_leases.environment_id
+       AND locked_deployment.id = deployment_build_leases.deployment_id
+     WHERE deployment_build_leases.id = sqlc.arg(build_lease_id)
+       AND deployment_build_leases.lease_sequence = sqlc.arg(lease_sequence)
+       AND deployment_build_leases.worker_group_id = sqlc.arg(worker_group_id)
+       AND deployment_build_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND deployment_build_leases.worker_epoch = sqlc.arg(worker_epoch)
+       AND deployment_build_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
+       AND (
+           (
+               deployment_build_leases.state = 'running'
+               AND deployment_build_leases.expires_at > now()
+               AND locked_deployment.status = 'building'
+               AND locked_deployment.current_build_lease_id = deployment_build_leases.id
+           )
+           OR
+           (
+               deployment_build_leases.state = 'lost'
+               AND deployment_build_leases.terminal_reason_code = sqlc.arg(reason_code)
+               AND deployment_build_leases.terminal_request_fingerprint IS NULL
+           )
+       )
+     FOR UPDATE OF deployment_build_leases
+), lost AS (
+    UPDATE deployment_build_leases
+       SET state = 'lost',
+           terminal_at = now(),
+           terminal_reason_code = sqlc.arg(reason_code),
+           terminal_error = NULL,
+           terminal_request_fingerprint = NULL,
+           updated_at = now()
+      FROM locked_lease
+     WHERE deployment_build_leases.id = locked_lease.id
+       AND locked_lease.state = 'running'
+    RETURNING deployment_build_leases.*
+), meter_event AS (
+    INSERT INTO meter_events (
+        org_id, project_id, environment_id, deployment_id,
+        deployment_build_lease_id, attempt_number, trace_id, span_id, meter,
+        quantity, unit, measured_from, measured_to, details,
+        idempotency_key, idempotency_fingerprint
+    )
+    SELECT lost.org_id, lost.project_id, lost.environment_id,
+           lost.deployment_id, lost.id, NULL::int,
+           lost.trace_id, lost.span_id, 'active_time',
+           extract(epoch FROM (lost.terminal_at - lost.started_at)) * 1000,
+           'milliseconds', lost.started_at, lost.terminal_at,
+           jsonb_build_object(
+               'outcome', 'lease_lost_requeued',
+               'reason_code', sqlc.arg(reason_code),
+               'cpu_millis', lost.requested_cpu_millis,
+               'memory_bytes', lost.requested_memory_bytes,
+               'workload_disk_bytes', lost.requested_workload_disk_bytes,
+               'scratch_bytes', lost.requested_scratch_bytes,
+               'build_executors', lost.requested_build_executors
+           ),
+           'build-lease-lost:' || lost.id::text,
+           jsonb_build_object(
+               'quantity', extract(epoch FROM (lost.terminal_at - lost.started_at)) * 1000,
+               'unit', 'milliseconds',
+               'measured_from', lost.started_at,
+               'measured_to', lost.terminal_at,
+               'outcome', 'lease_lost_requeued',
+               'reason_code', sqlc.arg(reason_code),
+               'cpu_millis', lost.requested_cpu_millis,
+               'memory_bytes', lost.requested_memory_bytes,
+               'workload_disk_bytes', lost.requested_workload_disk_bytes,
+               'scratch_bytes', lost.requested_scratch_bytes,
+               'build_executors', lost.requested_build_executors
+           )::text
+      FROM lost
+    ON CONFLICT (org_id, source_type, source_id, meter, idempotency_key)
+    DO UPDATE SET idempotency_fingerprint = meter_events.idempotency_fingerprint
+     WHERE meter_events.idempotency_fingerprint = excluded.idempotency_fingerprint
+    RETURNING *
+), meter_outbox AS (
+    INSERT INTO telemetry_outbox (
+        org_id, stream_kind, source_kind, source_id, project_id, environment_id,
+        deployment_id, meter_event_id, attempt_number, trace_id, span_id,
+        kind, payload, idempotency_key, observed_at
+    )
+    SELECT org_id, 'meter_event', source_type, source_id, project_id,
+           environment_id, deployment_id, id, NULL::int, trace_id, span_id,
+           meter, details, idempotency_key, occurred_at
+      FROM meter_event
+    ON CONFLICT DO NOTHING
+    RETURNING meter_event_id
+), transitioned_deployment AS (
+    UPDATE deployments
+       SET current_build_lease_id = CASE
+               WHEN lost.lease_sequence < 3 THEN NULL
+               ELSE deployments.current_build_lease_id
+           END,
+           status = CASE
+               WHEN lost.lease_sequence < 3 THEN 'building'::deployment_status
+               ELSE 'failed'::deployment_status
+           END,
+           failure = CASE
+               WHEN lost.lease_sequence < 3 THEN deployments.failure
+               ELSE jsonb_build_object('reason_code', 'build_delivery_exhausted')
+           END,
+           failed_at = CASE
+               WHEN lost.lease_sequence < 3 THEN deployments.failed_at
+               ELSE now()
+           END,
+           updated_at = now()
+      FROM lost
+     WHERE deployments.org_id = lost.org_id
+       AND deployments.id = lost.deployment_id
+       AND deployments.current_build_lease_id = lost.id
+       AND EXISTS (
+           SELECT 1
+             FROM meter_outbox
+            WHERE meter_outbox.meter_event_id = (
+                SELECT id
+                  FROM meter_event
+                 WHERE meter_event.deployment_build_lease_id = lost.id
+            )
+       )
+    RETURNING deployments.status
+), outcome AS (
+    SELECT lost.state,
+           lost.terminal_reason_code,
+           lost.terminal_at,
+           lost.lease_sequence,
+           false AS replayed
+      FROM lost
+    UNION ALL
+    SELECT locked_lease.state,
+           locked_lease.terminal_reason_code,
+           locked_lease.terminal_at,
+           locked_lease.lease_sequence,
+           true AS replayed
+      FROM locked_lease
+     WHERE locked_lease.state = 'lost'
+)
+SELECT outcome.state,
+       outcome.terminal_reason_code,
+       outcome.terminal_at,
+       outcome.lease_sequence,
+       locked_deployment.id AS deployment_id,
+       CASE WHEN outcome.replayed
+           THEN locked_deployment.status
+           ELSE transitioned_deployment.status
+       END::deployment_status AS deployment_status,
+       outcome.replayed
+  FROM outcome
+ CROSS JOIN locked_deployment
+  LEFT JOIN transitioned_deployment ON NOT outcome.replayed
+ WHERE outcome.replayed OR transitioned_deployment.status IS NOT NULL;
 
 -- name: PromoteDeployment :one
 WITH target AS (

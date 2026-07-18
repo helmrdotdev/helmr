@@ -76,7 +76,7 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	}
 }
 
-func TestCleanupRuntimeRequiresCanonicalExactOwnership(t *testing.T) {
+func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "00000000-0000-0000-0000-000000000701"
@@ -84,18 +84,49 @@ func TestCleanupRuntimeRequiresCanonicalExactOwnership(t *testing.T) {
 	if err := os.MkdirAll(statePath, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(vm.RuntimeOwnerBuild+"\n"+id+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(vm.OwnerBuild)+"\n"+id+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
-	if err := connector.CleanupRuntime(context.Background(), id); err == nil || !strings.Contains(err.Error(), "ownership evidence") {
-		t.Fatalf("CleanupRuntime() error = %v, want exact ownership rejection", err)
+	err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: id})
+	var unproven *vm.CleanupUnprovenError
+	if !errors.As(err, &unproven) || unproven.Owner != (vm.Owner{Kind: vm.OwnerRuntime, ID: id}) || !strings.Contains(err.Error(), "ownership marker") {
+		t.Fatalf("Cleanup() error = %v, want typed exact ownership rejection", err)
 	}
 	if _, err := os.Stat(statePath); err != nil {
 		t.Fatalf("mismatched owner state was removed: %v", err)
 	}
-	if err := connector.CleanupRuntime(context.Background(), strings.ToUpper(id)); err == nil {
+	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerRuntime, ID: strings.ToUpper(id)}); !errors.As(err, &unproven) {
 		t.Fatal("non-canonical owner id was accepted")
+	}
+}
+
+func TestCleanupRemovesExactBuildOwnerAndMarkerLast(t *testing.T) {
+	stateDir := t.TempDir()
+	jailerDir := t.TempDir()
+	id := "00000000-0000-0000-0000-000000000702"
+	statePath := filepath.Join(stateDir, id)
+	jailerPath := filepath.Join(jailerDir, "firecracker", id)
+	if err := os.MkdirAll(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte("build\n"+id+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "scratch"), []byte("state"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connector := &Connector{cfg: Config{StateDir: stateDir, JailerChrootBaseDir: jailerDir, IPPath: "/bin/true"}}
+	if err := connector.Cleanup(context.Background(), vm.Owner{Kind: vm.OwnerBuild, ID: id}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{statePath, jailerPath} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("cleanup path remains %s: %v", path, err)
+		}
 	}
 }
 

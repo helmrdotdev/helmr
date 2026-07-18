@@ -417,6 +417,11 @@ in
             Restart = "on-failure";
             RestartSec = "3s";
             Delegate = true;
+            CPUQuota = "100%";
+            MemoryMax = "2G";
+            MemorySwapMax = 0;
+            TasksMax = 1024;
+            MemoryOOMGroup = true;
             KillMode = "mixed";
             BindReadOnlyPaths = [ "/etc/helmr/guest-resolv.conf:/etc/resolv.conf" ];
             IPAddressDeny = cfg.networkBlockedIPv4CIDRs ++ cfg.networkBlockedIPv6CIDRs;

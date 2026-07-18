@@ -132,11 +132,14 @@ func LoadWorker() (Worker, error) {
 	if buildExecutors == 0 && slices.Contains(cfg.WorkerRoles, "build") {
 		buildExecutors = 1
 	}
-	if buildExecutors < 0 || buildExecutors > 1<<31-1 {
-		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be non-negative and fit in int32")
+	if buildExecutors < 0 || buildExecutors > 1 {
+		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be zero or one")
 	}
 	if !slices.Contains(cfg.WorkerRoles, "build") && buildExecutors != 0 {
 		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be zero when build role is disabled")
+	}
+	if slices.Contains(cfg.WorkerRoles, "build") && buildExecutors != 1 {
+		return cfg, errors.New("HELMR_WORKER_BUILD_EXECUTORS must be one when build role is enabled")
 	}
 	cfg.WorkerBuildExecutors = int32(buildExecutors)
 	var runtimeStarts int

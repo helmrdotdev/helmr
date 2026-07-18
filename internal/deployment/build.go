@@ -66,7 +66,7 @@ type GuestIndexer struct {
 	TempDir   string
 }
 
-func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog, error) {
+func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (_ Catalog, returnErr error) {
 	if p.Connector == nil {
 		return Catalog{}, errors.New("deployment indexer guest connector is required")
 	}
@@ -82,11 +82,19 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 	}
 	defer cleanup()
 
-	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{OwnerKind: vm.RuntimeOwnerBuild, Network: compute.DefaultNetworkPolicy()})
+	session, err := p.Connector.Connect(ctx, vm.ConnectRequest{
+		OwnerKind: vm.OwnerBuild,
+		Resources: compute.BuildGuestResources(),
+		Network:   compute.DefaultNetworkPolicy(),
+	})
 	if err != nil {
-		return Catalog{}, fmt.Errorf("connect deployment indexer guest: %w", err)
+		return Catalog{}, vm.NewGuestError(fmt.Errorf("connect deployment indexer guest: %w", err))
 	}
-	defer session.Close(context.Background())
+	defer func() {
+		if err := session.Close(context.Background()); err != nil {
+			returnErr = errors.Join(returnErr, vm.NewGuestError(fmt.Errorf("close deployment indexer guest: %w", err)))
+		}
+	}()
 	stream := session.Stream()
 
 	runID := strings.TrimSpace(request.RunID)
@@ -94,42 +102,64 @@ func (p GuestIndexer) Index(ctx context.Context, request IndexRequest) (Catalog,
 		runID = "deployment-index"
 	}
 	if err := wire.WriteFileFrame(stream, wire.StreamHeader{Type: wire.StreamTypeCatalogDeployment, RunID: runID}, sourceTar.Path); err != nil {
-		return Catalog{}, fmt.Errorf("write deployment source: %w", err)
+		return Catalog{}, vm.NewGuestError(fmt.Errorf("write deployment source: %w", err))
 	}
 	body, err := frameio.ReadMessageFrame(stream)
 	if err != nil {
-		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
+		return Catalog{}, vm.NewGuestError(fmt.Errorf("read deployment index: %w", err))
 	}
 	if frame, ok, err := wire.DecodeParseErrorFrame(body); err != nil {
 		return Catalog{}, fmt.Errorf("read deployment index: %w", err)
 	} else if ok {
 		return Catalog{}, task.ParseError{Kind: frame.Kind, Message: frame.Message}
 	}
-	return decodeCatalog(body)
+	catalog, err := decodeCatalog(body)
+	if err != nil {
+		return Catalog{}, vm.NewGuestError(fmt.Errorf("decode deployment index: %w", err))
+	}
+	return catalog, nil
 }
 
-func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult {
+func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
+	result, err := e.buildDeployment(ctx, lease, deployment)
+	if err == nil {
+		return result, nil
+	}
+	var guestError *vm.GuestError
+	if errors.As(err, &guestError) {
+		return api.WorkerDeploymentBuildResult{}, buildGuestDeliveryFailure(err)
+	}
+	var fatal interface {
+		FatalWorker() bool
+	}
+	if errors.As(err, &fatal) && fatal.FatalWorker() {
+		return api.WorkerDeploymentBuildResult{}, err
+	}
+	return failedDeploymentBuild(err), nil
+}
+
+func (e Builder) buildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error) {
 	if e.CAS == nil {
-		return failedDeploymentBuild(errors.New("deployment build CAS is required"))
+		return api.WorkerDeploymentBuildResult{}, errors.New("deployment build CAS is required")
 	}
 	if e.Indexer == nil {
-		return failedDeploymentBuild(errors.New("deployment indexer is required"))
+		return api.WorkerDeploymentBuildResult{}, errors.New("deployment indexer is required")
 	}
 	if e.Compiler == nil {
-		return failedDeploymentBuild(task.ErrCompilerRequired)
+		return api.WorkerDeploymentBuildResult{}, task.ErrCompilerRequired
 	}
 	if e.ImageBuilder == nil {
-		return failedDeploymentBuild(errors.New("deployment image builder is required"))
+		return api.WorkerDeploymentBuildResult{}, errors.New("deployment image builder is required")
 	}
 	source, cleanup, err := materializeSourceArtifact(ctx, e.WorkDir, e.CAS, deployment.DeploymentSource, "deployment")
 	if err != nil {
-		return failedDeploymentBuild(err)
+		return api.WorkerDeploymentBuildResult{}, err
 	}
 	defer cleanup()
 
 	index, err := e.Indexer.Index(ctx, IndexRequest{Source: source, RunID: lease.DeploymentID})
 	if err != nil {
-		return failedDeploymentBuild(err)
+		return api.WorkerDeploymentBuildResult{}, err
 	}
 	taskIDs := make([]string, 0, len(index.Tasks))
 	for taskID := range index.Tasks {
@@ -137,7 +167,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	}
 	sort.Strings(taskIDs)
 	if len(taskIDs) == 0 {
-		return failedDeploymentBuild(errors.New("deployment source must contain at least one task"))
+		return api.WorkerDeploymentBuildResult{}, errors.New("deployment source must contain at least one task")
 	}
 
 	tasks := make([]api.WorkerDeploymentBuildTask, 0, len(taskIDs))
@@ -156,38 +186,38 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	for _, taskID := range taskIDs {
 		indexTask := index.Tasks[taskID]
 		if err := api.ValidateTaskID(taskID); err != nil {
-			return failedDeploymentBuild(err)
+			return api.WorkerDeploymentBuildResult{}, err
 		}
 		bundle, err := e.Compiler.Compile(ctx, task.CompileRequest{Source: source, TaskID: taskID})
 		if err != nil {
-			return failedDeploymentBuild(err)
+			return api.WorkerDeploymentBuildResult{}, err
 		}
 		filePath := strings.TrimSpace(indexTask.FilePath)
 		if filePath == "" && bundle != nil && bundle.Task != nil {
 			filePath = strings.TrimSpace(bundle.Task.ModulePath)
 		}
 		if filePath == "" {
-			return failedDeploymentBuild(fmt.Errorf("task %q file_path is required", taskID))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q file_path is required", taskID)
 		}
 		exportName := strings.TrimSpace(indexTask.ExportName)
 		if exportName == "" {
-			return failedDeploymentBuild(fmt.Errorf("task %q export_name is required", taskID))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q export_name is required", taskID)
 		}
 		resources, err := deploymentTaskResources(bundle)
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q resources: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q resources: %w", taskID, err)
 		}
 		network, err := deploymentTaskNetwork(bundle)
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q network: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q network: %w", taskID, err)
 		}
 		sandbox, err := deploymentTaskSandbox(bundle)
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q sandbox: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q sandbox: %w", taskID, err)
 		}
 		maxDurationSeconds, err := deploymentTaskMaxDurationSeconds(bundle)
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("task %q max duration: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q max duration: %w", taskID, err)
 		}
 		schedules := deploymentTaskSchedules(bundle)
 		imageObject, ok := sandboxImages[sandbox.id]
@@ -199,21 +229,21 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 				Source: source,
 			})
 			if err != nil {
-				return failedDeploymentBuild(fmt.Errorf("build sandbox %q image: %w", sandbox.id, err))
+				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("build sandbox %q image: %w", sandbox.id, err)
 			}
 			imageFile, err := os.Open(imageArtifact.ImageTarPath)
 			if err != nil {
 				cleanupBuildArtifact(imageArtifact)
-				return failedDeploymentBuild(fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err))
+				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("open sandbox %q image artifact: %w", sandbox.id, err)
 			}
 			object, putErr := e.CAS.Put(ctx, api.SandboxImageArtifactMediaType, imageFile)
 			closeErr := imageFile.Close()
 			cleanupBuildArtifact(imageArtifact)
 			if putErr != nil {
-				return failedDeploymentBuild(fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr))
+				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store sandbox %q image artifact: %w", sandbox.id, putErr)
 			}
 			if closeErr != nil {
-				return failedDeploymentBuild(fmt.Errorf("close sandbox %q image artifact: %w", sandbox.id, closeErr))
+				return api.WorkerDeploymentBuildResult{}, fmt.Errorf("close sandbox %q image artifact: %w", sandbox.id, closeErr)
 			}
 			imageObject = api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType}
 			sandboxImages[sandbox.id] = imageObject
@@ -221,17 +251,17 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		}
 		body, err := proto.Marshal(bundle)
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("marshal task %q bundle: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal task %q bundle: %w", taskID, err)
 		}
 		object, err := e.CAS.Put(ctx, api.TaskBundleArtifactMediaType, bytes.NewReader(body))
 		if err != nil {
-			return failedDeploymentBuild(fmt.Errorf("store task %q bundle: %w", taskID, err))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store task %q bundle: %w", taskID, err)
 		}
 		casObjects = append(casObjects, api.CASObject{Digest: object.Digest, SizeBytes: object.SizeBytes, MediaType: object.MediaType})
 		queueName := deploymentTaskQueueName(bundle, taskID)
 		queue, ok := index.Queues[queueName]
 		if !ok {
-			return failedDeploymentBuild(fmt.Errorf("task %q references undefined queue %q", taskID, queueName))
+			return api.WorkerDeploymentBuildResult{}, fmt.Errorf("task %q references undefined queue %q", taskID, queueName)
 		}
 		tasks = append(tasks, api.WorkerDeploymentBuildTask{
 			TaskID:                     taskID,
@@ -275,11 +305,11 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 	}
 	manifestBody, err := json.Marshal(manifest)
 	if err != nil {
-		return failedDeploymentBuild(fmt.Errorf("marshal deployment manifest: %w", err))
+		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal deployment manifest: %w", err)
 	}
 	deploymentManifest, err := e.CAS.Put(ctx, api.DeploymentManifestArtifactMediaType, bytes.NewReader(manifestBody))
 	if err != nil {
-		return failedDeploymentBuild(fmt.Errorf("store deployment manifest: %w", err))
+		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store deployment manifest: %w", err)
 	}
 	buildManifestBody, err := json.Marshal(map[string]any{
 		"deployment_id":              deployment.ID,
@@ -293,11 +323,11 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		"deployment_manifest_digest": deploymentManifest.Digest,
 	})
 	if err != nil {
-		return failedDeploymentBuild(fmt.Errorf("marshal build manifest: %w", err))
+		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("marshal build manifest: %w", err)
 	}
 	buildManifest, err := e.CAS.Put(ctx, api.BuildManifestArtifactMediaType, bytes.NewReader(buildManifestBody))
 	if err != nil {
-		return failedDeploymentBuild(fmt.Errorf("store build manifest: %w", err))
+		return api.WorkerDeploymentBuildResult{}, fmt.Errorf("store build manifest: %w", err)
 	}
 	casObjects = append(casObjects,
 		api.CASObject{Digest: deploymentManifest.Digest, SizeBytes: deploymentManifest.SizeBytes, MediaType: deploymentManifest.MediaType},
@@ -310,7 +340,7 @@ func (e Builder) BuildDeployment(ctx context.Context, lease api.WorkerDeployment
 		Queues:                   queues,
 		Streams:                  index.Streams,
 		CASObjects:               casObjects,
-	}
+	}, nil
 }
 
 func failedDeploymentBuild(err error) api.WorkerDeploymentBuildResult {

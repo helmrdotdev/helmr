@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS helmr_telemetry.meter_events (
     source_id UUID,
     run_id Nullable(UUID),
     deployment_id Nullable(UUID),
-    attempt_number Int32,
+    attempt_number Nullable(Int32),
     trace_id String,
     span_id String,
     meter LowCardinality(String),

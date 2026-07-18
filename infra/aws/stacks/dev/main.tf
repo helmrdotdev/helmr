@@ -24,6 +24,10 @@ locals {
   build_worker_name            = "${lower(var.name)}-build"
   worker_ami_id                = coalesce(var.worker_ami_id, "ami-unconfigured")
   worker_allowed_ami_ids       = distinct(compact(concat([local.worker_ami_id], var.worker_allowed_ami_ids)))
+  buildkit_cpu_reserve_millis  = 1000
+  buildkit_memory_reserve_mib  = 2048
+  build_worker_cpu_millis      = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000 - local.buildkit_cpu_reserve_millis
+  build_worker_memory_mib      = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) - local.buildkit_memory_reserve_mib
   worker_groups = [
     {
       id                   = local.run_worker_group_id
@@ -64,8 +68,8 @@ locals {
       allows_run           = false
       allows_build         = true
       instance_capacity = var.create_worker ? {
-        milli_cpu            = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) * 1048576
+        milli_cpu            = local.build_worker_cpu_millis
+        memory_bytes         = local.build_worker_memory_mib * 1048576
         workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
         scratch_bytes        = local.build_worker_scratch_mib * 1048576
         build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
@@ -129,8 +133,8 @@ locals {
       role               = "build"
       compatibility_keys = [local.build_worker_group_id]
       instance_capacity = {
-        milli_cpu            = coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) * 1000
-        memory_bytes         = coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) * 1048576
+        milli_cpu            = local.build_worker_cpu_millis
+        memory_bytes         = local.build_worker_memory_mib * 1048576
         workload_disk_bytes  = local.build_worker_workload_disk_mib * 1048576
         scratch_bytes        = local.build_worker_scratch_mib * 1048576
         build_cache_bytes    = local.build_worker_build_cache_mib * 1048576
@@ -456,14 +460,14 @@ resource "terraform_data" "worker_preconditions" {
         local.run_worker_build_cache_mib > 0 && local.run_worker_artifact_cache_mib > 0 &&
         local.run_worker_workload_disk_mib >= var.worker_vm_scratch_disk_mib &&
         local.run_worker_scratch_mib >= var.worker_vm_scratch_disk_mib &&
-        coalesce(var.build_worker_capacity_vcpus, var.worker_capacity_vcpus, 0) > 0 &&
-        coalesce(var.build_worker_capacity_memory_mib, var.worker_capacity_memory_mib, 0) > 0 &&
-        coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0) > 0 &&
+        local.build_worker_cpu_millis >= 2000 &&
+        local.build_worker_memory_mib >= 2048 &&
+        coalesce(var.build_worker_execution_slots, var.worker_execution_slots, 0) == 1 &&
         local.build_worker_build_cache_mib > 0 && local.build_worker_artifact_cache_mib > 0 &&
         local.build_worker_workload_disk_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib) &&
         local.build_worker_scratch_mib >= coalesce(var.build_worker_vm_scratch_disk_mib, var.worker_vm_scratch_disk_mib)
       )
-      error_message = "worker groups require explicit certified CPU, memory, cache, disk-partition, and execution-slot capacity; one VM workload and scratch shape must fit each host partition."
+      error_message = "worker groups require certified CPU, memory, cache, disk partitions, and concurrency; build capacity must fit one fixed build guest after the service reserve and expose exactly one build executor."
     }
 
     precondition {

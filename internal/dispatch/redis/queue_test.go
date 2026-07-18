@@ -297,8 +297,7 @@ func TestBuildReadyIndexUsesSameFairnessAndPreservesFrozenResources(t *testing.T
 	counts := map[string]int{}
 	for _, message := range selected {
 		counts[message.OrgID]++
-		if message.WorkKind != dispatch.WorkKindBuild || message.BuildResources.BuildCacheBytes != 4096 ||
-			message.BuildResources.ArtifactCacheBytes != 8192 || message.BuildResources.Executors != 2 {
+		if message.WorkKind != dispatch.WorkKindBuild || message.BuildResources.Executors != 1 {
 			t.Fatalf("frozen build message changed: %+v", message)
 		}
 	}
@@ -307,7 +306,7 @@ func TestBuildReadyIndexUsesSameFairnessAndPreservesFrozenResources(t *testing.T
 	}
 }
 
-func TestBuildReadyCASRemovalPreservesNewAttempt(t *testing.T) {
+func TestBuildReadyCASRemovalPreservesNewDelivery(t *testing.T) {
 	server := miniredis.RunT(t)
 	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
 	queue, err := New(client, WithPrefix("build-cas"))
@@ -315,17 +314,16 @@ func TestBuildReadyCASRemovalPreservesNewAttempt(t *testing.T) {
 		t.Fatal(err)
 	}
 	message := testBuildMessage("dep-1", "org-a", "env-a", time.Now().UTC())
-	message.BuildAttemptNumber = 2
-	message.LeaseSequence = 1
+	message.LeaseSequence = 2
 	if _, err := queue.Enqueue(context.Background(), message); err != nil {
 		t.Fatal(err)
 	}
-	if err := queue.RemoveReady(context.Background(), dispatch.WorkKindBuild, message.DeploymentID, "build:1:4"); err != nil {
+	if err := queue.RemoveReady(context.Background(), dispatch.WorkKindBuild, message.DeploymentID, "build:1"); err != nil {
 		t.Fatal(err)
 	}
 	loaded, ok, err := queue.loadMessage(context.Background(), dispatch.WorkKindBuild, message.DeploymentID)
-	if err != nil || !ok || loaded.ReadyFence() != "build:2:1" {
-		t.Fatalf("new build attempt removed: loaded=%+v ok=%v err=%v", loaded, ok, err)
+	if err != nil || !ok || loaded.ReadyFence() != "build:2" {
+		t.Fatalf("new build delivery removed: loaded=%+v ok=%v err=%v", loaded, ok, err)
 	}
 }
 
@@ -346,11 +344,10 @@ func testMessage(runID, orgID, environmentID string, queuedAt time.Time) dispatc
 func testBuildMessage(deploymentID, orgID, environmentID string, queuedAt time.Time) dispatch.Message {
 	return dispatch.Message{WorkKind: dispatch.WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		RegionID: "us-east-1", ProjectID: "project-1", EnvironmentID: environmentID,
-		QueueClass: "build", QueueName: "deployment-build", BuildAttemptNumber: 1, LeaseSequence: 1,
+		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: 1,
 		QueueTimestamp: queuedAt, EnqueuedAt: queuedAt,
-		BuildResources: dispatch.BuildResourceVector{CPUMillis: 1000, MemoryBytes: 1024,
-			WorkloadDiskBytes: 2048, ScratchBytes: 1024, BuildCacheBytes: 4096,
-			ArtifactCacheBytes: 8192, Executors: 2}}
+		BuildResources: dispatch.BuildResourceVector{CPUMillis: 2000, MemoryBytes: 2 << 30,
+			WorkloadDiskBytes: 0, ScratchBytes: 13 << 30, Executors: 1}}
 }
 
 func containsAny(value string, needles ...string) bool {

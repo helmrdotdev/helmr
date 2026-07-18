@@ -16,6 +16,8 @@ import (
 	"github.com/moby/buildkit/exporter/containerimage/exptypes"
 	"github.com/moby/buildkit/session"
 	"github.com/moby/buildkit/session/secrets/secretsprovider"
+	"github.com/moby/buildkit/util/grpcerrors"
+	"google.golang.org/grpc/codes"
 )
 
 const (
@@ -23,6 +25,7 @@ const (
 	defaultOutputRoot   = "helmr-worker-builds"
 	defaultPlatform     = "linux/amd64"
 	defaultCacheNS      = "helmr"
+	buildKitService     = "helmr-buildkit.service"
 )
 
 type Config struct {
@@ -55,6 +58,31 @@ type Builder struct {
 	client         buildkitSolver
 	outputRoot     string
 	cacheNamespace string
+	health         interface {
+		Check(context.Context) error
+	}
+}
+
+type ServiceFailure struct {
+	Cause error
+}
+
+func (e *ServiceFailure) Error() string {
+	if e == nil || e.Cause == nil {
+		return "build service failure"
+	}
+	return "build service failure: " + e.Cause.Error()
+}
+
+func (e *ServiceFailure) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+func (*ServiceFailure) FatalWorker() bool {
+	return true
 }
 
 func Open(ctx context.Context, cfg Config) (*Builder, func() error, error) {
@@ -148,10 +176,17 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 		Session: buildSecretSession(request.BuildSecrets),
 	}, nil)
 	if err != nil {
-		return builder.Artifact{}, fmt.Errorf("solve build graph: %s", redactBuildError(err, request.BuildSecrets))
+		closeErr := closeImage()
+		removeErr := os.RemoveAll(output.root)
+		solveErr := b.solveError(ctx, err, request.BuildSecrets)
+		if closeErr != nil || removeErr != nil {
+			return builder.Artifact{}, &ServiceFailure{Cause: errors.Join(solveErr, closeErr, removeErr)}
+		}
+		return builder.Artifact{}, solveErr
 	}
 	if err := closeImage(); err != nil {
-		return builder.Artifact{}, fmt.Errorf("close image tar: %w", err)
+		removeErr := os.RemoveAll(output.root)
+		return builder.Artifact{}, &ServiceFailure{Cause: errors.Join(fmt.Errorf("close image tar: %w", err), removeErr)}
 	}
 	if err := os.WriteFile(output.config, configJSON, 0o644); err != nil {
 		return builder.Artifact{}, err
@@ -167,6 +202,26 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 		return builder.Artifact{}, err
 	}
 	return builder.Artifact{RootPath: output.root, ImageTarPath: output.imageTar, ConfigPath: output.config, ManifestPath: output.manifest}, nil
+}
+
+func (b *Builder) solveError(ctx context.Context, solveErr error, secrets map[string][]byte) error {
+	redacted := errors.New("solve build graph: " + redactBuildError(solveErr, secrets))
+	if b.health == nil {
+		return redacted
+	}
+	switch grpcerrors.Code(solveErr) {
+	case codes.Unavailable, codes.Internal, codes.ResourceExhausted:
+		return &ServiceFailure{Cause: redacted}
+	}
+	healthCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildKitHealthTimeout)
+	defer cancel()
+	if err := b.health.Check(healthCtx); err != nil {
+		return &ServiceFailure{Cause: errors.Join(redacted, fmt.Errorf("prove BuildKit service generation healthy: %w", err))}
+	}
+	if ctx.Err() != nil {
+		return errors.Join(redacted, context.Cause(ctx))
+	}
+	return redacted
 }
 
 func (b *Builder) output(request builder.Request) (buildOutput, error) {

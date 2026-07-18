@@ -15,6 +15,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/proto/bundle/v0"
 	bkclient "github.com/moby/buildkit/client"
 	"github.com/moby/buildkit/client/llb"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func TestBuildKitE2E(t *testing.T) {
@@ -285,6 +287,86 @@ func TestBuilderRedactsBuildSecretFromSolveError(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), short) {
 		t.Fatalf("error leaked short build secret: %v", err)
+	}
+}
+
+type fakeBuildKitHealth struct {
+	err error
+}
+
+func (h fakeBuildKitHealth) Check(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return h.err
+}
+
+func TestBuilderClassifiesTransportLossAsFatalServiceFailure(t *testing.T) {
+	sourceRoot := t.TempDir()
+	outputRoot := t.TempDir()
+	solver := &fakeBuildKitSolver{err: status.Error(codes.Unavailable, "connection lost")}
+	build := New(solver, outputRoot)
+	build.health = fakeBuildKitHealth{}
+
+	_, err := build.Build(context.Background(), builder.Request{
+		RunID:  "run-1",
+		TaskID: "deploy",
+		Bundle: &bundlev0.Bundle{Image: image(
+			from("debian:trixie-slim"),
+		)},
+		Source: builder.Source{ProjectRoot: sourceRoot},
+	})
+	var serviceFailure *ServiceFailure
+	if !errors.As(err, &serviceFailure) || !serviceFailure.FatalWorker() {
+		t.Fatalf("error = %v, want fatal BuildKit service failure", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outputRoot, "run-1", "deploy")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("partial build output remains: %v", statErr)
+	}
+}
+
+func TestBuilderKeepsHealthySolveFailureDeterministic(t *testing.T) {
+	sourceRoot := t.TempDir()
+	solver := &fakeBuildKitSolver{err: errors.New("command exited with status 1")}
+	build := New(solver, t.TempDir())
+	build.health = fakeBuildKitHealth{}
+
+	_, err := build.Build(context.Background(), builder.Request{
+		RunID:  "run-1",
+		TaskID: "deploy",
+		Bundle: &bundlev0.Bundle{Image: image(
+			from("debian:trixie-slim"),
+		)},
+		Source: builder.Source{ProjectRoot: sourceRoot},
+	})
+	var serviceFailure *ServiceFailure
+	if err == nil || errors.As(err, &serviceFailure) {
+		t.Fatalf("error = %v, want deterministic solve failure", err)
+	}
+}
+
+func TestBuilderKeepsCallerCancellationNonfatalWhenServiceIsHealthy(t *testing.T) {
+	sourceRoot := t.TempDir()
+	solver := &fakeBuildKitSolver{err: status.Error(codes.Canceled, "context canceled")}
+	build := New(solver, t.TempDir())
+	build.health = fakeBuildKitHealth{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := build.Build(ctx, builder.Request{
+		RunID:  "run-1",
+		TaskID: "deploy",
+		Bundle: &bundlev0.Bundle{Image: image(
+			from("debian:trixie-slim"),
+		)},
+		Source: builder.Source{ProjectRoot: sourceRoot},
+	})
+	var serviceFailure *ServiceFailure
+	if err == nil || errors.As(err, &serviceFailure) {
+		t.Fatalf("error = %v, want nonfatal caller cancellation", err)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
 	}
 }
 

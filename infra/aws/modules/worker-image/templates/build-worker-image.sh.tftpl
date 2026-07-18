@@ -150,7 +150,7 @@ cat >/etc/cni/conf.d/helmr.conflist <<'EOF'
 }
 EOF
 
-cat >/etc/systemd/system/buildkit.service <<'EOF'
+cat >/etc/systemd/system/helmr-buildkit.service <<'EOF'
 [Unit]
 Description=BuildKit daemon for Helmr workers
 After=network-online.target apparmor.service
@@ -170,6 +170,11 @@ RuntimeDirectoryMode=0770
 Restart=on-failure
 RestartSec=3
 Delegate=yes
+CPUQuota=100%
+MemoryMax=2G
+MemorySwapMax=0
+TasksMax=1024
+MemoryOOMGroup=yes
 KillMode=mixed
 
 [Install]
@@ -179,8 +184,8 @@ EOF
 cat >/etc/systemd/system/helmr-worker.service <<'EOF'
 [Unit]
 Description=Helmr worker
-After=network-online.target buildkit.service
-Wants=network-online.target buildkit.service
+After=network-online.target helmr-buildkit.service
+Wants=network-online.target helmr-buildkit.service
 
 [Service]
 Type=simple

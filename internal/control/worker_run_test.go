@@ -198,6 +198,115 @@ func TestWorkerBuildTerminalRetriesAfterResponseLoss(t *testing.T) {
 	}
 }
 
+func TestWorkerBuildDeliveryFailureRetriesStoredOutcome(t *testing.T) {
+	for _, status := range []db.DeploymentStatus{
+		db.DeploymentStatusBuilding,
+		db.DeploymentStatusDeployed,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			workerID := uuid.Must(uuid.NewV7())
+			lease := finalWorkerBuildLease(workerID)
+			deploymentID := uuid.MustParse(lease.DeploymentID)
+			store := &workerResponseLossStore{deliveryFailure: db.FailDeploymentBuildDeliveryRow{
+				State:              db.DeploymentBuildLeaseStateLost,
+				TerminalReasonCode: pgtype.Text{String: string(api.WorkerDeploymentBuildDeliveryProgramVerifierFailed), Valid: true},
+				TerminalAt:         pgtype.Timestamptz{Time: time.Now(), Valid: true},
+				LeaseSequence:      lease.LeaseSequence,
+				DeploymentID:       pgtype.UUID{Bytes: deploymentID, Valid: true},
+				DeploymentStatus:   status,
+				Replayed:           true,
+			}}
+			requestBody, err := json.Marshal(api.WorkerDeploymentBuildDeliveryFailureRequest{
+				Lease: lease, ReasonCode: api.WorkerDeploymentBuildDeliveryProgramVerifierFailed,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			server := &Server{log: discardTestLogger(), db: store}
+			req := httptest.NewRequest(http.MethodPost, "/api/worker/deployments/delivery-failed", bytes.NewReader(requestBody))
+			req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, finalWorkerActor(workerID)))
+			rec := httptest.NewRecorder()
+
+			server.workerDeploymentBuildDeliveryFailed(rec, req)
+
+			if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"status":"`+string(status)+`"`) {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+			if store.deliveryFailureCalls != 1 {
+				t.Fatalf("delivery failure calls = %d", store.deliveryFailureCalls)
+			}
+		})
+	}
+}
+
+func TestWorkerBuildDeliveryFailureRejectsInvalidReasonAndFence(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	lease := finalWorkerBuildLease(workerID)
+	server := &Server{log: discardTestLogger(), db: &workerResponseLossStore{}}
+	for _, test := range []struct {
+		name       string
+		mutate     func(*api.WorkerDeploymentBuildDeliveryFailureRequest)
+		wantStatus int
+	}{
+		{
+			name: "reason",
+			mutate: func(request *api.WorkerDeploymentBuildDeliveryFailureRequest) {
+				request.ReasonCode = "worker_reported_failure"
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "protocol",
+			mutate: func(request *api.WorkerDeploymentBuildDeliveryFailureRequest) {
+				request.Lease.WorkerProtocolVersion = "other"
+			},
+			wantStatus: http.StatusConflict,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := api.WorkerDeploymentBuildDeliveryFailureRequest{Lease: lease, ReasonCode: api.WorkerDeploymentBuildDeliveryProgramVerifierFailed}
+			test.mutate(&request)
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/api/worker/deployments/delivery-failed", bytes.NewReader(body))
+			req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, finalWorkerActor(workerID)))
+			rec := httptest.NewRecorder()
+
+			server.workerDeploymentBuildDeliveryFailed(rec, req)
+
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestWorkerBuildDeliveryFailureRejectsUnknownFields(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	lease := finalWorkerBuildLease(workerID)
+	body, err := json.Marshal(map[string]any{
+		"lease":      lease,
+		"reasonCode": api.WorkerDeploymentBuildDeliveryProgramVerifierFailed,
+		"diagnostic": "must remain in worker logs",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workerResponseLossStore{}
+	server := &Server{log: discardTestLogger(), db: store}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/deployments/delivery-failed", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, finalWorkerActor(workerID)))
+	rec := httptest.NewRecorder()
+
+	server.workerDeploymentBuildDeliveryFailed(rec, req)
+
+	if rec.Code != http.StatusBadRequest || store.deliveryFailureCalls != 0 {
+		t.Fatalf("status=%d delivery_calls=%d body=%s", rec.Code, store.deliveryFailureCalls, rec.Body.String())
+	}
+}
+
 func finalWorkerRunLease(workerID uuid.UUID) api.WorkerRunLease {
 	return api.WorkerRunLease{
 		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(), RunID: uuid.Must(uuid.NewV7()).String(),
@@ -212,7 +321,7 @@ func finalWorkerBuildLease(workerID uuid.UUID) api.WorkerDeploymentBuildLease {
 		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
 		ProjectID: uuid.Must(uuid.NewV7()).String(), EnvironmentID: uuid.Must(uuid.NewV7()).String(),
 		DeploymentID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "group-1", WorkerInstanceID: workerID.String(),
-		WorkerEpoch: 2, BuildAttemptNumber: 1, LeaseSequence: 1, WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		WorkerEpoch: 2, LeaseSequence: 1, WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
 		ExpiresAt: time.Now().Add(time.Minute), RequestedWorkloadDiskBytes: 1, RequestedScratchBytes: 1,
 		RequestedCPUMillis: 1000, RequestedMemoryBytes: 1 << 30, RequestedBuildExecutors: 1,
 	}
@@ -230,14 +339,16 @@ type workerContractStore struct{ db.Querier }
 
 type workerResponseLossStore struct {
 	db.Querier
-	runTerminal   db.GetRunLeaseTerminalResultRow
-	startedRun    db.RunLease
-	buildTerminal db.GetDeploymentBuildTerminalResultRow
-	startCalls    int
-	releaseCalls  int
-	completeCalls int
-	failCalls     int
-	rejectCalls   int
+	runTerminal          db.GetRunLeaseTerminalResultRow
+	startedRun           db.RunLease
+	buildTerminal        db.GetDeploymentBuildTerminalResultRow
+	startCalls           int
+	releaseCalls         int
+	completeCalls        int
+	failCalls            int
+	rejectCalls          int
+	deliveryFailure      db.FailDeploymentBuildDeliveryRow
+	deliveryFailureCalls int
 }
 
 func (s *workerResponseLossStore) GetRunLeaseTerminalResult(context.Context, db.GetRunLeaseTerminalResultParams) (db.GetRunLeaseTerminalResultRow, error) {
@@ -272,7 +383,12 @@ func (s *workerResponseLossStore) FailDeploymentBuild(context.Context, db.FailDe
 	return db.FailDeploymentBuildRow{}, pgx.ErrNoRows
 }
 
-func (s *workerResponseLossStore) RejectDeploymentBuildLease(context.Context, db.RejectDeploymentBuildLeaseParams) (db.DeploymentBuildLease, error) {
+func (s *workerResponseLossStore) RejectDeploymentBuildLease(context.Context, db.RejectDeploymentBuildLeaseParams) (db.RejectDeploymentBuildLeaseRow, error) {
 	s.rejectCalls++
-	return db.DeploymentBuildLease{}, pgx.ErrNoRows
+	return db.RejectDeploymentBuildLeaseRow{}, pgx.ErrNoRows
+}
+
+func (s *workerResponseLossStore) FailDeploymentBuildDelivery(context.Context, db.FailDeploymentBuildDeliveryParams) (db.FailDeploymentBuildDeliveryRow, error) {
+	s.deliveryFailureCalls++
+	return s.deliveryFailure, nil
 }

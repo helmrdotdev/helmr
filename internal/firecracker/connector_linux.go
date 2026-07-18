@@ -92,7 +92,22 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 }
 
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
-	return c.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
+	cfg := c.cfg
+	if request.OwnerKind == vm.OwnerBuild {
+		if request.Resources != compute.BuildGuestResources() {
+			return nil, errors.New("build guest resources do not match the platform profile")
+		}
+		var err error
+		cfg, err = c.configForResources(request.Resources, "build guest")
+		if err != nil {
+			return nil, err
+		}
+	} else if request.Resources != (compute.ResourceVector{}) {
+		return nil, errors.New("runtime attachment cannot change resources")
+	}
+	child := *c
+	child.cfg = cfg
+	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -108,69 +123,135 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil)
 }
 
-// CleanupRuntime reconciles one exact durable runtime owner. It deliberately
-// refuses fuzzy IDs and ambiguous ownership so a failed cleanup can only keep
-// capacity quarantined, never delete another runtime.
-func (c *Connector) CleanupRuntime(ctx context.Context, runtimeID string) error {
-	runtimeID = strings.TrimSpace(runtimeID)
-	id, err := uuid.Parse(runtimeID)
-	if err != nil || id.String() != runtimeID {
-		return errors.New("firecracker cleanup owner id must be a canonical UUID")
+func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
+	if err := owner.Validate(); err != nil {
+		return cleanupUnproven(owner, err)
 	}
-	statePath := filepath.Join(c.cfg.StateDir, runtimeID)
-	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", runtimeID)
-	if info, statErr := os.Stat(statePath); statErr == nil {
-		if !info.IsDir() {
-			return errors.New("firecracker cleanup state owner path is not a directory")
-		}
-		owner, readErr := os.ReadFile(filepath.Join(statePath, "owner"))
-		if readErr != nil {
-			return fmt.Errorf("read firecracker cleanup ownership evidence: %w", readErr)
-		}
-		if string(owner) != vm.RuntimeOwnerRuntime+"\n"+runtimeID+"\n" {
-			return errors.New("firecracker cleanup ownership evidence does not match exact runtime owner")
-		}
-	} else if !os.IsNotExist(statErr) {
-		return fmt.Errorf("inspect firecracker cleanup state: %w", statErr)
-	}
-	pids, err := exactRuntimePIDs(runtimeID)
+	statePath := filepath.Join(c.cfg.StateDir, owner.ID)
+	jailerPath := filepath.Join(c.cfg.JailerChrootBaseDir, "firecracker", owner.ID)
+	pids, err := exactRuntimePIDs(owner.ID)
 	if err != nil {
-		return fmt.Errorf("inventory firecracker cleanup processes: %w", err)
+		return cleanupUnproven(owner, fmt.Errorf("inventory firecracker processes: %w", err))
+	}
+	netns, err := c.runtimeNetNSExists(ctx, owner.ID)
+	if err != nil {
+		return cleanupUnproven(owner, err)
+	}
+	stateExists, err := pathExists(statePath)
+	if err != nil {
+		return cleanupUnproven(owner, fmt.Errorf("inspect firecracker state: %w", err))
+	}
+	jailerExists, err := pathExists(jailerPath)
+	if err != nil {
+		return cleanupUnproven(owner, fmt.Errorf("inspect firecracker jailer state: %w", err))
+	}
+	if !stateExists && !jailerExists && !netns && len(pids) == 0 {
+		return nil
+	}
+	if !stateExists {
+		return cleanupUnproven(owner, errors.New("firecracker ownership marker is missing"))
+	}
+	if err := validateOwnerMarker(statePath, owner); err != nil {
+		return cleanupUnproven(owner, err)
 	}
 	for _, pid := range pids {
 		if err := stopExactRuntimePID(ctx, pid); err != nil {
-			return fmt.Errorf("stop firecracker cleanup process %d: %w", pid, err)
+			return cleanupUnproven(owner, fmt.Errorf("stop firecracker process %d: %w", pid, err))
 		}
-	}
-	netns, err := c.runtimeNetNSExists(ctx, runtimeID)
-	if err != nil {
-		return err
 	}
 	if netns {
-		if err := c.cleanupNetworkPolicy(ctx, runtimeID); err != nil {
-			return err
+		if err := c.cleanupNetworkPolicy(ctx, owner.ID); err != nil {
+			return cleanupUnproven(owner, err)
 		}
-		if err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", runtimeID).Run(); err != nil {
-			return fmt.Errorf("delete firecracker cleanup netns: %w", err)
+		if err := exec.CommandContext(ctx, c.cfg.IPPath, "netns", "delete", owner.ID).Run(); err != nil {
+			return cleanupUnproven(owner, fmt.Errorf("delete firecracker netns: %w", err))
 		}
-	}
-	if err := os.RemoveAll(statePath); err != nil {
-		return fmt.Errorf("remove firecracker cleanup state: %w", err)
 	}
 	if err := os.RemoveAll(jailerPath); err != nil {
-		return fmt.Errorf("remove firecracker cleanup jailer state: %w", err)
+		return cleanupUnproven(owner, fmt.Errorf("remove firecracker jailer state: %w", err))
 	}
-	remaining, err := exactRuntimePIDs(runtimeID)
-	if err != nil || len(remaining) != 0 {
-		return fmt.Errorf("verify firecracker cleanup processes absent: pids=%v: %w", remaining, err)
+	remaining, err := exactRuntimePIDs(owner.ID)
+	if err != nil {
+		return cleanupUnproven(owner, fmt.Errorf("verify firecracker processes absent: %w", err))
 	}
-	if exists, verifyErr := c.runtimeNetNSExists(ctx, runtimeID); verifyErr != nil || exists {
-		return fmt.Errorf("verify firecracker cleanup netns absent: exists=%t: %w", exists, verifyErr)
+	if len(remaining) != 0 {
+		return cleanupUnproven(owner, fmt.Errorf("verify firecracker processes absent: pids=%v", remaining))
 	}
-	for _, path := range []string{statePath, jailerPath} {
-		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
-			return fmt.Errorf("verify firecracker cleanup path absent %s: %w", path, statErr)
+	if exists, verifyErr := c.runtimeNetNSExists(ctx, owner.ID); verifyErr != nil {
+		return cleanupUnproven(owner, fmt.Errorf("verify firecracker netns absent: %w", verifyErr))
+	} else if exists {
+		return cleanupUnproven(owner, errors.New("verify firecracker netns absent: namespace remains"))
+	}
+	if exists, verifyErr := pathExists(jailerPath); verifyErr != nil {
+		return cleanupUnproven(owner, fmt.Errorf("verify firecracker jailer state absent: %w", verifyErr))
+	} else if exists {
+		return cleanupUnproven(owner, errors.New("verify firecracker jailer state absent: path remains"))
+	}
+	if err := removeStateRootLast(statePath, owner); err != nil {
+		return cleanupUnproven(owner, err)
+	}
+	if exists, verifyErr := pathExists(statePath); verifyErr != nil {
+		return cleanupUnproven(owner, fmt.Errorf("verify firecracker state absent: %w", verifyErr))
+	} else if exists {
+		return cleanupUnproven(owner, errors.New("verify firecracker state absent: path remains"))
+	}
+	return nil
+}
+
+func cleanupUnproven(owner vm.Owner, cause error) error {
+	return &vm.CleanupUnprovenError{Owner: owner, Cause: cause}
+}
+
+func pathExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	switch {
+	case err == nil:
+		return true, nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
+}
+
+func validateOwnerMarker(statePath string, owner vm.Owner) error {
+	info, err := os.Stat(statePath)
+	if err != nil {
+		return fmt.Errorf("inspect firecracker ownership root: %w", err)
+	}
+	if !info.IsDir() {
+		return errors.New("firecracker ownership root is not a directory")
+	}
+	marker, err := os.ReadFile(filepath.Join(statePath, "owner"))
+	if err != nil {
+		return fmt.Errorf("read firecracker ownership marker: %w", err)
+	}
+	if string(marker) != string(owner.Kind)+"\n"+owner.ID+"\n" {
+		return errors.New("firecracker ownership marker does not match exact owner")
+	}
+	return nil
+}
+
+func removeStateRootLast(statePath string, owner vm.Owner) error {
+	entries, err := os.ReadDir(statePath)
+	if err != nil {
+		return fmt.Errorf("inventory firecracker state: %w", err)
+	}
+	for _, entry := range entries {
+		if entry.Name() == "owner" {
+			continue
 		}
+		if err := os.RemoveAll(filepath.Join(statePath, entry.Name())); err != nil {
+			return fmt.Errorf("remove firecracker state entry %q: %w", entry.Name(), err)
+		}
+	}
+	markerPath := filepath.Join(statePath, "owner")
+	if err := os.Remove(markerPath); err != nil {
+		return fmt.Errorf("remove firecracker ownership marker: %w", err)
+	}
+	if err := os.Remove(statePath); err != nil {
+		restoreErr := os.WriteFile(markerPath, []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600)
+		return errors.Join(fmt.Errorf("remove firecracker state root: %w", err), restoreErr)
 	}
 	return nil
 }
@@ -262,28 +343,35 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 }
 
 func (c *Connector) configForMaterializeRequest(request vm.MaterializeRequest) (Config, error) {
+	return c.configForResources(request.Resources, "materialize")
+}
+
+func (c *Connector) configForResources(resources compute.ResourceVector, operation string) (Config, error) {
 	cfg := c.cfg
-	if request.Resources.MemoryMiB > 0 {
-		if request.Resources.MemoryMiB > cfg.MemoryMiB {
-			return Config{}, fmt.Errorf("materialize requested memory %d MiB exceeds worker VM memory capacity %d MiB", request.Resources.MemoryMiB, cfg.MemoryMiB)
-		}
-		cfg.MemoryMiB = request.Resources.MemoryMiB
+	if err := resources.Validate(true); err != nil {
+		return Config{}, fmt.Errorf("%s resources: %w", operation, err)
 	}
-	if request.Resources.MilliCPU > 0 {
-		requestedVCPUs := (request.Resources.MilliCPU + 999) / 1000
+	if resources.MemoryMiB > 0 {
+		if resources.MemoryMiB > cfg.MemoryMiB {
+			return Config{}, fmt.Errorf("%s requested memory %d MiB exceeds worker VM memory capacity %d MiB", operation, resources.MemoryMiB, cfg.MemoryMiB)
+		}
+		cfg.MemoryMiB = resources.MemoryMiB
+	}
+	if resources.MilliCPU > 0 {
+		requestedVCPUs := (resources.MilliCPU + 999) / 1000
 		if requestedVCPUs <= 0 {
 			requestedVCPUs = 1
 		}
 		if requestedVCPUs > cfg.VCPUCount {
-			return Config{}, fmt.Errorf("materialize requested cpu %d milliCPU exceeds worker VM vCPU capacity %d", request.Resources.MilliCPU, cfg.VCPUCount)
+			return Config{}, fmt.Errorf("%s requested cpu %d milliCPU exceeds worker VM vCPU capacity %d", operation, resources.MilliCPU, cfg.VCPUCount)
 		}
 		cfg.VCPUCount = requestedVCPUs
 	}
-	if request.Resources.DiskMiB > 0 {
-		if request.Resources.DiskMiB > cfg.ScratchDiskMiB {
-			return Config{}, fmt.Errorf("materialize requested disk %d MiB exceeds worker VM scratch disk capacity %d MiB", request.Resources.DiskMiB, cfg.ScratchDiskMiB)
+	if resources.DiskMiB > 0 {
+		if resources.DiskMiB > cfg.ScratchDiskMiB {
+			return Config{}, fmt.Errorf("%s requested disk %d MiB exceeds worker VM scratch disk capacity %d MiB", operation, resources.DiskMiB, cfg.ScratchDiskMiB)
 		}
-		cfg.ScratchDiskMiB = request.Resources.DiskMiB
+		cfg.ScratchDiskMiB = resources.DiskMiB
 	}
 	return cfg, nil
 }
@@ -515,60 +603,54 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind string, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, recordPhase func(vm.RuntimePhase)) (_ vm.CheckpointableSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
-	if ownerKind != vm.RuntimeOwnerRuntime && ownerKind != vm.RuntimeOwnerBuild {
-		return nil, errors.New("firecracker owner kind must be runtime or build")
-	}
-	if ownerKind == vm.RuntimeOwnerBuild && instanceID == "" {
+	if ownerKind == vm.OwnerBuild && instanceID == "" {
 		instanceID = uuid.NewString()
 	}
-	if _, err := uuid.Parse(instanceID); err != nil {
-		return nil, errors.New("firecracker owner id must be a UUID")
+	owner := vm.Owner{Kind: ownerKind, ID: instanceID}
+	if err := owner.Validate(); err != nil {
+		return nil, fmt.Errorf("firecracker owner: %w", err)
 	}
 	instanceDir := filepath.Join(c.cfg.StateDir, instanceID)
 	if err := os.MkdirAll(instanceDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create firecracker instance dir: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(instanceDir, "owner"), []byte(ownerKind+"\n"+instanceID+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(instanceDir, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
 		_ = os.RemoveAll(instanceDir)
 		return nil, fmt.Errorf("write firecracker ownership evidence: %w", err)
 	}
-	cleanupInstanceDir := func() { _ = os.RemoveAll(instanceDir) }
+	defer func() {
+		if retErr != nil {
+			retErr = errors.Join(retErr, c.Cleanup(context.Background(), owner))
+		}
+	}()
 	scratchDiskPath := filepath.Join(instanceDir, scratchDiskName)
 	if strings.TrimSpace(scratchDiskRestorePath) != "" {
 		scratchDiskPath = scratchDiskRestorePath
 	} else if err := c.createScratchDisk(ctx, scratchDiskPath); err != nil {
-		cleanupInstanceDir()
 		return nil, err
 	}
 	phaseStarted := time.Now()
 	if err := c.prepareScratchDiskForJailer(scratchDiskPath); err != nil {
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-		cleanupInstanceDir()
 		return nil, err
 	}
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_prepare_scratch_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	substrateDiskPath := ""
 	if topology.Substrate != nil {
 		if err := validateRuntimeSubstrateTopology(topology.Substrate); err != nil {
-			cleanupInstanceDir()
 			return nil, err
 		}
 		substrateDiskPath = strings.TrimSpace(topology.Substrate.Path)
 		phaseStarted = time.Now()
 		if err := c.prepareSubstrateDiskForJailer(substrateDiskPath); err != nil {
 			recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
-			cleanupInstanceDir()
 			return nil, err
 		}
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "prepare_substrate_for_jailer", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
 	}
 	jailRoot := jailRootPath(c.cfg, instanceID)
-	cleanup := func() {
-		cleanupInstanceDir()
-		_ = os.RemoveAll(filepath.Dir(jailRoot))
-	}
 
 	vsockHostPath := filepath.Join(jailRoot, vsockSocketName)
 	guestCID := allocateGuestCID()
@@ -627,7 +709,6 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind stri
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_create_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		machineCancel()
-		cleanup()
 		return nil, fmt.Errorf("create firecracker machine: %w", err)
 	}
 	machine.Logger().Printf("starting firecracker machine")
@@ -635,8 +716,6 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind stri
 	if err := startMachineContext(ctx, machine, machineCtx, machineCancel); err != nil {
 		recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 		_ = stopMachine(context.Background(), machine)
-		_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
-		cleanup()
 		return nil, fmt.Errorf("start firecracker machine: %w", err)
 	}
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_start_firecracker_machine", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted))})
@@ -645,10 +724,9 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind stri
 	started := true
 	defer func() {
 		if !started {
-			_ = stopSessionMachine(context.Background(), machine, machineExit)
+			stopErr := stopSessionMachine(context.Background(), machine, machineExit)
 			machineCancel()
-			_ = c.cleanupNetworkPolicy(context.Background(), instanceID)
-			cleanup()
+			retErr = errors.Join(retErr, stopErr)
 		}
 	}()
 	if restoring {
@@ -681,10 +759,8 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind stri
 		jailRoot:      jailRoot,
 		scratchDisk:   scratchDiskPath,
 		topology:      topology,
-		cleanup:       cleanup,
-		networkPolicyCleanup: func() error {
-			return c.cleanupNetworkPolicy(context.Background(), instanceID)
-		},
+		owner:         owner,
+		cleaner:       c,
 	}, nil
 }
 
@@ -1171,22 +1247,22 @@ func healthProbeErrorBucket(err error) string {
 }
 
 type guestSession struct {
-	stream               io.ReadWriteCloser
-	machine              *firecracker.Machine
-	machineCancel        context.CancelFunc
-	machineExit          *machineExit
-	cfg                  Config
-	artifacts            runtimeArtifacts
-	vsockHostPath        string
-	instanceDir          string
-	jailRoot             string
-	scratchDisk          string
-	topology             vm.RuntimeTopology
-	cleanup              func()
-	networkPolicyCleanup func() error
-	paused               atomic.Bool
-	once                 sync.Once
-	err                  error
+	stream        io.ReadWriteCloser
+	machine       *firecracker.Machine
+	machineCancel context.CancelFunc
+	machineExit   *machineExit
+	cfg           Config
+	artifacts     runtimeArtifacts
+	vsockHostPath string
+	instanceDir   string
+	jailRoot      string
+	scratchDisk   string
+	topology      vm.RuntimeTopology
+	owner         vm.Owner
+	cleaner       vm.Cleaner
+	paused        atomic.Bool
+	once          sync.Once
+	err           error
 }
 
 func (s *guestSession) Stream() io.ReadWriteCloser {
@@ -1233,7 +1309,6 @@ func (s *guestSession) Wait(ctx context.Context) error {
 
 func (s *guestSession) Close(ctx context.Context) error {
 	s.once.Do(func() {
-		// Keep the machine context alive until StopVMM/Wait lets the SDK finish CNI cleanup.
 		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
 		if s.machineCancel != nil {
 			s.machineCancel()
@@ -1242,12 +1317,13 @@ func (s *guestSession) Close(ctx context.Context) error {
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil
 		}
-		var networkPolicyErr error
-		if s.networkPolicyCleanup != nil {
-			networkPolicyErr = s.networkPolicyCleanup()
+		var cleanupErr error
+		if s.cleaner != nil {
+			cleanupErr = s.cleaner.Cleanup(ctx, s.owner)
+		} else {
+			cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
 		}
-		cleanupGuestSessionResources(s.cleanup)
-		s.err = errors.Join(streamErr, networkPolicyErr, stopErr)
+		s.err = errors.Join(streamErr, stopErr, cleanupErr)
 	})
 	return s.err
 }

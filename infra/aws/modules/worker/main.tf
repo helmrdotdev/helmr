@@ -198,7 +198,6 @@ resource "aws_launch_template" "worker" {
   user_data = base64encode(templatefile("${path.module}/templates/user-data.sh.tftpl", {
     environment                          = local.base_worker_environment
     checkpoint_key_secret_arn            = var.secret_arns.checkpoint_encryption_key
-    buildkit_service_name                = var.buildkit_service_name
     worker_supports_build                = contains(var.worker_roles, "build")
     worker_service_name                  = var.worker_service_name
     worker_binary_path                   = var.worker_binary_path
@@ -270,6 +269,16 @@ resource "terraform_data" "network_preconditions" {
     precondition {
       condition     = var.worker_disk_mib == null || var.worker_disk_mib > var.worker_disk_reserve_mib
       error_message = "worker_disk_mib must exceed worker_disk_reserve_mib when an explicit filesystem capacity is configured."
+    }
+
+    precondition {
+      condition = !contains(var.worker_roles, "build") || (
+        var.worker_capacity_vcpus != null &&
+        var.worker_capacity_memory_mib != null &&
+        var.worker_capacity_vcpus >= (contains(var.worker_roles, "run") ? max(3, var.vm_vcpus + 1) : 3) &&
+        var.worker_capacity_memory_mib >= (contains(var.worker_roles, "run") ? max(4096, var.vm_memory_mib + 2048) : 4096)
+      )
+      error_message = "build workers require a host pool that still fits the worker VM shape and fixed build guest after subtracting the 1-vCPU, 2048-MiB BuildKit reserve."
     }
 
     precondition {

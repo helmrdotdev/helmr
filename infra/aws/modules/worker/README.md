@@ -9,7 +9,7 @@ volume. The module does not build the worker AMI.
 The AMI must provide:
 
 - `helmr-worker` at `worker_binary_path`
-- systemd units named by `worker_service_name` and `buildkit_service_name`
+- the worker unit named by `worker_service_name` and the fixed `helmr-buildkit` unit
 - AWS CLI v2 and `curl`
 - Firecracker and jailer binaries
 - `/dev/kvm` capable instance support

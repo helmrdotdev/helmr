@@ -17,13 +17,11 @@ const (
 )
 
 type BuildResourceVector struct {
-	CPUMillis          int64
-	MemoryBytes        int64
-	WorkloadDiskBytes  int64
-	ScratchBytes       int64
-	BuildCacheBytes    int64
-	ArtifactCacheBytes int64
-	Executors          int32
+	CPUMillis         int64
+	MemoryBytes       int64
+	WorkloadDiskBytes int64
+	ScratchBytes      int64
+	Executors         int32
 }
 
 type Message struct {
@@ -46,7 +44,6 @@ type Message struct {
 	QueuedExpiresAt       time.Time
 	EnqueuedAt            time.Time
 	Traceparent           string
-	BuildAttemptNumber    int32
 	LeaseSequence         int64
 	BuildResources        BuildResourceVector
 }
@@ -60,7 +57,7 @@ func (m Message) WorkID() string {
 
 func (m Message) ReadyFence() string {
 	if m.WorkKind == WorkKindBuild {
-		return fmt.Sprintf("build:%d:%d", m.BuildAttemptNumber, m.LeaseSequence)
+		return fmt.Sprintf("build:%d", m.LeaseSequence)
 	}
 	return fmt.Sprintf("run:%d", m.RunStateVersion)
 }
@@ -147,11 +144,11 @@ func (m Message) Validate() error {
 			problems = append(problems, err)
 		}
 	}
-	if m.WorkKind == WorkKindBuild && (m.BuildAttemptNumber <= 0 || m.LeaseSequence <= 0 ||
-		m.BuildResources.CPUMillis <= 0 || m.BuildResources.MemoryBytes <= 0 || m.BuildResources.Executors <= 0 ||
-		m.BuildResources.WorkloadDiskBytes < 0 || m.BuildResources.ScratchBytes < 0 ||
-		m.BuildResources.BuildCacheBytes < 0 || m.BuildResources.ArtifactCacheBytes < 0) {
-		problems = append(problems, errors.New("build fence and frozen resource vector must be valid"))
+	if m.WorkKind == WorkKindBuild && (m.LeaseSequence < 1 || m.LeaseSequence > 3 ||
+		m.BuildResources.CPUMillis != 2000 || m.BuildResources.MemoryBytes != 2<<30 ||
+		m.BuildResources.WorkloadDiskBytes != 0 || m.BuildResources.ScratchBytes != 13<<30 ||
+		m.BuildResources.Executors != 1) {
+		problems = append(problems, errors.New("build fence and fixed resource vector must be valid"))
 	}
 	return errors.Join(problems...)
 }

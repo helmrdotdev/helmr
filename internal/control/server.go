@@ -590,6 +590,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/deployments/start", s.workerStartDeploymentBuild)
 				r.Post("/deployments/renew", s.workerRenewDeploymentBuild)
 				r.Post("/deployments/reject", s.workerRejectDeploymentBuild)
+				r.Post("/deployments/delivery-failed", s.workerDeploymentBuildDeliveryFailed)
 				r.Post("/deployments/complete", s.workerCompleteDeploymentBuild)
 			})
 			r.Group(func(r chi.Router) {

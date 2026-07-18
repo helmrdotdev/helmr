@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/client"
 )
 
@@ -20,6 +21,7 @@ type ControlClient interface {
 	StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error)
 	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
 	RejectDeploymentBuild(ctx context.Context, request api.WorkerDeploymentBuildRejectRequest) error
+	ReportDeploymentBuildDeliveryFailure(ctx context.Context, request api.WorkerDeploymentBuildDeliveryFailureRequest) (api.WorkerDeploymentBuildResponse, error)
 	CompleteDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease, result api.WorkerDeploymentBuildResult) (api.WorkerDeploymentBuildResponse, error)
 	ClaimWorkspaceMount(ctx context.Context, capabilities api.WorkerCapabilities) (api.WorkerWorkspaceMountClaimResponse, error)
 	RenewWorkspaceMount(ctx context.Context, request api.WorkerWorkspaceMountRenewRequest) (api.WorkspaceMountResponse, error)
@@ -53,7 +55,7 @@ type Executor interface {
 }
 
 type DeploymentBuilder interface {
-	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) api.WorkerDeploymentBuildResult
+	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error)
 }
 
 type Materializer interface {
@@ -87,6 +89,7 @@ type Runner struct {
 	deploymentBuilder              DeploymentBuilder
 	materializer                   Materializer
 	capabilities                   api.WorkerCapabilities
+	resources                      *capacity.Ledger
 	pollEvery                      time.Duration
 	renewEvery                     time.Duration
 	renewWait                      time.Duration
@@ -124,6 +127,12 @@ func WithDeploymentBuilder(builder DeploymentBuilder) Option {
 func WithMaterializer(materializer Materializer) Option {
 	return func(runner *Runner) {
 		runner.materializer = materializer
+	}
+}
+
+func WithCapacity(resources *capacity.Ledger) Option {
+	return func(runner *Runner) {
+		runner.resources = resources
 	}
 }
 
@@ -165,6 +174,9 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	}
 	if runner.deploymentBuildCompletionGrace <= 0 {
 		return nil, errors.New("worker deployment build completion grace must be positive")
+	}
+	if runner.resources == nil {
+		return nil, errors.New("worker capacity ledger is required")
 	}
 	if runner.log == nil {
 		runner.log = slog.Default()

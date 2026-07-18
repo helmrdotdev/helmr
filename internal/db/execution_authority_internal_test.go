@@ -80,8 +80,6 @@ func TestBuildPlacementFreezesResourceVector(t *testing.T) {
 		"requested_memory_bytes",
 		"requested_workload_disk_bytes",
 		"requested_scratch_bytes",
-		"requested_build_cache_bytes",
-		"requested_artifact_cache_bytes",
 		"requested_executors",
 	} {
 		if !strings.Contains(leaseQueuedDeploymentBuild, token) {

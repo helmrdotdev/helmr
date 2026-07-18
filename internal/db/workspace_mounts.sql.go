@@ -408,16 +408,63 @@ func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureW
 }
 
 const failWorkspaceMount = `-- name: FailWorkspaceMount :one
+WITH target AS (
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+      FROM workspace_mounts
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
+       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
+       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.reclaimed_at IS NULL
+      JOIN worker_network_slots
+        ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
+       AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
+       AND worker_network_slots.runtime_instance_id = runtime_instances.id
+       AND worker_network_slots.state IN ('assigned','bound')
+     WHERE workspace_mounts.org_id = $3
+       AND workspace_mounts.id = $4
+       AND workspace_mounts.worker_instance_id = $5
+       AND workspace_mounts.worker_epoch = $6
+       AND workspace_mounts.runtime_instance_id = $7
+       AND workspace_mounts.fencing_generation = $8
+       AND workspace_mounts.state IN ('mounting','mounted','unmounting')
+     FOR UPDATE OF workspace_mounts, runtime_instances, worker_network_slots
+), failed_runtime AS (
+    UPDATE runtime_instances
+       SET observed_state = 'failed', observed_version = observed_version + 1,
+           observed_at = now(), failed_at = now(), terminal_at = now(),
+           terminal_reason_code = 'workspace_mount_failed',
+           terminal_error = $2, updated_at = now()
+      FROM target
+     WHERE runtime_instances.org_id = target.org_id
+       AND runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.worker_instance_id = target.worker_instance_id
+       AND runtime_instances.worker_epoch = target.worker_epoch
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+), quarantined_slot AS (
+    UPDATE worker_network_slots
+       SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
+           quarantined_at = now(),
+           state_reason_code = 'runtime_physical_cleanup_pending',
+           state_error = $2, updated_at = now()
+      FROM target, failed_runtime
+     WHERE worker_network_slots.worker_instance_id = failed_runtime.worker_instance_id
+       AND worker_network_slots.worker_epoch = failed_runtime.worker_epoch
+       AND worker_network_slots.runtime_instance_id = failed_runtime.id
+       AND worker_network_slots.state IN ('assigned','bound')
+    RETURNING worker_network_slots.id
+)
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = $1, terminal_error = $2,
        updated_at = now()
- WHERE org_id = $3 AND id = $4
-   AND worker_instance_id = $5 AND worker_epoch = $6
-   AND runtime_instance_id = $7
-   AND fencing_generation = $8
-   AND state IN ('mounting','mounted','unmounting')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+  FROM target, failed_runtime, quarantined_slot
+ WHERE workspace_mounts.org_id = target.org_id
+   AND workspace_mounts.id = target.id
+   AND failed_runtime.id = target.runtime_instance_id
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type FailWorkspaceMountParams struct {

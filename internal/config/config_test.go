@@ -419,6 +419,31 @@ func TestLoadWorkerReadsExplicitRolesAndCapacities(t *testing.T) {
 	}
 }
 
+func TestLoadWorkerRejectsMultipleBuildExecutors(t *testing.T) {
+	for key, value := range map[string]string{
+		"HELMR_CONTROL_URL":                       "https://api.example.test",
+		"HELMR_CAS_URI":                           "s3://helmr-cas",
+		"HELMR_WORKER_GROUP_ID":                   "build-workers",
+		"HELMR_WORKER_PROVIDER_REGION":            "us-east-1",
+		"HELMR_CHECKPOINT_ENCRYPTION_KEY":         "checkpoint-key",
+		"HELMR_WORKER_FIRECRACKER_JAILER_UID":     "1001",
+		"HELMR_WORKER_FIRECRACKER_JAILER_GID":     "1002",
+		"HELMR_WORKER_ROLES":                      "build",
+		"HELMR_WORKER_BUILD_EXECUTORS":            "2",
+		"HELMR_WORKER_CAPACITY_VCPUS":             "4",
+		"HELMR_WORKER_CAPACITY_MEMORY_MIB":        "8192",
+		"HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB":    "4096",
+		"HELMR_WORKER_ARTIFACT_CACHE_MAX_MIB":     "2048",
+		"HELMR_WORKER_NETWORK_BLOCKED_IPV4_CIDRS": "none",
+		"HELMR_WORKER_NETWORK_BLOCKED_IPV6_CIDRS": "none",
+	} {
+		t.Setenv(key, value)
+	}
+	if _, err := LoadWorker(); err == nil || !strings.Contains(err.Error(), "zero or one") {
+		t.Fatalf("LoadWorker() error = %v", err)
+	}
+}
+
 func TestLoadWorkerRejectsRuntimePoolBelowRuntimeStarts(t *testing.T) {
 	for key, value := range map[string]string{"HELMR_CONTROL_URL": "https://api.example.test", "HELMR_CAS_URI": "s3://helmr-cas", "HELMR_WORKER_GROUP_ID": "run-workers", "HELMR_WORKER_PROVIDER_REGION": "us-east-1", "HELMR_CHECKPOINT_ENCRYPTION_KEY": "checkpoint-key", "HELMR_WORKER_FIRECRACKER_JAILER_UID": "1001", "HELMR_WORKER_FIRECRACKER_JAILER_GID": "1002", "HELMR_WORKER_ROLES": "run", "HELMR_WORKER_RUNTIME_STARTS": "2", "HELMR_WORKER_PREPARED_RUNTIME_POOL_SIZE": "1"} {
 		t.Setenv(key, value)

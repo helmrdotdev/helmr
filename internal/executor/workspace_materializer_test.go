@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
@@ -186,11 +187,12 @@ func TestWorkspaceMaterializerPassesRequestedResourcesToConnector(t *testing.T) 
 			session:  &workspaceMaterializerTestSession{},
 			requests: &requests,
 		},
-		CAS:     store,
-		TempDir: t.TempDir(),
+		CAS:      store,
+		TempDir:  t.TempDir(),
+		Capacity: workspaceTestCapacity(t),
 	}
 
-	session, _, _, cleanup, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
+	session, _, _, cleanup, _, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -224,9 +226,10 @@ func TestWorkspaceMaterializerColdStartsWhenPreparedRuntimeEntryMissing(t *testi
 		Connector:   workspaceMaterializerTestConnector{session: &workspaceMaterializerTestSession{}},
 		CAS:         store,
 		RuntimePool: NewPreparedRuntimePool(nil, nil, 1, nil),
+		Capacity:    workspaceTestCapacity(t),
 	}
 
-	session, sandboxPath, workspacePath, cleanup, key, usedPreparedRuntime, err := materializer.materializeSession(context.Background(), &workspaceMount)
+	session, sandboxPath, workspacePath, cleanup, key, usedPreparedRuntime, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -250,12 +253,13 @@ func TestWorkspaceMaterializerColdMaterializeStartsIndependentWorkConcurrently(t
 			gate:    gate,
 			session: &workspaceMaterializerTestSession{},
 		},
-		CAS:     parallelStartCAS{Store: store, gate: gate, workspaceMount: workspaceMount},
-		TempDir: t.TempDir(),
+		CAS:      parallelStartCAS{Store: store, gate: gate, workspaceMount: workspaceMount},
+		TempDir:  t.TempDir(),
+		Capacity: workspaceTestCapacity(t),
 	}
 	done := make(chan error, 1)
 	go func() {
-		session, sandboxImagePath, workspacePath, cleanup, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
+		session, sandboxImagePath, workspacePath, cleanup, _, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
 		if cleanup != nil {
 			defer cleanup()
 		}
@@ -296,6 +300,19 @@ func TestWorkspaceMaterializerColdMaterializeStartsIndependentWorkConcurrently(t
 	case <-time.After(2 * time.Second):
 		t.Fatal("materializeSession did not finish after releasing concurrent work")
 	}
+}
+
+func workspaceTestCapacity(t *testing.T) *capacity.Ledger {
+	t.Helper()
+	resources, err := capacity.New(capacity.Vector{
+		CPUMillis: 16_000, MemoryBytes: 64 << 30,
+		WorkloadDiskBytes: 1 << 40, ScratchBytes: 1 << 40,
+		VMSlots: 64, BuildSlots: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resources
 }
 
 func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) {
@@ -438,6 +455,7 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 		Heartbeat:            time.Hour,
 		PollEvery:            time.Millisecond,
 		CompleteErrorBackoff: time.Millisecond,
+		Capacity:             workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if !errors.Is(err, context.Canceled) {
@@ -869,6 +887,7 @@ func TestWorkspaceMaterializerCleansPartialArtifactsOnMaterializeFailure(t *test
 		Connector: workspaceMaterializerTestConnector{},
 		CAS:       store,
 		TempDir:   tempDir,
+		Capacity:  workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if err == nil {
@@ -931,6 +950,7 @@ func TestWorkspaceMaterializerFailsStartupWhenGuestDoesNotRegister(t *testing.T)
 		TempDir:        t.TempDir(),
 		Heartbeat:      time.Hour,
 		StartupTimeout: time.Millisecond,
+		Capacity:       workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if !errors.Is(err, context.DeadlineExceeded) {
@@ -968,6 +988,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 		TempDir:   t.TempDir(),
 		Heartbeat: 10 * time.Millisecond,
 		PollEvery: time.Hour,
+		Capacity:  workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if err == nil || !strings.Contains(err.Error(), "renew workspace mount") {
@@ -978,6 +999,110 @@ func TestWorkspaceMaterializerFailsWorkspaceMountOnFatalHeartbeatError(t *testin
 	}
 	if len(client.failures) != 1 || client.failures[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("failures = %+v", client.failures)
+	}
+}
+
+func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsColdRuntimeCapacity(t *testing.T) {
+	initialClient, initialServer := net.Pipe()
+	defer initialServer.Close()
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-close-cold"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	go acknowledgeWorkspaceMount(t, initialServer, workspaceMount)
+	closeFailure := errors.New("cold runtime cleanup failed")
+	session := &workspaceMaterializerTestSession{
+		initial:   initialClient,
+		streams:   []io.ReadWriteCloser{newBlockingReadWriteCloser()},
+		operation: discardReadWriteCloser{},
+		closeErr:  closeFailure,
+	}
+	client := &workspaceMaterializerTestClient{
+		renewErrors: []error{errors.New("renew failed")},
+	}
+	ledger := workspaceTestCapacity(t)
+	materializer := WorkspaceMaterializer{
+		Connector: workspaceMaterializerTestConnector{session: session},
+		CAS:       store,
+		TempDir:   t.TempDir(),
+		Heartbeat: time.Millisecond,
+		PollEvery: time.Hour,
+		Capacity:  ledger,
+	}
+
+	err := materializer.RunWorkspaceMount(context.Background(), workspaceMount, client)
+	if !errors.Is(err, closeFailure) {
+		t.Fatalf("materializer error = %v, want close failure", err)
+	}
+	if got := len(ledger.Snapshot().Reservations); got != 1 {
+		t.Fatalf("capacity reservations after close failure = %d, want 1", got)
+	}
+	if len(client.failures) < 2 {
+		t.Fatalf("workspace failure reports = %+v, want close failure report", client.failures)
+	}
+	lastFailure := client.failures[len(client.failures)-1]
+	if !strings.Contains(string(lastFailure.Error), "workspace_mount_runtime_close_failed") {
+		t.Fatalf("last workspace failure = %s, want runtime close failure", lastFailure.Error)
+	}
+}
+
+func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckout(t *testing.T) {
+	preparedClient, preparedServer := net.Pipe()
+	defer preparedServer.Close()
+	store, workspaceMount := testWorkspaceMountArtifacts(t)
+	workspaceMount.ID = "mat-close-prepared"
+	workspaceMount.OrgID = "org-1"
+	workspaceMount.WorkspaceID = "workspace-1"
+	workspaceMount.GuestdChannelToken = "channel-token"
+	workspaceMount.GuestdChannelTokenHash = sha256sum.HexBytes([]byte("channel-token"))
+	target := runtimeCapacityTarget(workspaceMount.RuntimeInstanceID, workspaceMount.RuntimeEpoch)
+	target.NetworkSlotID = workspaceMount.NetworkSlotID
+	target.NetworkSlotGeneration = workspaceMount.NetworkSlotGeneration
+	closeFailure := errors.New("prepared runtime cleanup failed")
+	session := &workspaceMaterializerTestSession{
+		streams:   []io.ReadWriteCloser{preparedClient, newBlockingReadWriteCloser()},
+		operation: discardReadWriteCloser{},
+		closeErr:  closeFailure,
+	}
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	pool.Capacity = newPreparedRuntimeCapacity(t, 1)
+	pool.RuntimeScratchBytes = 256 << 20
+	if err := pool.reserveRuntimeCapacity(target); err != nil {
+		t.Fatal(err)
+	}
+	key := preparedRuntimeKeyFromWorkspaceMount(workspaceMount, pool.Network)
+	ready := newPreparedRuntimeSignal()
+	ready.finish(nil)
+	pool.entries[key] = []preparedRuntimeEntry{{
+		session: session, poolKey: key, runtimeInstanceID: target.ID,
+		runtimeEpoch: target.WorkerEpoch, networkSlotID: target.NetworkSlotID,
+		networkGeneration: target.NetworkSlotGeneration, target: target,
+		exit: newPreparedRuntimeSignal(), ready: ready,
+	}}
+	go acknowledgePreparedWorkspaceMount(t, preparedServer, workspaceMount, key)
+	client := &workspaceMaterializerTestClient{
+		renewErrors: []error{errors.New("renew failed")},
+	}
+	materializer := WorkspaceMaterializer{
+		Connector:   workspaceMaterializerTestConnector{},
+		CAS:         store,
+		TempDir:     t.TempDir(),
+		Heartbeat:   time.Millisecond,
+		PollEvery:   time.Hour,
+		RuntimePool: pool,
+	}
+
+	err := materializer.RunWorkspaceMount(context.Background(), workspaceMount, client)
+	if !errors.Is(err, closeFailure) {
+		t.Fatalf("materializer error = %v, want close failure", err)
+	}
+	if !pool.runtimeCheckedOut(target.ID, target.WorkerEpoch) {
+		t.Fatal("prepared runtime checkout was released after close failure")
+	}
+	if got := len(pool.Capacity.Snapshot().Reservations); got != 1 {
+		t.Fatalf("capacity reservations after close failure = %d, want 1", got)
 	}
 }
 
@@ -1008,6 +1133,7 @@ func TestWorkspaceMaterializerFailsWorkspaceMountWhenSessionExits(t *testing.T) 
 		TempDir:   t.TempDir(),
 		Heartbeat: time.Hour,
 		PollEvery: time.Hour,
+		Capacity:  workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if err == nil || !strings.Contains(err.Error(), "workspace mount VM exited") {
@@ -1132,6 +1258,7 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 		Heartbeat:            time.Hour,
 		PollEvery:            time.Millisecond,
 		CompleteErrorBackoff: time.Millisecond,
+		Capacity:             workspaceTestCapacity(t),
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if !errors.Is(err, context.Canceled) {

@@ -167,14 +167,35 @@ func TestHardAdmissionPressureObservation(t *testing.T) {
 	}
 }
 
-func TestBuildLeasePerExecutorShape(t *testing.T) {
-	capabilities := api.WorkerCapabilities{VMMilliCPU: 1000, VMMemoryMiB: 512, VMMaxDiskMiB: 1024, VMMaxScratchBytes: 1024 << 20, MaxBuildExecutors: 2}
-	lease := api.WorkerDeploymentBuildLease{RequestedBuildExecutors: 2, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 * (512 << 20), RequestedWorkloadDiskBytes: 2 * (1024 << 20), RequestedScratchBytes: 2 * (1024 << 20)}
+func TestBuildLeaseValidatesFixedGuestIndependentlyFromHostEnvelope(t *testing.T) {
+	capabilities := api.WorkerCapabilities{
+		VMMilliCPU: 2000, VMMemoryMiB: 2048, VMMaxDiskMiB: 1,
+		VMMaxScratchBytes: 8 << 30, MaxBuildExecutors: 1,
+	}
+	lease := api.WorkerDeploymentBuildLease{
+		RequestedBuildExecutors: 1, RequestedCPUMillis: 2000, RequestedMemoryBytes: 2 << 30,
+		RequestedWorkloadDiskBytes: 0, RequestedScratchBytes: 13 << 30,
+	}
 	if err := validateBuildLeaseShape(capabilities, lease); err != nil {
 		t.Fatal(err)
 	}
-	lease.RequestedScratchBytes++
-	if err := validateBuildLeaseShape(capabilities, lease); err == nil {
-		t.Fatal("oversized per-executor scratch accepted")
+	tests := []struct {
+		name   string
+		mutate func(*api.WorkerCapabilities, *api.WorkerDeploymentBuildLease)
+	}{
+		{name: "cpu", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMilliCPU-- }},
+		{name: "memory", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMemoryMiB-- }},
+		{name: "scratch", mutate: func(c *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease) { c.VMMaxScratchBytes-- }},
+		{name: "executors", mutate: func(_ *api.WorkerCapabilities, l *api.WorkerDeploymentBuildLease) { l.RequestedBuildExecutors = 2 }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testCapabilities := capabilities
+			testLease := lease
+			tt.mutate(&testCapabilities, &testLease)
+			if err := validateBuildLeaseShape(testCapabilities, testLease); err == nil {
+				t.Fatal("unsupported build shape accepted")
+			}
+		})
 	}
 }

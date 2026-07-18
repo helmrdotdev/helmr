@@ -96,7 +96,7 @@ func TestClickHouseWriterAppendsTypedBatchRows(t *testing.T) {
 		SourceType:     "run_lease",
 		SourceID:       runLeaseID,
 		RunID:          &runID,
-		AttemptNumber:  attemptNumber,
+		AttemptNumber:  &attemptNumber,
 		TraceID:        "trace",
 		SpanID:         "span",
 		Meter:          "active_time",

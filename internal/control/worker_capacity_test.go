@@ -41,3 +41,14 @@ func TestNormalizeWorkerCapabilitiesRejectsPerVMShapeBeyondHost(t *testing.T) {
 		t.Fatal("per-VM scratch beyond aggregate host capacity was accepted")
 	}
 }
+
+func TestNormalizeWorkerCapabilitiesRequiresOneBuildExecutor(t *testing.T) {
+	for _, executors := range []int32{0, 2} {
+		capabilities := testWorkerCapabilities()
+		capabilities.SupportsBuild = true
+		capabilities.MaxBuildExecutors = executors
+		if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
+			t.Fatalf("build executor count %d was accepted", executors)
+		}
+	}
+}

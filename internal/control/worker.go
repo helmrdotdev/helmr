@@ -827,8 +827,8 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if !capabilities.SupportsRun && !capabilities.SupportsBuild {
 		return api.WorkerCapabilities{}, errors.New("worker must support run, build, or both")
 	}
-	if capabilities.SupportsBuild && capabilities.MaxBuildExecutors <= 0 {
-		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be positive for build role")
+	if capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 1 {
+		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be one for build role")
 	}
 	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be zero without build role")

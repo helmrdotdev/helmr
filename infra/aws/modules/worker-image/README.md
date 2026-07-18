@@ -11,7 +11,7 @@ installs:
 - BuildKit and OCI runtime tooling
 - CNI plugins including `tc-redirect-tap`
 - guest boot artifacts under `/var/lib/helmr/images/guest/out`
-- `buildkit.service` and `helmr-worker.service`
+- `helmr-buildkit.service` and `helmr-worker.service`
 
 Run the emitted `image_pipeline_arn` with EC2 Image Builder, then pass the produced AMI ID to the
 worker module as `worker_ami_id`.

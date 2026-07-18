@@ -29,7 +29,7 @@ func (*Connector) Materialize(context.Context, vm.MaterializeRequest) (vm.Sessio
 	return nil, ErrUnsupported
 }
 
-func (*Connector) CleanupRuntime(context.Context, string) error { return ErrUnsupported }
+func (*Connector) Cleanup(context.Context, vm.Owner) error { return ErrUnsupported }
 
 func (*Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 	return RuntimeCapabilities{}, ErrUnsupported

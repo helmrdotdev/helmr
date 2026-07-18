@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/helmrdotdev/helmr/internal/api"
 )
 
 type verifiedProgramSnapshot struct {
@@ -19,6 +21,31 @@ func (err *programInvalidError) Error() string {
 	return err.diagnostic
 }
 
+type buildDeliveryError struct {
+	reason api.WorkerDeploymentBuildDeliveryFailureReason
+	err    error
+}
+
+func (err *buildDeliveryError) Error() string {
+	return err.err.Error()
+}
+
+func (err *buildDeliveryError) Unwrap() error {
+	return err.err
+}
+
+func (err *buildDeliveryError) DeploymentBuildDeliveryFailureReason() api.WorkerDeploymentBuildDeliveryFailureReason {
+	return err.reason
+}
+
+func programDeliveryFailure(err error) error {
+	return &buildDeliveryError{reason: api.WorkerDeploymentBuildDeliveryProgramVerifierFailed, err: err}
+}
+
+func buildGuestDeliveryFailure(err error) error {
+	return &buildDeliveryError{reason: api.WorkerDeploymentBuildDeliveryBuildGuestFailed, err: err}
+}
+
 func verifyProgramSnapshots(
 	ctx context.Context,
 	unitCgroupRoot string,
@@ -28,13 +55,14 @@ func verifyProgramSnapshots(
 ) (verifiedProgramSnapshot, error) {
 	codeFile, err := code.verifierFile()
 	if err != nil {
-		return verifiedProgramSnapshot{}, fmt.Errorf("open code snapshot for verification: %w", err)
+		return verifiedProgramSnapshot{}, programDeliveryFailure(
+			fmt.Errorf("open code snapshot for verification: %w", err),
+		)
 	}
 	dependencyFile, err := dependencies.verifierFile()
 	if err != nil {
-		return verifiedProgramSnapshot{}, fmt.Errorf(
-			"open dependency snapshot for verification: %w",
-			err,
+		return verifiedProgramSnapshot{}, programDeliveryFailure(
+			fmt.Errorf("open dependency snapshot for verification: %w", err),
 		)
 	}
 	result, err := runProgramVerifierProcess(ctx, programVerifierProcessConfig{
@@ -46,15 +74,14 @@ func verifyProgramSnapshots(
 		dependencies:   dependencyFile,
 	})
 	if err != nil {
-		return verifiedProgramSnapshot{}, err
+		return verifiedProgramSnapshot{}, programDeliveryFailure(err)
 	}
 	switch result.kind {
 	case programVerifierVerified:
 		index, err := ParseProgramIndex(result.index)
 		if err != nil {
-			return verifiedProgramSnapshot{}, fmt.Errorf(
-				"parse verified Program index: %w",
-				err,
+			return verifiedProgramSnapshot{}, programDeliveryFailure(
+				fmt.Errorf("parse verified Program index: %w", err),
 			)
 		}
 		return verifiedProgramSnapshot{
@@ -66,11 +93,10 @@ func verifyProgramSnapshots(
 			diagnostic: result.diagnostic,
 		}
 	case programVerifierFailed:
-		return verifiedProgramSnapshot{}, errors.New("program verifier failed")
+		return verifiedProgramSnapshot{}, programDeliveryFailure(errors.New("program verifier failed"))
 	default:
-		return verifiedProgramSnapshot{}, fmt.Errorf(
-			"program verifier returned unknown outcome %d",
-			result.kind,
+		return verifiedProgramSnapshot{}, programDeliveryFailure(
+			fmt.Errorf("program verifier returned unknown outcome %d", result.kind),
 		)
 	}
 }

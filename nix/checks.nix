@@ -64,6 +64,12 @@ let
     in
     require (buildkitService.User == "helmr-buildkit") "helmr-buildkit service user changed"
     && require (buildkitService.Group == "helmr-buildkit") "helmr-buildkit service group changed"
+    && require (buildkitService.Delegate == true) "helmr-buildkit service delegation changed"
+    && require (buildkitService.CPUQuota == "100%") "helmr-buildkit CPU limit changed"
+    && require (buildkitService.MemoryMax == "2G") "helmr-buildkit memory limit changed"
+    && require (buildkitService.MemorySwapMax == 0) "helmr-buildkit swap limit changed"
+    && require (buildkitService.TasksMax == 1024) "helmr-buildkit task limit changed"
+    && require (buildkitService.MemoryOOMGroup == true) "helmr-buildkit OOM group policy changed"
     && require (cfg.boot.kernel.sysctl."net.ipv4.ip_forward" == 1) "IPv4 forwarding is not enabled"
     && require (
       cfg.boot.kernel.sysctl."user.max_user_namespaces" == 16384

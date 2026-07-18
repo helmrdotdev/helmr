@@ -76,11 +76,10 @@ func buildQueueMessage(row db.ListQueuedDeploymentBuildCandidatesRow) (Message, 
 	}
 	message := Message{WorkKind: WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		ProjectID: projectID, EnvironmentID: environmentID, RegionID: row.BuildRegionID,
-		QueueClass: "build", QueueName: "deployment-build", BuildAttemptNumber: row.BuildAttemptNumber,
-		LeaseSequence: row.LeaseSequence, QueueTimestamp: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
+		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: row.LeaseSequence,
+		QueueTimestamp: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
 		BuildResources: BuildResourceVector{CPUMillis: row.BuildRequestedCpuMillis, MemoryBytes: row.BuildRequestedMemoryBytes,
 			WorkloadDiskBytes: row.BuildRequestedWorkloadDiskBytes, ScratchBytes: row.BuildRequestedScratchBytes,
-			BuildCacheBytes: row.BuildRequestedBuildCacheBytes, ArtifactCacheBytes: row.BuildRequestedArtifactCacheBytes,
 			Executors: row.BuildRequestedExecutors}}
 	if err := message.Validate(); err != nil {
 		return Message{}, err

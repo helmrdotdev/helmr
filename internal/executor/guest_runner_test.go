@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
 	"github.com/helmrdotdev/helmr/internal/builder"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
@@ -599,8 +600,9 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 		Log:                 slog.New(slog.NewJSONHandler(&logBuffer, nil)),
+		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
 		WaitHandler: waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
@@ -735,8 +737,9 @@ func TestGuestRunnerRestoresCheckpointSubstrateFromLocalCache(t *testing.T) {
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
 		Substrates:          lookup,
+		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
 		WaitHandler: waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
@@ -819,8 +822,9 @@ func TestGuestRunnerRejectsCheckpointSubstrateArtifactDigestMismatch(t *testing.
 		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, substrateObject.digest: substrateObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
+		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
 		WaitHandler: &capturingRunWaitHandler{},
 		Run: ResolvedRun{
 			RunID: "run-1",
@@ -841,6 +845,19 @@ func TestGuestRunnerRejectsCheckpointSubstrateArtifactDigestMismatch(t *testing.
 	if connector.restoreRequest.ID != "" {
 		t.Fatalf("restore connector was called: %+v", connector.restoreRequest)
 	}
+}
+
+func guestTestCapacity(t *testing.T) *capacity.Ledger {
+	t.Helper()
+	resources, err := capacity.New(capacity.Vector{
+		CPUMillis: 16_000, MemoryBytes: 64 << 30,
+		WorkloadDiskBytes: 1 << 40, ScratchBytes: 1 << 40,
+		VMSlots: 64, BuildSlots: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resources
 }
 
 func TestGuestRunnerRequiresRestoreAcknowledgerBeforeResumeAttach(t *testing.T) {
@@ -913,8 +930,9 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 		CAS:                 &fakeCAS{objects: map[string][]byte{manifestObject.digest: manifestObject.body, stateObject.digest: stateObject.body, scratchObject.digest: scratchObject.body, memoryObject.digest: memoryObject.body}},
 		CheckpointEncryptor: encryptor,
 		TempDir:             t.TempDir(),
+		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1"}),
+		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
 		WaitHandler: waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",

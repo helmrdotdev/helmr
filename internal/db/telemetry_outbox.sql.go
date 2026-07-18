@@ -400,7 +400,7 @@ type ClaimMeterEventIngestBatchRow struct {
 	SourceID               pgtype.UUID        `json:"source_id"`
 	RunID                  pgtype.UUID        `json:"run_id"`
 	DeploymentID           pgtype.UUID        `json:"deployment_id"`
-	AttemptNumber          int32              `json:"attempt_number"`
+	AttemptNumber          pgtype.Int4        `json:"attempt_number"`
 	TraceID                pgtype.Text        `json:"trace_id"`
 	SpanID                 pgtype.Text        `json:"span_id"`
 	Meter                  string             `json:"meter"`

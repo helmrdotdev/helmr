@@ -3,8 +3,6 @@ package worker
 import (
 	"context"
 	"errors"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
 type testControl struct {
@@ -111,6 +110,16 @@ type enabledConsumer struct {
 	inner   *queuedConsumer
 }
 
+type successfulRejectionConsumer struct {
+	claimed chan struct{}
+	once    sync.Once
+}
+
+func (c *successfulRejectionConsumer) Claim(context.Context) (Work, bool, error) {
+	c.once.Do(func() { close(c.claimed) })
+	return nil, true, nil
+}
+
 func (c *enabledConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	if !c.enabled.Load() {
 		return nil, false, nil
@@ -146,6 +155,35 @@ func (c *queuedConsumer) Claim(context.Context) (Work, bool, error) {
 	c.work = c.work[1:]
 	c.claimed++
 	return work, true, nil
+}
+
+func TestSupervisorAcceptsSuccessfulClaimWithoutWork(t *testing.T) {
+	control := &testControl{}
+	consumer := &successfulRejectionConsumer{claimed: make(chan struct{})}
+	s, err := New(Config{
+		Control: control, PollEvery: time.Millisecond,
+		Consumers: []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	select {
+	case <-consumer.claimed:
+	case <-time.After(time.Second):
+		t.Fatal("successful rejection was not claimed")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not stop")
+	}
 }
 
 func TestSupervisorRunsConcurrentWorkAndDrainsLocally(t *testing.T) {
@@ -256,6 +294,88 @@ func TestSupervisorShutdownCancelsOutstandingClaims(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("supervisor did not stop")
+	}
+}
+
+func TestSupervisorTerminatesEpochOnFatalWorkError(t *testing.T) {
+	control := &testControl{}
+	consumer := &queuedConsumer{work: []Work{
+		func(context.Context) error {
+			return &fatalWorkerError{err: errors.New("cleanup unproven")}
+		},
+	}}
+	s, err := New(Config{
+		Control:   control,
+		PollEvery: time.Millisecond,
+		Consumers: []ConsumerSpec{{Name: "build", Concurrency: 1, Consumer: consumer}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err = s.Run(ctx)
+	if err == nil || !strings.Contains(err.Error(), "worker fatal execution") {
+		t.Fatalf("run error = %v, want fatal execution", err)
+	}
+	if consumer.claimed != 1 {
+		t.Fatalf("claimed = %d, want 1", consumer.claimed)
+	}
+}
+
+func TestSupervisorRefusesActivationWithBuildResidue(t *testing.T) {
+	control := &testControl{}
+	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000701"}
+	s, err := New(Config{
+		Control: control,
+		Capabilities: api.WorkerCapabilities{
+			SupportsBuild:     true,
+			MaxBuildExecutors: 1,
+		},
+		Recover: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{
+				ObservedAt:        time.Now().UTC(),
+				Quarantined:       []string{owner.String()},
+				QuarantinedOwners: []vm.Owner{owner},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "quarantined build residue") {
+		t.Fatalf("error = %v, want build residue rejection", err)
+	}
+	if control.activated.Load() {
+		t.Fatal("worker activated with build residue")
+	}
+}
+
+func TestSupervisorRefusesActivationWithUnownedResidue(t *testing.T) {
+	control := &testControl{}
+	s, err := New(Config{
+		Control: control,
+		Capabilities: api.WorkerCapabilities{
+			SupportsRun:             true,
+			ExecutionSlotsAvailable: 1,
+		},
+		Recover: func(context.Context) (RecoveryEvidence, error) {
+			return RecoveryEvidence{
+				ObservedAt:  time.Now().UTC(),
+				Quarantined: []string{"process:123"},
+			}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = s.Run(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "without exact VM ownership") {
+		t.Fatalf("error = %v, want unowned residue rejection", err)
+	}
+	if control.activated.Load() {
+		t.Fatal("worker activated with unowned residue")
 	}
 }
 
@@ -713,58 +833,5 @@ func TestSingletonRejectsSecondOwner(t *testing.T) {
 	identity, err := ReadProcessIdentity(dir)
 	if err != nil || identity.ServiceID != "one" {
 		t.Fatalf("identity = %+v, err = %v", identity, err)
-	}
-}
-
-func TestQuarantineStaleRuntimeState(t *testing.T) {
-	dir := t.TempDir()
-	stale := filepath.Join(dir, "vms", "guest", "runtime-1")
-	if err := os.MkdirAll(stale, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	var stopped []int
-	var deleted []string
-	evidence, err := recoverLocalRuntimeState(context.Background(), dir, filepath.Join(dir, "jailer"), runtimeRecoveryOps{
-		matchingPIDs: func(string) ([]int, error) { return []int{42}, nil },
-		stopPID:      func(_ context.Context, pid int) error { stopped = append(stopped, pid); return nil },
-		netnsExists:  func(context.Context, string) (bool, error) { return true, nil },
-		deleteNetns:  func(_ context.Context, id string) error { deleted = append(deleted, id); return nil },
-		removeAll:    os.RemoveAll,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(evidence.Reclaimed) != 1 || evidence.Reclaimed[0] != "runtime-1" || len(evidence.Quarantined) != 0 {
-		t.Fatalf("evidence = %+v", evidence)
-	}
-	if len(stopped) != 1 || stopped[0] != 42 || len(deleted) != 1 {
-		t.Fatalf("stopped=%v deleted=%v", stopped, deleted)
-	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Fatalf("live stale state still exists: %v", err)
-	}
-}
-
-func TestRecoveryLeavesUnreclaimedStateInPlace(t *testing.T) {
-	dir := t.TempDir()
-	stale := filepath.Join(dir, "vms", "guest", "runtime-1")
-	if err := os.MkdirAll(stale, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	evidence, err := recoverLocalRuntimeState(context.Background(), dir, "", runtimeRecoveryOps{
-		matchingPIDs: func(string) ([]int, error) { return []int{42}, nil },
-		stopPID:      func(context.Context, int) error { return errors.New("still running") },
-		netnsExists:  func(context.Context, string) (bool, error) { return false, nil },
-		deleteNetns:  func(context.Context, string) error { return nil },
-		removeAll:    os.RemoveAll,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(evidence.Quarantined) != 1 {
-		t.Fatalf("evidence = %+v", evidence)
-	}
-	if _, err := os.Stat(stale); err != nil {
-		t.Fatalf("quarantined state was hidden or removed: %v", err)
 	}
 }

@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -291,6 +292,157 @@ func TestStopWorkspaceMountClosesRuntimeAndReclaimsNetworkSlot(t *testing.T) {
 	}
 	if slotState != db.WorkerNetworkSlotStateAvailable || slotRuntimeID.Valid || generation != 2 {
 		t.Fatalf("slot = %s runtime_valid=%v generation=%d, want available/false/2", slotState, slotRuntimeID.Valid, generation)
+	}
+}
+
+func TestFailWorkspaceMountAtomicallyQuarantinesRuntimeForReclaim(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	fixture := seedWorkspaceRuntimeFixture(t, ctx, ids, true, pool)
+	queries := db.New(pool)
+	failure := []byte(`{"code":"workspace_mount_runtime_close_failed","message":"runtime cleanup failed"}`)
+	params := db.FailWorkspaceMountParams{
+		ReasonCode:        pgtype.Text{String: "worker_mount_failed", Valid: true},
+		Error:             failure,
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ID:                pgvalue.UUID(fixture.mountID),
+		WorkerInstanceID:  pgvalue.UUID(fixture.workerID),
+		WorkerEpoch:       1,
+		RuntimeInstanceID: pgvalue.UUID(fixture.runtimeID),
+		FencingGeneration: 2,
+	}
+
+	if _, err := queries.FailWorkspaceMount(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("stale failure transition error = %v, want pgx.ErrNoRows", err)
+	}
+	var mountState db.WorkspaceMountState
+	var runtimeState db.RuntimeObservedState
+	var slotState db.WorkerNetworkSlotState
+	if err := pool.QueryRow(ctx, `SELECT state FROM workspace_mounts WHERE id = $1`, fixture.mountID).Scan(&mountState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT observed_state FROM runtime_instances WHERE id = $1`, fixture.runtimeID).Scan(&runtimeState); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT state FROM worker_network_slots WHERE id = $1`, fixture.slotID).Scan(&slotState); err != nil {
+		t.Fatal(err)
+	}
+	if mountState != db.WorkspaceMountStateMounted || runtimeState != db.RuntimeObservedStateReady || slotState != db.WorkerNetworkSlotStateBound {
+		t.Fatalf("stale transition mutated state = mount:%s runtime:%s slot:%s", mountState, runtimeState, slotState)
+	}
+
+	params.FencingGeneration = 1
+	failed, err := queries.FailWorkspaceMount(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != db.WorkspaceMountStateFailed || !failed.FailedAt.Valid {
+		t.Fatalf("mount = %s failed_at=%v, want failed", failed.State, failed.FailedAt.Valid)
+	}
+	var runtimeReason pgtype.Text
+	var runtimeError []byte
+	var reclaimedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT observed_state, terminal_reason_code, terminal_error, reclaimed_at
+		  FROM runtime_instances WHERE id = $1
+	`, fixture.runtimeID).Scan(&runtimeState, &runtimeReason, &runtimeError, &reclaimedAt); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeErrorBody map[string]string
+	if err := json.Unmarshal(runtimeError, &runtimeErrorBody); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeState != db.RuntimeObservedStateFailed || runtimeReason.String != "workspace_mount_failed" ||
+		runtimeErrorBody["code"] != "workspace_mount_runtime_close_failed" ||
+		runtimeErrorBody["message"] != "runtime cleanup failed" || reclaimedAt.Valid {
+		t.Fatalf("runtime = state:%s reason:%v error:%s reclaimed:%v", runtimeState, runtimeReason, runtimeError, reclaimedAt.Valid)
+	}
+	var slotReason pgtype.Text
+	var slotError []byte
+	var reclaimingAt pgtype.Timestamptz
+	var quarantinedAt pgtype.Timestamptz
+	if err := pool.QueryRow(ctx, `
+		SELECT state, state_reason_code, state_error, reclaiming_at, quarantined_at
+		  FROM worker_network_slots WHERE id = $1
+	`, fixture.slotID).Scan(&slotState, &slotReason, &slotError, &reclaimingAt, &quarantinedAt); err != nil {
+		t.Fatal(err)
+	}
+	var slotErrorBody map[string]string
+	if err := json.Unmarshal(slotError, &slotErrorBody); err != nil {
+		t.Fatal(err)
+	}
+	if slotState != db.WorkerNetworkSlotStateQuarantined ||
+		slotReason.String != "runtime_physical_cleanup_pending" ||
+		slotErrorBody["code"] != "workspace_mount_runtime_close_failed" ||
+		slotErrorBody["message"] != "runtime cleanup failed" || !reclaimingAt.Valid || !quarantinedAt.Valid {
+		t.Fatalf("slot = state:%s reason:%v error:%s reclaiming:%v quarantined:%v",
+			slotState, slotReason, slotError, reclaimingAt.Valid, quarantinedAt.Valid)
+	}
+
+	activateWorkspaceWorker(t, ctx, pool, fixture.workerID)
+	groupID := claimedWorkerGroup(t, ctx, pool, fixture.workerID)
+	target, err := queries.GetNextRuntimeReconcileTarget(ctx, db.GetNextRuntimeReconcileTargetParams{
+		WorkerGroupID: groupID, WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ID != pgvalue.UUID(fixture.runtimeID) ||
+		target.ObservedState != db.RuntimeObservedStateFailed ||
+		target.NetworkSlotID != pgvalue.UUID(fixture.slotID) {
+		t.Fatalf("reclaim target = runtime:%v state:%s slot:%v", target.ID, target.ObservedState, target.NetworkSlotID)
+	}
+}
+
+func TestFailWorkspaceMountQuarantinesAssignedNetworkSlot(t *testing.T) {
+	ctx := context.Background()
+	pool := newIntegrationDB(t, ctx)
+	ids := seedIntegration(t, ctx, pool)
+	fixture := seedWorkspaceRuntimeFixture(t, ctx, ids, true, pool)
+	mustExec(t, ctx, pool, `
+		UPDATE worker_network_slots
+		   SET state = 'assigned',
+		       host_interface_name = NULL,
+		       guest_address = NULL,
+		       gateway_address = NULL,
+		       subnet = NULL,
+		       tap_name = NULL,
+		       netns_name = NULL,
+		       guest_mac = NULL
+		 WHERE id = $1
+	`, fixture.slotID)
+
+	failed, err := db.New(pool).FailWorkspaceMount(ctx, db.FailWorkspaceMountParams{
+		ReasonCode:        pgtype.Text{String: "worker_mount_failed", Valid: true},
+		Error:             []byte(`{"code":"workspace_mount_runtime_close_failed"}`),
+		OrgID:             pgvalue.UUID(ids.orgID),
+		ID:                pgvalue.UUID(fixture.mountID),
+		WorkerInstanceID:  pgvalue.UUID(fixture.workerID),
+		WorkerEpoch:       1,
+		RuntimeInstanceID: pgvalue.UUID(fixture.runtimeID),
+		FencingGeneration: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.State != db.WorkspaceMountStateFailed {
+		t.Fatalf("mount state = %s, want failed", failed.State)
+	}
+
+	var runtimeState db.RuntimeObservedState
+	var slotState db.WorkerNetworkSlotState
+	if err := pool.QueryRow(ctx, `
+		SELECT runtime_instances.observed_state, worker_network_slots.state
+		  FROM runtime_instances
+		  JOIN worker_network_slots
+		    ON worker_network_slots.runtime_instance_id = runtime_instances.id
+		 WHERE runtime_instances.id = $1
+	`, fixture.runtimeID).Scan(&runtimeState, &slotState); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeState != db.RuntimeObservedStateFailed || slotState != db.WorkerNetworkSlotStateQuarantined {
+		t.Fatalf("runtime = %s slot = %s, want failed/quarantined", runtimeState, slotState)
 	}
 }
 

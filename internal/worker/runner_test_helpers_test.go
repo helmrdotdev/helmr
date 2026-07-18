@@ -2,8 +2,28 @@ package worker
 
 import (
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
+
+func testCapacity(t interface {
+	Helper()
+	Fatal(...any)
+}, capabilities api.WorkerCapabilities) *capacity.Ledger {
+	t.Helper()
+	resources, err := capacity.New(capacity.Vector{
+		CPUMillis:         capabilities.MaxVCPUs * 1000,
+		MemoryBytes:       capabilities.MaxMemoryMiB * 1024 * 1024,
+		WorkloadDiskBytes: capabilities.MaxDiskMiB * 1024 * 1024,
+		ScratchBytes:      capabilities.ScratchBytes,
+		VMSlots:           int64(capabilities.ExecutionSlotsAvailable),
+		BuildSlots:        int64(capabilities.MaxBuildExecutors),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resources
+}
 
 func testCapabilities() api.WorkerCapabilities {
 	return api.WorkerCapabilities{

@@ -2,96 +2,17 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
-	"strings"
 	"testing"
+
+	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-func TestRuntimeCandidatesUnionAllOwnedRootsIncludingJailerOnlyOrphan(t *testing.T) {
-	workDir := t.TempDir()
-	jailerDir := t.TempDir()
-	workOnly := "00000000-0000-0000-0000-000000000101"
-	shared := "00000000-0000-0000-0000-000000000102"
-	jailerOnly := "00000000-0000-0000-0000-000000000103"
-	for _, path := range []string{
-		filepath.Join(workDir, "vms", "guest", workOnly),
-		filepath.Join(workDir, "vms", "guest", shared),
-		filepath.Join(jailerDir, "firecracker", shared),
-		filepath.Join(jailerDir, "firecracker", jailerOnly),
-	} {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got, err := runtimeCandidates(workDir, jailerDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{workOnly, shared, jailerOnly}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("runtimeCandidates() = %v, want %v", got, want)
-	}
-}
-
-func TestRuntimeCandidatesRejectsNonCanonicalOwnershipInsteadOfCertifyingItAway(t *testing.T) {
-	for _, test := range []struct {
-		name     string
-		rootKind string
-		entry    string
-	}{
-		{name: "embedded uuid", rootKind: "work", entry: "orphan-00000000-0000-0000-0000-000000000101"},
-		{name: "uppercase uuid", rootKind: "work", entry: "00000000-0000-0000-0000-000000000ABC"},
-		{name: "jailer unknown owner", rootKind: "jailer", entry: "not-a-runtime"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			workDir := t.TempDir()
-			jailerDir := t.TempDir()
-			root := filepath.Join(workDir, "vms", "guest")
-			if test.rootKind == "jailer" {
-				root = filepath.Join(jailerDir, "firecracker")
-			}
-			if err := os.MkdirAll(filepath.Join(root, test.entry), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := runtimeCandidates(workDir, jailerDir); err == nil || !strings.Contains(err.Error(), "non-canonical runtime id") {
-				t.Fatalf("runtimeCandidates() error = %v, want non-canonical ownership failure", err)
-			}
-		})
-	}
-}
-
-func TestRecoveryReclaimsJailerOnlyCrashOrphan(t *testing.T) {
-	workDir := t.TempDir()
-	jailerDir := t.TempDir()
-	id := "00000000-0000-0000-0000-000000000104"
-	jailerPath := filepath.Join(jailerDir, "firecracker", id)
-	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
-		t.Fatal(err)
-	}
-
-	evidence, err := recoverLocalRuntimeState(context.Background(), workDir, jailerDir, runtimeRecoveryOps{
-		candidates:   func(context.Context) ([]string, error) { return runtimeCandidates(workDir, jailerDir) },
-		matchingPIDs: func(string) ([]int, error) { return nil, nil },
-		stopPID:      func(context.Context, int) error { return nil },
-		netnsExists:  func(context.Context, string) (bool, error) { return false, nil },
-		deleteNetns:  func(context.Context, string) error { return nil },
-		removeAll:    os.RemoveAll,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(evidence.Reclaimed, []string{id}) || len(evidence.Quarantined) != 0 {
-		t.Fatalf("evidence = %+v", evidence)
-	}
-	if _, err := os.Stat(jailerPath); !os.IsNotExist(err) {
-		t.Fatalf("jailer-only orphan remains after recovery: %v", err)
-	}
-}
-
-func TestRecoveryFindsOwnedProcessAndCorrelatedNetNSWithoutStateRoots(t *testing.T) {
+func TestRecoveryQuarantinesProcessWithoutOwnerMarker(t *testing.T) {
 	workDir := t.TempDir()
 	jailerDir := t.TempDir()
 	id := "00000000-0000-0000-0000-000000000106"
@@ -99,10 +20,10 @@ func TestRecoveryFindsOwnedProcessAndCorrelatedNetNSWithoutStateRoots(t *testing
 	var stopped []int
 	var deleted []string
 	var matched []string
-	evidence, err := recoverLocalRuntimeState(context.Background(), workDir, jailerDir, runtimeRecoveryOps{
-		candidates: func(context.Context) ([]string, error) { return nil, nil },
-		ownedProcesses: func(context.Context) ([]ownedRuntimeProcess, error) {
-			return []ownedRuntimeProcess{{PID: 42, ID: id}}, nil
+	evidence, err := recoverLocalVMState(context.Background(), workDir, jailerDir, vmRecoveryOps{
+		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return nil, nil },
+		ownedProcesses: func(context.Context) ([]ownedVMProcess, error) {
+			return []ownedVMProcess{{PID: 42, ID: id}}, nil
 		},
 		netnsNames: func(context.Context) ([]string, error) { return []string{id, unrelated}, nil },
 		matchingPIDs: func(candidate string) ([]int, error) {
@@ -120,19 +41,19 @@ func TestRecoveryFindsOwnedProcessAndCorrelatedNetNSWithoutStateRoots(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(evidence.Reclaimed, []string{id}) || !reflect.DeepEqual(stopped, []int{42}) || !reflect.DeepEqual(deleted, []string{id}) {
+	if !reflect.DeepEqual(evidence.Quarantined, []string{"process:42"}) || len(evidence.QuarantineErrors) != 1 {
 		t.Fatalf("evidence=%+v stopped=%v deleted=%v", evidence, stopped, deleted)
 	}
-	if !reflect.DeepEqual(matched, []string{id}) {
-		t.Fatalf("matched runtime IDs = %v; unrelated netns must not become ownership", matched)
+	if len(matched) != 0 || len(stopped) != 0 || len(deleted) != 0 {
+		t.Fatalf("ownerless process was selected for cleanup: matched=%v stopped=%v deleted=%v", matched, stopped, deleted)
 	}
 }
 
-func TestRecoveryQuarantinesNonCanonicalPreciselyOwnedProcess(t *testing.T) {
-	evidence, err := recoverLocalRuntimeState(context.Background(), t.TempDir(), t.TempDir(), runtimeRecoveryOps{
-		candidates: func(context.Context) ([]string, error) { return nil, nil },
-		ownedProcesses: func(context.Context) ([]ownedRuntimeProcess, error) {
-			return []ownedRuntimeProcess{{PID: 43, ID: "not-a-runtime", Problem: "owned jailer process has non-canonical --id"}}, nil
+func TestRecoveryQuarantinesMalformedOwnedProcess(t *testing.T) {
+	evidence, err := recoverLocalVMState(context.Background(), t.TempDir(), t.TempDir(), vmRecoveryOps{
+		ownerCandidates: func(context.Context) ([]ownerCandidate, error) { return nil, nil },
+		ownedProcesses: func(context.Context) ([]ownedVMProcess, error) {
+			return []ownedVMProcess{{PID: 43, ID: "not-a-runtime", Problem: "owned jailer process has non-canonical --id"}}, nil
 		},
 		netnsNames:   func(context.Context) ([]string, error) { return []string{"not-a-runtime"}, nil },
 		matchingPIDs: func(string) ([]int, error) { t.Fatal("unsafe residue was selected for cleanup"); return nil, nil },
@@ -149,7 +70,7 @@ func TestRecoveryQuarantinesNonCanonicalPreciselyOwnedProcess(t *testing.T) {
 	}
 }
 
-func TestOwnedRuntimeProcessDetectionIgnoresUnrelatedResources(t *testing.T) {
+func TestOwnedVMProcessDetectionIgnoresUnrelatedResources(t *testing.T) {
 	id := "00000000-0000-0000-0000-000000000107"
 	jailerDir := "/srv/helmr/jailer"
 	tests := []struct {
@@ -168,10 +89,98 @@ func TestOwnedRuntimeProcessDetectionIgnoresUnrelatedResources(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			id, owned, problem := helmrOwnedRuntimeProcess([]byte(tt.cmdline), tt.root, jailerDir)
+			id, owned, problem := helmrOwnedVMProcess([]byte(tt.cmdline), tt.root, jailerDir)
 			if owned != tt.wantOwned || id != tt.wantID || (problem != "") != tt.wantProblem {
 				t.Fatalf("id=%q owned=%t problem=%q", id, owned, problem)
 			}
 		})
+	}
+}
+
+func TestRecoveryReclaimsRuntimeAndBuildFromExactOwnerMarkers(t *testing.T) {
+	workDir := t.TempDir()
+	jailerDir := t.TempDir()
+	owners := []vm.Owner{
+		{Kind: vm.OwnerRuntime, ID: "00000000-0000-0000-0000-000000000201"},
+		{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000202"},
+	}
+	for _, owner := range owners {
+		statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
+		if err := os.MkdirAll(statePath, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte(string(owner.Kind)+"\n"+owner.ID+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(jailerDir, "firecracker", owner.ID), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(evidence.ReclaimedOwners, owners) || len(evidence.Quarantined) != 0 {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+}
+
+func TestRecoveryDoesNotGuessOwnerFromJailerRoot(t *testing.T) {
+	workDir := t.TempDir()
+	jailerDir := t.TempDir()
+	id := "00000000-0000-0000-0000-000000000203"
+	jailerPath := filepath.Join(jailerDir, "firecracker", id)
+	if err := os.MkdirAll(jailerPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := RecoverLocalVMState(context.Background(), workDir, jailerDir, truePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(evidence.Quarantined, []string{"jailer:" + id}) || len(evidence.QuarantinedOwners) != 0 {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+	if _, err := os.Stat(jailerPath); err != nil {
+		t.Fatalf("ownerless jailer evidence was removed: %v", err)
+	}
+}
+
+func TestRecoveryQuarantinePreservesStructuredBuildOwner(t *testing.T) {
+	workDir := t.TempDir()
+	owner := vm.Owner{Kind: vm.OwnerBuild, ID: "00000000-0000-0000-0000-000000000204"}
+	statePath := filepath.Join(workDir, "vms", "guest", owner.ID)
+	if err := os.MkdirAll(statePath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(statePath, "owner"), []byte("build\n"+owner.ID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := recoverLocalVMState(context.Background(), workDir, "", vmRecoveryOps{
+		ownerCandidates: func(context.Context) ([]ownerCandidate, error) {
+			return []ownerCandidate{{Owner: owner}}, nil
+		},
+		matchingPIDs: func(string) ([]int, error) { return []int{42}, nil },
+		stopPID:      func(context.Context, int) error { return errors.New("still running") },
+		netnsExists:  func(context.Context, string) (bool, error) { return false, nil },
+		deleteNetns:  func(context.Context, string) error { return nil },
+		removeAll:    os.RemoveAll,
+		removeState:  removeOwnedRecoveryState,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(evidence.QuarantinedOwners, []vm.Owner{owner}) || !reflect.DeepEqual(evidence.Quarantined, []string{owner.String()}) {
+		t.Fatalf("evidence = %+v", evidence)
+	}
+	if _, err := os.Stat(filepath.Join(statePath, "owner")); err != nil {
+		t.Fatalf("quarantined owner marker was removed: %v", err)
 	}
 }

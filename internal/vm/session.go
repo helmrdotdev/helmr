@@ -3,10 +3,12 @@ package vm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
@@ -24,11 +26,8 @@ type MaterializingConnector interface {
 	Materialize(context.Context, MaterializeRequest) (Session, error)
 }
 
-// RuntimeCleanupConnector removes physical state for one exact durable runtime
-// owner. A nil result is proof that process, network namespace, and owned
-// filesystem roots for the ID are absent.
-type RuntimeCleanupConnector interface {
-	CleanupRuntime(context.Context, string) error
+type Cleaner interface {
+	Cleanup(context.Context, Owner) error
 }
 
 type Session interface {
@@ -63,7 +62,8 @@ type CheckpointableSession interface {
 
 type ConnectRequest struct {
 	ID        string
-	OwnerKind string
+	OwnerKind OwnerKind
+	Resources compute.ResourceVector
 	Network   compute.NetworkPolicy
 	Topology  RuntimeTopology
 }
@@ -110,7 +110,7 @@ type SnapshotFile struct {
 type RestoreRequest struct {
 	ID                   string
 	RuntimeInstanceID    string
-	OwnerKind            string
+	OwnerKind            OwnerKind
 	VMState              string
 	VMStateMediaType     string
 	ScratchDisk          string
@@ -126,7 +126,7 @@ type RestoreRequest struct {
 
 type MaterializeRequest struct {
 	ID                 string
-	OwnerKind          string
+	OwnerKind          OwnerKind
 	RootfsDigest       string
 	ImageDigest        string
 	ImageFormat        string
@@ -137,10 +137,79 @@ type MaterializeRequest struct {
 	Topology           RuntimeTopology
 }
 
+type OwnerKind string
+
 const (
-	RuntimeOwnerRuntime = "runtime"
-	RuntimeOwnerBuild   = "build"
+	OwnerRuntime OwnerKind = "runtime"
+	OwnerBuild   OwnerKind = "build"
 )
+
+type Owner struct {
+	Kind OwnerKind `json:"kind"`
+	ID   string    `json:"id"`
+}
+
+func (o Owner) Validate() error {
+	if o.Kind != OwnerRuntime && o.Kind != OwnerBuild {
+		return errors.New("VM owner kind must be runtime or build")
+	}
+	id, err := uuid.Parse(o.ID)
+	if err != nil || id.String() != o.ID {
+		return errors.New("VM owner id must be a canonical UUID")
+	}
+	return nil
+}
+
+func (o Owner) String() string {
+	return string(o.Kind) + ":" + o.ID
+}
+
+type CleanupUnprovenError struct {
+	Owner Owner
+	Cause error
+}
+
+func (e *CleanupUnprovenError) Error() string {
+	if e == nil {
+		return "VM cleanup is unproven"
+	}
+	if e.Cause == nil {
+		return fmt.Sprintf("VM cleanup is unproven for %s", e.Owner)
+	}
+	return fmt.Sprintf("VM cleanup is unproven for %s: %v", e.Owner, e.Cause)
+}
+
+func (e *CleanupUnprovenError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
+type GuestError struct {
+	Cause error
+}
+
+func NewGuestError(cause error) error {
+	if cause == nil {
+		return nil
+	}
+	return &GuestError{Cause: cause}
+}
+
+func (e *GuestError) Error() string {
+	if e == nil || e.Cause == nil {
+		return "guest execution failed"
+	}
+	return "guest execution failed: " + e.Cause.Error()
+}
+
+func (e *GuestError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 type CheckpointIdentity struct {
 	RuntimeBackend      string

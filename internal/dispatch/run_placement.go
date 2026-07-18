@@ -147,10 +147,10 @@ SELECT count(*) < $4
 
 	var groupID, protocolVersion string
 	var workerID pgtype.UUID
-	var workerEpoch int64
+	var workerEpoch, workerScratchBytes int64
 	err = tx.QueryRow(ctx, `
 SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
-       worker_instances.protocol_version
+       worker_instances.protocol_version, worker_instances.per_vm_scratch_bytes
   FROM worker_groups
   JOIN worker_instances ON worker_instances.worker_group_id = worker_groups.id
   JOIN worker_observations
@@ -166,6 +166,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
 	   AND worker_instances.per_vm_cpu_millis >= $4
 	   AND worker_instances.per_vm_memory_bytes >= $5
 	   AND worker_instances.per_vm_workload_disk_bytes >= $6
+	   AND worker_instances.per_vm_scratch_bytes > 0
    AND (SELECT count(*) FROM runtime_instances
          WHERE worker_instance_id = worker_instances.id
            AND worker_epoch = worker_instances.current_epoch
@@ -211,12 +212,22 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
                     WHERE worker_instance_id = worker_instances.id
                       AND worker_epoch = worker_instances.current_epoch
                       AND state IN ('assigned','starting','running')), 0)
+   AND worker_instances.certified_scratch_bytes >= worker_instances.per_vm_scratch_bytes + COALESCE((
+       SELECT sum(reserved_scratch_bytes) FROM runtime_instances
+        WHERE worker_instance_id = worker_instances.id
+          AND worker_epoch = worker_instances.current_epoch
+          AND (observed_state IN ('allocated','preparing','ready','closing')
+            OR (observed_state IN ('failed','lost') AND reclaimed_at IS NULL))), 0)
+       + COALESCE((SELECT sum(requested_scratch_bytes) FROM deployment_build_leases
+                    WHERE worker_instance_id = worker_instances.id
+                      AND worker_epoch = worker_instances.current_epoch
+                      AND state IN ('assigned','starting','running')), 0)
  ORDER BY worker_instances.id
  LIMIT 1
  FOR UPDATE OF worker_groups SKIP LOCKED`, demand.regionID,
 		demand.runtimeIdentityID, demand.sandboxID, demand.cpuMillis,
 		demand.memoryBytes, demand.workloadDiskBytes, targetCount).Scan(
-		&groupID, &workerID, &workerEpoch, &protocolVersion)
+		&groupID, &workerID, &workerEpoch, &protocolVersion, &workerScratchBytes)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return PreparedRuntimeWake{}, false, nil
@@ -290,7 +301,7 @@ SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::text, sandboxes.id,
        sandboxes.fingerprint, sandboxes.rootfs_digest, sandboxes.image_digest,
        sandboxes.image_format, sandboxes.image_artifact_id, sandboxes.image_digest,
        sandboxes.image_artifact_format, sandboxes.runtime_abi, sandboxes.guestd_abi,
-       sandboxes.adapter_abi, $11::jsonb, $12, $13, $14, 0, $15,
+       sandboxes.adapter_abi, $11::jsonb, $12, $13, $14, $15, $16,
        'prepared_supply', now()
   FROM deployment_sandboxes AS sandboxes
  WHERE sandboxes.org_id = $2 AND sandboxes.project_id = $3
@@ -298,7 +309,7 @@ SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::text, sandboxes.id,
 		demand.orgID, demand.projectID, demand.environmentID, demand.regionID,
 		groupID, workerID, workerEpoch, demand.runtimeIdentityID, demand.sandboxID,
 		demand.networkPolicy, demand.cpuMillis, demand.memoryBytes,
-		demand.workloadDiskBytes, demand.executionSlots)
+		demand.workloadDiskBytes, workerScratchBytes, demand.executionSlots)
 	if err != nil {
 		return PreparedRuntimeWake{}, false, fmt.Errorf("create prepared runtime authority: %w", err)
 	}

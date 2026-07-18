@@ -301,16 +301,63 @@ UPDATE workspace_mounts SET state = 'unmounting', stopped_at = now(), updated_at
 RETURNING workspace_mounts.*;
 
 -- name: FailWorkspaceMount :one
+WITH target AS (
+    SELECT workspace_mounts.*
+      FROM workspace_mounts
+      JOIN runtime_instances
+        ON runtime_instances.org_id = workspace_mounts.org_id
+       AND runtime_instances.id = workspace_mounts.runtime_instance_id
+       AND runtime_instances.worker_instance_id = workspace_mounts.worker_instance_id
+       AND runtime_instances.worker_epoch = workspace_mounts.worker_epoch
+       AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
+       AND runtime_instances.reclaimed_at IS NULL
+      JOIN worker_network_slots
+        ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
+       AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
+       AND worker_network_slots.runtime_instance_id = runtime_instances.id
+       AND worker_network_slots.state IN ('assigned','bound')
+     WHERE workspace_mounts.org_id = sqlc.arg(org_id)
+       AND workspace_mounts.id = sqlc.arg(id)
+       AND workspace_mounts.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
+       AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
+       AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
+       AND workspace_mounts.state IN ('mounting','mounted','unmounting')
+     FOR UPDATE OF workspace_mounts, runtime_instances, worker_network_slots
+), failed_runtime AS (
+    UPDATE runtime_instances
+       SET observed_state = 'failed', observed_version = observed_version + 1,
+           observed_at = now(), failed_at = now(), terminal_at = now(),
+           terminal_reason_code = 'workspace_mount_failed',
+           terminal_error = sqlc.narg(error), updated_at = now()
+      FROM target
+     WHERE runtime_instances.org_id = target.org_id
+       AND runtime_instances.id = target.runtime_instance_id
+       AND runtime_instances.worker_instance_id = target.worker_instance_id
+       AND runtime_instances.worker_epoch = target.worker_epoch
+    RETURNING runtime_instances.*
+), quarantined_slot AS (
+    UPDATE worker_network_slots
+       SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
+           quarantined_at = now(),
+           state_reason_code = 'runtime_physical_cleanup_pending',
+           state_error = sqlc.narg(error), updated_at = now()
+      FROM target, failed_runtime
+     WHERE worker_network_slots.worker_instance_id = failed_runtime.worker_instance_id
+       AND worker_network_slots.worker_epoch = failed_runtime.worker_epoch
+       AND worker_network_slots.runtime_instance_id = failed_runtime.id
+       AND worker_network_slots.state IN ('assigned','bound')
+    RETURNING worker_network_slots.id
+)
 UPDATE workspace_mounts
    SET state = 'failed', failed_at = now(), terminal_at = now(),
        terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
        updated_at = now()
- WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
-   AND worker_instance_id = sqlc.arg(worker_instance_id) AND worker_epoch = sqlc.arg(worker_epoch)
-   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
-   AND fencing_generation = sqlc.arg(fencing_generation)
-   AND state IN ('mounting','mounted','unmounting')
-RETURNING *;
+  FROM target, failed_runtime, quarantined_slot
+ WHERE workspace_mounts.org_id = target.org_id
+   AND workspace_mounts.id = target.id
+   AND failed_runtime.id = target.runtime_instance_id
+RETURNING workspace_mounts.*;
 
 -- name: MarkStaleWorkspaceMountsLost :many
 UPDATE workspace_mounts

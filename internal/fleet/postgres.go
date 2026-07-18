@@ -329,13 +329,13 @@ func runDemandBucket(row db.ListFleetRunDemandRow, queuedScratch uint64) (Worklo
 }
 
 func buildDemandBucket(groupID string, row db.ListFleetBuildDemandRow) (WorkloadBucket, error) {
-	values := []int64{row.MilliCpu, row.MemoryBytes, row.WorkloadDiskBytes, row.ScratchBytes, row.BuildCacheBytes, row.ArtifactCacheBytes, row.BuildExecutors, row.DemandCount}
+	values := []int64{row.MilliCpu, row.MemoryBytes, row.WorkloadDiskBytes, row.ScratchBytes, row.BuildExecutors, row.DemandCount}
 	if err := requirePositiveDemand(values); err != nil {
 		return WorkloadBucket{}, err
 	}
 	return WorkloadBucket{CompatibilityKey: groupID, Count: uint64(row.DemandCount), Shape: Capacity{
 		MilliCPU: uint64(row.MilliCpu), MemoryBytes: uint64(row.MemoryBytes), WorkloadDiskBytes: uint64(row.WorkloadDiskBytes),
-		ScratchBytes: uint64(row.ScratchBytes), BuildCacheBytes: uint64(row.BuildCacheBytes), ArtifactCacheBytes: uint64(row.ArtifactCacheBytes), BuildExecutors: uint64(row.BuildExecutors),
+		ScratchBytes: uint64(row.ScratchBytes), BuildExecutors: uint64(row.BuildExecutors),
 	}}, nil
 }
 

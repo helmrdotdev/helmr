@@ -639,7 +639,7 @@ worker_journal() {
     jq -cn --arg lines "${lines}" '[
       "set -eu",
       "journalctl -u helmr-worker -n " + $lines + " --no-pager || true",
-      "journalctl -u buildkit.service -n " + $lines + " --no-pager || true"
+      "journalctl -u helmr-buildkit.service -n " + $lines + " --no-pager || true"
     ]'
   )"
   command_id="$(ssm_send_commands "${instance_id}" "helmr worker journal" "${commands}")"

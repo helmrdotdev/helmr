@@ -64,7 +64,6 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		WorkerGroupID:              row.WorkerGroupID,
 		WorkerInstanceID:           pgvalue.MustUUIDValue(row.WorkerInstanceID).String(),
 		WorkerEpoch:                row.WorkerEpoch,
-		BuildAttemptNumber:         row.BuildAttemptNumber,
 		LeaseSequence:              row.LeaseSequence,
 		WorkerProtocolVersion:      row.WorkerProtocolVersion,
 		ExpiresAt:                  leaseExpiresAt,
@@ -111,13 +110,13 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	started, err := s.db.GetStartedDeploymentBuildLease(r.Context(), db.GetStartedDeploymentBuildLeaseParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(leaseID),
-		BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
+		LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		WorkerProtocolVersion:      worker.ProtocolVersion,
 		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes, RequestedScratchBytes: lease.RequestedScratchBytes,
@@ -136,8 +135,8 @@ func (s *Server) workerStartDeploymentBuild(w http.ResponseWriter, r *http.Reque
 	expiresAt := time.Now().Add(deploymentBuildLeaseDuration)
 	started, err = s.db.StartDeploymentBuildLease(r.Context(), db.StartDeploymentBuildLeaseParams{
 		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber,
-		LeaseSequence: lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
 		RequestedScratchBytes:      lease.RequestedScratchBytes,
@@ -175,15 +174,15 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	expiresAt := time.Now().Add(deploymentBuildLeaseDuration)
 	renewed, err := s.db.RenewDeploymentBuildLease(r.Context(), db.RenewDeploymentBuildLeaseParams{
 		ExpiresAt: pgvalue.Timestamptz(expiresAt), OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber,
-		LeaseSequence: lease.LeaseSequence, WorkerGroupID: worker.WorkerGroupID,
+		BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+		WorkerGroupID:    worker.WorkerGroupID,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 	})
 	if isNoRows(err) {
@@ -200,19 +199,23 @@ func (s *Server) workerRenewDeploymentBuild(w http.ResponseWriter, r *http.Reque
 
 func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Request) {
 	worker := workerFromContext(r.Context())
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
+		return
+	}
 	var request api.WorkerDeploymentBuildRejectRequest
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build reject JSON: %w", err)))
 		return
 	}
 	lease := request.Lease
-	orgID, _, _, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
+	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
-	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.BuildAttemptNumber <= 0 || lease.LeaseSequence <= 0 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
+	if err != nil || lease.WorkerGroupID != worker.WorkerGroupID || lease.WorkerInstanceID != worker.WorkerInstanceID.String() || lease.WorkerEpoch != worker.WorkerEpoch || lease.LeaseSequence < 1 || lease.LeaseSequence > 3 || lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
@@ -230,7 +233,7 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 	}
 	terminal, err := s.db.GetDeploymentBuildTerminalResult(r.Context(), db.GetDeploymentBuildTerminalResultParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(leaseID),
-		BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
+		LeaseSequence: lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
@@ -246,21 +249,132 @@ func (s *Server) workerRejectDeploymentBuild(w http.ResponseWriter, r *http.Requ
 		writeError(w, errors.New("get terminal deployment build"))
 		return
 	}
-	_, err = s.db.RejectDeploymentBuildLease(r.Context(), db.RejectDeploymentBuildLeaseParams{
-		ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: request.Error, OrgID: orgID, DeploymentID: deploymentID,
-		BuildLeaseID: pgvalue.UUID(leaseID), BuildAttemptNumber: lease.BuildAttemptNumber, LeaseSequence: lease.LeaseSequence,
-		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
-		TerminalRequestFingerprint: fingerprint,
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
+			OrgID:                 orgID,
+			ProjectID:             projectID,
+			EnvironmentID:         environmentID,
+			DeploymentID:          deploymentID,
+			BuildLeaseID:          pgvalue.UUID(leaseID),
+			LeaseSequence:         lease.LeaseSequence,
+			WorkerGroupID:         worker.WorkerGroupID,
+			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:           worker.WorkerEpoch,
+			WorkerProtocolVersion: worker.ProtocolVersion,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build terminal fence")
+		}
+		if locked.State == db.DeploymentBuildLeaseStateSucceeded || locked.State == db.DeploymentBuildLeaseStateFailed || locked.State == db.DeploymentBuildLeaseStateRejected {
+			if locked.State != db.DeploymentBuildLeaseStateRejected ||
+				!locked.TerminalRequestFingerprint.Valid ||
+				locked.TerminalRequestFingerprint.String != fingerprint {
+				return conflict(errors.New("deployment build lease already has a different terminal result"))
+			}
+			return nil
+		}
+		if (locked.State != db.DeploymentBuildLeaseStateAssigned && locked.State != db.DeploymentBuildLeaseStateStarting) ||
+			locked.DeploymentStatus != db.DeploymentStatusBuilding ||
+			!locked.CurrentBuildLeaseID.Valid ||
+			locked.CurrentBuildLeaseID != pgvalue.UUID(leaseID) ||
+			!locked.ExpiresAt.Valid ||
+			!locked.ExpiresAt.Time.After(time.Now()) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		_, err = work.q.RejectDeploymentBuildLease(r.Context(), db.RejectDeploymentBuildLeaseParams{
+			ReasonCode: pgtype.Text{String: reason, Valid: true}, Error: request.Error, OrgID: orgID, DeploymentID: deploymentID,
+			BuildLeaseID: pgvalue.UUID(leaseID), LeaseSequence: lease.LeaseSequence,
+			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
+			TerminalRequestFingerprint: fingerprint,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("reject deployment build")
+		}
+		return nil
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) workerDeploymentBuildDeliveryFailed(w http.ResponseWriter, r *http.Request) {
+	worker := workerFromContext(r.Context())
+	if s.db == nil {
+		writeError(w, unavailable(errors.New("deployment build storage is not configured")))
+		return
+	}
+	var request api.WorkerDeploymentBuildDeliveryFailureRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid worker deployment build delivery failure JSON: %w", err)))
+		return
+	}
+	if request.ReasonCode != api.WorkerDeploymentBuildDeliveryBuildGuestFailed &&
+		request.ReasonCode != api.WorkerDeploymentBuildDeliveryProgramVerifierFailed {
+		writeError(w, badRequest(errors.New("deployment build delivery failure reasonCode is invalid")))
+		return
+	}
+	lease := request.Lease
+	orgID, projectID, environmentID, deploymentID, err := parseDeploymentBuildLeaseIDs(lease)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	leaseID, err := uuid.Parse(strings.TrimSpace(lease.ID))
+	if err != nil ||
+		lease.WorkerGroupID != worker.WorkerGroupID ||
+		lease.WorkerInstanceID != worker.WorkerInstanceID.String() ||
+		lease.WorkerEpoch != worker.WorkerEpoch ||
+		lease.LeaseSequence < 1 ||
+		lease.LeaseSequence > 3 ||
+		lease.WorkerProtocolVersion != worker.ProtocolVersion {
+		writeError(w, conflict(errors.New("deployment build lease is stale")))
+		return
+	}
+	row, err := s.db.FailDeploymentBuildDelivery(r.Context(), db.FailDeploymentBuildDeliveryParams{
+		OrgID:                 orgID,
+		ProjectID:             projectID,
+		EnvironmentID:         environmentID,
+		DeploymentID:          deploymentID,
+		BuildLeaseID:          pgvalue.UUID(leaseID),
+		LeaseSequence:         lease.LeaseSequence,
+		WorkerGroupID:         worker.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:           worker.WorkerEpoch,
+		WorkerProtocolVersion: worker.ProtocolVersion,
+		ReasonCode:            pgtype.Text{String: string(request.ReasonCode), Valid: true},
 	})
 	if isNoRows(err) {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
 	if err != nil {
-		writeError(w, errors.New("reject deployment build"))
+		writeError(w, errors.New("fail deployment build delivery"))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if row.State != db.DeploymentBuildLeaseStateLost ||
+		!row.TerminalReasonCode.Valid ||
+		row.TerminalReasonCode.String != string(request.ReasonCode) ||
+		!row.TerminalAt.Valid ||
+		row.LeaseSequence != lease.LeaseSequence ||
+		row.DeploymentID != deploymentID ||
+		(row.DeploymentStatus != db.DeploymentStatusBuilding &&
+			row.DeploymentStatus != db.DeploymentStatusDeployed &&
+			row.DeploymentStatus != db.DeploymentStatusFailed) {
+		writeError(w, errors.New("invalid deployment build delivery failure result"))
+		return
+	}
+	writeJSON(w, http.StatusOK, api.WorkerDeploymentBuildResponse{
+		DeploymentID: lease.DeploymentID,
+		Status:       string(row.DeploymentStatus),
+	})
 }
 
 func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Request) {
@@ -284,7 +398,12 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 	buildLeaseUUID, err := uuid.Parse(strings.TrimSpace(request.Lease.ID))
-	if err != nil || request.Lease.WorkerGroupID != worker.WorkerGroupID || request.Lease.WorkerEpoch != worker.WorkerEpoch || request.Lease.BuildAttemptNumber <= 0 || request.Lease.LeaseSequence <= 0 {
+	if err != nil ||
+		request.Lease.WorkerGroupID != worker.WorkerGroupID ||
+		request.Lease.WorkerEpoch != worker.WorkerEpoch ||
+		request.Lease.LeaseSequence < 1 ||
+		request.Lease.LeaseSequence > 3 ||
+		request.Lease.WorkerProtocolVersion != worker.ProtocolVersion {
 		writeError(w, conflict(errors.New("deployment build lease is stale")))
 		return
 	}
@@ -295,7 +414,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 	}
 	terminal, err := s.db.GetDeploymentBuildTerminalResult(r.Context(), db.GetDeploymentBuildTerminalResultParams{
 		OrgID: orgID, DeploymentID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
-		BuildAttemptNumber: request.Lease.BuildAttemptNumber, LeaseSequence: request.Lease.LeaseSequence,
+		LeaseSequence: request.Lease.LeaseSequence,
 		WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 		WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
 	})
@@ -321,14 +440,50 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("get terminal deployment build"))
 		return
 	}
-	if time.Now().After(request.Lease.ExpiresAt) {
-		writeError(w, conflict(errors.New("deployment build lease expired")))
-		return
-	}
-
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
+		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
+			OrgID:                 orgID,
+			ProjectID:             projectID,
+			EnvironmentID:         environmentID,
+			DeploymentID:          deploymentID,
+			BuildLeaseID:          pgvalue.UUID(buildLeaseUUID),
+			LeaseSequence:         request.Lease.LeaseSequence,
+			WorkerGroupID:         worker.WorkerGroupID,
+			WorkerInstanceID:      buildWorkerInstanceID,
+			WorkerEpoch:           worker.WorkerEpoch,
+			WorkerProtocolVersion: worker.ProtocolVersion,
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build terminal fence")
+		}
+		if locked.State == db.DeploymentBuildLeaseStateSucceeded || locked.State == db.DeploymentBuildLeaseStateFailed || locked.State == db.DeploymentBuildLeaseStateRejected {
+			if !locked.TerminalRequestFingerprint.Valid || locked.TerminalRequestFingerprint.String != fingerprint {
+				return conflict(errors.New("deployment build lease already has a different terminal result"))
+			}
+			switch locked.State {
+			case db.DeploymentBuildLeaseStateSucceeded:
+				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusDeployed)}
+				return nil
+			case db.DeploymentBuildLeaseStateFailed:
+				response = api.WorkerDeploymentBuildResponse{DeploymentID: request.Lease.DeploymentID, Status: string(db.DeploymentStatusFailed)}
+				return nil
+			default:
+				return conflict(errors.New("deployment build lease was terminated by another operation"))
+			}
+		}
+		if locked.State != db.DeploymentBuildLeaseStateRunning ||
+			locked.DeploymentStatus != db.DeploymentStatusBuilding ||
+			!locked.CurrentBuildLeaseID.Valid ||
+			locked.CurrentBuildLeaseID != pgvalue.UUID(buildLeaseUUID) ||
+			!locked.ExpiresAt.Valid ||
+			!locked.ExpiresAt.Time.After(time.Now()) {
+			return conflict(errors.New("deployment build lease is stale"))
+		}
 		failBuild := func(message string) error {
 			message = strings.TrimSpace(message)
 			if message == "" {
@@ -343,8 +498,8 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				TerminalRequestFingerprint: fingerprint,
 				OrgID:                      orgID, ID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
 				BuildWorkerInstanceID: buildWorkerInstanceID,
-				WorkerEpoch:           worker.WorkerEpoch, BuildAttemptNumber: request.Lease.BuildAttemptNumber,
-				LeaseSequence: request.Lease.LeaseSequence,
+				WorkerEpoch:           worker.WorkerEpoch,
+				LeaseSequence:         request.Lease.LeaseSequence,
 			})
 			if isNoRows(err) {
 				return conflict(errors.New("deployment build lease is stale"))
@@ -368,21 +523,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := s.verifyDeploymentBuildArtifacts(r.Context(), casObjects); err != nil {
 			return failBuild(err.Error())
 		}
-		buildDeployment, err := work.q.GetDeploymentBuildLease(r.Context(), db.GetDeploymentBuildLeaseParams{
-			OrgID: orgID, ID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
-			BuildWorkerInstanceID: buildWorkerInstanceID,
-			WorkerEpoch:           worker.WorkerEpoch,
-		})
-		if isNoRows(err) {
-			return conflict(errors.New("deployment build lease is stale"))
-		}
-		if err != nil {
-			return errors.New("get deployment build lease")
-		}
-		if buildDeployment.WorkerGroupID != worker.WorkerGroupID {
-			return forbidden(errors.New("deployment build lease belongs to another worker group"))
-		}
-		workerGroupID := buildDeployment.WorkerGroupID
+		workerGroupID := locked.WorkerGroupID
 		workerState, err := work.q.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
 			ID:            buildWorkerInstanceID,
 			WorkerGroupID: workerGroupID,
@@ -585,7 +726,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			BuildLeaseID:                 pgvalue.UUID(buildLeaseUUID),
 			BuildWorkerInstanceID:        buildWorkerInstanceID,
 			WorkerEpoch:                  worker.WorkerEpoch,
-			BuildAttemptNumber:           request.Lease.BuildAttemptNumber,
 			LeaseSequence:                request.Lease.LeaseSequence,
 			TerminalRequestFingerprint:   fingerprint,
 		})

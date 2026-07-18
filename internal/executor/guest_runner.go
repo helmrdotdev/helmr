@@ -18,6 +18,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/frameio"
@@ -55,6 +56,8 @@ type GuestRunner struct {
 	Log                   *slog.Logger
 	Stdout                io.Writer
 	Stderr                io.Writer
+	Capacity              *capacity.Ledger
+	RuntimeScratchBytes   int64
 }
 
 type RuntimeEventSink interface {
@@ -128,7 +131,7 @@ func (r GuestRunner) runDirect(ctx context.Context, request Request) (Result, er
 		return Result{}, errors.New("workspace artifact path is required")
 	}
 	phaseStarted := time.Now()
-	session, err := r.Connector.Connect(ctx, vm.ConnectRequest{ID: request.Leases.CurrentWorkerRunLease().RuntimeInstanceID, OwnerKind: vm.RuntimeOwnerRuntime, Network: request.Run.Requirements.Network})
+	session, err := r.Connector.Connect(ctx, vm.ConnectRequest{ID: request.Leases.CurrentWorkerRunLease().RuntimeInstanceID, OwnerKind: vm.OwnerRuntime, Network: request.Run.Requirements.Network})
 	r.logRunPhase(request, "guest run connector opened", "duration_ms", time.Since(phaseStarted).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return Result{}, fmt.Errorf("connect guest runtime: %w", err)
@@ -147,7 +150,7 @@ func (r GuestRunner) runDirect(ctx context.Context, request Request) (Result, er
 	return result, err
 }
 
-func (r GuestRunner) restore(ctx context.Context, request Request) (Result, error) {
+func (r GuestRunner) restore(ctx context.Context, request Request) (result Result, resultErr error) {
 	if request.Leases == nil {
 		return Result{}, errors.New("worker run lease provider is required")
 	}
@@ -243,10 +246,31 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		return Result{}, fmt.Errorf("read checkpoint manifest: %w", err)
 	}
 	runtimeInfo := restore.Checkpoint.RecoveryPoint.Runtime
+	if r.Capacity == nil {
+		return Result{}, errors.New("guest runner capacity ledger is required for restore")
+	}
+	lease := request.Leases.CurrentWorkerRunLease()
+	resourceVector, err := runtimeCapacityVector(
+		request.Run.Requirements.Resources.MilliCPU,
+		request.Run.Requirements.Resources.MemoryMiB,
+		request.Run.Requirements.Resources.DiskMiB,
+		r.RuntimeScratchBytes,
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	resourceKey := runtimeCapacityKey(lease.RuntimeInstanceID, lease.WorkerEpoch)
+	created, err := r.Capacity.Reserve(resourceKey, resourceVector)
+	if err != nil {
+		return Result{}, fmt.Errorf("reserve checkpoint restore capacity: %w", err)
+	}
+	if !created {
+		return Result{}, errors.New("checkpoint restore runtime is already reserved locally")
+	}
 	session, err := restoring.Restore(ctx, vm.RestoreRequest{
 		ID:                   restore.CheckpointID,
-		RuntimeInstanceID:    request.Leases.CurrentWorkerRunLease().RuntimeInstanceID,
-		OwnerKind:            vm.RuntimeOwnerRuntime,
+		RuntimeInstanceID:    lease.RuntimeInstanceID,
+		OwnerKind:            vm.OwnerRuntime,
 		VMState:              state,
 		VMStateMediaType:     stateArtifact.MediaType,
 		ScratchDisk:          scratchDisk,
@@ -269,10 +293,26 @@ func (r GuestRunner) restore(ctx context.Context, request Request) (Result, erro
 		RecordPhase: restorePhases.Record,
 	})
 	if err != nil {
+		if cleaner, ok := r.Connector.(vm.Cleaner); ok {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), restoreAttachTimeout)
+			cleanupErr := cleaner.Cleanup(cleanupCtx, vm.Owner{Kind: vm.OwnerRuntime, ID: lease.RuntimeInstanceID})
+			cancel()
+			if cleanupErr == nil {
+				_ = r.Capacity.Release(resourceKey)
+			}
+		}
 		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, fmt.Errorf("restore guest runtime: %w", err)
 	}
-	defer session.Close(context.Background())
+	defer func() {
+		if err := session.Close(context.Background()); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close restored guest runtime: %w", err))
+			return
+		}
+		if err := r.Capacity.Release(resourceKey); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("release restored guest capacity: %w", err))
+		}
+	}()
 	if err := r.attachAndAcknowledgeRestore(ctx, session, request, restorePhases); err != nil {
 		r.logCheckpointRestorePhases(request, restorePhases.Snapshot(), "failed", vm.RuntimeErrorClass(err))
 		return Result{}, err

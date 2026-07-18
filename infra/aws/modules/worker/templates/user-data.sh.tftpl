@@ -121,7 +121,7 @@ complete_launch() {
     return 0
   fi
 %{ if worker_supports_build ~}
-  systemctl is-active --quiet '${buildkit_service_name}'
+  systemctl is-active --quiet 'helmr-buildkit.service'
 %{ endif ~}
   systemctl is-active --quiet '${worker_service_name}'
   load_worker_env
@@ -190,8 +190,8 @@ esac
 EOF
 chmod 0755 /usr/local/bin/helmr-asg-lifecycle
 
-install -d -m 0755 /etc/systemd/system/'${buildkit_service_name}'.service.d
-cat >/etc/systemd/system/'${buildkit_service_name}'.service.d/10-network-policy.conf <<'EOF'
+install -d -m 0755 /etc/systemd/system/helmr-buildkit.service.d
+cat >/etc/systemd/system/helmr-buildkit.service.d/10-network-policy.conf <<'EOF'
 [Service]
 BindReadOnlyPaths=/etc/helmr/guest-resolv.conf:/etc/resolv.conf
 ExecStart=
@@ -204,10 +204,20 @@ IPAddressDeny=${cidr}
 %{ endfor ~}
 EOF
 
+cat >/etc/systemd/system/helmr-buildkit.service.d/20-resource-limits.conf <<'EOF'
+[Service]
+Delegate=yes
+CPUQuota=100%
+MemoryMax=2G
+MemorySwapMax=0
+TasksMax=1024
+MemoryOOMGroup=yes
+EOF
+
 cat >/etc/systemd/system/helmr-asg-lifecycle.service <<'EOF'
 [Unit]
 Description=Helmr Auto Scaling lifecycle integration
-After=network-online.target%{ if worker_supports_build } ${buildkit_service_name}.service%{ endif } ${worker_service_name}.service
+After=network-online.target%{ if worker_supports_build } helmr-buildkit.service%{ endif } ${worker_service_name}.service
 Wants=network-online.target
 
 [Service]
@@ -222,9 +232,9 @@ EOF
 
 systemctl daemon-reload
 %{ if worker_supports_build ~}
-systemctl enable --now '${buildkit_service_name}'
+systemctl enable --now helmr-buildkit.service
 %{ else ~}
-systemctl disable --now '${buildkit_service_name}' || true
+systemctl disable --now helmr-buildkit.service || true
 %{ endif ~}
 systemctl enable --now '${worker_service_name}'
 systemctl enable --now helmr-asg-lifecycle.service
