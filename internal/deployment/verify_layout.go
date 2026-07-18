@@ -125,7 +125,7 @@ func (verifier *pairVerifier) verifyCodePath(
 	if entry.Path == ".helmr" || strings.HasPrefix(entry.Path, ".helmr/") {
 		return fmt.Errorf("code Artifact contains reserved path %q", entry.Path)
 	}
-	if hasPathComponent(entry.Path, "node_modules") {
+	if hasNodeModulesComponent(entry.Path) {
 		if _, exists := verifier.codeLinks[entry.Path]; exists {
 			return nil
 		}
@@ -178,7 +178,7 @@ func (verifier *pairVerifier) verifyDependencyPath(entry artifactEntry) error {
 		return fmt.Errorf("dependency Artifact contains unowned path %q", entry.Path)
 	}
 	relative := strings.TrimPrefix(strings.TrimPrefix(entry.Path, owner), "/")
-	if hasPathComponent(relative, "node_modules") {
+	if hasNodeModulesComponent(relative) {
 		return fmt.Errorf("registry package %q contains unlisted node_modules path %q", owner, entry.Path)
 	}
 	return nil

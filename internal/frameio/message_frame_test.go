@@ -30,6 +30,18 @@ func TestReadMessageFrameRejectsOversizedBody(t *testing.T) {
 	}
 }
 
+func TestReadMessageFrameBoundedRejectsBeforeBodyRead(t *testing.T) {
+	var buf bytes.Buffer
+	buf.Write([]byte{0, 0, 0, 5})
+	_, err := ReadMessageFrameBounded(&buf, 4)
+	if err == nil {
+		t.Fatal("expected bounded frame error")
+	}
+	if buf.Len() != 0 {
+		t.Fatalf("reader retained %d header bytes", buf.Len())
+	}
+}
+
 func TestProtoFrameRoundTrip(t *testing.T) {
 	var buf bytes.Buffer
 	if err := WriteProtoFrame(&buf, wrapperspb.Int32(7)); err != nil {

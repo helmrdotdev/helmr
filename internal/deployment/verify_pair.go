@@ -413,9 +413,9 @@ func (verifier *pairVerifier) moduleFormat(source string) (ModuleFormat, error) 
 	}
 }
 
-func hasPathComponent(value, component string) bool {
+func hasNodeModulesComponent(value string) bool {
 	for _, item := range strings.Split(value, "/") {
-		if item == component {
+		if item == "node_modules" {
 			return true
 		}
 	}

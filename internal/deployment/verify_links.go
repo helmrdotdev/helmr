@@ -167,7 +167,7 @@ func (verifier *pairVerifier) isFirstPartyPath(value string) bool {
 	if value == "." || value == "helmr" || strings.HasPrefix(value, "helmr/") ||
 		value == "node_modules" || strings.HasPrefix(value, "node_modules/") ||
 		value == ".helmr" || strings.HasPrefix(value, ".helmr/") ||
-		hasPathComponent(value, "node_modules") {
+		hasNodeModulesComponent(value) {
 		return false
 	}
 	for current := value; current != "."; current = path.Dir(current) {

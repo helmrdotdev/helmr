@@ -33,6 +33,16 @@ func writeProgramArchive(
 	role artifactRole,
 	entries iter.Seq2[treeEntry, error],
 ) error {
+	return writeTreeArchive(ctx, destination, role, entries, false)
+}
+
+func writeTreeArchive(
+	ctx context.Context,
+	destination io.Writer,
+	role artifactRole,
+	entries iter.Seq2[treeEntry, error],
+	allowEmpty bool,
+) error {
 	if ctx == nil {
 		return errors.New("program archive context is nil")
 	}
@@ -111,7 +121,7 @@ func writeProgramArchive(
 			}
 		}
 	}
-	if state.count == 0 {
+	if state.count == 0 && !allowEmpty {
 		return fmt.Errorf("program archive entry count is outside [1,%d]", maxArtifactEntries-1)
 	}
 	var end [2 * tarBlockBytes]byte
@@ -379,6 +389,9 @@ func copyTreeContent(
 		if count == 0 {
 			return io.ErrNoProgress
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	var extra [1]byte
 	count, err := source.Read(extra[:])
