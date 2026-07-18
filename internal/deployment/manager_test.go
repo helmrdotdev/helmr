@@ -40,7 +40,9 @@ func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 			if parsed.Operation != request.Operation ||
 				parsed.PackageManager != request.PackageManager ||
 				parsed.Project != request.Project ||
-				parsed.ToolClosure != request.ToolClosure {
+				parsed.DependencyTools != request.DependencyTools ||
+				parsed.DependencyToolsDigest != request.DependencyToolsDigest ||
+				parsed.ComponentManifestDigest != request.ComponentManifestDigest {
 				t.Fatalf("parsed request = %#v", parsed)
 			}
 
@@ -81,7 +83,7 @@ func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	if digest == "sha256:"+hex.EncodeToString(plain[:]) {
 		t.Fatal("manager request digest is not domain separated")
 	}
-	const want = "sha256:647710ce0920875e087b05ed72637b96c4a216af0ed2d7f2946fd476dec47188"
+	const want = "sha256:748fe73b3e855c56304258802a808b41a3aaf927143cc54b03638819a2aa664d"
 	if digest != want {
 		t.Fatalf("manager request digest = %q, want %q", digest, want)
 	}
@@ -95,7 +97,19 @@ func TestManagerRequestRejectsInvalidShapes(t *testing.T) {
 			return request
 		},
 		"bad project media": func(request ManagerRequest) ManagerRequest {
-			request.Project.MediaType = ManagerToolMediaType
+			request.Project.MediaType = ManagerDependencyToolsMediaType
+			return request
+		},
+		"bad dependency tools media": func(request ManagerRequest) ManagerRequest {
+			request.DependencyTools.MediaType = ManagerProjectMediaType
+			return request
+		},
+		"invalid dependency tools digest": func(request ManagerRequest) ManagerRequest {
+			request.DependencyToolsDigest = "sha256:invalid"
+			return request
+		},
+		"invalid component manifest digest": func(request ManagerRequest) ManagerRequest {
+			request.ComponentManifestDigest = "sha256:invalid"
 			return request
 		},
 		"zero project size": func(request ManagerRequest) ManagerRequest {
@@ -634,10 +648,12 @@ func TestManagerResponseCancellationClosesBlockedDestination(t *testing.T) {
 
 func managerResolveRequest() ManagerRequest {
 	return ManagerRequest{
-		Architecture:        ArchitectureAArch64,
-		FormatVersion:       ManagerFormatVersion,
-		MaterializerVersion: DependencyMaterializerVersion,
-		Operation:           ManagerResolve,
+		Architecture:            ArchitectureAArch64,
+		ComponentManifestDigest: managerDigest("component manifest"),
+		DependencyToolsDigest:   managerDigest("dependency toolset"),
+		FormatVersion:           ManagerFormatVersion,
+		MaterializerVersion:     DependencyMaterializerVersion,
+		Operation:               ManagerResolve,
 		PackageManager: PackageManager{
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
@@ -647,9 +663,9 @@ func managerResolveRequest() ManagerRequest {
 			MediaType: ManagerProjectMediaType,
 			SizeBytes: 4096,
 		},
-		ToolClosure: ManagerArtifact{
-			Digest:    managerDigest("tool closure"),
-			MediaType: ManagerToolMediaType,
+		DependencyTools: ManagerArtifact{
+			Digest:    managerDigest("dependency tools"),
+			MediaType: ManagerDependencyToolsMediaType,
 			SizeBytes: 8192,
 		},
 	}

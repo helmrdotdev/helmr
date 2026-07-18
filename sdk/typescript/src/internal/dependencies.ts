@@ -34,6 +34,7 @@ export interface DependencyLockfile {
 
 export interface DependencyIndex {
   readonly formatVersion: 0
+  readonly dependencyToolsDigest: string
   readonly packageManager: DependencyPackageManager
   readonly lockfile: DependencyLockfile
   readonly localManifestsDigest: string
@@ -46,6 +47,7 @@ export interface DependencyIndex {
 
 export interface DependencyCacheInput {
   readonly formatVersion: 0
+  readonly dependencyToolsDigest: string
   readonly packageManager: DependencyPackageManager
   readonly lockfile: DependencyLockfile
   readonly localManifestsDigest: string
@@ -97,6 +99,7 @@ export function validateDependencyCacheInput(input: DependencyCacheInput): void 
     root,
     [
       "architecture",
+      "dependencyToolsDigest",
       "formatVersion",
       "localManifestsDigest",
       "lockfile",
@@ -118,6 +121,7 @@ function validateDependencyIndexValue(value: JsonValue): DependencyIndex {
     root,
     [
       "architecture",
+      "dependencyToolsDigest",
       "formatVersion",
       "localManifestsDigest",
       "lockfile",
@@ -142,6 +146,7 @@ function validateDependencyIndexValue(value: JsonValue): DependencyIndex {
   }
   return {
     formatVersion: DEPENDENCY_INDEX_FORMAT_VERSION,
+    dependencyToolsDigest: inputs.dependencyToolsDigest,
     packageManager: inputs.packageManager,
     lockfile: inputs.lockfile,
     localManifestsDigest: inputs.localManifestsDigest,
@@ -184,6 +189,10 @@ function validateDependencyInputs(
     throw new Error(`${label} architecture ${JSON.stringify(architecture)} is unsupported`)
   }
   return {
+    dependencyToolsDigest: requireDigest(
+      root["dependencyToolsDigest"],
+      `${label} dependencyToolsDigest`,
+    ),
     packageManager: { name: managerName, version: managerVersion },
     lockfile: {
       name: lockfileName,

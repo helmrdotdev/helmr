@@ -757,7 +757,8 @@ func newMinimalProgramPair(t *testing.T, rootManifest string) *testProgramPair {
 		t.Fatal(err)
 	}
 	dependencyRaw, err := CanonicalDependencyIndex(DependencyIndex{
-		FormatVersion: DependencyIndexFormatVersion,
+		FormatVersion:         DependencyIndexFormatVersion,
+		DependencyToolsDigest: testDigest("dependency tools"),
 		PackageManager: PackageManager{
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
@@ -930,7 +931,8 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 		t.Fatal(err)
 	}
 	dependencyRaw, err := CanonicalDependencyIndex(DependencyIndex{
-		FormatVersion: DependencyIndexFormatVersion,
+		FormatVersion:         DependencyIndexFormatVersion,
+		DependencyToolsDigest: testDigest("dependency tools"),
 		PackageManager: PackageManager{
 			Name:    PackageManagerBun,
 			Version: "1.3.10",

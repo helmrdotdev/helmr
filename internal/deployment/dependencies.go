@@ -37,6 +37,7 @@ type DependencyLockfile struct {
 
 type DependencyIndex struct {
 	FormatVersion         int                 `json:"formatVersion"`
+	DependencyToolsDigest string              `json:"dependencyToolsDigest"`
 	PackageManager        PackageManager      `json:"packageManager"`
 	Lockfile              DependencyLockfile  `json:"lockfile"`
 	LocalManifestsDigest  string              `json:"localManifestsDigest"`
@@ -48,13 +49,14 @@ type DependencyIndex struct {
 }
 
 type DependencyCacheInput struct {
-	FormatVersion        int                 `json:"formatVersion"`
-	PackageManager       PackageManager      `json:"packageManager"`
-	Lockfile             DependencyLockfile  `json:"lockfile"`
-	LocalManifestsDigest string              `json:"localManifestsDigest"`
-	MaterializerVersion  string              `json:"materializerVersion"`
-	RuntimeDigest        string              `json:"runtimeDigest"`
-	Architecture         RuntimeArchitecture `json:"architecture"`
+	FormatVersion         int                 `json:"formatVersion"`
+	DependencyToolsDigest string              `json:"dependencyToolsDigest"`
+	PackageManager        PackageManager      `json:"packageManager"`
+	Lockfile              DependencyLockfile  `json:"lockfile"`
+	LocalManifestsDigest  string              `json:"localManifestsDigest"`
+	MaterializerVersion   string              `json:"materializerVersion"`
+	RuntimeDigest         string              `json:"runtimeDigest"`
+	Architecture          RuntimeArchitecture `json:"architecture"`
 }
 
 func ParseDependencyIndex(raw []byte) (DependencyIndex, error) {
@@ -114,6 +116,7 @@ func ValidateDependencyIndex(index DependencyIndex) error {
 		return fmt.Errorf("dependency index formatVersion = %d, want %d", index.FormatVersion, DependencyIndexFormatVersion)
 	}
 	if err := validateDependencyInputs(
+		index.DependencyToolsDigest,
 		index.PackageManager,
 		index.Lockfile,
 		index.LocalManifestsDigest,
@@ -166,6 +169,7 @@ func ValidateDependencyCacheInput(input DependencyCacheInput) error {
 		)
 	}
 	return validateDependencyInputs(
+		input.DependencyToolsDigest,
 		input.PackageManager,
 		input.Lockfile,
 		input.LocalManifestsDigest,
@@ -177,6 +181,7 @@ func ValidateDependencyCacheInput(input DependencyCacheInput) error {
 }
 
 func validateDependencyInputs(
+	dependencyToolsDigest string,
 	manager PackageManager,
 	lockfile DependencyLockfile,
 	localManifestsDigest string,
@@ -185,6 +190,9 @@ func validateDependencyInputs(
 	architecture RuntimeArchitecture,
 	label string,
 ) error {
+	if !sha256DigestPattern.MatchString(dependencyToolsDigest) {
+		return fmt.Errorf("%s dependencyToolsDigest is not a lowercase SHA-256 digest", label)
+	}
 	if manager.Name != PackageManagerBun && manager.Name != PackageManagerNPM {
 		return fmt.Errorf("%s packageManager.name %q is unsupported", label, manager.Name)
 	}

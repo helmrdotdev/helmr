@@ -31,9 +31,9 @@ const (
 	ManagerProcessFailed = ManagerFailure("managerFailed")
 	ManagerOutputInvalid = ManagerFailure("outputInvalid")
 
-	ManagerToolMediaType         = "application/vnd.helmr.package-manager.v0+squashfs"
-	ManagerProjectMediaType      = "application/vnd.helmr.package-manager-project.v0+squashfs"
-	ManagerOfflineStoreMediaType = "application/vnd.helmr.package-manager-offline-store.v0+squashfs"
+	ManagerDependencyToolsMediaType = "application/vnd.helmr.dependency-tools.v0+squashfs"
+	ManagerProjectMediaType         = "application/vnd.helmr.package-manager-project.v0+squashfs"
+	ManagerOfflineStoreMediaType    = "application/vnd.helmr.package-manager-offline-store.v0+squashfs"
 
 	maxManagerRequestBytes  = 64 << 10
 	maxManagerMetadataBytes = (16 << 20) + maxManagerRequestBytes
@@ -58,15 +58,17 @@ type ManagerArtifact struct {
 }
 
 type ManagerRequest struct {
-	Architecture        RuntimeArchitecture `json:"architecture"`
-	FormatVersion       int                 `json:"formatVersion"`
-	MaterializerVersion string              `json:"materializerVersion"`
-	Operation           ManagerOperation    `json:"operation"`
-	PackageManager      PackageManager      `json:"packageManager"`
-	Project             ManagerArtifact     `json:"project"`
-	ToolClosure         ManagerArtifact     `json:"toolClosure"`
-	PackageGraph        *ProgramFile        `json:"packageGraph,omitempty"`
-	OfflineStore        *ManagerArtifact    `json:"offlineStore,omitempty"`
+	Architecture            RuntimeArchitecture `json:"architecture"`
+	ComponentManifestDigest string              `json:"componentManifestDigest"`
+	DependencyTools         ManagerArtifact     `json:"dependencyTools"`
+	DependencyToolsDigest   string              `json:"dependencyToolsDigest"`
+	FormatVersion           int                 `json:"formatVersion"`
+	MaterializerVersion     string              `json:"materializerVersion"`
+	Operation               ManagerOperation    `json:"operation"`
+	PackageManager          PackageManager      `json:"packageManager"`
+	Project                 ManagerArtifact     `json:"project"`
+	PackageGraph            *ProgramFile        `json:"packageGraph,omitempty"`
+	OfflineStore            *ManagerArtifact    `json:"offlineStore,omitempty"`
 }
 
 type ManagerTree struct {
@@ -171,6 +173,12 @@ func ValidateManagerRequest(request ManagerRequest) error {
 	if !validArchitecture(request.Architecture) {
 		return fmt.Errorf("manager request architecture %q is unsupported", request.Architecture)
 	}
+	if !sha256DigestPattern.MatchString(request.ComponentManifestDigest) {
+		return errors.New("manager request componentManifestDigest is not a lowercase SHA-256 digest")
+	}
+	if !sha256DigestPattern.MatchString(request.DependencyToolsDigest) {
+		return errors.New("manager request dependencyToolsDigest is not a lowercase SHA-256 digest")
+	}
 	if err := validateManagerPackage(request.PackageManager); err != nil {
 		return err
 	}
@@ -183,10 +191,10 @@ func ValidateManagerRequest(request ManagerRequest) error {
 		return err
 	}
 	if err := validateManagerArtifact(
-		request.ToolClosure,
-		ManagerToolMediaType,
+		request.DependencyTools,
+		ManagerDependencyToolsMediaType,
 		maxJSONSafeInteger,
-		"toolClosure",
+		"dependencyTools",
 	); err != nil {
 		return err
 	}
