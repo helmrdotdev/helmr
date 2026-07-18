@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 )
 
@@ -32,7 +33,7 @@ type Store interface {
 
 type ImmutableStore interface {
 	Reader
-	Publish(ctx context.Context, mediaType string, body io.Reader) (Object, error)
+	Publish(ctx context.Context, expected Descriptor, file *os.File) (Object, error)
 }
 
 // Stage receives object bytes, hashes and counts them, then publishes on Commit.
@@ -46,6 +47,12 @@ type Object struct {
 	Digest    string
 	SizeBytes int64
 	Key       string
+	MediaType string
+}
+
+type Descriptor struct {
+	Digest    string
+	SizeBytes int64
 	MediaType string
 }
 

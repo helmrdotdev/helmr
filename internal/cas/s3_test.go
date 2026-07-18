@@ -3,9 +3,11 @@ package cas
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -116,6 +118,7 @@ func TestS3PutUsesSinglePutBelowMultipartThreshold(t *testing.T) {
 }
 
 func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
+	requireDescriptorPublication(t)
 	client := &fakeS3Client{}
 	store := &ImmutableS3{store: &S3{
 		client:                  client,
@@ -124,7 +127,8 @@ func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
 		multipartThresholdBytes: 10,
 	}}
 
-	object, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello")))
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	object, err := store.Publish(t.Context(), expected, file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +144,7 @@ func TestImmutableS3PublishIsCreateOnlyAndUntagged(t *testing.T) {
 }
 
 func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
+	requireDescriptorPublication(t)
 	const digest = "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
@@ -155,7 +160,8 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 		multipartThresholdBytes: 10,
 	}}
 
-	object, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello")))
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	object, err := store.Publish(t.Context(), expected, file)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +171,7 @@ func TestImmutableS3PublishReusesExactExistingObject(t *testing.T) {
 }
 
 func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
+	requireDescriptorPublication(t)
 	client := &fakeS3Client{
 		putObjectErr: &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "exists"},
 		headObject: &s3.HeadObjectOutput{
@@ -179,12 +186,14 @@ func TestImmutableS3PublishRejectsExistingMetadataMismatch(t *testing.T) {
 		multipartThresholdBytes: 10,
 	}}
 
-	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err == nil {
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); err == nil {
 		t.Fatal("expected metadata mismatch")
 	}
 }
 
 func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
+	requireDescriptorPublication(t)
 	client := &fakeS3Client{
 		putObjectErrors: []error{
 			&smithy.GenericAPIError{Code: "ConditionalRequestConflict", Message: "racing writer"},
@@ -202,7 +211,8 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 		multipartThresholdBytes: 10,
 	}}
 
-	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); err != nil {
 		t.Fatal(err)
 	}
 	if client.putObjectCalls != 2 {
@@ -211,6 +221,7 @@ func TestImmutableS3PublishRetriesConditionalConflict(t *testing.T) {
 }
 
 func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
+	requireDescriptorPublication(t)
 	client := &fakeS3Client{uploadID: "upload-1"}
 	store := &ImmutableS3{store: &S3{
 		client:                  client,
@@ -220,7 +231,8 @@ func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 		multipartPartSizeBytes:  4,
 	}}
 
-	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); err != nil {
 		t.Fatal(err)
 	}
 	if client.createMultipart.Tagging != nil {
@@ -231,7 +243,39 @@ func TestImmutableS3MultipartPublishIsCreateOnlyAndUntagged(t *testing.T) {
 	}
 }
 
+func TestImmutableS3MultipartPublishUsesOnlySealedDescriptor(t *testing.T) {
+	requireDescriptorPublication(t)
+	client := &fakeS3Client{uploadID: "upload-1"}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 1,
+		multipartPartSizeBytes:  4,
+	}}
+	expected, file := sealedPublicationFile(t, []byte("hello world"))
+	if err := os.Remove(file.Name()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(t.Context(), expected, file); err != nil {
+		t.Fatal(err)
+	}
+	if len(client.uploadedParts) != 3 {
+		t.Fatalf("uploaded parts = %d", len(client.uploadedParts))
+	}
+	if got := string(uploadedPartBody(t, client, 1)); got != "hell" {
+		t.Fatalf("part 1 = %q", got)
+	}
+	if got := string(uploadedPartBody(t, client, 2)); got != "o wo" {
+		t.Fatalf("part 2 = %q", got)
+	}
+	if got := string(uploadedPartBody(t, client, 3)); got != "rld" {
+		t.Fatalf("part 3 = %q", got)
+	}
+}
+
 func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.T) {
+	requireDescriptorPublication(t)
 	client := &fakeS3Client{
 		uploadID: "upload-1",
 		completeMultipartErrors: []error{
@@ -247,7 +291,8 @@ func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.
 		multipartPartSizeBytes:  4,
 	}}
 
-	if _, err := store.Publish(t.Context(), "application/vnd.helmr.runtime.v0+squashfs", bytes.NewReader([]byte("hello"))); err != nil {
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); err != nil {
 		t.Fatal(err)
 	}
 	if client.createMultipartCalls != 2 || client.completeMultipartCalls != 2 {
@@ -255,6 +300,114 @@ func TestImmutableS3MultipartPublishRestartsAfterConditionalConflict(t *testing.
 	}
 	if !client.abortedMultipart {
 		t.Fatal("first multipart upload was not aborted")
+	}
+}
+
+func TestImmutableS3MultipartPublishDoesNotRetryAfterAmbiguousAbort(t *testing.T) {
+	requireDescriptorPublication(t)
+	client := &fakeS3Client{
+		uploadID: "upload-1",
+		completeMultipartErrors: []error{
+			&smithy.GenericAPIError{Code: "ConditionalRequestConflict", Message: "racing writer"},
+		},
+		abortMultipartErr: errors.New("abort failed"),
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 1,
+		multipartPartSizeBytes:  4,
+	}}
+
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if _, err := store.Publish(t.Context(), expected, file); err == nil {
+		t.Fatal("expected abort failure")
+	}
+	if client.createMultipartCalls != 1 || client.completeMultipartCalls != 1 {
+		t.Fatalf("multipart calls: create=%d complete=%d", client.createMultipartCalls, client.completeMultipartCalls)
+	}
+	if client.abortMultipartCalls != 1 {
+		t.Fatalf("abort calls = %d", client.abortMultipartCalls)
+	}
+}
+
+func TestImmutableS3PublishUsesOnlySealedDescriptor(t *testing.T) {
+	requireDescriptorPublication(t)
+	client := &fakeS3Client{}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		prefix:                  "runtime",
+		multipartThresholdBytes: 10,
+	}}
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if err := os.Remove(file.Name()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(t.Context(), expected, file); err != nil {
+		t.Fatal(err)
+	}
+	if string(client.putObjectBody) != "hello" {
+		t.Fatalf("body = %q", client.putObjectBody)
+	}
+}
+
+func TestImmutableS3PublishRejectsDescriptorMismatchBeforeUpload(t *testing.T) {
+	requireDescriptorPublication(t)
+	client := &fakeS3Client{}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		multipartThresholdBytes: 10,
+	}}
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	expected.Digest = sha256sum.DigestBytes([]byte("other"))
+	if _, err := store.Publish(t.Context(), expected, file); err == nil {
+		t.Fatal("expected digest mismatch")
+	}
+	if client.putObjectCalls != 0 {
+		t.Fatalf("PutObject calls = %d", client.putObjectCalls)
+	}
+}
+
+func TestImmutableS3PublishRejectsWritableDescriptor(t *testing.T) {
+	requireDescriptorPublication(t)
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	if err := os.Chmod(file.Name(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	writer, err := os.OpenFile(file.Name(), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close()
+	if err := os.Chmod(file.Name(), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	store := &ImmutableS3{store: &S3{client: &fakeS3Client{}, bucket: "bucket"}}
+	if _, err := store.Publish(t.Context(), expected, writer); err == nil {
+		t.Fatal("expected writable descriptor rejection")
+	}
+}
+
+func TestImmutableS3PublishRejectsIdentityChangeAfterUpload(t *testing.T) {
+	requireDescriptorPublication(t)
+	expected, file := sealedPublicationFile(t, []byte("hello"))
+	client := &fakeS3Client{
+		putObjectHook: func() {
+			if err := os.Chmod(file.Name(), 0o600); err != nil {
+				t.Error(err)
+			}
+		},
+	}
+	store := &ImmutableS3{store: &S3{
+		client:                  client,
+		bucket:                  "bucket",
+		multipartThresholdBytes: 10,
+	}}
+	if _, err := store.Publish(t.Context(), expected, file); err == nil {
+		t.Fatal("expected final identity rejection")
 	}
 }
 
@@ -547,11 +700,14 @@ type fakeS3Client struct {
 	putObjectErr            error
 	putObjectErrors         []error
 	putObjectCalls          int
+	putObjectHook           func()
 	headObject              *s3.HeadObjectOutput
 	headObjectErr           error
 	createMultipartCalls    int
 	completeMultipartCalls  int
 	completeMultipartErrors []error
+	abortMultipartCalls     int
+	abortMultipartErr       error
 }
 
 func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
@@ -562,6 +718,9 @@ func (f *fakeS3Client) PutObject(_ context.Context, input *s3.PutObjectInput, _ 
 		return nil, err
 	}
 	f.putObjectBody = body
+	if f.putObjectHook != nil {
+		f.putObjectHook()
+	}
 	if f.putObjectCalls <= len(f.putObjectErrors) {
 		return &s3.PutObjectOutput{}, f.putObjectErrors[f.putObjectCalls-1]
 	}
@@ -621,8 +780,9 @@ func (f *fakeS3Client) CompleteMultipartUpload(_ context.Context, input *s3.Comp
 }
 
 func (f *fakeS3Client) AbortMultipartUpload(context.Context, *s3.AbortMultipartUploadInput, ...func(*s3.Options)) (*s3.AbortMultipartUploadOutput, error) {
+	f.abortMultipartCalls++
 	f.abortedMultipart = true
-	return &s3.AbortMultipartUploadOutput{}, nil
+	return &s3.AbortMultipartUploadOutput{}, f.abortMultipartErr
 }
 
 var _ s3Client = (*fakeS3Client)(nil)
@@ -636,4 +796,36 @@ func uploadedPartBody(t *testing.T, client *fakeS3Client, number int32) []byte {
 	}
 	t.Fatalf("missing uploaded part %d: %+v", number, client.uploadedParts)
 	return nil
+}
+
+func requireDescriptorPublication(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("descriptor-bound publication requires Linux")
+	}
+}
+
+func sealedPublicationFile(t *testing.T, content []byte) (Descriptor, *os.File) {
+	t.Helper()
+	path := t.TempDir() + "/snapshot"
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return Descriptor{
+		Digest:    sha256sum.DigestBytes(content),
+		SizeBytes: int64(len(content)),
+		MediaType: "application/vnd.helmr.runtime.v0+squashfs",
+	}, file
 }
