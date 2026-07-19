@@ -31,12 +31,11 @@ func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 		request := request
 		t.Run(string(request.Operation), func(t *testing.T) {
 			t.Parallel()
-			toolchain := managerRequestToolchain(request)
-			canonical, err := CanonicalManagerRequest(request, toolchain)
+			canonical, err := CanonicalManagerRequest(request)
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err := ParseManagerRequest(canonical, toolchain)
+			parsed, err := ParseManagerRequest(canonical)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -45,14 +44,16 @@ func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 			}
 
 			var framed bytes.Buffer
-			if err := WriteManagerRequest(&framed, request, toolchain); err != nil {
+			if err := WriteManagerRequest(
+				&framed,
+				managerAuthorization(t, request),
+			); err != nil {
 				t.Fatal(err)
 			}
 			source := bytes.NewReader(framed.Bytes())
 			decoded, err := ReadManagerRequest(
 				context.Background(),
 				io.NopCloser(source),
-				toolchain,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -70,12 +71,11 @@ func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	t.Parallel()
 	request := managerResolveRequest()
-	toolchain := managerRequestToolchain(request)
-	digest, err := ManagerRequestDigest(request, toolchain)
+	digest, err := ManagerRequestDigest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := CanonicalManagerRequest(request, toolchain)
+	canonical, err := CanonicalManagerRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +86,89 @@ func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	const want = "sha256:933a144bf5ce95eafc2b4c645c6e7aee82f13cc2402feace9b029716aaa96990"
 	if digest != want {
 		t.Fatalf("manager request digest = %q, want %q", digest, want)
+	}
+}
+
+func TestManagerRequestDerivesToolchainIdentity(t *testing.T) {
+	t.Parallel()
+	request := managerResolveRequest()
+	toolchain, err := ManagerRequestToolchain(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toolchain != managerRequestToolchain(request) {
+		t.Fatalf("derived toolchain = %#v", toolchain)
+	}
+
+	tests := map[string]func(ManagerRequest) ManagerRequest{
+		"architecture": func(request ManagerRequest) ManagerRequest {
+			request.DependencyPlan.Architecture = ArchitectureX8664
+			return request
+		},
+		"runtime": func(request ManagerRequest) ManagerRequest {
+			request.DependencyPlan.ManagedRuntimeDigest = managerDigest("other runtime")
+			return request
+		},
+		"closure": func(request ManagerRequest) ManagerRequest {
+			request.StandardToolchain.Digest = managerDigest("other toolchain")
+			return request
+		},
+		"semantic digest": func(request ManagerRequest) ManagerRequest {
+			request.DependencyPlan.StandardToolchainDigest = managerDigest("other identity")
+			return request
+		},
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, err := ManagerRequestToolchain(mutate(request)); err == nil {
+				t.Fatal("ManagerRequestToolchain accepted a divergent projection")
+			}
+		})
+	}
+}
+
+func TestManagerRequestAuthorizationRequiresCatalogMember(t *testing.T) {
+	t.Parallel()
+	request := managerResolveRequest()
+	canonical, err := CanonicalManagerRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := ParseManagerRequest(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	toolchain := managerRequestToolchain(request)
+	if _, err := AuthorizeManagerRequest(
+		parsed,
+		authenticatedToolchainCatalogForTest(t, []Toolchain{toolchain}),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuthorizeManagerRequest(parsed, nil); err == nil {
+		t.Fatal("AuthorizeManagerRequest accepted a nil catalog")
+	}
+
+	rawCatalog, err := CanonicalToolchainCatalog([]Toolchain{toolchain})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unauthenticated, err := ParseToolchainCatalog(rawCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AuthorizeManagerRequest(parsed, unauthenticated); err == nil {
+		t.Fatal("AuthorizeManagerRequest accepted an unauthenticated catalog")
+	}
+
+	other := toolchain
+	other.ToolchainClosure.Digest = managerDigest("unregistered toolchain")
+	if _, err := AuthorizeManagerRequest(
+		parsed,
+		authenticatedToolchainCatalogForTest(t, []Toolchain{other}),
+	); err == nil {
+		t.Fatal("AuthorizeManagerRequest accepted an unregistered request")
 	}
 }
 
@@ -135,10 +218,7 @@ func TestManagerRequestRejectsInvalidShapes(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			request := mutate(managerResolveRequest())
-			if _, err := CanonicalManagerRequest(
-				request,
-				managerRequestToolchain(request),
-			); err == nil {
+			if _, err := CanonicalManagerRequest(request); err == nil {
 				t.Fatal("CanonicalManagerRequest returned nil error")
 			}
 		})
@@ -146,25 +226,22 @@ func TestManagerRequestRejectsInvalidShapes(t *testing.T) {
 	probe := managerProbeRequest()
 	project := managerProjectArtifact()
 	probe.Project = &project
-	if _, err := CanonicalManagerRequest(
-		probe,
-		managerRequestToolchain(probe),
-	); err == nil {
+	if _, err := CanonicalManagerRequest(probe); err == nil {
 		t.Fatal("CanonicalManagerRequest accepted a probe project")
 	}
 	request := managerResolveRequest()
 	toolchain := managerRequestToolchain(request)
 	toolchain.ToolchainClosure.Digest = managerDigest("other toolchain closure")
-	if _, err := CanonicalManagerRequest(request, toolchain); err == nil {
-		t.Fatal("CanonicalManagerRequest accepted a divergent registered toolchain")
+	catalog := authenticatedToolchainCatalogForTest(t, []Toolchain{toolchain})
+	if _, err := AuthorizeManagerRequest(request, catalog); err == nil {
+		t.Fatal("AuthorizeManagerRequest accepted a divergent registered toolchain")
 	}
 }
 
 func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) {
 	t.Parallel()
 	request := managerResolveRequest()
-	toolchain := managerRequestToolchain(request)
-	canonical, err := CanonicalManagerRequest(request, toolchain)
+	canonical, err := CanonicalManagerRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,12 +254,12 @@ func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ParseManagerRequest(unknown, toolchain); err == nil {
+	if _, err := ParseManagerRequest(unknown); err == nil {
 		t.Fatal("ParseManagerRequest accepted an unknown member")
 	}
 
 	nonCanonical := append([]byte("{\n"), canonical[1:]...)
-	if _, err := ParseManagerRequest(nonCanonical, toolchain); err == nil {
+	if _, err := ParseManagerRequest(nonCanonical); err == nil {
 		t.Fatal("ParseManagerRequest accepted non-canonical JSON")
 	}
 
@@ -192,7 +269,7 @@ func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) 
 		[]byte(`"formatVersion":0,"formatVersion":0,"managerCapsule"`),
 		1,
 	)
-	if _, err := ParseManagerRequest(duplicate, toolchain); err == nil {
+	if _, err := ParseManagerRequest(duplicate); err == nil {
 		t.Fatal("ParseManagerRequest accepted a duplicate member")
 	}
 }
@@ -200,8 +277,7 @@ func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) 
 func TestManagerRequestRejectsWrongStreamHeader(t *testing.T) {
 	t.Parallel()
 	request := managerResolveRequest()
-	toolchain := managerRequestToolchain(request)
-	body, err := CanonicalManagerRequest(request, toolchain)
+	body, err := CanonicalManagerRequest(request)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +293,6 @@ func TestManagerRequestRejectsWrongStreamHeader(t *testing.T) {
 	if _, err := ReadManagerRequest(
 		context.Background(),
 		io.NopCloser(bytes.NewReader(framed.Bytes())),
-		toolchain,
 	); err == nil {
 		t.Fatal("ReadManagerRequest accepted the wrong stream header")
 	}
@@ -227,15 +302,16 @@ func TestManagerRequestRejectsTrailingInput(t *testing.T) {
 	t.Parallel()
 	var framed bytes.Buffer
 	request := managerResolveRequest()
-	toolchain := managerRequestToolchain(request)
-	if err := WriteManagerRequest(&framed, request, toolchain); err != nil {
+	if err := WriteManagerRequest(
+		&framed,
+		managerAuthorization(t, request),
+	); err != nil {
 		t.Fatal(err)
 	}
 	framed.WriteByte(0)
 	if _, err := ReadManagerRequest(
 		context.Background(),
 		io.NopCloser(bytes.NewReader(framed.Bytes())),
-		toolchain,
 	); err == nil {
 		t.Fatal("ReadManagerRequest accepted trailing input")
 	}
@@ -303,7 +379,6 @@ func TestManagerMetadataRoundTripsAllOutcomes(t *testing.T) {
 			if err := ValidateManagerMetadataForRequest(
 				parsed,
 				test.request,
-				managerRequestToolchain(test.request),
 			); err != nil {
 				t.Fatal(err)
 			}
@@ -357,7 +432,6 @@ func TestManagerResponseStreamsAndChecksTreeIdentity(t *testing.T) {
 		context.Background(),
 		response,
 		request,
-		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		nil,
@@ -369,7 +443,6 @@ func TestManagerResponseStreamsAndChecksTreeIdentity(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
-		managerRequestToolchain(request),
 		nil,
 	)
 	if err != nil {
@@ -394,7 +467,6 @@ func TestManagerProbeResponseRequiresImmediateEOF(t *testing.T) {
 		context.Background(),
 		response,
 		request,
-		managerRequestToolchain(request),
 		metadata,
 		nil,
 		nil,
@@ -406,7 +478,6 @@ func TestManagerProbeResponseRequiresImmediateEOF(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		"",
 		request,
-		managerRequestToolchain(request),
 		nil,
 	)
 	if err != nil {
@@ -422,7 +493,6 @@ func TestManagerProbeResponseRequiresImmediateEOF(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		"",
 		request,
-		managerRequestToolchain(request),
 		nil,
 	); err == nil {
 		t.Fatal("ReadManagerResponse accepted bytes after probe metadata")
@@ -455,7 +525,6 @@ func TestManagerResponseRejectsTreeDivergence(t *testing.T) {
 				io.NopCloser(bytes.NewReader(response.Bytes())),
 				t.TempDir(),
 				request,
-				managerRequestToolchain(request),
 				nil,
 			); err == nil {
 				if tree != nil {
@@ -485,7 +554,6 @@ func TestManagerFailedResponseRequiresImmediateEOF(t *testing.T) {
 		context.Background(),
 		response,
 		request,
-		managerRequestToolchain(request),
 		metadata,
 		nil,
 		nil,
@@ -498,7 +566,6 @@ func TestManagerFailedResponseRequiresImmediateEOF(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
-		managerRequestToolchain(request),
 		nil,
 	); err == nil {
 		if tree != nil {
@@ -517,7 +584,6 @@ func TestManagerMetadataRejectsTargetDivergence(t *testing.T) {
 	if err := ValidateManagerMetadataForRequest(
 		metadata,
 		request,
-		managerRequestToolchain(request),
 	); err == nil {
 		t.Fatal("ValidateManagerMetadataForRequest accepted graph divergence")
 	}
@@ -528,7 +594,6 @@ func TestManagerMetadataRejectsTargetDivergence(t *testing.T) {
 	if err := ValidateManagerMetadataForRequest(
 		probeMetadata,
 		probe,
-		managerRequestToolchain(probe),
 	); err == nil {
 		t.Fatal("ValidateManagerMetadataForRequest accepted version divergence")
 	}
@@ -571,7 +636,6 @@ func TestManagerResponseRejectsInvalidTreeProfiles(t *testing.T) {
 				io.NopCloser(bytes.NewReader(response.Bytes())),
 				stageDirectory,
 				request,
-				managerRequestToolchain(request),
 				nil,
 			)
 			if err == nil {
@@ -604,7 +668,6 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		context.Background(),
 		response,
 		request,
-		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		&graph,
@@ -616,7 +679,6 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
-		managerRequestToolchain(request),
 		&graph,
 	)
 	if err != nil {
@@ -635,7 +697,6 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
-		managerRequestToolchain(request),
 		nil,
 	); err == nil {
 		if tree != nil {
@@ -674,7 +735,6 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		context.Background(),
 		response,
 		request,
-		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		&graph,
@@ -686,7 +746,6 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
-		managerRequestToolchain(request),
 		&graph,
 	)
 	if err != nil {
@@ -699,7 +758,6 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		context.Background(),
 		&managerBuffer{},
 		request,
-		managerRequestToolchain(request),
 		managerSuccessMetadata(request, ManagerRegistryClosure, empty),
 		io.NopCloser(bytes.NewReader(empty)),
 		&graph,
@@ -741,7 +799,6 @@ func TestManagerResponseCancellationClosesBlockedSource(t *testing.T) {
 					source,
 					stageDirectory,
 					request,
-					managerRequestToolchain(request),
 					nil,
 				)
 				if tree != nil {
@@ -780,7 +837,6 @@ func TestManagerResponseCancellationClosesBlockedDestination(t *testing.T) {
 			ctx,
 			destination,
 			request,
-			managerRequestToolchain(request),
 			metadata,
 			io.NopCloser(bytes.NewReader(body)),
 			nil,
@@ -1092,7 +1148,6 @@ func mustManagerRequestDigest(t *testing.T, request ManagerRequest) string {
 	}
 	digest, err := ManagerRequestDigest(
 		request,
-		managerRequestToolchain(request),
 	)
 	if err != nil {
 		if t == nil {
@@ -1105,6 +1160,21 @@ func mustManagerRequestDigest(t *testing.T, request ManagerRequest) string {
 
 func managerRequestToolchain(request ManagerRequest) Toolchain {
 	return dependencyPlanToolchain(request.DependencyPlan.Architecture)
+}
+
+func managerAuthorization(t *testing.T, request ManagerRequest) ManagerAuthorization {
+	t.Helper()
+	authorization, err := AuthorizeManagerRequest(
+		request,
+		authenticatedToolchainCatalogForTest(
+			t,
+			[]Toolchain{managerRequestToolchain(request)},
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authorization
 }
 
 func managerDigest(value string) string {

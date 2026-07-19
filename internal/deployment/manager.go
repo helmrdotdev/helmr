@@ -71,6 +71,10 @@ type ManagerRequest struct {
 	StandardToolchain    ManagerArtifact  `json:"standardToolchain"`
 }
 
+type ManagerAuthorization struct {
+	request ManagerRequest
+}
+
 type ManagerTree struct {
 	Digest    string          `json:"digest"`
 	Kind      ManagerTreeKind `json:"kind"`
@@ -96,7 +100,7 @@ type ManagerTreeContent interface {
 	io.Closer
 }
 
-func ParseManagerRequest(raw []byte, toolchain Toolchain) (ManagerRequest, error) {
+func ParseManagerRequest(raw []byte) (ManagerRequest, error) {
 	if len(raw) == 0 || len(raw) > maxManagerRequestBytes {
 		return ManagerRequest{}, fmt.Errorf(
 			"manager request size is outside [1,%d]",
@@ -120,10 +124,10 @@ func ParseManagerRequest(raw []byte, toolchain Toolchain) (ManagerRequest, error
 	if err := ensureEOF(decoder, "manager request"); err != nil {
 		return ManagerRequest{}, err
 	}
-	if err := ValidateManagerRequest(request, toolchain); err != nil {
+	if err := ValidateManagerRequest(request); err != nil {
 		return ManagerRequest{}, err
 	}
-	complete, err := CanonicalManagerRequest(request, toolchain)
+	complete, err := CanonicalManagerRequest(request)
 	if err != nil {
 		return ManagerRequest{}, err
 	}
@@ -135,11 +139,8 @@ func ParseManagerRequest(raw []byte, toolchain Toolchain) (ManagerRequest, error
 	return request, nil
 }
 
-func CanonicalManagerRequest(
-	request ManagerRequest,
-	toolchain Toolchain,
-) ([]byte, error) {
-	if err := ValidateManagerRequest(request, toolchain); err != nil {
+func CanonicalManagerRequest(request ManagerRequest) ([]byte, error) {
+	if err := ValidateManagerRequest(request); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(request)
@@ -159,7 +160,7 @@ func CanonicalManagerRequest(
 	return canonical, nil
 }
 
-func ValidateManagerRequest(request ManagerRequest, toolchain Toolchain) error {
+func ValidateManagerRequest(request ManagerRequest) error {
 	if request.FormatVersion != ManagerFormatVersion {
 		return fmt.Errorf(
 			"manager request formatVersion = %d, want %d",
@@ -225,20 +226,8 @@ func ValidateManagerRequest(request ManagerRequest, toolchain Toolchain) error {
 	); err != nil {
 		return err
 	}
-	if err := validateToolchain(toolchain); err != nil {
-		return fmt.Errorf("manager request standard toolchain: %w", err)
-	}
-	toolchainDigest, err := StandardToolchainDigest(toolchain)
-	if err != nil {
+	if _, err := ManagerRequestToolchain(request); err != nil {
 		return err
-	}
-	if request.DependencyPlan.StandardToolchainDigest != toolchainDigest ||
-		request.DependencyPlan.Architecture != toolchain.Architecture ||
-		request.DependencyPlan.ManagedRuntimeDigest != toolchain.ManagedRuntimeDigest ||
-		request.StandardToolchain != toolchain.ToolchainClosure {
-		return errors.New(
-			"manager request standardToolchain does not match dependencyPlan and registered toolchain",
-		)
 	}
 
 	switch request.Operation {
@@ -296,11 +285,53 @@ func ValidateManagerRequest(request ManagerRequest, toolchain Toolchain) error {
 	return nil
 }
 
-func ManagerRequestDigest(
+func ManagerRequestToolchain(request ManagerRequest) (Toolchain, error) {
+	toolchain := Toolchain{
+		Architecture:         request.DependencyPlan.Architecture,
+		FormatVersion:        ToolchainFormatVersion,
+		ManagedRuntimeDigest: request.DependencyPlan.ManagedRuntimeDigest,
+		ToolchainClosure:     request.StandardToolchain,
+	}
+	if err := validateToolchain(toolchain); err != nil {
+		return Toolchain{}, fmt.Errorf("manager request standard toolchain: %w", err)
+	}
+	digest, err := StandardToolchainDigest(toolchain)
+	if err != nil {
+		return Toolchain{}, err
+	}
+	if request.DependencyPlan.StandardToolchainDigest != digest {
+		return Toolchain{}, errors.New(
+			"manager request standardToolchain does not match dependencyPlan",
+		)
+	}
+	return toolchain, nil
+}
+
+func AuthorizeManagerRequest(
 	request ManagerRequest,
-	toolchain Toolchain,
-) (string, error) {
-	canonical, err := CanonicalManagerRequest(request, toolchain)
+	catalog *ToolchainCatalog,
+) (ManagerAuthorization, error) {
+	if err := ValidateManagerRequest(request); err != nil {
+		return ManagerAuthorization{}, err
+	}
+	derived, err := ManagerRequestToolchain(request)
+	if err != nil {
+		return ManagerAuthorization{}, err
+	}
+	registered, err := catalog.Resolve(request.DependencyPlan.StandardToolchainDigest)
+	if err != nil {
+		return ManagerAuthorization{}, fmt.Errorf("authorize manager request: %w", err)
+	}
+	if registered != derived {
+		return ManagerAuthorization{}, errors.New(
+			"authorize manager request: catalog toolchain does not match request",
+		)
+	}
+	return ManagerAuthorization{request: request}, nil
+}
+
+func ManagerRequestDigest(request ManagerRequest) (string, error) {
+	canonical, err := CanonicalManagerRequest(request)
 	if err != nil {
 		return "", err
 	}
@@ -310,13 +341,13 @@ func ManagerRequestDigest(
 
 func WriteManagerRequest(
 	destination io.Writer,
-	request ManagerRequest,
-	toolchain Toolchain,
+	authorization ManagerAuthorization,
 ) error {
 	if destination == nil {
 		return errors.New("manager request destination is nil")
 	}
-	body, err := CanonicalManagerRequest(request, toolchain)
+	request := authorization.request
+	body, err := CanonicalManagerRequest(request)
 	if err != nil {
 		return err
 	}
@@ -336,7 +367,6 @@ func WriteManagerRequest(
 func ReadManagerRequest(
 	ctx context.Context,
 	source io.ReadCloser,
-	toolchain Toolchain,
 ) (ManagerRequest, error) {
 	if ctx == nil {
 		return ManagerRequest{}, errors.New("manager request context is nil")
@@ -364,7 +394,7 @@ func ReadManagerRequest(
 	if _, err := io.ReadFull(source, body); err != nil {
 		return ManagerRequest{}, fmt.Errorf("read manager request body: %w", err)
 	}
-	request, err := ParseManagerRequest(body, toolchain)
+	request, err := ParseManagerRequest(body)
 	if err != nil {
 		return ManagerRequest{}, err
 	}
@@ -571,7 +601,6 @@ func WriteManagerResponse(
 	ctx context.Context,
 	destination io.WriteCloser,
 	request ManagerRequest,
-	toolchain Toolchain,
 	metadata ManagerMetadata,
 	tree io.ReadCloser,
 	graph *PackageGraph,
@@ -584,7 +613,7 @@ func WriteManagerResponse(
 	}
 	stopDestination := closeOnCancellation(ctx, destination)
 	defer stopDestination()
-	if err := ValidateManagerMetadataForRequest(metadata, request, toolchain); err != nil {
+	if err := ValidateManagerMetadataForRequest(metadata, request); err != nil {
 		return err
 	}
 	if err := validateManagerTreeGraph(request, metadata, graph); err != nil {
@@ -630,7 +659,6 @@ func ReadManagerResponse(
 	source io.ReadCloser,
 	stageDirectory string,
 	request ManagerRequest,
-	toolchain Toolchain,
 	graph *PackageGraph,
 ) (ManagerMetadata, ManagerTreeContent, error) {
 	if ctx == nil {
@@ -645,7 +673,7 @@ func ReadManagerResponse(
 	if err != nil {
 		return ManagerMetadata{}, nil, preferContextError(ctx, err)
 	}
-	if err := ValidateManagerMetadataForRequest(metadata, request, toolchain); err != nil {
+	if err := ValidateManagerMetadataForRequest(metadata, request); err != nil {
 		return ManagerMetadata{}, nil, err
 	}
 	if err := validateManagerTreeGraph(request, metadata, graph); err != nil {
@@ -731,9 +759,8 @@ func preferContextError(ctx context.Context, err error) error {
 func ValidateManagerMetadataForRequest(
 	metadata ManagerMetadata,
 	request ManagerRequest,
-	toolchain Toolchain,
 ) error {
-	if err := ValidateManagerRequest(request, toolchain); err != nil {
+	if err := ValidateManagerRequest(request); err != nil {
 		return err
 	}
 	if err := ValidateManagerMetadata(metadata); err != nil {
@@ -746,7 +773,7 @@ func ValidateManagerMetadataForRequest(
 			request.Operation,
 		)
 	}
-	digest, err := ManagerRequestDigest(request, toolchain)
+	digest, err := ManagerRequestDigest(request)
 	if err != nil {
 		return err
 	}
