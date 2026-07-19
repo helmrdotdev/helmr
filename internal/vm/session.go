@@ -85,6 +85,11 @@ const (
 	ProgramRuntimeDrive      = "program_runtime"
 	ProgramCodeDrive         = "program_code"
 	ProgramDependenciesDrive = "program_dependencies"
+	ManagerDrive             = "manager"
+	ManagedRuntimeDrive      = "managed_runtime"
+	ToolchainDrive           = "standard_toolchain"
+	ProjectDrive             = "project"
+	OfflineStoreDrive        = "offline_store"
 )
 
 type ReadOnlyDriveSource interface {

@@ -37,12 +37,24 @@ import (
 )
 
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
-const managerAcquireKernelArgs = defaultKernelArgs + " helmr.network=none helmr.pids_max=128"
+const managerAcquireKernelArgs = defaultKernelArgs + " helmr.profile=manager-acquire helmr.network=none helmr.pids_max=128"
+const dependencyManagerKernelArgs = defaultKernelArgs + " helmr.profile=dependency helmr.network=none helmr.pids_max=512"
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
 const scratchDiskName = "scratch.ext4"
 const maxGuestHealthResponseBytes = 4096
+
+var readOnlyDriveOrder = [...]string{
+	vm.ProgramRuntimeDrive,
+	vm.ProgramCodeDrive,
+	vm.ProgramDependenciesDrive,
+	vm.ManagerDrive,
+	vm.ManagedRuntimeDrive,
+	vm.ToolchainDrive,
+	vm.ProjectDrive,
+	vm.OfflineStoreDrive,
+}
 
 var nextGuestCID atomic.Uint32
 var dialVsock = vsock.DialContext
@@ -106,27 +118,14 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		if err := validateReadOnlyDrives(request.BuildDrives); err != nil {
 			return nil, err
 		}
-		managerAcquire := request.Resources == compute.ManagerAcquireResources() &&
-			request.PIDsMax == 128 &&
-			request.Networkless &&
-			!request.Network.Internet &&
-			len(request.Network.Allow) == 0 &&
-			len(request.Network.Deny) == 0 &&
-			len(request.BuildDrives) == 0
-		standardBuild := request.Resources == compute.BuildGuestResources() &&
-			request.PIDsMax == 0 &&
-			!request.Networkless
-		if !standardBuild && !managerAcquire {
-			return nil, errors.New("build guest resources do not match the platform profile")
-		}
 		var err error
-		cfg, err = c.configForResources(request.Resources, "build guest")
+		kernelArgs, networkless, err = buildGuestProfile(request)
 		if err != nil {
 			return nil, err
 		}
-		if managerAcquire {
-			kernelArgs = managerAcquireKernelArgs
-			networkless = true
+		cfg, err = c.configForResources(request.Resources, "build guest")
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		if len(request.BuildDrives) != 0 {
@@ -156,6 +155,72 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		request.BuildDrives,
 		nil,
 	)
+}
+
+func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
+	networkDisabled := !request.Network.Internet &&
+		len(request.Network.Allow) == 0 &&
+		len(request.Network.Deny) == 0
+	noSubstrate := request.Topology.Substrate == nil
+	switch {
+	case request.Resources == compute.ManagerAcquireResources() &&
+		request.PIDsMax == 128 &&
+		request.Networkless &&
+		networkDisabled &&
+		noSubstrate &&
+		len(request.BuildDrives) == 0:
+		return managerAcquireKernelArgs, true, nil
+	case request.Resources == compute.BuildGuestResources() &&
+		request.PIDsMax == 512 &&
+		request.Networkless &&
+		networkDisabled &&
+		noSubstrate &&
+		isDependencyDriveSet(request.BuildDrives):
+		return dependencyManagerKernelArgs, true, nil
+	case request.Resources == compute.BuildGuestResources() &&
+		request.PIDsMax == 0 &&
+		!request.Networkless &&
+		noSubstrate &&
+		isProgramDriveSet(request.BuildDrives):
+		return defaultKernelArgs, false, nil
+	default:
+		return "", false, errors.New("build guest resources do not match the platform profile")
+	}
+}
+
+func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
+	for _, drive := range drives {
+		switch drive.ID {
+		case vm.ProgramRuntimeDrive,
+			vm.ProgramCodeDrive,
+			vm.ProgramDependenciesDrive:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func isDependencyDriveSet(drives []vm.ReadOnlyDrive) bool {
+	present := make(map[string]bool, len(drives))
+	for _, drive := range drives {
+		present[drive.ID] = true
+	}
+	if !present[vm.ManagerDrive] ||
+		!present[vm.ManagedRuntimeDrive] ||
+		!present[vm.ToolchainDrive] {
+		return false
+	}
+	switch len(drives) {
+	case 3:
+		return !present[vm.ProjectDrive] && !present[vm.OfflineStoreDrive]
+	case 4:
+		return present[vm.ProjectDrive] && !present[vm.OfflineStoreDrive]
+	case 5:
+		return present[vm.ProjectDrive] && present[vm.OfflineStoreDrive]
+	default:
+		return false
+	}
 }
 
 func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
@@ -907,11 +972,7 @@ func runtimeDrives(
 	for _, drive := range readOnlyDrives {
 		byID[drive.ID] = drive
 	}
-	for _, id := range []string{
-		vm.ProgramRuntimeDrive,
-		vm.ProgramCodeDrive,
-		vm.ProgramDependenciesDrive,
-	} {
+	for _, id := range readOnlyDriveOrder {
 		if _, exists := byID[id]; exists {
 			drives = append(drives, models.Drive{
 				DriveID:      firecracker.String(id),
@@ -930,7 +991,12 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 		switch drive.ID {
 		case vm.ProgramRuntimeDrive,
 			vm.ProgramCodeDrive,
-			vm.ProgramDependenciesDrive:
+			vm.ProgramDependenciesDrive,
+			vm.ManagerDrive,
+			vm.ManagedRuntimeDrive,
+			vm.ToolchainDrive,
+			vm.ProjectDrive,
+			vm.OfflineStoreDrive:
 		default:
 			return fmt.Errorf(
 				"read-only drive %d ID %q is invalid",
@@ -2066,11 +2132,7 @@ func (strategy sealedDriveChrootStrategy) linkFiles(
 			FirecrackerPath:     machine.Cfg.JailerCfg.ExecFile,
 			JailerChrootBaseDir: machine.Cfg.JailerCfg.ChrootBaseDir,
 		}, machine.Cfg.JailerCfg.ID)
-		for _, id := range []string{
-			vm.ProgramRuntimeDrive,
-			vm.ProgramCodeDrive,
-			vm.ProgramDependenciesDrive,
-		} {
+		for _, id := range readOnlyDriveOrder {
 			source, exists := sources[id]
 			if !exists {
 				continue

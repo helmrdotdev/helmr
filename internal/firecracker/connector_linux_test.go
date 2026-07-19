@@ -1256,6 +1256,136 @@ func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 	}
 }
 
+func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	base := []vm.ReadOnlyDrive{
+		{ID: vm.ToolchainDrive, Source: source},
+		{ID: vm.ManagerDrive, Source: source},
+		{ID: vm.ManagedRuntimeDrive, Source: source},
+	}
+	tests := map[string][]vm.ReadOnlyDrive{
+		"probe": base,
+		"resolve": append(
+			append([]vm.ReadOnlyDrive{}, base...),
+			vm.ReadOnlyDrive{ID: vm.ProjectDrive, Source: source},
+		),
+		"lifecycle": append(
+			append([]vm.ReadOnlyDrive{}, base...),
+			vm.ReadOnlyDrive{ID: vm.OfflineStoreDrive, Source: source},
+			vm.ReadOnlyDrive{ID: vm.ProjectDrive, Source: source},
+		),
+	}
+	for name, drives := range tests {
+		t.Run(name, func(t *testing.T) {
+			kernelArgs, networkless, err := buildGuestProfile(vm.ConnectRequest{
+				OwnerKind:   vm.OwnerBuild,
+				Resources:   compute.BuildGuestResources(),
+				PIDsMax:     512,
+				Networkless: true,
+				BuildDrives: drives,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if kernelArgs != dependencyManagerKernelArgs || !networkless {
+				t.Fatalf("profile = (%q, %t), want dependency profile", kernelArgs, networkless)
+			}
+		})
+	}
+}
+
+func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	required := []vm.ReadOnlyDrive{
+		{ID: vm.ManagerDrive, Source: source},
+		{ID: vm.ManagedRuntimeDrive, Source: source},
+		{ID: vm.ToolchainDrive, Source: source},
+	}
+	tests := map[string]vm.ConnectRequest{
+		"missing component": {
+			Resources:   compute.BuildGuestResources(),
+			PIDsMax:     512,
+			Networkless: true,
+			BuildDrives: required[:2],
+		},
+		"offline store without project": {
+			Resources:   compute.BuildGuestResources(),
+			PIDsMax:     512,
+			Networkless: true,
+			BuildDrives: append(
+				append([]vm.ReadOnlyDrive{}, required...),
+				vm.ReadOnlyDrive{ID: vm.OfflineStoreDrive, Source: source},
+			),
+		},
+		"wrong process limit": {
+			Resources:   compute.BuildGuestResources(),
+			PIDsMax:     511,
+			Networkless: true,
+			BuildDrives: required,
+		},
+		"network policy": {
+			Resources:   compute.BuildGuestResources(),
+			PIDsMax:     512,
+			Networkless: true,
+			Network:     compute.DefaultNetworkPolicy(),
+			BuildDrives: required,
+		},
+		"workspace substrate": {
+			Resources:   compute.BuildGuestResources(),
+			PIDsMax:     512,
+			Networkless: true,
+			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
+				Path: "workspace.ext4",
+			}},
+			BuildDrives: required,
+		},
+		"dependency drives on standard build": {
+			Resources:   compute.BuildGuestResources(),
+			BuildDrives: required,
+		},
+	}
+	for name, request := range tests {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := buildGuestProfile(request); err == nil {
+				t.Fatal("buildGuestProfile error = nil")
+			}
+		})
+	}
+}
+
+func TestRuntimeDrivesUseFixedDependencyOrder(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	drives := runtimeDrives(
+		"/rootfs.ext4",
+		"/scratch.ext4",
+		"",
+		[]vm.ReadOnlyDrive{
+			{ID: vm.OfflineStoreDrive, Source: source},
+			{ID: vm.ProjectDrive, Source: source},
+			{ID: vm.ToolchainDrive, Source: source},
+			{ID: vm.ManagedRuntimeDrive, Source: source},
+			{ID: vm.ManagerDrive, Source: source},
+		},
+	)
+	want := []string{
+		"rootfs",
+		"scratch",
+		vm.ManagerDrive,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+		vm.ProjectDrive,
+		vm.OfflineStoreDrive,
+	}
+	if len(drives) != len(want) {
+		t.Fatalf("drive count = %d, want %d", len(drives), len(want))
+	}
+	for index, drive := range drives {
+		if got := firecracker.StringValue(drive.DriveID); got != want[index] {
+			t.Fatalf("drive %d ID = %q, want %q", index, got, want[index])
+		}
+	}
+}
+
 func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	chrootBase := t.TempDir()
 	vmID := "vm-1"
@@ -1335,6 +1465,94 @@ func TestSealedDriveChrootStrategySeparatesSourceCapabilities(t *testing.T) {
 	} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
 			t.Fatalf("ordinary jail link %q: %v", name, err)
+		}
+	}
+}
+
+func TestSealedDriveChrootStrategyPreservesDependencyDriveOrder(t *testing.T) {
+	chrootBase := t.TempDir()
+	vmID := "vm-dependency"
+	root := filepath.Join(chrootBase, "firecracker", vmID, "root")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sourceDirectory := t.TempDir()
+	kernelPath := filepath.Join(sourceDirectory, "vmlinux")
+	rootfsPath := filepath.Join(sourceDirectory, "rootfs.ext4")
+	scratchPath := filepath.Join(sourceDirectory, "scratch.ext4")
+	for _, path := range []string{kernelPath, rootfsPath, scratchPath} {
+		if err := os.WriteFile(path, []byte(filepath.Base(path)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sources := map[string]*recordingReadOnlyDriveSource{
+		vm.ManagerDrive:        {},
+		vm.ManagedRuntimeDrive: {},
+		vm.ToolchainDrive:      {},
+		vm.ProjectDrive:        {},
+		vm.OfflineStoreDrive:   {},
+	}
+	declared := []vm.ReadOnlyDrive{
+		{ID: vm.OfflineStoreDrive, Source: sources[vm.OfflineStoreDrive]},
+		{ID: vm.ProjectDrive, Source: sources[vm.ProjectDrive]},
+		{ID: vm.ToolchainDrive, Source: sources[vm.ToolchainDrive]},
+		{ID: vm.ManagedRuntimeDrive, Source: sources[vm.ManagedRuntimeDrive]},
+		{ID: vm.ManagerDrive, Source: sources[vm.ManagerDrive]},
+	}
+	machine := &firecracker.Machine{
+		Cfg: firecracker.Config{
+			KernelImagePath: kernelPath,
+			JailerCfg: &firecracker.JailerConfig{
+				ExecFile:      "/usr/bin/firecracker",
+				ChrootBaseDir: chrootBase,
+				ID:            vmID,
+				UID:           firecracker.Int(os.Getuid()),
+				GID:           firecracker.Int(os.Getgid()),
+			},
+			Drives: runtimeDrives(rootfsPath, scratchPath, "", declared),
+		},
+		Handlers: firecracker.Handlers{
+			FcInit: firecracker.HandlerList{}.Append(firecracker.Handler{
+				Name: firecracker.CreateLogFilesHandlerName,
+				Fn: func(context.Context, *firecracker.Machine) error {
+					return nil
+				},
+			}),
+		},
+	}
+	firecracker.WithLogger(logrus.NewEntry(logrus.New()))(machine)
+	strategy := sealedDriveChrootStrategy{kernelImagePath: kernelPath, drives: declared}
+	if err := strategy.AdaptHandlers(&machine.Handlers); err != nil {
+		t.Fatal(err)
+	}
+	if err := machine.Handlers.FcInit.Run(context.Background(), machine); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"rootfs",
+		"scratch",
+		vm.ManagerDrive,
+		vm.ManagedRuntimeDrive,
+		vm.ToolchainDrive,
+		vm.ProjectDrive,
+		vm.OfflineStoreDrive,
+	}
+	if len(machine.Cfg.Drives) != len(want) {
+		t.Fatalf("drive count = %d, want %d", len(machine.Cfg.Drives), len(want))
+	}
+	for index, drive := range machine.Cfg.Drives {
+		id := firecracker.StringValue(drive.DriveID)
+		if id != want[index] {
+			t.Fatalf("drive %d ID = %q, want %q", index, id, want[index])
+		}
+		if source := sources[id]; source != nil {
+			if source.directory != root ||
+				source.name != readOnlyDriveName(id) ||
+				source.uid != os.Getuid() ||
+				source.gid != os.Getgid() {
+				t.Fatalf("drive %q link request = %+v", id, source)
+			}
 		}
 	}
 }
