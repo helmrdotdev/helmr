@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -31,10 +32,57 @@ type connectionStart struct {
 	attach       *runv0.ResumeAttach
 }
 
-func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
+type guestProfile uint8
+
+const (
+	ordinaryGuestProfile guestProfile = iota
+	managerAcquireGuestProfile
+	dependencyGuestProfile
+)
+
+func parseGuestProfile(value string) (guestProfile, error) {
+	switch value {
+	case "":
+		return ordinaryGuestProfile, nil
+	case "manager-acquire":
+		return managerAcquireGuestProfile, nil
+	case "dependency":
+		return dependencyGuestProfile, nil
+	default:
+		return 0, fmt.Errorf("unsupported guest profile %q", value)
+	}
+}
+
+func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, logger *slog.Logger, registry *waitingRunRegistry, workspaceRegistry *workspaceOperationRegistry) (bool, error) {
+	profile, err := parseGuestProfile(cfg.Profile)
+	if err != nil {
+		return false, err
+	}
+	if profile == dependencyGuestProfile {
+		request, err := deployment.ReadManagerRequest(ctx, conn)
+		if err != nil {
+			return false, err
+		}
+		return false, fmt.Errorf(
+			"dependency manager %q execution is unavailable",
+			request.Operation,
+		)
+	}
 	start, err := readConnectionStart(conn)
 	if err != nil {
 		return false, err
+	}
+	if profile == managerAcquireGuestProfile {
+		if start.attach != nil {
+			return false, errors.New("manager acquisition guest rejects resume attach")
+		}
+		if start.streamHeader.Type != wire.StreamTypeManagerAcquire {
+			return false, fmt.Errorf(
+				"manager acquisition guest rejects input type %q",
+				start.streamHeader.Type,
+			)
+		}
+		return false, handleManagerAcquire(conn, start.bodyLen)
 	}
 	if start.attach != nil {
 		if err := registry.attach(start.attach.RunWaitId, start.attach.CheckpointId, conn); err != nil {
@@ -48,7 +96,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 	case wire.StreamTypeCompileTaskBundle:
 		return false, handleCompileTaskBundle(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeManagerAcquire:
-		return false, handleManagerAcquire(conn, start.bodyLen)
+		return false, errors.New("ordinary guest rejects manager acquisition")
 	case wire.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceMaterialize:

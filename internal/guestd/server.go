@@ -21,6 +21,7 @@ type Config struct {
 	AdapterRegisterPath string
 	AdapterPath         string
 	AdapterBundlePath   string
+	Profile             string
 	VsockPort           uint
 	HealthPort          uint
 }
@@ -31,6 +32,7 @@ func ParseFlags() Config {
 	flag.StringVar(&cfg.AdapterRegisterPath, "adapter-register-path", "/opt/helmr/adapter/register.mjs", "adapter runtime register hook path")
 	flag.StringVar(&cfg.AdapterPath, "adapter-path", "/opt/helmr/adapter/main.js", "adapter entrypoint path")
 	flag.StringVar(&cfg.AdapterBundlePath, "adapter-bundle-path", "/opt/helmr-adapter", "adapter bundle path")
+	flag.StringVar(&cfg.Profile, "profile", "", "guest execution profile")
 	flag.UintVar(&cfg.VsockPort, "vsock-port", 5000, "guest task vsock port")
 	flag.UintVar(&cfg.HealthPort, "health-port", 5001, "health check vsock port")
 	flag.Parse()
@@ -38,11 +40,17 @@ func ParseFlags() Config {
 }
 
 func Run(ctx context.Context, cfg Config, logger *slog.Logger) error {
-	if strings.TrimSpace(cfg.AdapterRuntimePath) == "" {
-		return errors.New("adapter runtime path is required")
+	profile, err := parseGuestProfile(cfg.Profile)
+	if err != nil {
+		return err
 	}
-	if strings.TrimSpace(cfg.AdapterPath) == "" {
-		return errors.New("adapter path is required")
+	if profile == ordinaryGuestProfile {
+		if strings.TrimSpace(cfg.AdapterRuntimePath) == "" {
+			return errors.New("adapter runtime path is required")
+		}
+		if strings.TrimSpace(cfg.AdapterPath) == "" {
+			return errors.New("adapter path is required")
+		}
 	}
 	healthListener, err := vsock.Listen(uint32(cfg.HealthPort), nil)
 	if err != nil {

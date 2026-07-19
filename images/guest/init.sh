@@ -204,6 +204,40 @@ kernel_arg() {
 	return 1
 }
 
+guest_profile() {
+	found=0
+	profile=
+	for arg in $(cat /proc/cmdline); do
+		case "$arg" in
+			helmr.profile=*)
+				if [ "$found" -ne 0 ]; then
+					echo "duplicate Helmr guest profile" >&2
+					return 1
+				fi
+				found=1
+				profile=${arg#*=}
+				;;
+			helmr.profile)
+				echo "invalid Helmr guest profile" >&2
+				return 1
+				;;
+		esac
+	done
+	if [ "$found" -ne 0 ] && [ -z "$profile" ]; then
+		echo "invalid empty Helmr guest profile" >&2
+		return 1
+	fi
+	case "$profile" in
+		""|manager-acquire|dependency)
+			echo "$profile"
+			;;
+		*)
+			echo "invalid Helmr guest profile: $profile" >&2
+			return 1
+			;;
+	esac
+}
+
 first_non_loopback_iface() {
 	for net in /sys/class/net/*; do
 		[ -e "$net" ] || continue
@@ -301,27 +335,49 @@ require_network_ready() {
 	fi
 }
 
+configure_isolated_network() {
+	ip link set lo up
+	for net in /sys/class/net/*; do
+		[ -e "$net" ] || continue
+		iface=${net##*/}
+		[ "$iface" = "lo" ] && continue
+		ip addr flush dev "$iface"
+		ip link set "$iface" down
+	done
+	ip route flush table main
+	: > /run/resolv.conf
+}
+
 configure_runtime_identity() {
 	hostname helmr-sandbox || true
 }
 
 mount_base
+profile=$(guest_profile)
 configure_process_limit
 configure_namespaces
 mount_scratch
-mount_substrate
 load_vsock
-configure_network
+if [ -z "$profile" ]; then
+	mount_substrate
+	configure_network
+else
+	configure_isolated_network
+fi
 configure_runtime_identity
 
 export HELMR_GUESTD_TMPDIR=/var/lib/helmr/tmp
 if [ -f /etc/helmr/checkpoint-storage-telemetry ]; then
-  export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
+	export HELMR_CHECKPOINT_STORAGE_TELEMETRY=1
 fi
-exec /usr/bin/guestd \
-  --adapter-runtime-path /usr/bin/node \
-  --adapter-register-path /opt/helmr/adapter/register.mjs \
-  --adapter-path /opt/helmr/adapter/main.js \
-  --adapter-bundle-path /opt/helmr-adapter \
-  --vsock-port 5000 \
-  --health-port 5001
+set -- /usr/bin/guestd \
+	--adapter-runtime-path /usr/bin/node \
+	--adapter-register-path /opt/helmr/adapter/register.mjs \
+	--adapter-path /opt/helmr/adapter/main.js \
+	--adapter-bundle-path /opt/helmr-adapter \
+	--vsock-port 5000 \
+	--health-port 5001
+if [ -n "$profile" ]; then
+	set -- "$@" --profile "$profile"
+fi
+exec "$@"
