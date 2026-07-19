@@ -100,14 +100,78 @@ run "manager_store_is_dedicated_versioned_and_create_only" {
 
   assert {
     condition = (
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerWritesOutsideNamespace") &&
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyUnconditionalManagerWrites") &&
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerCopies") &&
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerMutation") &&
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "s3:if-none-match") &&
-      strcontains(aws_s3_bucket_policy.manager_store.policy, "s3:ObjectCreationOperation")
+      strcontains(aws_s3_bucket_policy.manager_store.policy, jsonencode({
+        Sid       = "DenyUnconditionalManagerWrites"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:if-none-match" = "true"
+          }
+          Bool = {
+            "s3:ObjectCreationOperation" = "false"
+          }
+        }
+      })) &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, jsonencode({
+        Sid       = "DenyManagerCopies"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:x-amz-copy-source" = "false"
+          }
+          Bool = {
+            "s3:ObjectCreationOperation" = "false"
+          }
+        }
+      })) &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, jsonencode({
+        Sid       = "DenyExplicitNonKMSManagerEncryption"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" = "aws:kms"
+          }
+        }
+      })) &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, jsonencode({
+        Sid       = "DenyExplicitWrongManagerKMSKey"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.manager_store.arn
+          }
+        }
+      })) &&
+      strcontains(jsonencode(aws_s3_bucket_server_side_encryption_configuration.manager_store.rule), "\"sse_algorithm\":\"aws:kms\"") &&
+      strcontains(jsonencode(aws_s3_bucket_server_side_encryption_configuration.manager_store.rule), "\"kms_master_key_id\":\"${aws_kms_key.manager_store.arn}\"")
     )
-    error_message = "package-manager bucket policy must enforce immutable conditional creation."
+    error_message = "package-manager storage must enforce create-only writes and the dedicated default KMS key."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerWritesOutsideNamespace") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerMutation")
+    )
+    error_message = "package-manager bucket policy must reject writes outside its namespace and every mutation API."
   }
 }
 

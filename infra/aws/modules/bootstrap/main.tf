@@ -607,6 +607,36 @@ resource "aws_s3_bucket_policy" "manager_store" {
         }
       },
       {
+        Sid       = "DenyExplicitNonKMSManagerEncryption"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption" = "aws:kms"
+          }
+        }
+      },
+      {
+        Sid       = "DenyExplicitWrongManagerKMSKey"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "s3:PutObject"
+        Resource  = "${aws_s3_bucket.manager_store.arn}/v0/*"
+        Condition = {
+          Null = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = "false"
+          }
+          StringNotEquals = {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id" = aws_kms_key.manager_store.arn
+          }
+        }
+      },
+      {
         Sid       = "DenyManagerMutation"
         Effect    = "Deny"
         Principal = "*"
