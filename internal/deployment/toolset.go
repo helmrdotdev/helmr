@@ -23,15 +23,16 @@ const (
 	ManagerComponentMediaType = "application/vnd.helmr.package-manager-component.v0+squashfs"
 	ToolchainMediaType        = "application/vnd.helmr.standard-toolchain.v0+squashfs"
 
-	maxManagerRegistrationBytes = 32 << 10
-	maxToolchainBytes           = 4 << 10
-	maxToolsetBytes             = 64 << 10
-	maxToolComponentsBytes      = 64 << 10
-	maxToolRegistryBytes        = 16 << 20
-	maxToolRegistryMembers      = 1024
-	maxToolArgBytes             = 4096
-	maxToolArgvBytes            = 16 << 10
-	maxToolEnvironmentBytes     = 16 << 10
+	maxManagerRegistrationBytes       = 32 << 10
+	maxToolchainBytes                 = 4 << 10
+	maxToolsetBytes                   = 64 << 10
+	maxToolComponentsBytes            = 64 << 10
+	maxToolRegistryBytes              = 16 << 20
+	maxToolRegistryMembers            = 1024
+	maxToolArgBytes                   = 4096
+	maxToolArgvBytes                  = 16 << 10
+	maxToolEnvironmentBytes           = 16 << 10
+	maxToolArtifactBytes        int64 = 4 << 30
 
 	managerRegistrationDigestDomain = "helmr.package-manager-registration.v0\x00"
 	toolchainDigestDomain           = "helmr.standard-toolchain.v0\x00"
@@ -449,21 +450,28 @@ func validateToolRegistry(document toolRegistryDocument) error {
 		managerDigests[digest] = manager
 	}
 	toolchainDigests := make(map[string]Toolchain, len(document.Toolchains))
+	previousToolchainDigest := ""
 	for index, toolchain := range document.Toolchains {
 		if err := validateToolchain(toolchain); err != nil {
 			return fmt.Errorf("tool registry toolchain %d: %w", index, err)
-		}
-		if index > 0 && compareToolchains(document.Toolchains[index-1], toolchain) >= 0 {
-			return errors.New("tool registry toolchains are not in key order")
 		}
 		digest, err := StandardToolchainDigest(toolchain)
 		if err != nil {
 			return fmt.Errorf("tool registry toolchain %d: %w", index, err)
 		}
+		if index > 0 && compareToolchains(
+			document.Toolchains[index-1],
+			toolchain,
+			previousToolchainDigest,
+			digest,
+		) >= 0 {
+			return errors.New("tool registry toolchains are not in key order")
+		}
 		if _, exists := toolchainDigests[digest]; exists {
 			return errors.New("tool registry has a duplicate toolchain digest")
 		}
 		toolchainDigests[digest] = toolchain
+		previousToolchainDigest = digest
 	}
 	toolsetDigests := make(map[string]struct{}, len(document.Toolsets))
 	for index, toolset := range document.Toolsets {
@@ -501,8 +509,8 @@ func validateToolArtifact(value ManagerArtifact, mediaType, label string) error 
 	if value.MediaType != mediaType {
 		return fmt.Errorf("%s mediaType = %q, want %q", label, value.MediaType, mediaType)
 	}
-	if value.SizeBytes < 1 || value.SizeBytes > maxJSONSafeInteger {
-		return fmt.Errorf("%s sizeBytes is outside [1,%d]", label, maxJSONSafeInteger)
+	if value.SizeBytes < 1 || value.SizeBytes > maxToolArtifactBytes {
+		return fmt.Errorf("%s sizeBytes is outside [1,%d]", label, maxToolArtifactBytes)
 	}
 	return nil
 }
@@ -697,28 +705,30 @@ func compareManagers(left, right ManagerRegistration) int {
 	)
 }
 
-func compareToolchains(left, right Toolchain) int {
+func compareToolchains(left, right Toolchain, leftDigest, rightDigest string) int {
 	return strings.Compare(
-		left.ManagedRuntimeDigest+"\x00"+string(left.Architecture),
-		right.ManagedRuntimeDigest+"\x00"+string(right.Architecture),
+		left.ManagedRuntimeDigest+"\x00"+string(left.Architecture)+"\x00"+leftDigest,
+		right.ManagedRuntimeDigest+"\x00"+string(right.Architecture)+"\x00"+rightDigest,
 	)
 }
 
 func compareToolsets(left, right Toolset) int {
 	leftKey := fmt.Sprintf(
-		"%s\x00%s\x00%s\x00%s\x00%s",
+		"%s\x00%s\x00%s\x00%s\x00%s\x00%s",
 		left.PackageManager.Name,
 		left.PackageManager.Version,
-		left.ManagedRuntimeDigest,
 		left.Architecture,
+		left.ManagedRuntimeDigest,
+		left.StandardToolchainDigest,
 		left.MaterializerVersion,
 	)
 	rightKey := fmt.Sprintf(
-		"%s\x00%s\x00%s\x00%s\x00%s",
+		"%s\x00%s\x00%s\x00%s\x00%s\x00%s",
 		right.PackageManager.Name,
 		right.PackageManager.Version,
-		right.ManagedRuntimeDigest,
 		right.Architecture,
+		right.ManagedRuntimeDigest,
+		right.StandardToolchainDigest,
 		right.MaterializerVersion,
 	)
 	return strings.Compare(leftKey, rightKey)

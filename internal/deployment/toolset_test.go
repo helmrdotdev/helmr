@@ -231,6 +231,81 @@ func TestToolsetRegistryEnforcesKeyOrderAndUniqueSelection(t *testing.T) {
 	}
 }
 
+func TestToolsetRegistryAdmitsToolchainsThatDifferOnlyByDigest(t *testing.T) {
+	manager, firstToolchain, _, firstToolset := testToolset(t)
+	secondToolchain := firstToolchain
+	secondToolchain.FixtureDigest = toolDigestForTest("second toolchain fixtures")
+	secondToolchain.ToolchainClosure.Digest = toolDigestForTest("second toolchain closure")
+
+	firstDigest, err := StandardToolchainDigest(firstToolchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := StandardToolchainDigest(secondToolchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondToolset := firstToolset
+	secondToolset.StandardToolchainDigest = secondDigest
+	secondToolset.ComponentManifestDigest = toolDigestForTest("second components")
+	secondToolset.FixtureDigest = toolDigestForTest("second composite fixtures")
+	secondToolset.Artifact.Digest = toolDigestForTest("second dependency tools artifact")
+
+	toolchains := []Toolchain{firstToolchain, secondToolchain}
+	toolchainDigests := []string{firstDigest, secondDigest}
+	if compareToolchains(toolchains[0], toolchains[1], toolchainDigests[0], toolchainDigests[1]) > 0 {
+		toolchains[0], toolchains[1] = toolchains[1], toolchains[0]
+		toolchainDigests[0], toolchainDigests[1] = toolchainDigests[1], toolchainDigests[0]
+	}
+	toolsets := []Toolset{firstToolset, secondToolset}
+	if compareToolsets(toolsets[0], toolsets[1]) > 0 {
+		toolsets[0], toolsets[1] = toolsets[1], toolsets[0]
+	}
+
+	raw, err := CanonicalToolRegistry(
+		[]ManagerRegistration{manager},
+		toolchains,
+		toolsets,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := ParseToolRegistry(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(registry.toolchains) != 2 || len(registry.toolsets) != 2 {
+		t.Fatalf(
+			"registry members = %d toolchains, %d toolsets",
+			len(registry.toolchains),
+			len(registry.toolsets),
+		)
+	}
+
+	if _, err := CanonicalToolRegistry(
+		[]ManagerRegistration{manager},
+		[]Toolchain{toolchains[1], toolchains[0]},
+		toolsets,
+	); err == nil {
+		t.Fatal("CanonicalToolRegistry accepted toolchains out of digest order")
+	}
+	if _, err := CanonicalToolRegistry(
+		[]ManagerRegistration{manager},
+		toolchains,
+		[]Toolset{toolsets[1], toolsets[0]},
+	); err == nil {
+		t.Fatal("CanonicalToolRegistry accepted toolsets out of toolchain order")
+	}
+}
+
+func TestToolsetDocumentsRejectOversizedPhysicalObject(t *testing.T) {
+	manager, _, _, _ := testToolset(t)
+	manager.ManagerClosure.SizeBytes = maxToolArtifactBytes + 1
+	if _, err := CanonicalManagerRegistration(manager); err == nil {
+		t.Fatal("CanonicalManagerRegistration accepted an oversized object")
+	}
+}
+
 func TestToolsetRegistryEnforcesNestedDocumentBounds(t *testing.T) {
 	manager, toolchain, components, toolset := testToolset(t)
 	argument := strings.Repeat("x", maxToolArgBytes)
