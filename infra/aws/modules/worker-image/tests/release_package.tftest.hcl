@@ -33,6 +33,13 @@ override_resource {
 }
 
 override_resource {
+  target = aws_imagebuilder_component.runtime_release_validation
+  values = {
+    arn = "arn:aws:imagebuilder:us-east-1:000000000000:component/helmr-test-worker-runtime-release-validation/0.0.0/1"
+  }
+}
+
+override_resource {
   target = aws_imagebuilder_image_recipe.worker
   values = {
     arn = "arn:aws:imagebuilder:us-east-1:000000000000:image-recipe/helmr-test-worker/0.0.0"
@@ -83,8 +90,16 @@ run "release_package_transport_is_version_pinned" {
       strcontains(aws_imagebuilder_component.runtime_release.data, var.release_package_sha256) &&
       strcontains(aws_imagebuilder_component.runtime_release.data, "tarfile.open(archive, mode=\"r:\")") &&
       strcontains(aws_imagebuilder_component.runtime_release.data, "/usr/lib/helmr/runtime-release") &&
+      strcontains(aws_imagebuilder_component.runtime_release.data, "/usr/lib/helmr/toolchain-release") &&
+      strcontains(aws_imagebuilder_component.runtime_release.data, "toolchain-release/objects/sha256") &&
+      strcontains(aws_imagebuilder_component.runtime_release.data, "install -o root -g root -m 0444") &&
       strcontains(aws_imagebuilder_component.runtime_release.data, "sha256sum --check --strict") &&
-      length(aws_imagebuilder_image_recipe.worker.component) == 2
+      strcontains(aws_imagebuilder_component.runtime_release_validation.data, "s3api get-object") &&
+      strcontains(aws_imagebuilder_component.runtime_release_validation.data, "--version-id '${var.release_package_version_id}'") &&
+      strcontains(aws_imagebuilder_component.runtime_release_validation.data, var.release_package_sha256) &&
+      strcontains(aws_imagebuilder_component.runtime_release_validation.data, "sha256sum \"$path\"") &&
+      strcontains(aws_imagebuilder_component.runtime_release_validation.data, "toolchain-release/objects/sha256") &&
+      length(aws_imagebuilder_image_recipe.worker.component) == 3
     )
     error_message = "The image component must authenticate, safely unpack, install, and validate the exact release package."
   }

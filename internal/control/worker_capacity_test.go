@@ -56,17 +56,21 @@ func TestNormalizeWorkerCapabilitiesRequiresOneBuildExecutor(t *testing.T) {
 	}
 }
 
-func TestBuildWorkerRequiresCurrentToolRegistry(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("7", 64)
+func TestBuildWorkerRequiresCurrentToolchainCatalog(t *testing.T) {
+	policy := testBuildPolicy()
+	digest, err := policy.ToolchainCatalogDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	capabilities := testWorkerCapabilities()
 	capabilities.SupportsBuild = true
 	capabilities.MaxBuildExecutors = 1
-	capabilities.ToolRegistryDigest = digest
+	capabilities.ToolchainCatalogDigest = digest
 	normalized, err := normalizeWorkerCapabilities(capabilities)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := &Server{buildPolicy: testBuildPolicy()}
+	server := &Server{buildPolicy: policy, regionID: "us-east-1"}
 	if err := server.validateWorkerBuildPolicy(normalized); err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +83,15 @@ func TestBuildWorkerRequiresCurrentToolRegistry(t *testing.T) {
 		api.WorkerActivateRequest{},
 		normalized,
 	)
-	expected, err := deployment.ToolDigestBytes(digest)
+	expected, err := deployment.SHA256DigestBytes(digest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(params.ToolRegistryDigest, expected) {
-		t.Fatalf("tool registry digest = %x, want %x", params.ToolRegistryDigest, expected)
+	if !bytes.Equal(params.ToolchainCatalogDigest, expected) {
+		t.Fatalf("toolchain catalog digest = %x, want %x", params.ToolchainCatalogDigest, expected)
 	}
 
-	capabilities.ToolRegistryDigest = "sha256:" + strings.Repeat("8", 64)
+	capabilities.ToolchainCatalogDigest = "sha256:" + strings.Repeat("7", 64)
 	normalized, err = normalizeWorkerCapabilities(capabilities)
 	if err != nil {
 		t.Fatal(err)
@@ -97,12 +101,12 @@ func TestBuildWorkerRequiresCurrentToolRegistry(t *testing.T) {
 	}
 }
 
-func TestRunOnlyWorkerRejectsToolRegistry(t *testing.T) {
+func TestRunOnlyWorkerRejectsToolchainCatalog(t *testing.T) {
 	capabilities := testWorkerCapabilities()
 	capabilities.SupportsRun = true
 	capabilities.MaxRuntimeStarts = 1
-	capabilities.ToolRegistryDigest = "sha256:" + strings.Repeat("7", 64)
+	capabilities.ToolchainCatalogDigest = "sha256:" + strings.Repeat("7", 64)
 	if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
-		t.Fatal("normalizeWorkerCapabilities accepted run-only tool registry")
+		t.Fatal("normalizeWorkerCapabilities accepted run-only toolchain catalog")
 	}
 }

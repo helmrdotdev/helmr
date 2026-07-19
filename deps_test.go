@@ -45,7 +45,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"config":              {"auth", "region"},
 		"console":             {},
 		"control":             {"api", "archive", "auth", "cas", "compute", "console", "db", "db/schema", "deployment", "dispatch", "email", "jsoncanon", "pgvalue", "publicid", "region", "schedule", "secret", "sha256sum", "telemetry", "token", "tracing", "wire", "workspace"},
-		"cmd/tool-release":    {"deployment"},
+		"cmd/tool-release":    {"deployment", "jsoncanon"},
 		"db":                  {},
 		"db/dbtest":           {},
 		"db/schema":           {},

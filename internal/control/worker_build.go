@@ -44,23 +44,12 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		writeError(w, unavailable(errors.New("build policy is not configured")))
 		return
 	}
-	registryDigest, err := s.buildPolicy.ToolRegistryDigest()
-	if err != nil {
-		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
-		return
-	}
-	registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
-	if err != nil {
-		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
-		return
-	}
 	var response api.WorkerDeploymentBuildLeaseResponse
-	err = s.inTx(r.Context(), func(work *txWork) error {
+	err := s.inTx(r.Context(), func(work *txWork) error {
 		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-			ToolRegistryDigest: registryDigestBytes,
-			ExpiresAt:          pgvalue.Timestamptz(leaseExpiresAt),
+			ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
 		})
 		if isNoRows(err) {
 			return nil
@@ -72,7 +61,9 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return fmt.Errorf("read deployment build runtime digest: %w", err)
 		}
-		toolchainDigest, err := deployment.ToolDigestString(row.BuildStandardToolchainDigest)
+		toolchainDigest, err := deployment.SHA256DigestString(
+			row.BuildStandardToolchainDigest,
+		)
 		if err != nil {
 			return fmt.Errorf("read deployment build standard toolchain digest: %w", err)
 		}
@@ -493,16 +484,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, unavailable(errors.New("build policy is not configured")))
 		return
 	}
-	registryDigest, err := s.buildPolicy.ToolRegistryDigest()
-	if err != nil {
-		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
-		return
-	}
-	registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
-	if err != nil {
-		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
-		return
-	}
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
@@ -513,7 +494,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 				WorkerInstanceID:      buildWorkerInstanceID,
 				WorkerEpoch:           worker.WorkerEpoch,
 				WorkerProtocolVersion: worker.ProtocolVersion,
-				ToolRegistryDigest:    registryDigestBytes,
 			},
 		)
 		if isNoRows(err) {
@@ -563,6 +543,24 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			!locked.ExpiresAt.Time.After(time.Now()) {
 			return conflict(errors.New("deployment build lease is stale"))
 		}
+		runtimeDigest, err := deployment.RuntimeDigestString(locked.BuildRuntimeDigest)
+		if err != nil {
+			return errors.New("deployment build runtime digest is invalid")
+		}
+		toolchainDigest, err := deployment.SHA256DigestString(
+			locked.BuildStandardToolchainDigest,
+		)
+		if err != nil {
+			return errors.New("deployment build standard toolchain digest is invalid")
+		}
+		target, err := s.buildPolicy.Resolve(
+			runtimeDigest,
+			toolchainDigest,
+			locked.BuildMaterializerVersion,
+		)
+		if err != nil || string(target.Runtime.Architecture) != locked.BuildArchitecture {
+			return errors.New("deployment build target is not registered")
+		}
 		failBuildWithReason := func(reasonCode, fallback, message string) error {
 			message = strings.TrimSpace(message)
 			if message == "" {
@@ -608,22 +606,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		}
 		if request.Result.Error != nil {
 			return failBuild(*request.Result.Error)
-		}
-		runtimeDigest, err := deployment.RuntimeDigestString(locked.BuildRuntimeDigest)
-		if err != nil {
-			return errors.New("deployment build runtime digest is invalid")
-		}
-		toolchainDigest, err := deployment.ToolDigestString(locked.BuildStandardToolchainDigest)
-		if err != nil {
-			return errors.New("deployment build standard toolchain digest is invalid")
-		}
-		target, err := s.buildPolicy.Resolve(
-			runtimeDigest,
-			toolchainDigest,
-			locked.BuildMaterializerVersion,
-		)
-		if err != nil || string(target.Runtime.Architecture) != locked.BuildArchitecture {
-			return errors.New("deployment build target is not registered")
 		}
 		receipt, err := deployment.ValidateBuildProgram(request.Result)
 		if err != nil {

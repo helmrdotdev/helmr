@@ -18,8 +18,9 @@ const (
 )
 
 var (
-	ErrBuildRegionNotConfigured = errors.New("build policy region is not configured")
-	ErrRuntimeNotRegistered     = errors.New("runtime is not registered")
+	ErrBuildRegionNotConfigured       = errors.New("build policy region is not configured")
+	ErrRuntimeNotRegistered           = errors.New("runtime is not registered")
+	ErrStandardToolchainNotRegistered = errors.New("standard toolchain is not registered")
 )
 
 type BuildTarget struct {
@@ -29,11 +30,12 @@ type BuildTarget struct {
 }
 
 type BuildPolicy struct {
-	current            map[string]buildPolicyTarget
-	runtimes           map[string]RuntimeDescriptor
-	runtimesBytes      []byte
-	toolRegistryDigest string
-	registry           *ToolRegistry
+	current                map[string]buildPolicyTarget
+	runtimes               map[string]RuntimeDescriptor
+	runtimesBytes          []byte
+	toolchains             map[string]Toolchain
+	toolchainsBytes        []byte
+	toolchainCatalogDigest string
 }
 
 type buildPolicyTarget struct {
@@ -43,16 +45,16 @@ type buildPolicyTarget struct {
 }
 
 type buildPolicyDocument struct {
-	Current            map[string]buildPolicyTarget `json:"current"`
-	FormatVersion      int                          `json:"formatVersion"`
-	Runtimes           []RuntimeDescriptor          `json:"runtimes"`
-	ToolRegistryDigest string                       `json:"toolRegistryDigest"`
+	Current       map[string]buildPolicyTarget `json:"current"`
+	FormatVersion int                          `json:"formatVersion"`
+	Runtimes      []RuntimeDescriptor          `json:"runtimes"`
+	Toolchains    []Toolchain                  `json:"toolchains"`
 }
 
 func LoadBuildPolicy(
 	path string,
 	catalog *RuntimeCatalog,
-	registry *ToolRegistry,
+	toolchainCatalog *ToolchainCatalog,
 ) (*BuildPolicy, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -68,7 +70,7 @@ func LoadBuildPolicy(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateBuildPolicyRegistries(policy, catalog, registry); err != nil {
+	if err := validateBuildPolicyCatalogs(policy, catalog, toolchainCatalog); err != nil {
 		return nil, err
 	}
 	return policy, nil
@@ -112,17 +114,34 @@ func ParseBuildPolicy(raw []byte) (*BuildPolicy, error) {
 	if err != nil {
 		return nil, err
 	}
+	toolchainsBytes, err := canonicalToolchains(document.Toolchains)
+	if err != nil {
+		return nil, err
+	}
+	toolchainCatalogDigest, err := toolchainCatalogDigest(document.Toolchains)
+	if err != nil {
+		return nil, err
+	}
 	policy := &BuildPolicy{
-		current:            make(map[string]buildPolicyTarget, len(document.Current)),
-		runtimes:           make(map[string]RuntimeDescriptor, len(document.Runtimes)),
-		runtimesBytes:      runtimesBytes,
-		toolRegistryDigest: document.ToolRegistryDigest,
+		current:                make(map[string]buildPolicyTarget, len(document.Current)),
+		runtimes:               make(map[string]RuntimeDescriptor, len(document.Runtimes)),
+		runtimesBytes:          runtimesBytes,
+		toolchains:             make(map[string]Toolchain, len(document.Toolchains)),
+		toolchainsBytes:        toolchainsBytes,
+		toolchainCatalogDigest: toolchainCatalogDigest,
 	}
 	for region, target := range document.Current {
 		policy.current[region] = target
 	}
 	for _, descriptor := range document.Runtimes {
 		policy.runtimes[descriptor.Digest] = descriptor
+	}
+	for _, toolchain := range document.Toolchains {
+		digest, err := StandardToolchainDigest(toolchain)
+		if err != nil {
+			return nil, err
+		}
+		policy.toolchains[digest] = toolchain
 	}
 	return policy, nil
 }
@@ -142,13 +161,6 @@ func (p *BuildPolicy) Current(region string) (BuildTarget, error) {
 	}, nil
 }
 
-func (p *BuildPolicy) ToolRegistryDigest() (string, error) {
-	if p == nil || !validToolDigest(p.toolRegistryDigest) {
-		return "", errToolRegistryUnauthenticated
-	}
-	return p.toolRegistryDigest, nil
-}
-
 func (p *BuildPolicy) ResolveRuntime(digest string) (RuntimeDescriptor, error) {
 	if p == nil {
 		return RuntimeDescriptor{}, fmt.Errorf("%w: %q", ErrRuntimeNotRegistered, digest)
@@ -160,6 +172,24 @@ func (p *BuildPolicy) ResolveRuntime(digest string) (RuntimeDescriptor, error) {
 	return descriptor, nil
 }
 
+func (p *BuildPolicy) ResolveToolchain(digest string) (Toolchain, error) {
+	if p == nil {
+		return Toolchain{}, fmt.Errorf("%w: %q", ErrStandardToolchainNotRegistered, digest)
+	}
+	toolchain, ok := p.toolchains[digest]
+	if !ok {
+		return Toolchain{}, fmt.Errorf("%w: %q", ErrStandardToolchainNotRegistered, digest)
+	}
+	return toolchain, nil
+}
+
+func (p *BuildPolicy) ToolchainCatalogDigest() (string, error) {
+	if p == nil || !validToolDigest(p.toolchainCatalogDigest) {
+		return "", errToolchainCatalogUnauthenticated
+	}
+	return p.toolchainCatalogDigest, nil
+}
+
 func (p *BuildPolicy) Resolve(
 	runtimeDigest,
 	standardToolchainDigest,
@@ -169,10 +199,7 @@ func (p *BuildPolicy) Resolve(
 	if err != nil {
 		return BuildTarget{}, err
 	}
-	if p.registry == nil {
-		return BuildTarget{}, errToolRegistryUnauthenticated
-	}
-	toolchain, err := p.registry.Toolchain(standardToolchainDigest)
+	toolchain, err := p.ResolveToolchain(standardToolchainDigest)
 	if err != nil {
 		return BuildTarget{}, err
 	}
@@ -186,30 +213,6 @@ func (p *BuildPolicy) Resolve(
 		StandardToolchainDigest: standardToolchainDigest,
 		MaterializerVersion:     materializerVersion,
 	}, nil
-}
-
-func (p *BuildPolicy) ResolveToolset(
-	target BuildTarget,
-	manager PackageManager,
-) (Toolset, error) {
-	resolved, err := p.Resolve(
-		target.Runtime.Digest,
-		target.StandardToolchainDigest,
-		target.MaterializerVersion,
-	)
-	if err != nil {
-		return Toolset{}, err
-	}
-	if resolved != target {
-		return Toolset{}, errors.New("build target does not exact-match the authenticated policy")
-	}
-	return p.registry.Resolve(ToolKey{
-		Architecture:            resolved.Runtime.Architecture,
-		ManagedRuntimeDigest:    resolved.Runtime.Digest,
-		MaterializerVersion:     resolved.MaterializerVersion,
-		PackageManager:          manager,
-		StandardToolchainDigest: resolved.StandardToolchainDigest,
-	})
 }
 
 func ValidateProgramTarget(
@@ -244,36 +247,51 @@ func ValidateBuildPolicyUpgrade(previous, next *BuildPolicy) error {
 			return fmt.Errorf("build policy upgrade mutates registered runtime %q", digest)
 		}
 	}
+	for digest, toolchain := range previous.toolchains {
+		replacement, ok := next.toolchains[digest]
+		if !ok {
+			return fmt.Errorf(
+				"build policy upgrade removes registered standard toolchain %q",
+				digest,
+			)
+		}
+		if replacement != toolchain {
+			return fmt.Errorf(
+				"build policy upgrade mutates registered standard toolchain %q",
+				digest,
+			)
+		}
+	}
 	return nil
 }
 
-func validateBuildPolicyRegistries(
+func validateBuildPolicyCatalogs(
 	policy *BuildPolicy,
-	catalog *RuntimeCatalog,
-	registry *ToolRegistry,
+	runtimeCatalog *RuntimeCatalog,
+	toolchainCatalog *ToolchainCatalog,
 ) error {
 	if policy == nil {
 		return errors.New("build policy is required")
 	}
-	if catalog == nil || !catalog.authenticated {
+	if runtimeCatalog == nil || !runtimeCatalog.authenticated {
 		return errors.New("authenticated runtime catalog is required")
 	}
-	if !bytes.Equal(policy.runtimesBytes, catalog.runtimesBytes) {
+	if !bytes.Equal(policy.runtimesBytes, runtimeCatalog.runtimesBytes) {
 		return errors.New("build policy runtimes do not exact-match authenticated catalog")
 	}
-	registryDigest, err := registry.Digest()
+	if toolchainCatalog == nil || !toolchainCatalog.authenticated {
+		return errToolchainCatalogUnauthenticated
+	}
+	if !bytes.Equal(policy.toolchainsBytes, toolchainCatalog.toolchainsBytes) {
+		return errors.New("build policy toolchains do not exact-match authenticated catalog")
+	}
+	catalogDigest, err := toolchainCatalog.Digest()
 	if err != nil {
 		return err
 	}
-	if registryDigest != policy.toolRegistryDigest {
-		return errors.New("build policy toolRegistryDigest does not exact-match authenticated registry")
-	}
 	for region, target := range policy.current {
 		runtime := policy.runtimes[target.RuntimeDigest]
-		toolchain, err := registry.Toolchain(target.StandardToolchainDigest)
-		if err != nil {
-			return fmt.Errorf("build policy current region %q: %w", region, err)
-		}
+		toolchain := policy.toolchains[target.StandardToolchainDigest]
 		if toolchain.Architecture != runtime.Architecture ||
 			toolchain.ManagedRuntimeDigest != runtime.Digest {
 			return fmt.Errorf(
@@ -282,7 +300,9 @@ func validateBuildPolicyRegistries(
 			)
 		}
 	}
-	policy.registry = registry
+	if policy.toolchainCatalogDigest != catalogDigest {
+		return errors.New("build policy toolchain catalog identity does not exact-match authenticated catalog")
+	}
 	return nil
 }
 
@@ -297,31 +317,42 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 	if document.Current == nil {
 		return errors.New("build policy current must be an object")
 	}
-	if !validToolDigest(document.ToolRegistryDigest) {
-		return errors.New("build policy toolRegistryDigest is invalid")
-	}
-	registered := make(map[string]struct{}, len(document.Runtimes))
+	registeredRuntimes := make(map[string]RuntimeDescriptor, len(document.Runtimes))
 	if err := validateRuntimeDescriptors("build policy", document.Runtimes); err != nil {
 		return err
 	}
 	for _, descriptor := range document.Runtimes {
-		registered[descriptor.Digest] = struct{}{}
+		registeredRuntimes[descriptor.Digest] = descriptor
+	}
+	if err := validateToolchains("build policy", document.Toolchains); err != nil {
+		return err
+	}
+	registeredToolchains := make(map[string]Toolchain, len(document.Toolchains))
+	for _, toolchain := range document.Toolchains {
+		digest, err := StandardToolchainDigest(toolchain)
+		if err != nil {
+			return err
+		}
+		registeredToolchains[digest] = toolchain
 	}
 	for region, target := range document.Current {
 		if err := regionpkg.ValidateID(region); err != nil {
 			return fmt.Errorf("build policy current region %q: %w", region, err)
 		}
-		if _, ok := registered[target.RuntimeDigest]; !ok {
+		runtime, ok := registeredRuntimes[target.RuntimeDigest]
+		if !ok {
 			return fmt.Errorf(
 				"build policy current region %q references unregistered runtime %q",
 				region,
 				target.RuntimeDigest,
 			)
 		}
-		if !validToolDigest(target.StandardToolchainDigest) {
+		toolchain, ok := registeredToolchains[target.StandardToolchainDigest]
+		if !ok {
 			return fmt.Errorf(
-				"build policy current region %q has an invalid standard toolchain digest",
+				"build policy current region %q references unregistered standard toolchain %q",
 				region,
+				target.StandardToolchainDigest,
 			)
 		}
 		if target.MaterializerVersion != DependencyMaterializerVersion {
@@ -330,6 +361,13 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 				region,
 				target.MaterializerVersion,
 				DependencyMaterializerVersion,
+			)
+		}
+		if toolchain.Architecture != runtime.Architecture ||
+			toolchain.ManagedRuntimeDigest != runtime.Digest {
+			return fmt.Errorf(
+				"build policy current region %q has an incompatible standard toolchain",
+				region,
 			)
 		}
 	}

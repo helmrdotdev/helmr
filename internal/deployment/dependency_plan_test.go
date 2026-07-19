@@ -125,6 +125,28 @@ func TestDependencyPlanUsesManagedRuntimeForNPM(t *testing.T) {
 	}
 }
 
+func TestDependencyPlanRootsToolchainInNixNamespace(t *testing.T) {
+	plan := dependencyPlanFixture(t, PackageManagerBun, ArchitectureAArch64)
+	if plan.Mounts.StandardToolchain != "/nix" {
+		t.Fatalf(
+			"standard-toolchain mount = %q",
+			plan.Mounts.StandardToolchain,
+		)
+	}
+	if !reflect.DeepEqual(plan.Aliases, []PlanAlias{
+		{Path: "/bin/sh", Target: "/nix/bin/sh"},
+		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+	}) {
+		t.Fatalf("standard-toolchain aliases = %#v", plan.Aliases)
+	}
+	if got := plan.Environment[1]; got != (PlanEnvironment{
+		Name:  "PATH",
+		Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
+	}) {
+		t.Fatalf("dependency PATH = %#v", got)
+	}
+}
+
 func TestDependencyPlanRejectsTemplateDrift(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -228,7 +250,7 @@ func TestDependencyPlanHasStableDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "sha256:59269e2a254dd6693c04ad2693d8fd314abca74dc915e1cfe899b980e6e704b0"
+	const want = "sha256:36922c4bb037b6b0be3c844a44b5cd85c6b2addc2d9c80962d5d96ebf38a6b81"
 	if digest != want {
 		t.Fatalf("dependency plan digest = %q, want %q", digest, want)
 	}
@@ -257,7 +279,7 @@ func dependencyPlanFixture(
 func dependencyPlanToolchain(architecture RuntimeArchitecture) Toolchain {
 	return Toolchain{
 		Architecture:         architecture,
-		FormatVersion:        ToolsetFormatVersion,
+		FormatVersion:        ToolchainFormatVersion,
 		ManagedRuntimeDigest: "sha256:" + strings.Repeat("3", 64),
 		ToolchainClosure: ManagerArtifact{
 			Digest:    "sha256:" + strings.Repeat("4", 64),

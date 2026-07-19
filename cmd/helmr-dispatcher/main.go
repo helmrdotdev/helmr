@@ -39,16 +39,14 @@ const (
 )
 
 var loadAWSConfig = awsconfig.LoadDefaultConfig
-var loadDispatcherToolRegistryDigest = func() ([]byte, error) {
-	registry, err := deployment.LoadToolRegistry()
-	if err != nil {
-		return nil, err
-	}
-	digest, err := registry.Digest()
-	if err != nil {
-		return nil, err
-	}
-	return deployment.ToolDigestBytes(digest)
+
+type dispatcherToolchainCatalog interface {
+	Digest() (string, error)
+	Resolve(string) (deployment.Toolchain, error)
+}
+
+var loadDispatcherToolchainCatalog = func() (dispatcherToolchainCatalog, error) {
+	return deployment.LoadToolchainCatalog()
 }
 
 func main() {
@@ -66,11 +64,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	toolRegistryDigestBytes, err := loadDispatcherToolRegistryDigest()
+	toolchainCatalog, err := loadDispatcherToolchainCatalog()
 	if err != nil {
-		return fmt.Errorf("authenticate dependency tool registry: %w", err)
+		return fmt.Errorf("authenticate standard toolchain catalog: %w", err)
 	}
-
+	toolchainCatalogDigest, err := toolchainCatalog.Digest()
+	if err != nil {
+		return fmt.Errorf("read standard toolchain catalog digest: %w", err)
+	}
+	toolchainCatalogDigestBytes, err := deployment.SHA256DigestBytes(
+		toolchainCatalogDigest,
+	)
+	if err != nil {
+		return fmt.Errorf("decode standard toolchain catalog digest: %w", err)
+	}
 	pool, err := newDispatchPool(ctx, cfg.DatabaseURL, baseMaxConns)
 	if err != nil {
 		return fmt.Errorf("connect database: %w", err)
@@ -116,7 +123,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	buildDispatchAuthority, err := dispatch.NewBuildAuthority(
 		buildDispatchPool,
-		toolRegistryDigestBytes,
+		toolchainCatalogDigestBytes,
+		func(digest string) error {
+			_, err := toolchainCatalog.Resolve(digest)
+			return err
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("configure build dispatch authority: %w", err)

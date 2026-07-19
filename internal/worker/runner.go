@@ -12,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/client"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 const defaultDeploymentBuildCompletionGrace = 30 * time.Second
@@ -58,6 +59,10 @@ type DeploymentBuilder interface {
 	BuildDeployment(ctx context.Context, lease api.WorkerDeploymentBuildLease, deployment api.WorkerDeploymentBuild) (api.WorkerDeploymentBuildResult, error)
 }
 
+type BuildPolicy interface {
+	Resolve(string, string, string) (deployment.BuildTarget, error)
+}
+
 type Materializer interface {
 	RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error
 }
@@ -87,6 +92,7 @@ type Runner struct {
 	client                         ControlClient
 	executor                       Executor
 	deploymentBuilder              DeploymentBuilder
+	buildPolicy                    BuildPolicy
 	materializer                   Materializer
 	capabilities                   api.WorkerCapabilities
 	resources                      *capacity.Ledger
@@ -121,6 +127,12 @@ func WithLogger(log *slog.Logger) Option {
 func WithDeploymentBuilder(builder DeploymentBuilder) Option {
 	return func(runner *Runner) {
 		runner.deploymentBuilder = builder
+	}
+}
+
+func WithBuildPolicy(policy BuildPolicy) Option {
+	return func(runner *Runner) {
+		runner.buildPolicy = policy
 	}
 }
 
@@ -177,6 +189,9 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	}
 	if runner.resources == nil {
 		return nil, errors.New("worker capacity ledger is required")
+	}
+	if capabilities.SupportsBuild && runner.buildPolicy == nil {
+		return nil, errors.New("build worker policy is required")
 	}
 	if runner.log == nil {
 		runner.log = slog.Default()

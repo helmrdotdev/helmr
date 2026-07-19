@@ -69,14 +69,14 @@ WITH candidate AS (
        AND worker_instances.current_epoch = deployment_build_leases.worker_epoch
        AND worker_instances.state = 'active'
        AND worker_instances.supports_build
-       AND worker_instances.tool_registry_digest = $1::bytea
+       AND worker_instances.toolchain_catalog_digest IS NOT NULL
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = deployments.build_architecture
-     WHERE deployment_build_leases.worker_group_id = $2
-       AND deployment_build_leases.worker_instance_id = $3
-       AND deployment_build_leases.worker_epoch = $4
-       AND deployment_build_leases.worker_protocol_version = $5
+     WHERE deployment_build_leases.worker_group_id = $1
+       AND deployment_build_leases.worker_instance_id = $2
+       AND deployment_build_leases.worker_epoch = $3
+       AND deployment_build_leases.worker_protocol_version = $4
        AND deployment_build_leases.state = 'assigned'
        AND deployment_build_leases.start_deadline_at > now()
        AND deployment_build_leases.expires_at > now()
@@ -86,7 +86,7 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE deployment_build_leases
        SET state = 'starting', claimed_at = now(), renewed_at = now(),
-           expires_at = $6, updated_at = now()
+           expires_at = $5, updated_at = now()
       FROM candidate
      WHERE deployment_build_leases.id = candidate.id
     RETURNING deployment_build_leases.id, deployment_build_leases.org_id, deployment_build_leases.project_id, deployment_build_leases.environment_id, deployment_build_leases.deployment_id, deployment_build_leases.build_region_id, deployment_build_leases.lease_sequence, deployment_build_leases.worker_group_id, deployment_build_leases.worker_instance_id, deployment_build_leases.worker_epoch, deployment_build_leases.worker_protocol_version, deployment_build_leases.requested_cpu_millis, deployment_build_leases.requested_memory_bytes, deployment_build_leases.requested_workload_disk_bytes, deployment_build_leases.requested_scratch_bytes, deployment_build_leases.requested_build_executors, deployment_build_leases.build_snapshot, deployment_build_leases.trace_id, deployment_build_leases.span_id, deployment_build_leases.parent_span_id, deployment_build_leases.traceparent, deployment_build_leases.state, deployment_build_leases.assigned_at, deployment_build_leases.start_deadline_at, deployment_build_leases.claimed_at, deployment_build_leases.started_at, deployment_build_leases.renewed_at, deployment_build_leases.expires_at, deployment_build_leases.terminal_at, deployment_build_leases.terminal_reason_code, deployment_build_leases.terminal_error, deployment_build_leases.terminal_request_fingerprint, deployment_build_leases.created_at, deployment_build_leases.updated_at
@@ -111,7 +111,6 @@ SELECT claimed.id, claimed.org_id, claimed.project_id, claimed.environment_id, c
 `
 
 type ClaimNextDeploymentBuildLeaseParams struct {
-	ToolRegistryDigest    []byte             `json:"tool_registry_digest"`
 	WorkerGroupID         string             `json:"worker_group_id"`
 	WorkerInstanceID      pgtype.UUID        `json:"worker_instance_id"`
 	WorkerEpoch           int64              `json:"worker_epoch"`
@@ -172,7 +171,6 @@ type ClaimNextDeploymentBuildLeaseRow struct {
 
 func (q *Queries) ClaimNextDeploymentBuildLease(ctx context.Context, arg ClaimNextDeploymentBuildLeaseParams) (ClaimNextDeploymentBuildLeaseRow, error) {
 	row := q.db.QueryRow(ctx, claimNextDeploymentBuildLease,
-		arg.ToolRegistryDigest,
 		arg.WorkerGroupID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
@@ -3361,12 +3359,12 @@ const lockDeploymentBuildWorkerCertification = `-- name: LockDeploymentBuildWork
 WITH locked_group AS MATERIALIZED (
     SELECT worker_groups.id
       FROM worker_groups
-     WHERE worker_groups.id = $5
+     WHERE worker_groups.id = $4
        AND worker_groups.state IN ('active', 'draining')
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.tool_registry_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch
@@ -3381,7 +3379,7 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.supports_build
-   AND worker_instances.tool_registry_digest = $4::bytea
+   AND worker_instances.toolchain_catalog_digest IS NOT NULL
  FOR UPDATE OF worker_instances
 `
 
@@ -3389,7 +3387,6 @@ type LockDeploymentBuildWorkerCertificationParams struct {
 	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
 	WorkerEpoch           int64       `json:"worker_epoch"`
 	WorkerProtocolVersion string      `json:"worker_protocol_version"`
-	ToolRegistryDigest    []byte      `json:"tool_registry_digest"`
 	WorkerGroupID         string      `json:"worker_group_id"`
 }
 
@@ -3406,7 +3403,7 @@ type LockDeploymentBuildWorkerCertificationRow struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
-	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
@@ -3450,7 +3447,6 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.WorkerProtocolVersion,
-		arg.ToolRegistryDigest,
 		arg.WorkerGroupID,
 	)
 	var i LockDeploymentBuildWorkerCertificationRow
@@ -3467,7 +3463,7 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolRegistryDigest,
+		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,

@@ -9,6 +9,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -26,6 +27,33 @@ func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 			SizeBytes:         1,
 		},
 	}
+}
+
+type consumerBuildPolicy struct{}
+
+func (consumerBuildPolicy) Resolve(
+	runtimeDigest,
+	standardToolchainDigest,
+	materializerVersion string,
+) (deployment.BuildTarget, error) {
+	build := testWorkerDeploymentBuild()
+	if runtimeDigest != build.Runtime.Digest ||
+		standardToolchainDigest != build.StandardToolchainDigest ||
+		materializerVersion != build.MaterializerVersion {
+		return deployment.BuildTarget{}, errors.New("build target is not registered")
+	}
+	return deployment.BuildTarget{
+		Runtime: deployment.RuntimeDescriptor{
+			Architecture:      deployment.ArchitectureAArch64,
+			Digest:            build.Runtime.Digest,
+			FormatVersion:     build.Runtime.FormatVersion,
+			MediaType:         build.Runtime.MediaType,
+			RuntimeAPIVersion: build.Runtime.RuntimeAPIVersion,
+			SizeBytes:         build.Runtime.SizeBytes,
+		},
+		StandardToolchainDigest: standardToolchainDigest,
+		MaterializerVersion:     materializerVersion,
+	}, nil
 }
 
 type consumerTestClient struct {
@@ -187,7 +215,14 @@ func TestBuildConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 	}
 	executor := &detachedTestExecutor{}
 	builder := &successfulTestBuilder{}
-	runner, err := NewRunner(client, executor, capabilities, WithCapacity(testCapacity(t, capabilities)), WithDeploymentBuilder(builder))
+	runner, err := NewRunner(
+		client,
+		executor,
+		capabilities,
+		WithCapacity(testCapacity(t, capabilities)),
+		WithBuildPolicy(consumerBuildPolicy{}),
+		WithDeploymentBuilder(builder),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +265,7 @@ func TestDefaultBuildEnvelopeFitsDefaultBuildWorker(t *testing.T) {
 		&detachedTestExecutor{},
 		capabilities,
 		WithCapacity(testCapacity(t, capabilities)),
+		WithBuildPolicy(consumerBuildPolicy{}),
 		WithDeploymentBuilder(&successfulTestBuilder{}),
 	)
 	if err != nil {
@@ -271,6 +307,12 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 				deployment.Runtime.SizeBytes = 0
 			},
 		},
+		{
+			name: "unregistered standard toolchain", reason: "requirements_unsupported", withBuilder: true,
+			mutate: func(_ *api.WorkerCapabilities, _ *api.WorkerDeploymentBuildLease, deployment *api.WorkerDeploymentBuild) {
+				deployment.StandardToolchainDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+			},
+		},
 		{name: "builder unavailable", reason: "builder_unavailable"},
 		{
 			name: "lease deadline too short", reason: "lease_deadline_too_short", withBuilder: true,
@@ -293,7 +335,10 @@ func TestBuildPreStartRejectionsReturnSuccessfulNilWork(t *testing.T) {
 				buildLease: lease,
 				deployment: deployment,
 			}
-			options := []Option{WithCapacity(testCapacity(t, capabilities))}
+			options := []Option{
+				WithCapacity(testCapacity(t, capabilities)),
+				WithBuildPolicy(consumerBuildPolicy{}),
+			}
 			if tt.withBuilder {
 				options = append(options, WithDeploymentBuilder(&successfulTestBuilder{}))
 			}
@@ -341,7 +386,14 @@ func TestBuildAdmissionIncludesRuntimeOccupancy(t *testing.T) {
 		},
 		deployment: testWorkerDeploymentBuild(),
 	}
-	runner, err := NewRunner(client, &detachedTestExecutor{}, capabilities, WithCapacity(resources), WithDeploymentBuilder(&successfulTestBuilder{}))
+	runner, err := NewRunner(
+		client,
+		&detachedTestExecutor{},
+		capabilities,
+		WithCapacity(resources),
+		WithBuildPolicy(consumerBuildPolicy{}),
+		WithDeploymentBuilder(&successfulTestBuilder{}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,6 +476,7 @@ func TestBuildCleanupAmbiguityRetainsReservationAndTerminatesWorker(t *testing.T
 		&detachedTestExecutor{},
 		capabilities,
 		WithCapacity(resources),
+		WithBuildPolicy(consumerBuildPolicy{}),
 		WithDeploymentBuilder(builder),
 	)
 	if err != nil {
@@ -469,6 +522,7 @@ func TestBuildServiceFailureRetainsReservationAndTerminatesWorker(t *testing.T) 
 		&detachedTestExecutor{},
 		capabilities,
 		WithCapacity(resources),
+		WithBuildPolicy(consumerBuildPolicy{}),
 		WithDeploymentBuilder(&fatalBuildTestBuilder{}),
 	)
 	if err != nil {
@@ -511,6 +565,7 @@ func TestCanceledBuildReleasesReservation(t *testing.T) {
 		&detachedTestExecutor{},
 		capabilities,
 		WithCapacity(resources),
+		WithBuildPolicy(consumerBuildPolicy{}),
 		WithDeploymentBuilder(&canceledBuildTestBuilder{}),
 	)
 	if err != nil {

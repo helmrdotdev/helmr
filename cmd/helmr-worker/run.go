@@ -53,8 +53,9 @@ func run(log *slog.Logger) error {
 	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
-	var toolRegistryDigest string
-	var toolCorpus *deployment.ToolCorpus
+	var buildPolicy *deployment.BuildPolicy
+	var toolchainCatalogDigest string
+	var toolCorpus *deployment.ToolchainCorpus
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
 		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
@@ -173,23 +174,27 @@ func run(log *slog.Logger) error {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
-		toolRegistry, err := deployment.LoadToolRegistry()
+		toolchainCatalog, err := deployment.LoadToolchainCatalog()
 		if err != nil {
-			return fmt.Errorf("authenticate dependency tool registry: %w", err)
+			return fmt.Errorf("authenticate standard toolchain catalog: %w", err)
 		}
-		toolCorpus, err = deployment.LoadToolCorpus(ctx, toolRegistry, runtimeArchitecture)
+		toolCorpus, err = deployment.LoadToolchainCorpus(
+			ctx,
+			toolchainCatalog,
+			runtimeArchitecture,
+		)
 		if err != nil {
-			return fmt.Errorf("verify dependency tool corpus: %w", err)
+			return fmt.Errorf("verify standard-toolchain corpus: %w", err)
 		}
 		defer toolCorpus.Close()
-		toolRegistryDigest, err = toolRegistry.Digest()
+		toolchainCatalogDigest, err = toolchainCatalog.Digest()
 		if err != nil {
-			return fmt.Errorf("read dependency tool registry digest: %w", err)
+			return fmt.Errorf("read standard toolchain catalog digest: %w", err)
 		}
-		buildPolicy, err := deployment.LoadBuildPolicy(
+		buildPolicy, err = deployment.LoadBuildPolicy(
 			cfg.BuildPolicyPath,
 			runtimeCatalog,
-			toolRegistry,
+			toolchainCatalog,
 		)
 		if err != nil {
 			return fmt.Errorf("load build policy: %w", err)
@@ -350,7 +355,7 @@ func run(log *slog.Logger) error {
 		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
 		SupportsRun:             supportsRun,
 		SupportsBuild:           supportsBuild,
-		ToolRegistryDigest:      toolRegistryDigest,
+		ToolchainCatalogDigest:  toolchainCatalogDigest,
 		MaxBuildExecutors:       cfg.WorkerBuildExecutors,
 		MaxRuntimeStarts:        int32(runtimeStartLimit),
 		ScratchBytes:            diskCapacity.HostScratchBytes,
@@ -446,6 +451,7 @@ func run(log *slog.Logger) error {
 		workerdaemon.WithCapacity(hostCapacity),
 		workerdaemon.WithPollEvery(cfg.PollEvery),
 		workerdaemon.WithLogger(log),
+		workerdaemon.WithBuildPolicy(buildPolicy),
 		workerdaemon.WithDeploymentBuilder(deployment.Builder{
 			WorkDir:      workDir,
 			CAS:          store,

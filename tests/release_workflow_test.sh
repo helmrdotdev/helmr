@@ -82,6 +82,16 @@ require_text "cosign attest-blob" "$tag_job" \
 	"platform-tag runtime composition does not sign the complete statement"
 require_text "--statement \"\$release_dir/attestation.json\"" "$tag_job" \
 	"runtime signing is not bound to the complete in-toto statement"
+require_text "--toolchain-source \"\$standard_toolchain\"" "$tag_job" \
+	"standard-toolchain catalog is not composed from the captured Nix release"
+require_text ".#standardToolchain" "$tag_job" \
+	"platform release does not build the standard-toolchain candidate"
+reject_text ".#dependencyTools" "$workflow" \
+	"platform release still builds the retired Manager/toolset release"
+reject_text "--tool-registry" "$workflow" \
+	"platform release still consumes a serving-time dependency tool registry"
+require_text "--statement \"\$release_dir/toolchain-release/attestation.json\"" "$tag_job" \
+	"standard-toolchain signing is not bound to the complete in-toto statement"
 require_text "published lineage head" "$tag_job" \
 	"runtime composition does not reject a stale checked-in predecessor"
 require_text "expected_digest" "$tag_job" \
@@ -157,6 +167,12 @@ require_text "COPY --chown=0:0 --chmod=0444 runtime-release/catalog.sigstore.jso
 	"control image Sigstore bundle is not installed root-owned and read-only"
 require_text "COPY --chown=0:0 --chmod=0444 runtime-release/trusted-root.json" "$control_builder" \
 	"control image trusted root is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.json" "$control_builder" \
+	"control image standard-toolchain catalog is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.sigstore.json" "$control_builder" \
+	"control image standard-toolchain bundle is not installed root-owned and read-only"
+require_text "COPY --chown=0:0 --chmod=0444 toolchain-release/trusted-root.json" "$control_builder" \
+	"control image standard-toolchain trusted root is not installed root-owned and read-only"
 
 if ! rg -F "scripts/build-embedded-adapter.sh" "$workflow" >/dev/null; then
 	printf 'release workflow does not refresh the embedded adapter before CLI builds\n' >&2

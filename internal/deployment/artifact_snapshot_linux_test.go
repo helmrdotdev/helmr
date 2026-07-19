@@ -436,6 +436,40 @@ func TestArtifactSnapshotLinksExactSealedInode(t *testing.T) {
 	}
 }
 
+func TestArtifactSnapshotTransfersOwnershipForJailer(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("requires root to transfer artifact ownership")
+	}
+	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
+	directory := t.TempDir()
+	const jailerID = 65534
+	if err := snapshot.LinkInto(
+		directory,
+		"program.squashfs",
+		jailerID,
+		jailerID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	var source, linked unix.Stat_t
+	if err := unix.Fstat(int(snapshot.upload.Fd()), &source); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Stat(filepath.Join(directory, "program.squashfs"), &linked); err != nil {
+		t.Fatal(err)
+	}
+	if source.Uid != jailerID || source.Gid != jailerID {
+		t.Fatalf("source owner = %d:%d, want %d:%d", source.Uid, source.Gid, jailerID, jailerID)
+	}
+	if linked.Uid != jailerID || linked.Gid != jailerID {
+		t.Fatalf("linked owner = %d:%d, want %d:%d", linked.Uid, linked.Gid, jailerID, jailerID)
+	}
+	if source.Dev != linked.Dev || source.Ino != linked.Ino || source.Mode != linked.Mode {
+		t.Fatalf("linked identity = %+v, want %+v", linked, source)
+	}
+}
+
 func TestArtifactSnapshotLinkDoesNotReplaceDestination(t *testing.T) {
 	snapshot := newTestArtifactSnapshot(t, []byte("linked"))
 	directory := t.TempDir()

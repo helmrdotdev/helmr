@@ -143,7 +143,7 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 		return nil, false, nil
 	}
 	lease, deployment := *leased.Lease, *leased.Deployment
-	if err := validateBuildEnvelope(r.capabilities, deployment); err != nil {
+	if err := validateBuildEnvelope(r.capabilities, r.buildPolicy, deployment); err != nil {
 		return nil, true, r.rejectBuild(ctx, lease, "requirements_unsupported", err)
 	}
 	if err := validateBuildLeaseShape(r.capabilities, lease); err != nil {
@@ -199,7 +199,11 @@ func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
 	}, true, nil
 }
 
-func validateBuildEnvelope(capabilities api.WorkerCapabilities, build api.WorkerDeploymentBuild) error {
+func validateBuildEnvelope(
+	capabilities api.WorkerCapabilities,
+	policy BuildPolicy,
+	build api.WorkerDeploymentBuild,
+) error {
 	runtime, err := deployment.RuntimeDescriptorFromWire(build.Runtime)
 	if err != nil {
 		return fmt.Errorf("deployment runtime descriptor: %w", err)
@@ -211,7 +215,9 @@ func validateBuildEnvelope(capabilities api.WorkerCapabilities, build api.Worker
 			capabilities.RuntimeArch,
 		)
 	}
-	if _, err := deployment.ToolDigestBytes(build.StandardToolchainDigest); err != nil {
+	if _, err := deployment.SHA256DigestBytes(
+		build.StandardToolchainDigest,
+	); err != nil {
 		return fmt.Errorf("deployment standard toolchain digest: %w", err)
 	}
 	if build.MaterializerVersion != deployment.DependencyMaterializerVersion {
@@ -222,6 +228,20 @@ func validateBuildEnvelope(capabilities api.WorkerCapabilities, build api.Worker
 	}
 	if !capabilities.SupportsBuild {
 		return errors.New("worker is not certified for builds")
+	}
+	if policy == nil {
+		return errors.New("build worker policy is required")
+	}
+	target, err := policy.Resolve(
+		runtime.Digest,
+		build.StandardToolchainDigest,
+		build.MaterializerVersion,
+	)
+	if err != nil {
+		return fmt.Errorf("deployment build target: %w", err)
+	}
+	if target.Runtime != runtime {
+		return errors.New("deployment runtime descriptor does not exact-match worker policy")
 	}
 	return nil
 }

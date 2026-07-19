@@ -45,11 +45,11 @@ var loadControlBuildPolicy = func(path string) (*deployment.BuildPolicy, error) 
 	if err != nil {
 		return nil, fmt.Errorf("authenticate managed runtime catalog: %w", err)
 	}
-	registry, err := deployment.LoadToolRegistry()
+	toolchains, err := deployment.LoadToolchainCatalog()
 	if err != nil {
-		return nil, fmt.Errorf("authenticate dependency tool registry: %w", err)
+		return nil, fmt.Errorf("authenticate standard toolchain catalog: %w", err)
 	}
-	policy, err := deployment.LoadBuildPolicy(path, catalog, registry)
+	policy, err := deployment.LoadBuildPolicy(path, catalog, toolchains)
 	if err != nil {
 		return nil, fmt.Errorf("load build policy: %w", err)
 	}

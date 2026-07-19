@@ -39,15 +39,15 @@ func RunReleaseInstall(ctx context.Context, args []string) error {
 	if err != nil {
 		return fmt.Errorf("authenticate runtime catalog: %w", err)
 	}
-	registry, err := LoadToolRegistry()
+	toolchainCatalog, err := LoadToolchainCatalog()
 	if err != nil {
-		return fmt.Errorf("authenticate dependency tool registry: %w", err)
+		return fmt.Errorf("authenticate standard-toolchain catalog: %w", err)
 	}
 	store, err := cas.NewImmutableS3(ctx, storeURI)
 	if err != nil {
 		return fmt.Errorf("configure release store: %w", err)
 	}
-	return installBuildPolicy(ctx, store, digest, output, catalog, registry, 0, 0)
+	return installBuildPolicy(ctx, store, digest, output, catalog, toolchainCatalog, 0, 0)
 }
 
 func installBuildPolicy(
@@ -55,8 +55,8 @@ func installBuildPolicy(
 	store cas.Reader,
 	digest,
 	output string,
-	catalog *RuntimeCatalog,
-	registry *ToolRegistry,
+	runtimeCatalog *RuntimeCatalog,
+	toolchainCatalog *ToolchainCatalog,
 	ownerUID,
 	ownerGID int,
 ) error {
@@ -113,7 +113,7 @@ func installBuildPolicy(
 	if err != nil {
 		return err
 	}
-	if err := validateBuildPolicyRegistries(policy, catalog, registry); err != nil {
+	if err := validateBuildPolicyCatalogs(policy, runtimeCatalog, toolchainCatalog); err != nil {
 		return err
 	}
 	return installBuildPolicyFile(parent, output, raw, ownerUID, ownerGID)

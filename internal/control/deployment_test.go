@@ -69,7 +69,25 @@ func testBuildPolicy() *deployment.BuildPolicy {
 	if err != nil {
 		panic(err)
 	}
-	raw := []byte(`{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` + testManagedRuntimeDescriptor().Digest + `","standardToolchainDigest":"sha256:` + strings.Repeat("8", 64) + `"}},"formatVersion":0,"runtimes":[` + string(descriptor) + `],"toolRegistryDigest":"sha256:` + strings.Repeat("7", 64) + `"}`)
+	toolchain := deployment.Toolchain{
+		Architecture:         testManagedRuntimeDescriptor().Architecture,
+		FormatVersion:        deployment.ToolchainFormatVersion,
+		ManagedRuntimeDigest: testManagedRuntimeDescriptor().Digest,
+		ToolchainClosure: deployment.ManagerArtifact{
+			Digest:    "sha256:" + strings.Repeat("7", 64),
+			MediaType: deployment.ToolchainMediaType,
+			SizeBytes: 1,
+		},
+	}
+	toolchainDescriptor, err := deployment.CanonicalToolchain(toolchain)
+	if err != nil {
+		panic(err)
+	}
+	toolchainDigest, err := deployment.StandardToolchainDigest(toolchain)
+	if err != nil {
+		panic(err)
+	}
+	raw := []byte(`{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` + testManagedRuntimeDescriptor().Digest + `","standardToolchainDigest":"` + toolchainDigest + `"}},"formatVersion":0,"runtimes":[` + string(descriptor) + `],"toolchains":[` + string(toolchainDescriptor) + `]}`)
 	policy, err := deployment.ParseBuildPolicy(raw)
 	if err != nil {
 		panic(err)

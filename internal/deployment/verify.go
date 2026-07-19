@@ -186,6 +186,7 @@ const (
 	codeArtifact artifactRole = iota
 	dependencyArtifact
 	runtimeArtifact
+	toolchainArtifact
 )
 
 type inspectedArtifact struct {

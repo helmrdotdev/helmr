@@ -93,7 +93,7 @@ func TestCheckpointedWaitResolutionQueuesAndBindsResumeLeaseExactlyOnce(t *testi
 			runtime_config_digest, cni_profile, manifest, creation_expires_at, ready_at
 		) VALUES (
 			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 1, $11, $12, $13,
-			'ready', 'firecracker', 'test-runtime', 'arm64', 'test', 'sha256:kernel',
+			'ready', 'firecracker', 'test-runtime', 'aarch64', 'test', 'sha256:kernel',
 			'sha256:initramfs', 'sha256:rootfs', 'sha256:runtime-config', 'default',
 			'{"ready":true}', now() + interval '5 minutes', now()
 		)

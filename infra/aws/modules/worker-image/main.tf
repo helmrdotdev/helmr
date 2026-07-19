@@ -46,7 +46,6 @@ locals {
     release_package_key        = local.release_package_key
     release_package_version_id = var.release_package_version_id
     release_package_sha256     = var.release_package_sha256
-    release_validator          = file("${path.module}/templates/runtime-release.py")
   })
 }
 
@@ -236,7 +235,30 @@ resource "aws_imagebuilder_component" "runtime_release" {
             }
           }
         ]
-      },
+      }
+    ]
+  })
+
+  tags = var.tags
+
+  lifecycle {
+    create_before_destroy = true
+
+    precondition {
+      condition     = var.release_package_object_arn == local.release_package_arn
+      error_message = "release_package_object_arn must identify the exact object in release_package_s3_uri."
+    }
+  }
+}
+
+resource "aws_imagebuilder_component" "runtime_release_validation" {
+  name     = "${local.name}-worker-runtime-release-validation"
+  platform = "Linux"
+  version  = var.image_version
+
+  data = yamlencode({
+    schemaVersion = "1.0"
+    phases = [
       {
         name = "validate"
         steps = [
@@ -256,11 +278,6 @@ resource "aws_imagebuilder_component" "runtime_release" {
 
   lifecycle {
     create_before_destroy = true
-
-    precondition {
-      condition     = var.release_package_object_arn == local.release_package_arn
-      error_message = "release_package_object_arn must identify the exact object in release_package_s3_uri."
-    }
   }
 }
 
@@ -286,6 +303,10 @@ resource "aws_imagebuilder_image_recipe" "worker" {
 
   component {
     component_arn = aws_imagebuilder_component.runtime_release.arn
+  }
+
+  component {
+    component_arn = aws_imagebuilder_component.runtime_release_validation.arn
   }
 
   tags = var.tags

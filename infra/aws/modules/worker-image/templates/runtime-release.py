@@ -1,17 +1,28 @@
+import hashlib
 import json
 import os
-import shutil
+import re
 import sys
 import tarfile
 
-ALLOWED = {
+FIXED = {
     "catalog.json",
     "catalog.sigstore.json",
     "trusted-root.json",
+    "toolchain-release/catalog.json",
+    "toolchain-release/catalog.sigstore.json",
+    "toolchain-release/trusted-root.json",
     "verifier-corpus.json",
     "verifier-invalid.squashfs",
     "verifier-valid.squashfs",
 }
+OBJECT_PREFIX = "toolchain-release/objects/sha256/"
+SHA256 = re.compile(r"sha256:[0-9a-f]{64}")
+TOOLCHAIN_MEDIA_TYPE = "application/vnd.helmr.standard-toolchain.v0+squashfs"
+ARCHITECTURES = {"x86_64", "aarch64"}
+MAX_TOOLCHAINS = 1024
+MAX_TOOLCHAIN_BYTES = 4 << 30
+MAX_TOOLCHAIN_CORPUS_BYTES = 16 << 30
 
 
 def raw_members(path):
@@ -51,29 +62,116 @@ def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(f"runtime verifier corpus contains duplicate key: {key}")
+            raise ValueError(f"runtime release document contains duplicate key: {key}")
         result[key] = value
     return result
 
 
+def reject_constant(value):
+    raise ValueError(f"runtime release document contains invalid number: {value}")
+
+
+def load_document(source):
+    return json.load(
+        source,
+        object_pairs_hook=unique_object,
+        parse_constant=reject_constant,
+    )
+
+
+def toolchain_objects(catalog, architecture):
+    if (
+        set(catalog) != {"formatVersion", "toolchains"}
+        or type(catalog["formatVersion"]) is not int
+        or catalog["formatVersion"] != 0
+        or type(catalog["toolchains"]) is not list
+        or not 1 <= len(catalog["toolchains"]) <= MAX_TOOLCHAINS
+    ):
+        raise ValueError("standard-toolchain catalog is not the closed v0 document")
+
+    objects = {}
+    total = 0
+    for position, toolchain in enumerate(catalog["toolchains"]):
+        if (
+            type(toolchain) is not dict
+            or set(toolchain)
+            != {
+                "architecture",
+                "formatVersion",
+                "managedRuntimeDigest",
+                "toolchainClosure",
+            }
+            or toolchain["architecture"] not in ARCHITECTURES
+            or type(toolchain["formatVersion"]) is not int
+            or toolchain["formatVersion"] != 0
+            or type(toolchain["managedRuntimeDigest"]) is not str
+            or SHA256.fullmatch(toolchain["managedRuntimeDigest"]) is None
+        ):
+            raise ValueError(
+                f"standard-toolchain catalog member {position} is not a closed v0 toolchain"
+            )
+        closure = toolchain["toolchainClosure"]
+        if (
+            type(closure) is not dict
+            or set(closure) != {"digest", "mediaType", "sizeBytes"}
+            or type(closure["digest"]) is not str
+            or SHA256.fullmatch(closure["digest"]) is None
+            or closure["mediaType"] != TOOLCHAIN_MEDIA_TYPE
+            or type(closure["sizeBytes"]) is not int
+            or not 1 <= closure["sizeBytes"] <= MAX_TOOLCHAIN_BYTES
+        ):
+            raise ValueError(
+                f"standard-toolchain catalog member {position} has an invalid closure"
+            )
+        if toolchain["architecture"] != architecture:
+            continue
+        name = OBJECT_PREFIX + closure["digest"].removeprefix("sha256:")
+        descriptor = (closure["digest"], closure["sizeBytes"])
+        if name in objects:
+            if objects[name] != descriptor:
+                raise ValueError(
+                    "standard-toolchain catalog maps one closure digest to divergent bytes"
+                )
+            continue
+        if total > MAX_TOOLCHAIN_CORPUS_BYTES - closure["sizeBytes"]:
+            raise ValueError(
+                "standard-toolchain catalog exceeds the physical corpus bound"
+            )
+        objects[name] = descriptor
+        total += closure["sizeBytes"]
+
+    if not objects:
+        raise ValueError(
+            f"standard-toolchain catalog contains no {architecture} closure"
+        )
+    return objects
+
+
 def extract(archive, destination, architecture):
     names = raw_members(archive)
-    if len(names) != len(ALLOWED) or len(names) != len(set(names)) or set(names) != ALLOWED:
-        raise ValueError("runtime release package must contain exactly six raw allowlisted members")
-
-    os.mkdir(destination, 0o700)
     with tarfile.open(archive, mode="r:") as package:
         if package.pax_headers:
             raise ValueError("runtime release package must not contain global PAX headers")
         members = package.getmembers()
         logical_names = [member.name for member in members]
-        if (
-            len(members) != len(ALLOWED)
-            or len(logical_names) != len(set(logical_names))
-            or set(logical_names) != ALLOWED
-        ):
-            raise ValueError("runtime release package must contain exactly the six allowlisted members")
+        if names != logical_names or len(names) != len(set(names)):
+            raise ValueError("runtime release package contains duplicate or divergent members")
+        try:
+            catalog_member = package.getmember("toolchain-release/catalog.json")
+        except KeyError as error:
+            raise ValueError("runtime release package has no standard-toolchain catalog") from error
+        catalog_source = package.extractfile(catalog_member)
+        if catalog_source is None:
+            raise ValueError("standard-toolchain catalog has no content")
+        with catalog_source:
+            objects = toolchain_objects(load_document(catalog_source), architecture)
+        expected = FIXED | set(objects)
+        if set(names) != expected or len(names) != len(expected):
+            raise ValueError(
+                "runtime release package does not exact-match its standard-toolchain catalog"
+            )
 
+        os.mkdir(destination, 0o700)
         for member in members:
             if (
                 member.type not in (tarfile.REGTYPE, tarfile.AREGTYPE)
@@ -85,16 +183,29 @@ def extract(archive, destination, architecture):
             if source is None:
                 raise ValueError(f"runtime release package member has no content: {member.name}")
             target = os.path.join(destination, member.name)
+            os.makedirs(os.path.dirname(target), mode=0o700, exist_ok=True)
             descriptor = os.open(
                 target,
                 os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0),
                 0o600,
             )
+            digest = hashlib.sha256()
+            size = 0
             with source, os.fdopen(descriptor, "wb") as output:
-                shutil.copyfileobj(source, output)
+                while chunk := source.read(1024 * 1024):
+                    size += len(chunk)
+                    digest.update(chunk)
+                    output.write(chunk)
+            if member.name in objects:
+                expected_digest, expected_size = objects[member.name]
+                actual_digest = "sha256:" + digest.hexdigest()
+                if size != expected_size or actual_digest != expected_digest:
+                    raise ValueError(
+                        f"standard-toolchain closure does not match its descriptor: {member.name}"
+                    )
 
     with open(os.path.join(destination, "verifier-corpus.json"), "rb") as manifest:
-        corpus = json.load(manifest, object_pairs_hook=unique_object)
+        corpus = load_document(manifest)
 
     if (
         set(corpus) != {"formatVersion", "valid", "invalid"}

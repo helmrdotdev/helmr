@@ -117,7 +117,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		)
-		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		VALUES ('test-runtime', 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 		ON CONFLICT DO NOTHING
 	`)
 	mustExec(t, ctx, pool, `
@@ -190,7 +190,7 @@ func seedIntegration(t *testing.T, ctx context.Context, pool *pgxpool.Pool) inte
 			max_active_duration_ms, trace_id, root_span_id
 		)
 		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'waiting', 'waiting',
-			'{}', 'default', 1000, 1024, 4096, 1, 'test-runtime', 'arm64', 'test',
+			'{}', 'default', 1000, 1024, 4096, 1, 'test-runtime', 'aarch64', 'test',
 			'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default', 300000,
 			'11111111111111111111111111111111', '2222222222222222')
 	`, ids.runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID,

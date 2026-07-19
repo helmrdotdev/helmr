@@ -1,4 +1,5 @@
 import gzip
+import hashlib
 import importlib.util
 import io
 import json
@@ -28,15 +29,69 @@ def corpus(architecture):
     ).encode()
 
 
-def package(path, architecture="x86_64", duplicate=False):
+def toolchain(architecture, content, size=None):
+    if size is None:
+        size = len(content)
+    return {
+        "architecture": architecture,
+        "formatVersion": 0,
+        "managedRuntimeDigest": "sha256:" + hashlib.sha256(b"runtime").hexdigest(),
+        "toolchainClosure": {
+            "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
+            "mediaType": "application/vnd.helmr.standard-toolchain.v0+squashfs",
+            "sizeBytes": size,
+        },
+    }
+
+
+def package(
+    path,
+    architecture="x86_64",
+    duplicate=False,
+    toolchains=None,
+    corrupt=False,
+    extra_object=False,
+    omit_object=False,
+):
+    if toolchains is None:
+        toolchains = [(architecture, b"toolchain")]
+    candidates = [
+        entry if len(entry) == 3 else (*entry, None)
+        for entry in toolchains
+    ]
+    catalog = {
+        "formatVersion": 0,
+        "toolchains": [
+            toolchain(member_architecture, content, size)
+            for member_architecture, content, size in candidates
+        ],
+    }
     contents = {
         "catalog.json": b"catalog",
         "catalog.sigstore.json": b"bundle",
         "trusted-root.json": b"root",
+        "toolchain-release/catalog.json": json.dumps(
+            catalog,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode(),
+        "toolchain-release/catalog.sigstore.json": b"toolchain bundle",
+        "toolchain-release/trusted-root.json": b"root",
         "verifier-corpus.json": corpus(architecture),
         "verifier-invalid.squashfs": b"invalid",
         "verifier-valid.squashfs": b"valid",
     }
+    for member_architecture, content, _ in candidates:
+        if member_architecture != architecture:
+            continue
+        digest = hashlib.sha256(content).hexdigest()
+        contents[f"toolchain-release/objects/sha256/{digest}"] = (
+            b"corrupt" if corrupt else content
+        )
+    if omit_object:
+        del contents[next(name for name in contents if name.startswith(runtime_release.OBJECT_PREFIX))]
+    if extra_object:
+        contents[runtime_release.OBJECT_PREFIX + "f" * 64] = b"extra"
     with tarfile.open(path, "w", format=tarfile.USTAR_FORMAT) as archive:
         for name, content in contents.items():
             member = tarfile.TarInfo(name)
@@ -73,16 +128,22 @@ class RuntimeReleaseTest(unittest.TestCase):
 
         destination = self.extract(archive)
 
+        digest = hashlib.sha256(b"toolchain").hexdigest()
         self.assertEqual(
-            {entry.name for entry in destination.iterdir()},
-            runtime_release.ALLOWED,
+            {
+                str(entry.relative_to(destination))
+                for entry in destination.rglob("*")
+                if entry.is_file()
+            },
+            runtime_release.FIXED
+            | {f"{runtime_release.OBJECT_PREFIX}{digest}"},
         )
 
     def test_rejects_duplicate_member(self):
         archive = self.root / "duplicate.tar"
         package(archive, duplicate=True)
 
-        with self.assertRaisesRegex(ValueError, "exactly six raw"):
+        with self.assertRaisesRegex(ValueError, "duplicate or divergent"):
             self.extract(archive)
 
     def test_rejects_concatenated_tar(self):
@@ -135,7 +196,81 @@ class RuntimeReleaseTest(unittest.TestCase):
         archive = self.root / "arm.tar"
         package(archive, architecture="aarch64")
 
-        with self.assertRaisesRegex(ValueError, "closed x86_64"):
+        with self.assertRaisesRegex(ValueError, "no x86_64 closure"):
+            self.extract(archive)
+
+    def test_extracts_all_predecessor_closures_for_architecture(self):
+        archive = self.root / "release.tar"
+        toolchains = [
+            ("aarch64", b"arm"),
+            ("x86_64", b"current"),
+            ("x86_64", b"predecessor"),
+        ]
+        package(archive, toolchains=toolchains)
+
+        destination = self.extract(archive)
+
+        objects = destination / "toolchain-release" / "objects" / "sha256"
+        self.assertEqual(
+            {entry.name for entry in objects.iterdir()},
+            {
+                hashlib.sha256(b"current").hexdigest(),
+                hashlib.sha256(b"predecessor").hexdigest(),
+            },
+        )
+
+    def test_rejects_missing_catalog_object(self):
+        archive = self.root / "release.tar"
+        package(archive, omit_object=True)
+
+        with self.assertRaisesRegex(ValueError, "does not exact-match"):
+            self.extract(archive)
+
+    def test_rejects_extra_catalog_object(self):
+        archive = self.root / "release.tar"
+        package(archive, extra_object=True)
+
+        with self.assertRaisesRegex(ValueError, "does not exact-match"):
+            self.extract(archive)
+
+    def test_rejects_closure_digest_drift(self):
+        archive = self.root / "release.tar"
+        package(archive, corrupt=True)
+
+        with self.assertRaisesRegex(ValueError, "does not match its descriptor"):
+            self.extract(archive)
+
+    def test_rejects_oversized_closure_before_extraction(self):
+        archive = self.root / "release.tar"
+        package(
+            archive,
+            toolchains=[
+                (
+                    "x86_64",
+                    b"toolchain",
+                    runtime_release.MAX_TOOLCHAIN_BYTES + 1,
+                )
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "invalid closure"):
+            self.extract(archive)
+
+    def test_rejects_aggregate_corpus_overflow_before_extraction(self):
+        archive = self.root / "release.tar"
+        package(
+            archive,
+            toolchains=[
+                (
+                    "x86_64",
+                    f"toolchain-{position}".encode(),
+                    runtime_release.MAX_TOOLCHAIN_BYTES,
+                )
+                for position in range(5)
+            ],
+        )
+
+        with self.assertRaisesRegex(ValueError, "physical corpus bound"):
             self.extract(archive)
 
 

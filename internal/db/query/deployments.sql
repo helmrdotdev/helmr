@@ -366,7 +366,7 @@ WITH candidate AS (
        AND worker_instances.current_epoch = deployment_build_leases.worker_epoch
        AND worker_instances.state = 'active'
        AND worker_instances.supports_build
-       AND worker_instances.tool_registry_digest = sqlc.arg(tool_registry_digest)::bytea
+       AND worker_instances.toolchain_catalog_digest IS NOT NULL
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = deployments.build_architecture
@@ -660,7 +660,7 @@ SELECT worker_instances.*,
    AND worker_instances.state IN ('active', 'draining')
    AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.supports_build
-   AND worker_instances.tool_registry_digest = sqlc.arg(tool_registry_digest)::bytea
+   AND worker_instances.toolchain_catalog_digest IS NOT NULL
  FOR UPDATE OF worker_instances;
 
 -- name: GetDeploymentBuildTerminalResult :one

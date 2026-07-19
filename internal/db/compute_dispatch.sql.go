@@ -157,7 +157,7 @@ WITH target AS (
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, tool_registry_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), idle_mounts AS (
     UPDATE workspace_mounts
        SET state = 'unmounting', stopped_at = COALESCE(stopped_at, now()), updated_at = now()
@@ -193,7 +193,7 @@ WITH target AS (
        )
     RETURNING runtime_instances.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.tool_registry_digest, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.toolchain_catalog_digest, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM idle_mounts) >= 0
    AND (SELECT count(*) FROM idle_runtimes) >= 0
@@ -218,7 +218,7 @@ type DrainWorkerInstanceRow struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
-	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
@@ -270,7 +270,7 @@ func (q *Queries) DrainWorkerInstance(ctx context.Context, arg DrainWorkerInstan
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolRegistryDigest,
+		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
@@ -317,7 +317,7 @@ WITH target AS (
        AND worker_instances.worker_group_id = $2
        AND worker_instances.current_epoch = $3
        AND worker_instances.state IN ('active', 'draining')
-    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, tool_registry_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+    RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 ), revoked_credentials AS (
     UPDATE worker_instance_credentials
        SET revoked_at = COALESCE(revoked_at, now())
@@ -355,7 +355,7 @@ WITH target AS (
        AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
     RETURNING worker_network_slots.id
 )
-SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.tool_registry_digest, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
+SELECT target.id, target.resource_id, target.worker_group_id, target.attestation_fingerprint, target.state, target.claim_version, target.current_epoch, target.current_service_id, target.protocol_version, target.supervisor_version, target.supports_run, target.supports_build, target.toolchain_catalog_digest, target.runtime_identity_id, target.certified_cpu_millis, target.certified_memory_bytes, target.certified_workload_disk_bytes, target.certified_scratch_bytes, target.certified_build_cache_bytes, target.certified_artifact_cache_bytes, target.certified_hugepages_bytes, target.certified_checkpoint_bytes, target.per_vm_cpu_millis, target.per_vm_memory_bytes, target.per_vm_workload_disk_bytes, target.per_vm_scratch_bytes, target.max_vm_slots, target.max_run_consumers, target.max_build_executors, target.max_runtime_starts, target.certification_profile, target.certification_fingerprint, target.epoch_started_at, target.startup_inventory_epoch, target.startup_inventory_evidence, target.drain_cleanup_fingerprint, target.drain_cleanup_evidence, target.certified_at, target.activated_at, target.draining_at, target.disabled_at, target.lost_at, target.termination_claimed_at, target.provider_terminated_at, target.created_at, target.updated_at
   FROM target
  WHERE (SELECT count(*) FROM revoked_credentials) >= 0
    AND (SELECT count(*) FROM lost_mounts) >= 0
@@ -383,7 +383,7 @@ type FenceWorkerInstanceRow struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
-	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
@@ -440,7 +440,7 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolRegistryDigest,
+		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
@@ -667,7 +667,7 @@ func (q *Queries) GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg 
 }
 
 const getWorkerInstanceState = `-- name: GetWorkerInstanceState :one
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.tool_registry_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch,
@@ -715,7 +715,7 @@ type GetWorkerInstanceStateRow struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
-	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
@@ -771,7 +771,7 @@ func (q *Queries) GetWorkerInstanceState(ctx context.Context, arg GetWorkerInsta
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolRegistryDigest,
+		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
@@ -1038,7 +1038,7 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 }
 
 const listWorkerInstances = `-- name: ListWorkerInstances :many
-SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, tool_registry_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at FROM worker_instances
+SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at FROM worker_instances
  WHERE $1::text = 'all' OR state::text = $1::text
  ORDER BY updated_at DESC, created_at ASC
  LIMIT $2
@@ -1071,7 +1071,7 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 			&i.SupervisorVersion,
 			&i.SupportsRun,
 			&i.SupportsBuild,
-			&i.ToolRegistryDigest,
+			&i.ToolchainCatalogDigest,
 			&i.RuntimeIdentityID,
 			&i.CertifiedCpuMillis,
 			&i.CertifiedMemoryBytes,
@@ -1286,7 +1286,7 @@ UPDATE worker_instances
  WHERE id = $2
    AND worker_group_id = $3
    AND ($4::bigint IS NULL OR current_epoch = $4::bigint)
-RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, tool_registry_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+RETURNING id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
 `
 
 type SetWorkerInstanceStateParams struct {
@@ -1317,7 +1317,7 @@ func (q *Queries) SetWorkerInstanceState(ctx context.Context, arg SetWorkerInsta
 		&i.SupervisorVersion,
 		&i.SupportsRun,
 		&i.SupportsBuild,
-		&i.ToolRegistryDigest,
+		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,

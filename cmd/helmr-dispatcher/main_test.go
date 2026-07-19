@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -52,10 +53,10 @@ func TestExplicitManagedFleetFailsStartupWhenAWSConfigCannotLoad(t *testing.T) {
 }
 
 func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
-	originalRegistryLoader := loadDispatcherToolRegistryDigest
-	t.Cleanup(func() { loadDispatcherToolRegistryDigest = originalRegistryLoader })
-	loadDispatcherToolRegistryDigest = func() ([]byte, error) {
-		return make([]byte, 32), nil
+	originalCatalogLoader := loadDispatcherToolchainCatalog
+	t.Cleanup(func() { loadDispatcherToolchainCatalog = originalCatalogLoader })
+	loadDispatcherToolchainCatalog = func() (dispatcherToolchainCatalog, error) {
+		return dispatcherTestCatalog{}, nil
 	}
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
@@ -95,6 +96,16 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("dispatcher run did not stop")
 	}
+}
+
+type dispatcherTestCatalog struct{}
+
+func (dispatcherTestCatalog) Digest() (string, error) {
+	return "sha256:" + strings.Repeat("1", 64), nil
+}
+
+func (dispatcherTestCatalog) Resolve(string) (deployment.Toolchain, error) {
+	return deployment.Toolchain{}, nil
 }
 
 func newSmokeDatabase(t *testing.T, ctx context.Context) string {

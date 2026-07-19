@@ -7,17 +7,17 @@ import (
 	"errors"
 )
 
-func LoadToolCorpus(
+func LoadToolchainCorpus(
 	context.Context,
-	*ToolRegistry,
+	*ToolchainCatalog,
 	RuntimeArchitecture,
-) (*ToolCorpus, error) {
-	return nil, errors.New("dependency tool corpus is supported only on Linux")
+) (*ToolchainCorpus, error) {
+	return nil, errors.New("standard-toolchain corpus is supported only on Linux")
 }
 
-func (c *ToolCorpus) OpenToolset(
+func (c *ToolchainCorpus) OpenToolchain(
 	context.Context,
-	Toolset,
+	Toolchain,
 ) (*ToolObjectFile, error) {
-	return nil, errors.New("dependency tool corpus is supported only on Linux")
+	return nil, errors.New("standard-toolchain corpus is supported only on Linux")
 }

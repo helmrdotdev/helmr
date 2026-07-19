@@ -729,7 +729,7 @@ func TestWorkerActiveInputReadCancelsCreatedSessionContinuationRequest(t *testin
 		)
 		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'queued', 'queued', '{}', 'default',
 			1000, 1024, 4096, 1,
-			'test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			'test-runtime', 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
 			300000, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbb')
 	`, continuationRunID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run)); err != nil {
 		t.Fatal(err)
@@ -1205,7 +1205,7 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	}
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
-		VALUES ('test-runtime', 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		VALUES ('test-runtime', 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 		ON CONFLICT DO NOTHING
 	`); err != nil {
 		t.Fatal(err)
@@ -1241,7 +1241,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	runtimeID := "runtime-" + strings.ReplaceAll(uuid.NewString(), "-", "")
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO runtime_identities (id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile)
-		VALUES ($1, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
+		VALUES ($1, 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default')
 	`, runtimeID); err != nil {
 		t.Fatal(err)
 	}
@@ -1307,7 +1307,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		)
 		VALUES ($1, $9, $2, $3, $4, $5, $6, $7, 'approval-task', $8, 'running', 'executing', '{}', 'default',
 			1000, 1024, 4096, 1,
-			$10, 'arm64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
+			$10, 'aarch64', 'test', 'sha256:kernel', 'sha256:initramfs', 'sha256:rootfs', 'default',
 			300000, '11111111111111111111111111111111', '2222222222222222')
 	`, runID, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID, ids.deploymentTaskID, ids.workspaceID, ids.sessionID, streamTestPublicID(t, publicid.Run), runtimeID); err != nil {
 		t.Fatal(err)
@@ -1343,7 +1343,7 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 		       requested_disk_mib = 4096,
 		       requested_execution_slots = 1,
 		       runtime_identity_id = $2,
-		       runtime_arch = 'arm64',
+		       runtime_arch = 'aarch64',
 		       runtime_abi = 'test',
 		       kernel_digest = 'sha256:kernel',
 		       initramfs_digest = 'sha256:initramfs',

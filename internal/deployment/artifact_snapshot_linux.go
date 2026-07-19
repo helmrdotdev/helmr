@@ -288,6 +288,8 @@ func artifactSnapshotRole(role artifactRole) (string, int64, error) {
 		return ProgramDependencyArtifactMediaType, maxDependencyPhysicalBytes, nil
 	case runtimeArtifact:
 		return RuntimeArtifactMediaType, maxRuntimePhysicalBytes, nil
+	case toolchainArtifact:
+		return ToolchainMediaType, maxToolArtifactBytes, nil
 	default:
 		return "", 0, fmt.Errorf("artifact snapshot role = %d", role)
 	}
@@ -319,6 +321,13 @@ func validateArtifactSnapshotDescriptor(
 			"runtime",
 			RuntimeArtifactMediaType,
 			maxRuntimePhysicalBytes,
+		)
+	case toolchainArtifact:
+		return validateProgramDescriptor(
+			programDescriptor,
+			"standard toolchain",
+			ToolchainMediaType,
+			maxToolArtifactBytes,
 		)
 	default:
 		return fmt.Errorf("artifact snapshot role = %d", role)
@@ -594,16 +603,45 @@ func (snapshot *artifactSnapshot) LinkInto(
 	if err := validateArtifactSnapshotOwner(owner); err != nil {
 		return err
 	}
+	currentOwner := artifactSnapshotOwner{
+		UID: int(snapshot.platform.identity.uid),
+		GID: int(snapshot.platform.identity.gid),
+	}
 	before, err := inspectSealedArtifactSnapshot(
 		snapshot.upload,
 		snapshot.descriptor,
-		owner,
+		currentOwner,
 	)
 	if err != nil {
 		return err
 	}
 	if before != snapshot.platform.identity {
 		return errors.New("artifact snapshot changed before link")
+	}
+	if currentOwner != owner {
+		// A hard link retains inode ownership, so transfer the sealed inode before
+		// the jailed process receives its mode-0400 link.
+		if err := snapshot.upload.Chown(owner.UID, owner.GID); err != nil {
+			return fmt.Errorf("transfer artifact snapshot owner: %w", err)
+		}
+		if err := snapshot.upload.Sync(); err != nil {
+			return fmt.Errorf("sync artifact snapshot owner: %w", err)
+		}
+		transferred, err := inspectSealedArtifactSnapshot(
+			snapshot.upload,
+			snapshot.descriptor,
+			owner,
+		)
+		if err != nil {
+			return err
+		}
+		expected := before
+		expected.uid = uint32(owner.UID)
+		expected.gid = uint32(owner.GID)
+		if transferred != expected {
+			return errors.New("artifact snapshot changed during owner transfer")
+		}
+		snapshot.platform.identity = transferred
 	}
 	source, err := inspectArtifactSnapshotAt(
 		int(snapshot.platform.directory.Fd()),

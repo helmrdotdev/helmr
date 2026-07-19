@@ -146,7 +146,7 @@ type WorkerCapabilities struct {
 	ExecutionSlotsAvailable int32                     `json:"execution_slots_available"`
 	SupportsRun             bool                      `json:"supports_run"`
 	SupportsBuild           bool                      `json:"supports_build"`
-	ToolRegistryDigest      string                    `json:"tool_registry_digest,omitempty"`
+	ToolchainCatalogDigest  string                    `json:"toolchain_catalog_digest,omitempty"`
 	MaxBuildExecutors       int32                     `json:"max_build_executors"`
 	MaxRuntimeStarts        int32                     `json:"max_runtime_starts"`
 	ScratchBytes            int64                     `json:"scratch_bytes"`

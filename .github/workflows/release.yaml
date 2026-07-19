@@ -131,21 +131,31 @@ jobs:
             fi
 
             runtime="$(nix build --no-link --print-out-paths .#managedRuntime)"
+            standard_toolchain="$(nix build --no-link --print-out-paths .#standardToolchain)"
             run_release compose \
               --tag "$RELEASE_TAG" \
               --releases "$downloads" \
               --runtime "$runtime/runtime.squashfs" \
               --descriptor "$runtime/runtime.descriptor.json" \
               --invalid "$runtime/verifier-invalid.squashfs" \
+              --toolchain-source "$standard_toolchain" \
               --scratch "$scratch" \
               --output "$release_dir" >/dev/null
             sudo chown -R "$(id -u):$(id -g)" "$release_dir"
             install -m 0444 "$trusted_root" "$release_dir/trusted-root.json"
+            install -m 0444 \
+              "$trusted_root" \
+              "$release_dir/toolchain-release/trusted-root.json"
             cosign attest-blob \
               --yes \
               --new-bundle-format=true \
               --bundle "$release_dir/catalog.sigstore.json" \
               --statement "$release_dir/attestation.json"
+            cosign attest-blob \
+              --yes \
+              --new-bundle-format=true \
+              --bundle "$release_dir/toolchain-release/catalog.sigstore.json" \
+              --statement "$release_dir/toolchain-release/attestation.json"
             run_release archive \
               --tag "$RELEASE_TAG" \
               --input "$release_dir" \

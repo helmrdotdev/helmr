@@ -245,7 +245,7 @@ func TestCompleteWorkerDrainAtomicallyFencesCurrentEpochAuthority(t *testing.T) 
 		INSERT INTO worker_instances (
 			id, worker_group_id, resource_id, attestation_fingerprint, state,
 			current_epoch, current_service_id, protocol_version, supports_build,
-			tool_registry_digest,
+			toolchain_catalog_digest,
 			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
 			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_build_executors,

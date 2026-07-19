@@ -64,12 +64,25 @@ for signature verification; an archive cannot nominate its own trust root.
 
 The verified release feeds both deployment targets:
 
-- the Control image receives only `catalog.json`, `catalog.sigstore.json`, and
-  `trusted-root.json`, installed root-owned and read-only;
-- the x86_64 Worker verifier creates a read-only snapshot from the exact file descriptor bytes it
-  authenticated. Staging exact-checks that snapshot against the verifier's SHA-256 and byte length,
-  conditionally creates it in the versioned private bucket, downloads that exact version, and
-  checks the bytes again before Image Builder can consume it.
+- the Control image receives the runtime and standard-toolchain
+  `catalog.json`, `catalog.sigstore.json`, and `trusted-root.json` files,
+  installed root-owned and read-only, but no physical runtime or toolchain
+  objects;
+- the x86_64 Worker package contains the standard-toolchain closure objects derived from the
+  authenticated catalog for that architecture under
+  `toolchain-release/objects/sha256/<digest>`. The catalog is the only serving-time manifest:
+  producer registries, composed toolsets, and Manager objects are not shipped. The verifier creates
+  a read-only snapshot from the exact package bytes it authenticated. Staging exact-checks that
+  snapshot against the verifier's SHA-256 and byte length, conditionally creates it in the versioned
+  private bucket, downloads that exact version, and checks the bytes again before Image Builder can
+  consume it.
+
+Every complete distribution retains the exact deduplicated closure set named by its append-only
+standard-toolchain catalog, including predecessor closures. A Worker package contains the exact
+matching-architecture subset. Composition, package verification, installation, and Worker startup
+derive their expected object sets from the authenticated catalog and reject missing, extra,
+wrong-architecture, size-divergent, or digest-divergent objects. No second corpus manifest or
+historical download participates in this guarantee.
 
 ## Worker AMI release rules
 

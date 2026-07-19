@@ -415,7 +415,9 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	toolchainDigest, err := deployment.ToolDigestBytes(target.StandardToolchainDigest)
+	toolchainDigest, err := deployment.SHA256DigestBytes(
+		target.StandardToolchainDigest,
+	)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}

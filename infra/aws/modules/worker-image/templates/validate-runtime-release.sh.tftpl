@@ -2,11 +2,13 @@
 set -euo pipefail
 
 release_dir=/usr/lib/helmr/runtime-release
+toolchain_release_dir=/usr/lib/helmr/toolchain-release
 umask 077
 release_stage=$(mktemp -d /tmp/helmr-runtime-release-validation.XXXXXXXX)
 trap 'rm -rf -- "$release_stage"' EXIT
 release_archive="$release_stage/release.tar"
 release_extract="$release_stage/extracted"
+release_validator=/usr/local/libexec/helmr-runtime-release-validator.py
 files=(
   catalog.json
   catalog.sigstore.json
@@ -15,6 +17,12 @@ files=(
   verifier-invalid.squashfs
   verifier-valid.squashfs
 )
+toolchain_files=(
+  catalog.json
+  catalog.sigstore.json
+  trusted-root.json
+)
+toolchain_objects=toolchain-release/objects/sha256
 
 aws s3api get-object \
   --bucket '${release_package_bucket}' \
@@ -23,9 +31,11 @@ aws s3api get-object \
   "$release_archive" >/dev/null
 printf '%s  %s\n' '${release_package_sha256}' "$release_archive" | sha256sum --check --strict -
 
-python3 - "$release_archive" "$release_extract" x86_64 <<'PY'
-${release_validator}
-PY
+test -f "$release_validator"
+test ! -L "$release_validator"
+test "$(stat -c '%u:%g' "$release_validator")" = "0:0"
+test "$(stat -c '%a' "$release_validator")" = "444"
+python3 "$release_validator" "$release_archive" "$release_extract" x86_64
 
 test -d "$release_dir"
 test ! -L "$release_dir"
@@ -41,3 +51,54 @@ for file in "$${files[@]}"; do
   test "$(stat -c '%a' "$path")" = "444"
   test "$(sha256sum "$path" | awk '{print $1}')" = "$(sha256sum "$release_extract/$file" | awk '{print $1}')"
 done
+
+test -d "$toolchain_release_dir"
+test ! -L "$toolchain_release_dir"
+test "$(stat -c '%u:%g' "$toolchain_release_dir")" = "0:0"
+test "$(stat -c '%a' "$toolchain_release_dir")" = "755"
+test "$(find "$toolchain_release_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort)" = \
+  "$(printf '%s\n' "$${toolchain_files[@]}" objects | LC_ALL=C sort)"
+
+for file in "$${toolchain_files[@]}"; do
+  path="$toolchain_release_dir/$file"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%g' "$path")" = "0:0"
+  test "$(stat -c '%a' "$path")" = "444"
+  test "$(sha256sum "$path" | awk '{print $1}')" = \
+    "$(sha256sum "$release_extract/toolchain-release/$file" | awk '{print $1}')"
+done
+
+for directory in objects objects/sha256; do
+  path="$toolchain_release_dir/$directory"
+  test -d "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%g' "$path")" = "0:0"
+  test "$(stat -c '%a' "$path")" = "755"
+done
+test "$(find "$toolchain_release_dir/objects" -mindepth 1 -maxdepth 1 -printf '%f\n')" = sha256
+
+test "$(
+  find "$toolchain_release_dir/objects/sha256" \
+    -mindepth 1 -maxdepth 1 -printf '%f\n' |
+    LC_ALL=C sort
+)" = "$(
+  find "$release_extract/$toolchain_objects" \
+    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
+    LC_ALL=C sort
+)"
+
+while IFS= read -r object; do
+  path="$toolchain_release_dir/objects/sha256/$object"
+  test -f "$path"
+  test ! -L "$path"
+  test "$(stat -c '%u:%g' "$path")" = "0:0"
+  test "$(stat -c '%a' "$path")" = "444"
+  test "$(stat -c '%s' "$path")" = \
+    "$(stat -c '%s' "$release_extract/$toolchain_objects/$object")"
+  test "$(sha256sum "$path" | awk '{print $1}')" = "$object"
+done < <(
+  find "$release_extract/$toolchain_objects" \
+    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
+    LC_ALL=C sort
+)

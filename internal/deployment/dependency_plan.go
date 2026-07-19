@@ -379,15 +379,15 @@ func dependencyPlanTemplate(
 
 	return DependencyPlan{
 		Aliases: []PlanAlias{
-			{Path: "/bin/sh", Target: "/opt/helmr/toolchain/bin/sh"},
-			{Path: "/usr/bin/env", Target: "/opt/helmr/toolchain/bin/env"},
+			{Path: "/bin/sh", Target: "/nix/bin/sh"},
+			{Path: "/usr/bin/env", Target: "/nix/bin/env"},
 		},
 		Architecture: architecture,
 		Environment: []PlanEnvironment{
 			{Name: "HOME", Value: "/work/home"},
 			{
 				Name:  "PATH",
-				Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/opt/helmr/toolchain/bin",
+				Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
 			},
 		},
 		FormatVersion: DependencyPlanFormatVersion,
@@ -413,7 +413,7 @@ func dependencyPlanTemplate(
 			Manager:           "/opt/helmr/manager",
 			Project:           "/opt/helmr/project",
 			Runtime:           "/opt/helmr/runtime",
-			StandardToolchain: "/opt/helmr/toolchain",
+			StandardToolchain: "/nix",
 		},
 		OfflineStore: PlanOfflineStore{
 			ReadOnlyMountPath: "/opt/helmr/offline-store",

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/jackc/pgx/v5"
@@ -30,13 +31,35 @@ type buildPlacementFixture struct {
 	groupID       string
 }
 
-var buildPlacementToolRegistryDigest = bytes.Repeat([]byte{3}, 32)
+var buildPlacementToolchainCatalogDigest = bytes.Repeat([]byte{3}, 32)
+
+type buildPlacementCatalog struct{}
+
+func (buildPlacementCatalog) Digest() (string, error) {
+	return "sha256:" + strings.Repeat("03", 32), nil
+}
+
+func (buildPlacementCatalog) Resolve(digest string) (deployment.Toolchain, error) {
+	if digest == "sha256:"+strings.Repeat("02", 32) ||
+		digest == "sha256:"+strings.Repeat("04", 32) {
+		return deployment.Toolchain{}, nil
+	}
+	return deployment.Toolchain{}, errors.New("standard toolchain is not registered")
+}
 
 func newBuildPlacementFixture(t *testing.T, architecture string) *buildPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
-	authority, err := NewBuildAuthority(pool, buildPlacementToolRegistryDigest)
+	catalog := buildPlacementCatalog{}
+	authority, err := NewBuildAuthority(
+		pool,
+		buildPlacementToolchainCatalogDigest,
+		func(digest string) error {
+			_, err := catalog.Resolve(digest)
+			return err
+		},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +132,7 @@ INSERT INTO runtime_identities (
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
 			current_epoch, current_service_id, protocol_version, supports_build,
-			tool_registry_digest,
+			toolchain_catalog_digest,
 			runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
     certified_workload_disk_bytes, certified_scratch_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes,
@@ -120,7 +143,7 @@ INSERT INTO runtime_identities (
 			1, $4, 'helmr.worker.v0', true, $5, $6, 3000, 4294967296, 1, 34359738368,
 			2000, 2147483648, 1, 21474836480, 1, 'build-v0',
 			'sha256:test-certification', now(), now(), now()
-)`, workerID, workerID.String(), f.groupID, serviceID, buildPlacementToolRegistryDigest, runtimeID)
+)`, workerID, workerID.String(), f.groupID, serviceID, buildPlacementToolchainCatalogDigest, runtimeID)
 	} else {
 		mustDispatchExec(t, f.ctx, f.pool, `
 INSERT INTO worker_instances (
@@ -180,6 +203,71 @@ func TestPlaceReadyBuildExcludesMismatchedAndUncertifiedWorkers(t *testing.T) {
 				t.Fatalf("created %d build leases for an ineligible worker", leases)
 			}
 		})
+	}
+}
+
+func TestPlaceReadyBuildExcludesWorkerWithAnotherToolchainCatalog(t *testing.T) {
+	fixture := newBuildPlacementFixture(t, "aarch64")
+	workerID := fixture.addWorker(t, "aarch64", true)
+	mustDispatchExec(t, fixture.ctx, fixture.pool, `
+UPDATE worker_instances
+   SET toolchain_catalog_digest = decode(repeat('04', 32), 'hex')
+ WHERE id = $1`, workerID)
+
+	_, err := fixture.authority.PlaceReadyBuild(
+		fixture.ctx, fixture.candidate("aarch64"),
+		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
+	)
+	if !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("PlaceReadyBuild() error = %v, want ErrCapacityUnavailable", err)
+	}
+}
+
+func TestPlaceReadyBuildUsesCatalogMembershipInsteadOfPinEquality(t *testing.T) {
+	fixture := newBuildPlacementFixture(t, "aarch64")
+	workerID := fixture.addWorker(t, "aarch64", true)
+	mustDispatchExec(t, fixture.ctx, fixture.pool, `
+UPDATE deployments
+   SET build_standard_toolchain_digest = decode(repeat('04', 32), 'hex')
+ WHERE id = $1`, fixture.deploymentID)
+
+	lease, err := fixture.authority.PlaceReadyBuild(
+		fixture.ctx, fixture.candidate("aarch64"),
+		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.WorkerInstanceID != pgvalue.UUID(workerID) {
+		t.Fatalf("placed worker = %v, want %s", lease.WorkerInstanceID, workerID)
+	}
+}
+
+func TestPlaceReadyBuildLeavesUnregisteredPinWaiting(t *testing.T) {
+	fixture := newBuildPlacementFixture(t, "aarch64")
+	fixture.addWorker(t, "aarch64", true)
+	mustDispatchExec(t, fixture.ctx, fixture.pool, `
+UPDATE deployments
+   SET build_standard_toolchain_digest = decode(repeat('05', 32), 'hex')
+ WHERE id = $1`, fixture.deploymentID)
+
+	_, err := fixture.authority.PlaceReadyBuild(
+		fixture.ctx, fixture.candidate("aarch64"),
+		pgvalue.Timestamptz(time.Now().UTC().Add(-time.Minute)),
+	)
+	if !errors.Is(err, ErrCapacityUnavailable) {
+		t.Fatalf("PlaceReadyBuild() error = %v, want ErrCapacityUnavailable", err)
+	}
+	var leases int
+	if err := fixture.pool.QueryRow(
+		fixture.ctx,
+		`SELECT count(*) FROM deployment_build_leases WHERE deployment_id = $1`,
+		fixture.deploymentID,
+	).Scan(&leases); err != nil {
+		t.Fatal(err)
+	}
+	if leases != 0 {
+		t.Fatalf("created %d build leases for an unregistered toolchain pin", leases)
 	}
 }
 

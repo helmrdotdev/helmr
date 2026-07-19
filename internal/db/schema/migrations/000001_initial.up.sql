@@ -424,7 +424,7 @@ CREATE TABLE worker_instances (
     supervisor_version TEXT NOT NULL DEFAULT '',
     supports_run BOOLEAN NOT NULL DEFAULT false,
     supports_build BOOLEAN NOT NULL DEFAULT false,
-    tool_registry_digest BYTEA,
+    toolchain_catalog_digest BYTEA,
     runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     certified_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (certified_cpu_millis >= 0),
     certified_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_memory_bytes >= 0),
@@ -499,12 +499,12 @@ CREATE TABLE worker_instances (
         )
     ),
     CHECK (state NOT IN ('active', 'draining') OR NOT supports_build OR max_build_executors > 0),
-    CHECK (tool_registry_digest IS NULL OR octet_length(tool_registry_digest) = 32),
-    CHECK (supports_build OR tool_registry_digest IS NULL),
+    CHECK (toolchain_catalog_digest IS NULL OR octet_length(toolchain_catalog_digest) = 32),
+    CHECK (supports_build OR toolchain_catalog_digest IS NULL),
     CHECK (
         state NOT IN ('active', 'draining')
         OR NOT supports_build
-        OR tool_registry_digest IS NOT NULL
+        OR toolchain_catalog_digest IS NOT NULL
     ),
     CHECK (state <> 'draining' OR draining_at IS NOT NULL),
     CHECK (state <> 'disabled' OR disabled_at IS NOT NULL),

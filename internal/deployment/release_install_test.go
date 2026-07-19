@@ -10,7 +10,7 @@ import (
 )
 
 func TestInstallBuildPolicyPinsAndAtomicallyInstallsCanonicalBytes(t *testing.T) {
-	raw, catalog, registry := buildPolicyInstallFixture(t)
+	raw, runtimeCatalog, toolchainCatalog := buildPolicyInstallFixture(t)
 	digest := digestBytes(raw)
 	output := filepath.Join(t.TempDir(), "build-policy.json")
 	if err := os.WriteFile(output, []byte("previous"), 0o600); err != nil {
@@ -28,8 +28,8 @@ func TestInstallBuildPolicyPinsAndAtomicallyInstallsCanonicalBytes(t *testing.T)
 		},
 		digest,
 		output,
-		catalog,
-		registry,
+		runtimeCatalog,
+		toolchainCatalog,
 		os.Getuid(),
 		os.Getgid(),
 	)
@@ -60,7 +60,7 @@ func TestInstallBuildPolicyPinsAndAtomicallyInstallsCanonicalBytes(t *testing.T)
 }
 
 func TestInstallBuildPolicyRejectsAuthorityDrift(t *testing.T) {
-	raw, catalog, registry := buildPolicyInstallFixture(t)
+	raw, runtimeCatalog, toolchainCatalog := buildPolicyInstallFixture(t)
 	digest := digestBytes(raw)
 	base := runtimeObjectStore{
 		object: cas.Object{
@@ -70,37 +70,37 @@ func TestInstallBuildPolicyRejectsAuthorityDrift(t *testing.T) {
 		},
 		body: raw,
 	}
-	tests := map[string]func(*runtimeObjectStore, **RuntimeCatalog, **ToolRegistry){
-		"metadata": func(store *runtimeObjectStore, _ **RuntimeCatalog, _ **ToolRegistry) {
+	tests := map[string]func(*runtimeObjectStore, **RuntimeCatalog, **ToolchainCatalog){
+		"metadata": func(store *runtimeObjectStore, _ **RuntimeCatalog, _ **ToolchainCatalog) {
 			store.object.MediaType = "application/octet-stream"
 		},
-		"bytes": func(store *runtimeObjectStore, _ **RuntimeCatalog, _ **ToolRegistry) {
+		"bytes": func(store *runtimeObjectStore, _ **RuntimeCatalog, _ **ToolchainCatalog) {
 			store.body = append([]byte(nil), raw...)
 			store.body[len(store.body)-1] ^= 1
 		},
-		"catalog": func(_ *runtimeObjectStore, selected **RuntimeCatalog, _ **ToolRegistry) {
+		"runtime catalog": func(_ *runtimeObjectStore, selected **RuntimeCatalog, _ **ToolchainCatalog) {
 			other := testRuntimeDescriptor()
 			other.Digest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 			*selected = authenticatedRuntimeCatalogForTest(t, []RuntimeDescriptor{other})
 		},
-		"registry": func(_ *runtimeObjectStore, _ **RuntimeCatalog, selected **ToolRegistry) {
+		"toolchain catalog": func(_ *runtimeObjectStore, _ **RuntimeCatalog, selected **ToolchainCatalog) {
 			(*selected).authenticated = false
 		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			store := base
-			selectedCatalog := catalog
-			selectedRegistry := *registry
-			registryPointer := &selectedRegistry
-			mutate(&store, &selectedCatalog, &registryPointer)
+			selectedRuntimeCatalog := runtimeCatalog
+			selectedToolchainCatalog := *toolchainCatalog
+			toolchainCatalogPointer := &selectedToolchainCatalog
+			mutate(&store, &selectedRuntimeCatalog, &toolchainCatalogPointer)
 			err := installBuildPolicy(
 				context.Background(),
 				store,
 				digest,
 				filepath.Join(t.TempDir(), "build-policy.json"),
-				selectedCatalog,
-				registryPointer,
+				selectedRuntimeCatalog,
+				toolchainCatalogPointer,
 				os.Getuid(),
 				os.Getgid(),
 			)
@@ -112,7 +112,7 @@ func TestInstallBuildPolicyRejectsAuthorityDrift(t *testing.T) {
 }
 
 func TestInstallBuildPolicyRequiresCanonicalAbsoluteOutput(t *testing.T) {
-	raw, catalog, registry := buildPolicyInstallFixture(t)
+	raw, runtimeCatalog, toolchainCatalog := buildPolicyInstallFixture(t)
 	digest := digestBytes(raw)
 	store := runtimeObjectStore{
 		object: cas.Object{
@@ -127,8 +127,8 @@ func TestInstallBuildPolicyRequiresCanonicalAbsoluteOutput(t *testing.T) {
 		store,
 		digest,
 		"build-policy.json",
-		catalog,
-		registry,
+		runtimeCatalog,
+		toolchainCatalog,
 		os.Getuid(),
 		os.Getgid(),
 	); err == nil {
@@ -138,15 +138,16 @@ func TestInstallBuildPolicyRequiresCanonicalAbsoluteOutput(t *testing.T) {
 
 func buildPolicyInstallFixture(
 	t *testing.T,
-) ([]byte, *RuntimeCatalog, *ToolRegistry) {
+) ([]byte, *RuntimeCatalog, *ToolchainCatalog) {
 	t.Helper()
 	runtime := testRuntimeDescriptor()
-	registry, toolchainDigest := authenticatedToolRegistryForRuntime(t, runtime)
-	document := buildPolicyForRuntime(runtime, toolchainDigest)
-	document.ToolRegistryDigest = registry.digest
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
+	document := buildPolicyForRuntime(runtime, toolchain, toolchainDigest)
 	raw, err := canonicalBuildPolicyDocument(document)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return raw, authenticatedRuntimeCatalogForTest(t, []RuntimeDescriptor{runtime}), registry
+	return raw,
+		authenticatedRuntimeCatalogForTest(t, []RuntimeDescriptor{runtime}),
+		authenticatedToolchainCatalogForTest(t, []Toolchain{toolchain})
 }

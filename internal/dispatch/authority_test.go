@@ -28,13 +28,18 @@ func TestNewAuthorityRetainsConcretePool(t *testing.T) {
 	}
 }
 
-func TestNewBuildAuthorityRequiresRegistryDigest(t *testing.T) {
+func TestNewBuildAuthorityRequiresAuthenticatedCatalogIdentity(t *testing.T) {
 	pool := &pgxpool.Pool{}
-	authority, err := NewBuildAuthority(pool, make([]byte, 31))
-	if authority != nil {
-		t.Fatalf("NewBuildAuthority() authority = %#v, want nil", authority)
+	authority, err := NewBuildAuthority(pool, nil, func(string) error { return nil })
+	if authority != nil || err == nil {
+		t.Fatalf("NewBuildAuthority() = (%#v, %v), want error", authority, err)
 	}
-	if err == nil {
-		t.Fatal("NewBuildAuthority() error = nil, want digest error")
+}
+
+func TestNewBuildAuthorityRequiresResolver(t *testing.T) {
+	pool := &pgxpool.Pool{}
+	authority, err := NewBuildAuthority(pool, make([]byte, 32), nil)
+	if authority != nil || err == nil {
+		t.Fatalf("NewBuildAuthority() = (%#v, %v), want error", authority, err)
 	}
 }

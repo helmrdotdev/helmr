@@ -244,10 +244,10 @@ WITH runtime AS (
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
        AND (
            (NOT sqlc.arg(supports_build)::boolean
-            AND sqlc.narg(tool_registry_digest)::bytea IS NULL)
+            AND sqlc.narg(toolchain_catalog_digest)::bytea IS NULL)
            OR (
                sqlc.arg(supports_build)::boolean
-               AND octet_length(sqlc.narg(tool_registry_digest)::bytea) = 32
+               AND octet_length(sqlc.narg(toolchain_catalog_digest)::bytea) = 32
            )
        )
        AND sqlc.arg(certified_cpu_millis)::bigint >= worker_groups.required_cpu_millis
@@ -284,7 +284,7 @@ WITH runtime AS (
        SET state = 'active', protocol_version = sqlc.arg(protocol_version),
            supervisor_version = sqlc.arg(supervisor_version),
            supports_run = sqlc.arg(supports_run), supports_build = sqlc.arg(supports_build),
-           tool_registry_digest = sqlc.narg(tool_registry_digest),
+           toolchain_catalog_digest = sqlc.narg(toolchain_catalog_digest),
            runtime_identity_id = runtime.id,
            certified_cpu_millis = sqlc.arg(certified_cpu_millis),
            certified_memory_bytes = sqlc.arg(certified_memory_bytes),
@@ -387,7 +387,7 @@ UPDATE worker_instances
 	AND worker_instances.protocol_version = sqlc.arg(protocol_version)
 	AND worker_instances.supports_run = sqlc.arg(supports_run)
 	AND worker_instances.supports_build = sqlc.arg(supports_build)
-	AND worker_instances.tool_registry_digest IS NOT DISTINCT FROM sqlc.narg(tool_registry_digest)::bytea
+	AND worker_instances.toolchain_catalog_digest IS NOT DISTINCT FROM sqlc.narg(toolchain_catalog_digest)::bytea
 	AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
 	AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
 	AND worker_instances.certified_workload_disk_bytes = sqlc.arg(certified_workload_disk_bytes)

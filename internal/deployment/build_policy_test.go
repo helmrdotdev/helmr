@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -12,10 +13,9 @@ import (
 
 func TestBuildPolicyLookups(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	registry, toolchainDigest := authenticatedToolRegistryForRuntime(t, runtime)
-	document := buildPolicyForRuntime(runtime, toolchainDigest)
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
+	document := buildPolicyForRuntime(runtime, toolchain, toolchainDigest)
 	policy := parseBuildPolicyDocument(t, document)
-	policy.registry = registry
 
 	current, err := policy.Current("us-east-1")
 	if err != nil {
@@ -33,16 +33,12 @@ func TestBuildPolicyLookups(t *testing.T) {
 	if resolved != runtime {
 		t.Fatalf("ResolveRuntime(runtime) = %#v, want %#v", resolved, runtime)
 	}
-	toolset, err := policy.ResolveToolset(current, PackageManager{
-		Name:    PackageManagerBun,
-		Version: "1.3.10",
-	})
+	resolvedToolchain, err := policy.ResolveToolchain(toolchainDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if toolset.StandardToolchainDigest != current.StandardToolchainDigest ||
-		toolset.ManagedRuntimeDigest != current.Runtime.Digest {
-		t.Fatalf("ResolveToolset(current) = %#v", toolset)
+	if resolvedToolchain != toolchain {
+		t.Fatalf("ResolveToolchain(current) = %#v", resolvedToolchain)
 	}
 	if _, err := policy.Current("US-EAST-1"); !errors.Is(err, ErrBuildRegionNotConfigured) {
 		t.Fatalf("Current(unconfigured) error = %v", err)
@@ -50,16 +46,18 @@ func TestBuildPolicyLookups(t *testing.T) {
 	if _, err := policy.ResolveRuntime("sha256:" + strings.Repeat("c", 64)); !errors.Is(err, ErrRuntimeNotRegistered) {
 		t.Fatalf("ResolveRuntime(unregistered) error = %v", err)
 	}
+	if _, err := policy.ResolveToolchain("sha256:" + strings.Repeat("c", 64)); !errors.Is(err, ErrStandardToolchainNotRegistered) {
+		t.Fatalf("ResolveToolchain(unregistered) error = %v", err)
+	}
 }
 
 func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	registry, toolchainDigest := authenticatedToolRegistryForRuntime(t, runtime)
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
 	policy := parseBuildPolicyDocument(
 		t,
-		buildPolicyForRuntime(runtime, toolchainDigest),
+		buildPolicyForRuntime(runtime, toolchain, toolchainDigest),
 	)
-	policy.registry = registry
 	target, err := policy.Current("us-east-1")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +67,10 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	receipt.Index.Architecture = runtime.Architecture
 	receipt.DependencyIndex.RuntimeDigest = runtime.Digest
 	receipt.DependencyIndex.Architecture = runtime.Architecture
-	receipt.DependencyIndex.PackageManager = registry.toolsets[0].PackageManager
+	receipt.DependencyIndex.PackageManager = PackageManager{
+		Name:    PackageManagerBun,
+		Version: "1.3.10",
+	}
 	receipt.DependencyIndex.MaterializerVersion = target.MaterializerVersion
 	receipt.DependencyPlan.ManagedRuntimeDigest = runtime.Digest
 	receipt.DependencyPlan.Architecture = runtime.Architecture
@@ -126,16 +127,16 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 
 func TestLoadBuildPolicyRequiresExactAuthenticatedRegistries(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	registry, toolchainDigest := authenticatedToolRegistryForRuntime(t, runtime)
-	document := buildPolicyForRuntime(runtime, toolchainDigest)
-	document.ToolRegistryDigest = registry.digest
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
+	document := buildPolicyForRuntime(runtime, toolchain, toolchainDigest)
 	raw := canonicalBuildPolicyForTest(t, document)
 	path := filepath.Join(t.TempDir(), "build-policy.json")
 	if err := os.WriteFile(path, raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	catalog := authenticatedRuntimeCatalogForTest(t, document.Runtimes)
-	policy, err := LoadBuildPolicy(path, catalog, registry)
+	runtimeCatalog := authenticatedRuntimeCatalogForTest(t, document.Runtimes)
+	toolchainCatalog := authenticatedToolchainCatalogForTest(t, document.Toolchains)
+	policy, err := LoadBuildPolicy(path, runtimeCatalog, toolchainCatalog)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,44 +156,61 @@ func TestLoadBuildPolicyRequiresExactAuthenticatedRegistries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := LoadBuildPolicy(path, unverifiedCatalog, registry); err == nil {
+	if _, err := LoadBuildPolicy(path, unverifiedCatalog, toolchainCatalog); err == nil {
 		t.Fatal("LoadBuildPolicy accepted an unauthenticated runtime catalog")
 	}
-	registry.authenticated = false
-	if _, err := LoadBuildPolicy(path, catalog, registry); err == nil {
-		t.Fatal("LoadBuildPolicy accepted an unauthenticated tool registry")
+	toolchainCatalog.authenticated = false
+	if _, err := LoadBuildPolicy(path, runtimeCatalog, toolchainCatalog); err == nil {
+		t.Fatal("LoadBuildPolicy accepted an unauthenticated standard-toolchain catalog")
 	}
 }
 
 func TestBuildPolicyRejectsRegistryAndCompatibilityDrift(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	registry, toolchainDigest := authenticatedToolRegistryForRuntime(t, runtime)
-	document := buildPolicyForRuntime(runtime, toolchainDigest)
-	document.ToolRegistryDigest = registry.digest
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
+	document := buildPolicyForRuntime(runtime, toolchain, toolchainDigest)
 	policy := parseBuildPolicyDocument(t, document)
-	catalog := authenticatedRuntimeCatalogForTest(t, document.Runtimes)
+	runtimeCatalog := authenticatedRuntimeCatalogForTest(t, document.Runtimes)
+	toolchainCatalog := authenticatedToolchainCatalogForTest(t, document.Toolchains)
 
-	policy.toolRegistryDigest = "sha256:" + strings.Repeat("f", 64)
-	if err := validateBuildPolicyRegistries(policy, catalog, registry); err == nil {
-		t.Fatal("build policy accepted registry digest drift")
+	policy.toolchainsBytes = []byte("drift")
+	if err := validateBuildPolicyCatalogs(policy, runtimeCatalog, toolchainCatalog); err == nil {
+		t.Fatal("build policy accepted standard-toolchain catalog drift")
 	}
-	policy.toolRegistryDigest = registry.digest
-	registry.toolchains[0].ManagedRuntimeDigest = "sha256:" + strings.Repeat("e", 64)
-	if err := validateBuildPolicyRegistries(policy, catalog, registry); err == nil {
+	policy.toolchainsBytes = toolchainCatalog.toolchainsBytes
+	toolchain.ManagedRuntimeDigest = "sha256:" + strings.Repeat("e", 64)
+	policy.toolchains[toolchainDigest] = toolchain
+	if err := validateBuildPolicyCatalogs(policy, runtimeCatalog, toolchainCatalog); err == nil {
 		t.Fatal("build policy accepted an incompatible toolchain")
 	}
 }
 
 func TestValidateBuildPolicyUpgrade(t *testing.T) {
 	first := testRuntimeDescriptor()
-	_, firstToolchain := authenticatedToolRegistryForRuntime(t, first)
-	previous := parseBuildPolicyDocument(t, buildPolicyForRuntime(first, firstToolchain))
+	firstToolchain, firstToolchainDigest := testToolchainForRuntime(t, first)
+	previous := parseBuildPolicyDocument(
+		t,
+		buildPolicyForRuntime(first, firstToolchain, firstToolchainDigest),
+	)
 
 	second := first
 	second.Architecture = ArchitectureAArch64
 	second.Digest = "sha256:" + strings.Repeat("b", 64)
-	nextDocument := buildPolicyForRuntime(second, "sha256:"+strings.Repeat("d", 64))
+	secondToolchain, secondToolchainDigest := testToolchainForRuntime(t, second)
+	nextDocument := buildPolicyForRuntime(second, secondToolchain, secondToolchainDigest)
 	nextDocument.Runtimes = []RuntimeDescriptor{first, second}
+	nextDocument.Toolchains = []Toolchain{firstToolchain, secondToolchain}
+	sort.Slice(nextDocument.Toolchains, func(left, right int) bool {
+		leftDigest, err := StandardToolchainDigest(nextDocument.Toolchains[left])
+		if err != nil {
+			t.Fatal(err)
+		}
+		rightDigest, err := StandardToolchainDigest(nextDocument.Toolchains[right])
+		if err != nil {
+			t.Fatal(err)
+		}
+		return leftDigest < rightDigest
+	})
 	next := parseBuildPolicyDocument(t, nextDocument)
 	if err := ValidateBuildPolicyUpgrade(previous, next); err != nil {
 		t.Fatal(err)
@@ -209,6 +227,11 @@ func TestValidateBuildPolicyUpgrade(t *testing.T) {
 	if err := ValidateBuildPolicyUpgrade(previous, &mutated); err == nil {
 		t.Fatal("ValidateBuildPolicyUpgrade accepted runtime mutation")
 	}
+	mutated = *next
+	mutated.toolchains = map[string]Toolchain{}
+	if err := ValidateBuildPolicyUpgrade(previous, &mutated); err == nil {
+		t.Fatal("ValidateBuildPolicyUpgrade accepted standard-toolchain removal")
+	}
 	if err := ValidateBuildPolicyUpgrade(nil, next); err == nil {
 		t.Fatal("ValidateBuildPolicyUpgrade accepted a nil snapshot")
 	}
@@ -216,16 +239,17 @@ func TestValidateBuildPolicyUpgrade(t *testing.T) {
 
 func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 	runtime := testRuntimeDescriptor()
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
 	validTarget := buildPolicyTarget{
 		MaterializerVersion:     DependencyMaterializerVersion,
 		RuntimeDigest:           runtime.Digest,
-		StandardToolchainDigest: "sha256:" + strings.Repeat("d", 64),
+		StandardToolchainDigest: toolchainDigest,
 	}
 	valid := buildPolicyDocument{
-		Current:            map[string]buildPolicyTarget{"us-east-1": validTarget},
-		FormatVersion:      BuildPolicyFormatVersion,
-		Runtimes:           []RuntimeDescriptor{runtime},
-		ToolRegistryDigest: "sha256:" + strings.Repeat("e", 64),
+		Current:       map[string]buildPolicyTarget{"us-east-1": validTarget},
+		FormatVersion: BuildPolicyFormatVersion,
+		Runtimes:      []RuntimeDescriptor{runtime},
+		Toolchains:    []Toolchain{toolchain},
 	}
 	tests := map[string]func(*buildPolicyDocument){
 		"format version": func(value *buildPolicyDocument) {
@@ -237,8 +261,8 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 		"empty runtimes": func(value *buildPolicyDocument) {
 			value.Runtimes = nil
 		},
-		"invalid registry digest": func(value *buildPolicyDocument) {
-			value.ToolRegistryDigest = "latest"
+		"empty toolchains": func(value *buildPolicyDocument) {
+			value.Toolchains = nil
 		},
 		"invalid region": func(value *buildPolicyDocument) {
 			value.Current = map[string]buildPolicyTarget{" region": validTarget}
@@ -250,12 +274,25 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 		},
 		"invalid toolchain": func(value *buildPolicyDocument) {
 			target := validTarget
-			target.StandardToolchainDigest = "latest"
+			target.StandardToolchainDigest = "sha256:" + strings.Repeat("d", 64)
 			value.Current = map[string]buildPolicyTarget{"us-east-1": target}
 		},
 		"invalid materializer": func(value *buildPolicyDocument) {
 			target := validTarget
 			target.MaterializerVersion = "helmr.dependencies.v1"
+			value.Current = map[string]buildPolicyTarget{"us-east-1": target}
+		},
+		"incompatible toolchain": func(value *buildPolicyDocument) {
+			incompatible := toolchain
+			incompatible.Architecture = ArchitectureAArch64
+			incompatible.ManagedRuntimeDigest = "sha256:" + strings.Repeat("e", 64)
+			digest, err := StandardToolchainDigest(incompatible)
+			if err != nil {
+				t.Fatal(err)
+			}
+			value.Toolchains = []Toolchain{incompatible}
+			target := validTarget
+			target.StandardToolchainDigest = digest
 			value.Current = map[string]buildPolicyTarget{"us-east-1": target}
 		},
 	}
@@ -273,7 +310,8 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 
 func TestBuildPolicyRequiresClosedCanonicalShape(t *testing.T) {
 	runtime := testRuntimeDescriptor()
-	document := buildPolicyForRuntime(runtime, "sha256:"+strings.Repeat("d", 64))
+	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
+	document := buildPolicyForRuntime(runtime, toolchain, toolchainDigest)
 	canonical := canonicalBuildPolicyForTest(t, document)
 	tests := map[string][]byte{
 		"noncanonical": append([]byte(" "), canonical...),
@@ -299,6 +337,7 @@ func TestBuildPolicyRequiresClosedCanonicalShape(t *testing.T) {
 
 func buildPolicyForRuntime(
 	runtime RuntimeDescriptor,
+	toolchain Toolchain,
 	toolchainDigest string,
 ) buildPolicyDocument {
 	return buildPolicyDocument{
@@ -309,9 +348,9 @@ func buildPolicyForRuntime(
 				StandardToolchainDigest: toolchainDigest,
 			},
 		},
-		FormatVersion:      BuildPolicyFormatVersion,
-		Runtimes:           []RuntimeDescriptor{runtime},
-		ToolRegistryDigest: "sha256:" + strings.Repeat("e", 64),
+		FormatVersion: BuildPolicyFormatVersion,
+		Runtimes:      []RuntimeDescriptor{runtime},
+		Toolchains:    []Toolchain{toolchain},
 	}
 }
 
@@ -360,49 +399,34 @@ func authenticatedRuntimeCatalogForTest(
 	return catalog
 }
 
-func authenticatedToolRegistryForRuntime(
+func testToolchainForRuntime(
 	t *testing.T,
 	runtime RuntimeDescriptor,
-) (*ToolRegistry, string) {
+) (Toolchain, string) {
 	t.Helper()
-	manager, toolchain, components, toolset := testToolset(t)
-	manager.Architecture = runtime.Architecture
+	toolchain := testToolchain(t)
 	toolchain.Architecture = runtime.Architecture
 	toolchain.ManagedRuntimeDigest = runtime.Digest
-	components.Architecture = runtime.Architecture
-	components.ManagedRuntimeDigest = runtime.Digest
-	components.Manager = manager
-	components.Toolchain = toolchain
-	toolset.Architecture = runtime.Architecture
-	toolset.ManagedRuntimeDigest = runtime.Digest
-
-	managerDigest, err := ManagerRegistrationDigest(manager)
-	if err != nil {
-		t.Fatal(err)
-	}
 	toolchainDigest, err := StandardToolchainDigest(toolchain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	componentDigest, err := ComponentManifestDigest(components)
+	return toolchain, toolchainDigest
+}
+
+func authenticatedToolchainCatalogForTest(
+	t *testing.T,
+	toolchains []Toolchain,
+) *ToolchainCatalog {
+	t.Helper()
+	raw, err := CanonicalToolchainCatalog(toolchains)
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolset.ManagerRegistrationDigest = managerDigest
-	toolset.StandardToolchainDigest = toolchainDigest
-	toolset.ComponentManifestDigest = componentDigest
-	raw, err := CanonicalToolRegistry(
-		[]ManagerRegistration{manager},
-		[]Toolchain{toolchain},
-		[]Toolset{toolset},
-	)
+	catalog, err := ParseToolchainCatalog(raw)
 	if err != nil {
 		t.Fatal(err)
 	}
-	registry, err := ParseToolRegistry(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	registry.authenticated = true
-	return registry, toolchainDigest
+	catalog.authenticated = true
+	return catalog
 }

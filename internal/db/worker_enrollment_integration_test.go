@@ -750,12 +750,13 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 	const rootfsDigest = "sha256:build-worker-rootfs"
 	const runtimeABI = "helmr.firecracker.snapshot.v0"
 	certified, err := queries.CertifyWorkerInstance(ctx, db.CertifyWorkerInstanceParams{
-		RuntimeIdentityID: "sha256:build-worker-runtime", RuntimeArch: "amd64", RuntimeABI: runtimeABI,
+		RuntimeIdentityID: "sha256:build-worker-runtime", RuntimeArch: "x86_64", RuntimeABI: runtimeABI,
 		KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: rootfsDigest,
 		CniProfile: "helmr/v0", WorkerInstanceID: enrollment.WorkerInstanceID,
 		WorkerGroupID: workerGroupID, WorkerEpoch: authenticated.CurrentEpoch,
 		SupportsRun: false, SupportsBuild: true, MaxVmSlots: 0,
-		ProtocolVersion: auth.WorkerProtocolVersion, SupervisorVersion: "test",
+		ToolchainCatalogDigest: []byte(strings.Repeat("c", 32)),
+		ProtocolVersion:        auth.WorkerProtocolVersion, SupervisorVersion: "test",
 		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
 		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
 		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
@@ -782,7 +783,8 @@ func TestBuildOnlyWorkerCertificationRetainsRuntimeContract(t *testing.T) {
 		WorkerInstanceID: enrollment.WorkerInstanceID, WorkerGroupID: workerGroupID,
 		WorkerEpoch: authenticated.CurrentEpoch, SupportsRun: false,
 		RuntimeIdentityID: "sha256:build-worker-runtime", ProtocolVersion: auth.WorkerProtocolVersion,
-		SupportsBuild: true, CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
+		SupportsBuild: true, ToolchainCatalogDigest: []byte(strings.Repeat("c", 32)),
+		CertifiedCpuMillis: 4000, CertifiedMemoryBytes: 8 << 30,
 		CertifiedWorkloadDiskBytes: 64 << 30, CertifiedScratchBytes: 16 << 30,
 		CertifiedBuildCacheBytes: 8 << 30, CertifiedArtifactCacheBytes: 4 << 30,
 		PerVmCpuMillis: 2000, PerVmMemoryBytes: 4 << 30, PerVmWorkloadDiskBytes: 32 << 30,

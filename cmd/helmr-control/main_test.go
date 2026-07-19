@@ -91,7 +91,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
 	buildPolicyPath := t.TempDir() + "/build-policy.json"
-	buildPolicy := `{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"sha256:` + strings.Repeat("9", 64) + `","standardToolchainDigest":"sha256:` + strings.Repeat("8", 64) + `"}},"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:` + strings.Repeat("9", 64) + `","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}],"toolRegistryDigest":"sha256:` + strings.Repeat("7", 64) + `"}`
+	buildPolicy := smokeBuildPolicy(t)
 	if err := os.WriteFile(buildPolicyPath, []byte(buildPolicy), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +232,44 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	return databaseURL
+}
+
+func smokeBuildPolicy(t *testing.T) string {
+	t.Helper()
+	runtime := deployment.RuntimeDescriptor{
+		Architecture:      deployment.ArchitectureX8664,
+		Digest:            "sha256:" + strings.Repeat("9", 64),
+		FormatVersion:     deployment.RuntimeDescriptorFormatVersion,
+		MediaType:         deployment.RuntimeArtifactMediaType,
+		RuntimeAPIVersion: deployment.RuntimeAPIVersion,
+		SizeBytes:         4096,
+	}
+	runtimeRaw, err := deployment.CanonicalRuntimeDescriptor(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchain := deployment.Toolchain{
+		Architecture:         runtime.Architecture,
+		FormatVersion:        deployment.ToolchainFormatVersion,
+		ManagedRuntimeDigest: runtime.Digest,
+		ToolchainClosure: deployment.ManagerArtifact{
+			Digest:    "sha256:" + strings.Repeat("7", 64),
+			MediaType: deployment.ToolchainMediaType,
+			SizeBytes: 1,
+		},
+	}
+	toolchainRaw, err := deployment.CanonicalToolchain(toolchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolchainDigest, err := deployment.StandardToolchainDigest(toolchain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return `{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` +
+		runtime.Digest + `","standardToolchainDigest":"` + toolchainDigest +
+		`"}},"formatVersion":0,"runtimes":[` + string(runtimeRaw) +
+		`],"toolchains":[` + string(toolchainRaw) + `]}`
 }
 
 func freeSmokeAddr(t *testing.T) string {

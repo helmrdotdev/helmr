@@ -43,6 +43,7 @@ fi
 rm -rf "$context"
 mkdir -p "$context"
 mkdir -p "$context/runtime-release"
+mkdir -p "$context/toolchain-release"
 for name in catalog.json catalog.sigstore.json trusted-root.json; do
   source_path="$runtime_release_dir/$name"
   if [ ! -f "$source_path" ] || [ -L "$source_path" ]; then
@@ -50,6 +51,14 @@ for name in catalog.json catalog.sigstore.json trusted-root.json; do
     exit 1
   fi
   install -m 0444 "$source_path" "$context/runtime-release/$name"
+done
+for name in catalog.json catalog.sigstore.json trusted-root.json; do
+  source_path="$runtime_release_dir/toolchain-release/$name"
+  if [ ! -f "$source_path" ] || [ -L "$source_path" ]; then
+    echo "verified standard-toolchain release is missing regular file: $name" >&2
+    exit 1
+  fi
+  install -m 0444 "$source_path" "$context/toolchain-release/$name"
 done
 
 cd "$repo_root"
@@ -76,6 +85,9 @@ COPY helmr-dispatcher /usr/local/bin/helmr-dispatcher
 COPY --chown=0:0 --chmod=0444 runtime-release/catalog.json /usr/lib/helmr/runtime-release/catalog.json
 COPY --chown=0:0 --chmod=0444 runtime-release/catalog.sigstore.json /usr/lib/helmr/runtime-release/catalog.sigstore.json
 COPY --chown=0:0 --chmod=0444 runtime-release/trusted-root.json /usr/lib/helmr/runtime-release/trusted-root.json
+COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.json /usr/lib/helmr/toolchain-release/catalog.json
+COPY --chown=0:0 --chmod=0444 toolchain-release/catalog.sigstore.json /usr/lib/helmr/toolchain-release/catalog.sigstore.json
+COPY --chown=0:0 --chmod=0444 toolchain-release/trusted-root.json /usr/lib/helmr/toolchain-release/trusted-root.json
 ENTRYPOINT ["/usr/local/bin/helmr-control"]
 EOF
 

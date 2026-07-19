@@ -90,7 +90,7 @@ func TestCreateScopedRunFreezesCertifiedRegionalRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if created.RuntimeIdentityID != "test-runtime" || created.RuntimeABI != "test" || created.RuntimeArch != "arm64" {
+	if created.RuntimeIdentityID != "test-runtime" || created.RuntimeABI != "test" || created.RuntimeArch != "aarch64" {
 		t.Fatalf("runtime target = %s/%s/%s", created.RuntimeIdentityID, created.RuntimeABI, created.RuntimeArch)
 	}
 }
@@ -108,7 +108,7 @@ func TestCreateScopedRunRejectsWorkerRuntimeWithDifferentRootfs(t *testing.T) {
 		INSERT INTO runtime_identities (
 			id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile
 		) VALUES (
-			'incompatible-runtime', 'arm64', 'test', 'sha256:kernel',
+			'incompatible-runtime', 'aarch64', 'test', 'sha256:kernel',
 			'sha256:initramfs', 'sha256:different-rootfs', 'default'
 		)
 	`)

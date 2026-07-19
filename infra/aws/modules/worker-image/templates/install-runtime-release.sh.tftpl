@@ -8,6 +8,7 @@ release_stage=$(mktemp -d /tmp/helmr-runtime-release.XXXXXXXX)
 trap 'rm -rf -- "$release_stage"' EXIT
 release_archive="$release_stage/release.tar"
 release_extract="$release_stage/extracted"
+release_validator=/usr/local/libexec/helmr-runtime-release-validator.py
 
 aws s3api get-object \
   --bucket '${release_package_bucket}' \
@@ -16,11 +17,15 @@ aws s3api get-object \
   "$release_archive" >/dev/null
 printf '%s  %s\n' '${release_package_sha256}' "$release_archive" | sha256sum --check --strict -
 
-python3 - "$release_archive" "$release_extract" x86_64 <<'PY'
+install -d -o root -g root -m 0755 "$(dirname "$release_validator")"
+install -o root -g root -m 0444 /dev/null "$release_validator"
+cat >"$release_validator" <<'PY'
 ${release_validator}
 PY
+python3 "$release_validator" "$release_archive" "$release_extract" x86_64
 
 release_dir=/usr/lib/helmr/runtime-release
+toolchain_release_dir=/usr/lib/helmr/toolchain-release
 files=(
   catalog.json
   catalog.sigstore.json
@@ -29,9 +34,33 @@ files=(
   verifier-invalid.squashfs
   verifier-valid.squashfs
 )
+toolchain_files=(
+  catalog.json
+  catalog.sigstore.json
+  trusted-root.json
+)
+toolchain_objects=toolchain-release/objects/sha256
 
-rm -rf -- "$release_dir"
+rm -rf -- "$release_dir" "$toolchain_release_dir"
 install -d -o root -g root -m 0755 "$release_dir"
+install -d -o root -g root -m 0755 \
+  "$toolchain_release_dir" \
+  "$toolchain_release_dir/objects" \
+  "$toolchain_release_dir/objects/sha256"
 for file in "$${files[@]}"; do
   install -o root -g root -m 0444 "$release_extract/$file" "$release_dir/$file"
 done
+for file in "$${toolchain_files[@]}"; do
+  install -o root -g root -m 0444 \
+    "$release_extract/toolchain-release/$file" \
+    "$toolchain_release_dir/$file"
+done
+while IFS= read -r object; do
+  install -o root -g root -m 0444 \
+    "$release_extract/$toolchain_objects/$object" \
+    "$toolchain_release_dir/objects/sha256/$object"
+done < <(
+  find "$release_extract/$toolchain_objects" \
+    -mindepth 1 -maxdepth 1 -type f -printf '%f\n' |
+    LC_ALL=C sort
+)

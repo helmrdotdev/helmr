@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -66,6 +67,50 @@ func TestPrepareRuntimeReleaseIsCanonicalAndRetainsCapturedBytes(t *testing.T) {
 	}
 	if !bytes.Equal(visited, raw) {
 		t.Fatal("runtime release object does not equal the captured source")
+	}
+}
+
+func TestToolchainReleaseStatementDeduplicatesSharedClosures(t *testing.T) {
+	first := testToolchain(t)
+	second := first
+	second.Architecture = ArchitectureX8664
+	firstDigest, err := StandardToolchainDigest(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondDigest, err := StandardToolchainDigest(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if firstDigest == secondDigest {
+		t.Fatal("fixture toolchains have identical semantic identities")
+	}
+	raw, err := CanonicalToolchainCatalog([]Toolchain{first, second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := ParseToolchainCatalog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement, err := canonicalToolchainReleaseStatement(raw, catalog, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var document toolchainAttestationDocument
+	if err := json.Unmarshal(statement, &document); err != nil {
+		t.Fatal(err)
+	}
+	if len(document.Subject) != 2 {
+		t.Fatalf("standard-toolchain subjects = %#v", document.Subject)
+	}
+	catalogHash := sha256.Sum256(raw)
+	if err := validateToolchainAttestationSubjects(
+		document.Subject,
+		catalogHash,
+		catalog,
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -131,7 +176,9 @@ func TestRuntimeReleaseArchiveIsDeterministicAndComplete(t *testing.T) {
 			t.TempDir(),
 			&output,
 			runtimeReleaseAuthenticatorForTest,
+			toolchainReleaseAuthenticatorForTest,
 			runtimeReleaseSnapshotForTest,
+			toolchainReleaseSnapshotForTest,
 		)
 		if err != nil {
 			t.Fatal(err)
@@ -158,6 +205,18 @@ func TestRuntimeReleaseArchiveIsDeterministicAndComplete(t *testing.T) {
 	if !bytes.Equal(members[object], []byte("runtime")) {
 		t.Fatal("runtime release archive does not retain exact runtime object")
 	}
+	for digest, snapshot := range first.toolchainObjects {
+		name := ToolchainReleaseObjectsDirectory + "/sha256/" +
+			strings.TrimPrefix(digest, "sha256:")
+		if !bytes.Equal(
+			members[name],
+			[]byte("standard toolchain closure"),
+		) || snapshot.descriptor.Digest != digest {
+			t.Fatal(
+				"runtime release archive does not retain exact standard-toolchain object",
+			)
+		}
+	}
 }
 
 func TestRuntimeReleaseArchiveRejectsMemberDrift(t *testing.T) {
@@ -172,7 +231,9 @@ func TestRuntimeReleaseArchiveRejectsMemberDrift(t *testing.T) {
 		t.TempDir(),
 		&output,
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 		runtimeReleaseSnapshotForTest,
+		toolchainReleaseSnapshotForTest,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +327,7 @@ func TestRuntimeReleaseArchiveChecksOuterReferenceBeforeTrust(t *testing.T) {
 				reference,
 				t.TempDir(),
 				authenticate,
+				toolchainReleaseLineageAuthenticatorForTest,
 			)
 			if predecessor != nil {
 				predecessor.Close()
@@ -292,53 +354,63 @@ func TestRuntimeReleaseArchiveRejectsUnsignedStatementDrift(t *testing.T) {
 		t.TempDir(),
 		&output,
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 		runtimeReleaseSnapshotForTest,
+		toolchainReleaseSnapshotForTest,
 	); err != nil {
 		t.Fatal(err)
 	}
-	members := readRuntimePackageMembers(t, output.Bytes())
-	members[RuntimeReleaseStatementFile] = append(
-		[]byte(nil),
-		members[RuntimeReleaseStatementFile]...,
-	)
-	members[RuntimeReleaseStatementFile][0] ^= 0xff
-	names := make([]string, 0, len(members))
-	for name := range members {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	raw := runtimeReleaseTestTar(t, members, names, nil)
-	path := filepath.Join(t.TempDir(), "runtime-release.tar")
-	if err := os.WriteFile(path, raw, 0o400); err != nil {
-		t.Fatal(err)
-	}
-	predecessor, err := openRuntimeReleaseArchive(
-		context.Background(),
-		path,
-		RuntimeReleaseRef{
-			Release:   release.lineage.Release,
-			Digest:    runtimeReleaseDigest(raw),
-			SizeBytes: int64(len(raw)),
-		},
-		t.TempDir(),
-		func(
-			_ RuntimeReleaseLineage,
-			catalog,
-			bundle,
-			trustedRoot []byte,
-		) (*RuntimeCatalog, error) {
-			return runtimeReleaseAuthenticatorForTest(
-				catalog,
-				bundle,
-				trustedRoot,
+	baseMembers := readRuntimePackageMembers(t, output.Bytes())
+	for _, statementFile := range []string{
+		RuntimeReleaseStatementFile,
+		ToolchainReleaseStatementFile,
+	} {
+		t.Run(statementFile, func(t *testing.T) {
+			members := make(map[string][]byte, len(baseMembers))
+			for name, raw := range baseMembers {
+				members[name] = append([]byte(nil), raw...)
+			}
+			members[statementFile][0] ^= 0xff
+			names := make([]string, 0, len(members))
+			for name := range members {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			raw := runtimeReleaseTestTar(t, members, names, nil)
+			path := filepath.Join(t.TempDir(), "runtime-release.tar")
+			if err := os.WriteFile(path, raw, 0o400); err != nil {
+				t.Fatal(err)
+			}
+			predecessor, err := openRuntimeReleaseArchive(
+				context.Background(),
+				path,
+				RuntimeReleaseRef{
+					Release:   release.lineage.Release,
+					Digest:    runtimeReleaseDigest(raw),
+					SizeBytes: int64(len(raw)),
+				},
+				t.TempDir(),
+				func(
+					_ RuntimeReleaseLineage,
+					catalog,
+					bundle,
+					trustedRoot []byte,
+				) (*RuntimeCatalog, error) {
+					return runtimeReleaseAuthenticatorForTest(
+						catalog,
+						bundle,
+						trustedRoot,
+					)
+				},
+				toolchainReleaseLineageAuthenticatorForTest,
 			)
-		},
-	)
-	if predecessor != nil {
-		predecessor.Close()
-	}
-	if err == nil {
-		t.Fatal("runtime release archive accepted unsigned statement drift")
+			if predecessor != nil {
+				predecessor.Close()
+			}
+			if err == nil {
+				t.Fatal("runtime release archive accepted unsigned statement drift")
+			}
+		})
 	}
 }
 
@@ -379,6 +451,7 @@ func TestPrepareRuntimeReleaseRequiresExplicitLineage(t *testing.T) {
 				context.Background(),
 				divergent,
 				nil,
+				nil,
 				func(
 					context.Context,
 					string,
@@ -388,6 +461,7 @@ func TestPrepareRuntimeReleaseRequiresExplicitLineage(t *testing.T) {
 					return RuntimeIndex{}, errors.New("must not verify")
 				},
 				runtimeReleaseSnapshotForTest,
+				toolchainReleaseSnapshotForTest,
 			)
 			if err == nil {
 				release.Close()
@@ -413,6 +487,7 @@ func TestRuntimeWorkerPackageIsDeterministicAndUsesCapturedValidFixture(t *testi
 		bytes.NewReader(first),
 		ArchitectureX8664,
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -425,8 +500,64 @@ func TestRuntimeWorkerPackageIsDeterministicAndUsesCapturedValidFixture(t *testi
 		names = append(names, name)
 	}
 	sort.Strings(names)
-	if strings.Join(names, ",") != strings.Join(runtimeReleasePackageFiles, ",") {
+	expected := runtimeWorkerPackageNamesForTest(t, firstRelease)
+	sort.Strings(expected)
+	if strings.Join(names, ",") != strings.Join(expected, ",") {
 		t.Fatalf("package members = %q", names)
+	}
+}
+
+func TestRuntimeReleaseToolchainIterationSelectsExactArchitecture(t *testing.T) {
+	release := prepareRuntimeReleaseForTest(t, []byte("runtime"), nil)
+	defer release.Close()
+	catalog, err := ParseToolchainCatalog(release.toolchainCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreign := catalog.toolchains[0]
+	foreign.Architecture = ArchitectureAArch64
+	foreign.ManagedRuntimeDigest = toolDigestForTest("aarch64 runtime")
+	foreignRaw := []byte("aarch64 standard toolchain")
+	foreign.ToolchainClosure = ManagerArtifact{
+		Digest:    runtimeReleaseDigest(foreignRaw),
+		MediaType: ToolchainMediaType,
+		SizeBytes: int64(len(foreignRaw)),
+	}
+	toolchains := append(catalog.toolchains, foreign)
+	sort.Slice(toolchains, func(left, right int) bool {
+		leftDigest, _ := StandardToolchainDigest(toolchains[left])
+		rightDigest, _ := StandardToolchainDigest(toolchains[right])
+		return leftDigest < rightDigest
+	})
+	release.toolchainCatalog, err = CanonicalToolchainCatalog(toolchains)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foreignSnapshot, err := toolchainReleaseSnapshotForTest(
+		context.Background(),
+		t.TempDir(),
+		foreign.ToolchainClosure,
+		bytes.NewReader(foreignRaw),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release.toolchainObjects[foreign.ToolchainClosure.Digest] = foreignSnapshot
+
+	var visited []ToolObject
+	if err := release.ForEachToolchain(
+		context.Background(),
+		ArchitectureX8664,
+		func(descriptor ToolObject, _ io.Reader) error {
+			visited = append(visited, descriptor)
+			return nil
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(visited) != 1 ||
+		visited[0].Digest == foreign.ToolchainClosure.Digest {
+		t.Fatalf("x86_64 toolchain iteration = %#v", visited)
 	}
 }
 
@@ -491,6 +622,7 @@ func TestRuntimeWorkerPackageRejectsMemberDrift(t *testing.T) {
 				bytes.NewReader(raw),
 				ArchitectureX8664,
 				runtimeReleaseAuthenticatorForTest,
+				toolchainReleaseAuthenticatorForTest,
 			); err == nil {
 				t.Fatal("runtime package accepted member drift")
 			}
@@ -516,6 +648,7 @@ func TestRuntimeWorkerPackageRejectsDigestAndCatalogMembershipDrift(t *testing.T
 			bytes.NewReader(raw),
 			ArchitectureX8664,
 			runtimeReleaseAuthenticatorForTest,
+			toolchainReleaseAuthenticatorForTest,
 		); err == nil {
 			t.Fatal("runtime package accepted valid fixture digest drift")
 		}
@@ -534,8 +667,37 @@ func TestRuntimeWorkerPackageRejectsDigestAndCatalogMembershipDrift(t *testing.T
 			bytes.NewReader(raw),
 			ArchitectureX8664,
 			runtimeReleaseAuthenticatorForTest,
+			toolchainReleaseAuthenticatorForTest,
 		); err == nil {
 			t.Fatal("runtime package accepted invalid fixture digest drift")
+		}
+	})
+
+	t.Run("standard toolchain digest", func(t *testing.T) {
+		members := cloneRuntimeReleaseMembers(original)
+		var objectName string
+		for name := range members {
+			if strings.HasPrefix(
+				name,
+				ToolchainReleaseObjectsDirectory+"/sha256/",
+			) {
+				objectName = name
+				break
+			}
+		}
+		if objectName == "" {
+			t.Fatal("worker package has no standard-toolchain object")
+		}
+		members[objectName][0] ^= 0xff
+		names := runtimeWorkerPackageNamesForTest(t, release)
+		raw := runtimeReleaseTestTar(t, members, names, nil)
+		if err := validateRuntimeWorkerPackage(
+			bytes.NewReader(raw),
+			ArchitectureX8664,
+			runtimeReleaseAuthenticatorForTest,
+			toolchainReleaseAuthenticatorForTest,
+		); err == nil {
+			t.Fatal("runtime package accepted standard-toolchain digest drift")
 		}
 	})
 
@@ -569,10 +731,32 @@ func TestRuntimeWorkerPackageRejectsDigestAndCatalogMembershipDrift(t *testing.T
 			bytes.NewReader(raw),
 			ArchitectureX8664,
 			runtimeReleaseAuthenticatorForTest,
+			toolchainReleaseAuthenticatorForTest,
 		); err == nil {
 			t.Fatal("runtime package accepted a non-member valid descriptor")
 		}
 	})
+}
+
+func TestRuntimeWorkerPackageRejectsToolchainTrustedRootDivergence(t *testing.T) {
+	release := prepareRuntimeReleaseForTest(t, []byte("runtime"), nil)
+	defer release.Close()
+	members := readRuntimePackageMembers(t, writeRuntimePackageForTest(t, release))
+	members[ToolchainReleaseTrustedRootFile] = []byte("another trusted root")
+	raw := runtimeReleaseTestTar(
+		t,
+		members,
+		runtimeReleasePackageFiles,
+		nil,
+	)
+	if err := validateRuntimeWorkerPackage(
+		bytes.NewReader(raw),
+		ArchitectureX8664,
+		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
+	); err == nil {
+		t.Fatal("runtime package accepted divergent standard-toolchain trusted roots")
+	}
 }
 
 func TestRuntimeCatalogSuccessorRejectsRemovalAndMutation(t *testing.T) {
@@ -637,6 +821,25 @@ func TestPrepareRuntimeReleaseRetainsExactPredecessorObjects(t *testing.T) {
 	if !found {
 		t.Fatal("predecessor runtime bytes were not retained")
 	}
+	if len(release.toolchainObjects) != 1 {
+		t.Fatalf(
+			"deduplicated standard-toolchain object count = %d, want 1",
+			len(release.toolchainObjects),
+		)
+	}
+	for _, object := range release.toolchainObjects {
+		reader, err := object.content.uploadReader(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, err := io.ReadAll(reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(raw, []byte("standard toolchain closure")) {
+			t.Fatal("predecessor standard-toolchain bytes were not retained")
+		}
+	}
 }
 
 func TestPrepareRuntimeReleaseRejectsPredecessorObjectDrift(t *testing.T) {
@@ -691,6 +894,7 @@ func TestVerifyRuntimeWorkerPackageUsesProductionOutcomeBeforeMaterializing(t *t
 		output,
 		snapshotOutput,
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 		verify,
 		runtimeReleaseSnapshotForTest,
 	)
@@ -717,7 +921,7 @@ func TestVerifyRuntimeWorkerPackageUsesProductionOutcomeBeforeMaterializing(t *t
 	if snapshotStat.Mode().Perm() != 0o444 {
 		t.Fatalf("verified runtime package snapshot mode = %v", snapshotStat.Mode())
 	}
-	for _, name := range runtimeReleasePackageFiles {
+	for _, name := range runtimeWorkerPackageNamesForTest(t, release) {
 		stat, err := os.Stat(filepath.Join(output, name))
 		if err != nil {
 			t.Fatal(err)
@@ -738,6 +942,7 @@ func TestVerifyRuntimeWorkerPackageUsesProductionOutcomeBeforeMaterializing(t *t
 		failedOutput,
 		"",
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 		func(
 			context.Context,
 			string,
@@ -850,18 +1055,63 @@ func prepareRuntimeReleaseWithCatalogForTest(
 			SizeBytes: 1,
 		}
 	}
-	return prepareRuntimeRelease(
+	toolchain := testToolchain(t)
+	toolchainRaw := []byte("standard toolchain closure")
+	toolchain.ToolchainClosure = ManagerArtifact{
+		Digest:    runtimeReleaseDigest(toolchainRaw),
+		MediaType: ToolchainMediaType,
+		SizeBytes: int64(len(toolchainRaw)),
+	}
+	toolchain.Architecture = descriptor.Architecture
+	toolchain.ManagedRuntimeDigest = descriptor.Digest
+	toolchainSource, err := runtimeReleaseToolchainSourceForTest(
+		t,
+		toolchain,
+		toolchainRaw,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if predecessor != nil && len(predecessor.ToolchainCatalog) == 0 {
+		predecessor.ToolchainCatalog, err = CanonicalToolchainCatalog(
+			[]Toolchain{toolchain},
+		)
+		if err != nil {
+			return nil, err
+		}
+		predecessor.ToolchainBundle = []byte("toolchain bundle")
+		predecessor.ToolchainTrustedRoot = []byte("trusted root")
+		predecessor.Toolchains = map[string]*os.File{
+			toolchain.ToolchainClosure.Digest: runtimeReleaseTestFile(
+				t,
+				toolchainRaw,
+			),
+		}
+	}
+	var predecessorToolchains *ToolchainCatalog
+	if predecessor != nil {
+		predecessorToolchains, err = ParseToolchainCatalog(
+			predecessor.ToolchainCatalog,
+		)
+		if err != nil {
+			return nil, err
+		}
+		predecessorToolchains.authenticated = true
+	}
+	release, err := prepareRuntimeRelease(
 		context.Background(),
 		RuntimeReleaseSource{
-			Runtime:          source,
-			Invalid:          invalid,
-			Descriptor:       descriptor,
-			ScratchDirectory: t.TempDir(),
-			UnitCgroupRoot:   "/cgroup",
-			Lineage:          lineage,
-			Predecessor:      predecessor,
+			Runtime:                  source,
+			Invalid:                  invalid,
+			Descriptor:               descriptor,
+			ScratchDirectory:         t.TempDir(),
+			UnitCgroupRoot:           "/cgroup",
+			Lineage:                  lineage,
+			Predecessor:              predecessor,
+			ToolchainSourceDirectory: toolchainSource,
 		},
 		catalog,
+		predecessorToolchains,
 		func(
 			_ context.Context,
 			_ string,
@@ -879,7 +1129,47 @@ func prepareRuntimeReleaseWithCatalogForTest(
 			return RuntimeIndex{}, errors.New("unexpected verifier lease")
 		},
 		runtimeReleaseSnapshotForTest,
+		toolchainReleaseSnapshotForTest,
 	)
+	if err != nil {
+		return nil, err
+	}
+	release.toolchainBundle = []byte("toolchain bundle")
+	release.toolchainTrustedRoot = []byte("trusted root")
+	return release, nil
+}
+
+func runtimeReleaseToolchainSourceForTest(
+	t *testing.T,
+	toolchain Toolchain,
+	raw []byte,
+) (string, error) {
+	t.Helper()
+	directory := t.TempDir()
+	document, err := CanonicalToolchain(toolchain)
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(
+		filepath.Join(directory, ToolchainSourceFile),
+		document,
+		0o444,
+	); err != nil {
+		return "", err
+	}
+	objectDirectory := filepath.Join(directory, "objects", "sha256")
+	if err := os.MkdirAll(objectDirectory, 0o755); err != nil {
+		return "", err
+	}
+	name := strings.TrimPrefix(toolchain.ToolchainClosure.Digest, "sha256:")
+	if err := os.WriteFile(
+		filepath.Join(objectDirectory, name),
+		raw,
+		0o444,
+	); err != nil {
+		return "", err
+	}
+	return directory, nil
 }
 
 func runtimeReleaseSnapshotForTest(
@@ -939,6 +1229,65 @@ func runtimeReleaseSnapshotForTest(
 	}, nil
 }
 
+func toolchainReleaseSnapshotForTest(
+	ctx context.Context,
+	_ string,
+	descriptor ManagerArtifact,
+	source io.Reader,
+) (*toolchainSnapshot, error) {
+	raw, err := io.ReadAll(source)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) != descriptor.SizeBytes ||
+		runtimeReleaseDigest(raw) != descriptor.Digest {
+		return nil, errors.New(
+			"standard-toolchain test snapshot descriptor drift",
+		)
+	}
+	path := filepath.Join(os.TempDir(), strings.TrimPrefix(
+		descriptor.Digest,
+		"sha256:",
+	))
+	file, err := os.CreateTemp(filepath.Dir(path), ".helmr-toolchain-test-*")
+	if err != nil {
+		return nil, err
+	}
+	name := file.Name()
+	defer os.Remove(name)
+	if _, err := file.Write(raw); err != nil {
+		file.Close()
+		return nil, err
+	}
+	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	verifier, err := os.Open(name)
+	if err != nil {
+		return nil, err
+	}
+	upload, err := os.Open(name)
+	if err != nil {
+		verifier.Close()
+		return nil, err
+	}
+	return &toolchainSnapshot{
+		descriptor: descriptor,
+		content: &artifactSnapshot{
+			descriptor: artifactSnapshotDescriptor{
+				Digest:    descriptor.Digest,
+				MediaType: descriptor.MediaType,
+				SizeBytes: descriptor.SizeBytes,
+			},
+			verifier: verifier,
+			upload:   upload,
+		},
+	}, nil
+}
+
 func runtimeReleaseTestFile(t *testing.T, raw []byte) *os.File {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "input")
@@ -972,10 +1321,68 @@ func writeRuntimePackageForTest(t *testing.T, release *RuntimeRelease) []byte {
 		t.TempDir(),
 		&output,
 		runtimeReleaseAuthenticatorForTest,
+		toolchainReleaseAuthenticatorForTest,
 	); err != nil {
 		t.Fatal(err)
 	}
 	return output.Bytes()
+}
+
+func runtimeWorkerPackageNamesForTest(
+	t *testing.T,
+	release *RuntimeRelease,
+) []string {
+	t.Helper()
+	names := append([]string(nil), runtimeReleasePackageFiles...)
+	catalog, err := ParseToolchainCatalog(release.toolchainCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objects, err := toolchainClosureObjects(
+		catalog,
+		release.architecture,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, object := range objects {
+		names = append(
+			names,
+			ToolchainReleaseObjectsDirectory+"/sha256/"+
+				strings.TrimPrefix(object.Digest, "sha256:"),
+		)
+	}
+	return names
+}
+
+func toolchainReleaseAuthenticatorForTest(
+	catalogBytes,
+	bundle,
+	trustedRoot []byte,
+) (*ToolchainCatalog, error) {
+	if string(bundle) != "toolchain bundle" ||
+		string(trustedRoot) != "trusted root" {
+		return nil, errors.New("unexpected standard-toolchain release trust inputs")
+	}
+	catalog, err := ParseToolchainCatalog(catalogBytes)
+	if err != nil {
+		return nil, err
+	}
+	catalog.authenticated = true
+	return catalog, nil
+}
+
+func toolchainReleaseLineageAuthenticatorForTest(
+	_ RuntimeReleaseLineage,
+	catalog,
+	bundle,
+	trustedRoot []byte,
+) (*ToolchainCatalog, error) {
+	return toolchainReleaseAuthenticatorForTest(
+		catalog,
+		bundle,
+		trustedRoot,
+	)
 }
 
 func runtimeReleaseAuthenticatorForTest(

@@ -106,7 +106,7 @@ in
     )
     {
       inherit managedRuntime;
-      dependencyTools =
+      standardToolchain =
         let
           releaseTool = buildGo126Module {
             pname = "helmr-tool-candidate";
@@ -123,9 +123,8 @@ in
             subPackages = [ "internal/cmd/tool-release" ];
           };
         in
-        pkgs.callPackage ./dependency-tools.nix {
+        pkgs.callPackage ./toolchain.nix {
           inherit managedRuntime;
-          bun = pkgsBun.bun;
           inherit releaseTool squashfsTools;
         };
     }

@@ -22,19 +22,26 @@ import (
 )
 
 const (
-	RuntimeReleaseCatalogFile       = "catalog.json"
-	RuntimeReleaseStatementFile     = "attestation.json"
-	RuntimeReleaseLineageFile       = "runtime-release.json"
-	RuntimeReleaseBundleFile        = "catalog.sigstore.json"
-	RuntimeReleaseTrustedRootFile   = "trusted-root.json"
-	RuntimeReleaseCorpusFile        = "verifier-corpus.json"
-	RuntimeReleaseValidFile         = "verifier-valid.squashfs"
-	RuntimeReleaseInvalidFile       = "verifier-invalid.squashfs"
-	RuntimeReleaseObjectsDirectory  = "objects"
-	maxRuntimeReleasePackageBytes   = maxRuntimePhysicalBytes + 3*maxProgramFileSizeBytes + 1<<20
-	runtimeReleasePackageFileMode   = 0o444
-	runtimeReleaseDirectoryFileMode = 0o444
-	runtimeReleaseLineageBytes      = 4096
+	RuntimeReleaseCatalogFile        = "catalog.json"
+	RuntimeReleaseStatementFile      = "attestation.json"
+	RuntimeReleaseLineageFile        = "runtime-release.json"
+	RuntimeReleaseBundleFile         = "catalog.sigstore.json"
+	RuntimeReleaseTrustedRootFile    = "trusted-root.json"
+	RuntimeReleaseCorpusFile         = "verifier-corpus.json"
+	RuntimeReleaseValidFile          = "verifier-valid.squashfs"
+	RuntimeReleaseInvalidFile        = "verifier-invalid.squashfs"
+	RuntimeReleaseObjectsDirectory   = "objects"
+	ToolchainReleaseDirectory        = "toolchain-release"
+	ToolchainReleaseCatalogFile      = ToolchainReleaseDirectory + "/catalog.json"
+	ToolchainReleaseStatementFile    = ToolchainReleaseDirectory + "/attestation.json"
+	ToolchainReleaseBundleFile       = ToolchainReleaseDirectory + "/catalog.sigstore.json"
+	ToolchainReleaseTrustedRootFile  = ToolchainReleaseDirectory + "/trusted-root.json"
+	ToolchainReleaseObjectsDirectory = ToolchainReleaseDirectory + "/objects"
+	ToolchainSourceFile              = "toolchain.json"
+	maxRuntimeReleasePackageBytes    = maxRuntimePhysicalBytes + maxToolchainCorpusBytes + 6*maxProgramFileSizeBytes + 2<<20
+	runtimeReleasePackageFileMode    = 0o444
+	runtimeReleaseDirectoryFileMode  = 0o444
+	runtimeReleaseLineageBytes       = 4096
 )
 
 var runtimeReleaseTagPattern = regexp.MustCompile(
@@ -44,6 +51,9 @@ var runtimeReleaseTagPattern = regexp.MustCompile(
 var runtimeReleasePackageFiles = []string{
 	RuntimeReleaseCatalogFile,
 	RuntimeReleaseBundleFile,
+	ToolchainReleaseCatalogFile,
+	ToolchainReleaseBundleFile,
+	ToolchainReleaseTrustedRootFile,
 	RuntimeReleaseTrustedRootFile,
 	RuntimeReleaseCorpusFile,
 	RuntimeReleaseInvalidFile,
@@ -51,13 +61,14 @@ var runtimeReleasePackageFiles = []string{
 }
 
 type RuntimeReleaseSource struct {
-	Runtime          *os.File
-	Invalid          *os.File
-	Descriptor       RuntimeDescriptor
-	ScratchDirectory string
-	UnitCgroupRoot   string
-	Lineage          RuntimeReleaseLineage
-	Predecessor      *RuntimeReleasePredecessor
+	Runtime                  *os.File
+	Invalid                  *os.File
+	Descriptor               RuntimeDescriptor
+	ScratchDirectory         string
+	UnitCgroupRoot           string
+	Lineage                  RuntimeReleaseLineage
+	Predecessor              *RuntimeReleasePredecessor
+	ToolchainSourceDirectory string
 }
 
 type RuntimeReleaseLineage struct {
@@ -73,26 +84,35 @@ type RuntimeReleaseRef struct {
 }
 
 type RuntimeReleasePredecessor struct {
-	Lineage     RuntimeReleaseLineage
-	Catalog     []byte
-	Bundle      []byte
-	TrustedRoot []byte
-	Runtimes    map[string]*os.File
-	directory   string
+	Lineage              RuntimeReleaseLineage
+	Catalog              []byte
+	Bundle               []byte
+	TrustedRoot          []byte
+	ToolchainCatalog     []byte
+	ToolchainBundle      []byte
+	ToolchainTrustedRoot []byte
+	Runtimes             map[string]*os.File
+	Toolchains           map[string]*os.File
+	directory            string
 }
 
 type RuntimeRelease struct {
-	architecture RuntimeArchitecture
-	lineage      RuntimeReleaseLineage
-	catalog      []byte
-	statement    []byte
-	corpus       []byte
-	invalid      RuntimeDescriptor
-	index        RuntimeIndex
-	valid        RuntimeDescriptor
-	objects      map[string]*RuntimeArtifactSnapshot
-	invalidFile  *RuntimeArtifactSnapshot
-	closed       bool
+	architecture         RuntimeArchitecture
+	lineage              RuntimeReleaseLineage
+	catalog              []byte
+	statement            []byte
+	toolchainCatalog     []byte
+	toolchainStatement   []byte
+	toolchainBundle      []byte
+	toolchainTrustedRoot []byte
+	corpus               []byte
+	invalid              RuntimeDescriptor
+	index                RuntimeIndex
+	valid                RuntimeDescriptor
+	objects              map[string]*RuntimeArtifactSnapshot
+	toolchainObjects     map[string]*toolchainSnapshot
+	invalidFile          *RuntimeArtifactSnapshot
+	closed               bool
 }
 
 type RuntimeReleasePackage struct {
@@ -108,6 +128,7 @@ type runtimeReleaseVerifier func(
 ) (RuntimeIndex, error)
 
 type runtimeCatalogAuthenticator func([]byte, []byte, []byte) (*RuntimeCatalog, error)
+type toolchainCatalogAuthenticator func([]byte, []byte, []byte) (*ToolchainCatalog, error)
 
 type runtimeReleaseLineageAuthenticator func(
 	RuntimeReleaseLineage,
@@ -115,6 +136,12 @@ type runtimeReleaseLineageAuthenticator func(
 	[]byte,
 	[]byte,
 ) (*RuntimeCatalog, error)
+type toolchainReleaseLineageAuthenticator func(
+	RuntimeReleaseLineage,
+	[]byte,
+	[]byte,
+	[]byte,
+) (*ToolchainCatalog, error)
 
 type runtimeReleaseSnapshotter func(
 	context.Context,
@@ -122,6 +149,13 @@ type runtimeReleaseSnapshotter func(
 	RuntimeDescriptor,
 	*os.File,
 ) (*RuntimeArtifactSnapshot, error)
+
+type toolchainReleaseSnapshotter func(
+	context.Context,
+	string,
+	ManagerArtifact,
+	io.Reader,
+) (*toolchainSnapshot, error)
 
 type runtimeReleaseCountingReader struct {
 	source io.Reader
@@ -238,7 +272,7 @@ func openRuntimeReleaseDirectory(
 	directory,
 	release string,
 ) (*RuntimeReleasePredecessor, error) {
-	return openRuntimeReleaseDirectoryWithAuthenticator(
+	return openRuntimeReleaseDirectoryWithAuthenticators(
 		directory,
 		release,
 		func(
@@ -255,20 +289,40 @@ func openRuntimeReleaseDirectory(
 				lineage.Predecessor,
 			)
 		},
+		func(
+			lineage RuntimeReleaseLineage,
+			catalog,
+			bundle,
+			trustedRoot []byte,
+		) (*ToolchainCatalog, error) {
+			return VerifyToolchainCatalogForRelease(
+				catalog,
+				bundle,
+				trustedRoot,
+				lineage.Release,
+				lineage.Predecessor,
+			)
+		},
 	)
 }
 
-func openRuntimeReleaseDirectoryWithAuthenticator(
+func openRuntimeReleaseDirectoryWithAuthenticators(
 	directory,
 	release string,
 	authenticate runtimeReleaseLineageAuthenticator,
+	authenticateToolchain func(
+		RuntimeReleaseLineage,
+		[]byte,
+		[]byte,
+		[]byte,
+	) (*ToolchainCatalog, error),
 ) (*RuntimeReleasePredecessor, error) {
 	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
 		return nil, errors.New(
 			"runtime release predecessor directory is not canonical absolute",
 		)
 	}
-	if authenticate == nil {
+	if authenticate == nil || authenticateToolchain == nil {
 		return nil, errors.New(
 			"runtime release predecessor authenticator is nil",
 		)
@@ -334,12 +388,74 @@ func openRuntimeReleaseDirectoryWithAuthenticator(
 			"runtime release statement does not exact-match its signed payload",
 		)
 	}
+	toolchainCatalogBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseCatalogFile),
+		maxToolchainCatalogBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	toolchainBundleBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseBundleFile),
+		maxReleaseBundleBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	toolchainTrustedRootBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseTrustedRootFile),
+		maxReleaseTrustedRootBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(trustedRootBytes, toolchainTrustedRootBytes) {
+		return nil, errors.New(
+			"runtime and standard-toolchain trusted roots do not exact-match",
+		)
+	}
+	toolchainCatalog, err := authenticateToolchain(
+		lineage,
+		toolchainCatalogBytes,
+		toolchainBundleBytes,
+		toolchainTrustedRootBytes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"authenticate predecessor standard-toolchain release: %w",
+			err,
+		)
+	}
+	toolchainStatementBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseStatementFile),
+		maxProgramFileSizeBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	toolchainStatement, err := canonicalToolchainReleaseStatement(
+		toolchainCatalogBytes,
+		toolchainCatalog,
+		lineage.Predecessor,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(toolchainStatementBytes, toolchainStatement) {
+		return nil, errors.New(
+			"standard-toolchain release statement does not exact-match its signed payload",
+		)
+	}
 	predecessor := &RuntimeReleasePredecessor{
-		Lineage:     lineage,
-		Catalog:     catalogBytes,
-		Bundle:      bundleBytes,
-		TrustedRoot: trustedRootBytes,
-		Runtimes:    make(map[string]*os.File, len(catalog.runtimes)),
+		Lineage:              lineage,
+		Catalog:              catalogBytes,
+		Bundle:               bundleBytes,
+		TrustedRoot:          trustedRootBytes,
+		ToolchainCatalog:     toolchainCatalogBytes,
+		ToolchainBundle:      toolchainBundleBytes,
+		ToolchainTrustedRoot: toolchainTrustedRootBytes,
+		Runtimes:             make(map[string]*os.File, len(catalog.runtimes)),
+		Toolchains:           make(map[string]*os.File),
 	}
 	for _, descriptor := range catalog.runtimes {
 		path := filepath.Join(
@@ -377,6 +493,39 @@ func openRuntimeReleaseDirectoryWithAuthenticator(
 		predecessor.Close()
 		return nil, err
 	}
+	toolchainObjects, err := toolchainClosureObjects(
+		toolchainCatalog,
+		"",
+	)
+	if err != nil {
+		predecessor.Close()
+		return nil, err
+	}
+	for _, descriptor := range toolchainObjects {
+		path := filepath.Join(
+			directory,
+			ToolchainReleaseObjectsDirectory,
+			"sha256",
+			strings.TrimPrefix(descriptor.Digest, "sha256:"),
+		)
+		file, openErr := OpenRuntimeReleaseFile(path, descriptor.SizeBytes)
+		if openErr != nil {
+			predecessor.Close()
+			return nil, fmt.Errorf(
+				"open predecessor standard toolchain %q: %w",
+				descriptor.Digest,
+				openErr,
+			)
+		}
+		predecessor.Toolchains[descriptor.Digest] = file
+	}
+	if err := validateToolchainObjectDirectory(
+		directory,
+		toolchainObjects,
+	); err != nil {
+		predecessor.Close()
+		return nil, err
+	}
 	return predecessor, nil
 }
 
@@ -399,6 +548,21 @@ func (predecessor *RuntimeReleasePredecessor) Close() error {
 			}
 		}
 		delete(predecessor.Runtimes, digest)
+	}
+	for digest, file := range predecessor.Toolchains {
+		if file != nil {
+			if err := file.Close(); err != nil {
+				closeErr = errors.Join(
+					closeErr,
+					fmt.Errorf(
+						"close predecessor standard toolchain %q: %w",
+						digest,
+						err,
+					),
+				)
+			}
+		}
+		delete(predecessor.Toolchains, digest)
 	}
 	if predecessor.directory != "" {
 		closeErr = errors.Join(closeErr, os.RemoveAll(predecessor.directory))
@@ -438,11 +602,47 @@ func validateRuntimeReleaseObjectDirectory(
 	return nil
 }
 
+func validateToolchainObjectDirectory(
+	directory string,
+	objects []ToolObject,
+) error {
+	root := filepath.Join(
+		directory,
+		ToolchainReleaseObjectsDirectory,
+		"sha256",
+	)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return fmt.Errorf("read standard-toolchain object directory: %w", err)
+	}
+	expected := make(map[string]bool, len(objects))
+	for _, descriptor := range objects {
+		expected[strings.TrimPrefix(descriptor.Digest, "sha256:")] = true
+	}
+	if len(entries) != len(expected) {
+		return fmt.Errorf(
+			"standard-toolchain object count = %d, want %d",
+			len(entries),
+			len(expected),
+		)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !expected[entry.Name()] {
+			return fmt.Errorf(
+				"standard-toolchain release contains unexpected object %q",
+				entry.Name(),
+			)
+		}
+	}
+	return nil
+}
+
 func PrepareRuntimeRelease(
 	ctx context.Context,
 	source RuntimeReleaseSource,
 ) (*RuntimeRelease, error) {
 	var predecessor *RuntimeCatalog
+	var predecessorToolchains *ToolchainCatalog
 	if source.Predecessor != nil {
 		if source.Lineage.Predecessor == nil {
 			return nil, errors.New(
@@ -460,13 +660,36 @@ func PrepareRuntimeRelease(
 		if err != nil {
 			return nil, fmt.Errorf("authenticate predecessor runtime catalog: %w", err)
 		}
+		if !bytes.Equal(
+			source.Predecessor.TrustedRoot,
+			source.Predecessor.ToolchainTrustedRoot,
+		) {
+			return nil, errors.New(
+				"predecessor runtime and standard-toolchain trusted roots do not exact-match",
+			)
+		}
+		predecessorToolchains, err = VerifyToolchainCatalogForRelease(
+			source.Predecessor.ToolchainCatalog,
+			source.Predecessor.ToolchainBundle,
+			source.Predecessor.ToolchainTrustedRoot,
+			source.Lineage.Predecessor.Release,
+			source.Predecessor.Lineage.Predecessor,
+		)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"authenticate predecessor standard-toolchain catalog: %w",
+				err,
+			)
+		}
 	}
 	return prepareRuntimeRelease(
 		ctx,
 		source,
 		predecessor,
+		predecessorToolchains,
 		VerifyRuntimeArtifact,
 		snapshotRuntimeReleaseFile,
+		snapshotToolchain,
 	)
 }
 
@@ -474,8 +697,10 @@ func prepareRuntimeRelease(
 	ctx context.Context,
 	source RuntimeReleaseSource,
 	predecessor *RuntimeCatalog,
+	predecessorToolchains *ToolchainCatalog,
 	verify runtimeReleaseVerifier,
 	snapshot runtimeReleaseSnapshotter,
+	snapshotToolchainClosure toolchainReleaseSnapshotter,
 ) (_ *RuntimeRelease, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("runtime release context is nil")
@@ -489,7 +714,7 @@ func prepareRuntimeRelease(
 	if source.UnitCgroupRoot == "" {
 		return nil, errors.New("runtime release verifier cgroup root is empty")
 	}
-	if verify == nil || snapshot == nil {
+	if verify == nil || snapshot == nil || snapshotToolchainClosure == nil {
 		return nil, errors.New("runtime release operations are nil")
 	}
 	if err := ValidateRuntimeDescriptor(source.Descriptor); err != nil {
@@ -512,15 +737,17 @@ func prepareRuntimeRelease(
 			"runtime release lineage and predecessor distribution disagree",
 		)
 	}
-	if (source.Predecessor == nil) != (predecessor == nil) {
+	if (source.Predecessor == nil) != (predecessor == nil) ||
+		(source.Predecessor == nil) != (predecessorToolchains == nil) {
 		return nil, errors.New("runtime release predecessor authentication is incomplete")
 	}
 
 	release := &RuntimeRelease{
-		architecture: source.Descriptor.Architecture,
-		lineage:      source.Lineage,
-		valid:        source.Descriptor,
-		objects:      make(map[string]*RuntimeArtifactSnapshot),
+		architecture:     source.Descriptor.Architecture,
+		lineage:          source.Lineage,
+		valid:            source.Descriptor,
+		objects:          make(map[string]*RuntimeArtifactSnapshot),
+		toolchainObjects: make(map[string]*toolchainSnapshot),
 	}
 	defer func() {
 		if returnErr != nil {
@@ -639,6 +866,120 @@ func prepareRuntimeRelease(
 	if err != nil {
 		return nil, err
 	}
+	var toolchains []Toolchain
+	if predecessorToolchains != nil {
+		toolchains = append(toolchains, predecessorToolchains.toolchains...)
+		if err := capturePredecessorToolchainObjects(
+			ctx,
+			source.ScratchDirectory,
+			source.Predecessor,
+			predecessorToolchains,
+			release.toolchainObjects,
+			snapshotToolchainClosure,
+		); err != nil {
+			return nil, err
+		}
+	}
+	if source.ToolchainSourceDirectory != "" {
+		toolchain, file, openErr := openToolchainSource(
+			source.ToolchainSourceDirectory,
+		)
+		if openErr != nil {
+			return nil, openErr
+		}
+		captured, captureErr := snapshotToolchainClosure(
+			ctx,
+			source.ScratchDirectory,
+			toolchain.ToolchainClosure,
+			file,
+		)
+		closeErr := file.Close()
+		if captureErr != nil || closeErr != nil {
+			return nil, errors.Join(captureErr, closeErr)
+		}
+		if toolchain.Architecture != source.Descriptor.Architecture ||
+			toolchain.ManagedRuntimeDigest != source.Descriptor.Digest {
+			captured.Close()
+			return nil, errors.New(
+				"standard-toolchain source does not target the composed managed runtime",
+			)
+		}
+		digest, digestErr := StandardToolchainDigest(toolchain)
+		if digestErr != nil {
+			captured.Close()
+			return nil, digestErr
+		}
+		found := false
+		for _, existing := range toolchains {
+			existingDigest, digestErr := StandardToolchainDigest(existing)
+			if digestErr != nil {
+				captured.Close()
+				return nil, digestErr
+			}
+			if existingDigest == digest {
+				found = true
+				if existing != toolchain {
+					captured.Close()
+					return nil, fmt.Errorf(
+						"standard-toolchain catalog successor mutates predecessor digest %q",
+						digest,
+					)
+				}
+				break
+			}
+		}
+		if !found {
+			toolchains = append(toolchains, toolchain)
+		}
+		closureDigest := toolchain.ToolchainClosure.Digest
+		if inherited := release.toolchainObjects[closureDigest]; inherited != nil {
+			if inherited.descriptor != captured.descriptor {
+				captured.Close()
+				return nil, fmt.Errorf(
+					"standard-toolchain closure digest %q has divergent descriptors",
+					closureDigest,
+				)
+			}
+			if err := captured.Close(); err != nil {
+				return nil, err
+			}
+		} else {
+			release.toolchainObjects[closureDigest] = captured
+		}
+	} else if predecessorToolchains == nil {
+		return nil, errors.New("runtime release standard-toolchain source is empty")
+	}
+	sort.Slice(toolchains, func(left, right int) bool {
+		leftDigest, _ := StandardToolchainDigest(toolchains[left])
+		rightDigest, _ := StandardToolchainDigest(toolchains[right])
+		return leftDigest < rightDigest
+	})
+	release.toolchainCatalog, err = CanonicalToolchainCatalog(toolchains)
+	if err != nil {
+		return nil, err
+	}
+	toolchainCatalog, err := ParseToolchainCatalog(release.toolchainCatalog)
+	if err != nil {
+		return nil, err
+	}
+	expectedObjects, err := toolchainClosureObjects(toolchainCatalog, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := validateCapturedToolchainObjects(
+		release.toolchainObjects,
+		expectedObjects,
+	); err != nil {
+		return nil, err
+	}
+	release.toolchainStatement, err = canonicalToolchainReleaseStatement(
+		release.toolchainCatalog,
+		toolchainCatalog,
+		release.lineage.Predecessor,
+	)
+	if err != nil {
+		return nil, err
+	}
 	release.corpus, err = canonicalRuntimeVerifierCorpusManifest(
 		runtimeVerifierCorpusManifest{
 			FormatVersion: RuntimeVerifierCorpusFormatVersion,
@@ -701,6 +1042,183 @@ func capturePredecessorRuntimeObjects(
 	for digest := range input.Runtimes {
 		if _, err := catalog.Resolve(digest); err != nil {
 			return fmt.Errorf("predecessor contains unexpected runtime object %q", digest)
+		}
+	}
+	return nil
+}
+
+func openToolchainSource(
+	directory string,
+) (Toolchain, *os.File, error) {
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return Toolchain{}, nil, errors.New(
+			"standard-toolchain source directory is not canonical absolute",
+		)
+	}
+	if err := requireReleaseDirectoryEntries(
+		directory,
+		[]string{ToolchainSourceFile, "objects"},
+		"standard-toolchain source",
+	); err != nil {
+		return Toolchain{}, nil, err
+	}
+	raw, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainSourceFile),
+		maxToolchainBytes,
+	)
+	if err != nil {
+		return Toolchain{}, nil, err
+	}
+	toolchain, err := ParseToolchain(raw)
+	if err != nil {
+		return Toolchain{}, nil, err
+	}
+	objectRoot := filepath.Join(directory, "objects")
+	if err := requireReleaseDirectoryEntries(
+		objectRoot,
+		[]string{"sha256"},
+		"standard-toolchain source objects",
+	); err != nil {
+		return Toolchain{}, nil, err
+	}
+	digestRoot := filepath.Join(objectRoot, "sha256")
+	name := strings.TrimPrefix(
+		toolchain.ToolchainClosure.Digest,
+		"sha256:",
+	)
+	if err := requireReleaseDirectoryEntries(
+		digestRoot,
+		[]string{name},
+		"standard-toolchain source sha256 objects",
+	); err != nil {
+		return Toolchain{}, nil, err
+	}
+	file, err := OpenRuntimeReleaseFile(
+		filepath.Join(digestRoot, name),
+		toolchain.ToolchainClosure.SizeBytes,
+	)
+	if err != nil {
+		return Toolchain{}, nil, fmt.Errorf(
+			"open standard-toolchain source closure: %w",
+			err,
+		)
+	}
+	return toolchain, file, nil
+}
+
+func requireReleaseDirectoryEntries(
+	directory string,
+	expected []string,
+	label string,
+) error {
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("read %s directory: %w", label, err)
+	}
+	names := make([]string, len(entries))
+	for index, entry := range entries {
+		names[index] = entry.Name()
+	}
+	sort.Strings(names)
+	want := append([]string(nil), expected...)
+	sort.Strings(want)
+	if strings.Join(names, "\x00") != strings.Join(want, "\x00") {
+		return fmt.Errorf(
+			"%s entries = %q, want %q",
+			label,
+			names,
+			want,
+		)
+	}
+	return nil
+}
+
+func capturePredecessorToolchainObjects(
+	ctx context.Context,
+	scratchDirectory string,
+	input *RuntimeReleasePredecessor,
+	catalog *ToolchainCatalog,
+	destination map[string]*toolchainSnapshot,
+	snapshot toolchainReleaseSnapshotter,
+) error {
+	if input == nil || catalog == nil || !catalog.authenticated {
+		return errors.New(
+			"authenticated predecessor standard-toolchain release is required",
+		)
+	}
+	objects, err := toolchainClosureObjects(catalog, "")
+	if err != nil {
+		return err
+	}
+	if len(input.Toolchains) != len(objects) {
+		return fmt.Errorf(
+			"predecessor standard-toolchain object count = %d, want %d",
+			len(input.Toolchains),
+			len(objects),
+		)
+	}
+	for _, descriptor := range objects {
+		source := input.Toolchains[descriptor.Digest]
+		if source == nil {
+			return fmt.Errorf(
+				"predecessor standard-toolchain object %q is missing",
+				descriptor.Digest,
+			)
+		}
+		captured, err := snapshot(
+			ctx,
+			scratchDirectory,
+			ManagerArtifact(descriptor),
+			source,
+		)
+		if err != nil {
+			return fmt.Errorf(
+				"capture predecessor standard toolchain %q: %w",
+				descriptor.Digest,
+				err,
+			)
+		}
+		destination[descriptor.Digest] = captured
+	}
+	return validateCapturedToolchainObjects(destination, objects)
+}
+
+func validateCapturedToolchainObjects(
+	captured map[string]*toolchainSnapshot,
+	expected []ToolObject,
+) error {
+	if len(captured) != len(expected) {
+		return fmt.Errorf(
+			"captured standard-toolchain object count = %d, want %d",
+			len(captured),
+			len(expected),
+		)
+	}
+	for _, descriptor := range expected {
+		snapshot := captured[descriptor.Digest]
+		if snapshot == nil || snapshot.content == nil {
+			return fmt.Errorf(
+				"captured standard-toolchain object %q is missing",
+				descriptor.Digest,
+			)
+		}
+		if snapshot.descriptor != ManagerArtifact(descriptor) {
+			return fmt.Errorf(
+				"captured standard-toolchain object %q descriptor drifted",
+				descriptor.Digest,
+			)
+		}
+	}
+	for digest := range captured {
+		found := false
+		for _, descriptor := range expected {
+			found = found || descriptor.Digest == digest
+		}
+		if !found {
+			return fmt.Errorf(
+				"captured standard-toolchain object %q is unexpected",
+				digest,
+			)
 		}
 	}
 	return nil
@@ -801,6 +1319,53 @@ func canonicalRuntimeReleaseStatement(
 			FormatVersion:    RuntimeAttestationFormatVersion,
 			Predecessor:      predecessor,
 			Runtimes:         append([]RuntimeDescriptor(nil), catalog.runtimes...),
+		},
+	})
+}
+
+func canonicalToolchainReleaseStatement(
+	catalogBytes []byte,
+	catalog *ToolchainCatalog,
+	predecessor *RuntimeReleaseRef,
+) ([]byte, error) {
+	if catalog == nil {
+		return nil, errors.New("standard-toolchain release catalog is nil")
+	}
+	catalogHash := sha256.Sum256(catalogBytes)
+	subjects := make([]releaseAttestationSubject, 0, len(catalog.toolchains)+1)
+	subjects = append(subjects, releaseAttestationSubject{
+		Name:   "catalog",
+		Digest: map[string]string{"sha256": hex.EncodeToString(catalogHash[:])},
+	})
+	seenClosures := make(map[string]struct{}, len(catalog.toolchains))
+	for _, toolchain := range catalog.toolchains {
+		hexDigest := strings.TrimPrefix(
+			toolchain.ToolchainClosure.Digest,
+			"sha256:",
+		)
+		if _, exists := seenClosures[hexDigest]; exists {
+			continue
+		}
+		seenClosures[hexDigest] = struct{}{}
+		subjects = append(subjects, releaseAttestationSubject{
+			Name:   "toolchain/sha256/" + hexDigest,
+			Digest: map[string]string{"sha256": hexDigest},
+		})
+	}
+	return canonicalToolchainAttestationDocument(toolchainAttestationDocument{
+		Type:          RuntimeAttestationType,
+		Subject:       subjects,
+		PredicateType: ToolchainAttestationPredicateType,
+		Predicate: toolchainAttestationPredicate{
+			CatalogDigest: "sha256:" +
+				hex.EncodeToString(catalogHash[:]),
+			CatalogMediaType: ToolchainCatalogMediaType,
+			FormatVersion:    ToolchainCatalogFormatVersion,
+			Predecessor:      predecessor,
+			Toolchains: append(
+				[]Toolchain(nil),
+				catalog.toolchains...,
+			),
 		},
 	})
 }
@@ -927,6 +1492,58 @@ func (release *RuntimeRelease) ForEachRuntime(
 	return nil
 }
 
+func (release *RuntimeRelease) ForEachToolchain(
+	ctx context.Context,
+	architecture RuntimeArchitecture,
+	visit func(ToolObject, io.Reader) error,
+) error {
+	if err := ValidateRuntimeArchitecture(architecture); err != nil {
+		return err
+	}
+	return release.forEachToolchain(ctx, architecture, visit)
+}
+
+func (release *RuntimeRelease) forEachToolchain(
+	ctx context.Context,
+	architecture RuntimeArchitecture,
+	visit func(ToolObject, io.Reader) error,
+) error {
+	if ctx == nil {
+		return errors.New("standard-toolchain release iteration context is nil")
+	}
+	if release == nil || release.closed {
+		return errors.New("standard-toolchain release is closed")
+	}
+	if visit == nil {
+		return errors.New("standard-toolchain release visitor is nil")
+	}
+	catalog, err := ParseToolchainCatalog(release.toolchainCatalog)
+	if err != nil {
+		return err
+	}
+	objects, err := toolchainClosureObjects(catalog, architecture)
+	if err != nil {
+		return err
+	}
+	for _, descriptor := range objects {
+		snapshot := release.toolchainObjects[descriptor.Digest]
+		if snapshot == nil || snapshot.content == nil {
+			return fmt.Errorf(
+				"standard-toolchain release object %q is closed",
+				descriptor.Digest,
+			)
+		}
+		reader, err := snapshot.content.uploadReader(ctx)
+		if err != nil {
+			return err
+		}
+		if err := visit(descriptor, reader); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (release *RuntimeRelease) Close() error {
 	if release == nil || release.closed {
 		return nil
@@ -939,6 +1556,13 @@ func (release *RuntimeRelease) Close() error {
 			closeRuntimeReleaseSnapshot(digest, snapshot),
 		)
 		delete(release.objects, digest)
+	}
+	for digest, snapshot := range release.toolchainObjects {
+		closeErr = errors.Join(
+			closeErr,
+			closeToolchainSnapshot(digest, snapshot),
+		)
+		delete(release.toolchainObjects, digest)
 	}
 	if release.invalidFile != nil {
 		closeErr = errors.Join(
@@ -1028,6 +1652,52 @@ func writeRuntimeReleaseDirectory(
 	); err != nil {
 		return err
 	}
+	if err := os.Mkdir(
+		filepath.Join(directory, ToolchainReleaseDirectory),
+		0o755,
+	); err != nil {
+		return fmt.Errorf("create standard-toolchain release directory: %w", err)
+	}
+	if err := writeRuntimeReleaseFile(
+		filepath.Join(directory, ToolchainReleaseCatalogFile),
+		release.toolchainCatalog,
+	); err != nil {
+		return err
+	}
+	if err := writeRuntimeReleaseFile(
+		filepath.Join(directory, ToolchainReleaseStatementFile),
+		release.toolchainStatement,
+	); err != nil {
+		return err
+	}
+	toolchainObjectRoot := filepath.Join(
+		directory,
+		ToolchainReleaseObjectsDirectory,
+		"sha256",
+	)
+	if err := os.MkdirAll(toolchainObjectRoot, 0o755); err != nil {
+		return fmt.Errorf(
+			"create standard-toolchain release object directory: %w",
+			err,
+		)
+	}
+	if err := release.forEachToolchain(
+		ctx,
+		"",
+		func(descriptor ToolObject, source io.Reader) error {
+			return writeRuntimeReleaseReader(
+				ctx,
+				filepath.Join(
+					toolchainObjectRoot,
+					strings.TrimPrefix(descriptor.Digest, "sha256:"),
+				),
+				descriptor.SizeBytes,
+				source,
+			)
+		},
+	); err != nil {
+		return err
+	}
 	lineage, err := CanonicalRuntimeReleaseLineage(release.lineage)
 	if err != nil {
 		return err
@@ -1111,6 +1781,16 @@ func LoadRuntimeReleaseDirectory(
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	toolchainCatalog, err := VerifyToolchainCatalogForRelease(
+		predecessor.ToolchainCatalog,
+		predecessor.ToolchainBundle,
+		predecessor.ToolchainTrustedRoot,
+		predecessor.Lineage.Release,
+		predecessor.Lineage.Predecessor,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	corpusBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(directory, RuntimeReleaseCorpusFile),
 		maxRuntimeVerifierCorpusManifestBytes,
@@ -1154,7 +1834,13 @@ func LoadRuntimeReleaseDirectory(
 		UnitCgroupRoot:   unitCgroupRoot,
 		Lineage:          predecessor.Lineage,
 		Predecessor:      predecessor,
-	}, catalog, VerifyRuntimeArtifact, snapshotRuntimeReleaseFile)
+	},
+		catalog,
+		toolchainCatalog,
+		VerifyRuntimeArtifact,
+		snapshotRuntimeReleaseFile,
+		snapshotToolchain,
+	)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -1185,6 +1871,31 @@ func LoadRuntimeReleaseDirectory(
 			"runtime release verifier corpus changed while loading captured inputs",
 		)
 	}
+	toolchainStatementBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseStatementFile),
+		maxProgramFileSizeBytes,
+	)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if !bytes.Equal(release.toolchainCatalog, predecessor.ToolchainCatalog) {
+		return nil, nil, nil, errors.New(
+			"standard-toolchain release catalog changed while loading captured inputs",
+		)
+	}
+	if !bytes.Equal(release.toolchainStatement, toolchainStatementBytes) {
+		return nil, nil, nil, errors.New(
+			"standard-toolchain release attestation statement changed while loading captured inputs",
+		)
+	}
+	release.toolchainBundle = append(
+		[]byte(nil),
+		predecessor.ToolchainBundle...,
+	)
+	release.toolchainTrustedRoot = append(
+		[]byte(nil),
+		predecessor.ToolchainTrustedRoot...,
+	)
 	return release,
 		append([]byte(nil), predecessor.Bundle...),
 		append([]byte(nil), predecessor.TrustedRoot...),
@@ -1275,6 +1986,10 @@ var runtimeReleaseArchiveFiles = []string{
 	RuntimeReleaseCorpusFile,
 	RuntimeReleaseInvalidFile,
 	RuntimeReleaseValidFile,
+	ToolchainReleaseStatementFile,
+	ToolchainReleaseCatalogFile,
+	ToolchainReleaseBundleFile,
+	ToolchainReleaseTrustedRootFile,
 }
 
 type runtimeReleaseArchiveMember struct {
@@ -1299,7 +2014,9 @@ func WriteRuntimeReleaseArchive(
 		scratchDirectory,
 		destination,
 		runtimeReleaseCatalogAuthenticator(release.lineage),
+		toolchainReleaseCatalogAuthenticator(release.lineage),
 		snapshotRuntimeReleaseFile,
+		snapshotToolchain,
 	)
 }
 
@@ -1311,12 +2028,17 @@ func writeRuntimeReleaseArchive(
 	scratchDirectory string,
 	destination io.Writer,
 	authenticate runtimeCatalogAuthenticator,
+	authenticateToolchain toolchainCatalogAuthenticator,
 	snapshot runtimeReleaseSnapshotter,
+	snapshotToolchainClosure toolchainReleaseSnapshotter,
 ) (_ RuntimeReleasePackage, returnErr error) {
 	if release == nil || release.closed {
 		return RuntimeReleasePackage{}, errors.New("runtime release is closed")
 	}
-	if authenticate == nil || snapshot == nil {
+	if authenticate == nil ||
+		authenticateToolchain == nil ||
+		snapshot == nil ||
+		snapshotToolchainClosure == nil {
 		return RuntimeReleasePackage{}, errors.New(
 			"runtime release archive authenticator is nil",
 		)
@@ -1328,19 +2050,39 @@ func writeRuntimeReleaseArchive(
 	); err != nil {
 		return RuntimeReleasePackage{}, err
 	}
+	if !bytes.Equal(trustedRoot, release.toolchainTrustedRoot) {
+		return RuntimeReleasePackage{}, errors.New(
+			"runtime and standard-toolchain trusted roots do not exact-match",
+		)
+	}
+	if _, err := authenticateToolchain(
+		release.toolchainCatalog,
+		release.toolchainBundle,
+		release.toolchainTrustedRoot,
+	); err != nil {
+		return RuntimeReleasePackage{}, err
+	}
 	lineage, err := CanonicalRuntimeReleaseLineage(release.lineage)
 	if err != nil {
 		return RuntimeReleasePackage{}, err
 	}
 	values := map[string][]byte{
-		RuntimeReleaseStatementFile:   release.statement,
-		RuntimeReleaseCatalogFile:     release.catalog,
-		RuntimeReleaseBundleFile:      bundle,
-		RuntimeReleaseLineageFile:     lineage,
-		RuntimeReleaseTrustedRootFile: trustedRoot,
-		RuntimeReleaseCorpusFile:      release.corpus,
+		RuntimeReleaseStatementFile:     release.statement,
+		RuntimeReleaseCatalogFile:       release.catalog,
+		RuntimeReleaseBundleFile:        bundle,
+		RuntimeReleaseLineageFile:       lineage,
+		RuntimeReleaseTrustedRootFile:   trustedRoot,
+		RuntimeReleaseCorpusFile:        release.corpus,
+		ToolchainReleaseStatementFile:   release.toolchainStatement,
+		ToolchainReleaseCatalogFile:     release.toolchainCatalog,
+		ToolchainReleaseBundleFile:      release.toolchainBundle,
+		ToolchainReleaseTrustedRootFile: release.toolchainTrustedRoot,
 	}
-	members := make([]runtimeReleaseArchiveMember, 0, len(values)+2+len(release.objects))
+	members := make(
+		[]runtimeReleaseArchiveMember,
+		0,
+		len(values)+2+len(release.objects)+len(release.toolchainObjects),
+	)
 	for name, raw := range values {
 		value := append([]byte(nil), raw...)
 		members = append(members, runtimeReleaseArchiveMember{
@@ -1368,6 +2110,17 @@ func writeRuntimeReleaseArchive(
 		captured := snapshot
 		members = append(members, runtimeReleaseArchiveMember{
 			name:      "objects/sha256/" + strings.TrimPrefix(digest, "sha256:"),
+			sizeBytes: captured.descriptor.SizeBytes,
+			source: func(ctx context.Context) (io.Reader, error) {
+				return captured.content.uploadReader(ctx)
+			},
+		})
+	}
+	for digest, snapshot := range release.toolchainObjects {
+		captured := snapshot
+		members = append(members, runtimeReleaseArchiveMember{
+			name: ToolchainReleaseObjectsDirectory + "/sha256/" +
+				strings.TrimPrefix(digest, "sha256:"),
 			sizeBytes: captured.descriptor.SizeBytes,
 			source: func(ctx context.Context) (io.Reader, error) {
 				return captured.content.uploadReader(ctx)
@@ -1445,6 +2198,14 @@ func writeRuntimeReleaseArchive(
 		) (*RuntimeCatalog, error) {
 			return authenticate(catalog, bundle, trustedRoot)
 		},
+		func(
+			_ RuntimeReleaseLineage,
+			catalog,
+			bundle,
+			trustedRoot []byte,
+		) (*ToolchainCatalog, error) {
+			return authenticateToolchain(catalog, bundle, trustedRoot)
+		},
 	)
 	if err != nil {
 		return RuntimeReleasePackage{}, err
@@ -1454,6 +2215,12 @@ func writeRuntimeReleaseArchive(
 		verified.Bundle,
 		verified.TrustedRoot,
 	)
+	verifiedToolchainCatalog, toolchainErr := authenticateToolchain(
+		verified.ToolchainCatalog,
+		verified.ToolchainBundle,
+		verified.ToolchainTrustedRoot,
+	)
+	err = errors.Join(err, toolchainErr)
 	objects := make(map[string]*RuntimeArtifactSnapshot)
 	if err == nil {
 		err = capturePredecessorRuntimeObjects(
@@ -1466,6 +2233,20 @@ func writeRuntimeReleaseArchive(
 		)
 	}
 	for _, object := range objects {
+		err = errors.Join(err, object.Close())
+	}
+	toolchainObjects := make(map[string]*toolchainSnapshot)
+	if err == nil {
+		err = capturePredecessorToolchainObjects(
+			ctx,
+			scratchDirectory,
+			verified,
+			verifiedToolchainCatalog,
+			toolchainObjects,
+			snapshotToolchainClosure,
+		)
+	}
+	for _, object := range toolchainObjects {
 		err = errors.Join(err, object.Close())
 	}
 	if err == nil {
@@ -1555,6 +2336,20 @@ func OpenRuntimeReleaseArchive(
 				lineage.Predecessor,
 			)
 		},
+		func(
+			lineage RuntimeReleaseLineage,
+			catalog,
+			bundle,
+			trustedRoot []byte,
+		) (*ToolchainCatalog, error) {
+			return VerifyToolchainCatalogForRelease(
+				catalog,
+				bundle,
+				trustedRoot,
+				lineage.Release,
+				lineage.Predecessor,
+			)
+		},
 	)
 }
 
@@ -1564,11 +2359,12 @@ func openRuntimeReleaseArchive(
 	expected RuntimeReleaseRef,
 	scratchDirectory string,
 	authenticate runtimeReleaseLineageAuthenticator,
+	authenticateToolchain toolchainReleaseLineageAuthenticator,
 ) (_ *RuntimeReleasePredecessor, returnErr error) {
 	if err := ValidateRuntimeReleaseRef(expected); err != nil {
 		return nil, err
 	}
-	if authenticate == nil {
+	if authenticate == nil || authenticateToolchain == nil {
 		return nil, errors.New("runtime release archive authenticator is nil")
 	}
 	source, err := OpenRuntimeReleaseFile(path, expected.SizeBytes)
@@ -1609,10 +2405,11 @@ func openRuntimeReleaseArchive(
 		os.RemoveAll(directory)
 		return nil, err
 	}
-	predecessor, err := openRuntimeReleaseDirectoryWithAuthenticator(
+	predecessor, err := openRuntimeReleaseDirectoryWithAuthenticators(
 		directory,
 		expected.Release,
 		authenticate,
+		authenticateToolchain,
 	)
 	if err != nil {
 		os.RemoveAll(directory)
@@ -1679,6 +2476,17 @@ func VerifyRuntimeReleaseArchive(
 			embeddedTrustedRoot []byte,
 		) (*RuntimeCatalog, error) {
 			return pinnedRuntimeCatalogAuthenticator(
+				embeddedLineage,
+				trustedRoot,
+			)(catalog, bundle, embeddedTrustedRoot)
+		},
+		func(
+			embeddedLineage RuntimeReleaseLineage,
+			catalog,
+			bundle,
+			embeddedTrustedRoot []byte,
+		) (*ToolchainCatalog, error) {
+			return pinnedToolchainCatalogAuthenticator(
 				embeddedLineage,
 				trustedRoot,
 			)(catalog, bundle, embeddedTrustedRoot)
@@ -1794,9 +2602,18 @@ func validateRuntimeReleaseArchiveName(name string) error {
 			return nil
 		}
 	}
-	const prefix = "objects/sha256/"
-	digest := strings.TrimPrefix(name, prefix)
-	if digest == name || len(digest) != sha256.Size*2 {
+	prefixes := []string{
+		RuntimeReleaseObjectsDirectory + "/sha256/",
+		ToolchainReleaseObjectsDirectory + "/sha256/",
+	}
+	var digest string
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(name, prefix) {
+			digest = strings.TrimPrefix(name, prefix)
+			break
+		}
+	}
+	if len(digest) != sha256.Size*2 {
 		return fmt.Errorf("runtime release archive contains unexpected member %q", name)
 	}
 	if _, err := hex.DecodeString(digest); err != nil ||
@@ -1823,6 +2640,7 @@ func WriteRuntimeWorkerPackage(
 		scratchDirectory,
 		destination,
 		authenticate,
+		toolchainReleaseCatalogAuthenticator(release.lineage),
 	)
 }
 
@@ -1834,6 +2652,7 @@ func writeRuntimeWorkerPackage(
 	scratchDirectory string,
 	destination io.Writer,
 	authenticate runtimeCatalogAuthenticator,
+	authenticateToolchain toolchainCatalogAuthenticator,
 ) (_ RuntimeReleasePackage, returnErr error) {
 	if ctx == nil {
 		return RuntimeReleasePackage{}, errors.New("runtime package context is nil")
@@ -1844,7 +2663,7 @@ func writeRuntimeWorkerPackage(
 	if destination == nil {
 		return RuntimeReleasePackage{}, errors.New("runtime package destination is nil")
 	}
-	if authenticate == nil {
+	if authenticate == nil || authenticateToolchain == nil {
 		return RuntimeReleasePackage{}, errors.New("runtime package authenticator is nil")
 	}
 	catalog, err := authenticate(release.catalog, bundle, trustedRoot)
@@ -1857,6 +2676,21 @@ func writeRuntimeWorkerPackage(
 		release.architecture,
 	); err != nil {
 		return RuntimeReleasePackage{}, err
+	}
+	if !bytes.Equal(trustedRoot, release.toolchainTrustedRoot) {
+		return RuntimeReleasePackage{}, errors.New(
+			"runtime and standard-toolchain trusted roots do not exact-match",
+		)
+	}
+	if _, err := authenticateToolchain(
+		release.toolchainCatalog,
+		release.toolchainBundle,
+		release.toolchainTrustedRoot,
+	); err != nil {
+		return RuntimeReleasePackage{}, fmt.Errorf(
+			"authenticate runtime package standard-toolchain catalog: %w",
+			err,
+		)
 	}
 	if len(bundle) == 0 || int64(len(bundle)) > maxReleaseBundleBytes {
 		return RuntimeReleasePackage{}, errors.New("runtime package bundle size is invalid")
@@ -1895,6 +2729,7 @@ func writeRuntimeWorkerPackage(
 		archive,
 		release.architecture,
 		authenticate,
+		authenticateToolchain,
 	); err != nil {
 		return RuntimeReleasePackage{}, fmt.Errorf("verify composed runtime package: %w", err)
 	}
@@ -1925,10 +2760,13 @@ func writeRuntimeWorkerPackageArchive(
 ) error {
 	writer := tar.NewWriter(destination)
 	members := map[string][]byte{
-		RuntimeReleaseCatalogFile:     release.catalog,
-		RuntimeReleaseBundleFile:      bundle,
-		RuntimeReleaseTrustedRootFile: trustedRoot,
-		RuntimeReleaseCorpusFile:      release.corpus,
+		RuntimeReleaseCatalogFile:       release.catalog,
+		RuntimeReleaseBundleFile:        bundle,
+		RuntimeReleaseTrustedRootFile:   trustedRoot,
+		RuntimeReleaseCorpusFile:        release.corpus,
+		ToolchainReleaseCatalogFile:     release.toolchainCatalog,
+		ToolchainReleaseBundleFile:      release.toolchainBundle,
+		ToolchainReleaseTrustedRootFile: release.toolchainTrustedRoot,
 	}
 	for _, name := range runtimeReleasePackageFiles {
 		if name == RuntimeReleaseValidFile || name == RuntimeReleaseInvalidFile {
@@ -1972,6 +2810,36 @@ func writeRuntimeWorkerPackageArchive(
 			return fmt.Errorf("write runtime package member %q: %w", name, err)
 		}
 	}
+	if err := release.ForEachToolchain(
+		ctx,
+		release.architecture,
+		func(descriptor ToolObject, source io.Reader) error {
+			name := ToolchainReleaseObjectsDirectory + "/sha256/" +
+				strings.TrimPrefix(descriptor.Digest, "sha256:")
+			if err := writeRuntimeReleaseTarHeader(
+				writer,
+				name,
+				descriptor.SizeBytes,
+			); err != nil {
+				return err
+			}
+			written, err := copyRuntimeRelease(ctx, writer, source)
+			if err != nil {
+				return err
+			}
+			if written != descriptor.SizeBytes {
+				return fmt.Errorf(
+					"runtime package member %q size = %d, want %d",
+					name,
+					written,
+					descriptor.SizeBytes,
+				)
+			}
+			return nil
+		},
+	); err != nil {
+		return err
+	}
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("close runtime package: %w", err)
 	}
@@ -2009,6 +2877,7 @@ func ValidateRuntimeWorkerPackage(
 		source,
 		architecture,
 		runtimeReleaseCatalogAuthenticator(lineage),
+		toolchainReleaseCatalogAuthenticator(lineage),
 	)
 }
 
@@ -2016,6 +2885,7 @@ func validateRuntimeWorkerPackage(
 	source io.Reader,
 	architecture RuntimeArchitecture,
 	authenticate runtimeCatalogAuthenticator,
+	authenticateToolchain toolchainCatalogAuthenticator,
 ) error {
 	if source == nil {
 		return errors.New("runtime package source is nil")
@@ -2023,7 +2893,7 @@ func validateRuntimeWorkerPackage(
 	if err := ValidateRuntimeArchitecture(architecture); err != nil {
 		return err
 	}
-	if authenticate == nil {
+	if authenticate == nil || authenticateToolchain == nil {
 		return errors.New("runtime package authenticator is nil")
 	}
 	counted := &runtimeReleaseCountingReader{
@@ -2033,27 +2903,16 @@ func validateRuntimeWorkerPackage(
 	small := make(map[string][]byte, len(runtimeReleasePackageFiles)-1)
 	var validDigest string
 	var validSize int64
-	seen := make(map[string]bool, len(runtimeReleasePackageFiles))
-	for position := 0; ; position++ {
+	for position, wantName := range runtimeReleasePackageFiles {
 		header, err := reader.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
 		if err != nil {
-			return fmt.Errorf("read runtime package header: %w", err)
+			return fmt.Errorf(
+				"read runtime package member %q: %w",
+				wantName,
+				err,
+			)
 		}
-		if position >= len(runtimeReleasePackageFiles) {
-			return fmt.Errorf("runtime package contains extra member %q", header.Name)
-		}
-		wantName := runtimeReleasePackageFiles[position]
 		if header.Name != wantName {
-			if seen[header.Name] {
-				return fmt.Errorf("runtime package contains duplicate member %q", header.Name)
-			}
-			if filepath.Base(header.Name) != header.Name ||
-				strings.Contains(header.Name, `\`) {
-				return fmt.Errorf("runtime package contains unsafe member %q", header.Name)
-			}
 			return fmt.Errorf(
 				"runtime package member %d = %q, want %q",
 				position,
@@ -2061,10 +2920,6 @@ func validateRuntimeWorkerPackage(
 				wantName,
 			)
 		}
-		if seen[header.Name] {
-			return fmt.Errorf("runtime package contains duplicate member %q", header.Name)
-		}
-		seen[header.Name] = true
 		if err := validateRuntimeReleaseTarHeader(header); err != nil {
 			return fmt.Errorf("runtime package member %q: %w", header.Name, err)
 		}
@@ -2091,12 +2946,91 @@ func validateRuntimeWorkerPackage(
 		}
 		small[header.Name] = raw
 	}
-	if len(seen) != len(runtimeReleasePackageFiles) {
-		return fmt.Errorf(
-			"runtime package member count = %d, want %d",
-			len(seen),
-			len(runtimeReleasePackageFiles),
+	catalog, err := authenticate(
+		small[RuntimeReleaseCatalogFile],
+		small[RuntimeReleaseBundleFile],
+		small[RuntimeReleaseTrustedRootFile],
+	)
+	if err != nil {
+		return fmt.Errorf("authenticate runtime package catalog: %w", err)
+	}
+	if !bytes.Equal(
+		small[RuntimeReleaseTrustedRootFile],
+		small[ToolchainReleaseTrustedRootFile],
+	) {
+		return errors.New(
+			"runtime and standard-toolchain trusted roots do not exact-match",
 		)
+	}
+	toolchainCatalog, err := authenticateToolchain(
+		small[ToolchainReleaseCatalogFile],
+		small[ToolchainReleaseBundleFile],
+		small[ToolchainReleaseTrustedRootFile],
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"authenticate runtime package standard-toolchain catalog: %w",
+			err,
+		)
+	}
+	toolchainObjects, err := toolchainClosureObjects(
+		toolchainCatalog,
+		architecture,
+	)
+	if err != nil {
+		return err
+	}
+	for _, descriptor := range toolchainObjects {
+		wantName := ToolchainReleaseObjectsDirectory + "/sha256/" +
+			strings.TrimPrefix(descriptor.Digest, "sha256:")
+		header, err := reader.Next()
+		if err != nil {
+			return fmt.Errorf(
+				"read runtime package member %q: %w",
+				wantName,
+				err,
+			)
+		}
+		if header.Name != wantName {
+			return fmt.Errorf(
+				"runtime package standard-toolchain member = %q, want %q",
+				header.Name,
+				wantName,
+			)
+		}
+		if err := validateRuntimeReleaseTarHeader(header); err != nil {
+			return fmt.Errorf("runtime package member %q: %w", header.Name, err)
+		}
+		if header.Size != descriptor.SizeBytes {
+			return fmt.Errorf(
+				"runtime package member %q size = %d, want %d",
+				header.Name,
+				header.Size,
+				descriptor.SizeBytes,
+			)
+		}
+		digest := sha256.New()
+		written, err := io.Copy(digest, reader)
+		if err != nil {
+			return fmt.Errorf(
+				"hash runtime package member %q: %w",
+				header.Name,
+				err,
+			)
+		}
+		actual := "sha256:" + hex.EncodeToString(digest.Sum(nil))
+		if written != descriptor.SizeBytes || actual != descriptor.Digest {
+			return fmt.Errorf(
+				"runtime package member %q does not match its catalog descriptor",
+				header.Name,
+			)
+		}
+	}
+	if header, err := reader.Next(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return fmt.Errorf("read runtime package trailing member: %w", err)
+		}
+		return fmt.Errorf("runtime package contains extra member %q", header.Name)
 	}
 	var trailing [1]byte
 	if count, err := counted.Read(trailing[:]); count != 0 || !errors.Is(err, io.EOF) {
@@ -2110,14 +3044,6 @@ func validateRuntimeWorkerPackage(
 			"runtime package exceeds %d bytes",
 			maxRuntimeReleasePackageBytes,
 		)
-	}
-	catalog, err := authenticate(
-		small[RuntimeReleaseCatalogFile],
-		small[RuntimeReleaseBundleFile],
-		small[RuntimeReleaseTrustedRootFile],
-	)
-	if err != nil {
-		return fmt.Errorf("authenticate runtime package catalog: %w", err)
 	}
 	document, err := parseRuntimeVerifierCorpusManifest(
 		small[RuntimeReleaseCorpusFile],
@@ -2160,6 +3086,7 @@ func VerifyRuntimeWorkerPackage(
 		outputDirectory,
 		snapshotPath,
 		pinnedRuntimeCatalogAuthenticator(lineage, trustedRoot),
+		pinnedToolchainCatalogAuthenticator(lineage, trustedRoot),
 		VerifyRuntimeArtifact,
 		snapshotRuntimeReleaseFile,
 	)
@@ -2199,6 +3126,40 @@ func runtimeReleaseCatalogAuthenticator(
 	}
 }
 
+func pinnedToolchainCatalogAuthenticator(
+	lineage RuntimeReleaseLineage,
+	trustedRoot []byte,
+) toolchainCatalogAuthenticator {
+	return func(catalog, bundle, embeddedTrustedRoot []byte) (*ToolchainCatalog, error) {
+		if !bytes.Equal(embeddedTrustedRoot, trustedRoot) {
+			return nil, errors.New(
+				"standard-toolchain release trusted root does not exact-match pinned release root",
+			)
+		}
+		return VerifyToolchainCatalogForRelease(
+			catalog,
+			bundle,
+			trustedRoot,
+			lineage.Release,
+			lineage.Predecessor,
+		)
+	}
+}
+
+func toolchainReleaseCatalogAuthenticator(
+	lineage RuntimeReleaseLineage,
+) toolchainCatalogAuthenticator {
+	return func(catalog, bundle, trustedRoot []byte) (*ToolchainCatalog, error) {
+		return VerifyToolchainCatalogForRelease(
+			catalog,
+			bundle,
+			trustedRoot,
+			lineage.Release,
+			lineage.Predecessor,
+		)
+	}
+}
+
 func verifyRuntimeWorkerPackage(
 	ctx context.Context,
 	source *os.File,
@@ -2208,6 +3169,7 @@ func verifyRuntimeWorkerPackage(
 	outputDirectory,
 	snapshotPath string,
 	authenticate runtimeCatalogAuthenticator,
+	authenticateToolchain toolchainCatalogAuthenticator,
 	verify runtimeReleaseVerifier,
 	snapshot runtimeReleaseSnapshotter,
 ) (_ RuntimeReleasePackage, returnErr error) {
@@ -2294,6 +3256,7 @@ func verifyRuntimeWorkerPackage(
 		packageSnapshot,
 		architecture,
 		authenticate,
+		authenticateToolchain,
 	); err != nil {
 		return RuntimeReleasePackage{}, err
 	}
@@ -2308,7 +3271,11 @@ func verifyRuntimeWorkerPackage(
 	if _, err := packageSnapshot.Seek(0, io.SeekStart); err != nil {
 		return RuntimeReleasePackage{}, fmt.Errorf("rewind verified runtime package: %w", err)
 	}
-	if err := extractRuntimeWorkerPackage(packageSnapshot, extracted); err != nil {
+	if err := extractRuntimeWorkerPackage(
+		packageSnapshot,
+		extracted,
+		architecture,
+	); err != nil {
 		return RuntimeReleasePackage{}, err
 	}
 	catalogBytes, err := readRuntimeReleaseInputFile(
@@ -2334,6 +3301,50 @@ func verifyRuntimeWorkerPackage(
 	}
 	catalog, err := authenticate(catalogBytes, bundleBytes, trustedRootBytes)
 	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	toolchainCatalogBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(extracted, ToolchainReleaseCatalogFile),
+		maxToolchainCatalogBytes,
+	)
+	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	toolchainBundleBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(extracted, ToolchainReleaseBundleFile),
+		maxReleaseBundleBytes,
+	)
+	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	toolchainTrustedRootBytes, err := readRuntimeReleaseInputFile(
+		filepath.Join(extracted, ToolchainReleaseTrustedRootFile),
+		maxReleaseTrustedRootBytes,
+	)
+	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	if !bytes.Equal(trustedRootBytes, toolchainTrustedRootBytes) {
+		return RuntimeReleasePackage{}, errors.New(
+			"runtime and standard-toolchain trusted roots do not exact-match",
+		)
+	}
+	toolchainCatalog, err := authenticateToolchain(
+		toolchainCatalogBytes,
+		toolchainBundleBytes,
+		toolchainTrustedRootBytes,
+	)
+	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	toolchainObjects, err := toolchainClosureObjects(
+		toolchainCatalog,
+		architecture,
+	)
+	if err != nil {
+		return RuntimeReleasePackage{}, err
+	}
+	if err := validateToolchainObjectDirectory(extracted, toolchainObjects); err != nil {
 		return RuntimeReleasePackage{}, err
 	}
 	corpusBytes, err := readRuntimeReleaseInputFile(
@@ -2363,7 +3374,11 @@ func verifyRuntimeWorkerPackage(
 		return RuntimeReleasePackage{}, err
 	}
 	if outputDirectory != "" {
-		if err := materializeRuntimeWorkerPackage(extracted, outputDirectory); err != nil {
+		if err := materializeRuntimeWorkerPackage(
+			extracted,
+			outputDirectory,
+			toolchainObjects,
+		); err != nil {
 			return RuntimeReleasePackage{}, err
 		}
 	}
@@ -2448,7 +3463,11 @@ func materializeRuntimeWorkerSnapshot(
 	return syncRuntimeReleaseDirectory(parent)
 }
 
-func extractRuntimeWorkerPackage(source io.Reader, directory string) error {
+func extractRuntimeWorkerPackage(
+	source io.Reader,
+	directory string,
+	architecture RuntimeArchitecture,
+) error {
 	reader := tar.NewReader(source)
 	for _, name := range runtimeReleasePackageFiles {
 		header, err := reader.Next()
@@ -2461,9 +3480,68 @@ func extractRuntimeWorkerPackage(source io.Reader, directory string) error {
 		if err := validateRuntimeReleaseTarHeader(header); err != nil {
 			return err
 		}
+		if err := os.MkdirAll(
+			filepath.Dir(filepath.Join(directory, name)),
+			0o755,
+		); err != nil {
+			return err
+		}
 		if err := writeRuntimeReleaseReader(
 			context.Background(),
 			filepath.Join(directory, name),
+			header.Size,
+			reader,
+		); err != nil {
+			return err
+		}
+	}
+	raw, err := readRuntimeReleaseInputFile(
+		filepath.Join(directory, ToolchainReleaseCatalogFile),
+		maxToolchainCatalogBytes,
+	)
+	if err != nil {
+		return err
+	}
+	catalog, err := ParseToolchainCatalog(raw)
+	if err != nil {
+		return err
+	}
+	objects, err := toolchainClosureObjects(catalog, architecture)
+	if err != nil {
+		return err
+	}
+	for _, descriptor := range objects {
+		name := ToolchainReleaseObjectsDirectory + "/sha256/" +
+			strings.TrimPrefix(descriptor.Digest, "sha256:")
+		header, err := reader.Next()
+		if err != nil {
+			return fmt.Errorf("read runtime package member %q: %w", name, err)
+		}
+		if header.Name != name {
+			return fmt.Errorf(
+				"runtime package member = %q, want %q",
+				header.Name,
+				name,
+			)
+		}
+		if err := validateRuntimeReleaseTarHeader(header); err != nil {
+			return err
+		}
+		if header.Size != descriptor.SizeBytes {
+			return fmt.Errorf(
+				"runtime package member %q size = %d, want %d",
+				name,
+				header.Size,
+				descriptor.SizeBytes,
+			)
+		}
+		path := filepath.Join(directory, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		if err := writeRuntimeReleaseReader(
+			context.Background(),
+			path,
 			header.Size,
 			reader,
 		); err != nil {
@@ -2563,7 +3641,11 @@ func verifyExtractedRuntimeCorpus(
 	return errors.Join(verifyErr, snapshotCloseErr)
 }
 
-func materializeRuntimeWorkerPackage(source, destination string) (returnErr error) {
+func materializeRuntimeWorkerPackage(
+	source,
+	destination string,
+	toolchainObjects []ToolObject,
+) (returnErr error) {
 	parent := filepath.Dir(destination)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return fmt.Errorf("create runtime package output parent: %w", err)
@@ -2582,10 +3664,24 @@ func materializeRuntimeWorkerPackage(source, destination string) (returnErr erro
 			returnErr = errors.Join(returnErr, os.RemoveAll(staging))
 		}
 	}()
-	for _, name := range runtimeReleasePackageFiles {
+	names := append([]string(nil), runtimeReleasePackageFiles...)
+	for _, descriptor := range toolchainObjects {
+		names = append(
+			names,
+			ToolchainReleaseObjectsDirectory+"/sha256/"+
+				strings.TrimPrefix(descriptor.Digest, "sha256:"),
+		)
+	}
+	for _, name := range names {
+		if err := os.MkdirAll(
+			filepath.Dir(filepath.Join(staging, name)),
+			0o755,
+		); err != nil {
+			return err
+		}
 		input, err := OpenRuntimeReleaseFile(
 			filepath.Join(source, name),
-			runtimeReleaseMaterializeLimit(name),
+			runtimeReleaseMaterializeLimit(name, toolchainObjects),
 		)
 		if err != nil {
 			return err
@@ -2616,9 +3712,18 @@ func materializeRuntimeWorkerPackage(source, destination string) (returnErr erro
 	return syncRuntimeReleaseDirectory(parent)
 }
 
-func runtimeReleaseMaterializeLimit(name string) int64 {
+func runtimeReleaseMaterializeLimit(
+	name string,
+	toolchainObjects []ToolObject,
+) int64 {
 	if name == RuntimeReleaseValidFile {
 		return maxRuntimePhysicalBytes
+	}
+	for _, descriptor := range toolchainObjects {
+		if name == ToolchainReleaseObjectsDirectory+"/sha256/"+
+			strings.TrimPrefix(descriptor.Digest, "sha256:") {
+			return descriptor.SizeBytes
+		}
 	}
 	limit, err := runtimeReleasePackageMemberLimit(name)
 	if err != nil {
@@ -2684,6 +3789,12 @@ func runtimeReleasePackageMemberLimit(name string) (int64, error) {
 	case RuntimeReleaseBundleFile:
 		return maxReleaseBundleBytes, nil
 	case RuntimeReleaseTrustedRootFile:
+		return maxReleaseTrustedRootBytes, nil
+	case ToolchainReleaseCatalogFile:
+		return maxToolchainCatalogBytes, nil
+	case ToolchainReleaseBundleFile:
+		return maxReleaseBundleBytes, nil
+	case ToolchainReleaseTrustedRootFile:
 		return maxReleaseTrustedRootBytes, nil
 	case RuntimeReleaseCorpusFile:
 		return maxRuntimeVerifierCorpusManifestBytes, nil

@@ -18,8 +18,31 @@ var (
 )
 
 type Authority struct {
-	pool                    *pgxpool.Pool
-	buildToolRegistryDigest []byte
+	pool                   *pgxpool.Pool
+	resolveBuildToolchain  ToolchainResolver
+	toolchainCatalogDigest []byte
+}
+
+type ToolchainResolver func(string) error
+
+func NewBuildAuthority(
+	pool *pgxpool.Pool,
+	catalogDigest []byte,
+	resolve ToolchainResolver,
+) (*Authority, error) {
+	authority, err := NewAuthority(pool)
+	if err != nil {
+		return nil, err
+	}
+	if len(catalogDigest) != 32 {
+		return nil, errors.New("build authority standard-toolchain catalog digest is invalid")
+	}
+	if resolve == nil {
+		return nil, errors.New("build authority standard-toolchain resolver is required")
+	}
+	authority.resolveBuildToolchain = resolve
+	authority.toolchainCatalogDigest = bytes.Clone(catalogDigest)
+	return authority, nil
 }
 
 func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
@@ -27,21 +50,6 @@ func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
 		return nil, ErrNilPool
 	}
 	return &Authority{pool: pool}, nil
-}
-
-func NewBuildAuthority(
-	pool *pgxpool.Pool,
-	toolRegistryDigest []byte,
-) (*Authority, error) {
-	authority, err := NewAuthority(pool)
-	if err != nil {
-		return nil, err
-	}
-	if len(toolRegistryDigest) != 32 {
-		return nil, errors.New("build authority tool registry digest must be 32 bytes")
-	}
-	authority.buildToolRegistryDigest = bytes.Clone(toolRegistryDigest)
-	return authority, nil
 }
 
 func (d *Authority) begin(ctx context.Context) (pgx.Tx, error) {
@@ -53,15 +61,15 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 type workerFence struct {
-	GroupID                 string
-	RegionID                string
-	WorkerInstanceID        pgtype.UUID
-	WorkerEpoch             int64
-	WorkerProtocolVersion   string
-	ObservationFreshAfter   pgtype.Timestamptz
-	Role                    string
-	BuildArchitecture       string
-	BuildToolRegistryDigest []byte
+	GroupID                string
+	RegionID               string
+	WorkerInstanceID       pgtype.UUID
+	WorkerEpoch            int64
+	WorkerProtocolVersion  string
+	ObservationFreshAfter  pgtype.Timestamptz
+	Role                   string
+	BuildArchitecture      string
+	ToolchainCatalogDigest []byte
 }
 
 // lockWorkerFence takes the worker-group lock before the worker lock, matching
@@ -104,12 +112,12 @@ SELECT worker_instances.id
        $6 <> 'build'
        OR (
            runtime_identities.runtime_arch = $7
-           AND worker_instances.tool_registry_digest = $8
+           AND worker_instances.toolchain_catalog_digest = $8
        )
    )
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.ObservationFreshAfter,
-		fence.Role, fence.BuildArchitecture, fence.BuildToolRegistryDigest).Scan(&workerID)
+		fence.Role, fence.BuildArchitecture, fence.ToolchainCatalogDigest).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}

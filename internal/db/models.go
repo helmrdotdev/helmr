@@ -3231,7 +3231,7 @@ type WorkerInstance struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
-	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`

@@ -18,9 +18,9 @@ import (
 )
 
 const (
-	buildCPU     int64 = 2000
-	buildMemory  int64 = 2 << 30
-	buildScratch int64 = 13 << 30
+	buildCPU     int64 = 3000
+	buildMemory  int64 = 4 << 30
+	buildScratch int64 = 32 << 30
 )
 
 type deploymentBuildFixture struct {
@@ -56,16 +56,20 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
 			build_materializer_version,
+			build_requested_cpu_millis, build_requested_memory_bytes,
+			build_requested_scratch_bytes,
 			version, content_hash, deployment_source_artifact_id, status
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
 			'helmr.dependencies.v0',
+			$10, $11, $12,
 			$7, $8, $9, 'queued'
 		)
 	`, deploymentID, testPublicID(t, publicid.Deployment), ids.orgID, ids.projectID,
 		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
-		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)
+		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID,
+		buildCPU, buildMemory, buildScratch)
 
 	groupID := "build-" + shortUUID(deploymentID)
 	workerID := uuid.Must(uuid.NewV7())
@@ -104,6 +108,7 @@ func (f *deploymentBuildFixture) lease(t *testing.T, sequence int64) db.LeaseQue
 		OrgID:                      pgvalue.UUID(f.orgID),
 		DeploymentID:               pgvalue.UUID(f.deploymentID),
 		BuildRegionID:              dbtest.DefaultRegionID,
+		BuildArchitecture:          "x86_64",
 		RequestedCpuMillis:         buildCPU,
 		RequestedMemoryBytes:       buildMemory,
 		RequestedWorkloadDiskBytes: 0,

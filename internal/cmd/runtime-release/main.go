@@ -57,6 +57,11 @@ func runCompose(ctx context.Context, args []string) (returnErr error) {
 	runtimePath := flags.String("runtime", "", "captured managed runtime")
 	invalidPath := flags.String("invalid", "", "managed runtime invalid verifier fixture")
 	descriptorPath := flags.String("descriptor", "", "managed runtime descriptor")
+	toolchainSource := flags.String(
+		"toolchain-source",
+		"",
+		"captured standard-toolchain source directory",
+	)
 	scratchDirectory := flags.String("scratch", "", "snapshot scratch directory")
 	unitCgroupRoot := flags.String("cgroup-root", "", "delegated verifier cgroup root")
 	outputDirectory := flags.String("output", "", "new release directory")
@@ -68,10 +73,11 @@ func runCompose(ctx context.Context, args []string) (returnErr error) {
 	}
 	if *tag == "" || *releasesDirectory == "" ||
 		*runtimePath == "" || *invalidPath == "" || *descriptorPath == "" ||
+		*toolchainSource == "" ||
 		*scratchDirectory == "" || *unitCgroupRoot == "" ||
 		*outputDirectory == "" {
 		return errors.New(
-			"compose requires --tag, --releases, --runtime, --invalid, --descriptor, --scratch, --cgroup-root, and --output",
+			"compose requires --tag, --releases, --runtime, --invalid, --descriptor, --toolchain-source, --scratch, --cgroup-root, and --output",
 		)
 	}
 	lineageFile, err := deployment.OpenRuntimeReleaseFile(
@@ -143,13 +149,14 @@ func runCompose(ctx context.Context, args []string) (returnErr error) {
 		}()
 	}
 	release, err := deployment.PrepareRuntimeRelease(ctx, deployment.RuntimeReleaseSource{
-		Runtime:          runtimeFile,
-		Invalid:          invalidFile,
-		Descriptor:       descriptor,
-		ScratchDirectory: canonicalAbsolute(*scratchDirectory),
-		UnitCgroupRoot:   canonicalAbsolute(*unitCgroupRoot),
-		Lineage:          lineage,
-		Predecessor:      predecessor,
+		Runtime:                  runtimeFile,
+		Invalid:                  invalidFile,
+		Descriptor:               descriptor,
+		ScratchDirectory:         canonicalAbsolute(*scratchDirectory),
+		UnitCgroupRoot:           canonicalAbsolute(*unitCgroupRoot),
+		Lineage:                  lineage,
+		Predecessor:              predecessor,
+		ToolchainSourceDirectory: canonicalAbsolute(*toolchainSource),
 	})
 	if err != nil {
 		return err

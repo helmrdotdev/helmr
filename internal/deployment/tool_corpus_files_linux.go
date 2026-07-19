@@ -16,32 +16,49 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const toolCorpusRoot = "/usr/lib/helmr/dependency-tools"
+const toolchainCorpusRoot = "/usr/lib/helmr/toolchain-release"
 
 type toolCorpusOwner struct {
 	uid uint32
 	gid uint32
 }
 
-func LoadToolCorpus(
+func LoadToolchainCorpus(
 	ctx context.Context,
-	registry *ToolRegistry,
+	catalog *ToolchainCatalog,
 	architecture RuntimeArchitecture,
-) (*ToolCorpus, error) {
-	return loadToolCorpus(ctx, toolCorpusRoot, registry, architecture, toolCorpusOwner{})
+) (*ToolchainCorpus, error) {
+	return loadToolchainCorpus(
+		ctx,
+		toolchainCorpusRoot,
+		catalog,
+		architecture,
+		toolCorpusOwner{},
+	)
 }
 
-func loadToolCorpus(
+func loadToolchainCorpus(
 	ctx context.Context,
 	root string,
-	registry *ToolRegistry,
+	catalog *ToolchainCatalog,
 	architecture RuntimeArchitecture,
 	owner toolCorpusOwner,
-) (_ *ToolCorpus, returnErr error) {
+) (_ *ToolchainCorpus, returnErr error) {
 	if ctx == nil {
-		return nil, errors.New("dependency tool corpus context is nil")
+		return nil, errors.New("standard-toolchain corpus context is nil")
 	}
-	rootDirectory, err := openToolCorpusDirectory(root, "dependency tool corpus root", owner)
+	if catalog == nil || !catalog.authenticated {
+		return nil, errToolchainCatalogUnauthenticated
+	}
+	objects, err := toolchainClosureObjects(catalog, architecture)
+	if err != nil {
+		return nil, err
+	}
+	rootDirectory, err := openToolCorpusDirectory(
+		root,
+		"standard-toolchain corpus root",
+		owner,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -50,46 +67,22 @@ func loadToolCorpus(
 			returnErr = errors.Join(returnErr, rootDirectory.Close())
 		}
 	}()
-	if err := requireToolCorpusEntries(rootDirectory, []string{"corpus.json", "objects"}); err != nil {
-		return nil, fmt.Errorf("enumerate dependency tool corpus root: %w", err)
-	}
-
-	manifest, err := openToolCorpusFileAt(
-		int(rootDirectory.Fd()),
-		"corpus.json",
-		"dependency tool corpus manifest",
-		owner,
-		1,
-		maxToolCorpusManifestBytes,
-	)
-	if err != nil {
-		return nil, err
-	}
-	raw, manifestIdentity, err := readToolCorpusManifest(ctx, manifest, owner)
-	closeErr := manifest.Close()
-	if err != nil {
-		return nil, errors.Join(err, closeErr)
-	}
-	if closeErr != nil {
-		return nil, fmt.Errorf("close dependency tool corpus manifest: %w", closeErr)
-	}
-	if err := matchToolCorpusLink(
-		int(rootDirectory.Fd()),
-		"corpus.json",
-		manifestIdentity,
-		"dependency tool corpus manifest",
-	); err != nil {
-		return nil, err
-	}
-	corpus, err := ParseToolCorpus(raw, registry, architecture)
-	if err != nil {
-		return nil, err
+	if err := requireToolCorpusEntries(rootDirectory, []string{
+		"catalog.json",
+		"catalog.sigstore.json",
+		"objects",
+		"trusted-root.json",
+	}); err != nil {
+		return nil, fmt.Errorf(
+			"enumerate standard-toolchain corpus root: %w",
+			err,
+		)
 	}
 
 	objectsDirectory, err := openToolCorpusDirectoryAt(
 		int(rootDirectory.Fd()),
 		"objects",
-		"dependency tool corpus objects",
+		"standard-toolchain corpus objects",
 		owner,
 	)
 	if err != nil {
@@ -101,12 +94,12 @@ func loadToolCorpus(
 		}
 	}()
 	if err := requireToolCorpusEntries(objectsDirectory, []string{"sha256"}); err != nil {
-		return nil, fmt.Errorf("enumerate dependency tool corpus objects: %w", err)
+		return nil, fmt.Errorf("enumerate standard-toolchain corpus objects: %w", err)
 	}
 	digestDirectory, err := openToolCorpusDirectoryAt(
 		int(objectsDirectory.Fd()),
 		"sha256",
-		"dependency tool corpus sha256 objects",
+		"standard-toolchain corpus sha256 objects",
 		owner,
 	)
 	if err != nil {
@@ -118,23 +111,26 @@ func loadToolCorpus(
 		}
 	}()
 
-	names := make([]string, len(corpus.objects))
-	for index, object := range corpus.objects {
+	names := make([]string, len(objects))
+	for index, object := range objects {
 		names[index] = strings.TrimPrefix(object.Digest, "sha256:")
 	}
 	if err := requireToolCorpusEntries(digestDirectory, names); err != nil {
-		return nil, fmt.Errorf("enumerate dependency tool corpus sha256 objects: %w", err)
+		return nil, fmt.Errorf(
+			"enumerate standard-toolchain corpus sha256 objects: %w",
+			err,
+		)
 	}
-	identities := make(map[string]toolCorpusIdentity, len(corpus.objects))
-	for _, object := range corpus.objects {
+	identities := make(map[string]toolCorpusIdentity, len(objects))
+	for _, object := range objects {
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("verify dependency tool corpus: %w", err)
+			return nil, fmt.Errorf("verify standard-toolchain corpus: %w", err)
 		}
 		name := strings.TrimPrefix(object.Digest, "sha256:")
 		file, err := openToolCorpusFileAt(
 			int(digestDirectory.Fd()),
 			name,
-			"dependency tool object "+object.Digest,
+			"standard-toolchain object "+object.Digest,
 			owner,
 			object.SizeBytes,
 			object.SizeBytes,
@@ -148,58 +144,93 @@ func loadToolCorpus(
 			return nil, errors.Join(verifyErr, closeErr)
 		}
 		if closeErr != nil {
-			return nil, fmt.Errorf("close dependency tool object %s: %w", object.Digest, closeErr)
+			return nil, fmt.Errorf(
+				"close standard-toolchain object %s: %w",
+				object.Digest,
+				closeErr,
+			)
 		}
 		if err := matchToolCorpusLink(
 			int(digestDirectory.Fd()),
 			name,
 			identity,
-			"dependency tool object "+object.Digest,
+			"standard-toolchain object "+object.Digest,
 		); err != nil {
 			return nil, err
 		}
 		identities[object.Digest] = identity
 	}
 
-	corpus.directory = digestDirectory
-	corpus.identities = identities
-	corpus.ownerUID = owner.uid
-	corpus.ownerGID = owner.gid
+	toolchains := make(map[string]Toolchain)
+	for _, toolchain := range catalog.toolchains {
+		if toolchain.Architecture != architecture {
+			continue
+		}
+		digest, err := StandardToolchainDigest(toolchain)
+		if err != nil {
+			return nil, err
+		}
+		toolchains[digest] = toolchain
+	}
+	corpus := &ToolchainCorpus{
+		architecture: architecture,
+		toolchains:   toolchains,
+		directory:    digestDirectory,
+		identities:   identities,
+		ownerUID:     owner.uid,
+		ownerGID:     owner.gid,
+	}
 	digestDirectory = nil
 	return corpus, nil
 }
 
-func (c *ToolCorpus) OpenToolset(
+func (c *ToolchainCorpus) OpenToolchain(
 	ctx context.Context,
-	toolset Toolset,
+	toolchain Toolchain,
 ) (_ *ToolObjectFile, returnErr error) {
 	if c == nil {
-		return nil, errors.New("dependency tool corpus is nil")
+		return nil, errors.New("standard-toolchain corpus is nil")
 	}
 	if ctx == nil {
-		return nil, errors.New("dependency tool corpus context is nil")
+		return nil, errors.New("standard-toolchain corpus context is nil")
 	}
-	if err := validateToolset(toolset); err != nil {
+	if err := validateToolchain(toolchain); err != nil {
 		return nil, err
 	}
-	if toolset.Architecture != c.architecture {
-		return nil, errors.New("dependency toolset architecture does not match the installed corpus")
+	if toolchain.Architecture != c.architecture {
+		return nil, errors.New(
+			"standard-toolchain architecture does not match the installed corpus",
+		)
 	}
-	descriptor := toolObject(toolset.Artifact)
+	digest, err := StandardToolchainDigest(toolchain)
+	if err != nil {
+		return nil, err
+	}
+	descriptor := toolObject(toolchain.ToolchainClosure)
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	if c.directory == nil {
-		return nil, errors.New("dependency tool corpus is closed or not installed")
+		return nil, errors.New(
+			"standard-toolchain corpus is closed or not installed",
+		)
+	}
+	registered, ok := c.toolchains[digest]
+	if !ok || registered != toolchain {
+		return nil, errors.New(
+			"standard toolchain is absent from the installed catalog",
+		)
 	}
 	expected, ok := c.identities[descriptor.Digest]
 	if !ok {
-		return nil, errors.New("dependency toolset object is absent from the installed corpus")
+		return nil, errors.New(
+			"standard-toolchain object is absent from the installed corpus",
+		)
 	}
 	name := strings.TrimPrefix(descriptor.Digest, "sha256:")
 	file, err := openToolCorpusFileAt(
 		int(c.directory.Fd()),
 		name,
-		"dependency toolset object "+descriptor.Digest,
+		"standard-toolchain object "+descriptor.Digest,
 		toolCorpusOwner{uid: c.ownerUID, gid: c.ownerGID},
 		descriptor.SizeBytes,
 		descriptor.SizeBytes,
@@ -222,13 +253,15 @@ func (c *ToolCorpus) OpenToolset(
 		return nil, err
 	}
 	if identity != expected {
-		return nil, errors.New("dependency toolset object changed after worker readiness")
+		return nil, errors.New(
+			"standard-toolchain object changed after worker readiness",
+		)
 	}
 	if err := matchToolCorpusLink(
 		int(c.directory.Fd()),
 		name,
 		identity,
-		"dependency toolset object "+descriptor.Digest,
+		"standard-toolchain object "+descriptor.Digest,
 	); err != nil {
 		return nil, err
 	}
@@ -415,85 +448,13 @@ func inspectToolCorpusFile(
 	}, nil
 }
 
-func readToolCorpusManifest(
-	ctx context.Context,
-	file *os.File,
-	owner toolCorpusOwner,
-) ([]byte, toolCorpusIdentity, error) {
-	before, err := inspectToolCorpusFile(
-		file,
-		"dependency tool corpus manifest",
-		owner,
-		1,
-		maxToolCorpusManifestBytes,
-	)
-	if err != nil {
-		return nil, toolCorpusIdentity{}, err
-	}
-	raw, err := readToolCorpusBytes(ctx, file, before.size)
-	if err != nil {
-		return nil, toolCorpusIdentity{}, err
-	}
-	after, err := inspectToolCorpusFile(
-		file,
-		"dependency tool corpus manifest",
-		owner,
-		before.size,
-		before.size,
-	)
-	if err != nil {
-		return nil, toolCorpusIdentity{}, err
-	}
-	if after != before {
-		return nil, toolCorpusIdentity{}, errors.New(
-			"dependency tool corpus manifest changed while reading",
-		)
-	}
-	return raw, after, nil
-}
-
-func readToolCorpusBytes(
-	ctx context.Context,
-	file *os.File,
-	sizeBytes int64,
-) ([]byte, error) {
-	if sizeBytes > maxToolCorpusManifestBytes {
-		return nil, errors.New("dependency tool corpus manifest exceeds the in-memory bound")
-	}
-	reader := io.NewSectionReader(file, 0, sizeBytes+1)
-	raw := make([]byte, 0, sizeBytes)
-	buffer := make([]byte, 64<<10)
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		count, readErr := reader.Read(buffer)
-		if count > 0 {
-			raw = append(raw, buffer[:count]...)
-			if int64(len(raw)) > sizeBytes {
-				return nil, errors.New("dependency tool corpus manifest has trailing bytes")
-			}
-		}
-		if readErr == io.EOF {
-			break
-		}
-		if readErr != nil {
-			return nil, readErr
-		}
-	}
-	if int64(len(raw)) != sizeBytes {
-		return nil, errors.New("dependency tool corpus manifest ended before its sealed size")
-	}
-	return raw, nil
-}
-
 func verifyToolCorpusObject(
 	ctx context.Context,
 	file *os.File,
 	descriptor ToolObject,
 	owner toolCorpusOwner,
 ) (toolCorpusIdentity, error) {
-	label := "dependency tool object " + descriptor.Digest
+	label := "standard-toolchain object " + descriptor.Digest
 	before, err := inspectToolCorpusFile(
 		file,
 		label,
