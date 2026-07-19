@@ -414,6 +414,22 @@ func TestValidateBuildFailed(t *testing.T) {
 	}
 }
 
+func TestValidateBuildFailedAcceptsManagerProtocolReasons(t *testing.T) {
+	for _, reason := range []BuildFailureReason{
+		BuildFailureManagerNotFound,
+		BuildFailureManagerUnsupported,
+		BuildFailureLockfileUnsupported,
+	} {
+		t.Run(string(reason), func(t *testing.T) {
+			result := testFailedBuildResult()
+			result.Failed.Error.ReasonCode = reason
+			if err := ValidateBuildResultContract(result); err != nil {
+				t.Fatalf("ValidateBuildResultContract: %v", err)
+			}
+		})
+	}
+}
+
 func TestParseBuildResultSizeBound(t *testing.T) {
 	raw := make([]byte, maxBuildResultBytes+1)
 	if _, err := ParseBuildResult(raw); err == nil {

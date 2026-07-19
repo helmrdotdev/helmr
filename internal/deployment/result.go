@@ -18,6 +18,9 @@ const (
 	BuildOutcomeFailed    = BuildOutcome("failed")
 
 	BuildFailureInvalidSource        = BuildFailureReason("invalid_source")
+	BuildFailureManagerNotFound      = BuildFailureReason("manager_not_found")
+	BuildFailureManagerUnsupported   = BuildFailureReason("unsupported_manager_protocol")
+	BuildFailureLockfileUnsupported  = BuildFailureReason("unsupported_lockfile_format")
 	BuildFailureUnsupportedToolchain = BuildFailureReason("unsupported_toolchain")
 	BuildFailureDependencyFailed     = BuildFailureReason("dependency_failed")
 	BuildFailureTransformFailed      = BuildFailureReason("transform_failed")
@@ -357,6 +360,9 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 func validateBuildFailed(failed BuildFailed) error {
 	switch failed.Error.ReasonCode {
 	case BuildFailureInvalidSource,
+		BuildFailureManagerNotFound,
+		BuildFailureManagerUnsupported,
+		BuildFailureLockfileUnsupported,
 		BuildFailureUnsupportedToolchain,
 		BuildFailureDependencyFailed,
 		BuildFailureTransformFailed,
