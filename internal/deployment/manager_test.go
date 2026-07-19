@@ -83,7 +83,7 @@ func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	if digest == "sha256:"+hex.EncodeToString(plain[:]) {
 		t.Fatal("manager request digest is not domain separated")
 	}
-	const want = "sha256:933a144bf5ce95eafc2b4c645c6e7aee82f13cc2402feace9b029716aaa96990"
+	const want = "sha256:f0525e82daed29adf6c89c67e5085384d258ceeb12cd7d597b73d19a3b5446a7"
 	if digest != want {
 		t.Fatalf("manager request digest = %q, want %q", digest, want)
 	}

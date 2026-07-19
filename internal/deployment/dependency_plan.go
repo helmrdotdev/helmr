@@ -270,11 +270,46 @@ func dependencyPlanTemplate(
 	materializerVersion string,
 ) (DependencyPlan, error) {
 	var probe, handshake, resolution, lifecycle PlanCommand
+	aliases := []PlanAlias{
+		{Path: "/bin/sh", Target: "/nix/bin/sh"},
+		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+	}
+	environment := []PlanEnvironment{
+		{Name: "HOME", Value: "/work/home"},
+		{
+			Name:  "PATH",
+			Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
+		},
+	}
 	switch manager.Name {
 	case PackageManagerBun:
 		cpu := "arm64"
-		if architecture == ArchitectureX8664 {
+		interpreter := PlanAlias{
+			Path:   "/lib/ld-linux-aarch64.so.1",
+			Target: "/nix/helmr/manager/lib/ld-linux-aarch64.so.1",
+		}
+		switch architecture {
+		case ArchitectureAArch64:
+		case ArchitectureX8664:
 			cpu = "x64"
+			interpreter = PlanAlias{
+				Path:   "/lib64/ld-linux-x86-64.so.2",
+				Target: "/nix/helmr/manager/lib/ld-linux-x86-64.so.2",
+			}
+		default:
+			return DependencyPlan{}, fmt.Errorf(
+				"dependency plan architecture %q is unsupported",
+				architecture,
+			)
+		}
+		aliases = []PlanAlias{aliases[0], interpreter, aliases[1]}
+		environment = []PlanEnvironment{
+			environment[0],
+			{
+				Name:  "LD_LIBRARY_PATH",
+				Value: "/nix/helmr/manager/lib",
+			},
+			environment[1],
 		}
 		probe = PlanCommand{
 			Argv: []string{managerBunEntrypoint, "--version"},
@@ -378,18 +413,9 @@ func dependencyPlanTemplate(
 	}
 
 	return DependencyPlan{
-		Aliases: []PlanAlias{
-			{Path: "/bin/sh", Target: "/nix/bin/sh"},
-			{Path: "/usr/bin/env", Target: "/nix/bin/env"},
-		},
-		Architecture: architecture,
-		Environment: []PlanEnvironment{
-			{Name: "HOME", Value: "/work/home"},
-			{
-				Name:  "PATH",
-				Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
-			},
-		},
+		Aliases:       aliases,
+		Architecture:  architecture,
+		Environment:   environment,
 		FormatVersion: DependencyPlanFormatVersion,
 		Handshake:     handshake,
 		Identity: PlanIdentity{

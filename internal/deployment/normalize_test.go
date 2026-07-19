@@ -6,11 +6,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/binary"
 	"encoding/hex"
 	"io"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -104,6 +106,339 @@ func TestNormalizeManagerArchiveRejectsWrongBunArchitecture(t *testing.T) {
 		archive,
 		ManagerAcquireStatusUnsupportedLayout,
 	)
+}
+
+func TestValidateManagerELFRequiresClosedLoaderContract(t *testing.T) {
+	for _, architecture := range []RuntimeArchitecture{
+		ArchitectureAArch64,
+		ArchitectureX8664,
+	} {
+		content := managerTestELF(architecture, 0)
+		if err := validateManagerELF(
+			bytes.NewReader(content),
+			int64(len(content)),
+			architecture,
+		); err != nil {
+			t.Fatalf("%s: %v", architecture, err)
+		}
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*managerTestELFConfig)
+	}{
+		{
+			name: "interpreter",
+			mutate: func(config *managerTestELFConfig) {
+				config.interpreter = "/lib64/ld-linux-x86-64.so.3"
+			},
+		},
+		{
+			name: "missing interpreter",
+			mutate: func(config *managerTestELFConfig) {
+				config.interpreters = 0
+			},
+		},
+		{
+			name: "duplicate interpreter",
+			mutate: func(config *managerTestELFConfig) {
+				config.interpreters = 2
+			},
+		},
+		{
+			name: "missing dynamic",
+			mutate: func(config *managerTestELFConfig) {
+				config.dynamics = 0
+			},
+		},
+		{
+			name: "duplicate dynamic",
+			mutate: func(config *managerTestELFConfig) {
+				config.dynamics = 2
+			},
+		},
+		{
+			name: "rpath",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_RPATH},
+				}
+			},
+		},
+		{
+			name: "runpath",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_RUNPATH},
+				}
+			},
+		},
+		{
+			name: "audit",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_AUDIT},
+				}
+			},
+		},
+		{
+			name: "dependency audit",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_DEPAUDIT},
+				}
+			},
+		},
+		{
+			name: "filter",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_FILTER},
+				}
+			},
+		},
+		{
+			name: "auxiliary",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_AUXILIARY},
+				}
+			},
+		},
+		{
+			name: "missing library",
+			mutate: func(config *managerTestELFConfig) {
+				config.needed = config.needed[:len(config.needed)-1]
+			},
+		},
+		{
+			name: "extra library",
+			mutate: func(config *managerTestELFConfig) {
+				config.needed = append(config.needed, "libz.so.1")
+			},
+		},
+		{
+			name: "duplicate library",
+			mutate: func(config *managerTestELFConfig) {
+				config.needed = append(config.needed, config.needed[0])
+			},
+		},
+		{
+			name: "duplicate string table",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_STRTAB, value: 1},
+				}
+			},
+		},
+		{
+			name: "duplicate string size",
+			mutate: func(config *managerTestELFConfig) {
+				config.extra = []managerTestELFDynamic{
+					{tag: elf.DT_STRSZ, value: 1},
+				}
+			},
+		},
+		{
+			name: "missing terminator",
+			mutate: func(config *managerTestELFConfig) {
+				config.includeNull = false
+			},
+		},
+		{
+			name: "unterminated library",
+			mutate: func(config *managerTestELFConfig) {
+				config.terminateStrings = false
+			},
+		},
+		{
+			name: "divergent dynamic mapping",
+			mutate: func(config *managerTestELFConfig) {
+				config.dynamicAddressDelta = 16
+			},
+		},
+		{
+			name: "ambiguous load mapping",
+			mutate: func(config *managerTestELFConfig) {
+				config.loads = 2
+			},
+		},
+		{
+			name: "partial load mapping",
+			mutate: func(config *managerTestELFConfig) {
+				config.partialLoad = true
+			},
+		},
+		{
+			name: "invalid needed offset",
+			mutate: func(config *managerTestELFConfig) {
+				config.invalidNeededOffset = true
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := managerTestELFDefaults(ArchitectureX8664)
+			test.mutate(&config)
+			content := managerTestELFDocument(config, 0)
+			if err := validateManagerELF(
+				bytes.NewReader(content),
+				int64(len(content)),
+				ArchitectureX8664,
+			); err == nil {
+				t.Fatal("validateManagerELF accepted an open loader contract")
+			}
+		})
+	}
+
+	header := managerTestELFHeader(ArchitectureX8664, 64, 0)
+	if err := validateManagerELF(
+		bytes.NewReader(header),
+		int64(len(header)),
+		ArchitectureX8664,
+	); err == nil {
+		t.Fatal("validateManagerELF accepted a header-only ELF")
+	}
+
+	for _, test := range []struct {
+		name   string
+		mutate func([]byte)
+	}{
+		{
+			name: "program count",
+			mutate: func(content []byte) {
+				binary.LittleEndian.PutUint16(content[56:58], ^uint16(0))
+			},
+		},
+		{
+			name: "program offset",
+			mutate: func(content []byte) {
+				binary.LittleEndian.PutUint64(content[32:40], ^uint64(0))
+			},
+		},
+		{
+			name: "interpreter offset",
+			mutate: func(content []byte) {
+				offset := managerTestELFProgramHeader(content, elf.PT_INTERP)
+				binary.LittleEndian.PutUint64(content[offset+8:offset+16], ^uint64(0))
+			},
+		},
+		{
+			name: "interpreter size",
+			mutate: func(content []byte) {
+				offset := managerTestELFProgramHeader(content, elf.PT_INTERP)
+				binary.LittleEndian.PutUint64(content[offset+32:offset+40], ^uint64(0))
+			},
+		},
+		{
+			name: "dynamic offset",
+			mutate: func(content []byte) {
+				offset := managerTestELFProgramHeader(content, elf.PT_DYNAMIC)
+				binary.LittleEndian.PutUint64(content[offset+8:offset+16], ^uint64(0))
+			},
+		},
+		{
+			name: "dynamic size",
+			mutate: func(content []byte) {
+				offset := managerTestELFProgramHeader(content, elf.PT_DYNAMIC)
+				binary.LittleEndian.PutUint64(content[offset+32:offset+40], ^uint64(0))
+				binary.LittleEndian.PutUint64(content[offset+40:offset+48], ^uint64(0))
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			content := managerTestELF(ArchitectureX8664, 0)
+			test.mutate(content)
+			if err := validateManagerELF(
+				bytes.NewReader(content),
+				int64(len(content)),
+				ArchitectureX8664,
+			); err == nil {
+				t.Fatal("validateManagerELF accepted invalid program headers")
+			}
+		})
+	}
+
+	content := managerTestELF(ArchitectureX8664, 0)
+	binary.LittleEndian.PutUint64(content[40:48], ^uint64(0))
+	binary.LittleEndian.PutUint16(content[58:60], ^uint16(0))
+	binary.LittleEndian.PutUint16(content[60:62], ^uint16(0))
+	binary.LittleEndian.PutUint16(content[62:64], ^uint16(0))
+	if err := validateManagerELF(
+		bytes.NewReader(content),
+		int64(len(content)),
+		ArchitectureX8664,
+	); err != nil {
+		t.Fatalf("irrelevant section metadata changed admission: %v", err)
+	}
+}
+
+func TestOfficialBunLoaderContract(t *testing.T) {
+	path := os.Getenv("HELMR_BUN_ARCHIVE")
+	if path == "" {
+		t.Skip("HELMR_BUN_ARCHIVE is not set")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var executable []byte
+	for _, entry := range archive.File {
+		if entry.FileInfo().IsDir() ||
+			!strings.HasSuffix(entry.Name, "/bun") {
+			continue
+		}
+		if executable != nil {
+			t.Fatal("Bun archive contains multiple executables")
+		}
+		source, err := entry.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		executable, err = io.ReadAll(source)
+		if closeErr := source.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if executable == nil {
+		t.Fatal("Bun archive contains no executable")
+	}
+	architecture := RuntimeArchitecture(os.Getenv("HELMR_BUN_ARCHITECTURE"))
+	request, source := managerNormalizeRequest(
+		t,
+		PackageManager{Name: PackageManagerBun, Version: "1.3.10"},
+		architecture,
+		raw,
+	)
+	response := new(bytes.Buffer)
+	if err := NormalizeManagerArchive(
+		response,
+		request,
+		source,
+		t.TempDir(),
+	); err != nil {
+		t.Fatal(err)
+	}
+	entries, terminal := managerReadNormalizedResponse(
+		t,
+		response.Bytes(),
+		request,
+	)
+	if terminal.Status != ManagerAcquireStatusOK {
+		t.Fatalf("status = %q", terminal.Status)
+	}
+	entry, ok := entries["bin/bun"]
+	if !ok || entry.mode != 0555 ||
+		!bytes.Equal(entry.content, executable) {
+		t.Fatal("normalized Bun executable differs from the official payload")
+	}
 }
 
 func TestNormalizeManagerArchiveRequiresBunRootEntry(t *testing.T) {
@@ -336,22 +671,228 @@ func managerTestTGZ(t *testing.T, entries []managerTestTarEntry) []byte {
 	return output.Bytes()
 }
 
+type managerTestELFDynamic struct {
+	tag   elf.DynTag
+	value uint64
+}
+
+type managerTestELFConfig struct {
+	architecture        RuntimeArchitecture
+	dynamicAddressDelta uint64
+	dynamics            int
+	extra               []managerTestELFDynamic
+	includeNull         bool
+	invalidNeededOffset bool
+	interpreter         string
+	interpreters        int
+	loads               int
+	needed              []string
+	partialLoad         bool
+	terminateStrings    bool
+}
+
 func managerTestELF(architecture RuntimeArchitecture, size int) []byte {
-	if size < 64 {
-		size = 64
+	return managerTestELFDocument(managerTestELFDefaults(architecture), size)
+}
+
+func managerTestELFDefaults(architecture RuntimeArchitecture) managerTestELFConfig {
+	interpreter := "/lib64/ld-linux-x86-64.so.2"
+	loader := "ld-linux-x86-64.so.2"
+	if architecture == ArchitectureAArch64 {
+		interpreter = "/lib/ld-linux-aarch64.so.1"
+		loader = "ld-linux-aarch64.so.1"
 	}
+	return managerTestELFConfig{
+		architecture: architecture,
+		dynamics:     1,
+		includeNull:  true,
+		interpreter:  interpreter,
+		interpreters: 1,
+		loads:        1,
+		needed: []string{
+			"libc.so.6",
+			loader,
+			"libpthread.so.0",
+			"libdl.so.2",
+			"libm.so.6",
+		},
+		terminateStrings: true,
+	}
+}
+
+func managerTestELFDocument(config managerTestELFConfig, size int) []byte {
+	const (
+		headerSize  = 64
+		programSize = 56
+		baseAddress = uint64(0x400000)
+	)
+	programs := config.loads + config.interpreters + config.dynamics
+	if config.partialLoad {
+		programs++
+	}
+	interpreter := append([]byte(config.interpreter), 0)
+	interpreterOffset := headerSize + programs*programSize
+
+	stringTable := []byte{0}
+	needed := make([]managerTestELFDynamic, 0, len(config.needed))
+	for _, library := range config.needed {
+		needed = append(needed, managerTestELFDynamic{
+			tag:   elf.DT_NEEDED,
+			value: uint64(len(stringTable)),
+		})
+		stringTable = append(stringTable, library...)
+		stringTable = append(stringTable, 0)
+	}
+	if !config.terminateStrings {
+		stringTable[len(stringTable)-1] = 'x'
+	}
+	if config.invalidNeededOffset {
+		needed[0].value = uint64(len(stringTable))
+	}
+	stringOffset := interpreterOffset + len(interpreter)
+	dynamicOffset := (stringOffset + len(stringTable) + 7) &^ 7
+	dynamic := append(needed, config.extra...)
+	dynamic = append(
+		dynamic,
+		managerTestELFDynamic{
+			tag:   elf.DT_STRTAB,
+			value: baseAddress + uint64(stringOffset),
+		},
+		managerTestELFDynamic{
+			tag:   elf.DT_STRSZ,
+			value: uint64(len(stringTable)),
+		},
+	)
+	if config.includeNull {
+		dynamic = append(dynamic, managerTestELFDynamic{tag: elf.DT_NULL})
+	}
+	minimum := dynamicOffset + len(dynamic)*16
+	if size < minimum {
+		size = minimum
+	}
+	content := managerTestELFHeader(config.architecture, size, programs)
+	copy(content[interpreterOffset:], interpreter)
+	copy(content[stringOffset:], stringTable)
+	for index, entry := range dynamic {
+		offset := dynamicOffset + index*16
+		binary.LittleEndian.PutUint64(
+			content[offset:offset+8],
+			uint64(entry.tag),
+		)
+		binary.LittleEndian.PutUint64(
+			content[offset+8:offset+16],
+			entry.value,
+		)
+	}
+
+	program := 0
+	for range config.loads {
+		offset := headerSize + program*programSize
+		writeManagerTestELFProgram(
+			content[offset:],
+			elf.PT_LOAD,
+			elf.PF_R|elf.PF_X,
+			0,
+			baseAddress,
+			uint64(size),
+		)
+		program++
+	}
+	if config.partialLoad {
+		offset := headerSize + program*programSize
+		writeManagerTestELFProgram(
+			content[offset:],
+			elf.PT_LOAD,
+			elf.PF_R,
+			uint64(dynamicOffset+8),
+			baseAddress+uint64(dynamicOffset+8),
+			16,
+		)
+		program++
+	}
+	for range config.interpreters {
+		offset := headerSize + program*programSize
+		writeManagerTestELFProgram(
+			content[offset:],
+			elf.PT_INTERP,
+			elf.PF_R,
+			uint64(interpreterOffset),
+			baseAddress+uint64(interpreterOffset),
+			uint64(len(interpreter)),
+		)
+		program++
+	}
+	for range config.dynamics {
+		offset := headerSize + program*programSize
+		writeManagerTestELFProgram(
+			content[offset:],
+			elf.PT_DYNAMIC,
+			elf.PF_R|elf.PF_W,
+			uint64(dynamicOffset),
+			baseAddress+uint64(dynamicOffset)+config.dynamicAddressDelta,
+			uint64(len(dynamic)*16),
+		)
+		program++
+	}
+	return content
+}
+
+func managerTestELFHeader(
+	architecture RuntimeArchitecture,
+	size int,
+	programs int,
+) []byte {
 	content := make([]byte, size)
 	copy(content, []byte{0x7f, 'E', 'L', 'F'})
-	content[4] = 2
-	content[5] = 1
-	content[6] = 1
-	binary.LittleEndian.PutUint16(content[16:18], 3)
-	machine := uint16(62)
+	content[4] = byte(elf.ELFCLASS64)
+	content[5] = byte(elf.ELFDATA2LSB)
+	content[6] = byte(elf.EV_CURRENT)
+	binary.LittleEndian.PutUint16(content[16:18], uint16(elf.ET_DYN))
+	machine := elf.EM_X86_64
 	if architecture == ArchitectureAArch64 {
-		machine = 183
+		machine = elf.EM_AARCH64
 	}
-	binary.LittleEndian.PutUint16(content[18:20], machine)
+	binary.LittleEndian.PutUint16(content[18:20], uint16(machine))
+	binary.LittleEndian.PutUint32(content[20:24], uint32(elf.EV_CURRENT))
+	binary.LittleEndian.PutUint64(content[32:40], 64)
+	binary.LittleEndian.PutUint16(content[52:54], 64)
+	binary.LittleEndian.PutUint16(content[54:56], 56)
+	binary.LittleEndian.PutUint16(content[56:58], uint16(programs))
+	binary.LittleEndian.PutUint16(content[58:60], 64)
 	return content
+}
+
+func writeManagerTestELFProgram(
+	destination []byte,
+	programType elf.ProgType,
+	flags elf.ProgFlag,
+	offset uint64,
+	address uint64,
+	size uint64,
+) {
+	binary.LittleEndian.PutUint32(destination[0:4], uint32(programType))
+	binary.LittleEndian.PutUint32(destination[4:8], uint32(flags))
+	binary.LittleEndian.PutUint64(destination[8:16], offset)
+	binary.LittleEndian.PutUint64(destination[16:24], address)
+	binary.LittleEndian.PutUint64(destination[24:32], address)
+	binary.LittleEndian.PutUint64(destination[32:40], size)
+	binary.LittleEndian.PutUint64(destination[40:48], size)
+	binary.LittleEndian.PutUint64(destination[48:56], 4096)
+}
+
+func managerTestELFProgramHeader(
+	content []byte,
+	programType elf.ProgType,
+) int {
+	offset := int(binary.LittleEndian.Uint64(content[32:40]))
+	count := int(binary.LittleEndian.Uint16(content[56:58]))
+	for range count {
+		if elf.ProgType(binary.LittleEndian.Uint32(content[offset:offset+4])) == programType {
+			return offset
+		}
+		offset += 56
+	}
+	panic("manager test ELF program is missing")
 }
 
 func managerNormalizeRequest(

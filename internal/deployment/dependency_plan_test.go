@@ -126,24 +126,101 @@ func TestDependencyPlanUsesManagedRuntimeForNPM(t *testing.T) {
 }
 
 func TestDependencyPlanRootsToolchainInNixNamespace(t *testing.T) {
-	plan := dependencyPlanFixture(t, PackageManagerBun, ArchitectureAArch64)
-	if plan.Mounts.StandardToolchain != "/nix" {
-		t.Fatalf(
-			"standard-toolchain mount = %q",
-			plan.Mounts.StandardToolchain,
-		)
-	}
-	if !reflect.DeepEqual(plan.Aliases, []PlanAlias{
-		{Path: "/bin/sh", Target: "/nix/bin/sh"},
-		{Path: "/usr/bin/env", Target: "/nix/bin/env"},
-	}) {
-		t.Fatalf("standard-toolchain aliases = %#v", plan.Aliases)
-	}
-	if got := plan.Environment[1]; got != (PlanEnvironment{
-		Name:  "PATH",
-		Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
-	}) {
-		t.Fatalf("dependency PATH = %#v", got)
+	for _, test := range []struct {
+		name         string
+		manager      PackageManagerName
+		architecture RuntimeArchitecture
+		aliases      []PlanAlias
+		environment  []PlanEnvironment
+	}{
+		{
+			name:         "bun/aarch64",
+			manager:      PackageManagerBun,
+			architecture: ArchitectureAArch64,
+			aliases: []PlanAlias{
+				{Path: "/bin/sh", Target: "/nix/bin/sh"},
+				{
+					Path:   "/lib/ld-linux-aarch64.so.1",
+					Target: "/nix/helmr/manager/lib/ld-linux-aarch64.so.1",
+				},
+				{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+			},
+			environment: []PlanEnvironment{
+				{Name: "HOME", Value: "/work/home"},
+				{
+					Name:  "LD_LIBRARY_PATH",
+					Value: "/nix/helmr/manager/lib",
+				},
+				{
+					Name:  "PATH",
+					Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
+				},
+			},
+		},
+		{
+			name:         "bun/x86_64",
+			manager:      PackageManagerBun,
+			architecture: ArchitectureX8664,
+			aliases: []PlanAlias{
+				{Path: "/bin/sh", Target: "/nix/bin/sh"},
+				{
+					Path:   "/lib64/ld-linux-x86-64.so.2",
+					Target: "/nix/helmr/manager/lib/ld-linux-x86-64.so.2",
+				},
+				{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+			},
+			environment: []PlanEnvironment{
+				{Name: "HOME", Value: "/work/home"},
+				{
+					Name:  "LD_LIBRARY_PATH",
+					Value: "/nix/helmr/manager/lib",
+				},
+				{
+					Name:  "PATH",
+					Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
+				},
+			},
+		},
+		{
+			name:         "npm",
+			manager:      PackageManagerNPM,
+			architecture: ArchitectureAArch64,
+			aliases: []PlanAlias{
+				{Path: "/bin/sh", Target: "/nix/bin/sh"},
+				{Path: "/usr/bin/env", Target: "/nix/bin/env"},
+			},
+			environment: []PlanEnvironment{
+				{Name: "HOME", Value: "/work/home"},
+				{
+					Name:  "PATH",
+					Value: "/opt/helmr/manager/bin:/opt/helmr/runtime/bin:/nix/bin",
+				},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			plan := dependencyPlanFixture(
+				t,
+				test.manager,
+				test.architecture,
+			)
+			if plan.Mounts.StandardToolchain != "/nix" {
+				t.Fatalf(
+					"standard-toolchain mount = %q",
+					plan.Mounts.StandardToolchain,
+				)
+			}
+			if !reflect.DeepEqual(plan.Aliases, test.aliases) {
+				t.Fatalf("aliases = %#v, want %#v", plan.Aliases, test.aliases)
+			}
+			if !reflect.DeepEqual(plan.Environment, test.environment) {
+				t.Fatalf(
+					"environment = %#v, want %#v",
+					plan.Environment,
+					test.environment,
+				)
+			}
+		})
 	}
 }
 
@@ -250,7 +327,7 @@ func TestDependencyPlanHasStableDigest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "sha256:36922c4bb037b6b0be3c844a44b5cd85c6b2addc2d9c80962d5d96ebf38a6b81"
+	const want = "sha256:fe8238a121539495f52f79eb4b60f228503d4db1873c5859578fe60816247008"
 	if digest != want {
 		t.Fatalf("dependency plan digest = %q, want %q", digest, want)
 	}

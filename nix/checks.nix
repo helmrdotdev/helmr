@@ -181,6 +181,16 @@ in
         touch "$out"
       '';
   managed-runtime = helmrPackages.managedRuntime;
+  manager-loader-contract = commandCheck "manager-loader-contract-check" ''
+    cp -R ${helmrPackages.helmr.goModules} vendor
+    export GOFLAGS=-mod=vendor
+    export GOPROXY=off
+    export GOSUMDB=off
+    export GOTOOLCHAIN=local
+    HELMR_BUN_ARCHIVE=${helmrPackages.standardToolchain.bunArchive} \
+    HELMR_BUN_ARCHITECTURE=${lib.escapeShellArg helmrPackages.standardToolchain.architecture} \
+      go test ./internal/deployment -run '^TestOfficialBunLoaderContract$'
+  '';
   managed-runtime-contract =
     pkgs.runCommand "managed-runtime-contract-check"
       {

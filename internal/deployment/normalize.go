@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"debug/elf"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
@@ -27,6 +28,8 @@ const (
 	managerZIPCentralSignature    = uint32(0x02014b50)
 	managerZIPEndSignature        = uint32(0x06054b50)
 	managerZIPDescriptorSignature = uint32(0x08074b50)
+	managerELFMetadataLimit       = uint64(4 << 20)
+	managerELFProgramLimit        = uint16(128)
 )
 
 var (
@@ -289,23 +292,10 @@ func normalizeBunArchive(
 	if err != nil {
 		return managerNormalizedTree{}, fmt.Errorf("%w: open Bun executable: %v", errManagerArchiveLayout, err)
 	}
-	header := make([]byte, 64)
-	if _, err := io.ReadFull(content, header); err != nil {
-		content.Close()
-		return managerNormalizedTree{}, fmt.Errorf("%w: read Bun ELF header: %v", errManagerArchiveLayout, err)
-	}
-	if err := validateManagerELF(header, request.Architecture); err != nil {
-		content.Close()
-		return managerNormalizedTree{}, err
-	}
-	if _, err := spool.Write(header); err != nil {
-		content.Close()
-		return managerNormalizedTree{}, fmt.Errorf("spool Bun executable: %w", err)
-	}
 	if err := copyManagerNormalizedContent(
 		spool,
 		content,
-		int64(executable.UncompressedSize64)-int64(len(header)),
+		int64(executable.UncompressedSize64),
 		"Bun executable",
 	); err != nil {
 		content.Close()
@@ -321,6 +311,14 @@ func normalizeBunArchive(
 	}
 	if err := content.Close(); err != nil {
 		return managerNormalizedTree{}, fmt.Errorf("%w: close Bun executable: %v", errManagerArchiveLayout, err)
+	}
+	executableSize := int64(executable.UncompressedSize64)
+	if err := validateManagerELF(
+		io.NewSectionReader(spool, 0, executableSize),
+		executableSize,
+		request.Architecture,
+	); err != nil {
+		return managerNormalizedTree{}, err
 	}
 	if _, err := spool.Seek(0, io.SeekStart); err != nil {
 		return managerNormalizedTree{}, fmt.Errorf("rewind Bun executable spool: %w", err)
@@ -703,37 +701,389 @@ func managerNormalizeSpool(directory string) (*os.File, error) {
 	return file, nil
 }
 
-func validateManagerELF(header []byte, architecture RuntimeArchitecture) error {
-	if len(header) < 64 ||
-		!bytes.Equal(header[:4], []byte{0x7f, 'E', 'L', 'F'}) ||
-		header[4] != 2 ||
-		header[5] != 1 ||
-		header[6] != 1 {
-		return fmt.Errorf("%w: Bun executable is not a little-endian ELF64 file", errManagerArchiveLayout)
+type managerELFFile struct {
+	fileType elf.Type
+	machine  elf.Machine
+	programs []managerELFProgram
+}
+
+type managerELFProgram struct {
+	filesz   uint64
+	memsz    uint64
+	offset   uint64
+	progType elf.ProgType
+	vaddr    uint64
+}
+
+func validateManagerELF(
+	source io.ReaderAt,
+	size int64,
+	architecture RuntimeArchitecture,
+) error {
+	file, err := parseManagerELF(source, size)
+	if err != nil {
+		return err
 	}
-	fileType := binary.LittleEndian.Uint16(header[16:18])
-	if fileType != 2 && fileType != 3 {
+	if file.fileType != elf.ET_EXEC && file.fileType != elf.ET_DYN {
 		return fmt.Errorf("%w: Bun executable ELF type is unsupported", errManagerArchiveLayout)
 	}
-	machine := binary.LittleEndian.Uint16(header[18:20])
-	var want uint16
+	var wantMachine elf.Machine
+	var wantInterpreter, wantLoader string
 	switch architecture {
 	case ArchitectureAArch64:
-		want = 183
+		wantMachine = elf.EM_AARCH64
+		wantInterpreter = "/lib/ld-linux-aarch64.so.1"
+		wantLoader = "ld-linux-aarch64.so.1"
 	case ArchitectureX8664:
-		want = 62
+		wantMachine = elf.EM_X86_64
+		wantInterpreter = "/lib64/ld-linux-x86-64.so.2"
+		wantLoader = "ld-linux-x86-64.so.2"
 	default:
 		return fmt.Errorf("%w: architecture %q is unsupported", errManagerArchiveLayout, architecture)
 	}
-	if machine != want {
+	if file.machine != wantMachine {
 		return fmt.Errorf(
 			"%w: Bun executable machine = %d, want %d",
 			errManagerArchiveLayout,
-			machine,
-			want,
+			file.machine,
+			wantMachine,
+		)
+	}
+
+	var interpreter, dynamic *managerELFProgram
+	for index := range file.programs {
+		program := &file.programs[index]
+		switch program.progType {
+		case elf.PT_INTERP:
+			if interpreter != nil {
+				return fmt.Errorf("%w: Bun executable has multiple PT_INTERP segments", errManagerArchiveLayout)
+			}
+			interpreter = program
+		case elf.PT_DYNAMIC:
+			if dynamic != nil {
+				return fmt.Errorf("%w: Bun executable has multiple PT_DYNAMIC segments", errManagerArchiveLayout)
+			}
+			dynamic = program
+		}
+	}
+	if interpreter == nil {
+		return fmt.Errorf("%w: Bun executable has no PT_INTERP segment", errManagerArchiveLayout)
+	}
+	interpreterBytes, err := readManagerELFProgram(
+		source,
+		uint64(size),
+		interpreter,
+		4096,
+		"PT_INTERP",
+	)
+	if err != nil {
+		return err
+	}
+	if len(interpreterBytes) < 2 ||
+		interpreterBytes[len(interpreterBytes)-1] != 0 ||
+		bytes.IndexByte(interpreterBytes[:len(interpreterBytes)-1], 0) >= 0 ||
+		string(interpreterBytes[:len(interpreterBytes)-1]) != wantInterpreter {
+		return fmt.Errorf(
+			"%w: Bun executable interpreter is not %q",
+			errManagerArchiveLayout,
+			wantInterpreter,
+		)
+	}
+	if dynamic == nil {
+		return fmt.Errorf("%w: Bun executable has no PT_DYNAMIC segment", errManagerArchiveLayout)
+	}
+	dynamicOffset, err := managerELFVirtualOffset(
+		file.programs,
+		uint64(size),
+		dynamic.vaddr,
+		dynamic.filesz,
+	)
+	if err != nil {
+		return err
+	}
+	if dynamicOffset != dynamic.offset {
+		return fmt.Errorf(
+			"%w: Bun executable PT_DYNAMIC file and memory views diverge",
+			errManagerArchiveLayout,
+		)
+	}
+	dynamicBytes, err := readManagerELFProgram(
+		source,
+		uint64(size),
+		dynamic,
+		managerELFMetadataLimit,
+		"PT_DYNAMIC",
+	)
+	if err != nil {
+		return err
+	}
+	if len(dynamicBytes) == 0 || len(dynamicBytes)%16 != 0 {
+		return fmt.Errorf("%w: Bun executable PT_DYNAMIC is malformed", errManagerArchiveLayout)
+	}
+
+	var neededOffsets []uint64
+	var stringAddress, stringSize uint64
+	var stringAddressSeen, stringSizeSeen, terminated bool
+	for offset := 0; offset < len(dynamicBytes); offset += 16 {
+		tag := elf.DynTag(int64(binary.LittleEndian.Uint64(dynamicBytes[offset : offset+8])))
+		value := binary.LittleEndian.Uint64(dynamicBytes[offset+8 : offset+16])
+		if tag == elf.DT_NULL {
+			terminated = true
+			break
+		}
+		switch tag {
+		case elf.DT_NEEDED:
+			neededOffsets = append(neededOffsets, value)
+		case elf.DT_STRTAB:
+			if stringAddressSeen {
+				return fmt.Errorf("%w: Bun executable has multiple DT_STRTAB values", errManagerArchiveLayout)
+			}
+			stringAddress, stringAddressSeen = value, true
+		case elf.DT_STRSZ:
+			if stringSizeSeen {
+				return fmt.Errorf("%w: Bun executable has multiple DT_STRSZ values", errManagerArchiveLayout)
+			}
+			stringSize, stringSizeSeen = value, true
+		case elf.DT_RPATH, elf.DT_RUNPATH,
+			elf.DT_AUDIT, elf.DT_DEPAUDIT,
+			elf.DT_FILTER, elf.DT_AUXILIARY:
+			return fmt.Errorf(
+				"%w: Bun executable declares an alternate loader object",
+				errManagerArchiveLayout,
+			)
+		}
+	}
+	if !terminated || !stringAddressSeen || !stringSizeSeen ||
+		stringSize == 0 || stringSize > managerELFMetadataLimit {
+		return fmt.Errorf("%w: Bun executable dynamic string table is malformed", errManagerArchiveLayout)
+	}
+	stringOffset, err := managerELFVirtualOffset(
+		file.programs,
+		uint64(size),
+		stringAddress,
+		stringSize,
+	)
+	if err != nil {
+		return err
+	}
+	stringTable := make([]byte, int(stringSize))
+	if _, err := source.ReadAt(stringTable, int64(stringOffset)); err != nil {
+		return fmt.Errorf("%w: read Bun executable dynamic strings: %v", errManagerArchiveLayout, err)
+	}
+	needed := make([]string, 0, len(neededOffsets))
+	for _, offset := range neededOffsets {
+		if offset >= uint64(len(stringTable)) {
+			return fmt.Errorf("%w: Bun executable DT_NEEDED offset is invalid", errManagerArchiveLayout)
+		}
+		end := bytes.IndexByte(stringTable[offset:], 0)
+		if end <= 0 {
+			return fmt.Errorf("%w: Bun executable DT_NEEDED string is malformed", errManagerArchiveLayout)
+		}
+		needed = append(needed, string(stringTable[offset:offset+uint64(end)]))
+	}
+	slices.Sort(needed)
+	wantNeeded := []string{
+		"libc.so.6",
+		"libdl.so.2",
+		"libm.so.6",
+		"libpthread.so.0",
+		wantLoader,
+	}
+	slices.Sort(wantNeeded)
+	if !slices.Equal(needed, wantNeeded) {
+		return fmt.Errorf(
+			"%w: Bun executable DT_NEEDED = %q, want %q",
+			errManagerArchiveLayout,
+			needed,
+			wantNeeded,
 		)
 	}
 	return nil
+}
+
+func readManagerELFProgram(
+	source io.ReaderAt,
+	fileSize uint64,
+	program *managerELFProgram,
+	limit uint64,
+	name string,
+) ([]byte, error) {
+	if program.filesz == 0 ||
+		program.filesz > limit ||
+		program.filesz > program.memsz ||
+		program.offset > fileSize ||
+		program.filesz > fileSize-program.offset ||
+		program.offset > math.MaxInt64 ||
+		program.filesz > math.MaxInt64 {
+		return nil, fmt.Errorf(
+			"%w: Bun executable %s bounds are invalid",
+			errManagerArchiveLayout,
+			name,
+		)
+	}
+	content := make([]byte, int(program.filesz))
+	if _, err := source.ReadAt(content, int64(program.offset)); err != nil {
+		return nil, fmt.Errorf(
+			"%w: read Bun executable %s: %v",
+			errManagerArchiveLayout,
+			name,
+			err,
+		)
+	}
+	return content, nil
+}
+
+func managerELFVirtualOffset(
+	programs []managerELFProgram,
+	fileSize uint64,
+	address uint64,
+	size uint64,
+) (uint64, error) {
+	var offset uint64
+	matches := 0
+	for _, program := range programs {
+		if program.progType != elf.PT_LOAD {
+			continue
+		}
+		if program.filesz > program.memsz {
+			return 0, fmt.Errorf(
+				"%w: Bun executable PT_LOAD bounds are invalid",
+				errManagerArchiveLayout,
+			)
+		}
+		overlaps := managerELFRangesOverlap(
+			address,
+			size,
+			program.vaddr,
+			program.memsz,
+		)
+		if address < program.vaddr {
+			if overlaps {
+				return 0, fmt.Errorf(
+					"%w: Bun executable runtime data is partially remapped",
+					errManagerArchiveLayout,
+				)
+			}
+			continue
+		}
+		delta := address - program.vaddr
+		if delta > program.filesz ||
+			size > program.filesz-delta ||
+			program.offset > fileSize ||
+			delta > fileSize-program.offset ||
+			size > fileSize-program.offset-delta {
+			if overlaps {
+				return 0, fmt.Errorf(
+					"%w: Bun executable runtime data is partially remapped",
+					errManagerArchiveLayout,
+				)
+			}
+			continue
+		}
+		matches++
+		if matches > 1 {
+			return 0, fmt.Errorf(
+				"%w: Bun executable runtime data mapping is ambiguous",
+				errManagerArchiveLayout,
+			)
+		}
+		offset = program.offset + delta
+	}
+	if matches != 1 || offset > math.MaxInt64 {
+		return 0, fmt.Errorf(
+			"%w: Bun executable runtime data is not file-backed",
+			errManagerArchiveLayout,
+		)
+	}
+	return offset, nil
+}
+
+func managerELFRangesOverlap(
+	firstStart, firstSize, secondStart, secondSize uint64,
+) bool {
+	if firstSize == 0 || secondSize == 0 {
+		return false
+	}
+	if firstStart <= secondStart {
+		return secondStart-firstStart < firstSize
+	}
+	return firstStart-secondStart < secondSize
+}
+
+func parseManagerELF(source io.ReaderAt, size int64) (managerELFFile, error) {
+	const (
+		headerSize  = uint64(64)
+		programSize = uint64(56)
+	)
+	if size < int64(headerSize) {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: Bun executable is not a little-endian ELF64 file",
+			errManagerArchiveLayout,
+		)
+	}
+	header := make([]byte, headerSize)
+	if _, err := source.ReadAt(header, 0); err != nil {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: read Bun executable ELF header: %v",
+			errManagerArchiveLayout,
+			err,
+		)
+	}
+	if !bytes.Equal(header[:4], []byte{0x7f, 'E', 'L', 'F'}) ||
+		header[4] != byte(elf.ELFCLASS64) ||
+		header[5] != byte(elf.ELFDATA2LSB) ||
+		header[6] != byte(elf.EV_CURRENT) ||
+		binary.LittleEndian.Uint32(header[20:24]) != uint32(elf.EV_CURRENT) ||
+		binary.LittleEndian.Uint16(header[52:54]) != uint16(headerSize) ||
+		binary.LittleEndian.Uint16(header[54:56]) != uint16(programSize) {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: Bun executable is not a little-endian ELF64 file",
+			errManagerArchiveLayout,
+		)
+	}
+	programCount := binary.LittleEndian.Uint16(header[56:58])
+	if programCount == 0 || programCount > managerELFProgramLimit {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: Bun executable program-header count is unsupported",
+			errManagerArchiveLayout,
+		)
+	}
+	programOffset := binary.LittleEndian.Uint64(header[32:40])
+	programBytes := uint64(programCount) * programSize
+	fileSize := uint64(size)
+	if programOffset > fileSize ||
+		programBytes > fileSize-programOffset ||
+		programOffset > math.MaxInt64 {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: Bun executable program-header bounds are invalid",
+			errManagerArchiveLayout,
+		)
+	}
+	rawPrograms := make([]byte, int(programBytes))
+	if _, err := source.ReadAt(rawPrograms, int64(programOffset)); err != nil {
+		return managerELFFile{}, fmt.Errorf(
+			"%w: read Bun executable program headers: %v",
+			errManagerArchiveLayout,
+			err,
+		)
+	}
+	programs := make([]managerELFProgram, programCount)
+	for index := range programs {
+		offset := index * int(programSize)
+		raw := rawPrograms[offset : offset+int(programSize)]
+		programs[index] = managerELFProgram{
+			progType: elf.ProgType(binary.LittleEndian.Uint32(raw[0:4])),
+			offset:   binary.LittleEndian.Uint64(raw[8:16]),
+			vaddr:    binary.LittleEndian.Uint64(raw[16:24]),
+			filesz:   binary.LittleEndian.Uint64(raw[32:40]),
+			memsz:    binary.LittleEndian.Uint64(raw[40:48]),
+		}
+	}
+	return managerELFFile{
+		fileType: elf.Type(binary.LittleEndian.Uint16(header[16:18])),
+		machine:  elf.Machine(binary.LittleEndian.Uint16(header[18:20])),
+		programs: programs,
+	}, nil
 }
 
 type managerTarStream struct {
