@@ -26,7 +26,7 @@ func TestAuthenticateRuntimeCatalog(t *testing.T) {
 	document := runtimeAttestationForTest(catalogBytes, catalog)
 	entity, err := virtual.Attest(
 		testRuntimeReleaseIdentity,
-		runtimeAttestationIssuer,
+		releaseAttestationIssuer,
 		canonicalRuntimeAttestationForTest(t, document),
 	)
 	if err != nil {
@@ -53,31 +53,31 @@ func TestRuntimeAttestationRejectsIdentityDrift(t *testing.T) {
 	}{
 		"issuer lookalike": {
 			identity: testRuntimeReleaseIdentity,
-			issuer:   runtimeAttestationIssuer + ".example",
+			issuer:   releaseAttestationIssuer + ".example",
 		},
 		"fork": {
 			identity: strings.Replace(testRuntimeReleaseIdentity, "helmrdotdev", "fork", 1),
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 		"other workflow": {
 			identity: strings.Replace(testRuntimeReleaseIdentity, "release.yaml", "sdk-release.yaml", 1),
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 		"branch ref": {
 			identity: strings.Replace(testRuntimeReleaseIdentity, "refs/tags/v1.2.3-rc.1", "refs/heads/main", 1),
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 		"SDK tag": {
 			identity: strings.Replace(testRuntimeReleaseIdentity, "v1.2.3-rc.1", "sdk-v1.2.3", 1),
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 		"malformed tag": {
 			identity: strings.Replace(testRuntimeReleaseIdentity, "v1.2.3-rc.1", "v01.2.3", 1),
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 		"trailing input": {
 			identity: testRuntimeReleaseIdentity + "/extra",
-			issuer:   runtimeAttestationIssuer,
+			issuer:   releaseAttestationIssuer,
 		},
 	}
 
@@ -118,7 +118,7 @@ func TestRuntimeAttestationExactBindsReleaseLineage(t *testing.T) {
 	}
 	entity, err := virtual.Attest(
 		testRuntimeReleaseIdentity,
-		runtimeAttestationIssuer,
+		releaseAttestationIssuer,
 		canonicalRuntimeAttestationForTest(t, document),
 	)
 	if err != nil {
@@ -202,7 +202,7 @@ func TestRuntimeAttestationRejectsSubjectAndPredicateDrift(t *testing.T) {
 			mutate(&document)
 			entity, err := virtual.Attest(
 				testRuntimeReleaseIdentity,
-				runtimeAttestationIssuer,
+				releaseAttestationIssuer,
 				canonicalRuntimeAttestationForTest(t, document),
 			)
 			if err != nil {
@@ -236,7 +236,7 @@ func TestRuntimeAttestationRejectsOpenPredicate(t *testing.T) {
 	}
 	entity, err := virtual.Attest(
 		testRuntimeReleaseIdentity,
-		runtimeAttestationIssuer,
+		releaseAttestationIssuer,
 		statement,
 	)
 	if err != nil {
@@ -257,14 +257,14 @@ func TestVerifyRuntimeCatalogRejectsMalformedTrustInputs(t *testing.T) {
 	if _, err := VerifyRuntimeCatalog(catalogBytes, nil, nil); err == nil {
 		t.Fatal("VerifyRuntimeCatalog accepted missing bundle and trust root")
 	}
-	if _, err := parseRuntimeTrustedRoot([]byte(`{}`)); err == nil {
-		t.Fatal("parseRuntimeTrustedRoot accepted empty trusted root")
+	if _, err := parseReleaseTrustedRoot([]byte(`{}`)); err == nil {
+		t.Fatal("parseReleaseTrustedRoot accepted empty trusted root")
 	}
 }
 
 func TestParseRuntimeBundleRequiresExactV03DSSE(t *testing.T) {
 	protobufBundle := &protobundle.Bundle{
-		MediaType: RuntimeBundleMediaType,
+		MediaType: ReleaseBundleMediaType,
 		VerificationMaterial: &protobundle.VerificationMaterial{
 			Content: &protobundle.VerificationMaterial_PublicKey{
 				PublicKey: &protocommon.PublicKeyIdentifier{Hint: "test"},
@@ -285,8 +285,8 @@ func TestParseRuntimeBundleRequiresExactV03DSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseRuntimeBundle(raw); err != nil {
-		t.Fatalf("parseRuntimeBundle rejected v0.3 DSSE: %v", err)
+	if _, err := parseReleaseBundle(raw); err != nil {
+		t.Fatalf("parseReleaseBundle rejected v0.3 DSSE: %v", err)
 	}
 
 	protobufBundle.MediaType = "application/vnd.dev.sigstore.bundle+json;version=0.3"
@@ -294,12 +294,12 @@ func TestParseRuntimeBundleRequiresExactV03DSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseRuntimeBundle(raw); err == nil {
-		t.Fatal("parseRuntimeBundle accepted a compatibility media type")
+	if _, err := parseReleaseBundle(raw); err == nil {
+		t.Fatal("parseReleaseBundle accepted a compatibility media type")
 	}
 
 	messageBundle := &protobundle.Bundle{
-		MediaType:            RuntimeBundleMediaType,
+		MediaType:            ReleaseBundleMediaType,
 		VerificationMaterial: protobufBundle.VerificationMaterial,
 		Content: &protobundle.Bundle_MessageSignature{
 			MessageSignature: &protocommon.MessageSignature{
@@ -315,8 +315,8 @@ func TestParseRuntimeBundleRequiresExactV03DSSE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseRuntimeBundle(raw); err == nil {
-		t.Fatal("parseRuntimeBundle accepted a message signature")
+	if _, err := parseReleaseBundle(raw); err == nil {
+		t.Fatal("parseReleaseBundle accepted a message signature")
 	}
 }
 
@@ -325,8 +325,8 @@ func TestParseRuntimeTrustedRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := parseRuntimeTrustedRoot(raw); err != nil {
-		t.Fatalf("parseRuntimeTrustedRoot rejected valid pinned roots: %v", err)
+	if _, err := parseReleaseTrustedRoot(raw); err != nil {
+		t.Fatalf("parseReleaseTrustedRoot rejected valid pinned roots: %v", err)
 	}
 }
 
@@ -349,13 +349,13 @@ func runtimeAttestationForTest(
 	catalog *RuntimeCatalog,
 ) runtimeAttestationDocument {
 	catalogHash := sha256.Sum256(catalogBytes)
-	subjects := []runtimeAttestationSubject{{
+	subjects := []releaseAttestationSubject{{
 		Name:   "catalog",
 		Digest: map[string]string{"sha256": hex.EncodeToString(catalogHash[:])},
 	}}
 	for _, descriptor := range catalog.runtimes {
 		hexDigest := descriptor.Digest[len("sha256:"):]
-		subjects = append(subjects, runtimeAttestationSubject{
+		subjects = append(subjects, releaseAttestationSubject{
 			Name:   "runtime/sha256/" + hexDigest,
 			Digest: map[string]string{"sha256": hexDigest},
 		})

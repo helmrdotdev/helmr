@@ -28,7 +28,7 @@ func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
 	bundleBytes, err := readRuntimeReleaseFileOwned(
 		runtimeBundlePath,
 		"runtime attestation bundle",
-		maxRuntimeBundleBytes,
+		maxReleaseBundleBytes,
 		0,
 	)
 	if err != nil {
@@ -37,7 +37,7 @@ func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
 	trustedRootBytes, err := readRuntimeReleaseFileOwned(
 		runtimeTrustedRootPath,
 		"runtime trusted root",
-		maxRuntimeTrustedRootBytes,
+		maxReleaseTrustedRootBytes,
 		0,
 	)
 	if err != nil {

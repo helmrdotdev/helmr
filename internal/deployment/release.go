@@ -282,14 +282,14 @@ func openRuntimeReleaseDirectoryWithAuthenticator(
 	}
 	bundleBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(directory, RuntimeReleaseBundleFile),
-		maxRuntimeBundleBytes,
+		maxReleaseBundleBytes,
 	)
 	if err != nil {
 		return nil, err
 	}
 	trustedRootBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(directory, RuntimeReleaseTrustedRootFile),
-		maxRuntimeTrustedRootBytes,
+		maxReleaseTrustedRootBytes,
 	)
 	if err != nil {
 		return nil, err
@@ -779,14 +779,14 @@ func canonicalRuntimeReleaseStatement(
 		return nil, errors.New("runtime release catalog is nil")
 	}
 	catalogHash := sha256.Sum256(catalogBytes)
-	subjects := make([]runtimeAttestationSubject, 0, len(catalog.runtimes)+1)
-	subjects = append(subjects, runtimeAttestationSubject{
+	subjects := make([]releaseAttestationSubject, 0, len(catalog.runtimes)+1)
+	subjects = append(subjects, releaseAttestationSubject{
 		Name:   "catalog",
 		Digest: map[string]string{"sha256": hex.EncodeToString(catalogHash[:])},
 	})
 	for _, descriptor := range catalog.runtimes {
 		hexDigest := strings.TrimPrefix(descriptor.Digest, "sha256:")
-		subjects = append(subjects, runtimeAttestationSubject{
+		subjects = append(subjects, releaseAttestationSubject{
 			Name:   "runtime/sha256/" + hexDigest,
 			Digest: map[string]string{"sha256": hexDigest},
 		})
@@ -1165,7 +1165,7 @@ func LoadRuntimeReleaseDirectory(
 	}()
 	statementBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(directory, RuntimeReleaseStatementFile),
-		maxRuntimeBundleBytes,
+		maxReleaseBundleBytes,
 	)
 	if err != nil {
 		return nil, nil, nil, err
@@ -1858,10 +1858,10 @@ func writeRuntimeWorkerPackage(
 	); err != nil {
 		return RuntimeReleasePackage{}, err
 	}
-	if len(bundle) == 0 || int64(len(bundle)) > maxRuntimeBundleBytes {
+	if len(bundle) == 0 || int64(len(bundle)) > maxReleaseBundleBytes {
 		return RuntimeReleasePackage{}, errors.New("runtime package bundle size is invalid")
 	}
-	if len(trustedRoot) == 0 || int64(len(trustedRoot)) > maxRuntimeTrustedRootBytes {
+	if len(trustedRoot) == 0 || int64(len(trustedRoot)) > maxReleaseTrustedRootBytes {
 		return RuntimeReleasePackage{}, errors.New("runtime package trusted root size is invalid")
 	}
 
@@ -2320,14 +2320,14 @@ func verifyRuntimeWorkerPackage(
 	}
 	bundleBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(extracted, RuntimeReleaseBundleFile),
-		maxRuntimeBundleBytes,
+		maxReleaseBundleBytes,
 	)
 	if err != nil {
 		return RuntimeReleasePackage{}, err
 	}
 	trustedRootBytes, err := readRuntimeReleaseInputFile(
 		filepath.Join(extracted, RuntimeReleaseTrustedRootFile),
-		maxRuntimeTrustedRootBytes,
+		maxReleaseTrustedRootBytes,
 	)
 	if err != nil {
 		return RuntimeReleasePackage{}, err
@@ -2682,9 +2682,9 @@ func runtimeReleasePackageMemberLimit(name string) (int64, error) {
 	case RuntimeReleaseCatalogFile:
 		return maxRuntimeCatalogBytes, nil
 	case RuntimeReleaseBundleFile:
-		return maxRuntimeBundleBytes, nil
+		return maxReleaseBundleBytes, nil
 	case RuntimeReleaseTrustedRootFile:
-		return maxRuntimeTrustedRootBytes, nil
+		return maxReleaseTrustedRootBytes, nil
 	case RuntimeReleaseCorpusFile:
 		return maxRuntimeVerifierCorpusManifestBytes, nil
 	case RuntimeReleaseInvalidFile:

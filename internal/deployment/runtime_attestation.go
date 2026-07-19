@@ -10,30 +10,24 @@ import (
 	"regexp"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
-	sigbundle "github.com/sigstore/sigstore-go/pkg/bundle"
 	"github.com/sigstore/sigstore-go/pkg/root"
 	"github.com/sigstore/sigstore-go/pkg/verify"
 )
 
 const (
-	RuntimeBundleMediaType              = "application/vnd.dev.sigstore.bundle.v0.3+json"
-	RuntimeAttestationType              = "https://in-toto.io/Statement/v1"
-	RuntimeAttestationPredicateType     = "https://helmr.dev/attestations/runtime-release/v0"
-	RuntimeAttestationFormatVersion     = 0
-	runtimeAttestationIssuer            = "https://token.actions.githubusercontent.com"
-	maxRuntimeBundleBytes               = maxProgramFileSizeBytes
-	maxRuntimeTrustedRootBytes          = maxProgramFileSizeBytes
-	runtimeReleaseCertificateSANPattern = `^https://github\.com/helmrdotdev/helmr/\.github/workflows/release\.yaml@refs/tags/v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)(?:-(?:(?:0|[1-9][0-9]*)|(?:[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))(?:\.(?:(?:0|[1-9][0-9]*)|(?:[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)))*)?$`
+	RuntimeAttestationType          = "https://in-toto.io/Statement/v1"
+	RuntimeAttestationPredicateType = "https://helmr.dev/attestations/runtime-release/v0"
+	RuntimeAttestationFormatVersion = 0
 )
 
 type runtimeAttestationDocument struct {
 	Type          string                      `json:"_type"`
-	Subject       []runtimeAttestationSubject `json:"subject"`
+	Subject       []releaseAttestationSubject `json:"subject"`
 	PredicateType string                      `json:"predicateType"`
 	Predicate     runtimeAttestationPredicate `json:"predicate"`
 }
 
-type runtimeAttestationSubject struct {
+type releaseAttestationSubject struct {
 	Name   string            `json:"name"`
 	Digest map[string]string `json:"digest"`
 }
@@ -63,11 +57,11 @@ func VerifyRuntimeCatalog(
 	if err != nil {
 		return nil, err
 	}
-	entity, err := parseRuntimeBundle(bundleBytes)
+	entity, err := parseReleaseBundle(bundleBytes)
 	if err != nil {
 		return nil, err
 	}
-	trustedMaterial, err := parseRuntimeTrustedRoot(trustedRootBytes)
+	trustedMaterial, err := parseReleaseTrustedRoot(trustedRootBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -102,11 +96,11 @@ func VerifyRuntimeCatalogForRelease(
 	if err != nil {
 		return nil, err
 	}
-	entity, err := parseRuntimeBundle(bundleBytes)
+	entity, err := parseReleaseBundle(bundleBytes)
 	if err != nil {
 		return nil, err
 	}
-	trustedMaterial, err := parseRuntimeTrustedRoot(trustedRootBytes)
+	trustedMaterial, err := parseReleaseTrustedRoot(trustedRootBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -124,44 +118,6 @@ func VerifyRuntimeCatalogForRelease(
 	}
 	catalog.authenticated = true
 	return catalog, nil
-}
-
-func parseRuntimeBundle(raw []byte) (*sigbundle.Bundle, error) {
-	if len(raw) == 0 || int64(len(raw)) > maxRuntimeBundleBytes {
-		return nil, fmt.Errorf(
-			"runtime attestation bundle size is outside [1,%d]",
-			maxRuntimeBundleBytes,
-		)
-	}
-	var entity sigbundle.Bundle
-	if err := json.Unmarshal(raw, &entity); err != nil {
-		return nil, fmt.Errorf("decode runtime attestation bundle: %w", err)
-	}
-	if entity.MediaType != RuntimeBundleMediaType {
-		return nil, fmt.Errorf(
-			"runtime attestation bundle mediaType = %q, want %q",
-			entity.MediaType,
-			RuntimeBundleMediaType,
-		)
-	}
-	if _, err := entity.Envelope(); err != nil {
-		return nil, fmt.Errorf("runtime attestation bundle does not contain a DSSE envelope: %w", err)
-	}
-	return &entity, nil
-}
-
-func parseRuntimeTrustedRoot(raw []byte) (root.TrustedMaterial, error) {
-	if len(raw) == 0 || int64(len(raw)) > maxRuntimeTrustedRootBytes {
-		return nil, fmt.Errorf(
-			"runtime trusted root size is outside [1,%d]",
-			maxRuntimeTrustedRootBytes,
-		)
-	}
-	trustedRoot, err := root.NewTrustedRootFromJSON(raw)
-	if err != nil {
-		return nil, fmt.Errorf("decode runtime trusted root: %w", err)
-	}
-	return trustedRoot, nil
 }
 
 func authenticateRuntimeCatalog(
@@ -196,53 +152,22 @@ func authenticateRuntimeCatalogWithExpectation(
 		return errors.New("runtime trusted root is required")
 	}
 
-	sanPattern := runtimeReleaseCertificateSANPattern
+	sanPattern := releaseCertificateSANPattern
 	if expectation != nil {
 		sanPattern = "^" + regexp.QuoteMeta(
 			"https://github.com/helmrdotdev/helmr/.github/workflows/release.yaml@refs/tags/"+
 				expectation.release,
 		) + "$"
 	}
-	identity, err := verify.NewShortCertificateIdentity(
-		runtimeAttestationIssuer,
-		"",
-		"",
+	catalogHash := sha256.Sum256(catalogBytes)
+	raw, err := verifyReleasePayload(
+		entity,
+		trustedMaterial,
+		catalogHash[:],
 		sanPattern,
 	)
 	if err != nil {
-		return fmt.Errorf("configure runtime attestation identity: %w", err)
-	}
-	verifier, err := verify.NewVerifier(
-		trustedMaterial,
-		verify.WithTransparencyLog(1),
-		verify.WithIntegratedTimestamps(1),
-	)
-	if err != nil {
-		return fmt.Errorf("configure runtime attestation verifier: %w", err)
-	}
-
-	catalogHash := sha256.Sum256(catalogBytes)
-	if _, err := verifier.Verify(
-		entity,
-		verify.NewPolicy(
-			verify.WithArtifactDigest("sha256", catalogHash[:]),
-			verify.WithCertificateIdentity(identity),
-		),
-	); err != nil {
 		return fmt.Errorf("verify runtime attestation: %w", err)
-	}
-
-	signature, err := entity.SignatureContent()
-	if err != nil {
-		return fmt.Errorf("read verified runtime attestation: %w", err)
-	}
-	envelope := signature.EnvelopeContent()
-	if envelope == nil {
-		return errors.New("verified runtime attestation is not a DSSE envelope")
-	}
-	raw, err := envelope.RawEnvelope().DecodeB64Payload()
-	if err != nil {
-		return fmt.Errorf("decode verified runtime attestation payload: %w", err)
 	}
 	if err := validateRuntimeAttestation(
 		raw,
@@ -313,7 +238,7 @@ func validateRuntimeAttestation(
 }
 
 func validateRuntimeAttestationSubjects(
-	subjects []runtimeAttestationSubject,
+	subjects []releaseAttestationSubject,
 	catalogHash [sha256.Size]byte,
 	catalog *RuntimeCatalog,
 ) error {
