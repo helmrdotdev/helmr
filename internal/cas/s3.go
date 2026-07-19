@@ -768,7 +768,12 @@ func (r *verifyingReadCloser) verify() error {
 	}
 	actual := "sha256:" + hex.EncodeToString(r.hash.Sum(nil))
 	if actual != r.expected {
-		r.err = fmt.Errorf("cas object digest mismatch: expected %s, got %s", r.expected, actual)
+		r.err = fmt.Errorf(
+			"%w: expected %s, got %s",
+			ErrDigestMismatch,
+			r.expected,
+			actual,
+		)
 	}
 	return r.err
 }

@@ -57,6 +57,7 @@ type Descriptor struct {
 }
 
 var (
+	ErrDigestMismatch = errors.New("cas object digest mismatch")
 	errStageClosed    = errors.New("cas stage is closed")
 	errStageCommitted = errors.New("cas stage already committed")
 	errStageAborted   = errors.New("cas stage aborted")
