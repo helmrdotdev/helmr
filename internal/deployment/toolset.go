@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -131,9 +132,12 @@ type toolRegistryDocument struct {
 }
 
 type ToolRegistry struct {
-	managers   []ManagerRegistration
-	toolchains []Toolchain
-	toolsets   []Toolset
+	managers      []ManagerRegistration
+	toolchains    []Toolchain
+	toolsets      []Toolset
+	raw           []byte
+	digest        string
+	authenticated bool
 }
 
 func CanonicalManagerRegistration(value ManagerRegistration) ([]byte, error) {
@@ -229,10 +233,13 @@ func ParseToolRegistry(raw []byte) (*ToolRegistry, error) {
 	if !bytes.Equal(raw, complete) {
 		return nil, errors.New("tool registry does not match the complete canonical v0 shape")
 	}
+	hash := sha256.Sum256(raw)
 	return &ToolRegistry{
 		managers:   append([]ManagerRegistration(nil), document.Managers...),
 		toolchains: append([]Toolchain(nil), document.Toolchains...),
 		toolsets:   append([]Toolset(nil), document.Toolsets...),
+		raw:        append([]byte(nil), raw...),
+		digest:     "sha256:" + hex.EncodeToString(hash[:]),
 	}, nil
 }
 
@@ -498,6 +505,9 @@ func validateToolRegistry(document toolRegistryDocument) error {
 			return errors.New("tool registry has a duplicate toolset digest")
 		}
 		toolsetDigests[digest] = struct{}{}
+	}
+	if err := validateToolObjectSet(toolRegistryObjects(document)); err != nil {
+		return fmt.Errorf("tool registry physical closure: %w", err)
 	}
 	return nil
 }
