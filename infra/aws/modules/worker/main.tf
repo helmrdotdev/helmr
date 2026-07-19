@@ -57,6 +57,7 @@ locals {
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
     HELMR_RUNTIME_STORE_URI        = var.runtime_store_uri
+    HELMR_MANAGER_STORE_URI        = var.manager_store_uri
     HELMR_BUILD_POLICY_PATH        = "/etc/helmr/build-policy.json"
     HELMR_WORKER_BUILD_CACHE_DIR   = "/var/lib/helmr/cache"
     HELMR_WORKER_BUILD_SCRATCH_DIR = "/var/lib/helmr/scratch"
@@ -65,7 +66,8 @@ locals {
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
     "HELMR_CHECKPOINT_ENCRYPTION_KEY",
     "HELMR_BUILD_POLICY_PATH",
-    "HELMR_RUNTIME_STORE_URI"
+    "HELMR_RUNTIME_STORE_URI",
+    "HELMR_MANAGER_STORE_URI"
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
   base_worker_environment      = merge(local.worker_environment, var.worker_environment)
@@ -200,6 +202,40 @@ resource "aws_iam_role_policy" "worker" {
               "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
             }
           }
+        },
+        {
+          Sid    = "ReadAndCreateManagerAuthority"
+          Effect = "Allow"
+          Action = [
+            "s3:GetObject",
+            "s3:PutObject"
+          ]
+          Resource = [
+            "${var.manager_store_bucket_arn}/v0/claims/sha256/*",
+            "${var.manager_store_bucket_arn}/v0/capsules/sha256/*",
+            "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+          ]
+        },
+        {
+          Sid      = "AbortManagerTreeUploads"
+          Effect   = "Allow"
+          Action   = ["s3:AbortMultipartUpload"]
+          Resource = "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+        },
+        {
+          Sid    = "EncryptAndDecryptManagerAuthority"
+          Effect = "Allow"
+          Action = [
+            "kms:Decrypt",
+            "kms:GenerateDataKey"
+          ]
+          Resource = var.manager_store_kms_key_arn
+          Condition = {
+            StringEquals = {
+              "kms:ViaService"                   = "s3.${data.aws_region.current.region}.amazonaws.com"
+              "kms:EncryptionContext:aws:s3:arn" = var.manager_store_bucket_arn
+            }
+          }
         }
     ] : statement if contains(var.worker_roles, "build")])
   })
@@ -292,6 +328,7 @@ resource "terraform_data" "network_preconditions" {
     network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
     reserved_env_conflicts     = local.worker_environment_conflicts
     runtime_store_uri          = var.runtime_store_uri
+    manager_store_uri          = var.manager_store_uri
     build_policy_digest        = var.build_policy_digest
     build_cache_mib            = var.build_cache_mib
     build_scratch_mib          = var.build_scratch_mib
@@ -311,6 +348,19 @@ resource "terraform_data" "network_preconditions" {
     precondition {
       condition     = var.runtime_store_bucket_arn != var.cas_bucket_arn
       error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Artifact CAS bucket."
+    }
+
+    precondition {
+      condition     = var.manager_store_uri == "s3://${trimprefix(var.manager_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}"
+      error_message = "manager_store_uri must identify the bucket supplied by manager_store_bucket_arn without a prefix."
+    }
+
+    precondition {
+      condition = (
+        var.manager_store_bucket_arn != var.cas_bucket_arn &&
+        var.manager_store_bucket_arn != var.runtime_store_bucket_arn
+      )
+      error_message = "manager_store_bucket_arn must identify a dedicated authority bucket."
     }
 
     precondition {

@@ -33,6 +33,9 @@ variables {
   runtime_store_uri         = "s3://helmr-test-runtime/objects"
   runtime_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
   runtime_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
+  manager_store_uri         = "s3://helmr-test-managers"
+  manager_store_bucket_arn  = "arn:aws:s3:::helmr-test-managers"
+  manager_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/22222222-2222-2222-2222-222222222222"
   build_policy_digest       = null
   min_size                  = 0
   max_size                  = 1
@@ -62,7 +65,10 @@ run "controller_owns_protected_capacity" {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_REGION_ID=helmr-us-east") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_STORE_URI") &&
-      !strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*")
+      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_MANAGER_STORE_URI") &&
+      !strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
+      !strcontains(aws_iam_role_policy.worker.policy, "${var.manager_store_bucket_arn}/v0/") &&
+      !strcontains(aws_iam_role_policy.worker.policy, var.manager_store_kms_key_arn)
     )
     error_message = "run-only workers must receive their region without unused current-runtime storage authority"
   }
@@ -120,6 +126,83 @@ run "build_worker_installs_exact_policy_before_service" {
 
   assert {
     condition = (
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_MANAGER_STORE_URI=s3://helmr-test-managers") &&
+      strcontains(aws_iam_role_policy.worker.policy, jsonencode({
+        Sid    = "ReadAndCreateManagerAuthority"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
+        ]
+        Resource = [
+          "${var.manager_store_bucket_arn}/v0/claims/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/capsules/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+        ]
+      })) &&
+      strcontains(aws_iam_role_policy.worker.policy, jsonencode({
+        Sid      = "AbortManagerTreeUploads"
+        Effect   = "Allow"
+        Action   = ["s3:AbortMultipartUpload"]
+        Resource = "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+      })) &&
+      strcontains(aws_iam_role_policy.worker.policy, jsonencode({
+        Sid    = "EncryptAndDecryptManagerAuthority"
+        Effect = "Allow"
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ]
+        Resource = var.manager_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService"                   = "s3.us-east-1.amazonaws.com"
+            "kms:EncryptionContext:aws:s3:arn" = var.manager_store_bucket_arn
+          }
+        }
+      }))
+    )
+    error_message = "build workers must receive only create/read authority for the fixed Manager Store namespaces."
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+      length([
+        for resource in try(tolist(statement.Resource), [statement.Resource]) : resource
+        if startswith(resource, var.manager_store_bucket_arn)
+        ]) == 0 || (
+        try(statement.Sid, "") == "ReadAndCreateManagerAuthority" &&
+        toset(try(tolist(statement.Action), [statement.Action])) == toset(["s3:GetObject", "s3:PutObject"]) &&
+        toset(try(tolist(statement.Resource), [statement.Resource])) == toset([
+          "${var.manager_store_bucket_arn}/v0/claims/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/capsules/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+        ])
+        ) || (
+        try(statement.Sid, "") == "AbortManagerTreeUploads" &&
+        toset(try(tolist(statement.Action), [statement.Action])) == toset(["s3:AbortMultipartUpload"]) &&
+        toset(try(tolist(statement.Resource), [statement.Resource])) == toset(["${var.manager_store_bucket_arn}/v0/trees/sha256/*"])
+      )
+    ])
+    error_message = "build-worker policy must not grant additional Manager Store actions or namespaces."
+  }
+
+  assert {
+    condition = alltrue([
+      for statement in jsondecode(aws_iam_role_policy.worker.policy).Statement :
+      !contains(try(tolist(statement.Resource), [statement.Resource]), var.manager_store_kms_key_arn) || (
+        try(statement.Sid, "") == "EncryptAndDecryptManagerAuthority" &&
+        toset(try(tolist(statement.Action), [statement.Action])) == toset(["kms:Decrypt", "kms:GenerateDataKey"]) &&
+        try(statement.Condition.StringEquals["kms:ViaService"], "") == "s3.us-east-1.amazonaws.com" &&
+        try(statement.Condition.StringEquals["kms:EncryptionContext:aws:s3:arn"], "") == var.manager_store_bucket_arn
+      )
+    ])
+    error_message = "build-worker Manager KMS authority must be limited to S3 operations for the Manager Store bucket."
+  }
+
+  assert {
+    condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-cache.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "build-scratch.ext4") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "mkfs.ext4 -F -q -m 0") &&
@@ -145,6 +228,38 @@ run "build_worker_requires_policy_digest" {
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
     build_policy_digest        = null
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "manager_store_uri_must_match_bucket" {
+  command = plan
+
+  variables {
+    manager_store_uri = "s3://another-manager-store"
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "manager_store_must_not_reuse_cas" {
+  command = plan
+
+  variables {
+    manager_store_uri        = "s3://helmr-test-cas"
+    manager_store_bucket_arn = "arn:aws:s3:::helmr-test-cas"
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "manager_store_must_not_reuse_runtime_store" {
+  command = plan
+
+  variables {
+    manager_store_uri        = "s3://helmr-test-runtime"
+    manager_store_bucket_arn = "arn:aws:s3:::helmr-test-runtime"
   }
 
   expect_failures = [terraform_data.network_preconditions]
