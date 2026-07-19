@@ -53,6 +53,8 @@ func run(log *slog.Logger) error {
 	}
 	supportsRun := slices.Contains(cfg.WorkerRoles, "run")
 	supportsBuild := slices.Contains(cfg.WorkerRoles, "build")
+	var toolRegistryDigest string
+	var toolCorpus *deployment.ToolCorpus
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
 		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
@@ -171,14 +173,32 @@ func run(log *slog.Logger) error {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
 		}
-		runtimePolicy, err := deployment.LoadRuntimePolicy(cfg.RuntimePolicyPath, runtimeCatalog)
+		toolRegistry, err := deployment.LoadToolRegistry()
 		if err != nil {
-			return fmt.Errorf("load managed runtime policy: %w", err)
+			return fmt.Errorf("authenticate dependency tool registry: %w", err)
 		}
-		currentRuntime, err := runtimePolicy.Current(cfg.RegionID)
+		toolCorpus, err = deployment.LoadToolCorpus(ctx, toolRegistry, runtimeArchitecture)
 		if err != nil {
-			return fmt.Errorf("resolve regional managed runtime: %w", err)
+			return fmt.Errorf("verify dependency tool corpus: %w", err)
 		}
+		defer toolCorpus.Close()
+		toolRegistryDigest, err = toolRegistry.Digest()
+		if err != nil {
+			return fmt.Errorf("read dependency tool registry digest: %w", err)
+		}
+		buildPolicy, err := deployment.LoadBuildPolicy(
+			cfg.BuildPolicyPath,
+			runtimeCatalog,
+			toolRegistry,
+		)
+		if err != nil {
+			return fmt.Errorf("load build policy: %w", err)
+		}
+		currentTarget, err := buildPolicy.Current(cfg.RegionID)
+		if err != nil {
+			return fmt.Errorf("resolve regional build target: %w", err)
+		}
+		currentRuntime := currentTarget.Runtime
 		if currentRuntime.Architecture != runtimeArchitecture {
 			return fmt.Errorf(
 				"regional managed runtime architecture = %q, worker architecture is %q",
@@ -330,6 +350,7 @@ func run(log *slog.Logger) error {
 		ExecutionSlotsAvailable: cfg.WorkerExecutionSlots,
 		SupportsRun:             supportsRun,
 		SupportsBuild:           supportsBuild,
+		ToolRegistryDigest:      toolRegistryDigest,
 		MaxBuildExecutors:       cfg.WorkerBuildExecutors,
 		MaxRuntimeStarts:        int32(runtimeStartLimit),
 		ScratchBytes:            diskCapacity.HostScratchBytes,

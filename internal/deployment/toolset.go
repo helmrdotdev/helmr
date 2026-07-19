@@ -42,8 +42,9 @@ const (
 )
 
 var (
-	toolEnvironmentNamePattern = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
-	lockfileAdapterPattern     = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+	toolEnvironmentNamePattern     = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
+	lockfileAdapterPattern         = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,127}$`)
+	errToolRegistryUnauthenticated = errors.New("authenticated dependency tool registry is required")
 )
 
 type ToolCommand struct {
@@ -67,7 +68,6 @@ type ToolProxy struct {
 type ManagerRegistration struct {
 	Architecture    RuntimeArchitecture `json:"architecture"`
 	Executable      string              `json:"executable"`
-	FixtureDigest   string              `json:"fixtureDigest"`
 	FormatVersion   int                 `json:"formatVersion"`
 	Lifecycle       ToolCommand         `json:"lifecycle"`
 	LockfileAdapter string              `json:"lockfileAdapter"`
@@ -81,7 +81,6 @@ type ManagerRegistration struct {
 
 type Toolchain struct {
 	Architecture         RuntimeArchitecture `json:"architecture"`
-	FixtureDigest        string              `json:"fixtureDigest"`
 	FormatVersion        int                 `json:"formatVersion"`
 	ManagedRuntimeDigest string              `json:"managedRuntimeDigest"`
 	ToolchainClosure     ManagerArtifact     `json:"toolchainClosure"`
@@ -97,7 +96,6 @@ type Toolset struct {
 	Artifact                  ManagerArtifact     `json:"artifact"`
 	ComponentManifestDigest   string              `json:"componentManifestDigest"`
 	Environment               []ToolEnvironment   `json:"environment"`
-	FixtureDigest             string              `json:"fixtureDigest"`
 	FormatVersion             int                 `json:"formatVersion"`
 	ManagedRuntimeDigest      string              `json:"managedRuntimeDigest"`
 	ManagerRegistrationDigest string              `json:"managerRegistrationDigest"`
@@ -138,6 +136,14 @@ type ToolRegistry struct {
 	raw           []byte
 	digest        string
 	authenticated bool
+}
+
+type ToolKey struct {
+	Architecture            RuntimeArchitecture
+	ManagedRuntimeDigest    string
+	MaterializerVersion     string
+	PackageManager          PackageManager
+	StandardToolchainDigest string
 }
 
 func CanonicalManagerRegistration(value ManagerRegistration) ([]byte, error) {
@@ -260,6 +266,74 @@ func CanonicalToolRegistry(
 	return canonicalToolDocument(document, "tool registry", maxToolRegistryBytes)
 }
 
+func (r *ToolRegistry) Digest() (string, error) {
+	if r == nil || !r.authenticated {
+		return "", errToolRegistryUnauthenticated
+	}
+	return r.digest, nil
+}
+
+func (r *ToolRegistry) Toolchain(digest string) (Toolchain, error) {
+	if r == nil || !r.authenticated {
+		return Toolchain{}, errToolRegistryUnauthenticated
+	}
+	for _, toolchain := range r.toolchains {
+		registered, err := StandardToolchainDigest(toolchain)
+		if err != nil {
+			return Toolchain{}, err
+		}
+		if registered == digest {
+			return toolchain, nil
+		}
+	}
+	return Toolchain{}, fmt.Errorf("standard toolchain %q is not registered", digest)
+}
+
+func (r *ToolRegistry) Resolve(key ToolKey) (Toolset, error) {
+	if r == nil || !r.authenticated {
+		return Toolset{}, errToolRegistryUnauthenticated
+	}
+	if !validArchitecture(key.Architecture) ||
+		!validToolDigest(key.ManagedRuntimeDigest) ||
+		!validToolDigest(key.StandardToolchainDigest) ||
+		key.MaterializerVersion != DependencyMaterializerVersion {
+		return Toolset{}, errors.New("dependency tool selection key is invalid")
+	}
+	if err := validateManagerPackage(key.PackageManager); err != nil {
+		return Toolset{}, err
+	}
+	for _, toolset := range r.toolsets {
+		if toolset.Architecture == key.Architecture &&
+			toolset.ManagedRuntimeDigest == key.ManagedRuntimeDigest &&
+			toolset.MaterializerVersion == key.MaterializerVersion &&
+			toolset.PackageManager == key.PackageManager &&
+			toolset.StandardToolchainDigest == key.StandardToolchainDigest {
+			resolved := toolset
+			resolved.Environment = append([]ToolEnvironment(nil), toolset.Environment...)
+			return resolved, nil
+		}
+	}
+	return Toolset{}, errors.New("dependency toolset is not registered")
+}
+
+func ToolDigestBytes(value string) ([]byte, error) {
+	if !validToolDigest(value) {
+		return nil, errors.New("dependency tool digest is not a lowercase SHA-256 digest")
+	}
+	decoded, err := hex.DecodeString(value[len("sha256:"):])
+	if err != nil {
+		return nil, errors.New("dependency tool digest is not a lowercase SHA-256 digest")
+	}
+	return decoded, nil
+}
+
+func ToolDigestString(value []byte) (string, error) {
+	if len(value) != sha256.Size {
+		return "", fmt.Errorf("dependency tool digest is not %d bytes", sha256.Size)
+	}
+	return "sha256:" + hex.EncodeToString(value), nil
+}
+
 func ValidateToolComponents(toolset Toolset, components ToolComponents) error {
 	if err := validateToolset(toolset); err != nil {
 		return err
@@ -302,9 +376,6 @@ func validateManagerRegistration(value ManagerRegistration) error {
 	if err := validateManagerPackage(value.PackageManager); err != nil {
 		return err
 	}
-	if !validToolDigest(value.FixtureDigest) {
-		return errors.New("manager registration fixtureDigest is invalid")
-	}
 	if err := validateToolArtifact(value.ManagerClosure, ManagerComponentMediaType, "manager closure"); err != nil {
 		return err
 	}
@@ -344,7 +415,7 @@ func validateToolchain(value Toolchain) error {
 	if !validArchitecture(value.Architecture) {
 		return fmt.Errorf("standard toolchain architecture %q is unsupported", value.Architecture)
 	}
-	if !validToolDigest(value.FixtureDigest) || !validToolDigest(value.ManagedRuntimeDigest) {
+	if !validToolDigest(value.ManagedRuntimeDigest) {
 		return errors.New("standard toolchain digest is invalid")
 	}
 	return validateToolArtifact(value.ToolchainClosure, ToolchainMediaType, "toolchain closure")
@@ -365,7 +436,6 @@ func validateToolset(value Toolset) error {
 	}
 	for _, digest := range []string{
 		value.ComponentManifestDigest,
-		value.FixtureDigest,
 		value.ManagedRuntimeDigest,
 		value.ManagerRegistrationDigest,
 		value.StandardToolchainDigest,

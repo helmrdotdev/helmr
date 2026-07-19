@@ -205,7 +205,7 @@ module "control" {
   runtime_store_uri                      = var.runtime_store_uri
   runtime_store_bucket_arn               = var.runtime_store_bucket_arn
   runtime_store_kms_key_arn              = var.runtime_store_kms_key_arn
-  runtime_policy_digest                  = var.runtime_policy_digest
+  build_policy_digest                    = var.build_policy_digest
   control_desired_count                  = var.control_desired_count
   dispatcher_desired_count               = var.dispatcher_desired_count
   control_assign_public_ip               = var.control_assign_public_ip
@@ -281,7 +281,7 @@ module "worker_group" {
   runtime_store_uri                          = var.runtime_store_uri
   runtime_store_bucket_arn                   = var.runtime_store_bucket_arn
   runtime_store_kms_key_arn                  = var.runtime_store_kms_key_arn
-  runtime_policy_digest                      = each.key == "build" ? var.runtime_policy_digest : null
+  build_policy_digest                        = each.key == "build" ? var.build_policy_digest : null
 
   secret_arns = {
     checkpoint_encryption_key = module.control.secret_arns.checkpoint_encryption_key

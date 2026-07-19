@@ -43,6 +43,12 @@ func TestProgramReceiptRejectsIncompleteOrDivergentShape(t *testing.T) {
 		"dependency mismatch": func(receipt *ProgramReceipt) {
 			receipt.Index.Dependencies.Digest = "sha256:" + strings.Repeat("d", 64)
 		},
+		"dependency index runtime": func(receipt *ProgramReceipt) {
+			receipt.DependencyIndex.RuntimeDigest = "sha256:" + strings.Repeat("d", 64)
+		},
+		"dependency index package graph": func(receipt *ProgramReceipt) {
+			receipt.DependencyIndex.PackageGraphDigest = "sha256:" + strings.Repeat("d", 64)
+		},
 		"index": func(receipt *ProgramReceipt) {
 			receipt.Index.RuntimeAPIVersion = "helmr.runtime.v1"
 		},
@@ -112,21 +118,56 @@ func TestProgramReceiptCanonicalSizeBound(t *testing.T) {
 	}
 }
 
-func testProgramReceipt(t *testing.T) ProgramReceipt {
-	t.Helper()
-	var index ProgramIndex
-	if err := json.Unmarshal(canonicalVerifierProgramIndex(t), &index); err != nil {
+func TestProgramVerificationRoundTrip(t *testing.T) {
+	canonical := canonicalVerifierProgramVerification(t)
+	verified, err := parseProgramVerification(canonical)
+	if err != nil {
 		t.Fatal(err)
 	}
-	dependencies := index.Dependencies
+	reencoded, err := canonicalProgramVerification(verified)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(reencoded, canonical) {
+		t.Fatalf("reencoded verification = %q, want %q", reencoded, canonical)
+	}
+	verified.Index.Declarations[0].Slots[0] = DeclarationSlotSchema
+	again, err := parseProgramVerification(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Index.Declarations[0].Slots[0] != DeclarationSlotHandler {
+		t.Fatal("parsed verification retained caller mutation")
+	}
+}
+
+func TestProgramVerificationRejectsDivergentIndexes(t *testing.T) {
+	verified, err := parseProgramVerification(canonicalVerifierProgramVerification(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified.DependencyIndex.PackageGraphSizeBytes++
+	if _, err := canonicalProgramVerification(verified); err == nil {
+		t.Fatal("canonicalProgramVerification accepted divergent package graph identity")
+	}
+}
+
+func testProgramReceipt(t *testing.T) ProgramReceipt {
+	t.Helper()
+	var verified programVerification
+	if err := json.Unmarshal(canonicalVerifierProgramVerification(t), &verified); err != nil {
+		t.Fatal(err)
+	}
+	dependencies := verified.Index.Dependencies
 	return ProgramReceipt{
-		FormatVersion: ProgramReceiptFormatVersion,
+		FormatVersion:   ProgramReceiptFormatVersion,
+		DependencyIndex: verified.DependencyIndex,
 		Code: ProgramDescriptor{
 			Digest:    "sha256:" + strings.Repeat("c", 64),
 			SizeBytes: squashFSPhysicalAlign,
 			MediaType: ProgramCodeArtifactMediaType,
 		},
 		Dependencies: dependencies,
-		Index:        index,
+		Index:        verified.Index,
 	}
 }

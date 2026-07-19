@@ -94,7 +94,7 @@ func testArtifactID() pgtype.UUID {
 func testWorkerCapabilities() api.WorkerCapabilities {
 	capabilities := api.WorkerCapabilities{
 		ProtocolVersion:         api.CurrentWorkerProtocolVersion,
-		RuntimeArch:             "arm64",
+		RuntimeArch:             "aarch64",
 		RuntimeABI:              "helmr.firecracker.snapshot.v0",
 		KernelDigest:            "sha256:kernel",
 		InitramfsDigest:         "sha256:initramfs",

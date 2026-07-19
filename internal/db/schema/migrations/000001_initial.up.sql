@@ -424,6 +424,7 @@ CREATE TABLE worker_instances (
     supervisor_version TEXT NOT NULL DEFAULT '',
     supports_run BOOLEAN NOT NULL DEFAULT false,
     supports_build BOOLEAN NOT NULL DEFAULT false,
+    tool_registry_digest BYTEA,
     runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
     certified_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (certified_cpu_millis >= 0),
     certified_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_memory_bytes >= 0),
@@ -498,6 +499,13 @@ CREATE TABLE worker_instances (
         )
     ),
     CHECK (state NOT IN ('active', 'draining') OR NOT supports_build OR max_build_executors > 0),
+    CHECK (tool_registry_digest IS NULL OR octet_length(tool_registry_digest) = 32),
+    CHECK (supports_build OR tool_registry_digest IS NULL),
+    CHECK (
+        state NOT IN ('active', 'draining')
+        OR NOT supports_build
+        OR tool_registry_digest IS NOT NULL
+    ),
     CHECK (state <> 'draining' OR draining_at IS NOT NULL),
     CHECK (state <> 'disabled' OR disabled_at IS NOT NULL),
     CHECK (state <> 'lost' OR lost_at IS NOT NULL),
@@ -879,6 +887,8 @@ CREATE TABLE deployments (
     build_region_id TEXT NOT NULL REFERENCES regions(id) ON DELETE RESTRICT,
     build_architecture TEXT NOT NULL CHECK (build_architecture IN ('aarch64', 'x86_64')),
     build_runtime_digest BYTEA NOT NULL CHECK (octet_length(build_runtime_digest) = 32),
+    build_standard_toolchain_digest BYTEA NOT NULL CHECK (octet_length(build_standard_toolchain_digest) = 32),
+    build_materializer_version TEXT NOT NULL CHECK (build_materializer_version = 'helmr.dependencies.v0'),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
@@ -3414,7 +3424,9 @@ CREATE UNIQUE INDEX deployments_reusable_build_key_idx
         bundle_format_version,
         worker_protocol_version,
         build_architecture,
-        build_runtime_digest
+        build_runtime_digest,
+        build_standard_toolchain_digest,
+        build_materializer_version
     )
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_build_region_status_idx

@@ -2204,6 +2204,8 @@ type Deployment struct {
 	BuildRegionID                   string             `json:"build_region_id"`
 	BuildArchitecture               string             `json:"build_architecture"`
 	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
+	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
+	BuildMaterializerVersion        string             `json:"build_materializer_version"`
 	Version                         string             `json:"version"`
 	ContentHash                     string             `json:"content_hash"`
 	ApiVersion                      string             `json:"api_version"`
@@ -3229,6 +3231,7 @@ type WorkerInstance struct {
 	SupervisorVersion           string              `json:"supervisor_version"`
 	SupportsRun                 bool                `json:"supports_run"`
 	SupportsBuild               bool                `json:"supports_build"`
+	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`

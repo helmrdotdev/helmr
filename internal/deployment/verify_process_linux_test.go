@@ -295,7 +295,7 @@ func TestVerifierTerminalDrainRejectsLeakedWriter(t *testing.T) {
 	if err := writeVerifierVerified(
 		&output,
 		programVerifierJob,
-		canonicalVerifierProgramIndex(t),
+		canonicalVerifierProgramVerification(t),
 	); err != nil {
 		t.Fatal(err)
 	}

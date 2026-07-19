@@ -79,7 +79,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	if s.runtimePolicy == nil || s.runtimeStore == nil {
+	if s.buildPolicy == nil || s.runtimeStore == nil {
 		writeError(w, unavailable(errors.New("managed runtime is not configured")))
 		return
 	}
@@ -92,12 +92,12 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	buildRegionID := project.DefaultRegionID
-	runtimeTarget, err := s.runtimePolicy.Current(buildRegionID)
+	buildTarget, err := s.buildPolicy.Current(buildRegionID)
 	if err != nil {
-		writeError(w, unavailable(fmt.Errorf("resolve managed runtime: %w", err)))
+		writeError(w, unavailable(fmt.Errorf("resolve build target: %w", err)))
 		return
 	}
-	if err := validateRuntimeObject(r.Context(), s.runtimeStore, runtimeTarget); err != nil {
+	if err := validateRuntimeObject(r.Context(), s.runtimeStore, buildTarget.Runtime); err != nil {
 		writeError(w, unavailable(err))
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) createDeployment(w http.ResponseWriter, r *http.Request) {
 			return conflict(errors.New("project default region changed; retry deployment creation"))
 		}
 		var createErr error
-		response, createErr = createDeploymentRecords(r.Context(), store, buildRegionID, runtimeTarget, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
+		response, createErr = createDeploymentRecords(r.Context(), store, buildRegionID, buildTarget, actor.OrgID, projectID, environmentID, strings.TrimSpace(request.ContentHash), artifact, metadata)
 		return createErr
 	})
 	if err != nil {

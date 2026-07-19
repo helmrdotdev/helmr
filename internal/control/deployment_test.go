@@ -31,9 +31,9 @@ import (
 func newDeploymentTestServer(store *fakeStore, casStore cas.Store) *Server {
 	descriptor := testManagedRuntimeDescriptor()
 	return &Server{
-		db:            store,
-		cas:           casStore,
-		runtimePolicy: testRuntimePolicy(),
+		db:          store,
+		cas:         casStore,
+		buildPolicy: testBuildPolicy(),
 		runtimeStore: &fakeCAS{object: cas.Object{
 			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		}},
@@ -58,13 +58,13 @@ func testManagedRuntimeDescriptor() deployment.RuntimeDescriptor {
 	}
 }
 
-func testRuntimePolicy() *deployment.RuntimePolicy {
+func testBuildPolicy() *deployment.BuildPolicy {
 	descriptor, err := deployment.CanonicalRuntimeDescriptor(testManagedRuntimeDescriptor())
 	if err != nil {
 		panic(err)
 	}
-	raw := []byte(`{"current":{"us-east-1":"` + testManagedRuntimeDescriptor().Digest + `"},"formatVersion":0,"runtimes":[` + string(descriptor) + `]}`)
-	policy, err := deployment.ParseRuntimePolicy(raw)
+	raw := []byte(`{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` + testManagedRuntimeDescriptor().Digest + `","standardToolchainDigest":"sha256:` + strings.Repeat("8", 64) + `"}},"formatVersion":0,"runtimes":[` + string(descriptor) + `],"toolRegistryDigest":"sha256:` + strings.Repeat("7", 64) + `"}`)
+	policy, err := deployment.ParseBuildPolicy(raw)
 	if err != nil {
 		panic(err)
 	}

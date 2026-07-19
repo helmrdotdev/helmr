@@ -13,9 +13,11 @@ func TestReuseDescriptorCanonicalKey(t *testing.T) {
 	}
 	wantCanonical := `{"apiVersion":"2026-06-06","architecture":"aarch64","buildRegionId":"us-east-1","bundleFormatVersion":2,"cliVersion":"0.4.0","contentHash":"sha256:` +
 		strings.Repeat("1", 64) +
-		`","environmentId":"00000000-0000-0000-0000-000000000003","formatVersion":0,"orgId":"00000000-0000-0000-0000-000000000001","projectId":"00000000-0000-0000-0000-000000000002","runtimeDigest":"sha256:` +
+		`","environmentId":"00000000-0000-0000-0000-000000000003","formatVersion":0,"materializerVersion":"helmr.dependencies.v0","orgId":"00000000-0000-0000-0000-000000000001","projectId":"00000000-0000-0000-0000-000000000002","runtimeDigest":"sha256:` +
 		strings.Repeat("2", 64) +
-		`","sdkVersion":"0.3.0","workerProtocolVersion":"helmr.worker.v0"}`
+		`","sdkVersion":"0.3.0","standardToolchainDigest":"sha256:` +
+		strings.Repeat("3", 64) +
+		`","workerProtocolVersion":"helmr.worker.v0"}`
 	if string(canonical) != wantCanonical {
 		t.Fatalf("canonical reuse descriptor = %s, want %s", canonical, wantCanonical)
 	}
@@ -23,7 +25,7 @@ func TestReuseDescriptorCanonicalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != "sha256:7c1ff7f7d5056bcde4c059221be3d337be06bd199fd7de00974327baf7bd5a2c" {
+	if key != "sha256:e3f24fb03c69c0a43482d394375215000c8e08d5d5f3599e0f8a95777b776b28" {
 		t.Fatalf("reuse key = %q", key)
 	}
 }
@@ -55,6 +57,12 @@ func TestReuseDescriptorRejectsInvalidMembers(t *testing.T) {
 		},
 		"architecture": func(value *ReuseDescriptor) { value.Architecture = "amd64" },
 		"runtime":      func(value *ReuseDescriptor) { value.RuntimeDigest = "sha256:invalid" },
+		"toolchain": func(value *ReuseDescriptor) {
+			value.StandardToolchainDigest = "sha256:invalid"
+		},
+		"materializer": func(value *ReuseDescriptor) {
+			value.MaterializerVersion = "helmr.dependencies.v1"
+		},
 	}
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -85,6 +93,9 @@ func TestReuseKeyChangesWithEveryRequestMember(t *testing.T) {
 		"bundle":       func(value *ReuseDescriptor) { value.BundleFormatVersion = 3 },
 		"architecture": func(value *ReuseDescriptor) { value.Architecture = ArchitectureX8664 },
 		"runtime":      func(value *ReuseDescriptor) { value.RuntimeDigest = "sha256:" + strings.Repeat("4", 64) },
+		"toolchain": func(value *ReuseDescriptor) {
+			value.StandardToolchainDigest = "sha256:" + strings.Repeat("4", 64)
+		},
 	}
 	for name, mutate := range mutations {
 		t.Run(name, func(t *testing.T) {
@@ -103,18 +114,20 @@ func TestReuseKeyChangesWithEveryRequestMember(t *testing.T) {
 
 func validReuseDescriptor() ReuseDescriptor {
 	return ReuseDescriptor{
-		FormatVersion:         ReuseFormatVersion,
-		OrgID:                 "00000000-0000-0000-0000-000000000001",
-		ProjectID:             "00000000-0000-0000-0000-000000000002",
-		EnvironmentID:         "00000000-0000-0000-0000-000000000003",
-		BuildRegionID:         "us-east-1",
-		ContentHash:           "sha256:" + strings.Repeat("1", 64),
-		APIVersion:            "2026-06-06",
-		SDKVersion:            "0.3.0",
-		CLIVersion:            "0.4.0",
-		BundleFormatVersion:   2,
-		WorkerProtocolVersion: "helmr.worker.v0",
-		Architecture:          ArchitectureAArch64,
-		RuntimeDigest:         "sha256:" + strings.Repeat("2", 64),
+		FormatVersion:           ReuseFormatVersion,
+		OrgID:                   "00000000-0000-0000-0000-000000000001",
+		ProjectID:               "00000000-0000-0000-0000-000000000002",
+		EnvironmentID:           "00000000-0000-0000-0000-000000000003",
+		BuildRegionID:           "us-east-1",
+		ContentHash:             "sha256:" + strings.Repeat("1", 64),
+		APIVersion:              "2026-06-06",
+		SDKVersion:              "0.3.0",
+		CLIVersion:              "0.4.0",
+		BundleFormatVersion:     2,
+		WorkerProtocolVersion:   "helmr.worker.v0",
+		Architecture:            ArchitectureAArch64,
+		MaterializerVersion:     DependencyMaterializerVersion,
+		RuntimeDigest:           "sha256:" + strings.Repeat("2", 64),
+		StandardToolchainDigest: "sha256:" + strings.Repeat("3", 64),
 	}
 }

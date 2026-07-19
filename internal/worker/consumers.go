@@ -211,6 +211,15 @@ func validateBuildEnvelope(capabilities api.WorkerCapabilities, build api.Worker
 			capabilities.RuntimeArch,
 		)
 	}
+	if _, err := deployment.ToolDigestBytes(build.StandardToolchainDigest); err != nil {
+		return fmt.Errorf("deployment standard toolchain digest: %w", err)
+	}
+	if build.MaterializerVersion != deployment.DependencyMaterializerVersion {
+		return fmt.Errorf(
+			"deployment materializer version %q is unsupported",
+			build.MaterializerVersion,
+		)
+	}
 	if !capabilities.SupportsBuild {
 		return errors.New("worker is not certified for builds")
 	}

@@ -8,6 +8,8 @@ INSERT INTO deployments (
     build_region_id,
     build_architecture,
     build_runtime_digest,
+    build_standard_toolchain_digest,
+    build_materializer_version,
     version,
     api_version,
     sdk_version,
@@ -26,6 +28,8 @@ SELECT sqlc.arg(id),
        sqlc.arg(build_region_id),
        sqlc.arg(build_architecture),
        sqlc.arg(build_runtime_digest),
+       sqlc.arg(build_standard_toolchain_digest),
+       sqlc.arg(build_materializer_version),
        sqlc.arg(version),
        sqlc.arg(api_version),
        sqlc.arg(sdk_version),
@@ -68,6 +72,8 @@ SELECT *
    AND worker_protocol_version = sqlc.arg(worker_protocol_version)
    AND build_architecture = sqlc.arg(build_architecture)
    AND build_runtime_digest = sqlc.arg(build_runtime_digest)
+   AND build_standard_toolchain_digest = sqlc.arg(build_standard_toolchain_digest)
+   AND build_materializer_version = sqlc.arg(build_materializer_version)
    AND status IN ('queued', 'building');
 
 -- name: AllocateDeploymentVersion :one
@@ -175,6 +181,8 @@ SELECT inserted.*,
        advanced.content_hash,
        advanced.build_architecture,
        advanced.build_runtime_digest,
+       advanced.build_standard_toolchain_digest,
+       advanced.build_materializer_version,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
        source_artifacts.media_type AS source_media_type,
@@ -358,6 +366,7 @@ WITH candidate AS (
        AND worker_instances.current_epoch = deployment_build_leases.worker_epoch
        AND worker_instances.state = 'active'
        AND worker_instances.supports_build
+       AND worker_instances.tool_registry_digest = sqlc.arg(tool_registry_digest)::bytea
       JOIN runtime_identities
         ON runtime_identities.id = worker_instances.runtime_identity_id
        AND runtime_identities.runtime_arch = deployments.build_architecture
@@ -382,6 +391,7 @@ WITH candidate AS (
 SELECT claimed.*, deployments.version, deployments.api_version, deployments.sdk_version,
        deployments.cli_version, deployments.bundle_format_version, deployments.content_hash,
        deployments.build_architecture, deployments.build_runtime_digest,
+       deployments.build_standard_toolchain_digest, deployments.build_materializer_version,
        source_artifacts.digest AS deployment_source_digest,
        source_artifacts.size_bytes AS source_size_bytes,
        source_artifacts.media_type AS source_media_type,
@@ -618,7 +628,9 @@ SELECT locked_lease.*,
        locked_deployment.status AS deployment_status,
        locked_deployment.current_build_lease_id,
        locked_deployment.build_architecture,
-       locked_deployment.build_runtime_digest
+       locked_deployment.build_runtime_digest,
+       locked_deployment.build_standard_toolchain_digest,
+       locked_deployment.build_materializer_version
   FROM locked_lease
   JOIN locked_deployment
     ON locked_deployment.org_id = locked_lease.org_id

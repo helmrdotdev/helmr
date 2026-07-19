@@ -42,6 +42,11 @@ const (
 // PlaceReadyBuild chooses certified build capacity in the deployment's frozen
 // region. The worker never scans or chooses deployment work.
 func (d *Authority) PlaceReadyBuild(ctx context.Context, candidate ReadyBuildCandidate, observationFreshAfter pgtype.Timestamptz) (db.LeaseQueuedDeploymentBuildRow, error) {
+	if len(d.buildToolRegistryDigest) != 32 {
+		return db.LeaseQueuedDeploymentBuildRow{}, errors.New(
+			"build authority dependency tool registry is not configured",
+		)
+	}
 	if !validBuildArchitecture(candidate.BuildArchitecture) {
 		return db.LeaseQueuedDeploymentBuildRow{}, fmt.Errorf("build architecture is outside the closed internal domain")
 	}
@@ -73,6 +78,7 @@ SELECT worker_groups.id, worker_instances.id, worker_instances.current_epoch,
  WHERE worker_groups.region_id = $1 AND worker_groups.state = 'active'
    AND worker_groups.allows_build
    AND worker_instances.state = 'active' AND worker_instances.supports_build
+   AND worker_instances.tool_registry_digest = $12
    AND worker_instances.certified_at IS NOT NULL
    AND worker_instances.protocol_version = worker_groups.protocol_version
    AND worker_observations.observed_at >= $2
@@ -123,7 +129,7 @@ LIMIT 1`, candidate.BuildRegionID, observationFreshAfter, candidate.RequestedBui
 		candidate.RequestedCPUMillis, candidate.RequestedMemoryBytes,
 		candidate.RequestedWorkloadDiskBytes, candidate.RequestedScratchBytes,
 		fixedBuildGuestCPUMillis, fixedBuildGuestMemoryBytes, fixedBuildGuestScratchBytes,
-		candidate.BuildArchitecture).Scan(
+		candidate.BuildArchitecture, d.buildToolRegistryDigest).Scan(
 		&groupID, &workerID, &workerEpoch, &protocolVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
@@ -232,7 +238,8 @@ LIMIT 1`, params.Lease.BuildRegionID, params.Lease.DeploymentID,
 		WorkerInstanceID: params.Lease.BuildWorkerInstanceID, WorkerEpoch: params.Lease.WorkerEpoch,
 		WorkerProtocolVersion: params.Lease.WorkerProtocolVersion,
 		ObservationFreshAfter: params.ObservationFreshAfter, Role: "build",
-		BuildArchitecture: params.Lease.BuildArchitecture,
+		BuildArchitecture:       params.Lease.BuildArchitecture,
+		BuildToolRegistryDigest: d.buildToolRegistryDigest,
 	}); err != nil {
 		return db.LeaseQueuedDeploymentBuildRow{}, err
 	}

@@ -40,14 +40,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var loadControlRuntimePolicy = func(path string) (*deployment.RuntimePolicy, error) {
+var loadControlBuildPolicy = func(path string) (*deployment.BuildPolicy, error) {
 	catalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
 		return nil, fmt.Errorf("authenticate managed runtime catalog: %w", err)
 	}
-	policy, err := deployment.LoadRuntimePolicy(path, catalog)
+	registry, err := deployment.LoadToolRegistry()
 	if err != nil {
-		return nil, fmt.Errorf("load managed runtime policy: %w", err)
+		return nil, fmt.Errorf("authenticate dependency tool registry: %w", err)
+	}
+	policy, err := deployment.LoadBuildPolicy(path, catalog, registry)
+	if err != nil {
+		return nil, fmt.Errorf("load build policy: %w", err)
 	}
 	return policy, nil
 }
@@ -68,9 +72,9 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "runtime":
-			if err := runRuntimeCommand(context.Background(), os.Args[2:]); err != nil {
-				log.Error("manage runtime", "error", err)
+		case "release":
+			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("install release", "error", err)
 				os.Exit(1)
 			}
 			return
@@ -90,7 +94,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
 	}
-	runtimePolicy, err := loadControlRuntimePolicy(cfg.RuntimePolicyPath)
+	buildPolicy, err := loadControlBuildPolicy(cfg.BuildPolicyPath)
 	if err != nil {
 		return err
 	}
@@ -262,7 +266,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadinessDB:           pool,
 		Auth:                  auth.NewDBAuthenticator(queries),
 		CAS:                   casStore,
-		RuntimePolicy:         runtimePolicy,
+		BuildPolicy:           buildPolicy,
 		RuntimeStore:          runtimeStore,
 		Secrets:               secretStore,
 		RunEnqueuer:           runEnqueuer,

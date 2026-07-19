@@ -410,25 +410,31 @@ func validateDeploymentContentHash(archivePath string, contentHash string) error
 	return nil
 }
 
-func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.RuntimeDescriptor, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
-	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Digest)
+func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.BuildTarget, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (api.DeploymentResponse, error) {
+	runtimeDigest, err := deployment.RuntimeDigestBytes(target.Runtime.Digest)
+	if err != nil {
+		return api.DeploymentResponse{}, err
+	}
+	toolchainDigest, err := deployment.ToolDigestBytes(target.StandardToolchainDigest)
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
 	reuseDescriptor := deployment.ReuseDescriptor{
-		FormatVersion:         deployment.ReuseFormatVersion,
-		OrgID:                 orgID.String(),
-		ProjectID:             pgvalue.MustUUIDValue(projectID).String(),
-		EnvironmentID:         pgvalue.MustUUIDValue(environmentID).String(),
-		BuildRegionID:         buildRegionID,
-		ContentHash:           contentHash,
-		APIVersion:            metadata.APIVersion,
-		SDKVersion:            metadata.SDKVersion,
-		CLIVersion:            metadata.CLIVersion,
-		BundleFormatVersion:   metadata.BundleFormatVersion,
-		WorkerProtocolVersion: metadata.WorkerProtocolVersion,
-		Architecture:          target.Architecture,
-		RuntimeDigest:         target.Digest,
+		FormatVersion:           deployment.ReuseFormatVersion,
+		OrgID:                   orgID.String(),
+		ProjectID:               pgvalue.MustUUIDValue(projectID).String(),
+		EnvironmentID:           pgvalue.MustUUIDValue(environmentID).String(),
+		BuildRegionID:           buildRegionID,
+		ContentHash:             contentHash,
+		APIVersion:              metadata.APIVersion,
+		SDKVersion:              metadata.SDKVersion,
+		CLIVersion:              metadata.CLIVersion,
+		BundleFormatVersion:     metadata.BundleFormatVersion,
+		WorkerProtocolVersion:   metadata.WorkerProtocolVersion,
+		Architecture:            target.Runtime.Architecture,
+		MaterializerVersion:     target.MaterializerVersion,
+		RuntimeDigest:           target.Runtime.Digest,
+		StandardToolchainDigest: target.StandardToolchainDigest,
 	}
 	reuseKey, err := deployment.ReuseKey(reuseDescriptor)
 	if err != nil {
@@ -446,21 +452,23 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 		return api.DeploymentResponse{}, err
 	}
 	deployment, err := store.GetReusableDeploymentBuild(ctx, db.GetReusableDeploymentBuildParams{
-		OrgID:                 pgvalue.UUID(orgID),
-		BuildRegionID:         buildRegionID,
-		ProjectID:             projectID,
-		EnvironmentID:         environmentID,
-		ContentHash:           contentHash,
-		ApiVersion:            metadata.APIVersion,
-		SdkVersion:            metadata.SDKVersion,
-		CliVersion:            metadata.CLIVersion,
-		BundleFormatVersion:   metadata.BundleFormatVersion,
-		WorkerProtocolVersion: metadata.WorkerProtocolVersion,
-		BuildArchitecture:     string(target.Architecture),
-		BuildRuntimeDigest:    runtimeDigest,
+		OrgID:                        pgvalue.UUID(orgID),
+		BuildRegionID:                buildRegionID,
+		ProjectID:                    projectID,
+		EnvironmentID:                environmentID,
+		ContentHash:                  contentHash,
+		ApiVersion:                   metadata.APIVersion,
+		SdkVersion:                   metadata.SDKVersion,
+		CliVersion:                   metadata.CLIVersion,
+		BundleFormatVersion:          metadata.BundleFormatVersion,
+		WorkerProtocolVersion:        metadata.WorkerProtocolVersion,
+		BuildArchitecture:            string(target.Runtime.Architecture),
+		BuildRuntimeDigest:           runtimeDigest,
+		BuildStandardToolchainDigest: toolchainDigest,
+		BuildMaterializerVersion:     target.MaterializerVersion,
 	})
 	if isNoRows(err) {
-		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
+		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, toolchainDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
 	}
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -472,7 +480,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 	return response, nil
 }
 
-func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.RuntimeDescriptor, runtimeDigest []byte, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
+func createQueuedDeployment(ctx context.Context, store deploymentStore, buildRegionID string, target deployment.BuildTarget, runtimeDigest, toolchainDigest []byte, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, contentHash string, artifact api.DeploymentSourceArtifact, metadata deploymentVersionMetadata) (db.Deployment, error) {
 	version, err := nextDeploymentVersion(ctx, store, orgID, projectID, environmentID)
 	if err != nil {
 		return db.Deployment{}, err
@@ -493,23 +501,25 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, buildReg
 	var publicID string
 	deployment, err := createWithPublicID(ctx, []publicIDSlot{{prefix: publicid.Deployment, value: &publicID}}, func() (db.Deployment, error) {
 		return store.CreateDeployment(ctx, db.CreateDeploymentParams{
-			ID:                         pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			PublicID:                   publicID,
-			OrgID:                      pgvalue.UUID(orgID),
-			BuildRegionID:              buildRegionID,
-			BuildArchitecture:          string(target.Architecture),
-			BuildRuntimeDigest:         runtimeDigest,
-			ProjectID:                  projectID,
-			EnvironmentID:              environmentID,
-			Version:                    version,
-			ApiVersion:                 metadata.APIVersion,
-			SdkVersion:                 metadata.SDKVersion,
-			CliVersion:                 metadata.CLIVersion,
-			BundleFormatVersion:        metadata.BundleFormatVersion,
-			WorkerProtocolVersion:      metadata.WorkerProtocolVersion,
-			ContentHash:                contentHash,
-			DeploymentSourceArtifactID: sourceArtifact.ID,
-			Status:                     db.DeploymentStatusQueued,
+			ID:                           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			PublicID:                     publicID,
+			OrgID:                        pgvalue.UUID(orgID),
+			BuildRegionID:                buildRegionID,
+			BuildArchitecture:            string(target.Runtime.Architecture),
+			BuildRuntimeDigest:           runtimeDigest,
+			BuildStandardToolchainDigest: toolchainDigest,
+			BuildMaterializerVersion:     target.MaterializerVersion,
+			ProjectID:                    projectID,
+			EnvironmentID:                environmentID,
+			Version:                      version,
+			ApiVersion:                   metadata.APIVersion,
+			SdkVersion:                   metadata.SDKVersion,
+			CliVersion:                   metadata.CLIVersion,
+			BundleFormatVersion:          metadata.BundleFormatVersion,
+			WorkerProtocolVersion:        metadata.WorkerProtocolVersion,
+			ContentHash:                  contentHash,
+			DeploymentSourceArtifactID:   sourceArtifact.ID,
+			Status:                       db.DeploymentStatusQueued,
 		})
 	})
 	if err != nil {

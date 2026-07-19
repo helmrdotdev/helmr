@@ -1,10 +1,13 @@
 package control
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
 func TestWorkerCertificationUsesAggregateDiskCapacity(t *testing.T) {
@@ -50,5 +53,56 @@ func TestNormalizeWorkerCapabilitiesRequiresOneBuildExecutor(t *testing.T) {
 		if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
 			t.Fatalf("build executor count %d was accepted", executors)
 		}
+	}
+}
+
+func TestBuildWorkerRequiresCurrentToolRegistry(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("7", 64)
+	capabilities := testWorkerCapabilities()
+	capabilities.SupportsBuild = true
+	capabilities.MaxBuildExecutors = 1
+	capabilities.ToolRegistryDigest = digest
+	normalized, err := normalizeWorkerCapabilities(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{buildPolicy: testBuildPolicy()}
+	if err := server.validateWorkerBuildPolicy(normalized); err != nil {
+		t.Fatal(err)
+	}
+	params := workerCertificationParams(
+		workerActor{
+			WorkerInstanceID: uuid.New(),
+			WorkerGroupID:    "workers",
+			WorkerEpoch:      1,
+		},
+		api.WorkerActivateRequest{},
+		normalized,
+	)
+	expected, err := deployment.ToolDigestBytes(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(params.ToolRegistryDigest, expected) {
+		t.Fatalf("tool registry digest = %x, want %x", params.ToolRegistryDigest, expected)
+	}
+
+	capabilities.ToolRegistryDigest = "sha256:" + strings.Repeat("8", 64)
+	normalized, err = normalizeWorkerCapabilities(capabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.validateWorkerBuildPolicy(normalized); err == nil {
+		t.Fatal("validateWorkerBuildPolicy accepted another registry")
+	}
+}
+
+func TestRunOnlyWorkerRejectsToolRegistry(t *testing.T) {
+	capabilities := testWorkerCapabilities()
+	capabilities.SupportsRun = true
+	capabilities.MaxRuntimeStarts = 1
+	capabilities.ToolRegistryDigest = "sha256:" + strings.Repeat("7", 64)
+	if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
+		t.Fatal("normalizeWorkerCapabilities accepted run-only tool registry")
 	}
 }

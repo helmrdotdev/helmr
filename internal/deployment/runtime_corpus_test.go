@@ -274,7 +274,7 @@ func TestOpenRuntimeCorpusFileRejectsInsecureFiles(t *testing.T) {
 	}
 
 	t.Run("wrong owner", func(t *testing.T) {
-		if _, err := openRuntimeReleaseFile(regular, "fixture", 1, owner+1); err == nil {
+		if _, err := openReleaseFile(regular, "fixture", 1, owner+1); err == nil {
 			t.Fatal("runtime corpus accepted the wrong owner")
 		}
 	})
@@ -286,7 +286,7 @@ func TestOpenRuntimeCorpusFileRejectsInsecureFiles(t *testing.T) {
 		if err := os.Chmod(path, 0o622); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := openRuntimeReleaseFile(path, "fixture", 1, owner); err == nil {
+		if _, err := openReleaseFile(path, "fixture", 1, owner); err == nil {
 			t.Fatal("runtime corpus accepted an insecure mode")
 		}
 	})
@@ -295,17 +295,17 @@ func TestOpenRuntimeCorpusFileRejectsInsecureFiles(t *testing.T) {
 		if err := os.Symlink(regular, path); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := openRuntimeReleaseFile(path, "fixture", 1, owner); err == nil {
+		if _, err := openReleaseFile(path, "fixture", 1, owner); err == nil {
 			t.Fatal("runtime corpus accepted a symlink")
 		}
 	})
 	t.Run("directory", func(t *testing.T) {
-		if _, err := openRuntimeReleaseFile(directory, "fixture", 1, owner); err == nil {
+		if _, err := openReleaseFile(directory, "fixture", 1, owner); err == nil {
 			t.Fatal("runtime corpus accepted a directory")
 		}
 	})
 	t.Run("wrong exact size", func(t *testing.T) {
-		if _, err := openRuntimeReleaseFileExact(regular, "fixture", 2, owner); err == nil {
+		if _, err := openReleaseFileExact(regular, "fixture", 2, owner); err == nil {
 			t.Fatal("runtime corpus accepted the wrong exact size")
 		}
 	})

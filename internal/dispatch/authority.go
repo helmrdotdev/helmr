@@ -1,6 +1,7 @@
 package dispatch
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,7 +18,8 @@ var (
 )
 
 type Authority struct {
-	pool *pgxpool.Pool
+	pool                    *pgxpool.Pool
+	buildToolRegistryDigest []byte
 }
 
 func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
@@ -25,6 +27,21 @@ func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
 		return nil, ErrNilPool
 	}
 	return &Authority{pool: pool}, nil
+}
+
+func NewBuildAuthority(
+	pool *pgxpool.Pool,
+	toolRegistryDigest []byte,
+) (*Authority, error) {
+	authority, err := NewAuthority(pool)
+	if err != nil {
+		return nil, err
+	}
+	if len(toolRegistryDigest) != 32 {
+		return nil, errors.New("build authority tool registry digest must be 32 bytes")
+	}
+	authority.buildToolRegistryDigest = bytes.Clone(toolRegistryDigest)
+	return authority, nil
 }
 
 func (d *Authority) begin(ctx context.Context) (pgx.Tx, error) {
@@ -36,14 +53,15 @@ func rollback(ctx context.Context, tx pgx.Tx) {
 }
 
 type workerFence struct {
-	GroupID               string
-	RegionID              string
-	WorkerInstanceID      pgtype.UUID
-	WorkerEpoch           int64
-	WorkerProtocolVersion string
-	ObservationFreshAfter pgtype.Timestamptz
-	Role                  string
-	BuildArchitecture     string
+	GroupID                 string
+	RegionID                string
+	WorkerInstanceID        pgtype.UUID
+	WorkerEpoch             int64
+	WorkerProtocolVersion   string
+	ObservationFreshAfter   pgtype.Timestamptz
+	Role                    string
+	BuildArchitecture       string
+	BuildToolRegistryDigest []byte
 }
 
 // lockWorkerFence takes the worker-group lock before the worker lock, matching
@@ -82,10 +100,16 @@ SELECT worker_instances.id
         OR ($6 = 'build' AND worker_instances.supports_build))
    AND (($6 = 'run' AND worker_observations.run_paused_reason IS NULL)
         OR ($6 = 'build' AND worker_observations.build_paused_reason IS NULL))
-   AND ($6 <> 'build' OR runtime_identities.runtime_arch = $7)
+   AND (
+       $6 <> 'build'
+       OR (
+           runtime_identities.runtime_arch = $7
+           AND worker_instances.tool_registry_digest = $8
+       )
+   )
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.ObservationFreshAfter,
-		fence.Role, fence.BuildArchitecture).Scan(&workerID)
+		fence.Role, fence.BuildArchitecture, fence.BuildToolRegistryDigest).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}

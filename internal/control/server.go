@@ -58,7 +58,7 @@ type Server struct {
 	readinessDB           db.DBTX
 	auth                  auth.Authenticator
 	cas                   cas.Store
-	runtimePolicy         *deployment.RuntimePolicy
+	buildPolicy           *deployment.BuildPolicy
 	runtimeStore          cas.Reader
 	secrets               SecretManager
 	runEnqueuer           RunEnqueuer
@@ -131,7 +131,7 @@ type ServerConfig struct {
 
 	Auth                  auth.Authenticator
 	CAS                   cas.Store
-	RuntimePolicy         *deployment.RuntimePolicy
+	BuildPolicy           *deployment.BuildPolicy
 	RuntimeStore          cas.Reader
 	Secrets               SecretManager
 	RunEnqueuer           RunEnqueuer
@@ -224,7 +224,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		readinessDB:           cfg.ReadinessDB,
 		auth:                  cfg.Auth,
 		cas:                   cfg.CAS,
-		runtimePolicy:         cfg.RuntimePolicy,
+		buildPolicy:           cfg.BuildPolicy,
 		runtimeStore:          cfg.RuntimeStore,
 		secrets:               cfg.Secrets,
 		runEnqueuer:           cfg.RunEnqueuer,

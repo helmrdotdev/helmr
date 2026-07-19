@@ -146,6 +146,7 @@ type WorkerCapabilities struct {
 	ExecutionSlotsAvailable int32                     `json:"execution_slots_available"`
 	SupportsRun             bool                      `json:"supports_run"`
 	SupportsBuild           bool                      `json:"supports_build"`
+	ToolRegistryDigest      string                    `json:"tool_registry_digest,omitempty"`
 	MaxBuildExecutors       int32                     `json:"max_build_executors"`
 	MaxRuntimeStarts        int32                     `json:"max_runtime_starts"`
 	ScratchBytes            int64                     `json:"scratch_bytes"`
@@ -371,17 +372,19 @@ type WorkerDeploymentBuildLease struct {
 }
 
 type WorkerDeploymentBuild struct {
-	ID                    string                   `json:"id"`
-	Version               string                   `json:"version"`
-	APIVersion            string                   `json:"api_version"`
-	SDKVersion            string                   `json:"sdk_version,omitempty"`
-	CLIVersion            string                   `json:"cli_version,omitempty"`
-	BundleFormatVersion   int32                    `json:"bundle_format_version"`
-	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
-	ProjectID             string                   `json:"project_id"`
-	EnvironmentID         string                   `json:"environment_id"`
-	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
-	Runtime               WorkerRuntimeDescriptor  `json:"runtime"`
+	ID                      string                   `json:"id"`
+	Version                 string                   `json:"version"`
+	APIVersion              string                   `json:"api_version"`
+	SDKVersion              string                   `json:"sdk_version,omitempty"`
+	CLIVersion              string                   `json:"cli_version,omitempty"`
+	BundleFormatVersion     int32                    `json:"bundle_format_version"`
+	WorkerProtocolVersion   string                   `json:"worker_protocol_version"`
+	ProjectID               string                   `json:"project_id"`
+	EnvironmentID           string                   `json:"environment_id"`
+	DeploymentSource        DeploymentSourceArtifact `json:"deployment_source"`
+	Runtime                 WorkerRuntimeDescriptor  `json:"runtime"`
+	StandardToolchainDigest string                   `json:"standard_toolchain_digest"`
+	MaterializerVersion     string                   `json:"materializer_version"`
 }
 
 type WorkerRuntimeDescriptor struct {

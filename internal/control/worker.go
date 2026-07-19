@@ -310,6 +310,10 @@ func (s *Server) workerActivate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
+	if err := s.validateWorkerBuildPolicy(capabilities); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	if strings.TrimSpace(request.CertificationProfile) == "" {
 		request.CertificationProfile = "helmr-runtime-v0"
 	}
@@ -445,6 +449,10 @@ func (s *Server) workerRenewCertification(w http.ResponseWriter, r *http.Request
 		writeError(w, badRequest(err))
 		return
 	}
+	if err := s.validateWorkerBuildPolicy(capabilities); err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
 	worker := workerFromContext(r.Context())
 	if _, err := s.db.RenewWorkerCertification(r.Context(), workerCertificationRenewParams(worker, capabilities)); isNoRows(err) {
 		writeError(w, conflict(errors.New("worker certification facts changed")))
@@ -457,6 +465,7 @@ func (s *Server) workerRenewCertification(w http.ResponseWriter, r *http.Request
 }
 
 func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities) db.RenewWorkerCertificationParams {
+	toolRegistryDigest, _ := deployment.ToolDigestBytes(c.ToolRegistryDigest)
 	return db.RenewWorkerCertificationParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID, WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 		RuntimeIdentityID: c.RuntimeID, ProtocolVersion: c.ProtocolVersion, SupportsRun: c.SupportsRun, SupportsBuild: c.SupportsBuild,
@@ -467,6 +476,7 @@ func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities
 		PerVmCpuMillis: c.VMMilliCPU, PerVmMemoryBytes: c.VMMemoryMiB * 1024 * 1024,
 		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
 		MaxVmSlots: c.ExecutionSlotsAvailable, MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: c.MaxRuntimeStarts,
+		ToolRegistryDigest: toolRegistryDigest,
 	}
 }
 
@@ -689,6 +699,7 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 	if supportsRun && maxRuntimeStarts == 0 {
 		maxRuntimeStarts = c.ExecutionSlotsAvailable
 	}
+	toolRegistryDigest, _ := deployment.ToolDigestBytes(c.ToolRegistryDigest)
 	return db.CertifyWorkerInstanceParams{
 		RuntimeIdentityID: c.RuntimeID, RuntimeArch: c.RuntimeArch, RuntimeABI: c.RuntimeABI,
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
@@ -702,6 +713,7 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 		PerVmWorkloadDiskBytes: c.VMMaxDiskMiB * 1024 * 1024, PerVmScratchBytes: c.VMMaxScratchBytes,
 		MaxVmSlots: c.ExecutionSlotsAvailable, MaxRunConsumers: c.ExecutionSlotsAvailable,
 		MaxBuildExecutors: c.MaxBuildExecutors, MaxRuntimeStarts: maxRuntimeStarts,
+		ToolRegistryDigest:   toolRegistryDigest,
 		CertificationProfile: request.CertificationProfile, CertificationFingerprint: request.CertificationFingerprint,
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
@@ -729,6 +741,7 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		ExecutionSlotsAvailable: input.ExecutionSlotsAvailable,
 		SupportsRun:             input.SupportsRun,
 		SupportsBuild:           input.SupportsBuild,
+		ToolRegistryDigest:      strings.TrimSpace(input.ToolRegistryDigest),
 		MaxBuildExecutors:       input.MaxBuildExecutors,
 		MaxRuntimeStarts:        input.MaxRuntimeStarts,
 		ScratchBytes:            input.ScratchBytes,
@@ -834,6 +847,13 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	if !capabilities.SupportsBuild && capabilities.MaxBuildExecutors != 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_build_executors must be zero without build role")
 	}
+	if capabilities.SupportsBuild {
+		if _, err := deployment.ToolDigestBytes(capabilities.ToolRegistryDigest); err != nil {
+			return api.WorkerCapabilities{}, errors.New("build worker tool_registry_digest is invalid")
+		}
+	} else if capabilities.ToolRegistryDigest != "" {
+		return api.WorkerCapabilities{}, errors.New("run-only worker must not report tool_registry_digest")
+	}
 	if capabilities.SupportsRun && capabilities.MaxRuntimeStarts <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
 	}
@@ -847,6 +867,23 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		return api.WorkerCapabilities{}, errors.New("worker network.deny_cidrs capability is required")
 	}
 	return capabilities, nil
+}
+
+func (s *Server) validateWorkerBuildPolicy(capabilities api.WorkerCapabilities) error {
+	if !capabilities.SupportsBuild {
+		return nil
+	}
+	if s.buildPolicy == nil {
+		return errors.New("build policy is not configured")
+	}
+	expected, err := s.buildPolicy.ToolRegistryDigest()
+	if err != nil {
+		return errors.New("build policy dependency tool registry is invalid")
+	}
+	if capabilities.ToolRegistryDigest != expected {
+		return errors.New("build worker dependency tool registry does not match the build policy")
+	}
+	return nil
 }
 
 func firstPositiveInt32(values ...int32) int32 {

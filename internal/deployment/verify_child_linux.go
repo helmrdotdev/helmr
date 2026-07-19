@@ -172,10 +172,14 @@ func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) 
 	if err != nil {
 		return nil, err
 	}
-	canonical, err := CanonicalProgramIndex(verified.Index())
+	canonical, err := canonicalProgramVerification(programVerification{
+		FormatVersion:   ProgramReceiptFormatVersion,
+		DependencyIndex: verified.DependencyIndex(),
+		Index:           verified.Index(),
+	})
 	if err != nil {
 		return nil, &artifactInfrastructureError{
-			cause: fmt.Errorf("canonicalize verified Program index: %w", err),
+			cause: fmt.Errorf("canonicalize verified Program: %w", err),
 		}
 	}
 	return canonical, nil

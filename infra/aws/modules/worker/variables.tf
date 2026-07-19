@@ -356,14 +356,14 @@ variable "runtime_store_kms_key_arn" {
   }
 }
 
-variable "runtime_policy_digest" {
-  description = "Exact policy digest installed by build-capable workers; must be null for run-only workers."
+variable "build_policy_digest" {
+  description = "Exact build-policy digest installed by build-capable workers; must be null for run-only workers."
   type        = string
   nullable    = true
 
   validation {
-    condition     = var.runtime_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
-    error_message = "runtime_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
+    condition     = var.build_policy_digest == null || can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be null or lowercase sha256:<64 hexadecimal digits>."
   }
 }
 

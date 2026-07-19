@@ -106,7 +106,7 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.CAS != nil {
 		cfg.CAS = testCfg.CAS
 		descriptor := testManagedRuntimeDescriptor()
-		cfg.RuntimePolicy = testRuntimePolicy()
+		cfg.BuildPolicy = testBuildPolicy()
 		cfg.RuntimeStore = &fakeCAS{object: cas.Object{
 			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		}}

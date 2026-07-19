@@ -40,6 +40,15 @@ WITH credential AS (
            END,
            supports_run = credential.effective_allows_run,
            supports_build = credential.effective_allows_build,
+           tool_registry_digest = CASE
+               WHEN credential.effective_allows_build
+                    AND (
+                        worker_instances.current_service_id = sqlc.arg(service_id)
+                        OR worker_instances.state = 'draining'
+                    )
+               THEN worker_instances.tool_registry_digest
+               ELSE NULL
+           END,
            certified_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                                       OR worker_instances.state = 'draining'
                                THEN worker_instances.certified_at ELSE NULL END,
@@ -191,6 +200,7 @@ WITH nonce AS (
        SET claim_version = worker_instances.claim_version + 1,
            state = 'registering', protocol_version = EXCLUDED.protocol_version,
            supports_run = EXCLUDED.supports_run, supports_build = EXCLUDED.supports_build,
+           tool_registry_digest = NULL,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,
            current_service_id = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE uuidv7() END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,

@@ -391,10 +391,10 @@ for path in "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jail
 done
 install -d -m 0755 "$cache_mount/buildkit" "$scratch_mount/worker" "$scratch_mount/jailer"
 
-"$worker_binary" runtime install \
+"$worker_binary" release install \
   --store '${runtime_store_uri}' \
-  --digest '${runtime_policy_digest}' \
-  --output /etc/helmr/runtime-policy.json
+  --digest '${build_policy_digest}' \
+  --output /etc/helmr/build-policy.json
 systemctl enable --now helmr-buildkit.service
 %{ else ~}
 systemctl disable --now helmr-buildkit.service || true

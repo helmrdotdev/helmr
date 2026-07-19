@@ -14,7 +14,9 @@ import (
 
 func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 	return api.WorkerDeploymentBuild{
-		ID: "deployment-1",
+		ID:                      "deployment-1",
+		MaterializerVersion:     "helmr.dependencies.v0",
+		StandardToolchainDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Runtime: api.WorkerRuntimeDescriptor{
 			Architecture:      "aarch64",
 			Digest:            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

@@ -30,11 +30,13 @@ type buildPlacementFixture struct {
 	groupID       string
 }
 
+var buildPlacementToolRegistryDigest = bytes.Repeat([]byte{3}, 32)
+
 func newBuildPlacementFixture(t *testing.T, architecture string) *buildPlacementFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := newDispatchIntegrationDB(t, ctx)
-	authority, err := NewAuthority(pool)
+	authority, err := NewBuildAuthority(pool, buildPlacementToolRegistryDigest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,9 +75,14 @@ VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deplo
 	mustDispatchExec(t, ctx, pool, `
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
-    build_architecture, build_runtime_digest, version, content_hash,
+    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+    build_materializer_version, version, content_hash,
     deployment_source_artifact_id, status
-) VALUES ($1, $2, $3, $4, $5, 'us-east-1', $6, $7, 'v1', $8, $9, 'queued')`,
+) VALUES (
+    $1, $2, $3, $4, $5, 'us-east-1', $6, $7,
+    decode(repeat('02', 32), 'hex'), 'helmr.dependencies.v0',
+    'v1', $8, $9, 'queued'
+)`,
 		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,
 		fixture.projectID, fixture.environmentID, architecture, bytes.Repeat([]byte{1}, 32),
 		"sha256:"+strings.Repeat("2", 64), sourceArtifactID)
@@ -99,20 +106,21 @@ INSERT INTO runtime_identities (
 		runtimeID, architecture)
 	if certified {
 		mustDispatchExec(t, f.ctx, f.pool, `
-INSERT INTO worker_instances (
-    id, resource_id, worker_group_id, attestation_fingerprint, state,
-    current_epoch, current_service_id, protocol_version, supports_build,
-    runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
+		INSERT INTO worker_instances (
+			id, resource_id, worker_group_id, attestation_fingerprint, state,
+			current_epoch, current_service_id, protocol_version, supports_build,
+			tool_registry_digest,
+			runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
     certified_workload_disk_bytes, certified_scratch_bytes,
     per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes,
     per_vm_scratch_bytes, max_build_executors, certification_profile,
     certification_fingerprint, epoch_started_at, certified_at, activated_at
 ) VALUES (
-    $1, $2, $3, 'sha256:test-attestation', 'active',
-    1, $4, 'helmr.worker.v0', true, $5, 3000, 4294967296, 1, 34359738368,
-    2000, 2147483648, 1, 21474836480, 1, 'build-v0',
-    'sha256:test-certification', now(), now(), now()
-)`, workerID, workerID.String(), f.groupID, serviceID, runtimeID)
+			$1, $2, $3, 'sha256:test-attestation', 'active',
+			1, $4, 'helmr.worker.v0', true, $5, $6, 3000, 4294967296, 1, 34359738368,
+			2000, 2147483648, 1, 21474836480, 1, 'build-v0',
+			'sha256:test-certification', now(), now(), now()
+)`, workerID, workerID.String(), f.groupID, serviceID, buildPlacementToolRegistryDigest, runtimeID)
 	} else {
 		mustDispatchExec(t, f.ctx, f.pool, `
 INSERT INTO worker_instances (

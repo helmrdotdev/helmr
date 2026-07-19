@@ -27,3 +27,14 @@ func TestNewAuthorityRetainsConcretePool(t *testing.T) {
 		t.Fatalf("New(pool) retained %p, want %p", database.pool, pool)
 	}
 }
+
+func TestNewBuildAuthorityRequiresRegistryDigest(t *testing.T) {
+	pool := &pgxpool.Pool{}
+	authority, err := NewBuildAuthority(pool, make([]byte, 31))
+	if authority != nil {
+		t.Fatalf("NewBuildAuthority() authority = %#v, want nil", authority)
+	}
+	if err == nil {
+		t.Fatal("NewBuildAuthority() error = nil, want digest error")
+	}
+}

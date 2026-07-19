@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 
@@ -38,6 +39,17 @@ const (
 )
 
 var loadAWSConfig = awsconfig.LoadDefaultConfig
+var loadDispatcherToolRegistryDigest = func() ([]byte, error) {
+	registry, err := deployment.LoadToolRegistry()
+	if err != nil {
+		return nil, err
+	}
+	digest, err := registry.Digest()
+	if err != nil {
+		return nil, err
+	}
+	return deployment.ToolDigestBytes(digest)
+}
 
 func main() {
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
@@ -54,6 +66,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	toolRegistryDigestBytes, err := loadDispatcherToolRegistryDigest()
+	if err != nil {
+		return fmt.Errorf("authenticate dependency tool registry: %w", err)
+	}
 
 	pool, err := newDispatchPool(ctx, cfg.DatabaseURL, baseMaxConns)
 	if err != nil {
@@ -98,7 +114,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
 	}
-	buildDispatchAuthority, err := dispatch.NewAuthority(buildDispatchPool)
+	buildDispatchAuthority, err := dispatch.NewBuildAuthority(
+		buildDispatchPool,
+		toolRegistryDigestBytes,
+	)
 	if err != nil {
 		return fmt.Errorf("configure build dispatch authority: %w", err)
 	}

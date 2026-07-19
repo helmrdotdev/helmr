@@ -57,14 +57,14 @@ locals {
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
     HELMR_RUNTIME_STORE_URI        = var.runtime_store_uri
-    HELMR_RUNTIME_POLICY_PATH      = "/etc/helmr/runtime-policy.json"
+    HELMR_BUILD_POLICY_PATH        = "/etc/helmr/build-policy.json"
     HELMR_WORKER_BUILD_CACHE_DIR   = "/var/lib/helmr/cache"
     HELMR_WORKER_BUILD_SCRATCH_DIR = "/var/lib/helmr/scratch"
   } : {}, local.disk_environment, local.capacity_environment, local.cache_environment)
 
   reserved_worker_environment_keys = toset(concat(keys(local.worker_environment), [
     "HELMR_CHECKPOINT_ENCRYPTION_KEY",
-    "HELMR_RUNTIME_POLICY_PATH",
+    "HELMR_BUILD_POLICY_PATH",
     "HELMR_RUNTIME_STORE_URI"
   ]))
   worker_environment_conflicts = setintersection(keys(var.worker_environment), local.reserved_worker_environment_keys)
@@ -241,7 +241,7 @@ resource "aws_launch_template" "worker" {
     network_blocked_ipv6_cidrs           = var.network_blocked_ipv6_cidrs
     aws_region                           = data.aws_region.current.region
     runtime_store_uri                    = var.runtime_store_uri
-    runtime_policy_digest                = var.runtime_policy_digest == null ? "" : var.runtime_policy_digest
+    build_policy_digest                  = var.build_policy_digest == null ? "" : var.build_policy_digest
     build_cache_mib                      = var.build_cache_mib == null ? 0 : var.build_cache_mib
     build_scratch_mib                    = var.build_scratch_mib == null ? 0 : var.build_scratch_mib
     worker_disk_reserve_mib              = var.worker_disk_reserve_mib
@@ -292,7 +292,7 @@ resource "terraform_data" "network_preconditions" {
     network_blocked_ipv4_cidrs = var.network_blocked_ipv4_cidrs
     reserved_env_conflicts     = local.worker_environment_conflicts
     runtime_store_uri          = var.runtime_store_uri
-    runtime_policy_digest      = var.runtime_policy_digest
+    build_policy_digest        = var.build_policy_digest
     build_cache_mib            = var.build_cache_mib
     build_scratch_mib          = var.build_scratch_mib
   }
@@ -314,8 +314,8 @@ resource "terraform_data" "network_preconditions" {
     }
 
     precondition {
-      condition     = contains(var.worker_roles, "build") == (var.runtime_policy_digest != null)
-      error_message = "build-capable workers require runtime_policy_digest; run-only workers must not receive current runtime policy."
+      condition     = contains(var.worker_roles, "build") == (var.build_policy_digest != null)
+      error_message = "build-capable workers require build_policy_digest; run-only workers must not receive the current build policy."
     }
 
     precondition {

@@ -24,7 +24,7 @@ func TestReadRuntimeReleaseFile(t *testing.T) {
 	if err := os.WriteFile(path, []byte("release"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := readRuntimeReleaseFile(path, "test release file", 7)
+	raw, err := readReleaseFile(path, "test release file", 7)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,14 +50,14 @@ func TestReadRuntimeReleaseFileFailsClosed(t *testing.T) {
 			if err := os.WriteFile(path, test.content, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := readRuntimeReleaseFile(path, "test release file", test.max); err == nil ||
+			if _, err := readReleaseFile(path, "test release file", test.max); err == nil ||
 				!strings.Contains(err.Error(), test.want) {
-				t.Fatalf("readRuntimeReleaseFile error = %v, want %q", err, test.want)
+				t.Fatalf("readReleaseFile error = %v, want %q", err, test.want)
 			}
 		})
 	}
 
-	if _, err := readRuntimeReleaseFile(
+	if _, err := readReleaseFile(
 		filepath.Join(directory, "missing"),
 		"test release file",
 		1,

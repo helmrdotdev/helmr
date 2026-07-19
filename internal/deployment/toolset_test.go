@@ -48,10 +48,10 @@ func TestToolsetDocumentsAndRegistryRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const wantManagerDigest = "sha256:d1d24dbb21313504f1b0f2e58f7a856518ce9fdec87304bc59ccf0ccaf99d045"
-	const wantToolchainDigest = "sha256:df290b7904ab0fa8d2ec0749a9c5971f94bdcbe518bf1439b29b9ae5f9539014"
-	const wantComponentDigest = "sha256:87338fd6e4eded2b07553151ace047e33c17b85347bda72d1ca2ded565010638"
-	const wantToolsetDigest = "sha256:a7b972265537e2e6f269535af89799ba8fc7a64db82533caa5b3ca2cd4c7805b"
+	const wantManagerDigest = "sha256:d8bb3fb2261a2be3b8f00f701a5952be4b452efa184b44b5d5216fee24ab9deb"
+	const wantToolchainDigest = "sha256:9a275667c944b6fe99525bec560de40f7914f72d5d2613f79d891e4dd84e87fd"
+	const wantComponentDigest = "sha256:4bcd5bdb5ca58047d6f3f4a186b3753fb983cdf68f50fc06a3f036ae91fec2a4"
+	const wantToolsetDigest = "sha256:57e2fafd748e503c15aabcf475695f823e70d49f52431cc0dd2727e774076ae8"
 	if managerDigest != wantManagerDigest ||
 		toolchainDigest != wantToolchainDigest ||
 		componentDigest != wantComponentDigest ||
@@ -234,7 +234,6 @@ func TestToolsetRegistryEnforcesKeyOrderAndUniqueSelection(t *testing.T) {
 func TestToolsetRegistryAdmitsToolchainsThatDifferOnlyByDigest(t *testing.T) {
 	manager, firstToolchain, _, firstToolset := testToolset(t)
 	secondToolchain := firstToolchain
-	secondToolchain.FixtureDigest = toolDigestForTest("second toolchain fixtures")
 	secondToolchain.ToolchainClosure.Digest = toolDigestForTest("second toolchain closure")
 
 	firstDigest, err := StandardToolchainDigest(firstToolchain)
@@ -248,7 +247,6 @@ func TestToolsetRegistryAdmitsToolchainsThatDifferOnlyByDigest(t *testing.T) {
 	secondToolset := firstToolset
 	secondToolset.StandardToolchainDigest = secondDigest
 	secondToolset.ComponentManifestDigest = toolDigestForTest("second components")
-	secondToolset.FixtureDigest = toolDigestForTest("second composite fixtures")
 	secondToolset.Artifact.Digest = toolDigestForTest("second dependency tools artifact")
 
 	toolchains := []Toolchain{firstToolchain, secondToolchain}
@@ -280,6 +278,35 @@ func TestToolsetRegistryAdmitsToolchainsThatDifferOnlyByDigest(t *testing.T) {
 			len(registry.toolchains),
 			len(registry.toolsets),
 		)
+	}
+	if _, err := registry.Resolve(ToolKey{
+		Architecture:            firstToolset.Architecture,
+		ManagedRuntimeDigest:    firstToolset.ManagedRuntimeDigest,
+		MaterializerVersion:     firstToolset.MaterializerVersion,
+		PackageManager:          firstToolset.PackageManager,
+		StandardToolchainDigest: firstToolset.StandardToolchainDigest,
+	}); err == nil {
+		t.Fatal("Resolve accepted an unauthenticated registry")
+	}
+	registry.authenticated = true
+	for _, expected := range []Toolset{firstToolset, secondToolset} {
+		resolved, err := registry.Resolve(ToolKey{
+			Architecture:            expected.Architecture,
+			ManagedRuntimeDigest:    expected.ManagedRuntimeDigest,
+			MaterializerVersion:     expected.MaterializerVersion,
+			PackageManager:          expected.PackageManager,
+			StandardToolchainDigest: expected.StandardToolchainDigest,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resolved.StandardToolchainDigest != expected.StandardToolchainDigest {
+			t.Fatalf(
+				"resolved toolchain = %q, want %q",
+				resolved.StandardToolchainDigest,
+				expected.StandardToolchainDigest,
+			)
+		}
 	}
 
 	if _, err := CanonicalToolRegistry(
@@ -339,7 +366,6 @@ func testToolset(t *testing.T) (
 	manager := ManagerRegistration{
 		Architecture:    ArchitectureAArch64,
 		Executable:      "/opt/helmr/dependency-tools/bin/bun",
-		FixtureDigest:   toolDigestForTest("manager fixtures"),
 		FormatVersion:   ToolsetFormatVersion,
 		Lifecycle:       ToolCommand{Argv: []string{"/opt/helmr/dependency-tools/bin/bun"}},
 		LockfileAdapter: "bun-lock-v0",
@@ -362,7 +388,6 @@ func testToolset(t *testing.T) (
 	}
 	toolchain := Toolchain{
 		Architecture:         ArchitectureAArch64,
-		FixtureDigest:        toolDigestForTest("toolchain fixtures"),
 		FormatVersion:        ToolsetFormatVersion,
 		ManagedRuntimeDigest: toolDigestForTest("managed runtime"),
 		ToolchainClosure: ManagerArtifact{
@@ -414,7 +439,6 @@ func testToolset(t *testing.T) (
 		},
 		ComponentManifestDigest:   componentDigest,
 		Environment:               append([]ToolEnvironment(nil), environment...),
-		FixtureDigest:             toolDigestForTest("toolset fixtures"),
 		FormatVersion:             ToolsetFormatVersion,
 		ManagedRuntimeDigest:      toolchain.ManagedRuntimeDigest,
 		ManagerRegistrationDigest: managerDigest,

@@ -258,13 +258,13 @@ variable "runtime_store_kms_key_arn" {
   }
 }
 
-variable "runtime_policy_digest" {
-  description = "Exact immutable managed-runtime policy object digest installed before Control starts."
+variable "build_policy_digest" {
+  description = "Exact immutable build-policy object digest installed before Control starts."
   type        = string
 
   validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
-    error_message = "runtime_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
   }
 }
 

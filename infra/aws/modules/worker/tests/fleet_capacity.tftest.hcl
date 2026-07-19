@@ -33,7 +33,7 @@ variables {
   runtime_store_uri         = "s3://helmr-test-runtime/objects"
   runtime_store_bucket_arn  = "arn:aws:s3:::helmr-test-runtime"
   runtime_store_kms_key_arn = "arn:aws:kms:us-east-1:111122223333:key/11111111-1111-1111-1111-111111111111"
-  runtime_policy_digest     = null
+  build_policy_digest       = null
   min_size                  = 0
   max_size                  = 1
   secret_arns = {
@@ -68,8 +68,8 @@ run "controller_owns_protected_capacity" {
   }
 
   assert {
-    condition     = !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_POLICY_PATH") && !strcontains(base64decode(aws_launch_template.worker.user_data), "runtime install")
-    error_message = "run-only workers must not receive or install current runtime policy"
+    condition     = !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_BUILD_POLICY_PATH") && !strcontains(base64decode(aws_launch_template.worker.user_data), "release install")
+    error_message = "run-only workers must not receive or install the current build policy"
   }
 
   assert {
@@ -97,18 +97,18 @@ run "build_worker_installs_exact_policy_before_service" {
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
     worker_execution_slots     = 1
-    runtime_policy_digest      = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     build_cache_mib            = 8192
     build_scratch_mib          = 8192
   }
 
   assert {
     condition = (
-      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_POLICY_PATH=/etc/helmr/runtime-policy.json") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "\"$worker_binary\" runtime install") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_BUILD_POLICY_PATH=/etc/helmr/build-policy.json") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "\"$worker_binary\" release install") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--store 's3://helmr-test-runtime/objects'") &&
       strcontains(base64decode(aws_launch_template.worker.user_data), "--digest 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'") &&
-      strcontains(base64decode(aws_launch_template.worker.user_data), "--output /etc/helmr/runtime-policy.json")
+      strcontains(base64decode(aws_launch_template.worker.user_data), "--output /etc/helmr/build-policy.json")
     )
     error_message = "build-capable worker bootstrap must install the exact policy through the worker CLI"
   }
@@ -144,7 +144,7 @@ run "build_worker_requires_policy_digest" {
     worker_roles               = ["build"]
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
-    runtime_policy_digest      = null
+    build_policy_digest        = null
   }
 
   expect_failures = [terraform_data.network_preconditions]
@@ -154,7 +154,7 @@ run "run_only_worker_rejects_current_policy" {
   command = plan
 
   variables {
-    runtime_policy_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    build_policy_digest = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
   }
 
   expect_failures = [terraform_data.network_preconditions]

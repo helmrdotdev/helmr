@@ -103,13 +103,13 @@ variable "runtime_store_kms_key_arn" {
   type        = string
 }
 
-variable "runtime_policy_digest" {
-  description = "Exact committed managed-runtime policy digest for this stack rollout."
+variable "build_policy_digest" {
+  description = "Exact committed build-policy digest for this stack rollout."
   type        = string
 
   validation {
-    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.runtime_policy_digest))
-    error_message = "runtime_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
+    condition     = can(regex("^sha256:[0-9a-f]{64}$", var.build_policy_digest))
+    error_message = "build_policy_digest must be lowercase sha256:<64 hexadecimal digits>."
   }
 }
 

@@ -3,6 +3,7 @@ package deployment
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -16,7 +17,7 @@ func TestVerifierResultRoundTrip(t *testing.T) {
 		{
 			name:    "program",
 			job:     programVerifierJob,
-			payload: canonicalVerifierProgramIndex(t),
+			payload: canonicalVerifierProgramVerification(t),
 		},
 		{
 			name:    "runtime",
@@ -103,7 +104,7 @@ func TestVerifierFramingLeavesVerifiedPayloadOpaque(t *testing.T) {
 }
 
 func TestVerifierResultRejectsMalformedOutput(t *testing.T) {
-	canonical := canonicalVerifierProgramIndex(t)
+	canonical := canonicalVerifierProgramVerification(t)
 	valid := func() []byte {
 		var output bytes.Buffer
 		if err := writeVerifierReady(&output); err != nil {
@@ -231,6 +232,40 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			DeclaredID: "verify",
 			Slots:      []DeclarationSlot{DeclarationSlotHandler},
 		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return canonical
+}
+
+func canonicalVerifierProgramVerification(t *testing.T) []byte {
+	t.Helper()
+	var index ProgramIndex
+	if err := json.Unmarshal(canonicalVerifierProgramIndex(t), &index); err != nil {
+		t.Fatal(err)
+	}
+	canonical, err := canonicalProgramVerification(programVerification{
+		FormatVersion: ProgramReceiptFormatVersion,
+		DependencyIndex: DependencyIndex{
+			FormatVersion:         DependencyIndexFormatVersion,
+			DependencyToolsDigest: "sha256:" + strings.Repeat("4", 64),
+			PackageManager: PackageManager{
+				Name:    PackageManagerBun,
+				Version: "1.3.10",
+			},
+			Lockfile: DependencyLockfile{
+				Name:   "bun.lock",
+				Digest: "sha256:" + strings.Repeat("5", 64),
+			},
+			LocalManifestsDigest:  "sha256:" + strings.Repeat("6", 64),
+			PackageGraphDigest:    index.PackageGraph.Digest,
+			PackageGraphSizeBytes: index.PackageGraph.SizeBytes,
+			MaterializerVersion:   DependencyMaterializerVersion,
+			RuntimeDigest:         index.RuntimeDigest,
+			Architecture:          index.Architecture,
+		},
+		Index: index,
 	})
 	if err != nil {
 		t.Fatal(err)

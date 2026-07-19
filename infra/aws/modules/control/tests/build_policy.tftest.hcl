@@ -153,7 +153,7 @@ variables {
   runtime_store_uri            = "s3://helmr-test-runtime/objects"
   runtime_store_bucket_arn     = "arn:aws:s3:::helmr-test-runtime"
   runtime_store_kms_key_arn    = "arn:aws:kms:us-east-1:000000000000:key/11111111-1111-1111-1111-111111111111"
-  runtime_policy_digest        = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  build_policy_digest          = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
   clickhouse_url               = "https://clickhouse.example.invalid"
   github_oauth_client_id       = "test-client"
   database_skip_final_snapshot = true
@@ -164,41 +164,41 @@ run "control_installs_exact_policy_before_start" {
 
   assert {
     condition = (
-      jsondecode(aws_ecs_task_definition.control.container_definitions)[0].name == "runtime-policy-install" &&
+      jsondecode(aws_ecs_task_definition.control.container_definitions)[0].name == "release-install" &&
       jsondecode(aws_ecs_task_definition.control.container_definitions)[0].user == "0" &&
       jsondecode(aws_ecs_task_definition.control.container_definitions)[0].entryPoint == ["helmr-control"] &&
       jsondecode(aws_ecs_task_definition.control.container_definitions)[0].command == [
-        "runtime",
+        "release",
         "install",
         "--store",
         var.runtime_store_uri,
         "--digest",
-        var.runtime_policy_digest,
+        var.build_policy_digest,
         "--output",
-        "/runtime/runtime-policy.json"
+        "/release/build-policy.json"
       ]
     )
-    error_message = "Control must use the exact digest-pinned runtime install command in a root init container."
+    error_message = "Control must use the exact digest-pinned release install command in a root init container."
   }
 
   assert {
     condition = (
       jsondecode(aws_ecs_task_definition.control.container_definitions)[1].dependsOn == [{
-        containerName = "runtime-policy-install"
+        containerName = "release-install"
         condition     = "SUCCESS"
       }] &&
       jsondecode(aws_ecs_task_definition.control.container_definitions)[1].mountPoints == [{
-        sourceVolume  = "runtime-policy"
-        containerPath = "/runtime"
+        sourceVolume  = "release-policy"
+        containerPath = "/release"
         readOnly      = true
       }]
     )
-    error_message = "Control must depend on successful installation and mount the runtime policy volume read-only."
+    error_message = "Control must depend on successful installation and mount the build policy volume read-only."
   }
 
   assert {
     condition = (
-      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_RUNTIME_POLICY_PATH == "/runtime/runtime-policy.json" &&
+      { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_BUILD_POLICY_PATH == "/release/build-policy.json" &&
       { for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name => item.value }.HELMR_RUNTIME_STORE_URI == var.runtime_store_uri &&
       !contains([for item in jsondecode(aws_ecs_task_definition.control.container_definitions)[1].environment : item.name], "HELMR_RETAINED_CAS_URI")
     )
@@ -207,12 +207,12 @@ run "control_installs_exact_policy_before_start" {
 
   assert {
     condition = (
-      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_POLICY_PATH") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.dispatcher.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI") &&
-      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_POLICY_PATH") &&
+      !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_BUILD_POLICY_PATH") &&
       !contains([for item in jsondecode(aws_ecs_task_definition.migration.container_definitions)[0].environment : item.name], "HELMR_RUNTIME_STORE_URI")
     )
-    error_message = "Dispatcher and migration must not receive runtime policy configuration."
+    error_message = "Dispatcher and migration must not receive build policy configuration."
   }
 
   assert {

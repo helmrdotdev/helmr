@@ -90,18 +90,18 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_REDIS_URL", "redis://"+redisServer.Addr()+"/0")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_CAS_URI", "s3://helmr-smoke")
-	runtimePolicyPath := t.TempDir() + "/runtime-policy.json"
-	runtimePolicy := `{"current":{"us-east-1":"sha256:` + strings.Repeat("9", 64) + `"},"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:` + strings.Repeat("9", 64) + `","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}]}`
-	if err := os.WriteFile(runtimePolicyPath, []byte(runtimePolicy), 0o600); err != nil {
+	buildPolicyPath := t.TempDir() + "/build-policy.json"
+	buildPolicy := `{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"sha256:` + strings.Repeat("9", 64) + `","standardToolchainDigest":"sha256:` + strings.Repeat("8", 64) + `"}},"formatVersion":0,"runtimes":[{"architecture":"x86_64","digest":"sha256:` + strings.Repeat("9", 64) + `","formatVersion":0,"mediaType":"application/vnd.helmr.runtime.v0+squashfs","runtimeApiVersion":"helmr.runtime.v0","sizeBytes":4096}],"toolRegistryDigest":"sha256:` + strings.Repeat("7", 64) + `"}`
+	if err := os.WriteFile(buildPolicyPath, []byte(buildPolicy), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("HELMR_RUNTIME_POLICY_PATH", runtimePolicyPath)
+	t.Setenv("HELMR_BUILD_POLICY_PATH", buildPolicyPath)
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-smoke-runtime")
-	originalRuntimePolicyLoader := loadControlRuntimePolicy
-	loadControlRuntimePolicy = func(string) (*deployment.RuntimePolicy, error) {
-		return deployment.ParseRuntimePolicy([]byte(runtimePolicy))
+	originalBuildPolicyLoader := loadControlBuildPolicy
+	loadControlBuildPolicy = func(string) (*deployment.BuildPolicy, error) {
+		return deployment.ParseBuildPolicy([]byte(buildPolicy))
 	}
-	t.Cleanup(func() { loadControlRuntimePolicy = originalRuntimePolicyLoader })
+	t.Cleanup(func() { loadControlBuildPolicy = originalBuildPolicyLoader })
 	t.Setenv("HELMR_WORKER_GROUP_ID", "us-east-1-worker-group-1")
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")

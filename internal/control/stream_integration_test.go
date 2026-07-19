@@ -1185,7 +1185,19 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 	if _, err := pool.Exec(ctx, `INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type) VALUES ($1, $2, $3, $4, $5, 'sandbox_image', 1, 'application/octet-stream')`, taskBundleID, ids.orgID, ids.projectID, ids.environmentID, rootfsDigest); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `INSERT INTO deployments (id, public_id, org_id, project_id, environment_id, build_region_id, version, content_hash, deployment_source_artifact_id, status) VALUES ($1, $8, $2, $3, $4, $5, 'v1', $6, $7, 'deployed')`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO deployments (
+			id, public_id, org_id, project_id, environment_id, build_region_id,
+			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_materializer_version,
+			version, content_hash, deployment_source_artifact_id, status
+		) VALUES (
+			$1, $8, $2, $3, $4, $5,
+			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'helmr.dependencies.v0',
+			'v1', $6, $7, 'deployed'
+		)
+	`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {
 		t.Fatalf("insert deployment fixture: %v", err)
 	}
 	if _, err := pool.Exec(ctx, `INSERT INTO deployment_queues (org_id, project_id, environment_id, deployment_id, name) VALUES ($1, $2, $3, $4, 'default')`, ids.orgID, ids.projectID, ids.environmentID, ids.deploymentID); err != nil {

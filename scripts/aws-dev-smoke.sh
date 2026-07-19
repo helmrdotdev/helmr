@@ -907,14 +907,14 @@ apply_bootstrap_contract_tfvars() {
   runtime_store_uri="$(bootstrap_contract_value RUNTIME_STORE_URI runtime_store_uri)"
   runtime_store_bucket_arn="$(bootstrap_contract_value RUNTIME_STORE_BUCKET_ARN runtime_store_bucket_arn)"
   runtime_store_kms_key_arn="$(bootstrap_contract_value RUNTIME_STORE_KMS_KEY_ARN runtime_store_kms_key_arn)"
-  runtime_policy_digest="${DEV_RUNTIME_POLICY_DIGEST:-$(tfvar_value "${tfvars_file}" runtime_policy_digest 2>/dev/null || true)}"
-  printf '%s\n' "${runtime_policy_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
-    die "DEV_RUNTIME_POLICY_DIGEST must be sha256:<64 lowercase hexadecimal digits>"
+  build_policy_digest="${DEV_BUILD_POLICY_DIGEST:-$(tfvar_value "${tfvars_file}" build_policy_digest 2>/dev/null || true)}"
+  printf '%s\n' "${build_policy_digest}" | grep -Eq '^sha256:[0-9a-f]{64}$' ||
+    die "DEV_BUILD_POLICY_DIGEST must be sha256:<64 lowercase hexadecimal digits>"
 
   set_tfvar "${tfvars_file}" "runtime_store_uri" "$(tf_quote "${runtime_store_uri}")"
   set_tfvar "${tfvars_file}" "runtime_store_bucket_arn" "$(tf_quote "${runtime_store_bucket_arn}")"
   set_tfvar "${tfvars_file}" "runtime_store_kms_key_arn" "$(tf_quote "${runtime_store_kms_key_arn}")"
-  set_tfvar "${tfvars_file}" "runtime_policy_digest" "$(tf_quote "${runtime_policy_digest}")"
+  set_tfvar "${tfvars_file}" "build_policy_digest" "$(tf_quote "${build_policy_digest}")"
 }
 
 dev_base_tfvars() {

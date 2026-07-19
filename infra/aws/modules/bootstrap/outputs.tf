@@ -24,17 +24,17 @@ output "source_artifact_kms_key_arn" {
 }
 
 output "runtime_store_uri" {
-  description = "Immutable managed-runtime store URI ending at the objects prefix."
+  description = "Immutable Helmr release store URI ending at the objects prefix."
   value       = "s3://${aws_s3_bucket.runtime_store.bucket}/objects"
 }
 
 output "runtime_store_bucket_arn" {
-  description = "S3 bucket ARN for the managed-runtime installation store."
+  description = "S3 bucket ARN for the immutable Helmr release store."
   value       = aws_s3_bucket.runtime_store.arn
 }
 
 output "runtime_store_kms_key_arn" {
-  description = "KMS key ARN for the managed-runtime installation store."
+  description = "KMS key ARN for the immutable Helmr release store."
   value       = aws_kms_key.runtime_store.arn
 }
 

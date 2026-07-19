@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"sort"
+	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -41,6 +43,68 @@ type ToolCorpus struct {
 	objects      []ToolObject
 	raw          []byte
 	digest       string
+	mu           sync.RWMutex
+	directory    *os.File
+	identities   map[string]toolCorpusIdentity
+	ownerUID     uint32
+	ownerGID     uint32
+}
+
+type toolCorpusIdentity struct {
+	device             uint64
+	inode              uint64
+	size               int64
+	mode               uint32
+	uid                uint32
+	gid                uint32
+	links              uint64
+	modifiedSeconds    int64
+	modifiedNanosecond int64
+	changedSeconds     int64
+	changedNanosecond  int64
+}
+
+type ToolObjectFile struct {
+	file       *os.File
+	descriptor ToolObject
+}
+
+func (f *ToolObjectFile) Descriptor() ToolObject {
+	if f == nil {
+		return ToolObject{}
+	}
+	return f.descriptor
+}
+
+func (f *ToolObjectFile) File() *os.File {
+	if f == nil {
+		return nil
+	}
+	return f.file
+}
+
+func (f *ToolObjectFile) Close() error {
+	if f == nil || f.file == nil {
+		return nil
+	}
+	err := f.file.Close()
+	f.file = nil
+	return err
+}
+
+func (c *ToolCorpus) Close() error {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.directory == nil {
+		return nil
+	}
+	err := c.directory.Close()
+	c.directory = nil
+	c.identities = nil
+	return err
 }
 
 func CanonicalToolCorpus(

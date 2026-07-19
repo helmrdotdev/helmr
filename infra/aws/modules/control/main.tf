@@ -85,7 +85,7 @@ locals {
     HELMR_CONTROL_ADDR           = ":${local.control_port}"
     HELMR_DEPLOYMENT_MODE        = var.deployment_mode
     HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_RUNTIME_POLICY_PATH    = "/runtime/runtime-policy.json"
+    HELMR_BUILD_POLICY_PATH      = "/release/build-policy.json"
     HELMR_RUNTIME_STORE_URI      = var.runtime_store_uri
     HELMR_PUBLIC_URL             = local.control_url
     HELMR_REDIS_URL              = local.redis_url
@@ -1248,29 +1248,29 @@ resource "aws_ecs_task_definition" "control" {
   }
 
   volume {
-    name = "runtime-policy"
+    name = "release-policy"
   }
 
   container_definitions = jsonencode([
     {
-      name       = "runtime-policy-install"
+      name       = "release-install"
       image      = var.control_image
       essential  = false
       user       = "0"
       entryPoint = ["helmr-control"]
       command = [
-        "runtime",
+        "release",
         "install",
         "--store",
         var.runtime_store_uri,
         "--digest",
-        var.runtime_policy_digest,
+        var.build_policy_digest,
         "--output",
-        "/runtime/runtime-policy.json"
+        "/release/build-policy.json"
       ]
       mountPoints = [{
-        sourceVolume  = "runtime-policy"
-        containerPath = "/runtime"
+        sourceVolume  = "release-policy"
+        containerPath = "/release"
         readOnly      = false
       }]
       logConfiguration = {
@@ -1278,7 +1278,7 @@ resource "aws_ecs_task_definition" "control" {
         options = {
           awslogs-group         = aws_cloudwatch_log_group.control.name
           awslogs-region        = data.aws_region.current.region
-          awslogs-stream-prefix = "runtime-policy-install"
+          awslogs-stream-prefix = "release-install"
         }
       }
     },
@@ -1288,12 +1288,12 @@ resource "aws_ecs_task_definition" "control" {
       essential  = true
       entryPoint = var.control_entrypoint
       dependsOn = [{
-        containerName = "runtime-policy-install"
+        containerName = "release-install"
         condition     = "SUCCESS"
       }]
       mountPoints = [{
-        sourceVolume  = "runtime-policy"
-        containerPath = "/runtime"
+        sourceVolume  = "release-policy"
+        containerPath = "/release"
         readOnly      = true
       }]
       portMappings = [{

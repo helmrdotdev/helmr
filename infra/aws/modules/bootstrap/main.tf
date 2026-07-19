@@ -147,7 +147,7 @@ resource "aws_s3_bucket_public_access_block" "source_artifacts" {
 }
 
 resource "aws_kms_key" "runtime_store" {
-  description             = "KMS key for the Helmr managed-runtime installation store"
+  description             = "KMS key for the Helmr immutable release store"
   deletion_window_in_days = 30
   enable_key_rotation     = true
   tags                    = var.tags

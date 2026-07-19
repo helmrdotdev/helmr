@@ -16,7 +16,7 @@ const (
 // in the worker image. The paths are intentionally fixed internal packaging
 // inputs rather than operator-configurable settings.
 func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
-	catalogBytes, err := readRuntimeReleaseFileOwned(
+	catalogBytes, err := readReleaseFileOwned(
 		runtimeCatalogPath,
 		"runtime catalog",
 		maxRuntimeCatalogBytes,
@@ -25,7 +25,7 @@ func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	bundleBytes, err := readRuntimeReleaseFileOwned(
+	bundleBytes, err := readReleaseFileOwned(
 		runtimeBundlePath,
 		"runtime attestation bundle",
 		maxReleaseBundleBytes,
@@ -34,7 +34,7 @@ func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
 	if err != nil {
 		return nil, err
 	}
-	trustedRootBytes, err := readRuntimeReleaseFileOwned(
+	trustedRootBytes, err := readReleaseFileOwned(
 		runtimeTrustedRootPath,
 		"runtime trusted root",
 		maxReleaseTrustedRootBytes,
@@ -46,17 +46,17 @@ func LoadRuntimeCatalog() (*RuntimeCatalog, error) {
 	return VerifyRuntimeCatalog(catalogBytes, bundleBytes, trustedRootBytes)
 }
 
-func readRuntimeReleaseFile(path, label string, maxBytes int64) ([]byte, error) {
-	return readRuntimeReleaseFileOwned(path, label, maxBytes, uint32(os.Getuid()))
+func readReleaseFile(path, label string, maxBytes int64) ([]byte, error) {
+	return readReleaseFileOwned(path, label, maxBytes, uint32(os.Getuid()))
 }
 
-func readRuntimeReleaseFileOwned(
+func readReleaseFileOwned(
 	path,
 	label string,
 	maxBytes int64,
 	ownerUID uint32,
 ) ([]byte, error) {
-	file, err := openRuntimeReleaseFile(path, label, maxBytes, ownerUID)
+	file, err := openReleaseFile(path, label, maxBytes, ownerUID)
 	if err != nil {
 		return nil, err
 	}

@@ -21,19 +21,21 @@ const (
 )
 
 type ReuseDescriptor struct {
-	FormatVersion         int                 `json:"formatVersion"`
-	OrgID                 string              `json:"orgId"`
-	ProjectID             string              `json:"projectId"`
-	EnvironmentID         string              `json:"environmentId"`
-	BuildRegionID         string              `json:"buildRegionId"`
-	ContentHash           string              `json:"contentHash"`
-	APIVersion            string              `json:"apiVersion"`
-	SDKVersion            string              `json:"sdkVersion"`
-	CLIVersion            string              `json:"cliVersion"`
-	BundleFormatVersion   int32               `json:"bundleFormatVersion"`
-	WorkerProtocolVersion string              `json:"workerProtocolVersion"`
-	Architecture          RuntimeArchitecture `json:"architecture"`
-	RuntimeDigest         string              `json:"runtimeDigest"`
+	FormatVersion           int                 `json:"formatVersion"`
+	OrgID                   string              `json:"orgId"`
+	ProjectID               string              `json:"projectId"`
+	EnvironmentID           string              `json:"environmentId"`
+	BuildRegionID           string              `json:"buildRegionId"`
+	ContentHash             string              `json:"contentHash"`
+	APIVersion              string              `json:"apiVersion"`
+	SDKVersion              string              `json:"sdkVersion"`
+	CLIVersion              string              `json:"cliVersion"`
+	BundleFormatVersion     int32               `json:"bundleFormatVersion"`
+	WorkerProtocolVersion   string              `json:"workerProtocolVersion"`
+	Architecture            RuntimeArchitecture `json:"architecture"`
+	MaterializerVersion     string              `json:"materializerVersion"`
+	RuntimeDigest           string              `json:"runtimeDigest"`
+	StandardToolchainDigest string              `json:"standardToolchainDigest"`
 }
 
 func CanonicalReuseDescriptor(descriptor ReuseDescriptor) ([]byte, error) {
@@ -114,6 +116,16 @@ func ValidateReuseDescriptor(descriptor ReuseDescriptor) error {
 	}
 	if !sha256DigestPattern.MatchString(descriptor.RuntimeDigest) {
 		return fmt.Errorf("deployment reuse descriptor runtimeDigest is not a lowercase SHA-256 digest")
+	}
+	if !sha256DigestPattern.MatchString(descriptor.StandardToolchainDigest) {
+		return fmt.Errorf("deployment reuse descriptor standardToolchainDigest is not a lowercase SHA-256 digest")
+	}
+	if descriptor.MaterializerVersion != DependencyMaterializerVersion {
+		return fmt.Errorf(
+			"deployment reuse descriptor materializerVersion = %q, want %q",
+			descriptor.MaterializerVersion,
+			DependencyMaterializerVersion,
+		)
 	}
 	return nil
 }

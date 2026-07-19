@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -40,12 +41,27 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
+	if s.buildPolicy == nil {
+		writeError(w, unavailable(errors.New("build policy is not configured")))
+		return
+	}
+	registryDigest, err := s.buildPolicy.ToolRegistryDigest()
+	if err != nil {
+		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
+		return
+	}
+	registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
+	if err != nil {
+		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
+		return
+	}
 	var response api.WorkerDeploymentBuildLeaseResponse
-	err := s.inTx(r.Context(), func(work *txWork) error {
+	err = s.inTx(r.Context(), func(work *txWork) error {
 		row, err := work.q.ClaimNextDeploymentBuildLease(r.Context(), db.ClaimNextDeploymentBuildLeaseParams{
 			WorkerGroupID: worker.WorkerGroupID, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch, WorkerProtocolVersion: worker.ProtocolVersion,
-			ExpiresAt: pgvalue.Timestamptz(leaseExpiresAt),
+			ToolRegistryDigest: registryDigestBytes,
+			ExpiresAt:          pgvalue.Timestamptz(leaseExpiresAt),
 		})
 		if isNoRows(err) {
 			return nil
@@ -57,13 +73,19 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		if err != nil {
 			return fmt.Errorf("read deployment build runtime digest: %w", err)
 		}
-		if s.runtimePolicy == nil {
-			return errors.New("managed runtime policy is not configured")
-		}
-		runtimeTarget, err := s.runtimePolicy.Resolve(runtimeDigest)
+		toolchainDigest, err := deployment.ToolDigestString(row.BuildStandardToolchainDigest)
 		if err != nil {
-			return fmt.Errorf("resolve deployment build runtime: %w", err)
+			return fmt.Errorf("read deployment build standard toolchain digest: %w", err)
 		}
+		target, err := s.buildPolicy.Resolve(
+			runtimeDigest,
+			toolchainDigest,
+			row.BuildMaterializerVersion,
+		)
+		if err != nil {
+			return fmt.Errorf("resolve deployment build target: %w", err)
+		}
+		runtimeTarget := target.Runtime
 		if string(runtimeTarget.Architecture) != row.BuildArchitecture {
 			return errors.New("deployment build runtime descriptor does not match persisted architecture")
 		}
@@ -105,7 +127,9 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 				SizeBytes: row.SourceSizeBytes,
 				MediaType: row.SourceMediaType,
 			},
-			Runtime: runtimeWire,
+			Runtime:                 runtimeWire,
+			StandardToolchainDigest: target.StandardToolchainDigest,
+			MaterializerVersion:     target.MaterializerVersion,
 		}
 		response = api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}
 		return nil
@@ -510,17 +534,17 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			!locked.ExpiresAt.Time.After(time.Now()) {
 			return conflict(errors.New("deployment build lease is stale"))
 		}
-		failBuild := func(message string) error {
+		failBuildWithReason := func(reasonCode, fallback, message string) error {
 			message = strings.TrimSpace(message)
 			if message == "" {
-				message = "deployment build failed"
+				message = fallback
 			}
 			payload, err := json.Marshal(workerMessagePayload{Message: message})
 			if err != nil {
 				return errors.New("marshal deployment build error")
 			}
 			row, err := work.q.FailDeploymentBuild(r.Context(), db.FailDeploymentBuildParams{
-				Failure: payload, ReasonCode: pgtype.Text{String: "worker_reported_failure", Valid: true},
+				Failure: payload, ReasonCode: pgtype.Text{String: reasonCode, Valid: true},
 				TerminalRequestFingerprint: fingerprint,
 				OrgID:                      orgID, ID: deploymentID, BuildLeaseID: pgvalue.UUID(buildLeaseUUID),
 				BuildWorkerInstanceID: buildWorkerInstanceID,
@@ -539,8 +563,64 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			response = api.WorkerDeploymentBuildResponse{DeploymentID: pgvalue.MustUUIDValue(row.ID).String(), Status: string(row.Status)}
 			return nil
 		}
+		failBuild := func(message string) error {
+			return failBuildWithReason(
+				"worker_reported_failure",
+				"deployment build failed",
+				message,
+			)
+		}
+		failInvalid := func(message string) error {
+			return failBuildWithReason(
+				"output_invalid",
+				"deployment build output is invalid",
+				message,
+			)
+		}
 		if request.Result.Error != nil {
 			return failBuild(*request.Result.Error)
+		}
+		runtimeDigest, err := deployment.RuntimeDigestString(locked.BuildRuntimeDigest)
+		if err != nil {
+			return errors.New("deployment build runtime digest is invalid")
+		}
+		toolchainDigest, err := deployment.ToolDigestString(locked.BuildStandardToolchainDigest)
+		if err != nil {
+			return errors.New("deployment build standard toolchain digest is invalid")
+		}
+		if s.buildPolicy == nil {
+			return errors.New("build policy is not configured")
+		}
+		target, err := s.buildPolicy.Resolve(
+			runtimeDigest,
+			toolchainDigest,
+			locked.BuildMaterializerVersion,
+		)
+		if err != nil || string(target.Runtime.Architecture) != locked.BuildArchitecture {
+			return errors.New("deployment build target is not registered")
+		}
+		receipt, err := deployment.ValidateBuildProgram(request.Result)
+		if err != nil {
+			return failInvalid(err.Error())
+		}
+		if err := deployment.ValidateProgramTarget(target, receipt); err != nil {
+			return failInvalid(err.Error())
+		}
+		toolset, err := s.buildPolicy.ResolveToolset(
+			target,
+			receipt.DependencyIndex.PackageManager,
+		)
+		if err != nil {
+			return fmt.Errorf("resolve deployment dependency toolset: %w", err)
+		}
+		dependencyToolsDigest, err := deployment.DependencyToolsDigest(toolset)
+		if err != nil {
+			return fmt.Errorf("digest deployment dependency toolset: %w", err)
+		}
+		if receipt.DependencyIndex.DependencyToolsDigest != dependencyToolsDigest {
+			return failInvalid(
+				"program receipt dependency toolset does not match the deployment build target",
+			)
 		}
 		casObjects, err := deployment.ValidateBuildResult(request.Result)
 		if err != nil {
@@ -569,6 +649,17 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			workerState.RuntimeArch.String != locked.BuildArchitecture {
 			return failBuild("deployment build worker certification does not match the deployment target")
 		}
+		registryDigest, err := s.buildPolicy.ToolRegistryDigest()
+		if err != nil {
+			return errors.New("build policy dependency tool registry is invalid")
+		}
+		registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
+		if err != nil {
+			return errors.New("build policy dependency tool registry is invalid")
+		}
+		if !bytes.Equal(workerState.ToolRegistryDigest, registryDigestBytes) {
+			return errors.New("deployment build worker dependency tool registry is stale")
+		}
 		casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
 		for _, object := range casObjects {
 			casObjectByDigest[strings.TrimSpace(object.Digest)] = object
@@ -580,6 +671,34 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			}); err != nil {
 				return failBuild("record deployment build artifact: " + err.Error())
 			}
+		}
+		programCodeArtifact, err := createDeploymentBuildArtifact(
+			r.Context(),
+			work.q,
+			orgID,
+			projectID,
+			environmentID,
+			buildWorkerInstanceID,
+			receipt.Code.Digest,
+			db.ArtifactKindDeploymentProgramCode,
+			casObjectByDigest,
+		)
+		if err != nil {
+			return failBuild("record deployment program code: " + err.Error())
+		}
+		programDependencyArtifact, err := createDeploymentBuildArtifact(
+			r.Context(),
+			work.q,
+			orgID,
+			projectID,
+			environmentID,
+			buildWorkerInstanceID,
+			receipt.Dependencies.Digest,
+			db.ArtifactKindDeploymentProgramDependencies,
+			casObjectByDigest,
+		)
+		if err != nil {
+			return failBuild("record deployment program dependencies: " + err.Error())
 		}
 		buildManifestArtifact, err := createDeploymentBuildArtifact(r.Context(), work.q, orgID, projectID, environmentID, buildWorkerInstanceID, strings.TrimSpace(request.Result.BuildManifestDigest), db.ArtifactKindBuildManifest, casObjectByDigest)
 		if err != nil {
@@ -756,6 +875,10 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		row, err := work.q.CompleteDeploymentBuild(r.Context(), db.CompleteDeploymentBuildParams{
 			BuildManifestArtifactID:      buildManifestArtifact.ID,
 			DeploymentManifestArtifactID: deploymentManifestArtifact.ID,
+			ProgramCodeArtifactID:        programCodeArtifact.ID,
+			ProgramDependencyArtifactID:  programDependencyArtifact.ID,
+			ProgramRuntimeDigest:         append([]byte(nil), locked.BuildRuntimeDigest...),
+			ProgramArchitecture:          pgtype.Text{String: locked.BuildArchitecture, Valid: true},
 			OrgID:                        orgID,
 			ID:                           deploymentID,
 			BuildLeaseID:                 pgvalue.UUID(buildLeaseUUID),

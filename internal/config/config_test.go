@@ -18,7 +18,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_USER", " telemetry ")
 	t.Setenv("HELMR_CLICKHOUSE_PASSWORD", " clickhouse-password ")
 	t.Setenv("HELMR_CAS_URI", " s3://helmr-cas ")
-	t.Setenv("HELMR_RUNTIME_POLICY_PATH", " /etc/helmr/runtime-policy.json ")
+	t.Setenv("HELMR_BUILD_POLICY_PATH", " /etc/helmr/build-policy.json ")
 	t.Setenv("HELMR_RUNTIME_STORE_URI", " s3://helmr-cas/runtimes ")
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "\n01234567890123456789012345678901\n")
 	t.Setenv("HELMR_WORKER_GROUPS", ` [{"id":"run-workers"}] `)
@@ -39,7 +39,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.RuntimePolicyPath != "/etc/helmr/runtime-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -70,7 +70,7 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 
 func TestLoadControlRequiresManagedRuntimeConfig(t *testing.T) {
 	for _, variable := range []string{
-		"HELMR_RUNTIME_POLICY_PATH",
+		"HELMR_BUILD_POLICY_PATH",
 		"HELMR_RUNTIME_STORE_URI",
 	} {
 		t.Run(variable, func(t *testing.T) {
@@ -295,7 +295,7 @@ func setControlWorkerGroupEnv(t *testing.T) {
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_DEFAULT_REGION_ID", "us-east-1")
 	t.Setenv("HELMR_WORKER_GROUPS", `[{"id":"run-workers"}]`)
-	t.Setenv("HELMR_RUNTIME_POLICY_PATH", "/etc/helmr/runtime-policy.json")
+	t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-cas/runtimes")
 }
 
@@ -304,7 +304,7 @@ func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
 	if build {
 		t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-runtime")
-		t.Setenv("HELMR_RUNTIME_POLICY_PATH", "/etc/helmr/runtime-policy.json")
+		t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 		t.Setenv("HELMR_WORKER_BUILD_CACHE_DIR", "/var/lib/helmr/cache")
 		t.Setenv("HELMR_WORKER_BUILD_SCRATCH_DIR", "/var/lib/helmr/scratch")
 		t.Setenv("HELMR_WORKER_SUBSTRATE_CACHE_MAX_MIB", "8192")
@@ -427,7 +427,7 @@ func TestLoadWorkerReadsVMConfig(t *testing.T) {
 	if cfg.WorkerProviderRegion != "us-east-1" || cfg.WorkerLabels["pool"] != "standard" || cfg.WorkerLabels["dedicated_key"] != "tenant-a" {
 		t.Fatalf("config = %+v", cfg)
 	}
-	if cfg.RegionID != "us-east-1" || cfg.RuntimePolicyPath != "/etc/helmr/runtime-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-runtime" {
+	if cfg.RegionID != "us-east-1" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-runtime" {
 		t.Fatalf("config = %+v", cfg)
 	}
 	if cfg.CheckpointKey == "" {

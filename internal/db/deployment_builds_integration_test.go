@@ -54,8 +54,15 @@ func newDeploymentBuildFixture(t *testing.T) (*deploymentBuildFixture, *pgxpool.
 	mustExec(t, ctx, pool, `
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
+			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
+			build_materializer_version,
 			version, content_hash, deployment_source_artifact_id, status
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'queued')
+		) VALUES (
+			$1, $2, $3, $4, $5, $6,
+			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
+			'helmr.dependencies.v0',
+			$7, $8, $9, 'queued'
+		)
 	`, deploymentID, testPublicID(t, publicid.Deployment), ids.orgID, ids.projectID,
 		ids.environmentID, dbtest.DefaultRegionID, "build-"+shortUUID(deploymentID),
 		testDigest("deployment-build-"+deploymentID.String()), sourceArtifactID)

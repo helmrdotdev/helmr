@@ -113,7 +113,7 @@ func openRuntimeVerifierCorpus(
 	if err := ValidateRuntimeArchitecture(architecture); err != nil {
 		return nil, err
 	}
-	manifest, err := openRuntimeReleaseFile(
+	manifest, err := openReleaseFile(
 		paths.manifest,
 		"runtime verifier corpus manifest",
 		maxRuntimeVerifierCorpusManifestBytes,
@@ -137,7 +137,7 @@ func openRuntimeVerifierCorpus(
 		return nil, err
 	}
 
-	valid, err := openRuntimeReleaseFileExact(
+	valid, err := openReleaseFileExact(
 		paths.valid,
 		"runtime verifier valid fixture",
 		document.Valid.Descriptor.SizeBytes,
@@ -151,7 +151,7 @@ func openRuntimeVerifierCorpus(
 			returnErr = errors.Join(returnErr, valid.Close())
 		}
 	}()
-	invalid, err := openRuntimeReleaseFileExact(
+	invalid, err := openReleaseFileExact(
 		paths.invalid,
 		"runtime verifier invalid fixture",
 		document.Invalid.Descriptor.SizeBytes,
@@ -427,7 +427,7 @@ func verifyRuntimeCorpusFixture(
 	return verify(snapshot)
 }
 
-func openRuntimeReleaseFile(
+func openReleaseFile(
 	path,
 	label string,
 	maxBytes int64,
@@ -443,7 +443,7 @@ func openRuntimeReleaseFile(
 	return file, nil
 }
 
-func openRuntimeReleaseFileExact(
+func openReleaseFileExact(
 	path,
 	label string,
 	sizeBytes int64,

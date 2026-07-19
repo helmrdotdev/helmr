@@ -52,6 +52,11 @@ func TestExplicitManagedFleetFailsStartupWhenAWSConfigCannotLoad(t *testing.T) {
 }
 
 func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
+	originalRegistryLoader := loadDispatcherToolRegistryDigest
+	t.Cleanup(func() { loadDispatcherToolRegistryDigest = originalRegistryLoader })
+	loadDispatcherToolRegistryDigest = func() ([]byte, error) {
+		return make([]byte, 32), nil
+	}
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
 	redisServer := miniredis.RunT(t)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -71,10 +72,17 @@ type ProgramIndex struct {
 }
 
 type ProgramReceipt struct {
-	FormatVersion int               `json:"formatVersion"`
-	Code          ProgramDescriptor `json:"code"`
-	Dependencies  ProgramDescriptor `json:"dependencies"`
-	Index         ProgramIndex      `json:"index"`
+	FormatVersion   int               `json:"formatVersion"`
+	Code            ProgramDescriptor `json:"code"`
+	Dependencies    ProgramDescriptor `json:"dependencies"`
+	DependencyIndex DependencyIndex   `json:"dependencyIndex"`
+	Index           ProgramIndex      `json:"index"`
+}
+
+type programVerification struct {
+	FormatVersion   int             `json:"formatVersion"`
+	DependencyIndex DependencyIndex `json:"dependencyIndex"`
+	Index           ProgramIndex    `json:"index"`
 }
 
 func ParseProgramReceipt(raw []byte) (ProgramReceipt, error) {
@@ -164,12 +172,15 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 	if err := ValidateProgramIndex(receipt.Index); err != nil {
 		return fmt.Errorf("program receipt index: %w", err)
 	}
+	if err := ValidateDependencyIndex(receipt.DependencyIndex); err != nil {
+		return fmt.Errorf("program receipt dependencyIndex: %w", err)
+	}
 	if receipt.Index.Dependencies != receipt.Dependencies {
 		return fmt.Errorf(
 			"program receipt index dependency descriptor does not match dependencies",
 		)
 	}
-	return nil
+	return validateProgramIndexes(receipt.Index, receipt.DependencyIndex)
 }
 
 func validateProgramDescriptor(
@@ -203,17 +214,108 @@ func validateProgramDescriptor(
 }
 
 func cloneProgramReceipt(receipt ProgramReceipt) ProgramReceipt {
-	receipt.Index.Declarations = append(
-		[]ProgramDeclaration(nil),
-		receipt.Index.Declarations...,
-	)
-	for position := range receipt.Index.Declarations {
-		receipt.Index.Declarations[position].Slots = append(
-			[]DeclarationSlot(nil),
-			receipt.Index.Declarations[position].Slots...,
+	receipt.Index = cloneReceiptProgramIndex(receipt.Index)
+	return receipt
+}
+
+func parseProgramVerification(raw []byte) (programVerification, error) {
+	if len(raw) == 0 || len(raw) > maxProgramReceiptSizeBytes {
+		return programVerification{}, fmt.Errorf(
+			"program verification size is outside [1,%d]",
+			maxProgramReceiptSizeBytes,
 		)
 	}
-	return receipt
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return programVerification{}, fmt.Errorf("canonicalize program verification: %w", err)
+	}
+	if !bytes.Equal(raw, canonical) {
+		return programVerification{}, errors.New("program verification is not RFC 8785 canonical JSON")
+	}
+	var verified programVerification
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&verified); err != nil {
+		return programVerification{}, fmt.Errorf("decode program verification: %w", err)
+	}
+	if err := ensureEOF(decoder, "program verification"); err != nil {
+		return programVerification{}, err
+	}
+	if err := validateProgramVerification(verified); err != nil {
+		return programVerification{}, err
+	}
+	complete, err := canonicalProgramVerification(verified)
+	if err != nil {
+		return programVerification{}, err
+	}
+	if !bytes.Equal(raw, complete) {
+		return programVerification{}, errors.New(
+			"program verification does not match the complete canonical v0 shape",
+		)
+	}
+	verified.Index = cloneReceiptProgramIndex(verified.Index)
+	return verified, nil
+}
+
+func canonicalProgramVerification(verified programVerification) ([]byte, error) {
+	if err := validateProgramVerification(verified); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(verified)
+	if err != nil {
+		return nil, fmt.Errorf("encode program verification: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize program verification: %w", err)
+	}
+	if len(canonical) > maxProgramReceiptSizeBytes {
+		return nil, fmt.Errorf(
+			"program verification size is outside [1,%d]",
+			maxProgramReceiptSizeBytes,
+		)
+	}
+	return canonical, nil
+}
+
+func validateProgramVerification(verified programVerification) error {
+	if verified.FormatVersion != ProgramReceiptFormatVersion {
+		return fmt.Errorf(
+			"program verification formatVersion = %d, want %d",
+			verified.FormatVersion,
+			ProgramReceiptFormatVersion,
+		)
+	}
+	if err := ValidateProgramIndex(verified.Index); err != nil {
+		return fmt.Errorf("program verification index: %w", err)
+	}
+	if err := ValidateDependencyIndex(verified.DependencyIndex); err != nil {
+		return fmt.Errorf("program verification dependencyIndex: %w", err)
+	}
+	return validateProgramIndexes(verified.Index, verified.DependencyIndex)
+}
+
+func validateProgramIndexes(index ProgramIndex, dependencies DependencyIndex) error {
+	if index.RuntimeDigest != dependencies.RuntimeDigest ||
+		index.Architecture != dependencies.Architecture {
+		return errors.New("program and dependency indexes disagree on runtime or architecture")
+	}
+	if index.PackageGraph.Digest != dependencies.PackageGraphDigest ||
+		index.PackageGraph.SizeBytes != dependencies.PackageGraphSizeBytes {
+		return errors.New("program and dependency indexes disagree on package graph identity")
+	}
+	return nil
+}
+
+func cloneReceiptProgramIndex(index ProgramIndex) ProgramIndex {
+	index.Declarations = append([]ProgramDeclaration(nil), index.Declarations...)
+	for position := range index.Declarations {
+		index.Declarations[position].Slots = append(
+			[]DeclarationSlot(nil),
+			index.Declarations[position].Slots...,
+		)
+	}
+	return index
 }
 
 func ParseProgramIndex(raw []byte) (ProgramIndex, error) {

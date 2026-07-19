@@ -36,9 +36,9 @@ func main() {
 				os.Exit(1)
 			}
 			return
-		case "runtime":
-			if err := runRuntimeCommand(context.Background(), os.Args[2:]); err != nil {
-				log.Error("manage runtime", "error", err)
+		case "release":
+			if err := runReleaseCommand(context.Background(), os.Args[2:]); err != nil {
+				log.Error("install release", "error", err)
 				os.Exit(1)
 			}
 			return
