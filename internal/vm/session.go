@@ -64,6 +64,8 @@ type ConnectRequest struct {
 	ID          string
 	OwnerKind   OwnerKind
 	Resources   compute.ResourceVector
+	PIDsMax     int64
+	Networkless bool
 	Network     compute.NetworkPolicy
 	Topology    RuntimeTopology
 	BuildDrives []ReadOnlyDrive

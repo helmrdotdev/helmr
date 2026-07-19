@@ -36,6 +36,7 @@ const (
 	ManagerAcquireMaxLogicalBytes         = int64(512 << 20)
 	ManagerAcquireMaxPathBytes            = 4095
 	ManagerAcquireMaxComponentBytes       = 255
+	ManagerAcquireMaxInputBytes           = uint64(4 + ManagerAcquireMaxFrameBytes + maxManagerDistributionBytes)
 
 	managerAcquireEntryType    = "entry"
 	managerAcquireTerminalType = "terminal"

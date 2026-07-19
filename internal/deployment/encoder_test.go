@@ -35,13 +35,13 @@ printf 'encoded' >&3
 	destination := emptyEncoderDestination(t)
 	defer destination.Close()
 
-	if err := encodeProgramArchive(
+	if err := encodeSquashFS(
 		context.Background(),
 		executable,
 		strings.NewReader("archive"),
 		destination,
 	); err != nil {
-		t.Fatalf("encodeProgramArchive: %v", err)
+		t.Fatalf("encodeSquashFS: %v", err)
 	}
 	if _, err := destination.Seek(0, io.SeekStart); err != nil {
 		t.Fatal(err)
@@ -59,25 +59,25 @@ func TestProgramEncoderRejectsInvalidExecutable(t *testing.T) {
 	t.Parallel()
 	destination := emptyEncoderDestination(t)
 	defer destination.Close()
-	if err := encodeProgramArchive(
+	if err := encodeSquashFS(
 		context.Background(),
 		"mksquashfs",
 		strings.NewReader("archive"),
 		destination,
 	); err == nil {
-		t.Fatal("encodeProgramArchive accepted a relative executable")
+		t.Fatal("encodeSquashFS accepted a relative executable")
 	}
 
 	executable := writeEncoderFixture(t, `#!/bin/sh
 printf 'mksquashfs version 4.7.0\n'
 `)
-	if err := encodeProgramArchive(
+	if err := encodeSquashFS(
 		context.Background(),
 		executable,
 		strings.NewReader("archive"),
 		destination,
 	); err == nil {
-		t.Fatal("encodeProgramArchive accepted another encoder version")
+		t.Fatal("encodeSquashFS accepted another encoder version")
 	}
 }
 
@@ -109,13 +109,13 @@ fi
 		t.Run(name, func(t *testing.T) {
 			destination := create(t)
 			defer destination.Close()
-			if err := encodeProgramArchive(
+			if err := encodeSquashFS(
 				context.Background(),
 				executable,
 				strings.NewReader("archive"),
 				destination,
 			); err == nil {
-				t.Fatal("encodeProgramArchive accepted an invalid destination")
+				t.Fatal("encodeSquashFS accepted an invalid destination")
 			}
 		})
 	}
@@ -188,7 +188,7 @@ func TestPinnedProgramEncoder(t *testing.T) {
 func encodeFixtureArchive(t *testing.T, executable string, archive []byte) []byte {
 	t.Helper()
 	destination := emptyEncoderDestination(t)
-	if err := encodeProgramArchive(
+	if err := encodeSquashFS(
 		context.Background(),
 		executable,
 		bytes.NewReader(archive),

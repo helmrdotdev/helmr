@@ -13,6 +13,7 @@ type StreamType string
 const (
 	StreamTypeCatalogDeployment       StreamType = "catalog-deployment"
 	StreamTypeCompileTaskBundle       StreamType = "compile-task-bundle"
+	StreamTypeManagerAcquire          StreamType = "manager-acquire"
 	StreamTypeRunImage                StreamType = "run-image"
 	StreamTypeDeploymentSource        StreamType = "deployment-source"
 	StreamTypeWorkspaceArtifact       StreamType = "workspace-artifact"

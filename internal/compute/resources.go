@@ -28,6 +28,15 @@ func BuildGuestResources() ResourceVector {
 	}
 }
 
+func ManagerAcquireResources() ResourceVector {
+	return ResourceVector{
+		MilliCPU:  1000,
+		MemoryMiB: 1024,
+		DiskMiB:   2048,
+		Slots:     1,
+	}
+}
+
 func BuildEnvelopeResources() ResourceVector {
 	return ResourceVector{
 		MilliCPU:  3000,

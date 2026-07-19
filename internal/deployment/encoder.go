@@ -45,20 +45,20 @@ var encoderArguments = []string{
 	"0",
 }
 
-func encodeProgramArchive(
+func encodeSquashFS(
 	ctx context.Context,
 	executable string,
 	source io.Reader,
 	destination *os.File,
 ) error {
 	if ctx == nil {
-		return errors.New("program encoder context is nil")
+		return errors.New("SquashFS encoder context is nil")
 	}
 	if source == nil {
-		return errors.New("program encoder source is nil")
+		return errors.New("SquashFS encoder source is nil")
 	}
 	if destination == nil {
-		return errors.New("program encoder destination is nil")
+		return errors.New("SquashFS encoder destination is nil")
 	}
 	if err := validateProgramEncoder(executable); err != nil {
 		return err
@@ -68,10 +68,10 @@ func encodeProgramArchive(
 	}
 	info, err := destination.Stat()
 	if err != nil {
-		return fmt.Errorf("inspect program encoder destination: %w", err)
+		return fmt.Errorf("inspect SquashFS encoder destination: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm() != 0600 || info.Size() != 0 {
-		return fmt.Errorf("program encoder destination is not an empty regular mode 0600 file")
+		return fmt.Errorf("SquashFS encoder destination is not an empty regular mode 0600 file")
 	}
 
 	stdout := &limitedEncoderOutput{remaining: maxEncoderDiagnosticBytes}
@@ -84,13 +84,13 @@ func encodeProgramArchive(
 	command.ExtraFiles = []*os.File{destination}
 	if err := command.Run(); err != nil {
 		return fmt.Errorf(
-			"encode Program SquashFS: %w%s",
+			"encode SquashFS: %w%s",
 			err,
 			encoderDiagnostic(stdout, stderr),
 		)
 	}
 	if stdout.exceeded || stderr.exceeded {
-		return errors.New("program encoder diagnostic exceeds 1048576 bytes")
+		return errors.New("SquashFS encoder diagnostic exceeds 1048576 bytes")
 	}
 	return nil
 }
@@ -98,14 +98,14 @@ func encodeProgramArchive(
 func validateProgramEncoder(executable string) error {
 	if executable == "" || !filepath.IsAbs(executable) ||
 		filepath.Clean(executable) != executable {
-		return errors.New("program encoder executable must be an absolute clean path")
+		return errors.New("SquashFS encoder executable must be an absolute clean path")
 	}
 	info, err := os.Stat(executable)
 	if err != nil {
-		return fmt.Errorf("inspect program encoder executable: %w", err)
+		return fmt.Errorf("inspect SquashFS encoder executable: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0111 == 0 {
-		return errors.New("program encoder executable is not an executable regular file")
+		return errors.New("SquashFS encoder executable is not an executable regular file")
 	}
 	return nil
 }
@@ -119,18 +119,18 @@ func verifyProgramEncoder(ctx context.Context, executable string) error {
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		return fmt.Errorf(
-			"probe program encoder: %w%s",
+			"probe SquashFS encoder: %w%s",
 			err,
 			encoderDiagnostic(stdout, stderr),
 		)
 	}
 	if stdout.exceeded || stderr.exceeded {
-		return errors.New("program encoder version output exceeds 1048576 bytes")
+		return errors.New("SquashFS encoder version output exceeds 1048576 bytes")
 	}
 	output := stdout.String() + stderr.String()
 	first, _, _ := strings.Cut(output, "\n")
 	if !strings.HasPrefix(first, "mksquashfs version 4.6.1 ") {
-		return fmt.Errorf("program encoder version output = %q", first)
+		return fmt.Errorf("SquashFS encoder version output = %q", first)
 	}
 	return nil
 }
@@ -155,7 +155,7 @@ func (output *limitedEncoderOutput) Write(value []byte) (int, error) {
 		return count, err
 	}
 	if output.exceeded {
-		return count, errors.New("program encoder diagnostic limit exceeded")
+		return count, errors.New("SquashFS encoder diagnostic limit exceeded")
 	}
 	return count, nil
 }

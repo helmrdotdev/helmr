@@ -47,6 +47,8 @@ func handleConnection(ctx context.Context, conn io.ReadWriter, cfg Config, logge
 		return false, handleCatalogDeployment(ctx, conn, cfg, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeCompileTaskBundle:
 		return false, handleCompileTaskBundle(ctx, conn, cfg, start.streamHeader, start.bodyLen)
+	case wire.StreamTypeManagerAcquire:
+		return false, handleManagerAcquire(conn, start.bodyLen)
 	case wire.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceMaterialize:

@@ -56,7 +56,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"executor":            {"api", "archive", "builder", "capacity", "cas", "checkpoint", "compute", "frameio", "localcache", "proto/bundle/v0", "proto/run/v0", "proto/workspace/v0", "runtime", "sha256sum", "substrate", "task", "vm", "wire", "workspace"},
 		"firecracker":         {"cas", "compute", "sha256sum", "vm"},
 		"fleet":               {"db"},
-		"guestd":              {"archive", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "frameio", "wire", "workspace"},
+		"guestd":              {"archive", "deployment", "oci", "proto/run/v0", "proto/workspace/v0", "safepath", "sha256sum", "frameio", "wire", "workspace"},
 		"localcache":          {},
 		"oci":                 {"sha256sum"},
 		"pgvalue":             {},

@@ -48,6 +48,31 @@ configure_namespaces() {
 	fi
 }
 
+configure_process_limit() {
+	limit=$(kernel_arg helmr.pids_max || true)
+	[ -n "$limit" ] || return 0
+	case "$limit" in
+		*[!0-9]*|0)
+			echo "invalid Helmr process limit" >&2
+			exit 1
+			;;
+	esac
+	mkdir -p /sys/fs/cgroup
+	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
+	if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
+		echo "pids controller unavailable" >&2
+		exit 1
+	fi
+	echo +pids > /sys/fs/cgroup/cgroup.subtree_control
+	mkdir /sys/fs/cgroup/helmr
+	echo "$limit" > /sys/fs/cgroup/helmr/pids.max
+	echo $$ > /sys/fs/cgroup/helmr/cgroup.procs
+	if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
+		echo "Helmr process limit was not applied" >&2
+		exit 1
+	fi
+}
+
 mount_scratch() {
 	mkdir -p /var/lib/helmr
 	if ! is_mounted /var/lib/helmr; then
@@ -233,6 +258,10 @@ has_static_network() {
 }
 
 configure_network() {
+	if [ "$(kernel_arg helmr.network || true)" = "none" ]; then
+		: > /run/resolv.conf
+		return
+	fi
 	echo "nameserver 1.1.1.1" > /run/resolv.conf
 	if configure_static_from_cmdline; then
 		require_network_ready
@@ -277,6 +306,7 @@ configure_runtime_identity() {
 }
 
 mount_base
+configure_process_limit
 configure_namespaces
 mount_scratch
 mount_substrate
