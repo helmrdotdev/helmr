@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 
@@ -117,11 +116,11 @@ func newManagedWorkspaceMountSession(session vm.Session) *managedWorkspaceMountS
 	}
 }
 
-func (s *managedWorkspaceMountSession) Stream() io.ReadWriteCloser {
+func (s *managedWorkspaceMountSession) Stream() vm.Stream {
 	return s.session.Stream()
 }
 
-func (s *managedWorkspaceMountSession) OpenStream(ctx context.Context) (io.ReadWriteCloser, error) {
+func (s *managedWorkspaceMountSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return s.session.OpenStream(ctx)
 }
 
@@ -227,24 +226,24 @@ func (s *managedWorkspaceMountSession) CheckpointReleaseResult(ctx context.Conte
 
 type borrowedRunSession struct {
 	parent        vm.Session
-	stream        io.ReadWriteCloser
+	stream        vm.Stream
 	endForeground func()
 	once          sync.Once
 	err           error
 }
 
-func newBorrowedRunSession(parent vm.Session, stream io.ReadWriteCloser, endForeground func()) vm.Session {
+func newBorrowedRunSession(parent vm.Session, stream vm.Stream, endForeground func()) vm.Session {
 	if endForeground == nil {
 		endForeground = func() {}
 	}
 	return &borrowedRunSession{parent: parent, stream: stream, endForeground: endForeground}
 }
 
-func (s *borrowedRunSession) Stream() io.ReadWriteCloser {
+func (s *borrowedRunSession) Stream() vm.Stream {
 	return s.stream
 }
 
-func (s *borrowedRunSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (s *borrowedRunSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, errors.New("borrowed run session does not support opening nested streams")
 }
 

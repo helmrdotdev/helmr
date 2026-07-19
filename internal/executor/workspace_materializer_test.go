@@ -1578,19 +1578,19 @@ type workspaceMaterializerTestSession struct {
 	closed    int
 }
 
-func (s *workspaceMaterializerTestSession) Stream() io.ReadWriteCloser {
-	return s.initial
+func (s *workspaceMaterializerTestSession) Stream() vm.Stream {
+	return testVMStream(s.initial)
 }
 
-func (s *workspaceMaterializerTestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (s *workspaceMaterializerTestSession) OpenStream(context.Context) (vm.Stream, error) {
 	if len(s.streams) > 0 {
 		stream := s.streams[0]
 		s.streams = s.streams[1:]
 		s.opened = append(s.opened, stream)
-		return stream, nil
+		return testVMStream(stream), nil
 	}
 	s.opened = append(s.opened, s.operation)
-	return s.operation, nil
+	return testVMStream(s.operation), nil
 }
 
 func (s *workspaceMaterializerTestSession) Close(context.Context) error {

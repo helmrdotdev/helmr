@@ -61,8 +61,8 @@ func (c *cleanupRuntimeConnector) Cleanup(_ context.Context, owner vm.Owner) err
 	return c.err
 }
 
-func (*closeTrackingRuntimeSession) Stream() io.ReadWriteCloser { return nil }
-func (*closeTrackingRuntimeSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (*closeTrackingRuntimeSession) Stream() vm.Stream { return nil }
+func (*closeTrackingRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, nil
 }
 func (*closeTrackingRuntimeSession) Wait(context.Context) error { return nil }
@@ -71,8 +71,8 @@ func (s *closeTrackingRuntimeSession) Close(context.Context) error {
 	return s.err
 }
 
-func (*stuckPreparedRuntimeSession) Stream() io.ReadWriteCloser { return nil }
-func (*stuckPreparedRuntimeSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (*stuckPreparedRuntimeSession) Stream() vm.Stream { return nil }
+func (*stuckPreparedRuntimeSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, nil
 }
 func (s *stuckPreparedRuntimeSession) Wait(context.Context) error {

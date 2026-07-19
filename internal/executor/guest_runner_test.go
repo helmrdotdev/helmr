@@ -1400,12 +1400,12 @@ func (f *fakeRuntimeSubstrateLookup) LookupDigest(_ context.Context, digest stri
 	}, nil
 }
 
-func (s fakeGuestSession) Stream() io.ReadWriteCloser {
-	return s.stream
+func (s fakeGuestSession) Stream() vm.Stream {
+	return testVMStream(s.stream)
 }
 
-func (s fakeGuestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return s.stream, nil
+func (s fakeGuestSession) OpenStream(context.Context) (vm.Stream, error) {
+	return testVMStream(s.stream), nil
 }
 
 func (s fakeGuestSession) Close(context.Context) error {
@@ -1415,6 +1415,24 @@ func (s fakeGuestSession) Close(context.Context) error {
 func (s fakeGuestSession) Wait(ctx context.Context) error {
 	<-ctx.Done()
 	return ctx.Err()
+}
+
+type testStream struct {
+	io.ReadWriteCloser
+}
+
+func (testStream) CloseWrite() error {
+	return nil
+}
+
+func testVMStream(stream io.ReadWriteCloser) vm.Stream {
+	if stream == nil {
+		return nil
+	}
+	if stream, ok := stream.(vm.Stream); ok {
+		return stream
+	}
+	return testStream{ReadWriteCloser: stream}
 }
 
 type fakeCheckpointableGuestSession struct {

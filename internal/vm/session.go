@@ -30,9 +30,14 @@ type Cleaner interface {
 	Cleanup(context.Context, Owner) error
 }
 
+type Stream interface {
+	io.ReadWriteCloser
+	CloseWrite() error
+}
+
 type Session interface {
-	Stream() io.ReadWriteCloser
-	OpenStream(context.Context) (io.ReadWriteCloser, error)
+	Stream() Stream
+	OpenStream(context.Context) (Stream, error)
 	Wait(context.Context) error
 	Close(context.Context) error
 }

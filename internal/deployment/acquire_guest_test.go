@@ -175,11 +175,11 @@ type managerAcquireTestSession struct {
 	closeErr  error
 }
 
-func (session *managerAcquireTestSession) Stream() io.ReadWriteCloser {
-	return session.host
+func (session *managerAcquireTestSession) Stream() vm.Stream {
+	return managerAcquireTestStream{Conn: session.host}
 }
 
-func (session *managerAcquireTestSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
+func (session *managerAcquireTestSession) OpenStream(context.Context) (vm.Stream, error) {
 	return nil, errors.New("open stream is unsupported")
 }
 
@@ -192,4 +192,12 @@ func (session *managerAcquireTestSession) Close(context.Context) error {
 		session.closeErr = errors.Join(session.host.Close(), <-session.done)
 	})
 	return session.closeErr
+}
+
+type managerAcquireTestStream struct {
+	net.Conn
+}
+
+func (managerAcquireTestStream) CloseWrite() error {
+	return nil
 }

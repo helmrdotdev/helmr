@@ -846,7 +846,7 @@ func startMachineContext(ctx context.Context, machine *firecracker.Machine, mach
 	}
 }
 
-func (c *Connector) connectReadyGuest(ctx context.Context, vsockHostPath string, machineExit *machineExit, logf func(string, ...interface{})) (io.ReadWriteCloser, error) {
+func (c *Connector) connectReadyGuest(ctx context.Context, vsockHostPath string, machineExit *machineExit, logf func(string, ...interface{})) (vm.Stream, error) {
 	if err := c.waitForHealth(ctx, vsockHostPath, machineExit, logf); err != nil {
 		return nil, err
 	}
@@ -1117,7 +1117,7 @@ func healthAttemptContext(ctx context.Context, attemptTimeout time.Duration) (co
 	return context.WithTimeout(ctx, attemptTimeout)
 }
 
-func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, machineExit *machineExit) (io.ReadWriteCloser, error) {
+func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, machineExit *machineExit) (vm.Stream, error) {
 	connectCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
 	defer cancel()
 	if machineExit != nil {
@@ -1136,7 +1136,12 @@ func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, mach
 		}
 		conn, err := dialVsock(connectCtx, vsockPath, c.cfg.GuestPort)
 		if err == nil {
-			return conn, nil
+			stream, ok := conn.(vm.Stream)
+			if !ok {
+				_ = conn.Close()
+				return nil, errors.New("guest stream does not support write half-close")
+			}
+			return stream, nil
 		}
 		lastErr = err
 		if connectCtx.Err() != nil {
@@ -1367,7 +1372,7 @@ func healthProbeErrorBucket(err error) string {
 }
 
 type guestSession struct {
-	stream        io.ReadWriteCloser
+	stream        vm.Stream
 	machine       *firecracker.Machine
 	machineCancel context.CancelFunc
 	machineExit   *machineExit
@@ -1385,11 +1390,11 @@ type guestSession struct {
 	err           error
 }
 
-func (s *guestSession) Stream() io.ReadWriteCloser {
+func (s *guestSession) Stream() vm.Stream {
 	return s.stream
 }
 
-func (s *guestSession) OpenStream(ctx context.Context) (io.ReadWriteCloser, error) {
+func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
 	return (&Connector{cfg: s.cfg}).connectGuestPort(ctx, s.vsockHostPath, s.machineExit)
 }
 

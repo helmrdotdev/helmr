@@ -94,7 +94,7 @@ func waitForTestError(t *testing.T, result <-chan error, name string) error {
 func TestBorrowedRunSessionReleaseCheckpointSourceClosesParentWorkspaceMount(t *testing.T) {
 	parent := &borrowedParentSession{stream: discardReadWriteCloser{}}
 	runStream := &countingReadWriteCloser{}
-	session := newBorrowedRunSession(parent, runStream, nil)
+	session := newBorrowedRunSession(parent, testVMStream(runStream), nil)
 
 	checkpointable, ok := session.(vm.CheckpointableSession)
 	if !ok {
@@ -163,12 +163,12 @@ type borrowedParentSession struct {
 	closeCount int
 }
 
-func (s *borrowedParentSession) Stream() io.ReadWriteCloser {
-	return s.stream
+func (s *borrowedParentSession) Stream() vm.Stream {
+	return testVMStream(s.stream)
 }
 
-func (s *borrowedParentSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return &countingReadWriteCloser{}, nil
+func (s *borrowedParentSession) OpenStream(context.Context) (vm.Stream, error) {
+	return testVMStream(&countingReadWriteCloser{}), nil
 }
 
 func (s *borrowedParentSession) Wait(ctx context.Context) error {
@@ -207,10 +207,10 @@ type blockingCloseSession struct {
 	closeErr   error
 }
 
-func (s *blockingCloseSession) Stream() io.ReadWriteCloser { return discardReadWriteCloser{} }
+func (s *blockingCloseSession) Stream() vm.Stream { return testVMStream(discardReadWriteCloser{}) }
 
-func (s *blockingCloseSession) OpenStream(context.Context) (io.ReadWriteCloser, error) {
-	return discardReadWriteCloser{}, nil
+func (s *blockingCloseSession) OpenStream(context.Context) (vm.Stream, error) {
+	return testVMStream(discardReadWriteCloser{}), nil
 }
 
 func (s *blockingCloseSession) Wait(ctx context.Context) error {
