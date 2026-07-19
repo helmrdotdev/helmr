@@ -30,6 +30,10 @@ let
           'String(Boolean(process.config.variables.node_use_openssl_ca))')" = false
       '';
     });
+  managedRuntime = pkgs.callPackage ./runtime.nix {
+    nodejs_24 = managedNode;
+    inherit squashfsTools;
+  };
   buildGo126Module = pkgs.callPackage "${nixpkgs}/pkgs/build-support/go/module.nix" {
     go = pkgs.go_1_26;
   };
@@ -101,10 +105,29 @@ in
       ]
     )
     {
-      managedRuntime = pkgs.callPackage ./runtime.nix {
-        nodejs_24 = managedNode;
-        inherit squashfsTools;
-      };
+      inherit managedRuntime;
+      dependencyTools =
+        let
+          releaseTool = buildGo126Module {
+            pname = "helmr-tool-candidate";
+            version = "0";
+            src = lib.fileset.toSource {
+              root = ../..;
+              fileset = lib.fileset.unions [
+                ../../go.mod
+                ../../go.sum
+                ../../internal
+              ];
+            };
+            vendorHash = "sha256-nm9r7z+b+TRvWgMDXo0eUwVKNkEuQIsF3sFGCDiJQ5g=";
+            subPackages = [ "internal/cmd/tool-release" ];
+          };
+        in
+        pkgs.callPackage ./dependency-tools.nix {
+          inherit managedRuntime;
+          bun = pkgsBun.bun;
+          inherit releaseTool squashfsTools;
+        };
     }
 // lib.optionalAttrs (firecrackerRelease != null) {
   firecrackerRuntime = pkgs.stdenvNoCC.mkDerivation {
