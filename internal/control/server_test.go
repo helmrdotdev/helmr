@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -34,6 +35,7 @@ type testServerConfig struct {
 	TX                 TxBeginner
 	Auth               auth.Authenticator
 	CAS                cas.Store
+	ManagerStore       ManagerResolver
 	Secrets            SecretManager
 	RunEnqueuer        RunEnqueuer
 	ScheduleEngine     ScheduleRegistrar
@@ -110,6 +112,15 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		cfg.RuntimeStore = &fakeCAS{object: cas.Object{
 			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		}}
+		cfg.ManagerStore = managerResolverFunc(func(
+			context.Context,
+			deployment.ManagerSelector,
+		) (deployment.ManagerCapsule, error) {
+			return controlManagerCapsule(), nil
+		})
+	}
+	if testCfg.ManagerStore != nil {
+		cfg.ManagerStore = testCfg.ManagerStore
 	}
 	if testCfg.Secrets != nil {
 		cfg.Secrets = testCfg.Secrets

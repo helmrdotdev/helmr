@@ -221,7 +221,11 @@ func ValidateProgramTarget(
 	}
 	if receipt.Index.RuntimeDigest != target.Runtime.Digest ||
 		receipt.Index.Architecture != target.Runtime.Architecture ||
-		receipt.DependencyIndex.MaterializerVersion != target.MaterializerVersion {
+		receipt.DependencyIndex.MaterializerVersion != target.MaterializerVersion ||
+		receipt.DependencyPlan.ManagedRuntimeDigest != target.Runtime.Digest ||
+		receipt.DependencyPlan.StandardToolchainDigest != target.StandardToolchainDigest ||
+		receipt.DependencyPlan.MaterializerVersion != target.MaterializerVersion ||
+		receipt.DependencyPlan.Architecture != target.Runtime.Architecture {
 		return errors.New("program receipt does not match the build target")
 	}
 	return nil

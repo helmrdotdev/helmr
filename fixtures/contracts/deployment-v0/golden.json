@@ -80,7 +80,7 @@
     { "name": "unknown-module-member", "mutation": "unknown_module_member" }
   ],
   "dependencyIndex": {
-    "canonical": "{\"architecture\":\"x86_64\",\"dependencyToolsDigest\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"formatVersion\":0,\"localManifestsDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"lockfile\":{\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"name\":\"bun.lock\"},\"materializerVersion\":\"helmr.dependencies.v0\",\"packageGraphDigest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"packageGraphSizeBytes\":18492,\"packageManager\":{\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeDigest\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}"
+    "canonical": "{\"architecture\":\"x86_64\",\"dependencyPlanDigest\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"formatVersion\":0,\"localManifestsDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"lockfile\":{\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"name\":\"bun.lock\"},\"materializerVersion\":\"helmr.dependencies.v0\",\"packageGraphDigest\":\"sha256:3333333333333333333333333333333333333333333333333333333333333333\",\"packageGraphSizeBytes\":18492,\"packageManager\":{\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeDigest\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}"
   },
   "dependencyIndexRejections": [
     { "name": "missing-format-version", "mutation": "missing_format_version" },
@@ -99,7 +99,7 @@
     { "name": "manager-lockfile-mismatch", "mutation": "lockfile_name" },
     { "name": "lockfile-digest-mismatch", "mutation": "lockfile_digest" },
     { "name": "local-manifests-digest-mismatch", "mutation": "local_manifests_digest" },
-    { "name": "dependency-tools-digest-mismatch", "mutation": "dependency_tools_digest" },
+    { "name": "dependency-plan-digest-mismatch", "mutation": "dependency_plan_digest" },
     { "name": "package-graph-digest-mismatch", "mutation": "package_graph_digest" },
     { "name": "package-graph-size-zero", "mutation": "package_graph_size_zero" },
     { "name": "package-graph-size-fractional", "mutation": "package_graph_size_fractional" },
@@ -114,8 +114,8 @@
     { "name": "duplicate-lockfile-member", "mutation": "duplicate_lockfile_member" }
   ],
   "dependencyCacheInput": {
-    "canonical": "{\"architecture\":\"x86_64\",\"dependencyToolsDigest\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"formatVersion\":0,\"localManifestsDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"lockfile\":{\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"name\":\"bun.lock\"},\"materializerVersion\":\"helmr.dependencies.v0\",\"packageManager\":{\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeDigest\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}",
-    "key": "sha256:3c1d74849f53a58a6015a632c3ec91d629787bcc9839080822b0915c0fc1a9a2"
+    "canonical": "{\"architecture\":\"x86_64\",\"dependencyPlanDigest\":\"sha256:5555555555555555555555555555555555555555555555555555555555555555\",\"formatVersion\":0,\"localManifestsDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\",\"lockfile\":{\"digest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"name\":\"bun.lock\"},\"materializerVersion\":\"helmr.dependencies.v0\",\"packageManager\":{\"name\":\"bun\",\"version\":\"1.3.10\"},\"runtimeDigest\":\"sha256:4444444444444444444444444444444444444444444444444444444444444444\"}",
+    "key": "sha256:1c4ebdc04a548752bfaf9d1f579e07673aa4e060b465ea95fe19c18e7a8ccf7b"
   },
   "dependencyCacheInputRejections": [
     { "name": "invalid-format-version", "mutation": "invalid_format_version" },
@@ -124,7 +124,7 @@
     { "name": "mismatched-lockfile", "mutation": "mismatched_lockfile" },
     { "name": "invalid-lockfile-digest", "mutation": "invalid_lockfile_digest" },
     { "name": "invalid-local-manifests-digest", "mutation": "invalid_local_manifests_digest" },
-    { "name": "invalid-dependency-tools-digest", "mutation": "invalid_dependency_tools_digest" },
+    { "name": "invalid-dependency-plan-digest", "mutation": "invalid_dependency_plan_digest" },
     { "name": "invalid-materializer-version", "mutation": "invalid_materializer_version" },
     { "name": "invalid-runtime-digest", "mutation": "invalid_runtime_digest" },
     { "name": "invalid-architecture", "mutation": "invalid_architecture" }

@@ -47,6 +47,13 @@ type SecretManager interface {
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
 
+type ManagerResolver interface {
+	Resolve(
+		context.Context,
+		deployment.ManagerSelector,
+	) (deployment.ManagerCapsule, error)
+}
+
 type Server struct {
 	log                   *slog.Logger
 	deploymentMode        string
@@ -60,6 +67,7 @@ type Server struct {
 	cas                   cas.Store
 	buildPolicy           *deployment.BuildPolicy
 	runtimeStore          cas.Reader
+	managerStore          ManagerResolver
 	secrets               SecretManager
 	runEnqueuer           RunEnqueuer
 	preparedRuntimeSupply PreparedRuntimeSupplyReconciler
@@ -133,6 +141,7 @@ type ServerConfig struct {
 	CAS                   cas.Store
 	BuildPolicy           *deployment.BuildPolicy
 	RuntimeStore          cas.Reader
+	ManagerStore          ManagerResolver
 	Secrets               SecretManager
 	RunEnqueuer           RunEnqueuer
 	PreparedRuntimeSupply PreparedRuntimeSupplyReconciler
@@ -172,6 +181,9 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
+	}
+	if cfg.BuildPolicy != nil && cfg.ManagerStore == nil {
+		return nil, errors.New("control manager store is required")
 	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
@@ -226,6 +238,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		cas:                   cfg.CAS,
 		buildPolicy:           cfg.BuildPolicy,
 		runtimeStore:          cfg.RuntimeStore,
+		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
 		runEnqueuer:           cfg.RunEnqueuer,
 		preparedRuntimeSupply: cfg.PreparedRuntimeSupply,

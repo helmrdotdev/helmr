@@ -632,21 +632,15 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := deployment.ValidateProgramTarget(target, receipt); err != nil {
 			return failInvalid(err.Error())
 		}
-		toolset, err := s.buildPolicy.ResolveToolset(
-			target,
-			receipt.DependencyIndex.PackageManager,
-		)
-		if err != nil {
-			return fmt.Errorf("resolve deployment dependency toolset: %w", err)
-		}
-		dependencyToolsDigest, err := deployment.DependencyToolsDigest(toolset)
-		if err != nil {
-			return fmt.Errorf("digest deployment dependency toolset: %w", err)
-		}
-		if receipt.DependencyIndex.DependencyToolsDigest != dependencyToolsDigest {
-			return failInvalid(
-				"program receipt dependency toolset does not match the deployment build target",
-			)
+		if err := validateManagerAuthority(
+			r.Context(),
+			s.managerStore,
+			receipt.DependencyPlan,
+		); err != nil {
+			if errors.Is(err, errManagerAuthorityMismatch) {
+				return failInvalid(err.Error())
+			}
+			return fmt.Errorf("validate package manager authority: %w", err)
 		}
 		casObjects, err := deployment.ValidateBuildResult(request.Result)
 		if err != nil {
@@ -907,6 +901,36 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+var errManagerAuthorityMismatch = errors.New(
+	"dependency plan package manager does not match fixed authority",
+)
+
+func validateManagerAuthority(
+	ctx context.Context,
+	store ManagerResolver,
+	plan deployment.DependencyPlan,
+) error {
+	if store == nil {
+		return errors.New("manager store is required")
+	}
+	selector := deployment.NewManagerSelector(
+		plan.PackageManager,
+		plan.Architecture,
+	)
+	capsule, err := store.Resolve(ctx, selector)
+	if err != nil {
+		return err
+	}
+	digest, err := deployment.ManagerCapsuleDigest(capsule)
+	if err != nil {
+		return fmt.Errorf("digest manager capsule: %w", err)
+	}
+	if digest != plan.ManagerCapsuleDigest {
+		return errManagerAuthorityMismatch
+	}
+	return nil
 }
 
 func parseDeploymentBuildLeaseIDs(lease api.WorkerDeploymentBuildLease) (pgtype.UUID, pgtype.UUID, pgtype.UUID, pgtype.UUID, error) {

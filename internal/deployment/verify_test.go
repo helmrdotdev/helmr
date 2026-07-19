@@ -756,9 +756,14 @@ func newMinimalProgramPair(t *testing.T, rootManifest string) *testProgramPair {
 	if err != nil {
 		t.Fatal(err)
 	}
+	planRaw, planDigest := dependencyPlanForTest(
+		t,
+		runtimeDigest,
+		ArchitectureX8664,
+	)
 	dependencyRaw, err := CanonicalDependencyIndex(DependencyIndex{
-		FormatVersion:         DependencyIndexFormatVersion,
-		DependencyToolsDigest: testDigest("dependency tools"),
+		FormatVersion:        DependencyIndexFormatVersion,
+		DependencyPlanDigest: planDigest,
 		PackageManager: PackageManager{
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
@@ -826,6 +831,7 @@ func newMinimalProgramPair(t *testing.T, rootManifest string) *testProgramPair {
 	dependencies.addDirectory(".helmr")
 	dependencies.addDirectory(".helmr/views")
 	dependencies.addFile(".helmr/dependencies.json", dependencyRaw, 0644)
+	dependencies.addFile(".helmr/dependency-plan.json", planRaw, 0644)
 	dependencies.addFile(".helmr/package-graph.json", graphRaw, 0644)
 
 	return &testProgramPair{
@@ -930,9 +936,14 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 	if err != nil {
 		t.Fatal(err)
 	}
+	planRaw, planDigest := dependencyPlanForTest(
+		t,
+		runtimeDigest,
+		ArchitectureX8664,
+	)
 	dependencyRaw, err := CanonicalDependencyIndex(DependencyIndex{
-		FormatVersion:         DependencyIndexFormatVersion,
-		DependencyToolsDigest: testDigest("dependency tools"),
+		FormatVersion:        DependencyIndexFormatVersion,
+		DependencyPlanDigest: planDigest,
 		PackageManager: PackageManager{
 			Name:    PackageManagerBun,
 			Version: "1.3.10",
@@ -1029,6 +1040,7 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 		dependencies.addDirectory(directory)
 	}
 	dependencies.addFile(".helmr/dependencies.json", dependencyRaw, 0644)
+	dependencies.addFile(".helmr/dependency-plan.json", planRaw, 0644)
 	dependencies.addFile(".helmr/package-graph.json", graphRaw, 0644)
 	dependencies.addFile(registryPath+"/package.json", registryManifest, 0644)
 	dependencies.addFile(registryPath+"/bin/cli.js", []byte("export {}\n"), 0755)
@@ -1081,6 +1093,25 @@ func newCompleteProgramPair(t *testing.T) *testProgramPair {
 		code:         code,
 		dependencies: dependencies,
 	}
+}
+
+func dependencyPlanForTest(
+	t *testing.T,
+	runtimeDigest string,
+	architecture RuntimeArchitecture,
+) ([]byte, string) {
+	t.Helper()
+	plan := dependencyPlanFixture(t, PackageManagerBun, architecture)
+	plan.ManagedRuntimeDigest = runtimeDigest
+	raw, err := CanonicalDependencyPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := DependencyPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return raw, digest
 }
 
 func exactTestFilesystem() artifactFilesystem {

@@ -97,6 +97,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	}
 	t.Setenv("HELMR_BUILD_POLICY_PATH", buildPolicyPath)
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-smoke-runtime")
+	t.Setenv("HELMR_MANAGER_STORE_URI", "s3://helmr-smoke-managers")
 	originalBuildPolicyLoader := loadControlBuildPolicy
 	loadControlBuildPolicy = func(string) (*deployment.BuildPolicy, error) {
 		return deployment.ParseBuildPolicy([]byte(buildPolicy))

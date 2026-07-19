@@ -49,6 +49,15 @@ func TestProgramReceiptRejectsIncompleteOrDivergentShape(t *testing.T) {
 		"dependency index package graph": func(receipt *ProgramReceipt) {
 			receipt.DependencyIndex.PackageGraphDigest = "sha256:" + strings.Repeat("d", 64)
 		},
+		"dependency plan template": func(receipt *ProgramReceipt) {
+			receipt.DependencyPlan.Limits.PIDs++
+		},
+		"dependency plan digest": func(receipt *ProgramReceipt) {
+			receipt.DependencyIndex.DependencyPlanDigest = "sha256:" + strings.Repeat("d", 64)
+		},
+		"dependency plan runtime": func(receipt *ProgramReceipt) {
+			receipt.DependencyPlan.ManagedRuntimeDigest = "sha256:" + strings.Repeat("d", 64)
+		},
 		"index": func(receipt *ProgramReceipt) {
 			receipt.Index.RuntimeAPIVersion = "helmr.runtime.v1"
 		},
@@ -102,12 +111,16 @@ func TestProgramReceiptParserReturnsDefensiveDeclarations(t *testing.T) {
 		t.Fatal(err)
 	}
 	receipt.Index.Declarations[0].Slots[0] = DeclarationSlotSchema
+	receipt.DependencyPlan.Resolution.Argv[0] = "/bin/other"
 	again, err := ParseProgramReceipt(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if again.Index.Declarations[0].Slots[0] != DeclarationSlotHandler {
 		t.Fatal("parsed receipt retained caller mutation")
+	}
+	if again.DependencyPlan.Resolution.Argv[0] != managerBunEntrypoint {
+		t.Fatal("parsed receipt retained caller plan mutation")
 	}
 }
 
@@ -132,12 +145,16 @@ func TestProgramVerificationRoundTrip(t *testing.T) {
 		t.Fatalf("reencoded verification = %q, want %q", reencoded, canonical)
 	}
 	verified.Index.Declarations[0].Slots[0] = DeclarationSlotSchema
+	verified.DependencyPlan.Resolution.Argv[0] = "/bin/other"
 	again, err := parseProgramVerification(canonical)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if again.Index.Declarations[0].Slots[0] != DeclarationSlotHandler {
 		t.Fatal("parsed verification retained caller mutation")
+	}
+	if again.DependencyPlan.Resolution.Argv[0] != managerBunEntrypoint {
+		t.Fatal("parsed verification retained caller plan mutation")
 	}
 }
 
@@ -150,6 +167,15 @@ func TestProgramVerificationRejectsDivergentIndexes(t *testing.T) {
 	if _, err := canonicalProgramVerification(verified); err == nil {
 		t.Fatal("canonicalProgramVerification accepted divergent package graph identity")
 	}
+
+	verified, err = parseProgramVerification(canonicalVerifierProgramVerification(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified.DependencyIndex.DependencyPlanDigest = "sha256:" + strings.Repeat("d", 64)
+	if _, err := canonicalProgramVerification(verified); err == nil {
+		t.Fatal("canonicalProgramVerification accepted divergent dependency plan identity")
+	}
 }
 
 func testProgramReceipt(t *testing.T) ProgramReceipt {
@@ -161,6 +187,7 @@ func testProgramReceipt(t *testing.T) ProgramReceipt {
 	dependencies := verified.Index.Dependencies
 	return ProgramReceipt{
 		FormatVersion:   ProgramReceiptFormatVersion,
+		DependencyPlan:  verified.DependencyPlan,
 		DependencyIndex: verified.DependencyIndex,
 		Code: ProgramDescriptor{
 			Digest:    "sha256:" + strings.Repeat("c", 64),

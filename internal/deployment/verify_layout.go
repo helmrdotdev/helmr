@@ -49,7 +49,11 @@ func (verifier *pairVerifier) verifyLayouts() error {
 			return fmt.Errorf("dependency layout: %w", err)
 		}
 	}
-	for _, required := range []string{".helmr/dependencies.json", ".helmr/package-graph.json"} {
+	for _, required := range []string{
+		".helmr/dependencies.json",
+		".helmr/dependency-plan.json",
+		".helmr/package-graph.json",
+	} {
 		if _, err := verifier.deps.require(required, artifactEntryRegular); err != nil {
 			return fmt.Errorf("dependency layout: %w", err)
 		}
@@ -152,7 +156,8 @@ func (verifier *pairVerifier) verifyCodePath(
 
 func (verifier *pairVerifier) verifyDependencyPath(entry artifactEntry) error {
 	switch entry.Path {
-	case ".", ".helmr", ".helmr/views", ".helmr/dependencies.json", ".helmr/package-graph.json":
+	case ".", ".helmr", ".helmr/views", ".helmr/dependencies.json",
+		".helmr/dependency-plan.json", ".helmr/package-graph.json":
 		return nil
 	}
 	if _, exists := verifier.depLinks[entry.Path]; exists {

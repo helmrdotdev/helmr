@@ -245,11 +245,22 @@ func canonicalVerifierProgramVerification(t *testing.T) []byte {
 	if err := json.Unmarshal(canonicalVerifierProgramIndex(t), &index); err != nil {
 		t.Fatal(err)
 	}
+	plan := dependencyPlanFixture(
+		t,
+		PackageManagerBun,
+		index.Architecture,
+	)
+	plan.ManagedRuntimeDigest = index.RuntimeDigest
+	planDigest, err := DependencyPlanDigest(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
 	canonical, err := canonicalProgramVerification(programVerification{
-		FormatVersion: ProgramReceiptFormatVersion,
+		FormatVersion:  ProgramReceiptFormatVersion,
+		DependencyPlan: plan,
 		DependencyIndex: DependencyIndex{
-			FormatVersion:         DependencyIndexFormatVersion,
-			DependencyToolsDigest: "sha256:" + strings.Repeat("4", 64),
+			FormatVersion:        DependencyIndexFormatVersion,
+			DependencyPlanDigest: planDigest,
 			PackageManager: PackageManager{
 				Name:    PackageManagerBun,
 				Version: "1.3.10",

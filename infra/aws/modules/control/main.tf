@@ -87,6 +87,7 @@ locals {
     HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
     HELMR_BUILD_POLICY_PATH      = "/release/build-policy.json"
     HELMR_RUNTIME_STORE_URI      = var.runtime_store_uri
+    HELMR_MANAGER_STORE_URI      = var.manager_store_uri
     HELMR_PUBLIC_URL             = local.control_url
     HELMR_REDIS_URL              = local.redis_url
     HELMR_SCHEDULE_JITTER        = var.schedule_jitter
@@ -187,6 +188,8 @@ resource "terraform_data" "bootstrap_preconditions" {
     worker_fleets                     = var.worker_fleets
     runtime_store_uri                 = var.runtime_store_uri
     runtime_store_bucket_arn          = var.runtime_store_bucket_arn
+    manager_store_uri                 = var.manager_store_uri
+    manager_store_bucket_arn          = var.manager_store_bucket_arn
   }
 
   lifecycle {
@@ -208,6 +211,19 @@ resource "terraform_data" "bootstrap_preconditions" {
     precondition {
       condition     = var.runtime_store_bucket_arn != aws_s3_bucket.cas.arn
       error_message = "runtime_store_bucket_arn must identify the dedicated bootstrap store, not the mutable Control CAS bucket."
+    }
+
+    precondition {
+      condition     = var.manager_store_uri == "s3://${trimprefix(var.manager_store_bucket_arn, "arn:${data.aws_partition.current.partition}:s3:::")}"
+      error_message = "manager_store_uri must identify the bucket supplied by manager_store_bucket_arn without a prefix."
+    }
+
+    precondition {
+      condition = (
+        var.manager_store_bucket_arn != aws_s3_bucket.cas.arn &&
+        var.manager_store_bucket_arn != var.runtime_store_bucket_arn
+      )
+      error_message = "manager_store_bucket_arn must identify a dedicated authority bucket."
     }
 
     precondition {
@@ -1059,6 +1075,27 @@ resource "aws_iam_role_policy" "control_task" {
         Effect   = "Allow"
         Action   = ["kms:Decrypt"]
         Resource = var.runtime_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Sid    = "ReadManagerAuthority"
+        Effect = "Allow"
+        Action = ["s3:GetObject"]
+        Resource = [
+          "${var.manager_store_bucket_arn}/v0/claims/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/capsules/sha256/*",
+          "${var.manager_store_bucket_arn}/v0/trees/sha256/*"
+        ]
+      },
+      {
+        Sid      = "DecryptManagerAuthority"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.manager_store_kms_key_arn
         Condition = {
           StringEquals = {
             "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"

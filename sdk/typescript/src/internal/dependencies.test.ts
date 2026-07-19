@@ -96,8 +96,8 @@ describe("deployment dependency index", async () => {
         case "local_manifests_digest":
           value["localManifestsDigest"] = "sha256:invalid"
           break
-        case "dependency_tools_digest":
-          value["dependencyToolsDigest"] = "sha256:invalid"
+        case "dependency_plan_digest":
+          value["dependencyPlanDigest"] = "sha256:invalid"
           break
         case "package_graph_digest":
           value["packageGraphDigest"] = "sha256:invalid"
@@ -131,7 +131,7 @@ describe("deployment dependency index", async () => {
   test("rejects every missing or null root and nested member", () => {
     const rootMembers = [
       "architecture",
-      "dependencyToolsDigest",
+      "dependencyPlanDigest",
       "formatVersion",
       "localManifestsDigest",
       "lockfile",
@@ -238,8 +238,8 @@ describe("deployment dependency index", async () => {
         case "invalid_local_manifests_digest":
           input.localManifestsDigest = "sha256:invalid"
           break
-        case "invalid_dependency_tools_digest":
-          input.dependencyToolsDigest = "sha256:invalid"
+        case "invalid_dependency_plan_digest":
+          input.dependencyPlanDigest = "sha256:invalid"
           break
         case "invalid_materializer_version":
           input.materializerVersion = "helmr.dependencies.v1"
@@ -267,8 +267,8 @@ describe("deployment dependency index", async () => {
       architecture: (input) => {
         input.architecture = "aarch64"
       },
-      dependencyTools: (input) => {
-        input.dependencyToolsDigest = `sha256:${"8".repeat(64)}`
+      dependencyPlan: (input) => {
+        input.dependencyPlanDigest = `sha256:${"8".repeat(64)}`
       },
       localManifests: (input) => {
         input.localManifestsDigest = `sha256:${"5".repeat(64)}`
@@ -300,7 +300,7 @@ describe("deployment dependency index", async () => {
 
 type MutableDependencyIndex = {
   formatVersion: number
-  dependencyToolsDigest: string
+  dependencyPlanDigest: string
   packageManager: { name: string; version: string }
   lockfile: { name: string; digest: string }
   localManifestsDigest: string
@@ -313,7 +313,7 @@ type MutableDependencyIndex = {
 
 type MutableDependencyCacheInput = {
   formatVersion: number
-  dependencyToolsDigest: string
+  dependencyPlanDigest: string
   packageManager: { name: string; version: string }
   lockfile: { name: string; digest: string }
   localManifestsDigest: string

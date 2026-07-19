@@ -37,6 +37,12 @@ func newDeploymentTestServer(store *fakeStore, casStore cas.Store) *Server {
 		runtimeStore: &fakeCAS{object: cas.Object{
 			Digest: descriptor.Digest, SizeBytes: descriptor.SizeBytes, MediaType: descriptor.MediaType,
 		}},
+		managerStore: managerResolverFunc(func(
+			context.Context,
+			deployment.ManagerSelector,
+		) (deployment.ManagerCapsule, error) {
+			return controlManagerCapsule(), nil
+		}),
 		workerGroupID:   "us-east-1-worker-group-1",
 		defaultRegionID: "us-east-1",
 		log:             slog.New(slog.NewTextHandler(io.Discard, nil)),

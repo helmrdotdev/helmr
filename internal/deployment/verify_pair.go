@@ -13,6 +13,7 @@ type pairVerifier struct {
 	code            *inspectedArtifact
 	deps            *inspectedArtifact
 	index           ProgramIndex
+	dependencyPlan  DependencyPlan
 	dependencyIndex DependencyIndex
 	graph           PackageGraph
 	modules         ModuleMap
@@ -93,6 +94,25 @@ func (verifier *pairVerifier) readDocuments() error {
 	verifier.dependencyIndex, err = ParseDependencyIndex(dependencyRaw)
 	if err != nil {
 		return fmt.Errorf("dependency index: %w", err)
+	}
+
+	planRaw, err := verifier.deps.read(
+		verifier.ctx,
+		".helmr/dependency-plan.json",
+		maxDependencyPlanBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("dependency plan: %w", err)
+	}
+	verifier.dependencyPlan, err = ParseDependencyPlan(planRaw)
+	if err != nil {
+		return fmt.Errorf("dependency plan: %w", err)
+	}
+	if err := validateDependencyPlanIndex(
+		verifier.dependencyPlan,
+		verifier.dependencyIndex,
+	); err != nil {
+		return err
 	}
 	if verifier.index.RuntimeDigest != verifier.dependencyIndex.RuntimeDigest ||
 		verifier.index.Architecture != verifier.dependencyIndex.Architecture {

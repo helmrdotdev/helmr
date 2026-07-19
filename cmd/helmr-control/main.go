@@ -247,9 +247,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.RuntimeStoreURI); err != nil {
 		return fmt.Errorf("validate managed runtime store: %w", err)
 	}
+	if err := cas.ValidateDistinctS3Stores(cfg.CASURI, cfg.ManagerStoreURI); err != nil {
+		return fmt.Errorf("validate manager store: %w", err)
+	}
+	if err := cas.ValidateDistinctS3Stores(
+		cfg.RuntimeStoreURI,
+		cfg.ManagerStoreURI,
+	); err != nil {
+		return fmt.Errorf("validate manager and managed runtime stores: %w", err)
+	}
 	runtimeStore, err := cas.NewImmutableS3(ctx, cfg.RuntimeStoreURI)
 	if err != nil {
 		return fmt.Errorf("configure managed runtime store: %w", err)
+	}
+	managerStore, err := deployment.NewManagerS3(ctx, cfg.ManagerStoreURI)
+	if err != nil {
+		return fmt.Errorf("configure manager store: %w", err)
 	}
 	var authProvider control.AuthProvider
 	if cfg.GitHubOAuthClientID != "" && cfg.GitHubOAuthClientSecret != "" {
@@ -268,6 +281,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		CAS:                   casStore,
 		BuildPolicy:           buildPolicy,
 		RuntimeStore:          runtimeStore,
+		ManagerStore:          managerStore,
 		Secrets:               secretStore,
 		RunEnqueuer:           runEnqueuer,
 		PreparedRuntimeSupply: preparedRuntimeSupply,

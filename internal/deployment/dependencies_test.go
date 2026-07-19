@@ -66,8 +66,8 @@ func TestDependencyIndexRejectsSharedMutations(t *testing.T) {
 				lockfile["digest"] = "sha256:invalid"
 			case "local_manifests_digest":
 				value["localManifestsDigest"] = "sha256:invalid"
-			case "dependency_tools_digest":
-				value["dependencyToolsDigest"] = "sha256:invalid"
+			case "dependency_plan_digest":
+				value["dependencyPlanDigest"] = "sha256:invalid"
 			case "package_graph_digest":
 				value["packageGraphDigest"] = "sha256:invalid"
 			case "package_graph_size_zero":
@@ -106,7 +106,7 @@ func TestDependencyIndexRejectsMissingAndNullMembers(t *testing.T) {
 	if err := json.Unmarshal([]byte(fixture.DependencyIndex.Canonical), &base); err != nil {
 		t.Fatal(err)
 	}
-	for _, member := range []string{"architecture", "dependencyToolsDigest", "formatVersion", "localManifestsDigest", "lockfile", "materializerVersion", "packageGraphDigest", "packageGraphSizeBytes", "packageManager", "runtimeDigest"} {
+	for _, member := range []string{"architecture", "dependencyPlanDigest", "formatVersion", "localManifestsDigest", "lockfile", "materializerVersion", "packageGraphDigest", "packageGraphSizeBytes", "packageManager", "runtimeDigest"} {
 		for _, mode := range []string{"missing", "null"} {
 			t.Run(mode+"_root_"+member, func(t *testing.T) {
 				value := cloneJSONMap(t, base)
@@ -240,8 +240,8 @@ func TestDependencyCacheInputRejectsSharedMutations(t *testing.T) {
 				input.Lockfile.Digest = "sha256:invalid"
 			case "invalid_local_manifests_digest":
 				input.LocalManifestsDigest = "sha256:invalid"
-			case "invalid_dependency_tools_digest":
-				input.DependencyToolsDigest = "sha256:invalid"
+			case "invalid_dependency_plan_digest":
+				input.DependencyPlanDigest = "sha256:invalid"
 			case "invalid_materializer_version":
 				input.MaterializerVersion = "helmr.dependencies.v1"
 			case "invalid_runtime_digest":
@@ -272,8 +272,8 @@ func TestDependencyCacheKeyBindsEveryInput(t *testing.T) {
 		"architecture": func(input *DependencyCacheInput) {
 			input.Architecture = ArchitectureAArch64
 		},
-		"dependency tools": func(input *DependencyCacheInput) {
-			input.DependencyToolsDigest = "sha256:" + strings.Repeat("8", 64)
+		"dependency plan": func(input *DependencyCacheInput) {
+			input.DependencyPlanDigest = "sha256:" + strings.Repeat("8", 64)
 		},
 		"local manifests": func(input *DependencyCacheInput) {
 			input.LocalManifestsDigest = "sha256:" + strings.Repeat("5", 64)

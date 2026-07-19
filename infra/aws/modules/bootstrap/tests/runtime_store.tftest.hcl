@@ -26,6 +26,13 @@ override_resource {
   }
 }
 
+override_resource {
+  target = aws_kms_key.manager_store
+  values = {
+    arn = "arn:aws:kms:us-east-1:000000000000:key/00000000-0000-0000-0000-000000000003"
+  }
+}
+
 variables {
   name = "helmr-test"
   runtime_provisioner_principal_arns = [
@@ -61,6 +68,46 @@ run "runtime_store_is_versioned_non_expiring_and_separate" {
       output.runtime_store_kms_key_arn == aws_kms_key.runtime_store.arn
     )
     error_message = "bootstrap outputs must expose the fixed /objects URI and its physical bucket/KMS authority."
+  }
+}
+
+run "manager_store_is_dedicated_versioned_and_create_only" {
+  command = apply
+
+  assert {
+    condition = (
+      aws_s3_bucket.manager_store.bucket != aws_s3_bucket.runtime_store.bucket &&
+      aws_s3_bucket.manager_store.bucket != aws_s3_bucket.source_artifacts.bucket &&
+      aws_kms_key.manager_store.arn != aws_kms_key.runtime_store.arn &&
+      aws_kms_key.manager_store.arn != aws_kms_key.source_artifacts.arn
+    )
+    error_message = "package-manager authority requires a dedicated S3 and KMS boundary."
+  }
+
+  assert {
+    condition     = aws_s3_bucket_versioning.manager_store.versioning_configuration[0].status == "Enabled"
+    error_message = "package-manager authority store must have versioning enabled."
+  }
+
+  assert {
+    condition = (
+      output.manager_store_uri == "s3://${aws_s3_bucket.manager_store.bucket}" &&
+      output.manager_store_bucket_arn == aws_s3_bucket.manager_store.arn &&
+      output.manager_store_kms_key_arn == aws_kms_key.manager_store.arn
+    )
+    error_message = "bootstrap outputs must expose the package-manager store URI and physical authority."
+  }
+
+  assert {
+    condition = (
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerWritesOutsideNamespace") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyUnconditionalManagerWrites") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerCopies") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "DenyManagerMutation") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "s3:if-none-match") &&
+      strcontains(aws_s3_bucket_policy.manager_store.policy, "s3:ObjectCreationOperation")
+    )
+    error_message = "package-manager bucket policy must enforce immutable conditional creation."
   }
 }
 

@@ -174,6 +174,7 @@ func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) 
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
 		FormatVersion:   ProgramReceiptFormatVersion,
+		DependencyPlan:  verified.DependencyPlan(),
 		DependencyIndex: verified.DependencyIndex(),
 		Index:           verified.Index(),
 	})

@@ -39,6 +39,7 @@ type Control struct {
 	CASURI                  string
 	BuildPolicyPath         string
 	RuntimeStoreURI         string
+	ManagerStoreURI         string
 	WorkerTokenSigningKey   string
 	WorkerGroupsJSON        string
 	SetupToken              string

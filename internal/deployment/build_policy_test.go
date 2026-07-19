@@ -71,8 +71,13 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	receipt.DependencyIndex.Architecture = runtime.Architecture
 	receipt.DependencyIndex.PackageManager = registry.toolsets[0].PackageManager
 	receipt.DependencyIndex.MaterializerVersion = target.MaterializerVersion
-	receipt.DependencyIndex.DependencyToolsDigest, err = DependencyToolsDigest(
-		registry.toolsets[0],
+	receipt.DependencyPlan.ManagedRuntimeDigest = runtime.Digest
+	receipt.DependencyPlan.Architecture = runtime.Architecture
+	receipt.DependencyPlan.PackageManager = receipt.DependencyIndex.PackageManager
+	receipt.DependencyPlan.MaterializerVersion = target.MaterializerVersion
+	receipt.DependencyPlan.StandardToolchainDigest = toolchainDigest
+	receipt.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
+		receipt.DependencyPlan,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -84,24 +89,38 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	wrongRuntime := cloneProgramReceipt(receipt)
 	wrongRuntime.Index.RuntimeDigest = "sha256:" + strings.Repeat("b", 64)
 	wrongRuntime.DependencyIndex.RuntimeDigest = wrongRuntime.Index.RuntimeDigest
+	wrongRuntime.DependencyPlan.ManagedRuntimeDigest = wrongRuntime.Index.RuntimeDigest
+	wrongRuntime.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
+		wrongRuntime.DependencyPlan,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidateProgramTarget(target, wrongRuntime); err == nil {
 		t.Fatal("ValidateProgramTarget accepted another runtime")
 	}
 	wrongManager := cloneProgramReceipt(receipt)
 	wrongManager.DependencyIndex.PackageManager.Version = "1.3.11"
+	wrongManager.DependencyPlan.PackageManager.Version = "1.3.11"
+	wrongManager.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
+		wrongManager.DependencyPlan,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := ValidateProgramTarget(target, wrongManager); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := policy.ResolveToolset(
-		target,
-		wrongManager.DependencyIndex.PackageManager,
-	); err == nil {
-		t.Fatal("ResolveToolset accepted an unregistered package manager")
-	}
-	wrongToolset := cloneProgramReceipt(receipt)
-	wrongToolset.DependencyIndex.DependencyToolsDigest = "sha256:" + strings.Repeat("c", 64)
-	if err := ValidateProgramTarget(target, wrongToolset); err != nil {
+	wrongToolchain := cloneProgramReceipt(receipt)
+	wrongToolchain.DependencyPlan.StandardToolchainDigest = "sha256:" + strings.Repeat("c", 64)
+	wrongToolchain.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
+		wrongToolchain.DependencyPlan,
+	)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := ValidateProgramTarget(target, wrongToolchain); err == nil {
+		t.Fatal("ValidateProgramTarget accepted another standard toolchain")
 	}
 }
 

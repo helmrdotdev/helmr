@@ -23,7 +23,7 @@ const (
 	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
 	maxJSONSafeInteger                 int64 = 9007199254740991
 	maxProgramFileSizeBytes            int64 = 16777216
-	maxProgramReceiptSizeBytes               = 17825792
+	maxProgramReceiptSizeBytes               = 17891328
 	ArchitectureAArch64                      = RuntimeArchitecture("aarch64")
 	ArchitectureX8664                        = RuntimeArchitecture("x86_64")
 	DeclarationKindTask                      = DeclarationKind("task")
@@ -75,12 +75,14 @@ type ProgramReceipt struct {
 	FormatVersion   int               `json:"formatVersion"`
 	Code            ProgramDescriptor `json:"code"`
 	Dependencies    ProgramDescriptor `json:"dependencies"`
+	DependencyPlan  DependencyPlan    `json:"dependencyPlan"`
 	DependencyIndex DependencyIndex   `json:"dependencyIndex"`
 	Index           ProgramIndex      `json:"index"`
 }
 
 type programVerification struct {
 	FormatVersion   int             `json:"formatVersion"`
+	DependencyPlan  DependencyPlan  `json:"dependencyPlan"`
 	DependencyIndex DependencyIndex `json:"dependencyIndex"`
 	Index           ProgramIndex    `json:"index"`
 }
@@ -175,6 +177,15 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 	if err := ValidateDependencyIndex(receipt.DependencyIndex); err != nil {
 		return fmt.Errorf("program receipt dependencyIndex: %w", err)
 	}
+	if err := ValidateDependencyPlan(receipt.DependencyPlan); err != nil {
+		return fmt.Errorf("program receipt dependencyPlan: %w", err)
+	}
+	if err := validateDependencyPlanIndex(
+		receipt.DependencyPlan,
+		receipt.DependencyIndex,
+	); err != nil {
+		return fmt.Errorf("program receipt: %w", err)
+	}
 	if receipt.Index.Dependencies != receipt.Dependencies {
 		return fmt.Errorf(
 			"program receipt index dependency descriptor does not match dependencies",
@@ -214,8 +225,19 @@ func validateProgramDescriptor(
 }
 
 func cloneProgramReceipt(receipt ProgramReceipt) ProgramReceipt {
+	receipt.DependencyPlan = cloneDependencyPlan(receipt.DependencyPlan)
 	receipt.Index = cloneReceiptProgramIndex(receipt.Index)
 	return receipt
+}
+
+func cloneDependencyPlan(plan DependencyPlan) DependencyPlan {
+	plan.Aliases = append([]PlanAlias(nil), plan.Aliases...)
+	plan.Environment = append([]PlanEnvironment(nil), plan.Environment...)
+	plan.Handshake.Argv = append([]string(nil), plan.Handshake.Argv...)
+	plan.Lifecycle.Argv = append([]string(nil), plan.Lifecycle.Argv...)
+	plan.Probe.Argv = append([]string(nil), plan.Probe.Argv...)
+	plan.Resolution.Argv = append([]string(nil), plan.Resolution.Argv...)
+	return plan
 }
 
 func parseProgramVerification(raw []byte) (programVerification, error) {
@@ -253,6 +275,7 @@ func parseProgramVerification(raw []byte) (programVerification, error) {
 			"program verification does not match the complete canonical v0 shape",
 		)
 	}
+	verified.DependencyPlan = cloneDependencyPlan(verified.DependencyPlan)
 	verified.Index = cloneReceiptProgramIndex(verified.Index)
 	return verified, nil
 }
@@ -292,7 +315,34 @@ func validateProgramVerification(verified programVerification) error {
 	if err := ValidateDependencyIndex(verified.DependencyIndex); err != nil {
 		return fmt.Errorf("program verification dependencyIndex: %w", err)
 	}
+	if err := ValidateDependencyPlan(verified.DependencyPlan); err != nil {
+		return fmt.Errorf("program verification dependencyPlan: %w", err)
+	}
+	if err := validateDependencyPlanIndex(
+		verified.DependencyPlan,
+		verified.DependencyIndex,
+	); err != nil {
+		return fmt.Errorf("program verification: %w", err)
+	}
 	return validateProgramIndexes(verified.Index, verified.DependencyIndex)
+}
+
+func validateDependencyPlanIndex(
+	plan DependencyPlan,
+	index DependencyIndex,
+) error {
+	digest, err := DependencyPlanDigest(plan)
+	if err != nil {
+		return err
+	}
+	if index.DependencyPlanDigest != digest ||
+		plan.PackageManager != index.PackageManager ||
+		plan.ManagedRuntimeDigest != index.RuntimeDigest ||
+		plan.Architecture != index.Architecture ||
+		plan.MaterializerVersion != index.MaterializerVersion {
+		return errors.New("dependency plan does not match dependency index inputs")
+	}
+	return nil
 }
 
 func validateProgramIndexes(index ProgramIndex, dependencies DependencyIndex) error {

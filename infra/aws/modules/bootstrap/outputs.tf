@@ -48,6 +48,21 @@ output "runtime_rollout_orchestrator_role_arn" {
   value       = aws_iam_role.runtime_rollout_orchestrator.arn
 }
 
+output "manager_store_uri" {
+  description = "Immutable package-manager authority store URI."
+  value       = "s3://${aws_s3_bucket.manager_store.bucket}"
+}
+
+output "manager_store_bucket_arn" {
+  description = "S3 bucket ARN for the package-manager authority store."
+  value       = aws_s3_bucket.manager_store.arn
+}
+
+output "manager_store_kms_key_arn" {
+  description = "KMS key ARN for the package-manager authority store."
+  value       = aws_kms_key.manager_store.arn
+}
+
 output "retained_cas_uri" {
   description = "Retained deployment Artifact CAS URI."
   value       = "s3://${aws_s3_bucket.retained_cas.bucket}"

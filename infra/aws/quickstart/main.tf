@@ -205,6 +205,9 @@ module "control" {
   runtime_store_uri                      = var.runtime_store_uri
   runtime_store_bucket_arn               = var.runtime_store_bucket_arn
   runtime_store_kms_key_arn              = var.runtime_store_kms_key_arn
+  manager_store_uri                      = var.manager_store_uri
+  manager_store_bucket_arn               = var.manager_store_bucket_arn
+  manager_store_kms_key_arn              = var.manager_store_kms_key_arn
   build_policy_digest                    = var.build_policy_digest
   control_desired_count                  = var.control_desired_count
   dispatcher_desired_count               = var.dispatcher_desired_count
