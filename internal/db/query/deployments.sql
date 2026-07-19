@@ -636,6 +636,33 @@ SELECT locked_lease.*,
     ON locked_deployment.org_id = locked_lease.org_id
    AND locked_deployment.id = locked_lease.deployment_id;
 
+-- name: LockDeploymentBuildWorkerCertification :one
+WITH locked_group AS MATERIALIZED (
+    SELECT worker_groups.id
+      FROM worker_groups
+     WHERE worker_groups.id = sqlc.arg(worker_group_id)
+       AND worker_groups.state IN ('active', 'draining')
+       AND worker_groups.allows_build
+     FOR UPDATE
+)
+SELECT worker_instances.*,
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi,
+       runtime_identities.runtime_arch
+  FROM worker_instances
+  JOIN locked_group
+    ON locked_group.id = worker_instances.worker_group_id
+  LEFT JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+ WHERE worker_instances.id = sqlc.arg(worker_instance_id)
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)::bigint
+   AND worker_instances.protocol_version = sqlc.arg(worker_protocol_version)
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.certified_at IS NOT NULL
+   AND worker_instances.supports_build
+   AND worker_instances.tool_registry_digest = sqlc.arg(tool_registry_digest)::bytea
+ FOR UPDATE OF worker_instances;
+
 -- name: GetDeploymentBuildTerminalResult :one
 SELECT state, terminal_request_fingerprint
   FROM deployment_build_leases

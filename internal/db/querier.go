@@ -332,6 +332,7 @@ type Querier interface {
 	LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error)
 	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
+	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)

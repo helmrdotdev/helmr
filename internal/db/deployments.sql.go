@@ -3357,6 +3357,157 @@ func (q *Queries) LockDeploymentBuildTerminalFence(ctx context.Context, arg Lock
 	return i, err
 }
 
+const lockDeploymentBuildWorkerCertification = `-- name: LockDeploymentBuildWorkerCertification :one
+WITH locked_group AS MATERIALIZED (
+    SELECT worker_groups.id
+      FROM worker_groups
+     WHERE worker_groups.id = $5
+       AND worker_groups.state IN ('active', 'draining')
+       AND worker_groups.allows_build
+     FOR UPDATE
+)
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.tool_registry_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi,
+       runtime_identities.runtime_arch
+  FROM worker_instances
+  JOIN locked_group
+    ON locked_group.id = worker_instances.worker_group_id
+  LEFT JOIN runtime_identities
+    ON runtime_identities.id = worker_instances.runtime_identity_id
+ WHERE worker_instances.id = $1
+   AND worker_instances.current_epoch = $2::bigint
+   AND worker_instances.protocol_version = $3
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.certified_at IS NOT NULL
+   AND worker_instances.supports_build
+   AND worker_instances.tool_registry_digest = $4::bytea
+ FOR UPDATE OF worker_instances
+`
+
+type LockDeploymentBuildWorkerCertificationParams struct {
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+	ToolRegistryDigest    []byte      `json:"tool_registry_digest"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+}
+
+type LockDeploymentBuildWorkerCertificationRow struct {
+	ID                          pgtype.UUID         `json:"id"`
+	ResourceID                  string              `json:"resource_id"`
+	WorkerGroupID               string              `json:"worker_group_id"`
+	AttestationFingerprint      string              `json:"attestation_fingerprint"`
+	State                       WorkerInstanceState `json:"state"`
+	ClaimVersion                int64               `json:"claim_version"`
+	CurrentEpoch                pgtype.Int8         `json:"current_epoch"`
+	CurrentServiceID            pgtype.UUID         `json:"current_service_id"`
+	ProtocolVersion             string              `json:"protocol_version"`
+	SupervisorVersion           string              `json:"supervisor_version"`
+	SupportsRun                 bool                `json:"supports_run"`
+	SupportsBuild               bool                `json:"supports_build"`
+	ToolRegistryDigest          []byte              `json:"tool_registry_digest"`
+	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
+	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
+	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
+	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
+	CertifiedScratchBytes       int64               `json:"certified_scratch_bytes"`
+	CertifiedBuildCacheBytes    int64               `json:"certified_build_cache_bytes"`
+	CertifiedArtifactCacheBytes int64               `json:"certified_artifact_cache_bytes"`
+	CertifiedHugepagesBytes     int64               `json:"certified_hugepages_bytes"`
+	CertifiedCheckpointBytes    int64               `json:"certified_checkpoint_bytes"`
+	PerVmCpuMillis              int64               `json:"per_vm_cpu_millis"`
+	PerVmMemoryBytes            int64               `json:"per_vm_memory_bytes"`
+	PerVmWorkloadDiskBytes      int64               `json:"per_vm_workload_disk_bytes"`
+	PerVmScratchBytes           int64               `json:"per_vm_scratch_bytes"`
+	MaxVmSlots                  int32               `json:"max_vm_slots"`
+	MaxRunConsumers             int32               `json:"max_run_consumers"`
+	MaxBuildExecutors           int32               `json:"max_build_executors"`
+	MaxRuntimeStarts            int32               `json:"max_runtime_starts"`
+	CertificationProfile        string              `json:"certification_profile"`
+	CertificationFingerprint    string              `json:"certification_fingerprint"`
+	EpochStartedAt              pgtype.Timestamptz  `json:"epoch_started_at"`
+	StartupInventoryEpoch       pgtype.Int8         `json:"startup_inventory_epoch"`
+	StartupInventoryEvidence    []byte              `json:"startup_inventory_evidence"`
+	DrainCleanupFingerprint     pgtype.Text         `json:"drain_cleanup_fingerprint"`
+	DrainCleanupEvidence        []byte              `json:"drain_cleanup_evidence"`
+	CertifiedAt                 pgtype.Timestamptz  `json:"certified_at"`
+	ActivatedAt                 pgtype.Timestamptz  `json:"activated_at"`
+	DrainingAt                  pgtype.Timestamptz  `json:"draining_at"`
+	DisabledAt                  pgtype.Timestamptz  `json:"disabled_at"`
+	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
+	TerminationClaimedAt        pgtype.Timestamptz  `json:"termination_claimed_at"`
+	ProviderTerminatedAt        pgtype.Timestamptz  `json:"provider_terminated_at"`
+	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	RootfsDigest                pgtype.Text         `json:"rootfs_digest"`
+	RuntimeABI                  pgtype.Text         `json:"runtime_abi"`
+	RuntimeArch                 pgtype.Text         `json:"runtime_arch"`
+}
+
+func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error) {
+	row := q.db.QueryRow(ctx, lockDeploymentBuildWorkerCertification,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+		arg.ToolRegistryDigest,
+		arg.WorkerGroupID,
+	)
+	var i LockDeploymentBuildWorkerCertificationRow
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.AttestationFingerprint,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.CurrentServiceID,
+		&i.ProtocolVersion,
+		&i.SupervisorVersion,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.ToolRegistryDigest,
+		&i.RuntimeIdentityID,
+		&i.CertifiedCpuMillis,
+		&i.CertifiedMemoryBytes,
+		&i.CertifiedWorkloadDiskBytes,
+		&i.CertifiedScratchBytes,
+		&i.CertifiedBuildCacheBytes,
+		&i.CertifiedArtifactCacheBytes,
+		&i.CertifiedHugepagesBytes,
+		&i.CertifiedCheckpointBytes,
+		&i.PerVmCpuMillis,
+		&i.PerVmMemoryBytes,
+		&i.PerVmWorkloadDiskBytes,
+		&i.PerVmScratchBytes,
+		&i.MaxVmSlots,
+		&i.MaxRunConsumers,
+		&i.MaxBuildExecutors,
+		&i.MaxRuntimeStarts,
+		&i.CertificationProfile,
+		&i.CertificationFingerprint,
+		&i.EpochStartedAt,
+		&i.StartupInventoryEpoch,
+		&i.StartupInventoryEvidence,
+		&i.DrainCleanupFingerprint,
+		&i.DrainCleanupEvidence,
+		&i.CertifiedAt,
+		&i.ActivatedAt,
+		&i.DrainingAt,
+		&i.DisabledAt,
+		&i.LostAt,
+		&i.TerminationClaimedAt,
+		&i.ProviderTerminatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RootfsDigest,
+		&i.RuntimeABI,
+		&i.RuntimeArch,
+	)
+	return i, err
+}
+
 const markDeploymentFailed = `-- name: MarkDeploymentFailed :one
 UPDATE deployments
    SET status = 'failed',

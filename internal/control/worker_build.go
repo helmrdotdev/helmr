@@ -1,7 +1,6 @@
 package control
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -490,9 +489,39 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		writeError(w, errors.New("get terminal deployment build"))
 		return
 	}
+	if s.buildPolicy == nil {
+		writeError(w, unavailable(errors.New("build policy is not configured")))
+		return
+	}
+	registryDigest, err := s.buildPolicy.ToolRegistryDigest()
+	if err != nil {
+		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
+		return
+	}
+	registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
+	if err != nil {
+		writeError(w, unavailable(errors.New("build policy dependency tool registry is invalid")))
+		return
+	}
 	buildWorkerInstanceID := pgvalue.UUID(worker.WorkerInstanceID)
 	var response api.WorkerDeploymentBuildResponse
 	err = s.inTx(r.Context(), func(work *txWork) error {
+		workerState, err := work.q.LockDeploymentBuildWorkerCertification(
+			r.Context(),
+			db.LockDeploymentBuildWorkerCertificationParams{
+				WorkerGroupID:         worker.WorkerGroupID,
+				WorkerInstanceID:      buildWorkerInstanceID,
+				WorkerEpoch:           worker.WorkerEpoch,
+				WorkerProtocolVersion: worker.ProtocolVersion,
+				ToolRegistryDigest:    registryDigestBytes,
+			},
+		)
+		if isNoRows(err) {
+			return conflict(errors.New("deployment build worker certification was withdrawn"))
+		}
+		if err != nil {
+			return errors.New("lock deployment build worker certification")
+		}
 		locked, err := work.q.LockDeploymentBuildTerminalFence(r.Context(), db.LockDeploymentBuildTerminalFenceParams{
 			OrgID:                 orgID,
 			ProjectID:             projectID,
@@ -588,9 +617,6 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return errors.New("deployment build standard toolchain digest is invalid")
 		}
-		if s.buildPolicy == nil {
-			return errors.New("build policy is not configured")
-		}
 		target, err := s.buildPolicy.Resolve(
 			runtimeDigest,
 			toolchainDigest,
@@ -633,32 +659,9 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 			}
 			return fmt.Errorf("verify deployment build artifacts: %w", err)
 		}
-		workerGroupID := locked.WorkerGroupID
-		workerState, err := work.q.GetWorkerInstanceState(r.Context(), db.GetWorkerInstanceStateParams{
-			ID:            buildWorkerInstanceID,
-			WorkerGroupID: workerGroupID,
-		})
-		if isNoRows(err) {
-			return failBuild("deployment build worker instance was not found")
-		}
-		if err != nil {
-			return errors.New("get deployment build worker state")
-		}
-		if !workerState.SupportsBuild ||
-			!workerState.RuntimeArch.Valid ||
+		if !workerState.RuntimeArch.Valid ||
 			workerState.RuntimeArch.String != locked.BuildArchitecture {
-			return failBuild("deployment build worker certification does not match the deployment target")
-		}
-		registryDigest, err := s.buildPolicy.ToolRegistryDigest()
-		if err != nil {
-			return errors.New("build policy dependency tool registry is invalid")
-		}
-		registryDigestBytes, err := deployment.ToolDigestBytes(registryDigest)
-		if err != nil {
-			return errors.New("build policy dependency tool registry is invalid")
-		}
-		if !bytes.Equal(workerState.ToolRegistryDigest, registryDigestBytes) {
-			return errors.New("deployment build worker dependency tool registry is stale")
+			return conflict(errors.New("deployment build worker certification was withdrawn"))
 		}
 		casObjectByDigest := make(map[string]api.CASObject, len(casObjects))
 		for _, object := range casObjects {
