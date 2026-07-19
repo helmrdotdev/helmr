@@ -41,11 +41,20 @@ func validateManagerTreeGraph(
 	metadata ManagerMetadata,
 	graph *PackageGraph,
 ) error {
-	if request.Operation == ManagerResolve {
+	switch request.Operation {
+	case ManagerProbe:
+		if graph != nil {
+			return errors.New("manager probe response forbids an input package graph")
+		}
+		return nil
+	case ManagerResolve:
 		if graph != nil {
 			return errors.New("manager resolve response forbids an input package graph")
 		}
 		return nil
+	case ManagerLifecycle:
+	default:
+		return fmt.Errorf("manager response operation %q is unsupported", request.Operation)
 	}
 	if graph == nil {
 		return errors.New("manager lifecycle response requires the input package graph")

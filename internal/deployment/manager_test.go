@@ -11,6 +11,7 @@ import (
 	"io"
 	"iter"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -23,37 +24,35 @@ import (
 func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 	t.Parallel()
 	for _, request := range []ManagerRequest{
+		managerProbeRequest(),
 		managerResolveRequest(),
 		managerLifecycleRequest(),
 	} {
 		request := request
 		t.Run(string(request.Operation), func(t *testing.T) {
 			t.Parallel()
-			canonical, err := CanonicalManagerRequest(request)
+			toolchain := managerRequestToolchain(request)
+			canonical, err := CanonicalManagerRequest(request, toolchain)
 			if err != nil {
 				t.Fatal(err)
 			}
-			parsed, err := ParseManagerRequest(canonical)
+			parsed, err := ParseManagerRequest(canonical, toolchain)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if parsed.Operation != request.Operation ||
-				parsed.PackageManager != request.PackageManager ||
-				parsed.Project != request.Project ||
-				parsed.DependencyTools != request.DependencyTools ||
-				parsed.DependencyToolsDigest != request.DependencyToolsDigest ||
-				parsed.ComponentManifestDigest != request.ComponentManifestDigest {
+			if !reflect.DeepEqual(parsed, request) {
 				t.Fatalf("parsed request = %#v", parsed)
 			}
 
 			var framed bytes.Buffer
-			if err := WriteManagerRequest(&framed, request); err != nil {
+			if err := WriteManagerRequest(&framed, request, toolchain); err != nil {
 				t.Fatal(err)
 			}
 			source := bytes.NewReader(framed.Bytes())
 			decoded, err := ReadManagerRequest(
 				context.Background(),
 				io.NopCloser(source),
+				toolchain,
 			)
 			if err != nil {
 				t.Fatal(err)
@@ -71,11 +70,12 @@ func TestManagerRequestCanonicalRoundTripAndFraming(t *testing.T) {
 func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	t.Parallel()
 	request := managerResolveRequest()
-	digest, err := ManagerRequestDigest(request)
+	toolchain := managerRequestToolchain(request)
+	digest, err := ManagerRequestDigest(request, toolchain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	canonical, err := CanonicalManagerRequest(request)
+	canonical, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestManagerRequestDigestIsDomainSeparatedAndStable(t *testing.T) {
 	if digest == "sha256:"+hex.EncodeToString(plain[:]) {
 		t.Fatal("manager request digest is not domain separated")
 	}
-	const want = "sha256:748fe73b3e855c56304258802a808b41a3aaf927143cc54b03638819a2aa664d"
+	const want = "sha256:933a144bf5ce95eafc2b4c645c6e7aee82f13cc2402feace9b029716aaa96990"
 	if digest != want {
 		t.Fatalf("manager request digest = %q, want %q", digest, want)
 	}
@@ -97,23 +97,27 @@ func TestManagerRequestRejectsInvalidShapes(t *testing.T) {
 			return request
 		},
 		"bad project media": func(request ManagerRequest) ManagerRequest {
-			request.Project.MediaType = ManagerDependencyToolsMediaType
+			request.Project.MediaType = ManagerTreeMediaType
 			return request
 		},
-		"bad dependency tools media": func(request ManagerRequest) ManagerRequest {
-			request.DependencyTools.MediaType = ManagerProjectMediaType
+		"bad manager tree media": func(request ManagerRequest) ManagerRequest {
+			request.ManagerTree.MediaType = ManagerProjectMediaType
 			return request
 		},
-		"invalid dependency tools digest": func(request ManagerRequest) ManagerRequest {
-			request.DependencyToolsDigest = "sha256:invalid"
+		"invalid dependency plan digest": func(request ManagerRequest) ManagerRequest {
+			request.DependencyPlanDigest = "sha256:invalid"
 			return request
 		},
-		"invalid component manifest digest": func(request ManagerRequest) ManagerRequest {
-			request.ComponentManifestDigest = "sha256:invalid"
+		"mismatched manager tree": func(request ManagerRequest) ManagerRequest {
+			request.ManagerTree.Digest = managerDigest("other manager tree")
 			return request
 		},
 		"zero project size": func(request ManagerRequest) ManagerRequest {
 			request.Project.SizeBytes = 0
+			return request
+		},
+		"mismatched runtime": func(request ManagerRequest) ManagerRequest {
+			request.Runtime.Digest = managerDigest("other runtime")
 			return request
 		},
 		"resolve graph": func(request ManagerRequest) ManagerRequest {
@@ -131,17 +135,36 @@ func TestManagerRequestRejectsInvalidShapes(t *testing.T) {
 	for name, mutate := range tests {
 		t.Run(name, func(t *testing.T) {
 			request := mutate(managerResolveRequest())
-			if _, err := CanonicalManagerRequest(request); err == nil {
+			if _, err := CanonicalManagerRequest(
+				request,
+				managerRequestToolchain(request),
+			); err == nil {
 				t.Fatal("CanonicalManagerRequest returned nil error")
 			}
 		})
+	}
+	probe := managerProbeRequest()
+	project := managerProjectArtifact()
+	probe.Project = &project
+	if _, err := CanonicalManagerRequest(
+		probe,
+		managerRequestToolchain(probe),
+	); err == nil {
+		t.Fatal("CanonicalManagerRequest accepted a probe project")
+	}
+	request := managerResolveRequest()
+	toolchain := managerRequestToolchain(request)
+	toolchain.ToolchainClosure.Digest = managerDigest("other toolchain closure")
+	if _, err := CanonicalManagerRequest(request, toolchain); err == nil {
+		t.Fatal("CanonicalManagerRequest accepted a divergent registered toolchain")
 	}
 }
 
 func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) {
 	t.Parallel()
 	request := managerResolveRequest()
-	canonical, err := CanonicalManagerRequest(request)
+	toolchain := managerRequestToolchain(request)
+	canonical, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,27 +177,31 @@ func TestManagerRequestRejectsNonCanonicalUnknownAndDuplicateJSON(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ParseManagerRequest(unknown); err == nil {
+	if _, err := ParseManagerRequest(unknown, toolchain); err == nil {
 		t.Fatal("ParseManagerRequest accepted an unknown member")
 	}
 
 	nonCanonical := append([]byte("{\n"), canonical[1:]...)
-	if _, err := ParseManagerRequest(nonCanonical); err == nil {
+	if _, err := ParseManagerRequest(nonCanonical, toolchain); err == nil {
 		t.Fatal("ParseManagerRequest accepted non-canonical JSON")
 	}
 
-	duplicate := append(
-		[]byte(`{"architecture":"aarch64",`),
-		canonical[1:]...,
+	duplicate := bytes.Replace(
+		canonical,
+		[]byte(`"formatVersion":0,"managerCapsule"`),
+		[]byte(`"formatVersion":0,"formatVersion":0,"managerCapsule"`),
+		1,
 	)
-	if _, err := ParseManagerRequest(duplicate); err == nil {
+	if _, err := ParseManagerRequest(duplicate, toolchain); err == nil {
 		t.Fatal("ParseManagerRequest accepted a duplicate member")
 	}
 }
 
 func TestManagerRequestRejectsWrongStreamHeader(t *testing.T) {
 	t.Parallel()
-	body, err := CanonicalManagerRequest(managerResolveRequest())
+	request := managerResolveRequest()
+	toolchain := managerRequestToolchain(request)
+	body, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,6 +217,7 @@ func TestManagerRequestRejectsWrongStreamHeader(t *testing.T) {
 	if _, err := ReadManagerRequest(
 		context.Background(),
 		io.NopCloser(bytes.NewReader(framed.Bytes())),
+		toolchain,
 	); err == nil {
 		t.Fatal("ReadManagerRequest accepted the wrong stream header")
 	}
@@ -198,13 +226,16 @@ func TestManagerRequestRejectsWrongStreamHeader(t *testing.T) {
 func TestManagerRequestRejectsTrailingInput(t *testing.T) {
 	t.Parallel()
 	var framed bytes.Buffer
-	if err := WriteManagerRequest(&framed, managerResolveRequest()); err != nil {
+	request := managerResolveRequest()
+	toolchain := managerRequestToolchain(request)
+	if err := WriteManagerRequest(&framed, request, toolchain); err != nil {
 		t.Fatal(err)
 	}
 	framed.WriteByte(0)
 	if _, err := ReadManagerRequest(
 		context.Background(),
 		io.NopCloser(bytes.NewReader(framed.Bytes())),
+		toolchain,
 	); err == nil {
 		t.Fatal("ReadManagerRequest accepted trailing input")
 	}
@@ -212,6 +243,7 @@ func TestManagerRequestRejectsTrailingInput(t *testing.T) {
 
 func TestManagerMetadataRoundTripsAllOutcomes(t *testing.T) {
 	t.Parallel()
+	probe := managerProbeRequest()
 	resolve := managerResolveRequest()
 	lifecycle := managerLifecycleRequest()
 	failureMessage := "manifest projection is invalid"
@@ -221,6 +253,11 @@ func TestManagerMetadataRoundTripsAllOutcomes(t *testing.T) {
 		request  ManagerRequest
 		metadata ManagerMetadata
 	}{
+		{
+			name:     "probe",
+			request:  probe,
+			metadata: managerSuccessMetadata(probe, "", nil),
+		},
 		{
 			name:    "resolve",
 			request: resolve,
@@ -263,10 +300,50 @@ func TestManagerMetadataRoundTripsAllOutcomes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := ValidateManagerMetadataForRequest(parsed, test.request); err != nil {
+			if err := ValidateManagerMetadataForRequest(
+				parsed,
+				test.request,
+				managerRequestToolchain(test.request),
+			); err != nil {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestManagerFailureMappingIsClosed(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		operation ManagerOperation
+		reason    ManagerFailure
+		want      BuildFailureReason
+	}{
+		{ManagerProbe, ManagerInvalidInput, BuildFailureManagerUnsupported},
+		{ManagerProbe, ManagerProcessFailed, BuildFailureManagerUnsupported},
+		{ManagerProbe, ManagerOutputInvalid, BuildFailureManagerUnsupported},
+		{ManagerResolve, ManagerProcessFailed, BuildFailureDependencyFailed},
+		{ManagerLifecycle, ManagerProcessFailed, BuildFailureDependencyFailed},
+		{ManagerResolve, ManagerInvalidInput, BuildFailureOutputInvalid},
+		{ManagerResolve, ManagerOutputInvalid, BuildFailureOutputInvalid},
+		{ManagerLifecycle, ManagerInvalidInput, BuildFailureOutputInvalid},
+		{ManagerLifecycle, ManagerOutputInvalid, BuildFailureOutputInvalid},
+	} {
+		got, err := ManagerBuildFailure(test.operation, test.reason)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != test.want {
+			t.Fatalf(
+				"ManagerBuildFailure(%q, %q) = %q, want %q",
+				test.operation,
+				test.reason,
+				got,
+				test.want,
+			)
+		}
+	}
+	if _, err := ManagerBuildFailure(ManagerResolve, "unknown"); err == nil {
+		t.Fatal("ManagerBuildFailure accepted an unknown reason")
 	}
 }
 
@@ -280,6 +357,7 @@ func TestManagerResponseStreamsAndChecksTreeIdentity(t *testing.T) {
 		context.Background(),
 		response,
 		request,
+		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		nil,
@@ -291,6 +369,7 @@ func TestManagerResponseStreamsAndChecksTreeIdentity(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
+		managerRequestToolchain(request),
 		nil,
 	)
 	if err != nil {
@@ -303,6 +382,50 @@ func TestManagerResponseStreamsAndChecksTreeIdentity(t *testing.T) {
 	}
 	if parsed.RequestDigest != metadata.RequestDigest || !bytes.Equal(treeBytes, body) {
 		t.Fatalf("parsed = %#v tree bytes = %d", parsed, len(treeBytes))
+	}
+}
+
+func TestManagerProbeResponseRequiresImmediateEOF(t *testing.T) {
+	t.Parallel()
+	request := managerProbeRequest()
+	metadata := managerSuccessMetadata(request, "", nil)
+	response := &managerBuffer{}
+	if err := WriteManagerResponse(
+		context.Background(),
+		response,
+		request,
+		managerRequestToolchain(request),
+		metadata,
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	parsed, tree, err := ReadManagerResponse(
+		context.Background(),
+		io.NopCloser(bytes.NewReader(response.Bytes())),
+		"",
+		request,
+		managerRequestToolchain(request),
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree != nil || parsed.ObservedVersion == nil ||
+		*parsed.ObservedVersion != request.DependencyPlan.PackageManager.Version {
+		t.Fatalf("probe response = %#v, tree = %#v", parsed, tree)
+	}
+	response.WriteByte(0)
+	if _, _, err := ReadManagerResponse(
+		context.Background(),
+		io.NopCloser(bytes.NewReader(response.Bytes())),
+		"",
+		request,
+		managerRequestToolchain(request),
+		nil,
+	); err == nil {
+		t.Fatal("ReadManagerResponse accepted bytes after probe metadata")
 	}
 }
 
@@ -332,6 +455,7 @@ func TestManagerResponseRejectsTreeDivergence(t *testing.T) {
 				io.NopCloser(bytes.NewReader(response.Bytes())),
 				t.TempDir(),
 				request,
+				managerRequestToolchain(request),
 				nil,
 			); err == nil {
 				if tree != nil {
@@ -361,6 +485,7 @@ func TestManagerFailedResponseRequiresImmediateEOF(t *testing.T) {
 		context.Background(),
 		response,
 		request,
+		managerRequestToolchain(request),
 		metadata,
 		nil,
 		nil,
@@ -373,6 +498,7 @@ func TestManagerFailedResponseRequiresImmediateEOF(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
+		managerRequestToolchain(request),
 		nil,
 	); err == nil {
 		if tree != nil {
@@ -388,8 +514,23 @@ func TestManagerMetadataRejectsTargetDivergence(t *testing.T) {
 	metadata := managerSuccessMetadata(request, ManagerRegistryClosure, []byte("tree"))
 	other := managerDigest("other graph")
 	metadata.PackageGraphDigest = &other
-	if err := ValidateManagerMetadataForRequest(metadata, request); err == nil {
+	if err := ValidateManagerMetadataForRequest(
+		metadata,
+		request,
+		managerRequestToolchain(request),
+	); err == nil {
 		t.Fatal("ValidateManagerMetadataForRequest accepted graph divergence")
+	}
+	probe := managerProbeRequest()
+	probeMetadata := managerSuccessMetadata(probe, "", nil)
+	otherVersion := "1.3.11"
+	probeMetadata.ObservedVersion = &otherVersion
+	if err := ValidateManagerMetadataForRequest(
+		probeMetadata,
+		probe,
+		managerRequestToolchain(probe),
+	); err == nil {
+		t.Fatal("ValidateManagerMetadataForRequest accepted version divergence")
 	}
 }
 
@@ -430,6 +571,7 @@ func TestManagerResponseRejectsInvalidTreeProfiles(t *testing.T) {
 				io.NopCloser(bytes.NewReader(response.Bytes())),
 				stageDirectory,
 				request,
+				managerRequestToolchain(request),
 				nil,
 			)
 			if err == nil {
@@ -462,6 +604,7 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		context.Background(),
 		response,
 		request,
+		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		&graph,
@@ -473,6 +616,7 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
+		managerRequestToolchain(request),
 		&graph,
 	)
 	if err != nil {
@@ -491,6 +635,7 @@ func TestManagerLifecycleResponseUsesInputGraphProfile(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
+		managerRequestToolchain(request),
 		nil,
 	); err == nil {
 		if tree != nil {
@@ -529,6 +674,7 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		context.Background(),
 		response,
 		request,
+		managerRequestToolchain(request),
 		metadata,
 		io.NopCloser(bytes.NewReader(body)),
 		&graph,
@@ -540,6 +686,7 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		io.NopCloser(bytes.NewReader(response.Bytes())),
 		t.TempDir(),
 		request,
+		managerRequestToolchain(request),
 		&graph,
 	)
 	if err != nil {
@@ -552,6 +699,7 @@ func TestManagerLifecycleResponseAcceptsListedNestedPackage(t *testing.T) {
 		context.Background(),
 		&managerBuffer{},
 		request,
+		managerRequestToolchain(request),
 		managerSuccessMetadata(request, ManagerRegistryClosure, empty),
 		io.NopCloser(bytes.NewReader(empty)),
 		&graph,
@@ -588,7 +736,14 @@ func TestManagerResponseCancellationClosesBlockedSource(t *testing.T) {
 			done := make(chan error, 1)
 			stageDirectory := t.TempDir()
 			go func() {
-				_, tree, err := ReadManagerResponse(ctx, source, stageDirectory, request, nil)
+				_, tree, err := ReadManagerResponse(
+					ctx,
+					source,
+					stageDirectory,
+					request,
+					managerRequestToolchain(request),
+					nil,
+				)
 				if tree != nil {
 					tree.Close()
 				}
@@ -625,6 +780,7 @@ func TestManagerResponseCancellationClosesBlockedDestination(t *testing.T) {
 			ctx,
 			destination,
 			request,
+			managerRequestToolchain(request),
 			metadata,
 			io.NopCloser(bytes.NewReader(body)),
 			nil,
@@ -646,28 +802,50 @@ func TestManagerResponseCancellationClosesBlockedDestination(t *testing.T) {
 	}
 }
 
-func managerResolveRequest() ManagerRequest {
+func managerProbeRequest() ManagerRequest {
+	capsule := managerCapsuleFixture(PackageManagerBun, ArchitectureAArch64)
+	toolchain := dependencyPlanToolchain(ArchitectureAArch64)
+	plan, err := NewDependencyPlan(
+		capsule,
+		toolchain,
+		DependencyMaterializerVersion,
+	)
+	if err != nil {
+		panic(err)
+	}
+	planDigest, err := DependencyPlanDigest(plan)
+	if err != nil {
+		panic(err)
+	}
 	return ManagerRequest{
-		Architecture:            ArchitectureAArch64,
-		ComponentManifestDigest: managerDigest("component manifest"),
-		DependencyToolsDigest:   managerDigest("dependency toolset"),
-		FormatVersion:           ManagerFormatVersion,
-		MaterializerVersion:     DependencyMaterializerVersion,
-		Operation:               ManagerResolve,
-		PackageManager: PackageManager{
-			Name:    PackageManagerBun,
-			Version: "1.3.10",
-		},
-		Project: ManagerArtifact{
-			Digest:    managerDigest("project"),
-			MediaType: ManagerProjectMediaType,
+		DependencyPlan:       plan,
+		DependencyPlanDigest: planDigest,
+		FormatVersion:        ManagerFormatVersion,
+		ManagerCapsule:       capsule,
+		ManagerTree:          capsule.Tree,
+		Operation:            ManagerProbe,
+		Runtime: ManagerArtifact{
+			Digest:    plan.ManagedRuntimeDigest,
+			MediaType: RuntimeArtifactMediaType,
 			SizeBytes: 4096,
 		},
-		DependencyTools: ManagerArtifact{
-			Digest:    managerDigest("dependency tools"),
-			MediaType: ManagerDependencyToolsMediaType,
-			SizeBytes: 8192,
-		},
+		StandardToolchain: toolchain.ToolchainClosure,
+	}
+}
+
+func managerResolveRequest() ManagerRequest {
+	request := managerProbeRequest()
+	request.Operation = ManagerResolve
+	project := managerProjectArtifact()
+	request.Project = &project
+	return request
+}
+
+func managerProjectArtifact() ManagerArtifact {
+	return ManagerArtifact{
+		Digest:    managerDigest("project"),
+		MediaType: ManagerProjectMediaType,
+		SizeBytes: 4096,
 	}
 }
 
@@ -756,16 +934,25 @@ func managerSuccessMetadata(
 		Operation:     request.Operation,
 		Outcome:       ManagerSucceeded,
 		RequestDigest: mustManagerRequestDigest(nil, request),
-		Tree: &ManagerTree{
+	}
+	switch request.Operation {
+	case ManagerProbe:
+		version := request.DependencyPlan.PackageManager.Version
+		metadata.ObservedVersion = &version
+	case ManagerResolve:
+		metadata.Tree = &ManagerTree{
 			Digest:    managerDigestBytes(body),
 			Kind:      kind,
 			SizeBytes: int64(len(body)),
-		},
-	}
-	if request.Operation == ManagerResolve {
+		}
 		graph := managerPackageGraph()
 		metadata.PackageGraph = &graph
-	} else {
+	case ManagerLifecycle:
+		metadata.Tree = &ManagerTree{
+			Digest:    managerDigestBytes(body),
+			Kind:      kind,
+			SizeBytes: int64(len(body)),
+		}
 		digest := request.PackageGraph.Digest
 		metadata.PackageGraphDigest = &digest
 	}
@@ -903,7 +1090,10 @@ func mustManagerRequestDigest(t *testing.T, request ManagerRequest) string {
 	if t != nil {
 		t.Helper()
 	}
-	digest, err := ManagerRequestDigest(request)
+	digest, err := ManagerRequestDigest(
+		request,
+		managerRequestToolchain(request),
+	)
 	if err != nil {
 		if t == nil {
 			panic(err)
@@ -911,6 +1101,10 @@ func mustManagerRequestDigest(t *testing.T, request ManagerRequest) string {
 		t.Fatal(err)
 	}
 	return digest
+}
+
+func managerRequestToolchain(request ManagerRequest) Toolchain {
+	return dependencyPlanToolchain(request.DependencyPlan.Architecture)
 }
 
 func managerDigest(value string) string {

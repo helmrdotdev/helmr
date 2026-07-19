@@ -18,6 +18,7 @@ import (
 const (
 	ManagerFormatVersion = 0
 
+	ManagerProbe     = ManagerOperation("probe")
 	ManagerResolve   = ManagerOperation("resolve")
 	ManagerLifecycle = ManagerOperation("lifecycle")
 
@@ -31,12 +32,11 @@ const (
 	ManagerProcessFailed = ManagerFailure("managerFailed")
 	ManagerOutputInvalid = ManagerFailure("outputInvalid")
 
-	ManagerDependencyToolsMediaType = "application/vnd.helmr.dependency-tools.v0+squashfs"
-	ManagerProjectMediaType         = "application/vnd.helmr.package-manager-project.v0+squashfs"
-	ManagerOfflineStoreMediaType    = "application/vnd.helmr.package-manager-offline-store.v0+squashfs"
+	ManagerProjectMediaType      = "application/vnd.helmr.package-manager-project.v0+squashfs"
+	ManagerOfflineStoreMediaType = "application/vnd.helmr.package-manager-offline-store.v0+squashfs"
 
-	maxManagerRequestBytes  = 64 << 10
-	maxManagerMetadataBytes = (16 << 20) + maxManagerRequestBytes
+	maxManagerRequestBytes  = 128 << 10
+	maxManagerMetadataBytes = (16 << 20) + (64 << 10)
 	maxManagerMessageBytes  = 16 << 10
 	maxManagerProjectBytes  = 384 << 20
 	maxManagerTreeBytes     = 9 << 30
@@ -58,17 +58,17 @@ type ManagerArtifact struct {
 }
 
 type ManagerRequest struct {
-	Architecture            RuntimeArchitecture `json:"architecture"`
-	ComponentManifestDigest string              `json:"componentManifestDigest"`
-	DependencyTools         ManagerArtifact     `json:"dependencyTools"`
-	DependencyToolsDigest   string              `json:"dependencyToolsDigest"`
-	FormatVersion           int                 `json:"formatVersion"`
-	MaterializerVersion     string              `json:"materializerVersion"`
-	Operation               ManagerOperation    `json:"operation"`
-	PackageManager          PackageManager      `json:"packageManager"`
-	Project                 ManagerArtifact     `json:"project"`
-	PackageGraph            *ProgramFile        `json:"packageGraph,omitempty"`
-	OfflineStore            *ManagerArtifact    `json:"offlineStore,omitempty"`
+	DependencyPlan       DependencyPlan   `json:"dependencyPlan"`
+	DependencyPlanDigest string           `json:"dependencyPlanDigest"`
+	FormatVersion        int              `json:"formatVersion"`
+	ManagerCapsule       ManagerCapsule   `json:"managerCapsule"`
+	ManagerTree          ManagerArtifact  `json:"managerTree"`
+	Operation            ManagerOperation `json:"operation"`
+	Project              *ManagerArtifact `json:"project,omitempty"`
+	PackageGraph         *ProgramFile     `json:"packageGraph,omitempty"`
+	OfflineStore         *ManagerArtifact `json:"offlineStore,omitempty"`
+	Runtime              ManagerArtifact  `json:"runtime"`
+	StandardToolchain    ManagerArtifact  `json:"standardToolchain"`
 }
 
 type ManagerTree struct {
@@ -84,6 +84,7 @@ type ManagerMetadata struct {
 	RequestDigest      string           `json:"requestDigest"`
 	PackageGraph       *PackageGraph    `json:"packageGraph,omitempty"`
 	PackageGraphDigest *string          `json:"packageGraphDigest,omitempty"`
+	ObservedVersion    *string          `json:"observedVersion,omitempty"`
 	Tree               *ManagerTree     `json:"tree,omitempty"`
 	Reason             *ManagerFailure  `json:"reason,omitempty"`
 	Message            *string          `json:"message,omitempty"`
@@ -95,7 +96,7 @@ type ManagerTreeContent interface {
 	io.Closer
 }
 
-func ParseManagerRequest(raw []byte) (ManagerRequest, error) {
+func ParseManagerRequest(raw []byte, toolchain Toolchain) (ManagerRequest, error) {
 	if len(raw) == 0 || len(raw) > maxManagerRequestBytes {
 		return ManagerRequest{}, fmt.Errorf(
 			"manager request size is outside [1,%d]",
@@ -119,10 +120,10 @@ func ParseManagerRequest(raw []byte) (ManagerRequest, error) {
 	if err := ensureEOF(decoder, "manager request"); err != nil {
 		return ManagerRequest{}, err
 	}
-	if err := ValidateManagerRequest(request); err != nil {
+	if err := ValidateManagerRequest(request, toolchain); err != nil {
 		return ManagerRequest{}, err
 	}
-	complete, err := CanonicalManagerRequest(request)
+	complete, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		return ManagerRequest{}, err
 	}
@@ -134,8 +135,11 @@ func ParseManagerRequest(raw []byte) (ManagerRequest, error) {
 	return request, nil
 }
 
-func CanonicalManagerRequest(request ManagerRequest) ([]byte, error) {
-	if err := ValidateManagerRequest(request); err != nil {
+func CanonicalManagerRequest(
+	request ManagerRequest,
+	toolchain Toolchain,
+) ([]byte, error) {
+	if err := ValidateManagerRequest(request, toolchain); err != nil {
 		return nil, err
 	}
 	raw, err := json.Marshal(request)
@@ -155,7 +159,7 @@ func CanonicalManagerRequest(request ManagerRequest) ([]byte, error) {
 	return canonical, nil
 }
 
-func ValidateManagerRequest(request ManagerRequest) error {
+func ValidateManagerRequest(request ManagerRequest, toolchain Toolchain) error {
 	if request.FormatVersion != ManagerFormatVersion {
 		return fmt.Errorf(
 			"manager request formatVersion = %d, want %d",
@@ -163,54 +167,123 @@ func ValidateManagerRequest(request ManagerRequest) error {
 			ManagerFormatVersion,
 		)
 	}
-	if request.MaterializerVersion != DependencyMaterializerVersion {
+	if err := ValidateDependencyPlan(request.DependencyPlan); err != nil {
+		return fmt.Errorf("manager request dependencyPlan: %w", err)
+	}
+	planDigest, err := DependencyPlanDigest(request.DependencyPlan)
+	if err != nil {
+		return err
+	}
+	if request.DependencyPlanDigest != planDigest {
 		return fmt.Errorf(
-			"manager request materializerVersion = %q, want %q",
-			request.MaterializerVersion,
-			DependencyMaterializerVersion,
+			"manager request dependencyPlanDigest = %q, want %q",
+			request.DependencyPlanDigest,
+			planDigest,
 		)
 	}
-	if !validArchitecture(request.Architecture) {
-		return fmt.Errorf("manager request architecture %q is unsupported", request.Architecture)
+	if err := validateManagerCapsule(request.ManagerCapsule); err != nil {
+		return fmt.Errorf("manager request managerCapsule: %w", err)
 	}
-	if !sha256DigestPattern.MatchString(request.ComponentManifestDigest) {
-		return errors.New("manager request componentManifestDigest is not a lowercase SHA-256 digest")
-	}
-	if !sha256DigestPattern.MatchString(request.DependencyToolsDigest) {
-		return errors.New("manager request dependencyToolsDigest is not a lowercase SHA-256 digest")
-	}
-	if err := validateManagerPackage(request.PackageManager); err != nil {
+	capsuleDigest, err := ManagerCapsuleDigest(request.ManagerCapsule)
+	if err != nil {
 		return err
 	}
+	if request.DependencyPlan.ManagerCapsuleDigest != capsuleDigest {
+		return errors.New("manager request dependencyPlan does not name managerCapsule")
+	}
+	if request.DependencyPlan.Architecture != request.ManagerCapsule.Architecture ||
+		request.DependencyPlan.PackageManager != request.ManagerCapsule.PackageManager {
+		return errors.New("manager request dependencyPlan and managerCapsule do not match")
+	}
+	if request.ManagerTree != request.ManagerCapsule.Tree {
+		return errors.New("manager request managerTree does not match managerCapsule.tree")
+	}
 	if err := validateManagerArtifact(
-		request.Project,
-		ManagerProjectMediaType,
-		maxManagerProjectBytes,
-		"project",
+		request.ManagerTree,
+		ManagerTreeMediaType,
+		maxManagerCapsuleTreeBytes,
+		"managerTree",
 	); err != nil {
 		return err
 	}
 	if err := validateManagerArtifact(
-		request.DependencyTools,
-		ManagerDependencyToolsMediaType,
-		maxJSONSafeInteger,
-		"dependencyTools",
+		request.Runtime,
+		RuntimeArtifactMediaType,
+		maxRuntimePhysicalBytes,
+		"runtime",
 	); err != nil {
 		return err
+	}
+	if request.Runtime.Digest != request.DependencyPlan.ManagedRuntimeDigest {
+		return errors.New("manager request runtime does not match dependencyPlan")
+	}
+	if err := validateManagerArtifact(
+		request.StandardToolchain,
+		ToolchainMediaType,
+		maxToolArtifactBytes,
+		"standardToolchain",
+	); err != nil {
+		return err
+	}
+	if err := validateToolchain(toolchain); err != nil {
+		return fmt.Errorf("manager request standard toolchain: %w", err)
+	}
+	toolchainDigest, err := StandardToolchainDigest(toolchain)
+	if err != nil {
+		return err
+	}
+	if request.DependencyPlan.StandardToolchainDigest != toolchainDigest ||
+		request.DependencyPlan.Architecture != toolchain.Architecture ||
+		request.DependencyPlan.ManagedRuntimeDigest != toolchain.ManagedRuntimeDigest ||
+		request.StandardToolchain != toolchain.ToolchainClosure {
+		return errors.New(
+			"manager request standardToolchain does not match dependencyPlan and registered toolchain",
+		)
 	}
 
 	switch request.Operation {
+	case ManagerProbe:
+		if request.Project != nil ||
+			request.PackageGraph != nil ||
+			request.OfflineStore != nil {
+			return errors.New(
+				"manager probe request forbids project, packageGraph, and offlineStore",
+			)
+		}
 	case ManagerResolve:
+		if request.Project == nil {
+			return errors.New("manager resolve request requires project")
+		}
 		if request.PackageGraph != nil || request.OfflineStore != nil {
 			return errors.New("manager resolve request forbids packageGraph and offlineStore")
 		}
 	case ManagerLifecycle:
-		if request.PackageGraph == nil || request.OfflineStore == nil {
-			return errors.New("manager lifecycle request requires packageGraph and offlineStore")
+		if request.Project == nil ||
+			request.PackageGraph == nil ||
+			request.OfflineStore == nil {
+			return errors.New(
+				"manager lifecycle request requires project, packageGraph, and offlineStore",
+			)
 		}
+	default:
+		return fmt.Errorf("manager request operation %q is unsupported", request.Operation)
+	}
+	if request.Project != nil {
+		if err := validateManagerArtifact(
+			*request.Project,
+			ManagerProjectMediaType,
+			maxManagerProjectBytes,
+			"project",
+		); err != nil {
+			return err
+		}
+	}
+	if request.PackageGraph != nil {
 		if err := validateManagerFile(*request.PackageGraph, "packageGraph"); err != nil {
 			return err
 		}
+	}
+	if request.OfflineStore != nil {
 		if err := validateManagerArtifact(
 			*request.OfflineStore,
 			ManagerOfflineStoreMediaType,
@@ -219,14 +292,15 @@ func ValidateManagerRequest(request ManagerRequest) error {
 		); err != nil {
 			return err
 		}
-	default:
-		return fmt.Errorf("manager request operation %q is unsupported", request.Operation)
 	}
 	return nil
 }
 
-func ManagerRequestDigest(request ManagerRequest) (string, error) {
-	canonical, err := CanonicalManagerRequest(request)
+func ManagerRequestDigest(
+	request ManagerRequest,
+	toolchain Toolchain,
+) (string, error) {
+	canonical, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		return "", err
 	}
@@ -234,11 +308,15 @@ func ManagerRequestDigest(request ManagerRequest) (string, error) {
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
-func WriteManagerRequest(destination io.Writer, request ManagerRequest) error {
+func WriteManagerRequest(
+	destination io.Writer,
+	request ManagerRequest,
+	toolchain Toolchain,
+) error {
 	if destination == nil {
 		return errors.New("manager request destination is nil")
 	}
-	body, err := CanonicalManagerRequest(request)
+	body, err := CanonicalManagerRequest(request, toolchain)
 	if err != nil {
 		return err
 	}
@@ -258,6 +336,7 @@ func WriteManagerRequest(destination io.Writer, request ManagerRequest) error {
 func ReadManagerRequest(
 	ctx context.Context,
 	source io.ReadCloser,
+	toolchain Toolchain,
 ) (ManagerRequest, error) {
 	if ctx == nil {
 		return ManagerRequest{}, errors.New("manager request context is nil")
@@ -285,7 +364,7 @@ func ReadManagerRequest(
 	if _, err := io.ReadFull(source, body); err != nil {
 		return ManagerRequest{}, fmt.Errorf("read manager request body: %w", err)
 	}
-	request, err := ParseManagerRequest(body)
+	request, err := ParseManagerRequest(body, toolchain)
 	if err != nil {
 		return ManagerRequest{}, err
 	}
@@ -363,7 +442,9 @@ func ValidateManagerMetadata(metadata ManagerMetadata) error {
 			ManagerFormatVersion,
 		)
 	}
-	if metadata.Operation != ManagerResolve && metadata.Operation != ManagerLifecycle {
+	if metadata.Operation != ManagerProbe &&
+		metadata.Operation != ManagerResolve &&
+		metadata.Operation != ManagerLifecycle {
 		return fmt.Errorf("manager metadata operation %q is unsupported", metadata.Operation)
 	}
 	if !sha256DigestPattern.MatchString(metadata.RequestDigest) {
@@ -372,13 +453,31 @@ func ValidateManagerMetadata(metadata ManagerMetadata) error {
 
 	switch metadata.Outcome {
 	case ManagerSucceeded:
-		if metadata.Tree == nil || metadata.Reason != nil || metadata.Message != nil {
+		if metadata.Reason != nil || metadata.Message != nil {
 			return errors.New("successful manager metadata has an invalid outcome shape")
 		}
-		if err := validateManagerTree(*metadata.Tree); err != nil {
-			return err
-		}
-		if metadata.Operation == ManagerResolve {
+		switch metadata.Operation {
+		case ManagerProbe:
+			if metadata.ObservedVersion == nil ||
+				metadata.PackageGraph != nil ||
+				metadata.PackageGraphDigest != nil ||
+				metadata.Tree != nil {
+				return errors.New("manager probe success requires only observedVersion")
+			}
+			if len(*metadata.ObservedVersion) == 0 ||
+				len(*metadata.ObservedVersion) > maxPackageManagerVersionBytes ||
+				!packageManagerVersionPattern.MatchString(*metadata.ObservedVersion) {
+				return errors.New(
+					"manager probe observedVersion is not an admitted SemVer",
+				)
+			}
+		case ManagerResolve:
+			if metadata.ObservedVersion != nil || metadata.Tree == nil {
+				return errors.New("manager resolve success has an invalid outcome shape")
+			}
+			if err := validateManagerTree(*metadata.Tree); err != nil {
+				return err
+			}
 			if metadata.PackageGraph == nil || metadata.PackageGraphDigest != nil {
 				return errors.New("manager resolve success requires only packageGraph")
 			}
@@ -392,7 +491,13 @@ func ValidateManagerMetadata(metadata ManagerMetadata) error {
 			if err := ValidatePackageGraph(*metadata.PackageGraph); err != nil {
 				return fmt.Errorf("manager metadata packageGraph: %w", err)
 			}
-		} else {
+		case ManagerLifecycle:
+			if metadata.ObservedVersion != nil || metadata.Tree == nil {
+				return errors.New("manager lifecycle success has an invalid outcome shape")
+			}
+			if err := validateManagerTree(*metadata.Tree); err != nil {
+				return err
+			}
 			if metadata.PackageGraph != nil || metadata.PackageGraphDigest == nil {
 				return errors.New("manager lifecycle success requires only packageGraphDigest")
 			}
@@ -412,6 +517,7 @@ func ValidateManagerMetadata(metadata ManagerMetadata) error {
 	case ManagerFailed:
 		if metadata.PackageGraph != nil ||
 			metadata.PackageGraphDigest != nil ||
+			metadata.ObservedVersion != nil ||
 			metadata.Tree != nil ||
 			metadata.Reason == nil ||
 			metadata.Message == nil {
@@ -465,6 +571,7 @@ func WriteManagerResponse(
 	ctx context.Context,
 	destination io.WriteCloser,
 	request ManagerRequest,
+	toolchain Toolchain,
 	metadata ManagerMetadata,
 	tree io.ReadCloser,
 	graph *PackageGraph,
@@ -477,7 +584,7 @@ func WriteManagerResponse(
 	}
 	stopDestination := closeOnCancellation(ctx, destination)
 	defer stopDestination()
-	if err := ValidateManagerMetadataForRequest(metadata, request); err != nil {
+	if err := ValidateManagerMetadataForRequest(metadata, request, toolchain); err != nil {
 		return err
 	}
 	if err := validateManagerTreeGraph(request, metadata, graph); err != nil {
@@ -491,6 +598,12 @@ func WriteManagerResponse(
 			return err
 		}
 		return nil
+	}
+	if metadata.Operation == ManagerProbe {
+		if tree != nil {
+			return errors.New("successful manager probe response forbids a tree")
+		}
+		return WriteManagerMetadata(destination, metadata)
 	}
 	if tree == nil {
 		return errors.New("successful manager response requires a tree")
@@ -517,6 +630,7 @@ func ReadManagerResponse(
 	source io.ReadCloser,
 	stageDirectory string,
 	request ManagerRequest,
+	toolchain Toolchain,
 	graph *PackageGraph,
 ) (ManagerMetadata, ManagerTreeContent, error) {
 	if ctx == nil {
@@ -525,16 +639,13 @@ func ReadManagerResponse(
 	if source == nil {
 		return ManagerMetadata{}, nil, errors.New("manager response source is nil")
 	}
-	if stageDirectory == "" {
-		return ManagerMetadata{}, nil, errors.New("manager tree stage directory is empty")
-	}
 	stop := closeOnCancellation(ctx, source)
 	defer stop()
 	metadata, err := ReadManagerMetadata(source)
 	if err != nil {
 		return ManagerMetadata{}, nil, preferContextError(ctx, err)
 	}
-	if err := ValidateManagerMetadataForRequest(metadata, request); err != nil {
+	if err := ValidateManagerMetadataForRequest(metadata, request, toolchain); err != nil {
 		return ManagerMetadata{}, nil, err
 	}
 	if err := validateManagerTreeGraph(request, metadata, graph); err != nil {
@@ -548,6 +659,18 @@ func ReadManagerResponse(
 			)
 		}
 		return metadata, nil, nil
+	}
+	if metadata.Operation == ManagerProbe {
+		if err := copyTreeContent(ctx, io.Discard, source, 0); err != nil {
+			return ManagerMetadata{}, nil, fmt.Errorf(
+				"read manager probe response EOF: %w",
+				preferContextError(ctx, err),
+			)
+		}
+		return metadata, nil, nil
+	}
+	if stageDirectory == "" {
+		return ManagerMetadata{}, nil, errors.New("manager tree stage directory is empty")
 	}
 
 	stage, err := os.CreateTemp(stageDirectory, "helmr-manager-tree-*")
@@ -608,8 +731,9 @@ func preferContextError(ctx context.Context, err error) error {
 func ValidateManagerMetadataForRequest(
 	metadata ManagerMetadata,
 	request ManagerRequest,
+	toolchain Toolchain,
 ) error {
-	if err := ValidateManagerRequest(request); err != nil {
+	if err := ValidateManagerRequest(request, toolchain); err != nil {
 		return err
 	}
 	if err := ValidateManagerMetadata(metadata); err != nil {
@@ -622,7 +746,7 @@ func ValidateManagerMetadataForRequest(
 			request.Operation,
 		)
 	}
-	digest, err := ManagerRequestDigest(request)
+	digest, err := ManagerRequestDigest(request, toolchain)
 	if err != nil {
 		return err
 	}
@@ -631,6 +755,15 @@ func ValidateManagerMetadataForRequest(
 			"manager metadata requestDigest = %q, want %q",
 			metadata.RequestDigest,
 			digest,
+		)
+	}
+	if request.Operation == ManagerProbe &&
+		metadata.Outcome == ManagerSucceeded &&
+		*metadata.ObservedVersion != request.DependencyPlan.PackageManager.Version {
+		return fmt.Errorf(
+			"manager metadata observedVersion = %q, want %q",
+			*metadata.ObservedVersion,
+			request.DependencyPlan.PackageManager.Version,
 		)
 	}
 	if request.Operation == ManagerLifecycle &&
@@ -643,6 +776,31 @@ func ValidateManagerMetadataForRequest(
 		)
 	}
 	return nil
+}
+
+func ManagerBuildFailure(
+	operation ManagerOperation,
+	reason ManagerFailure,
+) (BuildFailureReason, error) {
+	switch operation {
+	case ManagerProbe:
+		switch reason {
+		case ManagerInvalidInput, ManagerProcessFailed, ManagerOutputInvalid:
+			return BuildFailureManagerUnsupported, nil
+		}
+	case ManagerResolve, ManagerLifecycle:
+		switch reason {
+		case ManagerProcessFailed:
+			return BuildFailureDependencyFailed, nil
+		case ManagerInvalidInput, ManagerOutputInvalid:
+			return BuildFailureOutputInvalid, nil
+		}
+	}
+	return "", fmt.Errorf(
+		"manager failure operation %q reason %q has no deterministic mapping",
+		operation,
+		reason,
+	)
 }
 
 func validateManagerPackage(manager PackageManager) error {
