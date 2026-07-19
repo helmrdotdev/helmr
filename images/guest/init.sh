@@ -75,6 +75,7 @@ disable_user_namespaces() {
 }
 
 configure_process_limit() {
+	profile=$1
 	limit=$(kernel_arg helmr.pids_max || true)
 	[ -n "$limit" ] || return 0
 	case "$limit" in
@@ -85,16 +86,45 @@ configure_process_limit() {
 	esac
 	mkdir -p /sys/fs/cgroup
 	is_mounted /sys/fs/cgroup || mount -t cgroup2 cgroup2 /sys/fs/cgroup
-	if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
-		echo "pids controller unavailable" >&2
-		exit 1
+	if [ "$profile" != dependency ]; then
+		if ! grep -qw pids /sys/fs/cgroup/cgroup.controllers; then
+			echo "pids controller unavailable" >&2
+			exit 1
+		fi
+		echo +pids > /sys/fs/cgroup/cgroup.subtree_control
+		mkdir /sys/fs/cgroup/helmr
+		echo "$limit" > /sys/fs/cgroup/helmr/pids.max
+		echo $$ > /sys/fs/cgroup/helmr/cgroup.procs
+		if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
+			echo "Helmr process limit was not applied" >&2
+			exit 1
+		fi
+		return 0
 	fi
-	echo +pids > /sys/fs/cgroup/cgroup.subtree_control
+	for controller in cpu memory pids; do
+		if ! grep -qw "$controller" /sys/fs/cgroup/cgroup.controllers; then
+			echo "$controller controller unavailable" >&2
+			exit 1
+		fi
+	done
+	echo "+cpu +memory +pids" > /sys/fs/cgroup/cgroup.subtree_control
 	mkdir /sys/fs/cgroup/helmr
 	echo "$limit" > /sys/fs/cgroup/helmr/pids.max
-	echo $$ > /sys/fs/cgroup/helmr/cgroup.procs
+	echo "+cpu +memory +pids" > /sys/fs/cgroup/helmr/cgroup.subtree_control
+	mkdir /sys/fs/cgroup/helmr/supervisor
+	echo $$ > /sys/fs/cgroup/helmr/supervisor/cgroup.procs
 	if [ "$(cat /sys/fs/cgroup/helmr/pids.max)" != "$limit" ]; then
 		echo "Helmr process limit was not applied" >&2
+		exit 1
+	fi
+	for controller in cpu memory pids; do
+		if ! grep -qw "$controller" /sys/fs/cgroup/helmr/cgroup.subtree_control; then
+			echo "$controller controller was not delegated" >&2
+			exit 1
+		fi
+	done
+	if ! grep -qx '0::/helmr/supervisor' /proc/self/cgroup; then
+		echo "Helmr supervisor cgroup placement failed" >&2
 		exit 1
 	fi
 }
@@ -380,7 +410,7 @@ configure_runtime_identity() {
 
 mount_base
 profile=$(guest_profile)
-configure_process_limit
+configure_process_limit "$profile"
 if [ -z "$profile" ]; then
 	enable_user_namespaces
 else

@@ -29,10 +29,22 @@ func handleDependencyConnection(ctx context.Context, conn io.ReadWriteCloser) (r
 	if err != nil {
 		return err
 	}
+	closed := false
 	defer func() {
-		retErr = errors.Join(retErr, staged.Close())
+		if !closed {
+			retErr = errors.Join(retErr, staged.Close())
+		}
 	}()
-	return fmt.Errorf("dependency manager %q execution is unavailable", request.Operation)
+
+	metadata, err := activateDependencyManager(ctx, request, staged)
+	if err != nil {
+		return err
+	}
+	if err := staged.Close(); err != nil {
+		return err
+	}
+	closed = true
+	return deployment.WriteManagerResponse(ctx, conn, request, metadata, nil, nil)
 }
 
 func dependencyComponents(request deployment.ManagerRequest) []dependencyComponent {
@@ -74,6 +86,7 @@ func dependencyComponents(request deployment.ManagerRequest) []dependencyCompone
 
 type stagedDependencyComponents interface {
 	Close() error
+	Path(string) (string, error)
 }
 
 func verifyDependencyContent(

@@ -15,3 +15,13 @@ func stageDependencyComponents(
 ) (stagedDependencyComponents, error) {
 	return nil, errors.New("dependency component staging requires Linux")
 }
+
+func activateDependencyManager(
+	context.Context,
+	deployment.ManagerRequest,
+	stagedDependencyComponents,
+) (deployment.ManagerMetadata, error) {
+	return deployment.ManagerMetadata{}, errors.New(
+		"dependency manager activation requires Linux",
+	)
+}

@@ -1280,7 +1280,7 @@ func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
 			kernelArgs, networkless, err := buildGuestProfile(vm.ConnectRequest{
 				OwnerKind:   vm.OwnerBuild,
 				Resources:   compute.BuildGuestResources(),
-				PIDsMax:     512,
+				PIDsMax:     dependencyGuestPIDsMax,
 				Networkless: true,
 				BuildDrives: drives,
 			})
@@ -1304,13 +1304,13 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 	tests := map[string]vm.ConnectRequest{
 		"missing component": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     512,
+			PIDsMax:     dependencyGuestPIDsMax,
 			Networkless: true,
 			BuildDrives: required[:2],
 		},
 		"offline store without project": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     512,
+			PIDsMax:     dependencyGuestPIDsMax,
 			Networkless: true,
 			BuildDrives: append(
 				append([]vm.ReadOnlyDrive{}, required...),
@@ -1319,20 +1319,20 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 		},
 		"wrong process limit": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     511,
+			PIDsMax:     dependencyGuestPIDsMax - 1,
 			Networkless: true,
 			BuildDrives: required,
 		},
 		"network policy": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     512,
+			PIDsMax:     dependencyGuestPIDsMax,
 			Networkless: true,
 			Network:     compute.DefaultNetworkPolicy(),
 			BuildDrives: required,
 		},
 		"workspace substrate": {
 			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     512,
+			PIDsMax:     dependencyGuestPIDsMax,
 			Networkless: true,
 			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 				Path: "workspace.ext4",

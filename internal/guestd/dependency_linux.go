@@ -166,3 +166,15 @@ func (staged *linuxStagedDependencyComponents) Close() error {
 	}
 	return errors.Join(problems...)
 }
+
+func (staged *linuxStagedDependencyComponents) Path(name string) (string, error) {
+	if staged == nil || staged.root == "" {
+		return "", errors.New("dependency components are not staged")
+	}
+	for _, mount := range staged.mounts {
+		if filepath.Base(mount) == name {
+			return mount, nil
+		}
+	}
+	return "", fmt.Errorf("dependency component %q is not staged", name)
+}
