@@ -39,12 +39,38 @@ mount_base() {
 	is_mounted /run || mount -t tmpfs -o mode=0755 tmpfs /run
 }
 
-configure_namespaces() {
+enable_user_namespaces() {
 	if [ -w /proc/sys/user/max_user_namespaces ]; then
 		echo 16384 > /proc/sys/user/max_user_namespaces
 	fi
 	if [ -w /proc/sys/kernel/unprivileged_userns_clone ]; then
 		echo 1 > /proc/sys/kernel/unprivileged_userns_clone
+	fi
+}
+
+disable_user_namespaces() {
+	max_namespaces=/proc/sys/user/max_user_namespaces
+	if [ ! -w "$max_namespaces" ]; then
+		echo "user namespace limit is unavailable" >&2
+		exit 1
+	fi
+	echo 0 > "$max_namespaces"
+	if [ "$(cat "$max_namespaces")" != 0 ]; then
+		echo "user namespaces remain enabled" >&2
+		exit 1
+	fi
+
+	unprivileged_clone=/proc/sys/kernel/unprivileged_userns_clone
+	if [ -e "$unprivileged_clone" ]; then
+		if [ ! -w "$unprivileged_clone" ]; then
+			echo "unprivileged user namespace policy is read-only" >&2
+			exit 1
+		fi
+		echo 0 > "$unprivileged_clone"
+		if [ "$(cat "$unprivileged_clone")" != 0 ]; then
+			echo "unprivileged user namespace cloning remains enabled" >&2
+			exit 1
+		fi
 	fi
 }
 
@@ -355,7 +381,11 @@ configure_runtime_identity() {
 mount_base
 profile=$(guest_profile)
 configure_process_limit
-configure_namespaces
+if [ -z "$profile" ]; then
+	enable_user_namespaces
+else
+	disable_user_namespaces
+fi
 mount_scratch
 load_vsock
 if [ -z "$profile" ]; then

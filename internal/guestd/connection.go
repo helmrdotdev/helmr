@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/archive"
-	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -59,14 +58,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, err
 	}
 	if profile == dependencyGuestProfile {
-		request, err := deployment.ReadManagerRequest(ctx, conn)
-		if err != nil {
-			return false, err
-		}
-		return false, fmt.Errorf(
-			"dependency manager %q execution is unavailable",
-			request.Operation,
-		)
+		return false, handleDependencyConnection(ctx, conn)
 	}
 	start, err := readConnectionStart(conn)
 	if err != nil {

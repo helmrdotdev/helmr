@@ -1,6 +1,7 @@
 package deployment
 
 import (
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -63,6 +64,25 @@ func (err *artifactContentError) Unwrap() error {
 
 type artifactInfrastructureError struct {
 	cause error
+}
+
+func VerifySquashFSPhysical(
+	ctx context.Context,
+	source io.ReaderAt,
+	physicalSize int64,
+) error {
+	if err := checkSquashFSContext(ctx); err != nil {
+		return err
+	}
+	facts, err := readSquashFSFacts(source, physicalSize)
+	if err != nil {
+		return err
+	}
+	return validateArtifactFilesystem(
+		projectSquashFSFilesystem(facts),
+		physicalSize,
+		false,
+	)
 }
 
 func (err *artifactInfrastructureError) Error() string {

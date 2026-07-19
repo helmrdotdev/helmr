@@ -261,6 +261,46 @@ func TestSquashFSArtifactReaderSurfacesTailAndIDFacts(t *testing.T) {
 	}
 }
 
+func TestVerifySquashFSPhysical(t *testing.T) {
+	t.Parallel()
+
+	exact, _ := squashFSTestArtifactImage(t, 0)
+	if err := VerifySquashFSPhysical(
+		context.Background(),
+		bytes.NewReader(exact),
+		int64(len(exact)),
+	); err != nil {
+		t.Fatalf("VerifySquashFSPhysical() error = %v", err)
+	}
+
+	tests := map[string][]byte{
+		"invalid superblock": func() []byte {
+			changed := append([]byte(nil), exact...)
+			binary.LittleEndian.PutUint16(changed[24:26], 0)
+			return changed
+		}(),
+		"nonzero padding": func() []byte {
+			changed := append([]byte(nil), exact...)
+			changed[len(changed)-1] = 1
+			return changed
+		}(),
+	}
+	for name, image := range tests {
+		image := image
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			if err := VerifySquashFSPhysical(
+				context.Background(),
+				bytes.NewReader(image),
+				int64(len(image)),
+			); err == nil {
+				t.Fatal("VerifySquashFSPhysical() accepted invalid image")
+			}
+		})
+	}
+}
+
 func TestProjectSquashFSEntriesRetainsKnownForbiddenForms(t *testing.T) {
 	tests := []squashFSInodeFacts{
 		{

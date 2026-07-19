@@ -3,9 +3,12 @@ package guestd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -15,6 +18,29 @@ type profileTestConnection struct {
 }
 
 func (connection *profileTestConnection) Close() error {
+	return nil
+}
+
+type oneShotTestListener struct {
+	conn     net.Conn
+	accepted int
+}
+
+func (listener *oneShotTestListener) Accept() (net.Conn, error) {
+	listener.accepted++
+	if listener.conn == nil {
+		return nil, errors.New("unexpected second accept")
+	}
+	conn := listener.conn
+	listener.conn = nil
+	return conn, nil
+}
+
+func (listener *oneShotTestListener) Close() error {
+	return nil
+}
+
+func (listener *oneShotTestListener) Addr() net.Addr {
 	return nil
 }
 
@@ -132,4 +158,45 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 	})
 }
 
+func TestBuildGuestIsOneShot(t *testing.T) {
+	t.Parallel()
+
+	server, client := net.Pipe()
+	listener := &oneShotTestListener{conn: server}
+	result := make(chan error, 1)
+	go func() {
+		result <- serveOneShotGuest(
+			context.Background(),
+			listener,
+			Config{Profile: "manager-acquire"},
+			slogDiscard(),
+			newWaitingRunRegistry(),
+			newWorkspaceOperationRegistry(),
+		)
+	}()
+	if err := wire.WriteStreamFrameHeader(
+		client,
+		wire.StreamHeader{Type: wire.StreamTypeCompileTaskBundle},
+		0,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil ||
+			!strings.Contains(err.Error(), "manager acquisition guest rejects input") {
+			t.Fatalf("serveOneShotGuest() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("serveOneShotGuest() did not return")
+	}
+	if listener.accepted != 1 {
+		t.Fatalf("listener accepted %d connections, want 1", listener.accepted)
+	}
+}
+
 var _ io.ReadWriteCloser = (*profileTestConnection)(nil)
+var _ net.Listener = (*oneShotTestListener)(nil)
