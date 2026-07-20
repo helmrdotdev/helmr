@@ -13,6 +13,7 @@ import (
 const (
 	maxPackageManifestSizeBytes = 16 << 20
 	maxBinCommandBytes          = 128
+	maxJSONNestingDepth         = 128
 )
 
 var binCommandPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -99,6 +100,9 @@ func parseOwnedPackageManifest(
 				"preprepare",
 				"prepare",
 				"postprepare",
+				"predependencies",
+				"dependencies",
+				"postdependencies",
 			} {
 				if _, exists := scripts[name]; exists {
 					manifest.AutomaticScripts = append(manifest.AutomaticScripts, name)
@@ -174,7 +178,7 @@ func decodePackageManifest(raw []byte) (map[string]any, error) {
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
-	value, err := decodeUniqueJSON(decoder)
+	value, err := decodeUniqueJSON(decoder, "package manifest")
 	if err != nil {
 		return nil, err
 	}
@@ -201,14 +205,29 @@ func parsePackageType(object map[string]any, manifest *packageManifest) error {
 	return nil
 }
 
-func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
+func decodeUniqueJSON(decoder *json.Decoder, label string) (any, error) {
+	return decodeUniqueJSONDepth(decoder, label, 0)
+}
+
+func decodeUniqueJSONDepth(
+	decoder *json.Decoder,
+	label string,
+	depth int,
+) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
-		return nil, fmt.Errorf("decode package manifest: %w", err)
+		return nil, fmt.Errorf("decode %s: %w", label, err)
 	}
 	delimiter, composite := token.(json.Delim)
 	if !composite {
 		return token, nil
+	}
+	if depth >= maxJSONNestingDepth {
+		return nil, fmt.Errorf(
+			"%s exceeds %d nested containers",
+			label,
+			maxJSONNestingDepth,
+		)
 	}
 
 	switch delimiter {
@@ -217,16 +236,16 @@ func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
 		for decoder.More() {
 			keyToken, err := decoder.Token()
 			if err != nil {
-				return nil, fmt.Errorf("decode package manifest object key: %w", err)
+				return nil, fmt.Errorf("decode %s object key: %w", label, err)
 			}
 			key, ok := keyToken.(string)
 			if !ok {
-				return nil, fmt.Errorf("decode package manifest object key: expected string")
+				return nil, fmt.Errorf("decode %s object key: expected string", label)
 			}
 			if _, exists := object[key]; exists {
-				return nil, fmt.Errorf("package manifest contains duplicate object member %q", key)
+				return nil, fmt.Errorf("%s contains duplicate object member %q", label, key)
 			}
-			value, err := decodeUniqueJSON(decoder)
+			value, err := decodeUniqueJSONDepth(decoder, label, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -234,15 +253,15 @@ func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
 		}
 		if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
 			if err != nil {
-				return nil, fmt.Errorf("decode package manifest object end: %w", err)
+				return nil, fmt.Errorf("decode %s object end: %w", label, err)
 			}
-			return nil, fmt.Errorf("decode package manifest object end: expected }")
+			return nil, fmt.Errorf("decode %s object end: expected }", label)
 		}
 		return object, nil
 	case '[':
 		array := []any{}
 		for decoder.More() {
-			value, err := decodeUniqueJSON(decoder)
+			value, err := decodeUniqueJSONDepth(decoder, label, depth+1)
 			if err != nil {
 				return nil, err
 			}
@@ -250,13 +269,13 @@ func decodeUniqueJSON(decoder *json.Decoder) (any, error) {
 		}
 		if token, err := decoder.Token(); err != nil || token != json.Delim(']') {
 			if err != nil {
-				return nil, fmt.Errorf("decode package manifest array end: %w", err)
+				return nil, fmt.Errorf("decode %s array end: %w", label, err)
 			}
-			return nil, fmt.Errorf("decode package manifest array end: expected ]")
+			return nil, fmt.Errorf("decode %s array end: expected ]", label)
 		}
 		return array, nil
 	default:
-		return nil, fmt.Errorf("decode package manifest: unexpected delimiter %q", delimiter)
+		return nil, fmt.Errorf("decode %s: unexpected delimiter %q", label, delimiter)
 	}
 }
 
