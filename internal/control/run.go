@@ -575,11 +575,11 @@ func resolveRunScheduling(options api.CreateRunOptions, task db.GetDeploymentTas
 	}
 
 	concurrencyKey := pgtype.Text{}
-	if key := strings.TrimSpace(options.ConcurrencyKey); key != "" {
-		if len(key) > 512 {
-			return runScheduling{}, errors.New("concurrency_key must be 512 characters or less")
+	if options.ConcurrencyKey != "" {
+		if err := api.ValidateConcurrencyKey(options.ConcurrencyKey); err != nil {
+			return runScheduling{}, err
 		}
-		concurrencyKey = pgtype.Text{String: key, Valid: true}
+		concurrencyKey = pgtype.Text{String: options.ConcurrencyKey, Valid: true}
 	}
 
 	ttl := strings.TrimSpace(options.TTL)

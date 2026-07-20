@@ -2,11 +2,13 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 var taskIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
@@ -68,6 +70,26 @@ func ValidateQueueName(name string) error {
 		return fmt.Errorf("queue name %q must match %s", name, queueNamePattern.String())
 	}
 	return nil
+}
+
+func ValidateConcurrencyKey(key string) error {
+	if !utf8.ValidString(key) {
+		return errors.New("concurrency_key must be valid UTF-8")
+	}
+	if len(key) == 0 || len(key) > 512 {
+		return errors.New("concurrency_key must be between 1 and 512 bytes")
+	}
+	if strings.IndexByte(key, 0) >= 0 {
+		return errors.New("concurrency_key must not contain NUL")
+	}
+	if invalidConcurrencyKeyBoundary(key[0]) || invalidConcurrencyKeyBoundary(key[len(key)-1]) {
+		return errors.New("concurrency_key must not start or end with ASCII whitespace")
+	}
+	return nil
+}
+
+func invalidConcurrencyKeyBoundary(value byte) bool {
+	return value == 0x20 || (value >= 0x09 && value <= 0x0d)
 }
 
 func ParsePositiveDuration(raw string, label string) (time.Duration, error) {

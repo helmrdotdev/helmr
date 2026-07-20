@@ -11,127 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const completeRunDispatch = `-- name: CompleteRunDispatch :one
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at FROM runs WHERE org_id = $1 AND id = $2
-`
-
-type CompleteRunDispatchParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	RunID pgtype.UUID `json:"run_id"`
-}
-
-func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispatchParams) (Run, error) {
-	row := q.db.QueryRow(ctx, completeRunDispatch, arg.OrgID, arg.RunID)
-	var i Run
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentDefinitionID,
-		&i.EntrypointKind,
-		&i.EntrypointDeclaredID,
-		&i.ActorID,
-		&i.CauseKind,
-		&i.ScheduleID,
-		&i.ScheduleGeneration,
-		&i.ScheduledAt,
-		&i.PreviousScheduledAt,
-		&i.ScheduleTimezone,
-		&i.ParentRunID,
-		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.ActorStartInputSequence,
-		&i.ActorStartInputHighWatermark,
-		&i.Payload,
-		&i.PayloadArtifactID,
-		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
-		&i.Status,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.Metadata,
-		&i.Tags,
-		&i.QueueName,
-		&i.ConcurrencyKey,
-		&i.QueueConcurrencyLimit,
-		&i.Priority,
-		&i.QueueOriginAt,
-		&i.QueueScoreAt,
-		&i.QueuedExpiresAt,
-		&i.MaxActiveDurationMs,
-		&i.RetryPolicy,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.ClaimID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.FirstLeaseAt,
-		&i.StartedAt,
-		&i.RetryAt,
-		&i.TerminalAt,
-	)
-	return i, err
-}
-
-const deadLetterRunDispatch = `-- name: DeadLetterRunDispatch :one
-WITH terminalized AS (
-    UPDATE runs
-       SET status = 'system_failed',
-           current_run_lease_id = NULL, state_version = state_version + 1,
-           terminal_reason_code = 'dispatch_dead_lettered',
-           error = jsonb_build_object('message', $1::text),
-           terminal_at = COALESCE(terminal_at, now()),
-           updated_at = now()
-     WHERE runs.org_id = $2 AND runs.id = $3
-       AND runs.status = 'queued' AND runs.state_version = $4
-    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
-)
-SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
-       terminalized.environment_id, terminalized.state_version
-  FROM terminalized
-`
-
-type DeadLetterRunDispatchParams struct {
-	LastError               string      `json:"last_error"`
-	OrgID                   pgtype.UUID `json:"org_id"`
-	RunID                   pgtype.UUID `json:"run_id"`
-	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
-}
-
-type DeadLetterRunDispatchRow struct {
-	RunID         pgtype.UUID `json:"run_id"`
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	StateVersion  int64       `json:"state_version"`
-}
-
-func (q *Queries) DeadLetterRunDispatch(ctx context.Context, arg DeadLetterRunDispatchParams) (DeadLetterRunDispatchRow, error) {
-	row := q.db.QueryRow(ctx, deadLetterRunDispatch,
-		arg.LastError,
-		arg.OrgID,
-		arg.RunID,
-		arg.ExpectedRunStateVersion,
-	)
-	var i DeadLetterRunDispatchRow
-	err := row.Scan(
-		&i.RunID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.StateVersion,
-	)
-	return i, err
-}
-
 const drainWorkerInstance = `-- name: DrainWorkerInstance :one
 WITH target AS (
     UPDATE worker_instances
@@ -460,6 +339,61 @@ func (q *Queries) FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstan
 		&i.ProviderTerminatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getQueuedRunReadyHint = `-- name: GetQueuedRunReadyHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.org_id = runs.org_id
+   AND workspaces.project_id = runs.project_id
+   AND workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+`
+
+type GetQueuedRunReadyHintParams struct {
+	OrgID pgtype.UUID `json:"org_id"`
+	RunID pgtype.UUID `json:"run_id"`
+}
+
+type GetQueuedRunReadyHintRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	StateVersion   int64              `json:"state_version"`
+	Priority       int32              `json:"priority"`
+	QueueOriginAt  pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt   pgtype.Timestamptz `json:"queue_score_at"`
+	RegionID       string             `json:"region_id"`
+}
+
+func (q *Queries) GetQueuedRunReadyHint(ctx context.Context, arg GetQueuedRunReadyHintParams) (GetQueuedRunReadyHintRow, error) {
+	row := q.db.QueryRow(ctx, getQueuedRunReadyHint, arg.OrgID, arg.RunID)
+	var i GetQueuedRunReadyHintRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.StateVersion,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.RegionID,
 	)
 	return i, err
 }
@@ -868,7 +802,7 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-           runs.concurrency_key, runs.queue_name,
+           coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
@@ -880,7 +814,7 @@ WITH candidate_scopes AS (
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-              runs.concurrency_key, runs.queue_name
+              coalesce(runs.concurrency_key, ''), runs.queue_name
 )
 SELECT org_id, project_id, environment_id, region_id, concurrency_key, queue_name, sort_key FROM candidate_scopes
  WHERE $1::text = ''
@@ -894,15 +828,15 @@ SELECT org_id, project_id, environment_id, region_id, concurrency_key, queue_nam
 `
 
 type ListQueuedRunCandidateScopesParams struct {
-	AfterSortKey       string      `json:"after_sort_key"`
-	AfterOrgID         pgtype.UUID `json:"after_org_id"`
-	AfterProjectID     pgtype.UUID `json:"after_project_id"`
-	AfterEnvironmentID pgtype.UUID `json:"after_environment_id"`
-	AfterRegionID      string      `json:"after_region_id"`
-	AfterQueueClass    string      `json:"after_queue_class"`
-	AfterQueueName     string      `json:"after_queue_name"`
-	RowLimit           int32       `json:"row_limit"`
-	ScanSeed           string      `json:"scan_seed"`
+	AfterSortKey        string      `json:"after_sort_key"`
+	AfterOrgID          pgtype.UUID `json:"after_org_id"`
+	AfterProjectID      pgtype.UUID `json:"after_project_id"`
+	AfterEnvironmentID  pgtype.UUID `json:"after_environment_id"`
+	AfterRegionID       string      `json:"after_region_id"`
+	AfterConcurrencyKey string      `json:"after_concurrency_key"`
+	AfterQueueName      string      `json:"after_queue_name"`
+	RowLimit            int32       `json:"row_limit"`
+	ScanSeed            string      `json:"scan_seed"`
 }
 
 type ListQueuedRunCandidateScopesRow struct {
@@ -910,7 +844,7 @@ type ListQueuedRunCandidateScopesRow struct {
 	ProjectID      pgtype.UUID `json:"project_id"`
 	EnvironmentID  pgtype.UUID `json:"environment_id"`
 	RegionID       string      `json:"region_id"`
-	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
+	ConcurrencyKey string      `json:"concurrency_key"`
 	QueueName      string      `json:"queue_name"`
 	SortKey        string      `json:"sort_key"`
 }
@@ -922,7 +856,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 		arg.AfterProjectID,
 		arg.AfterEnvironmentID,
 		arg.AfterRegionID,
-		arg.AfterQueueClass,
+		arg.AfterConcurrencyKey,
 		arg.AfterQueueName,
 		arg.RowLimit,
 		arg.ScanSeed,
@@ -1093,146 +1027,6 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 		return nil, err
 	}
 	return items, nil
-}
-
-const prepareQueuedRunDispatch = `-- name: PrepareQueuedRunDispatch :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.payload_artifact_id, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at, workspaces.region_id
-  FROM runs
-  JOIN workspaces
-    ON workspaces.org_id = runs.org_id
-   AND workspaces.project_id = runs.project_id
-   AND workspaces.environment_id = runs.environment_id
-   AND workspaces.id = runs.workspace_id
- WHERE runs.org_id = $1
-   AND runs.id = $2
-   AND runs.status = 'queued'
-   AND runs.current_run_lease_id IS NULL
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- FOR UPDATE OF runs
-`
-
-type PrepareQueuedRunDispatchParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	RunID pgtype.UUID `json:"run_id"`
-}
-
-type PrepareQueuedRunDispatchRow struct {
-	ID                           pgtype.UUID        `json:"id"`
-	PublicID                     string             `json:"public_id"`
-	OrgID                        pgtype.UUID        `json:"org_id"`
-	ProjectID                    pgtype.UUID        `json:"project_id"`
-	EnvironmentID                pgtype.UUID        `json:"environment_id"`
-	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
-	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
-	EntrypointKind               string             `json:"entrypoint_kind"`
-	EntrypointDeclaredID         string             `json:"entrypoint_declared_id"`
-	ActorID                      pgtype.UUID        `json:"actor_id"`
-	CauseKind                    string             `json:"cause_kind"`
-	ScheduleID                   pgtype.UUID        `json:"schedule_id"`
-	ScheduleGeneration           pgtype.Int8        `json:"schedule_generation"`
-	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
-	PreviousScheduledAt          pgtype.Timestamptz `json:"previous_scheduled_at"`
-	ScheduleTimezone             pgtype.Text        `json:"schedule_timezone"`
-	ParentRunID                  pgtype.UUID        `json:"parent_run_id"`
-	ParentOwnsLifecycle          pgtype.Bool        `json:"parent_owns_lifecycle"`
-	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
-	BaseWorkspaceVersionID       pgtype.UUID        `json:"base_workspace_version_id"`
-	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
-	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
-	Payload                      []byte             `json:"payload"`
-	PayloadArtifactID            pgtype.UUID        `json:"payload_artifact_id"`
-	Output                       []byte             `json:"output"`
-	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
-	Error                        []byte             `json:"error"`
-	Status                       RunStatus          `json:"status"`
-	StateVersion                 int64              `json:"state_version"`
-	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
-	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
-	Metadata                     []byte             `json:"metadata"`
-	Tags                         []string           `json:"tags"`
-	QueueName                    string             `json:"queue_name"`
-	ConcurrencyKey               pgtype.Text        `json:"concurrency_key"`
-	QueueConcurrencyLimit        pgtype.Int8        `json:"queue_concurrency_limit"`
-	Priority                     int32              `json:"priority"`
-	QueueOriginAt                pgtype.Timestamptz `json:"queue_origin_at"`
-	QueueScoreAt                 pgtype.Timestamptz `json:"queue_score_at"`
-	QueuedExpiresAt              pgtype.Timestamptz `json:"queued_expires_at"`
-	MaxActiveDurationMs          int64              `json:"max_active_duration_ms"`
-	RetryPolicy                  []byte             `json:"retry_policy"`
-	ActiveElapsedMs              int64              `json:"active_elapsed_ms"`
-	ActiveStartedAt              pgtype.Timestamptz `json:"active_started_at"`
-	TraceID                      pgtype.Text        `json:"trace_id"`
-	RootSpanID                   string             `json:"root_span_id"`
-	ClaimID                      pgtype.UUID        `json:"claim_id"`
-	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
-	FirstLeaseAt                 pgtype.Timestamptz `json:"first_lease_at"`
-	StartedAt                    pgtype.Timestamptz `json:"started_at"`
-	RetryAt                      pgtype.Timestamptz `json:"retry_at"`
-	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
-	RegionID                     string             `json:"region_id"`
-}
-
-func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueuedRunDispatchParams) (PrepareQueuedRunDispatchRow, error) {
-	row := q.db.QueryRow(ctx, prepareQueuedRunDispatch, arg.OrgID, arg.RunID)
-	var i PrepareQueuedRunDispatchRow
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.DeploymentID,
-		&i.DeploymentDefinitionID,
-		&i.EntrypointKind,
-		&i.EntrypointDeclaredID,
-		&i.ActorID,
-		&i.CauseKind,
-		&i.ScheduleID,
-		&i.ScheduleGeneration,
-		&i.ScheduledAt,
-		&i.PreviousScheduledAt,
-		&i.ScheduleTimezone,
-		&i.ParentRunID,
-		&i.ParentOwnsLifecycle,
-		&i.WorkspaceID,
-		&i.BaseWorkspaceVersionID,
-		&i.ActorStartInputSequence,
-		&i.ActorStartInputHighWatermark,
-		&i.Payload,
-		&i.PayloadArtifactID,
-		&i.Output,
-		&i.TerminalReasonCode,
-		&i.Error,
-		&i.Status,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.Metadata,
-		&i.Tags,
-		&i.QueueName,
-		&i.ConcurrencyKey,
-		&i.QueueConcurrencyLimit,
-		&i.Priority,
-		&i.QueueOriginAt,
-		&i.QueueScoreAt,
-		&i.QueuedExpiresAt,
-		&i.MaxActiveDurationMs,
-		&i.RetryPolicy,
-		&i.ActiveElapsedMs,
-		&i.ActiveStartedAt,
-		&i.TraceID,
-		&i.RootSpanID,
-		&i.ClaimID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.FirstLeaseAt,
-		&i.StartedAt,
-		&i.RetryAt,
-		&i.TerminalAt,
-		&i.RegionID,
-	)
-	return i, err
 }
 
 const setWorkerInstanceState = `-- name: SetWorkerInstanceState :one

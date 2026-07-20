@@ -278,15 +278,15 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 	for {
 		queryCtx, cancel := context.WithTimeout(ctx, r.runQueryTimeout)
 		rows, err := store.ListQueuedRunCandidateScopes(queryCtx, db.ListQueuedRunCandidateScopesParams{
-			AfterSortKey:       afterSortKey,
-			AfterOrgID:         afterRow.OrgID,
-			AfterProjectID:     afterRow.ProjectID,
-			AfterEnvironmentID: afterRow.EnvironmentID,
-			AfterRegionID:      afterRow.RegionID,
-			AfterQueueClass:    afterRow.QueueClass,
-			AfterQueueName:     afterRow.QueueName,
-			RowLimit:           r.scopeLimit,
-			ScanSeed:           scanSeed,
+			AfterSortKey:        afterSortKey,
+			AfterOrgID:          afterRow.OrgID,
+			AfterProjectID:      afterRow.ProjectID,
+			AfterEnvironmentID:  afterRow.EnvironmentID,
+			AfterRegionID:       afterRow.RegionID,
+			AfterConcurrencyKey: afterRow.ConcurrencyKey,
+			AfterQueueName:      afterRow.QueueName,
+			RowLimit:            r.scopeLimit,
+			ScanSeed:            scanSeed,
 		})
 		cancel()
 		if err != nil {
@@ -295,12 +295,12 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 		scopes := make([]QueueScope, 0, len(rows))
 		for _, row := range rows {
 			scopes = append(scopes, QueueScope{
-				OrgID:         row.OrgID,
-				RegionID:      row.RegionID,
-				ProjectID:     row.ProjectID,
-				EnvironmentID: row.EnvironmentID,
-				QueueClass:    row.QueueClass,
-				QueueName:     row.QueueName,
+				OrgID:          row.OrgID,
+				RegionID:       row.RegionID,
+				ProjectID:      row.ProjectID,
+				EnvironmentID:  row.EnvironmentID,
+				ConcurrencyKey: row.ConcurrencyKey,
+				QueueName:      row.QueueName,
 			})
 		}
 		for _, scope := range r.selector.Order(scopes) {

@@ -25,7 +25,8 @@ func TestBuildQueueMessageFreezesCandidateFenceAndHostResourceVector(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if message.WorkKind != WorkKindBuild || message.ReadyFence() != "build:3" || !message.QueueTimestamp.Equal(now) {
+	if message.WorkKind != WorkKindBuild || message.ReadyFence() != "build:3" ||
+		!message.QueueOriginAt.Equal(now) || !message.QueueScoreAt.Equal(now) {
 		t.Fatalf("build message fence = %+v", message)
 	}
 	if message.BuildArchitecture != "aarch64" {
@@ -42,7 +43,7 @@ func TestBuildReadyMessageRejectsMalformedArchitecture(t *testing.T) {
 	message := Message{
 		WorkKind: WorkKindBuild, DeploymentID: uuid.NewString(), OrgID: uuid.NewString(),
 		ProjectID: uuid.NewString(), EnvironmentID: uuid.NewString(), RegionID: "us-east-1",
-		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: 1,
+		QueueName: "deployment-build", LeaseSequence: 1,
 		BuildArchitecture: "amd64",
 		BuildResources: BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
 			ScratchBytes: 32 << 30, Executors: 1},
@@ -53,11 +54,14 @@ func TestBuildReadyMessageRejectsMalformedArchitecture(t *testing.T) {
 }
 
 func TestBuildReadyMessageArchitectureRoundTripDoesNotAdvertiseRuntimeDigest(t *testing.T) {
+	queuedAt := time.Now().UTC()
 	message := Message{
 		WorkKind: WorkKindBuild, DeploymentID: uuid.NewString(), OrgID: uuid.NewString(),
 		ProjectID: uuid.NewString(), EnvironmentID: uuid.NewString(), RegionID: "us-east-1",
-		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: 2,
+		QueueName: "deployment-build", LeaseSequence: 2,
 		BuildArchitecture: "x86_64",
+		QueueOriginAt:     queuedAt,
+		QueueScoreAt:      queuedAt,
 		BuildResources: BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
 			ScratchBytes: 32 << 30, Executors: 1},
 	}

@@ -1267,7 +1267,16 @@ CREATE TABLE schedules (
     cron_contract_version TEXT NOT NULL DEFAULT 'helmr.cron.v0'
         CHECK (cron_contract_version = 'helmr.cron.v0'),
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    concurrency_key TEXT,
+    concurrency_key TEXT CHECK (
+        concurrency_key IS NULL
+        OR (
+            octet_length(concurrency_key) BETWEEN 1 AND 512
+            AND ascii(left(concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(left(concurrency_key, 1)) <> 32
+            AND ascii(right(concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(right(concurrency_key, 1)) <> 32
+        )
+    ),
     queue_concurrency_limit BIGINT CHECK (queue_concurrency_limit BETWEEN 1 AND 9007199254740991),
     priority INTEGER NOT NULL DEFAULT 0,
     queued_ttl_ms BIGINT CHECK (queued_ttl_ms BETWEEN 1 AND 9007199254740991),
@@ -1544,7 +1553,16 @@ CREATE TABLE actors (
     input_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (input_retention_floor > 0),
     output_retention_floor BIGINT NOT NULL DEFAULT 1 CHECK (output_retention_floor > 0),
     managed_queue_name TEXT NOT NULL CHECK (btrim(managed_queue_name) <> '' AND octet_length(managed_queue_name) <= 256),
-    managed_concurrency_key TEXT,
+    managed_concurrency_key TEXT CHECK (
+        managed_concurrency_key IS NULL
+        OR (
+            octet_length(managed_concurrency_key) BETWEEN 1 AND 512
+            AND ascii(left(managed_concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(left(managed_concurrency_key, 1)) <> 32
+            AND ascii(right(managed_concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(right(managed_concurrency_key, 1)) <> 32
+        )
+    ),
     managed_queue_concurrency_limit BIGINT CHECK (
         managed_queue_concurrency_limit BETWEEN 1 AND 9007199254740991
     ),
@@ -1657,7 +1675,16 @@ CREATE TABLE runs (
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     tags TEXT[] NOT NULL DEFAULT '{}'::text[],
     queue_name TEXT NOT NULL CHECK (btrim(queue_name) <> ''),
-    concurrency_key TEXT,
+    concurrency_key TEXT CHECK (
+        concurrency_key IS NULL
+        OR (
+            octet_length(concurrency_key) BETWEEN 1 AND 512
+            AND ascii(left(concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(left(concurrency_key, 1)) <> 32
+            AND ascii(right(concurrency_key, 1)) NOT BETWEEN 9 AND 13
+            AND ascii(right(concurrency_key, 1)) <> 32
+        )
+    ),
     queue_concurrency_limit BIGINT CHECK (queue_concurrency_limit BETWEEN 1 AND 9007199254740991),
     priority INTEGER NOT NULL DEFAULT 0,
     queue_origin_at TIMESTAMPTZ NOT NULL,

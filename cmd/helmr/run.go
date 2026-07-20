@@ -91,7 +91,7 @@ func sessionStartCommand() *cobra.Command {
 				return err
 			}
 			options := api.SessionStartOptions{
-				ConcurrencyKey:     strings.TrimSpace(concurrencyKey),
+				ConcurrencyKey:     concurrencyKey,
 				Priority:           priority,
 				TTL:                strings.TrimSpace(ttl),
 				MaxDurationSeconds: maxDurationSeconds,

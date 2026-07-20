@@ -8,7 +8,6 @@ import (
 	"time"
 
 	miniredis "github.com/alicebob/miniredis/v2"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	redisv9 "github.com/redis/go-redis/v9"
 )
@@ -23,14 +22,8 @@ func TestQueueStoresOnlyReconstructableReadyIndex(t *testing.T) {
 	now := time.Unix(100, 0).UTC()
 	result, err := queue.Enqueue(context.Background(), dispatch.Message{
 		WorkKind: dispatch.WorkKindRun, RunID: "run-1", OrgID: "org-1", RegionID: "us-east-1",
-		ProjectID: "project-1", EnvironmentID: "env-1", QueueClass: "default",
-		QueueName: "jobs", RunStateVersion: 3, QueueTimestamp: now, EnqueuedAt: now,
-		Requirements: compute.RunRuntimeRequirements{
-			Resources: compute.ResourceVector{MilliCPU: 100, MemoryMiB: 128, Slots: 1},
-			Runtime: compute.RuntimeSelector{ID: "runtime", Arch: "x86_64", ABI: "abi",
-				KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", CNIProfile: "cni"},
-			Network: compute.DefaultNetworkPolicy(),
-		},
+		ProjectID: "project-1", EnvironmentID: "env-1", QueueName: "jobs",
+		RunStateVersion: 3, QueueOriginAt: now, QueueScoreAt: now, EnqueuedAt: now,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +36,24 @@ func TestQueueStoresOnlyReconstructableReadyIndex(t *testing.T) {
 		if containsAny(key, "lease", "active", "worker_group", "dispatch_generation") {
 			t.Fatalf("forbidden authority key created: %s", key)
 		}
+	}
+}
+
+func TestQueueRejectsMissingAuthoritativeQueueTimes(t *testing.T) {
+	server := miniredis.RunT(t)
+	client := redisv9.NewClient(&redisv9.Options{Addr: server.Addr()})
+	queue, err := New(client, WithPrefix("missing-times"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := testMessage("run-1", "org-1", "env-1", time.Unix(100, 0).UTC())
+	message.QueueOriginAt = time.Time{}
+	message.QueueScoreAt = time.Time{}
+	if _, err := queue.Enqueue(context.Background(), message); err == nil {
+		t.Fatal("enqueue accepted missing authoritative queue times")
+	}
+	if len(server.Keys()) != 0 {
+		t.Fatalf("enqueue wrote ready-index keys for invalid message: %v", server.Keys())
 	}
 }
 
@@ -330,23 +341,17 @@ func TestBuildReadyCASRemovalPreservesNewDelivery(t *testing.T) {
 func testMessage(runID, orgID, environmentID string, queuedAt time.Time) dispatch.Message {
 	return dispatch.Message{
 		WorkKind: dispatch.WorkKindRun, RunID: runID, OrgID: orgID, RegionID: "us-east-1", ProjectID: "project-1",
-		EnvironmentID: environmentID, QueueClass: "default", QueueName: "jobs",
-		RunStateVersion: 1, QueueTimestamp: queuedAt, EnqueuedAt: queuedAt,
-		Requirements: compute.RunRuntimeRequirements{
-			Resources: compute.ResourceVector{MilliCPU: 100, MemoryMiB: 128, Slots: 1},
-			Runtime: compute.RuntimeSelector{ID: "runtime", Arch: "x86_64", ABI: "abi",
-				KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", CNIProfile: "cni"},
-			Network: compute.DefaultNetworkPolicy(),
-		},
+		EnvironmentID: environmentID, QueueName: "jobs",
+		RunStateVersion: 1, QueueOriginAt: queuedAt, QueueScoreAt: queuedAt, EnqueuedAt: queuedAt,
 	}
 }
 
 func testBuildMessage(deploymentID, orgID, environmentID string, queuedAt time.Time) dispatch.Message {
 	return dispatch.Message{WorkKind: dispatch.WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		RegionID: "us-east-1", ProjectID: "project-1", EnvironmentID: environmentID,
-		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: 1,
+		QueueName: "deployment-build", LeaseSequence: 1,
 		BuildArchitecture: "x86_64",
-		QueueTimestamp:    queuedAt, EnqueuedAt: queuedAt,
+		QueueOriginAt:     queuedAt, QueueScoreAt: queuedAt, EnqueuedAt: queuedAt,
 		BuildResources: dispatch.BuildResourceVector{CPUMillis: 3000, MemoryBytes: 4 << 30,
 			WorkloadDiskBytes: 0, ScratchBytes: 32 << 30, Executors: 1}}
 }

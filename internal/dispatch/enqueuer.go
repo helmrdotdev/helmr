@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -16,7 +15,7 @@ import (
 var ErrNoEnqueueCandidate = errors.New("no queue candidate")
 
 type EnqueuerStore interface {
-	PrepareQueuedRunDispatch(context.Context, db.PrepareQueuedRunDispatchParams) (db.PrepareQueuedRunDispatchRow, error)
+	GetQueuedRunReadyHint(context.Context, db.GetQueuedRunReadyHintParams) (db.GetQueuedRunReadyHintRow, error)
 	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
 	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 	ListQueuedDeploymentBuildRegions(context.Context, int32) ([]string, error)
@@ -76,8 +75,8 @@ func buildQueueMessage(row db.ListQueuedDeploymentBuildCandidatesRow) (Message, 
 	}
 	message := Message{WorkKind: WorkKindBuild, DeploymentID: deploymentID, OrgID: orgID,
 		ProjectID: projectID, EnvironmentID: environmentID, RegionID: row.BuildRegionID,
-		QueueClass: "build", QueueName: "deployment-build", LeaseSequence: row.LeaseSequence,
-		QueueTimestamp: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
+		QueueName: "deployment-build", LeaseSequence: row.LeaseSequence,
+		QueueOriginAt: row.QueueTimestamp.Time, QueueScoreAt: row.QueueTimestamp.Time, EnqueuedAt: time.Now().UTC(),
 		BuildArchitecture: row.BuildArchitecture,
 		BuildResources: BuildResourceVector{CPUMillis: row.BuildRequestedCpuMillis, MemoryBytes: row.BuildRequestedMemoryBytes,
 			WorkloadDiskBytes: row.BuildRequestedWorkloadDiskBytes, ScratchBytes: row.BuildRequestedScratchBytes,
@@ -118,7 +117,7 @@ func NewEnqueuer(store EnqueuerStore, queue Queue, opts ...EnqueuerOption) (*Enq
 }
 
 func (e *Enqueuer) EnqueueRun(ctx context.Context, orgID pgtype.UUID, runID pgtype.UUID) (EnqueueResult, error) {
-	row, err := e.store.PrepareQueuedRunDispatch(ctx, db.PrepareQueuedRunDispatchParams{
+	row, err := e.store.GetQueuedRunReadyHint(ctx, db.GetQueuedRunReadyHintParams{
 		OrgID: orgID,
 		RunID: runID,
 	})
@@ -151,13 +150,13 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 		limit = 100
 	}
 	candidates, err := e.store.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
-		OrgID:         scope.OrgID,
-		RegionID:      scope.RegionID,
-		ProjectID:     scope.ProjectID,
-		EnvironmentID: scope.EnvironmentID,
-		QueueClass:    scope.QueueClass,
-		QueueName:     scope.QueueName,
-		RowLimit:      limit,
+		OrgID:          scope.OrgID,
+		RegionID:       scope.RegionID,
+		ProjectID:      scope.ProjectID,
+		EnvironmentID:  scope.EnvironmentID,
+		ConcurrencyKey: pgtype.Text{String: scope.ConcurrencyKey, Valid: scope.ConcurrencyKey != ""},
+		QueueName:      scope.QueueName,
+		RowLimit:       limit,
 	})
 	if err != nil {
 		return QueueReconcileStats{}, err
@@ -179,11 +178,7 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 	return stats, errors.Join(problems...)
 }
 
-func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
-	requirements, err := requirementsFromRow(row)
-	if err != nil {
-		return Message{}, err
-	}
+func queueMessage(row db.GetQueuedRunReadyHintRow) (Message, error) {
 	runID, err := pgUUIDString(row.ID)
 	if err != nil {
 		return Message{}, fmt.Errorf("run id: %w", err)
@@ -200,47 +195,21 @@ func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 	if err != nil {
 		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
-	limit := int64(0)
-	if row.QueueConcurrencyLimit.Valid {
-		limit = row.QueueConcurrencyLimit.Int64
-	}
 	return Message{
-		WorkKind:              WorkKindRun,
-		RunID:                 runID,
-		OrgID:                 orgID,
-		RegionID:              row.RegionID,
-		ProjectID:             projectID,
-		EnvironmentID:         environmentID,
-		QueueClass:            row.QueueClass,
-		QueueName:             QueueNameForRuntime(row.QueueName, requirements.Runtime),
-		QueueConcurrencyScope: row.QueueName,
-		QueueConcurrencyLimit: limit,
-		ConcurrencyKey:        row.ConcurrencyKey.String,
-		RunStateVersion:       row.StateVersion,
-		Requirements:          requirements,
-		Priority:              row.Priority,
-		QueueTimestamp:        row.QueueTimestamp.Time,
-		QueuedExpiresAt:       row.QueuedExpiresAt.Time,
-		EnqueuedAt:            time.Now().UTC(),
+		WorkKind:        WorkKindRun,
+		RunID:           runID,
+		OrgID:           orgID,
+		RegionID:        row.RegionID,
+		ProjectID:       projectID,
+		EnvironmentID:   environmentID,
+		QueueName:       row.QueueName,
+		ConcurrencyKey:  row.ConcurrencyKey.String,
+		RunStateVersion: row.StateVersion,
+		Priority:        row.Priority,
+		QueueOriginAt:   row.QueueOriginAt.Time,
+		QueueScoreAt:    row.QueueScoreAt.Time,
+		EnqueuedAt:      time.Now().UTC(),
 	}, nil
-}
-
-func requirementsFromRow(row db.PrepareQueuedRunDispatchRow) (compute.RunRuntimeRequirements, error) {
-	return compute.RunRuntimeRequirementsFromFields(compute.RunRuntimeRequirementFields{
-		RequestedMilliCPU:       row.RequestedMilliCpu,
-		RequestedMemoryMiB:      row.RequestedMemoryMib,
-		RequestedDiskMiB:        row.RequestedDiskMib,
-		RequestedExecutionSlots: row.RequestedExecutionSlots,
-		RuntimeID:               row.RuntimeIdentityID,
-		RuntimeArch:             row.RuntimeArch,
-		RuntimeABI:              row.RuntimeABI,
-		KernelDigest:            row.KernelDigest,
-		InitramfsDigest:         row.InitramfsDigest,
-		RootfsDigest:            row.RootfsDigest,
-		CNIProfile:              row.CniProfile,
-		NetworkPolicyJSON:       row.NetworkPolicy,
-		PlacementJSON:           row.ResourcePlacementPolicy,
-	})
 }
 
 func pgUUIDString(value pgtype.UUID) (string, error) {

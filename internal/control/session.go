@@ -789,7 +789,7 @@ func sessionStartRequestFingerprint(taskID string, payload json.RawMessage, opti
 	if options.Queue != nil {
 		fingerprint.Options.QueueName = strings.TrimSpace(options.Queue.Name)
 	}
-	fingerprint.Options.ConcurrencyKey = strings.TrimSpace(options.ConcurrencyKey)
+	fingerprint.Options.ConcurrencyKey = options.ConcurrencyKey
 	fingerprint.Options.Priority = options.Priority
 	fingerprint.Options.TTL = strings.TrimSpace(options.TTL)
 	fingerprint.Options.MaxDurationSeconds = options.MaxDurationSeconds

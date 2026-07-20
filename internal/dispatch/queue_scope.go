@@ -3,12 +3,12 @@ package dispatch
 import "github.com/jackc/pgx/v5/pgtype"
 
 type QueueScope struct {
-	OrgID         pgtype.UUID
-	RegionID      string
-	ProjectID     pgtype.UUID
-	EnvironmentID pgtype.UUID
-	QueueClass    string
-	QueueName     string
+	OrgID          pgtype.UUID
+	RegionID       string
+	ProjectID      pgtype.UUID
+	EnvironmentID  pgtype.UUID
+	ConcurrencyKey string
+	QueueName      string
 }
 
 type QueueScopeSelector interface {

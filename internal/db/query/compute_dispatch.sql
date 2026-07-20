@@ -304,8 +304,10 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state = 'active';
 
--- name: PrepareQueuedRunDispatch :one
-SELECT runs.*, workspaces.region_id
+-- name: GetQueuedRunReadyHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
   FROM runs
   JOIN workspaces
     ON workspaces.org_id = runs.org_id
@@ -316,13 +318,12 @@ SELECT runs.*, workspaces.region_id
    AND runs.id = sqlc.arg(run_id)
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- FOR UPDATE OF runs;
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
 
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-           runs.concurrency_key, runs.queue_name,
+           coalesce(runs.concurrency_key, '') AS concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
                coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
@@ -334,14 +335,14 @@ WITH candidate_scopes AS (
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-              runs.concurrency_key, runs.queue_name
+              coalesce(runs.concurrency_key, ''), runs.queue_name
 )
 SELECT * FROM candidate_scopes
  WHERE sqlc.arg(after_sort_key)::text = ''
     OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid,
           sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid,
-          sqlc.arg(after_region_id)::text, sqlc.arg(after_queue_class)::text,
+          sqlc.arg(after_region_id)::text, sqlc.arg(after_concurrency_key)::text,
           sqlc.arg(after_queue_name)::text)
  ORDER BY sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name
  LIMIT sqlc.arg(row_limit);
@@ -363,23 +364,3 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id
  LIMIT sqlc.arg(row_limit);
-
--- name: CompleteRunDispatch :one
-SELECT * FROM runs WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(run_id);
-
--- name: DeadLetterRunDispatch :one
-WITH terminalized AS (
-    UPDATE runs
-       SET status = 'system_failed',
-           current_run_lease_id = NULL, state_version = state_version + 1,
-           terminal_reason_code = 'dispatch_dead_lettered',
-           error = jsonb_build_object('message', sqlc.arg(last_error)::text),
-           terminal_at = COALESCE(terminal_at, now()),
-           updated_at = now()
-     WHERE runs.org_id = sqlc.arg(org_id) AND runs.id = sqlc.arg(run_id)
-       AND runs.status = 'queued' AND runs.state_version = sqlc.arg(expected_run_state_version)
-    RETURNING *
-)
-SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
-       terminalized.environment_id, terminalized.state_version
-  FROM terminalized;

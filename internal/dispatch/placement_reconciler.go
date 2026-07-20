@@ -206,7 +206,7 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 	for _, scope := range scopes {
 		fairScopes = append(fairScopes, QueueScope{OrgID: scope.OrgID, ProjectID: scope.ProjectID,
 			EnvironmentID: scope.EnvironmentID, RegionID: scope.RegionID,
-			QueueClass: scope.QueueClass, QueueName: scope.QueueName})
+			ConcurrencyKey: scope.ConcurrencyKey, QueueName: scope.QueueName})
 	}
 	fairScopes = (RoundRobinQueueScopeSelector{}).Order(fairScopes)
 	for _, scope := range fairScopes {
@@ -215,8 +215,13 @@ func (r *PlacementReconciler) ReconcileRuns(ctx context.Context) error {
 		}
 		rows, err := r.runDiscovery.ListQueuedRunDispatchCandidatesForScope(ctx, db.ListQueuedRunDispatchCandidatesForScopeParams{
 			OrgID: scope.OrgID, ProjectID: scope.ProjectID, EnvironmentID: scope.EnvironmentID,
-			RegionID: scope.RegionID, QueueClass: scope.QueueClass, QueueName: scope.QueueName,
-			RowLimit: remaining,
+			RegionID: scope.RegionID,
+			ConcurrencyKey: pgtype.Text{
+				String: scope.ConcurrencyKey,
+				Valid:  scope.ConcurrencyKey != "",
+			},
+			QueueName: scope.QueueName,
+			RowLimit:  remaining,
 		})
 		if err != nil {
 			problems = append(problems, err)

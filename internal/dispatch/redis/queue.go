@@ -69,9 +69,6 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	if message.EnqueuedAt.IsZero() {
 		message.EnqueuedAt = q.now().UTC()
 	}
-	if message.QueueTimestamp.IsZero() {
-		message.QueueTimestamp = message.EnqueuedAt
-	}
 	if err := message.Validate(); err != nil {
 		return dispatch.EnqueueResult{}, err
 	}
@@ -84,12 +81,12 @@ func (q *Queue) Enqueue(ctx context.Context, message dispatch.Message) (dispatch
 	messageKey := q.sourceKey(message.WorkKind, workID)
 	pipe := q.client.TxPipeline()
 	pipe.Set(ctx, messageKey, payload, q.messageTTL)
-	pipe.ZAdd(ctx, readyKey, redisv9.Z{Score: readyScore(message.Priority, message.QueueTimestamp), Member: workID})
-	pipe.ZAdd(ctx, q.oldestKey(message.WorkKind, message.RegionID), redisv9.Z{Score: float64(message.QueueTimestamp.UTC().UnixMilli()), Member: workID})
+	pipe.ZAdd(ctx, readyKey, redisv9.Z{Score: readyScore(message.Priority, message.QueueScoreAt), Member: workID})
+	pipe.ZAdd(ctx, q.oldestKey(message.WorkKind, message.RegionID), redisv9.Z{Score: float64(message.QueueOriginAt.UTC().UnixMilli()), Member: workID})
 	pipe.SAdd(ctx, q.regionsKey(message.WorkKind), message.RegionID)
 	pipe.ZAddArgs(ctx, q.organizationsKey(message.WorkKind, message.RegionID), redisv9.ZAddArgs{NX: true, Members: []redisv9.Z{{Score: 0, Member: message.OrgID}}})
 	pipe.ZAddArgs(ctx, q.environmentsKey(message.WorkKind, message.RegionID, message.OrgID), redisv9.ZAddArgs{NX: true, Members: []redisv9.Z{{Score: 0, Member: message.EnvironmentID}}})
-	pipe.ZAddArgs(ctx, q.leavesKey(message.WorkKind, message.RegionID, message.OrgID, message.EnvironmentID), redisv9.ZAddArgs{NX: true, Members: []redisv9.Z{{Score: float64(message.QueueTimestamp.UTC().UnixMilli()), Member: q.leafID(message)}}})
+	pipe.ZAddArgs(ctx, q.leavesKey(message.WorkKind, message.RegionID, message.OrgID, message.EnvironmentID), redisv9.ZAddArgs{NX: true, Members: []redisv9.Z{{Score: float64(message.QueueOriginAt.UTC().UnixMilli()), Member: q.leafID(message)}}})
 	depth := pipe.ZCard(ctx, readyKey)
 	for _, key := range []string{readyKey, q.oldestKey(message.WorkKind, message.RegionID), q.regionsKey(message.WorkKind),
 		q.organizationsKey(message.WorkKind, message.RegionID), q.environmentsKey(message.WorkKind, message.RegionID, message.OrgID),
@@ -127,7 +124,7 @@ func (q *Queue) leavesKey(kind dispatch.WorkKind, region, org, environment strin
 }
 func (q *Queue) leafID(message dispatch.Message) string {
 	scope := strings.Join([]string{string(message.WorkKind), message.RegionID, message.OrgID, message.ProjectID, message.EnvironmentID,
-		message.QueueClass, message.QueueName}, "\x00")
+		message.QueueName, message.ConcurrencyKey}, "\x00")
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(scope)))
 }
 
@@ -209,7 +206,7 @@ func (q *Queue) SelectReady(ctx context.Context, selection dispatch.ReadySelecti
 			_ = q.removeUnknown(ctx, selection.WorkKind, selection.RegionID, "", runID)
 			continue
 		}
-		if q.now().UTC().Sub(message.QueueTimestamp) < selection.OldestWorkAfter {
+		if q.now().UTC().Sub(message.QueueOriginAt) < selection.OldestWorkAfter {
 			break
 		}
 		selected = append(selected, message)
