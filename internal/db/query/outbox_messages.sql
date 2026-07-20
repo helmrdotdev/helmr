@@ -47,8 +47,9 @@ WITH candidates AS (
         (state = 'pending' AND available_at <= now())
         OR
         (state = 'claimed' AND claim_expires_at <= now())
-    )
+      )
       AND outbox_messages.lane = sqlc.arg(lane)
+      AND outbox_messages.topic = ANY(sqlc.arg(topics)::text[])
     ORDER BY available_at, id
     LIMIT sqlc.arg(row_limit)
     FOR UPDATE SKIP LOCKED

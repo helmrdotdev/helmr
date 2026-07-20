@@ -2701,7 +2701,7 @@ CREATE TABLE outbox_messages (
 );
 
 CREATE INDEX outbox_messages_delivery_idx
-    ON outbox_messages (lane, available_at, id)
+    ON outbox_messages (lane, topic, available_at, id)
     WHERE state IN ('pending', 'claimed');
 
 CREATE TABLE telemetry_outbox (

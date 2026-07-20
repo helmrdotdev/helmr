@@ -6,6 +6,60 @@ import (
 	"time"
 )
 
+func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
+	t.Setenv("HELMR_DATABASE_URL", " postgres://example ")
+	t.Setenv("HELMR_REDIS_URL", " redis://redis.example.test:6379/0 ")
+	t.Setenv("HELMR_CLICKHOUSE_URL", " https://clickhouse.example.test ")
+	t.Setenv("HELMR_SCHEDULE_POLL_INTERVAL", " 250ms ")
+	t.Setenv("HELMR_SCHEDULE_CLAIM_LIMIT", " 25 ")
+	t.Setenv("HELMR_SCHEDULE_CONCURRENCY", " 4 ")
+	t.Setenv("HELMR_SCHEDULE_CLAIM_LEASE", " 2m ")
+
+	cfg, err := LoadDispatcher()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DatabaseURL != "postgres://example" ||
+		cfg.RedisURL != "redis://redis.example.test:6379/0" ||
+		cfg.ClickHouseURL != "https://clickhouse.example.test" ||
+		cfg.SchedulePollInterval != 250*time.Millisecond ||
+		cfg.ScheduleClaimLimit != 25 ||
+		cfg.ScheduleConcurrency != 4 ||
+		cfg.ScheduleClaimLease != 2*time.Minute {
+		t.Fatalf("config = %+v", cfg)
+	}
+}
+
+func TestLoadDispatcherRejectsNonPositiveScheduleClaimConfig(t *testing.T) {
+	for _, variable := range []string{
+		"HELMR_SCHEDULE_POLL_INTERVAL",
+		"HELMR_SCHEDULE_CLAIM_LIMIT",
+		"HELMR_SCHEDULE_CONCURRENCY",
+		"HELMR_SCHEDULE_CLAIM_LEASE",
+	} {
+		t.Run(variable, func(t *testing.T) {
+			t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+			t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
+			t.Setenv(variable, "0")
+
+			_, err := LoadDispatcher()
+			if err == nil {
+				t.Fatalf("expected %s validation error", variable)
+			}
+		})
+	}
+}
+
+func TestLoadDispatcherRejectsScheduleClaimConfigAboveInt32(t *testing.T) {
+	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
+	t.Setenv("HELMR_SCHEDULE_CLAIM_LIMIT", "2147483648")
+
+	if _, err := LoadDispatcher(); err == nil {
+		t.Fatal("expected Schedule claim limit error")
+	}
+}
+
 func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_DATABASE_URL", " postgres://example\n")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:8123")

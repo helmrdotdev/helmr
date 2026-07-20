@@ -339,69 +339,47 @@ variable "dispatcher_desired_count" {
   default     = 1
 }
 
-variable "schedule_repair_every" {
-  description = "Schedule repair polling interval."
+variable "schedule_poll_interval" {
+  description = "PostgreSQL Schedule claim polling interval."
   type        = string
-  default     = "5s"
+  default     = "1s"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_repair_every))
-    error_message = "schedule_repair_every must be a positive duration."
+    condition     = can(regex("^[1-9]", var.schedule_poll_interval))
+    error_message = "schedule_poll_interval must be a positive duration."
   }
 }
 
-variable "schedule_repair_limit" {
-  description = "Maximum schedule repair entries scanned or due fires claimed per worker tick."
+variable "schedule_claim_limit" {
+  description = "Maximum due Schedule rows claimed per dispatcher poll."
   type        = number
   default     = 100
 
   validation {
-    condition     = var.schedule_repair_limit > 0
-    error_message = "schedule_repair_limit must be positive."
+    condition     = var.schedule_claim_limit > 0 && floor(var.schedule_claim_limit) == var.schedule_claim_limit && var.schedule_claim_limit <= 2147483647
+    error_message = "schedule_claim_limit must be an integer between 1 and 2147483647."
   }
 }
 
-variable "schedule_trigger_concurrency" {
-  description = "Maximum concurrent scheduled run creation operations per dispatcher task."
+variable "schedule_concurrency" {
+  description = "Maximum concurrent Schedule admission transactions per dispatcher task."
   type        = number
   default     = 10
 
   validation {
-    condition     = var.schedule_trigger_concurrency > 0
-    error_message = "schedule_trigger_concurrency must be positive."
+    condition     = var.schedule_concurrency > 0 && floor(var.schedule_concurrency) == var.schedule_concurrency && var.schedule_concurrency <= 2147483647
+    error_message = "schedule_concurrency must be an integer between 1 and 2147483647."
   }
 }
 
-variable "schedule_repair_lookahead" {
-  description = "How far ahead schedule workers repair database next-fire state into Redis."
-  type        = string
-  default     = "1h"
-
-  validation {
-    condition     = can(regex("^[1-9]", var.schedule_repair_lookahead))
-    error_message = "schedule_repair_lookahead must be a positive duration."
-  }
-}
-
-variable "schedule_lease" {
-  description = "Redis schedule fire visibility lease duration."
+variable "schedule_claim_lease" {
+  description = "PostgreSQL Schedule claim lease duration."
   type        = string
   default     = "5m"
 
   validation {
-    condition     = can(regex("^[1-9]", var.schedule_lease))
-    error_message = "schedule_lease must be a positive duration."
-  }
-}
-
-variable "schedule_max_attempts" {
-  description = "Maximum attempts for one schedule fire before it is skipped with an error."
-  type        = number
-  default     = 10
-
-  validation {
-    condition     = var.schedule_max_attempts > 0
-    error_message = "schedule_max_attempts must be positive."
+    condition     = can(regex("^[1-9]", var.schedule_claim_lease))
+    error_message = "schedule_claim_lease must be a positive duration."
   }
 }
 

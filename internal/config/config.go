@@ -63,35 +63,20 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	WorkerFleets               []WorkerFleet
-	FleetMetricsNamespace      string
-	DatabaseURL                string
-	RedisURL                   string
-	WorkerGroupID              string
-	ClickHouseURL              string
-	ClickHouseUser             string
-	ClickHousePassword         string
-	AuthSecret                 string
-	SecretEncryptionKey        string
-	SecretEncryptionKeyOld     string
-	LookupHMACKeys             string
-	PublicURL                  string
-	EmailProvider              string
-	ResendAPIKey               string
-	SMTPAddr                   string
-	SMTPUsername               string
-	SMTPPassword               string
-	EmailFrom                  string
-	ScheduleRepairEvery        time.Duration
-	ScheduleRepairLimit        int
-	ScheduleTriggerConcurrency int
-	ScheduleRepairLookahead    time.Duration
-	ScheduleLease              time.Duration
-	ScheduleMaxAttempts        int
-	ScheduleJitter             time.Duration
-	RuntimePrepareTarget       int
-	RuntimePrepareLimit        int
-	RuntimePrepareEvery        time.Duration
+	WorkerFleets          []WorkerFleet
+	FleetMetricsNamespace string
+	DatabaseURL           string
+	RedisURL              string
+	ClickHouseURL         string
+	ClickHouseUser        string
+	ClickHousePassword    string
+	SchedulePollInterval  time.Duration
+	ScheduleClaimLimit    int
+	ScheduleConcurrency   int
+	ScheduleClaimLease    time.Duration
+	RuntimePrepareTarget  int
+	RuntimePrepareLimit   int
+	RuntimePrepareEvery   time.Duration
 }
 
 type WorkerFleet struct {

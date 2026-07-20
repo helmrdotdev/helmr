@@ -36,8 +36,8 @@ Optional: `HELMR_CONTROL_ADDR`, `HELMR_PUBLIC_URL`, and `HELMR_MAGIC_LINK_DEBUG_
 ClickHouse telemetry: `HELMR_CLICKHOUSE_URL` is required. Set `HELMR_CLICKHOUSE_USER` when the service user is not `default`, and set `HELMR_CLICKHOUSE_PASSWORD` when the service requires a password.
 
 `HELMR_SECRET_ENCRYPTION_KEY_OLD` is optional and should only be set during
-Helmr-managed secret key rotation. While it is set, control and dispatcher can
-decrypt secrets written with the old key, and new writes use
+Helmr-managed secret key rotation. While it is set, control can decrypt secrets
+written with the old key, and new writes use
 `HELMR_SECRET_ENCRYPTION_KEY`. Run `helmr-control secrets reencrypt` to rewrite
 old-key secrets before removing `HELMR_SECRET_ENCRYPTION_KEY_OLD`; repeat the
 command until `remaining_old_key_count` is `0`.
@@ -45,7 +45,7 @@ command until `remaining_old_key_count` is `0`.
 `HELMR_LOOKUP_HMAC_KEYS` is a JSON object from positive integer versions to
 base64-encoded 32-byte keys, for example `{"1":"<base64-key>"}`. It contains
 key bytes only; PostgreSQL selects the active versions and the current write
-version. After adding a new key to every Control and Dispatcher instance, run
+version. After adding a new key to every Control instance, run
 `helmr-control lookup-hmac activate --version <new-version>`. Then run
 `helmr-control secrets reauthenticate --from-version <old-version>` until
 `remaining_old_key_count` is `0`. Then run
@@ -55,7 +55,7 @@ followed by
 `claim_count` and `secret_version_count` are `0`, run
 `helmr-control lookup-hmac retire --version <old-version>` before removing its
 bytes from configuration or KMS. A new database must receive its first explicit
-`lookup-hmac activate` before Control or Dispatcher starts.
+`lookup-hmac activate` before Control starts.
 
 When using the AWS module with `secret_encryption_key_old_arn`, also set
 `secret_encryption_key_old_kms_key_arns` if that old-key secret uses a
@@ -74,14 +74,10 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 
 ## Dispatcher
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, and `HELMR_LOOKUP_HMAC_KEYS`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, and `HELMR_CLICKHOUSE_URL`.
 
-Set `HELMR_SECRET_ENCRYPTION_KEY_OLD` on the dispatcher during the same rotation
-window as control so scheduled runs can resolve old-key secrets until
-re-encryption completes.
-
-Set the same active `HELMR_LOOKUP_HMAC_KEYS` versions on control and
-dispatcher.
+`HELMR_LOOKUP_HMAC_KEYS` and Secret encryption keys are control-plane
+authority and are not provided to the dispatcher.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.
@@ -90,13 +86,10 @@ Optional schedule worker tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HELMR_SCHEDULE_REPAIR_EVERY` | `5s` | How often the dispatcher repairs schedule Redis entries from the database and drains due entries. |
-| `HELMR_SCHEDULE_REPAIR_LIMIT` | `100` | Schedule repair page size and due-entry dequeue batch size. |
-| `HELMR_SCHEDULE_TRIGGER_CONCURRENCY` | `10` | Maximum concurrent scheduled task-start attempts per dispatcher. |
-| `HELMR_SCHEDULE_REPAIR_LOOKAHEAD` | `40s` | Safety-net window of upcoming next-fire entries repaired into Redis. Steady-state schedules enqueue their next fire directly. |
-| `HELMR_SCHEDULE_LEASE` | `5m` | Redis lease duration for a due schedule fire. |
-| `HELMR_SCHEDULE_MAX_ATTEMPTS` | `10` | Retry attempts before the current schedule fire is skipped. |
-| `HELMR_SCHEDULE_JITTER` | `30s` | Stable per-schedule jitter applied when registering next-fire entries. |
+| `HELMR_SCHEDULE_POLL_INTERVAL` | `1s` | How often the dispatcher claims due Schedule cursors from PostgreSQL. |
+| `HELMR_SCHEDULE_CLAIM_LIMIT` | `100` | Maximum due Schedule rows claimed per poll; must be an integer from 1 through 2147483647. |
+| `HELMR_SCHEDULE_CONCURRENCY` | `10` | Maximum concurrent Schedule admission transactions per dispatcher; must be an integer from 1 through 2147483647. |
+| `HELMR_SCHEDULE_CLAIM_LEASE` | `5m` | PostgreSQL claim lease held while one Schedule cursor is admitted. |
 
 ## Worker
 

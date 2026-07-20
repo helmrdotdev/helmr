@@ -16,17 +16,16 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	"github.com/helmrdotdev/helmr/internal/clickhouse"
 	"github.com/helmrdotdev/helmr/internal/config"
-	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/dispatch"
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 
 	"github.com/helmrdotdev/helmr/internal/fleet"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/runadmission"
 	"github.com/helmrdotdev/helmr/internal/schedule"
-	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -46,8 +45,16 @@ type dispatcherToolchainCatalog interface {
 	Resolve(string) (deployment.Toolchain, error)
 }
 
+type dispatcherRuntimeCatalog interface {
+	Resolve(string) (deployment.RuntimeDescriptor, error)
+}
+
 var loadDispatcherToolchainCatalog = func() (dispatcherToolchainCatalog, error) {
 	return deployment.LoadToolchainCatalog()
+}
+
+var loadDispatcherRuntimeCatalog = func() (dispatcherRuntimeCatalog, error) {
+	return deployment.LoadRuntimeCatalog()
 }
 
 func main() {
@@ -78,6 +85,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	)
 	if err != nil {
 		return fmt.Errorf("decode standard toolchain catalog digest: %w", err)
+	}
+	runtimeCatalog, err := loadDispatcherRuntimeCatalog()
+	if err != nil {
+		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
 	}
 	pool, err := newDispatchPool(ctx, cfg.DatabaseURL, baseMaxConns)
 	if err != nil {
@@ -142,8 +153,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("configure clickhouse: %w", err)
 	}
 	defer clickHouseClient.Close()
-	telemetryReader := telemetry.NewHistoricalReader(clickHouseClient)
-
 	redisOptions, err := redis.ParseURL(cfg.RedisURL)
 	if err != nil {
 		return fmt.Errorf("parse redis url: %w", err)
@@ -181,31 +190,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure build dispatch enqueuer: %w", err)
 	}
-	eventStream, err := control.NewEventStream(log, queries, redisClient, control.EventStreamConfig{
-		TelemetryReader: telemetryReader,
-	})
-	if err != nil {
-		return fmt.Errorf("configure event stream: %w", err)
-	}
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
-	}
-	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure schedule index: %w", err)
-	}
-	keyring, err := secret.KeyringFromBase64(cfg.SecretEncryptionKey, cfg.SecretEncryptionKeyOld)
-	if err != nil {
-		return fmt.Errorf("load secret encryption key: %w", err)
-	}
-	hashes, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys)
-	if err != nil {
-		return fmt.Errorf("load lookup HMAC keys: %w", err)
-	}
-	secretStore, err := secret.New(ctx, queries, pool, keyring, hashes)
-	if err != nil {
-		return fmt.Errorf("configure secret store: %w", err)
 	}
 	sweeperLock, err := dispatch.NewExpirySweepAdvisoryLock(pool)
 	if err != nil {
@@ -288,40 +275,39 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure prepared runtime warmer: %w", err)
 	}
-	scheduleReconcileLock, err := schedule.NewReconcileAdvisoryLock(pool)
+	scheduleAuthority, err := deployment.NewScheduleAuthority(runtimeCatalog)
 	if err != nil {
-		return fmt.Errorf("configure schedule reconcile lock: %w", err)
+		return fmt.Errorf("configure schedule authority: %w", err)
 	}
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer, eventStream)
+	scheduleAdmitter, err := schedule.NewDBAdmitter(pool, scheduleAuthority)
 	if err != nil {
-		return fmt.Errorf("configure schedule run creator: %w", err)
-	}
-	scheduleEngine, err := schedule.NewEngine(
-		log,
-		pool,
-		scheduleIndex,
-		scheduleRunCreator,
-		schedule.EngineConfig{
-			RepairLimit:     int32(cfg.ScheduleRepairLimit),
-			RepairLookahead: cfg.ScheduleRepairLookahead,
-			MaxAttempts:     int32(cfg.ScheduleMaxAttempts),
-			Jitter:          cfg.ScheduleJitter,
-			ReconcileLock:   scheduleReconcileLock,
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("configure schedule engine: %w", err)
+		return fmt.Errorf("configure schedule admission: %w", err)
 	}
 	scheduleWorker, err := schedule.NewWorker(
 		log,
-		scheduleEngine,
-		schedule.WithRepairEvery(cfg.ScheduleRepairEvery),
-		schedule.WithRepairLimit(int32(cfg.ScheduleRepairLimit)),
-		schedule.WithTriggerConcurrency(int32(cfg.ScheduleTriggerConcurrency)),
-		schedule.WithLease(cfg.ScheduleLease),
+		queries,
+		scheduleAdmitter,
+		schedule.WithPollInterval(cfg.SchedulePollInterval),
+		schedule.WithClaimLimit(int32(cfg.ScheduleClaimLimit)),
+		schedule.WithConcurrency(int32(cfg.ScheduleConcurrency)),
+		schedule.WithClaimLease(cfg.ScheduleClaimLease),
 	)
 	if err != nil {
 		return fmt.Errorf("configure schedule worker: %w", err)
+	}
+	runAdmissionDelivery, err := runadmission.NewDeliveryWorker(
+		log,
+		queries,
+		func(ctx context.Context, orgID, runID pgtype.UUID) error {
+			_, err := runEnqueuer.EnqueueRun(ctx, orgID, runID)
+			if errors.Is(err, dispatch.ErrNoEnqueueCandidate) {
+				return nil
+			}
+			return err
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("configure Run admission delivery: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -335,6 +321,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return checkpointReconciler.Run(runCtx) },
 		func() error { return preparedRuntimeWarmer.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
+		func() error { return runAdmissionDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
 	}
 	for _, controller := range fleetControllers {

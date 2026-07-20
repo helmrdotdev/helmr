@@ -8,42 +8,25 @@ import (
 	"io"
 	"strings"
 	"time"
-
-	"github.com/helmrdotdev/helmr/internal/auth"
-	"github.com/helmrdotdev/helmr/internal/keyedhash"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
+	const maxInt32 = int(1<<31 - 1)
 	var err error
-	publicURL := env("HELMR_PUBLIC_URL", DefaultPublicURL)
 	cfg := Dispatcher{
-		FleetMetricsNamespace:      env("HELMR_FLEET_METRICS_NAMESPACE", "Helmr/WorkerFleet"),
-		DatabaseURL:                envString("HELMR_DATABASE_URL"),
-		RedisURL:                   env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		WorkerGroupID:              envString("HELMR_WORKER_GROUP_ID"),
-		ClickHouseURL:              envString("HELMR_CLICKHOUSE_URL"),
-		ClickHouseUser:             envString("HELMR_CLICKHOUSE_USER"),
-		ClickHousePassword:         envString("HELMR_CLICKHOUSE_PASSWORD"),
-		AuthSecret:                 envString("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:        envString("HELMR_SECRET_ENCRYPTION_KEY"),
-		SecretEncryptionKeyOld:     envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
-		LookupHMACKeys:             envString("HELMR_LOOKUP_HMAC_KEYS"),
-		PublicURL:                  publicURL,
-		EmailProvider:              envLower("HELMR_EMAIL_PROVIDER"),
-		ResendAPIKey:               envString("HELMR_RESEND_API_KEY"),
-		SMTPAddr:                   envString("HELMR_SMTP_ADDR"),
-		SMTPUsername:               envString("HELMR_SMTP_USERNAME"),
-		SMTPPassword:               envString("HELMR_SMTP_PASSWORD"),
-		EmailFrom:                  envString("HELMR_EMAIL_FROM"),
-		ScheduleRepairEvery:        5 * time.Second,
-		ScheduleRepairLimit:        100,
-		ScheduleTriggerConcurrency: 10,
-		ScheduleLease:              5 * time.Minute,
-		ScheduleMaxAttempts:        10,
-		ScheduleJitter:             30 * time.Second,
-		RuntimePrepareTarget:       0,
-		RuntimePrepareLimit:        20,
-		RuntimePrepareEvery:        5 * time.Second,
+		FleetMetricsNamespace: env("HELMR_FLEET_METRICS_NAMESPACE", "Helmr/WorkerFleet"),
+		DatabaseURL:           envString("HELMR_DATABASE_URL"),
+		RedisURL:              env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:         envString("HELMR_CLICKHOUSE_URL"),
+		ClickHouseUser:        envString("HELMR_CLICKHOUSE_USER"),
+		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
+		SchedulePollInterval:  time.Second,
+		ScheduleClaimLimit:    100,
+		ScheduleConcurrency:   10,
+		ScheduleClaimLease:    5 * time.Minute,
+		RuntimePrepareTarget:  0,
+		RuntimePrepareLimit:   20,
+		RuntimePrepareEvery:   5 * time.Second,
 	}
 	workerFleetsJSON := envString("HELMR_WORKER_FLEETS")
 	if workerFleetsJSON != "" {
@@ -54,27 +37,26 @@ func LoadDispatcher() (Dispatcher, error) {
 	if len(cfg.WorkerFleets) > 0 && strings.TrimSpace(cfg.FleetMetricsNamespace) == "" {
 		return cfg, errors.New("HELMR_FLEET_METRICS_NAMESPACE must not be empty")
 	}
-	if cfg.ScheduleRepairEvery, err = envDuration("HELMR_SCHEDULE_REPAIR_EVERY", cfg.ScheduleRepairEvery); err != nil {
+	if cfg.SchedulePollInterval, err = envDuration("HELMR_SCHEDULE_POLL_INTERVAL", cfg.SchedulePollInterval); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleRepairLimit, err = envInt("HELMR_SCHEDULE_REPAIR_LIMIT", cfg.ScheduleRepairLimit); err != nil {
+	if cfg.ScheduleClaimLimit, err = envInt("HELMR_SCHEDULE_CLAIM_LIMIT", cfg.ScheduleClaimLimit); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleTriggerConcurrency, err = envInt("HELMR_SCHEDULE_TRIGGER_CONCURRENCY", cfg.ScheduleTriggerConcurrency); err != nil {
+	if cfg.ScheduleConcurrency, err = envInt("HELMR_SCHEDULE_CONCURRENCY", cfg.ScheduleConcurrency); err != nil {
 		return cfg, err
 	}
-	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
+	if cfg.ScheduleClaimLease, err = envDuration("HELMR_SCHEDULE_CLAIM_LEASE", cfg.ScheduleClaimLease); err != nil {
 		return cfg, err
 	}
-	cfg.ScheduleRepairLookahead = 2*cfg.ScheduleRepairEvery + cfg.ScheduleJitter
-	if cfg.ScheduleRepairLookahead, err = envDuration("HELMR_SCHEDULE_REPAIR_LOOKAHEAD", cfg.ScheduleRepairLookahead); err != nil {
-		return cfg, err
+	if cfg.SchedulePollInterval <= 0 ||
+		cfg.ScheduleClaimLimit <= 0 ||
+		cfg.ScheduleConcurrency <= 0 ||
+		cfg.ScheduleClaimLease <= 0 {
+		return cfg, errors.New("schedule polling, claim, concurrency, and lease settings must be positive")
 	}
-	if cfg.ScheduleLease, err = envDuration("HELMR_SCHEDULE_LEASE", cfg.ScheduleLease); err != nil {
-		return cfg, err
-	}
-	if cfg.ScheduleMaxAttempts, err = envInt("HELMR_SCHEDULE_MAX_ATTEMPTS", cfg.ScheduleMaxAttempts); err != nil {
-		return cfg, err
+	if cfg.ScheduleClaimLimit > maxInt32 || cfg.ScheduleConcurrency > maxInt32 {
+		return cfg, errors.New("schedule claim and concurrency settings must not exceed 2147483647")
 	}
 	if cfg.RuntimePrepareTarget, err = envInt("HELMR_PREPARED_RUNTIME_WARM_TARGET", cfg.RuntimePrepareTarget); err != nil {
 		return cfg, err
@@ -97,42 +79,9 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
-	if cfg.WorkerGroupID == "" {
-		return cfg, errors.New("HELMR_WORKER_GROUP_ID is required")
-	}
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
 	}
-	if err := validatePublicURL(cfg.PublicURL); err != nil {
-		return cfg, err
-	}
-	if cfg.AuthSecret == "" {
-		return cfg, errors.New("HELMR_AUTH_SECRET is required")
-	}
-	if err := auth.ValidateTokenSecret([]byte(cfg.AuthSecret)); err != nil {
-		return cfg, fmt.Errorf("HELMR_AUTH_SECRET: %w", err)
-	}
-	if cfg.SecretEncryptionKey == "" {
-		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
-	}
-	if cfg.LookupHMACKeys == "" {
-		return cfg, errors.New("HELMR_LOOKUP_HMAC_KEYS is required")
-	}
-	if _, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys); err != nil {
-		return cfg, fmt.Errorf("HELMR_LOOKUP_HMAC_KEYS: %w", err)
-	}
-	controlEmail := Control{
-		EmailProvider: cfg.EmailProvider,
-		ResendAPIKey:  cfg.ResendAPIKey,
-		SMTPAddr:      cfg.SMTPAddr,
-		SMTPUsername:  cfg.SMTPUsername,
-		SMTPPassword:  cfg.SMTPPassword,
-		EmailFrom:     cfg.EmailFrom,
-	}
-	if err := validateControlEmailConfig(&controlEmail); err != nil {
-		return cfg, err
-	}
-	cfg.EmailProvider = controlEmail.EmailProvider
 	return cfg, nil
 }
 

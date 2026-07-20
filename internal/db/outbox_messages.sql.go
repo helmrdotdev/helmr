@@ -19,10 +19,11 @@ WITH candidates AS (
         (state = 'pending' AND available_at <= now())
         OR
         (state = 'claimed' AND claim_expires_at <= now())
-    )
+      )
       AND outbox_messages.lane = $3
+      AND outbox_messages.topic = ANY($4::text[])
     ORDER BY available_at, id
-    LIMIT $4
+    LIMIT $5
     FOR UPDATE SKIP LOCKED
 )
 UPDATE outbox_messages
@@ -39,6 +40,7 @@ type ClaimOutboxMessagesParams struct {
 	ClaimedBy      pgtype.Text        `json:"claimed_by"`
 	ClaimExpiresAt pgtype.Timestamptz `json:"claim_expires_at"`
 	Lane           string             `json:"lane"`
+	Topics         []string           `json:"topics"`
 	RowLimit       int32              `json:"row_limit"`
 }
 
@@ -47,6 +49,7 @@ func (q *Queries) ClaimOutboxMessages(ctx context.Context, arg ClaimOutboxMessag
 		arg.ClaimedBy,
 		arg.ClaimExpiresAt,
 		arg.Lane,
+		arg.Topics,
 		arg.RowLimit,
 	)
 	if err != nil {

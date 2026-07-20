@@ -25,27 +25,28 @@ locals {
     var.secret_encryption_key_old_kms_key_arns,
     var.clickhouse_password_kms_key_arns
   ))
+  dispatcher_secret_kms_key_arns = distinct(concat(
+    [aws_kms_key.helmr.arn],
+    var.clickhouse_password_kms_key_arns
+  ))
   control_security_group_ids = concat(
     [aws_security_group.control.id],
     var.additional_control_security_group_ids
   )
 
-  telemetry_environment = merge(
-    {
-      HELMR_WORKER_GROUP_ID     = local.worker_group_id
-      HELMR_REGION_ID           = local.region_id
-      HELMR_DEFAULT_REGION_ID   = local.default_region_id
-      HELMR_PROVIDER            = "aws"
-      HELMR_PROVIDER_REGION     = data.aws_region.current.region
-      HELMR_REGION_DISPLAY_NAME = local.region_display_name
-    },
-    {
-      HELMR_CLICKHOUSE_URL = local.clickhouse_url
-    },
-    local.clickhouse_user == "" ? {} : {
-      HELMR_CLICKHOUSE_USER = local.clickhouse_user
-    }
-  )
+  clickhouse_environment = merge({
+    HELMR_CLICKHOUSE_URL = local.clickhouse_url
+    }, local.clickhouse_user == "" ? {} : {
+    HELMR_CLICKHOUSE_USER = local.clickhouse_user
+  })
+  telemetry_environment = merge({
+    HELMR_WORKER_GROUP_ID     = local.worker_group_id
+    HELMR_REGION_ID           = local.region_id
+    HELMR_DEFAULT_REGION_ID   = local.default_region_id
+    HELMR_PROVIDER            = "aws"
+    HELMR_PROVIDER_REGION     = data.aws_region.current.region
+    HELMR_REGION_DISPLAY_NAME = local.region_display_name
+  }, local.clickhouse_environment)
 
   telemetry_secrets = var.clickhouse_password_secret_arn == null ? {} : {
     HELMR_CLICKHOUSE_PASSWORD = var.clickhouse_password_secret_arn
@@ -132,7 +133,8 @@ locals {
   reserved_control_secret_keys      = toset(keys(local.control_secret_defaults))
   reserved_secret_rotation_keys     = toset(["HELMR_SECRET_ENCRYPTION_KEY_OLD"])
   reserved_control_keys             = setunion(local.reserved_control_environment_keys, local.reserved_control_secret_keys, local.reserved_email_keys, local.reserved_secret_rotation_keys)
-  reserved_dispatcher_keys = setunion(local.reserved_control_keys, toset(keys(local.dispatcher_environment_defaults)), toset([
+  reserved_dispatcher_keys = setunion(toset(keys(local.dispatcher_environment_defaults)), toset(keys(local.dispatcher_secrets)), toset([
+    "HELMR_CLICKHOUSE_PASSWORD",
     "HELMR_WORKER_FLEETS",
     "HELMR_FLEET_METRICS_NAMESPACE",
   ]))
@@ -142,32 +144,20 @@ locals {
   control_secrets                  = local.control_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    HELMR_PUBLIC_URL                   = local.control_url
-    HELMR_REDIS_URL                    = local.redis_url
-    HELMR_SCHEDULE_REPAIR_EVERY        = var.schedule_repair_every
-    HELMR_SCHEDULE_REPAIR_LIMIT        = tostring(var.schedule_repair_limit)
-    HELMR_SCHEDULE_TRIGGER_CONCURRENCY = tostring(var.schedule_trigger_concurrency)
-    HELMR_SCHEDULE_REPAIR_LOOKAHEAD    = var.schedule_repair_lookahead
-    HELMR_SCHEDULE_LEASE               = var.schedule_lease
-    HELMR_SCHEDULE_MAX_ATTEMPTS        = tostring(var.schedule_max_attempts)
-    HELMR_SCHEDULE_JITTER              = var.schedule_jitter
+    HELMR_REDIS_URL              = local.redis_url
+    HELMR_SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
+    HELMR_SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
+    HELMR_SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
+    HELMR_SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
     }, length(var.worker_fleets) > 0 ? {
     HELMR_WORKER_FLEETS           = jsonencode(var.worker_fleets)
     HELMR_FLEET_METRICS_NAMESPACE = var.fleet_metrics_namespace
-  } : {}, local.telemetry_environment, local.email_environment)
+  } : {}, local.clickhouse_environment)
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
-    HELMR_DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
-    HELMR_SECRET_ENCRYPTION_KEY = aws_secretsmanager_secret.secret_encryption_key.arn
-    HELMR_LOOKUP_HMAC_KEYS      = aws_secretsmanager_secret.lookup_hmac_keys.arn
-    },
-    var.secret_encryption_key_old_arn != null ? {
-      HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
-    } : {},
-    local.telemetry_secrets,
-    local.email_secrets
+    HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+    }, local.telemetry_secrets
   )
 
   redis_url = "rediss://${aws_elasticache_replication_group.dispatch.primary_endpoint_address}:${aws_elasticache_replication_group.dispatch.port}/0"
@@ -1003,7 +993,7 @@ resource "aws_iam_role_policy" "dispatcher_execution" {
         Action = [
           "kms:Decrypt"
         ]
-        Resource = local.secret_kms_key_arns
+        Resource = local.dispatcher_secret_kms_key_arns
         Condition = {
           StringEquals = {
             "kms:ViaService" = "secretsmanager.${data.aws_region.current.region}.amazonaws.com"

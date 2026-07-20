@@ -10,21 +10,25 @@ import (
 )
 
 type ScheduleAuthority struct {
-	policy *BuildPolicy
+	runtimes interface {
+		Resolve(string) (RuntimeDescriptor, error)
+	}
 }
 
-func NewScheduleAuthority(policy *BuildPolicy) (*ScheduleAuthority, error) {
-	if policy == nil {
-		return nil, errors.New("deployment build policy is required")
+func NewScheduleAuthority(runtimes interface {
+	Resolve(string) (RuntimeDescriptor, error)
+}) (*ScheduleAuthority, error) {
+	if runtimes == nil {
+		return nil, errors.New("managed runtime authority is required")
 	}
-	return &ScheduleAuthority{policy: policy}, nil
+	return &ScheduleAuthority{runtimes: runtimes}, nil
 }
 
 func (a *ScheduleAuthority) ResolveRuntime(digest string) error {
-	if a == nil || a.policy == nil {
-		return errors.New("deployment build policy is required")
+	if a == nil || a.runtimes == nil {
+		return errors.New("managed runtime authority is required")
 	}
-	_, err := a.policy.ResolveRuntime(digest)
+	_, err := a.runtimes.Resolve(digest)
 	return err
 }
 
