@@ -43,12 +43,13 @@ func validStorageFixture() (BuildStorageConfig, *fakeStorageProbe) {
 	cacheDevice := "8:1"
 	scratchDevice := "8:2"
 	config := BuildStorageConfig{
-		CacheRoot:            "/cache",
-		ScratchRoot:          "/scratch",
-		WorkDir:              "/scratch/worker",
-		JailerRoot:           "/scratch/jailer",
-		RequiredCacheBytes:   8 << 30,
-		RequiredScratchBytes: 32 << 30,
+		CacheRoot:                     "/cache",
+		ScratchRoot:                   "/scratch",
+		WorkDir:                       "/scratch/worker",
+		JailerRoot:                    "/scratch/jailer",
+		RequiredCacheBytes:            8 << 30,
+		RequiredScratchBytes:          32 << 30,
+		RequiredScratchAvailableBytes: 32 << 30,
 	}
 	probe := &fakeStorageProbe{
 		files: map[string]storageFile{
@@ -125,6 +126,20 @@ func TestProveBuildStorageRejectsInvalidBoundary(t *testing.T) {
 				config.CacheRoot = ""
 			},
 			want: "build cache root is required",
+		},
+		{
+			name: "missing scratch availability",
+			change: func(config *BuildStorageConfig, _ *fakeStorageProbe) {
+				config.RequiredScratchAvailableBytes = 0
+			},
+			want: "required build scratch availability",
+		},
+		{
+			name: "scratch availability exceeds capacity",
+			change: func(config *BuildStorageConfig, _ *fakeStorageProbe) {
+				config.RequiredScratchAvailableBytes = config.RequiredScratchBytes + 1
+			},
+			want: "required build scratch availability",
 		},
 		{
 			name: "relative root",

@@ -105,7 +105,7 @@ run "build_worker_installs_exact_policy_before_service" {
     worker_execution_slots     = 1
     build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     build_cache_mib            = 8192
-    build_scratch_mib          = 8192
+    build_scratch_mib          = 34816
   }
 
   assert {
@@ -228,6 +228,25 @@ run "build_worker_requires_policy_digest" {
     worker_capacity_vcpus      = 4
     worker_capacity_memory_mib = 8192
     build_policy_digest        = null
+  }
+
+  expect_failures = [terraform_data.network_preconditions]
+}
+
+run "build_worker_rejects_scratch_below_large_vm_boundary" {
+  command = plan
+
+  variables {
+    name                       = "helmr-test-build"
+    worker_group_id            = "build-workers"
+    worker_roles               = ["build"]
+    worker_capacity_vcpus      = 4
+    worker_capacity_memory_mib = 8192
+    worker_execution_slots     = 1
+    vm_scratch_disk_mib        = 40000
+    build_policy_digest        = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    build_cache_mib            = 8192
+    build_scratch_mib          = 42047
   }
 
   expect_failures = [terraform_data.network_preconditions]

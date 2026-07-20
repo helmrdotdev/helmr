@@ -73,21 +73,44 @@ func run(log *slog.Logger) error {
 	if err := os.Remove(filepath.Join(workDir, drainCompleteMarkerName)); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("clear stale drain marker: %w", err)
 	}
+	var startupRecovery *workerdaemon.RecoveryEvidence
 	substrateCacheDir := filepath.Join(workDir, "substrate-cache")
 	artifactCacheDir := filepath.Join(workDir, "artifact-cache")
+	var buildStorageConfig *workerdaemon.BuildStorageConfig
+	var buildScratchLeaseBytes uint64
 	if supportsBuild {
 		const mib = uint64(1024 * 1024)
-		storageProof, err := workerdaemon.ProveBuildStorage(workerdaemon.BuildStorageConfig{
-			CacheRoot:            cfg.BuildCacheDir,
-			ScratchRoot:          cfg.BuildScratchDir,
-			WorkDir:              workDir,
-			JailerRoot:           cfg.JailerChrootDir,
-			RequiredCacheBytes:   uint64(cfg.SubstrateCacheMaxMiB+cfg.ArtifactCacheMaxMiB) * mib,
-			RequiredScratchBytes: uint64(compute.BuildEnvelopeResources().DiskMiB) * mib,
-		})
+		scratchFloorMiB := admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)
+		storage := workerdaemon.BuildStorageConfig{
+			CacheRoot:                     cfg.BuildCacheDir,
+			ScratchRoot:                   cfg.BuildScratchDir,
+			WorkDir:                       workDir,
+			JailerRoot:                    cfg.JailerChrootDir,
+			RequiredCacheBytes:            uint64(cfg.SubstrateCacheMaxMiB+cfg.ArtifactCacheMaxMiB) * mib,
+			RequiredScratchBytes:          uint64(scratchFloorMiB+firecracker.BootCorpusMaxMiB) * mib,
+			RequiredScratchAvailableBytes: 1,
+		}
+		storageProof, err := workerdaemon.ProveBuildStorage(storage)
 		if err != nil {
 			return fmt.Errorf("prove build storage: %w", err)
 		}
+		evidence, err := workerdaemon.RecoverLocalVMState(ctx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+		if err != nil {
+			return fmt.Errorf("recover local worker state before build activation: %w", err)
+		}
+		if len(evidence.Quarantined) != 0 || len(evidence.QuarantineErrors) != 0 {
+			return errors.New("build worker runtime state is not clean enough to activate its boot corpus")
+		}
+		startupRecovery = &evidence
+		if err := firecracker.CleanRuntimes(workDir, ""); err != nil {
+			return fmt.Errorf("clean stale firecracker runtimes: %w", err)
+		}
+		storage.RequiredScratchAvailableBytes = uint64(firecracker.BootCorpusMaxMiB) * mib
+		storageProof, err = workerdaemon.ProveBuildStorage(storage)
+		if err != nil {
+			return fmt.Errorf("prove build storage after recovery: %w", err)
+		}
+		buildStorageConfig = &storage
 		if err := ensureBuildCacheDirectory(storageProof.SubstrateCacheDir); err != nil {
 			return fmt.Errorf("prepare substrate cache: %w", err)
 		}
@@ -102,6 +125,23 @@ func run(log *slog.Logger) error {
 		imagesDir = filepath.Join(workDir, "images")
 	}
 	guestImageDir := filepath.Join(imagesDir, "guest", "out")
+	if supportsBuild {
+		guestImageDir, err = firecracker.PrepareRuntime(guestImageDir, workDir, serviceID)
+		if err != nil {
+			return fmt.Errorf("prepare firecracker runtime: %w", err)
+		}
+		storage := *buildStorageConfig
+		storage.RequiredScratchAvailableBytes = uint64(admissionDiskFloorMiB(true, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB)) * 1024 * 1024
+		storageProof, err := workerdaemon.ProveBuildStorage(storage)
+		if err != nil {
+			return fmt.Errorf("prove build lease storage after runtime activation: %w", err)
+		}
+		reserveBytes := uint64(firecracker.BootCorpusMaxMiB) * 1024 * 1024
+		buildScratchLeaseBytes = min(
+			storageProof.Scratch.AvailableBytes,
+			storageProof.Scratch.CapacityBytes-reserveBytes,
+		)
+	}
 	rootfsPath := filepath.Join(guestImageDir, "rootfs.ext4")
 	connector, err := firecracker.NewConnector(firecracker.Config{
 		FirecrackerPath:         cfg.FirecrackerPath,
@@ -320,6 +360,16 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("partition worker physical disk capacity: %w", err)
 	}
+	if supportsBuild {
+		diskCapacity, err = capScratchCapacity(
+			diskCapacity,
+			uint64(firecracker.BootCorpusMaxMiB)*1024*1024,
+			buildScratchLeaseBytes,
+		)
+		if err != nil {
+			return fmt.Errorf("cap worker scratch capacity after runtime activation: %w", err)
+		}
+	}
 	allocatable := compute.ResourceVector{
 		MilliCPU:  cfg.WorkerCapacityVCPUs * 1000,
 		MemoryMiB: cfg.WorkerCapacityMemoryMiB,
@@ -502,7 +552,7 @@ func run(log *slog.Logger) error {
 		Probe: workerdaemon.SystemHostHealthProbe{
 			WorkDir: workDir, CgroupVersion: cfg.CgroupVersion, FirecrackerPath: cfg.FirecrackerPath,
 		},
-		DiskFloorBytes:   (cfg.WorkerDiskReserveMiB + cfg.VMScratchDiskMiB) * 1024 * 1024,
+		DiskFloorBytes:   admissionDiskFloorMiB(supportsBuild, cfg.VMScratchDiskMiB, cfg.WorkerDiskReserveMiB) * 1024 * 1024,
 		FDHeadroom:       256,
 		RuntimeSlotCount: cfg.WorkerExecutionSlots,
 	})
@@ -514,9 +564,15 @@ func run(log *slog.Logger) error {
 		Background: background, PollEvery: cfg.PollEvery, CertificationTTL: cfg.WorkerCertificationTTL,
 		AdmissionEvaluator: hardAdmission, Log: log,
 		Recover: func(recoveryCtx context.Context) (workerdaemon.RecoveryEvidence, error) {
-			evidence, err := workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
-			if err != nil {
-				return evidence, err
+			var evidence workerdaemon.RecoveryEvidence
+			if startupRecovery != nil {
+				evidence = *startupRecovery
+			} else {
+				var err error
+				evidence, err = workerdaemon.RecoverLocalVMState(recoveryCtx, workDir, cfg.JailerChrootDir, cfg.IPPath)
+				if err != nil {
+					return evidence, err
+				}
 			}
 			if len(evidence.Quarantined) != len(evidence.QuarantinedOwners) {
 				return evidence, errors.New("startup recovery found VM residue without exact ownership")

@@ -39,6 +39,11 @@ func TestLoadRuntimeArtifactsRejectsInvalidManifest(t *testing.T) {
 		{name: "path", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Path = "other" }, want: "rootfs path"},
 		{name: "digest", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Digest = "sha256:not-a-digest" }, want: "canonical sha256"},
 		{name: "uppercase digest", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.Digest = "sha256:" + strings.Repeat("A", 64) }, want: "canonical sha256"},
+		{name: "content digest", edit: func(cfg Config, _ *runtimeArtifacts) {
+			if err := os.WriteFile(cfg.RootfsPath, []byte("other!"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, want: "does not match manifest digest"},
 		{name: "size", edit: func(_ Config, m *runtimeArtifacts) { m.Rootfs.SizeBytes++ }, want: "does not match manifest size"},
 		{name: "missing artifact", edit: func(cfg Config, _ *runtimeArtifacts) { _ = os.Remove(cfg.RootfsPath) }, want: "stat runtime artifacts rootfs"},
 		{name: "symlink artifact", edit: func(cfg Config, _ *runtimeArtifacts) {

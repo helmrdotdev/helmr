@@ -1,12 +1,13 @@
 package worker
 
 type BuildStorageConfig struct {
-	CacheRoot            string
-	ScratchRoot          string
-	WorkDir              string
-	JailerRoot           string
-	RequiredCacheBytes   uint64
-	RequiredScratchBytes uint64
+	CacheRoot                     string
+	ScratchRoot                   string
+	WorkDir                       string
+	JailerRoot                    string
+	RequiredCacheBytes            uint64
+	RequiredScratchBytes          uint64
+	RequiredScratchAvailableBytes uint64
 }
 
 type BuildStorageMount struct {

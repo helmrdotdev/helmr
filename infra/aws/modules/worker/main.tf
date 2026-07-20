@@ -1,8 +1,10 @@
 locals {
-  name                  = lower(var.name)
-  asg_name              = "${local.name}-worker"
-  launch_hook_name      = "${local.name}-worker-launch"
-  termination_hook_name = "${local.name}-worker-terminate"
+  name                    = lower(var.name)
+  asg_name                = "${local.name}-worker"
+  launch_hook_name        = "${local.name}-worker-launch"
+  termination_hook_name   = "${local.name}-worker-terminate"
+  boot_corpus_reserve_mib = 2048
+  build_scratch_min_mib   = max(32768, var.vm_scratch_disk_mib) + local.boot_corpus_reserve_mib
 
   disk_environment = merge({
     HELMR_WORKER_DISK_RESERVE_MIB = tostring(var.worker_disk_reserve_mib)
@@ -379,9 +381,9 @@ resource "terraform_data" "network_preconditions" {
     precondition {
       condition = !contains(var.worker_roles, "build") || (
         var.worker_disk_reserve_mib >= 1024 &&
-        coalesce(var.build_scratch_mib, 0) >= var.vm_scratch_disk_mib
+        coalesce(var.build_scratch_mib, 0) >= local.build_scratch_min_mib
       )
-      error_message = "build workers require at least 1024 MiB of unadvertised root reserve and a scratch filesystem large enough for one VM scratch disk."
+      error_message = "build workers require at least 1024 MiB of unadvertised root reserve and a two-GiB boot-corpus reserve beyond the larger of the fixed build envelope and configured VM scratch."
     }
 
     precondition {

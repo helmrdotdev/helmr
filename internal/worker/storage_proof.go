@@ -48,6 +48,9 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 	if config.RequiredCacheBytes == 0 || config.RequiredScratchBytes == 0 {
 		return BuildStorageProof{}, errors.New("certified build storage sizes must be positive")
 	}
+	if config.RequiredScratchAvailableBytes == 0 || config.RequiredScratchAvailableBytes > config.RequiredScratchBytes {
+		return BuildStorageProof{}, errors.New("required build scratch availability must be positive and no greater than its capacity")
+	}
 
 	paths := []struct {
 		name string
@@ -97,11 +100,17 @@ func proveBuildStorage(config BuildStorageConfig, probe storageProbe) (BuildStor
 	if err != nil {
 		return BuildStorageProof{}, err
 	}
-	cache, cacheIdentity, err := proveStorageMount(config.CacheRoot, config.RequiredCacheBytes, false, mounts, probe)
+	cache, cacheIdentity, err := proveStorageMount(config.CacheRoot, config.RequiredCacheBytes, 0, mounts, probe)
 	if err != nil {
 		return BuildStorageProof{}, fmt.Errorf("prove build cache: %w", err)
 	}
-	scratch, scratchIdentity, err := proveStorageMount(config.ScratchRoot, config.RequiredScratchBytes, true, mounts, probe)
+	scratch, scratchIdentity, err := proveStorageMount(
+		config.ScratchRoot,
+		config.RequiredScratchBytes,
+		config.RequiredScratchAvailableBytes,
+		mounts,
+		probe,
+	)
 	if err != nil {
 		return BuildStorageProof{}, fmt.Errorf("prove build scratch: %w", err)
 	}
@@ -310,7 +319,7 @@ func unescapeMountInfo(value string) (string, error) {
 	return builder.String(), nil
 }
 
-func proveStorageMount(root string, required uint64, requireAvailable bool, mounts []storageMountInfo, probe storageProbe) (BuildStorageMount, string, error) {
+func proveStorageMount(root string, required uint64, requiredAvailable uint64, mounts []storageMountInfo, probe storageProbe) (BuildStorageMount, string, error) {
 	var matches []storageMountInfo
 	for _, mount := range mounts {
 		if mount.MountPoint == root {
@@ -364,8 +373,8 @@ func proveStorageMount(root string, required uint64, requireAvailable bool, moun
 	if capacity < required {
 		return BuildStorageMount{}, "", fmt.Errorf("%q has %d bytes of usable capacity; need %d", root, capacity, required)
 	}
-	if requireAvailable && available < required {
-		return BuildStorageMount{}, "", fmt.Errorf("%q has %d available bytes; need %d", root, available, required)
+	if available < requiredAvailable {
+		return BuildStorageMount{}, "", fmt.Errorf("%q has %d available bytes; need %d", root, available, requiredAvailable)
 	}
 
 	identity, err := proveMountSource(mount, probe)

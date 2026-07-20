@@ -11,6 +11,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
+
+	"github.com/google/uuid"
 )
 
 func (c *Connector) Preflight(ctx context.Context) error {
@@ -37,10 +40,81 @@ func (c *Connector) Preflight(ctx context.Context) error {
 	}
 	problems = append(problems, ensureDirectory("firecracker state directory", c.cfg.StateDir))
 	problems = append(problems, ensureDirectory("firecracker jailer chroot directory", c.cfg.JailerChrootBaseDir))
+	problems = append(problems, checkHardLinkLayout(c.cfg))
 	if err := ctx.Err(); err != nil {
 		problems = append(problems, err)
 	}
 	return errors.Join(problems...)
+}
+
+func checkHardLinkLayout(cfg Config) error {
+	paths := []struct {
+		name string
+		path string
+	}{
+		{name: "guest kernel", path: cfg.KernelPath},
+		{name: "guest initramfs", path: cfg.InitramfsPath},
+		{name: "guest rootfs", path: cfg.RootfsPath},
+		{name: "firecracker state directory", path: cfg.StateDir},
+		{name: "firecracker jailer chroot directory", path: cfg.JailerChrootBaseDir},
+	}
+	var device uint64
+	for index, item := range paths {
+		info, err := os.Stat(item.path)
+		if err != nil {
+			return fmt.Errorf("inspect %s filesystem: %w", item.name, err)
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if !ok {
+			return fmt.Errorf("inspect %s filesystem: unsupported stat result", item.name)
+		}
+		if index == 0 {
+			device = uint64(stat.Dev)
+			continue
+		}
+		if uint64(stat.Dev) != device {
+			return fmt.Errorf("%s is on a different filesystem than the guest kernel", item.name)
+		}
+	}
+
+	for _, item := range paths[:3] {
+		if err := proveHardLink(item.name, item.path, cfg.JailerChrootBaseDir); err != nil {
+			return err
+		}
+	}
+	probe, err := os.CreateTemp(cfg.StateDir, ".hardlink-")
+	if err != nil {
+		return fmt.Errorf("create firecracker hard-link probe: %w", err)
+	}
+	source := probe.Name()
+	if err := probe.Close(); err != nil {
+		_ = os.Remove(source)
+		return fmt.Errorf("close firecracker hard-link probe: %w", err)
+	}
+	defer os.Remove(source)
+	return proveHardLink("firecracker state", source, cfg.JailerChrootBaseDir)
+}
+
+func proveHardLink(label, source, directory string) error {
+	target := filepath.Join(directory, ".hardlink-"+uuid.NewString())
+	defer os.Remove(target)
+	if err := os.Link(source, target); err != nil {
+		return fmt.Errorf("prove %s hard-link layout: %w", label, err)
+	}
+	sourceInfo, err := os.Stat(source)
+	if err != nil {
+		return fmt.Errorf("stat %s hard-link source: %w", label, err)
+	}
+	targetInfo, err := os.Stat(target)
+	if err != nil {
+		return fmt.Errorf("stat %s hard-link target: %w", label, err)
+	}
+	sourceStat, sourceOK := sourceInfo.Sys().(*syscall.Stat_t)
+	targetStat, targetOK := targetInfo.Sys().(*syscall.Stat_t)
+	if !sourceOK || !targetOK || sourceStat.Dev != targetStat.Dev || sourceStat.Ino != targetStat.Ino {
+		return fmt.Errorf("%s hard-link probe did not preserve inode identity", label)
+	}
+	return nil
 }
 
 func checkCommand(label string, path string) error {

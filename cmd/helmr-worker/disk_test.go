@@ -43,6 +43,45 @@ func TestAdvertisedWorkerDiskCapacityFitsNButNotNPlusOne(t *testing.T) {
 	}
 }
 
+func TestAdmissionDiskFloorMatchesWorkerFilesystemContract(t *testing.T) {
+	if got := admissionDiskFloorMiB(false, 8192, 1024); got != 9216 {
+		t.Fatalf("run disk floor = %d, want 9216", got)
+	}
+	if got := admissionDiskFloorMiB(true, 32768, 1024); got != 32768 {
+		t.Fatalf("build disk floor = %d, want 32768", got)
+	}
+	if got := admissionDiskFloorMiB(true, 65536, 1024); got != 65536 {
+		t.Fatalf("mixed worker disk floor = %d, want 65536", got)
+	}
+}
+
+func TestCapScratchCapacityUsesPostStageAvailability(t *testing.T) {
+	capacity := compute.WorkerDiskCapacity{
+		VMWorkloadDiskMiB: 20480,
+		VMScratchBytes:    20480 << 20,
+		HostWorkloadMiB:   65536,
+		HostScratchBytes:  65536 << 20,
+	}
+	got, err := capScratchCapacity(capacity, 2048<<20, 32768<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostScratchBytes != 32768<<20 {
+		t.Fatalf("scratch capacity = %d, want %d", got.HostScratchBytes, int64(32768<<20))
+	}
+	capacity.HostScratchBytes = 34816 << 20
+	got, err = capScratchCapacity(capacity, 2048<<20, 33000<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.HostScratchBytes != 32768<<20 {
+		t.Fatalf("reserved scratch capacity = %d, want %d", got.HostScratchBytes, int64(32768<<20))
+	}
+	if _, err := capScratchCapacity(capacity, 2048<<20, (20480<<20)-1); err == nil {
+		t.Fatal("available capacity below one VM was accepted")
+	}
+}
+
 func TestWorkerCacheBudgetUsesConfiguredValue(t *testing.T) {
 	got := workerCacheBudgetBytes(123, 10000, 1, 3, 4096, 32768)
 	if got != 123*1024*1024 {
