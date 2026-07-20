@@ -13,11 +13,92 @@ import (
 
 type artifactSnapshotDescriptor ProgramDescriptor
 
+type artifactSnapshotSpec struct {
+	label     string
+	mediaType string
+	maxBytes  int64
+}
+
 type artifactSnapshot struct {
 	descriptor artifactSnapshotDescriptor
 	platform   artifactSnapshotPlatform
 	verifier   *os.File
 	upload     *os.File
+}
+
+func artifactSnapshotSpecForRole(role artifactRole) (artifactSnapshotSpec, error) {
+	switch role {
+	case codeArtifact:
+		return artifactSnapshotSpec{
+			label:     "code",
+			mediaType: ProgramCodeArtifactMediaType,
+			maxBytes:  maxCodePhysicalBytes,
+		}, nil
+	case dependencyArtifact:
+		return artifactSnapshotSpec{
+			label:     "dependencies",
+			mediaType: ProgramDependencyArtifactMediaType,
+			maxBytes:  maxDependencyPhysicalBytes,
+		}, nil
+	case runtimeArtifact:
+		return artifactSnapshotSpec{
+			label:     "runtime",
+			mediaType: RuntimeArtifactMediaType,
+			maxBytes:  maxRuntimePhysicalBytes,
+		}, nil
+	case toolchainArtifact:
+		return artifactSnapshotSpec{
+			label:     "standard toolchain",
+			mediaType: ToolchainMediaType,
+			maxBytes:  maxToolArtifactBytes,
+		}, nil
+	default:
+		return artifactSnapshotSpec{}, fmt.Errorf("artifact snapshot role = %d", role)
+	}
+}
+
+func validateArtifactSnapshotSpec(spec artifactSnapshotSpec) error {
+	if spec.label == "" {
+		return errors.New("artifact snapshot label is empty")
+	}
+	if spec.mediaType == "" {
+		return errors.New("artifact snapshot media type is empty")
+	}
+	if spec.maxBytes < 1 {
+		return errors.New("artifact snapshot byte limit is invalid")
+	}
+	return nil
+}
+
+func validateArtifactSnapshotDescriptor(
+	spec artifactSnapshotSpec,
+	descriptor artifactSnapshotDescriptor,
+) error {
+	if err := validateArtifactSnapshotSpec(spec); err != nil {
+		return err
+	}
+	if !sha256DigestPattern.MatchString(descriptor.Digest) {
+		return fmt.Errorf(
+			"%s artifact digest is not a lowercase SHA-256 digest",
+			spec.label,
+		)
+	}
+	if descriptor.SizeBytes < 1 || descriptor.SizeBytes > spec.maxBytes {
+		return fmt.Errorf(
+			"%s artifact size is outside [1,%d]",
+			spec.label,
+			spec.maxBytes,
+		)
+	}
+	if descriptor.MediaType != spec.mediaType {
+		return fmt.Errorf(
+			"%s artifact media type = %q, want %q",
+			spec.label,
+			descriptor.MediaType,
+			spec.mediaType,
+		)
+	}
+	return nil
 }
 
 func (snapshot *artifactSnapshot) verifierFile() (*os.File, error) {

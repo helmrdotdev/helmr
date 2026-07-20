@@ -77,48 +77,8 @@ func writeTreeArchive(
 		if err := state.accept(entry, role, maxBytes); err != nil {
 			return err
 		}
-		digest := sha256.Sum256([]byte(entry.Path))
-		suffix := hex.EncodeToString(digest[:])
-		pax := paxRecord("path", entry.Path)
-		if entry.Kind == artifactEntrySymlink {
-			pax = append(pax, paxRecord("linkpath", entry.LinkTarget)...)
-		}
-		if err := writeTarMember(
-			destination,
-			"PaxHeaders/"+suffix,
-			0644,
-			int64(len(pax)),
-			'x',
-			pax,
-		); err != nil {
-			return fmt.Errorf("write program archive PAX header for %q: %w", entry.Path, err)
-		}
-
-		typeFlag := byte('0')
-		switch entry.Kind {
-		case artifactEntryDirectory:
-			typeFlag = '5'
-		case artifactEntrySymlink:
-			typeFlag = '2'
-		}
-		size := entry.SizeBytes
-		if entry.Kind != artifactEntryRegular {
-			size = 0
-		}
-		header, err := tarHeader("Entries/"+suffix, entry.Mode, size, typeFlag)
-		if err != nil {
-			return fmt.Errorf("encode program archive header for %q: %w", entry.Path, err)
-		}
-		if _, err := destination.Write(header[:]); err != nil {
-			return fmt.Errorf("write program archive header for %q: %w", entry.Path, err)
-		}
-		if entry.Kind == artifactEntryRegular {
-			if err := copyTreeContent(ctx, destination, entry.Content, entry.SizeBytes); err != nil {
-				return fmt.Errorf("write program archive file %q: %w", entry.Path, err)
-			}
-			if err := writeTarPadding(destination, entry.SizeBytes); err != nil {
-				return fmt.Errorf("pad program archive file %q: %w", entry.Path, err)
-			}
+		if err := writeTreeEntry(ctx, destination, entry); err != nil {
+			return fmt.Errorf("write program archive entry %q: %w", entry.Path, err)
 		}
 	}
 	if state.count == 0 && !allowEmpty {
@@ -127,6 +87,58 @@ func writeTreeArchive(
 	var end [2 * tarBlockBytes]byte
 	if _, err := destination.Write(end[:]); err != nil {
 		return fmt.Errorf("write program archive end marker: %w", err)
+	}
+	return nil
+}
+
+func writeTreeEntry(
+	ctx context.Context,
+	destination io.Writer,
+	entry treeEntry,
+) error {
+	digest := sha256.Sum256([]byte(entry.Path))
+	suffix := hex.EncodeToString(digest[:])
+	pax := paxRecord("path", entry.Path)
+	if entry.Kind == artifactEntrySymlink {
+		pax = append(pax, paxRecord("linkpath", entry.LinkTarget)...)
+	}
+	if err := writeTarMember(
+		destination,
+		"PaxHeaders/"+suffix,
+		0644,
+		int64(len(pax)),
+		'x',
+		pax,
+	); err != nil {
+		return fmt.Errorf("write PAX header: %w", err)
+	}
+
+	typeFlag := byte('0')
+	switch entry.Kind {
+	case artifactEntryDirectory:
+		typeFlag = '5'
+	case artifactEntrySymlink:
+		typeFlag = '2'
+	}
+	size := entry.SizeBytes
+	if entry.Kind != artifactEntryRegular {
+		size = 0
+	}
+	header, err := tarHeader("Entries/"+suffix, entry.Mode, size, typeFlag)
+	if err != nil {
+		return fmt.Errorf("encode header: %w", err)
+	}
+	if _, err := destination.Write(header[:]); err != nil {
+		return fmt.Errorf("write header: %w", err)
+	}
+	if entry.Kind != artifactEntryRegular {
+		return nil
+	}
+	if err := copyTreeContent(ctx, destination, entry.Content, entry.SizeBytes); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+	if err := writeTarPadding(destination, entry.SizeBytes); err != nil {
+		return fmt.Errorf("pad file: %w", err)
 	}
 	return nil
 }

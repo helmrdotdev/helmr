@@ -44,10 +44,14 @@ func snapshotArtifact(
 	expected artifactSnapshotDescriptor,
 	source io.Reader,
 ) (*artifactSnapshot, error) {
+	spec, err := artifactSnapshotSpecForRole(role)
+	if err != nil {
+		return nil, err
+	}
 	if source == nil {
 		return nil, errors.New("artifact snapshot source is nil")
 	}
-	if err := validateArtifactSnapshotDescriptor(role, expected); err != nil {
+	if err := validateArtifactSnapshotDescriptor(spec, expected); err != nil {
 		return nil, err
 	}
 	leaseDirectory, err := os.MkdirTemp(directory, ".helmr-artifact-")
@@ -60,10 +64,10 @@ func snapshotArtifact(
 			os.Remove(leaseDirectory),
 		)
 	}
-	snapshot, err := produceArtifactSnapshot(
+	snapshot, err := produceArtifactSnapshotWithSpec(
 		ctx,
 		leaseDirectory,
-		role,
+		spec,
 		artifactSnapshotOwner{UID: os.Geteuid(), GID: os.Getegid()},
 		func(destination *os.File) error {
 			return copyArtifactSnapshot(ctx, destination, source, expected)
@@ -88,6 +92,20 @@ func produceArtifactSnapshot(
 	role artifactRole,
 	owner artifactSnapshotOwner,
 	produce func(*os.File) error,
+) (*artifactSnapshot, error) {
+	spec, err := artifactSnapshotSpecForRole(role)
+	if err != nil {
+		return nil, err
+	}
+	return produceArtifactSnapshotWithSpec(ctx, directory, spec, owner, produce)
+}
+
+func produceArtifactSnapshotWithSpec(
+	ctx context.Context,
+	directory string,
+	spec artifactSnapshotSpec,
+	owner artifactSnapshotOwner,
+	produce func(*os.File) error,
 ) (_ *artifactSnapshot, returnErr error) {
 	if ctx == nil {
 		return nil, errors.New("artifact snapshot context is nil")
@@ -98,8 +116,7 @@ func produceArtifactSnapshot(
 	if err := validateArtifactSnapshotOwner(owner); err != nil {
 		return nil, err
 	}
-	mediaType, maxBytes, err := artifactSnapshotRole(role)
-	if err != nil {
+	if err := validateArtifactSnapshotSpec(spec); err != nil {
 		return nil, err
 	}
 
@@ -166,11 +183,11 @@ func produceArtifactSnapshot(
 	if err != nil {
 		return nil, err
 	}
-	if before.size < 1 || before.size > maxBytes {
+	if before.size < 1 || before.size > spec.maxBytes {
 		return nil, fmt.Errorf(
 			"artifact snapshot size = %d, want 1..%d",
 			before.size,
-			maxBytes,
+			spec.maxBytes,
 		)
 	}
 	digest, err := hashArtifactSnapshot(ctx, writer, before.size)
@@ -180,9 +197,9 @@ func produceArtifactSnapshot(
 	descriptor := artifactSnapshotDescriptor{
 		Digest:    digest,
 		SizeBytes: before.size,
-		MediaType: mediaType,
+		MediaType: spec.mediaType,
 	}
-	if err := validateArtifactSnapshotDescriptor(role, descriptor); err != nil {
+	if err := validateArtifactSnapshotDescriptor(spec, descriptor); err != nil {
 		return nil, err
 	}
 	if err := writer.Sync(); err != nil {
@@ -278,60 +295,6 @@ func validateArtifactSnapshotOwner(owner artifactSnapshotOwner) error {
 		return errors.New("artifact snapshot owner GID is invalid")
 	}
 	return nil
-}
-
-func artifactSnapshotRole(role artifactRole) (string, int64, error) {
-	switch role {
-	case codeArtifact:
-		return ProgramCodeArtifactMediaType, maxCodePhysicalBytes, nil
-	case dependencyArtifact:
-		return ProgramDependencyArtifactMediaType, maxDependencyPhysicalBytes, nil
-	case runtimeArtifact:
-		return RuntimeArtifactMediaType, maxRuntimePhysicalBytes, nil
-	case toolchainArtifact:
-		return ToolchainMediaType, maxToolArtifactBytes, nil
-	default:
-		return "", 0, fmt.Errorf("artifact snapshot role = %d", role)
-	}
-}
-
-func validateArtifactSnapshotDescriptor(
-	role artifactRole,
-	descriptor artifactSnapshotDescriptor,
-) error {
-	programDescriptor := ProgramDescriptor(descriptor)
-	switch role {
-	case codeArtifact:
-		return validateProgramDescriptor(
-			programDescriptor,
-			"code",
-			ProgramCodeArtifactMediaType,
-			maxCodePhysicalBytes,
-		)
-	case dependencyArtifact:
-		return validateProgramDescriptor(
-			programDescriptor,
-			"dependencies",
-			ProgramDependencyArtifactMediaType,
-			maxDependencyPhysicalBytes,
-		)
-	case runtimeArtifact:
-		return validateProgramDescriptor(
-			programDescriptor,
-			"runtime",
-			RuntimeArtifactMediaType,
-			maxRuntimePhysicalBytes,
-		)
-	case toolchainArtifact:
-		return validateProgramDescriptor(
-			programDescriptor,
-			"standard toolchain",
-			ToolchainMediaType,
-			maxToolArtifactBytes,
-		)
-	default:
-		return fmt.Errorf("artifact snapshot role = %d", role)
-	}
 }
 
 func copyArtifactSnapshot(
