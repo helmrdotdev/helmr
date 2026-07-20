@@ -21,13 +21,6 @@ type contractFixture struct {
 		Name     string `json:"name"`
 		Mutation string `json:"mutation"`
 	} `json:"programRejections"`
-	ModuleMap struct {
-		Canonical string `json:"canonical"`
-	} `json:"moduleMap"`
-	ModuleMapRejections []struct {
-		Name     string `json:"name"`
-		Mutation string `json:"mutation"`
-	} `json:"moduleMapRejections"`
 	DependencyIndex struct {
 		Canonical string `json:"canonical"`
 	} `json:"dependencyIndex"`
@@ -155,8 +148,6 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
 			case "dependency_digest":
 				index.DependenciesDigest = "sha256:invalid"
-			case "module_map_digest":
-				index.ModuleMapDigest = "sha256:invalid"
 			case "toolchain_digest":
 				index.StandardToolchainDigest = "sha256:invalid"
 			case "manager_name":

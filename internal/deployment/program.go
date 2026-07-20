@@ -74,6 +74,15 @@ type ProgramSubmittedSource struct {
 	SourceDigest   string `json:"sourceDigest"`
 }
 
+type BuildProvenance struct {
+	Architecture            RuntimeArchitecture    `json:"architecture"`
+	BuildContractVersion    string                 `json:"buildContractVersion"`
+	Manager                 ProgramManager         `json:"manager"`
+	RuntimeDigest           string                 `json:"runtimeDigest"`
+	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
+	Submitted               ProgramSubmittedSource `json:"submitted"`
+}
+
 type ProgramIndex struct {
 	Architecture            RuntimeArchitecture    `json:"architecture"`
 	BuildContractVersion    string                 `json:"buildContractVersion"`
@@ -81,7 +90,6 @@ type ProgramIndex struct {
 	DependenciesDigest      string                 `json:"dependenciesDigest"`
 	FormatVersion           int                    `json:"formatVersion"`
 	Manager                 ProgramManager         `json:"manager"`
-	ModuleMapDigest         string                 `json:"moduleMapDigest"`
 	RuntimeAPIVersion       string                 `json:"runtimeApiVersion"`
 	RuntimeDigest           string                 `json:"runtimeDigest"`
 	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
@@ -374,54 +382,18 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.RuntimeAPIVersion != RuntimeAPIVersion {
 		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
 	}
-	if index.BuildContractVersion != ProgramBuildContractVersion {
-		return fmt.Errorf(
-			"program index buildContractVersion = %q, want %q",
-			index.BuildContractVersion,
-			ProgramBuildContractVersion,
-		)
-	}
-	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
-		return fmt.Errorf("program index runtimeDigest is not a lowercase SHA-256 digest")
-	}
-	if !validArchitecture(index.Architecture) {
-		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
-	}
-	if !sha256DigestPattern.MatchString(index.StandardToolchainDigest) {
-		return fmt.Errorf("program index standardToolchainDigest is not a lowercase SHA-256 digest")
+	if err := validateBuildProvenance("program index", BuildProvenance{
+		Architecture:            index.Architecture,
+		BuildContractVersion:    index.BuildContractVersion,
+		Manager:                 index.Manager,
+		RuntimeDigest:           index.RuntimeDigest,
+		StandardToolchainDigest: index.StandardToolchainDigest,
+		Submitted:               index.Submitted,
+	}); err != nil {
+		return err
 	}
 	if !sha256DigestPattern.MatchString(index.DependenciesDigest) {
 		return fmt.Errorf("program index dependenciesDigest is not a lowercase SHA-256 digest")
-	}
-	if !sha256DigestPattern.MatchString(index.ModuleMapDigest) {
-		return fmt.Errorf("program index moduleMapDigest is not a lowercase SHA-256 digest")
-	}
-	if !sha256DigestPattern.MatchString(index.Manager.CapsuleDigest) {
-		return fmt.Errorf("program index manager.capsuleDigest is not a lowercase SHA-256 digest")
-	}
-	if index.Manager.Name != PackageManagerNPM && index.Manager.Name != PackageManagerBun {
-		return fmt.Errorf("program index manager.name %q is unsupported", index.Manager.Name)
-	}
-	if len(index.Manager.Version) == 0 ||
-		len(index.Manager.Version) > maxPackageManagerVersionBytes ||
-		!packageManagerVersionPattern.MatchString(index.Manager.Version) {
-		return fmt.Errorf(
-			"program index manager.version %q is not an admitted SemVer",
-			index.Manager.Version,
-		)
-	}
-	if !validProgramLockfile(index.Manager.Name, index.Submitted.LockfileName) {
-		return fmt.Errorf(
-			"program index submitted.lockfileName = %q is unsupported for %s",
-			index.Submitted.LockfileName,
-			index.Manager.Name,
-		)
-	}
-	if !sha256DigestPattern.MatchString(index.Submitted.LockfileDigest) {
-		return fmt.Errorf("program index submitted.lockfileDigest is not a lowercase SHA-256 digest")
-	}
-	if !sha256DigestPattern.MatchString(index.Submitted.SourceDigest) {
-		return fmt.Errorf("program index submitted.sourceDigest is not a lowercase SHA-256 digest")
 	}
 	if len(index.Declarations) == 0 {
 		return fmt.Errorf("program index declarations must not be empty")
@@ -433,6 +405,56 @@ func ValidateProgramIndex(index ProgramIndex) error {
 		if position > 0 && compareDeclarations(index.Declarations[position-1], declaration) >= 0 {
 			return fmt.Errorf("program index declarations are not in canonical order at position %d", position)
 		}
+	}
+	return nil
+}
+
+func validateBuildProvenance(prefix string, provenance BuildProvenance) error {
+	if provenance.BuildContractVersion != ProgramBuildContractVersion {
+		return fmt.Errorf(
+			"%s buildContractVersion = %q, want %q",
+			prefix,
+			provenance.BuildContractVersion,
+			ProgramBuildContractVersion,
+		)
+	}
+	if !sha256DigestPattern.MatchString(provenance.RuntimeDigest) {
+		return fmt.Errorf("%s runtimeDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	if !validArchitecture(provenance.Architecture) {
+		return fmt.Errorf("%s architecture %q is unsupported", prefix, provenance.Architecture)
+	}
+	if !sha256DigestPattern.MatchString(provenance.StandardToolchainDigest) {
+		return fmt.Errorf("%s standardToolchainDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	if !sha256DigestPattern.MatchString(provenance.Manager.CapsuleDigest) {
+		return fmt.Errorf("%s manager.capsuleDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	if provenance.Manager.Name != PackageManagerNPM && provenance.Manager.Name != PackageManagerBun {
+		return fmt.Errorf("%s manager.name %q is unsupported", prefix, provenance.Manager.Name)
+	}
+	if len(provenance.Manager.Version) == 0 ||
+		len(provenance.Manager.Version) > maxPackageManagerVersionBytes ||
+		!packageManagerVersionPattern.MatchString(provenance.Manager.Version) {
+		return fmt.Errorf(
+			"%s manager.version %q is not an admitted SemVer",
+			prefix,
+			provenance.Manager.Version,
+		)
+	}
+	if !validProgramLockfile(provenance.Manager.Name, provenance.Submitted.LockfileName) {
+		return fmt.Errorf(
+			"%s submitted.lockfileName = %q is unsupported for %s",
+			prefix,
+			provenance.Submitted.LockfileName,
+			provenance.Manager.Name,
+		)
+	}
+	if !sha256DigestPattern.MatchString(provenance.Submitted.LockfileDigest) {
+		return fmt.Errorf("%s submitted.lockfileDigest is not a lowercase SHA-256 digest", prefix)
+	}
+	if !sha256DigestPattern.MatchString(provenance.Submitted.SourceDigest) {
+		return fmt.Errorf("%s submitted.sourceDigest is not a lowercase SHA-256 digest", prefix)
 	}
 	return nil
 }

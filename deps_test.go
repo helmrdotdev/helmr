@@ -49,7 +49,7 @@ func TestInternalPackageDependencies(t *testing.T) {
 		"db":                  {},
 		"db/dbtest":           {},
 		"db/schema":           {},
-		"deployment":          {"api", "archive", "builder", "cas", "compute", "frameio", "jsoncanon", "proto/bundle/v0", "publicid", "region", "schedule", "secret", "task", "vm", "wire"},
+		"deployment":          {"api", "archive", "builder", "cas", "compute", "frameio", "jsoncanon", "proto/bundle/v0", "publicid", "region", "safepath", "schedule", "secret", "task", "vm", "wire"},
 		"dispatch":            {"compute", "db", "pgvalue"},
 		"dispatch/redis":      {"dispatch", "pgvalue"},
 		"email":               {},

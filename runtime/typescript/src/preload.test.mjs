@@ -1,140 +1,74 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 
 const source = await readFile(new URL("./preload.mjs", import.meta.url), "utf8");
+const execFileAsync = promisify(execFile);
 const moduleURL = `data:text/javascript;base64,${
-  Buffer.from(source.replace(/\ninstallHooks\(\);\n$/, "\n")).toString("base64")
+  Buffer.from(source.replace(/\nregisterHooks\(createHooks\(\)\);\n$/, "\n")).toString("base64")
 }`;
 const { createHooks } = await import(moduleURL);
 
-function notFound() {
-  const error = new Error("not found");
-  error.code = "ERR_MODULE_NOT_FOUND";
-  return error;
-}
-
-function unsupportedDirectory() {
-  const error = new Error("directory import");
-  error.code = "ERR_UNSUPPORTED_DIR_IMPORT";
-  return error;
-}
-
-test("uses the ESM and CommonJS candidate orders after Node fails", () => {
-  const hooks = createHooks({ modules: [] });
-  for (const conditions of [["import"], new Set(["require"])]) {
-    const commonjs = typeof conditions.has === "function"
-      ? conditions.has("require")
-      : conditions.includes("require");
-    const seen = [];
-    const result = hooks.resolve(
-      "./tool",
-      {
-        conditions,
-        parentURL: "file:///opt/helmr/program/pkg/main.js",
-      },
-      (specifier) => {
-        seen.push(specifier);
-        const accepted = commonjs
-          ? "/opt/helmr/program/pkg/tool.js"
-          : "file:///opt/helmr/program/pkg/tool.js";
-        if (specifier === accepted) {
-          return {
-            url: commonjs ? `file://${specifier}` : specifier,
-          };
-        }
-        throw notFound();
-      },
-    );
-    assert.equal(result.url, "file:///opt/helmr/program/pkg/tool.js");
-    assert.deepEqual(
-      seen.slice(0, 4),
-      commonjs
-        ? ["./tool",
-          "/opt/helmr/program/pkg/tool.ts",
-          "/opt/helmr/program/pkg/tool.cts",
-          "/opt/helmr/program/pkg/tool.js"]
-        : ["./tool",
-          "file:///opt/helmr/program/pkg/tool.ts",
-          "file:///opt/helmr/program/pkg/tool.mts",
-          "file:///opt/helmr/program/pkg/tool.js"],
-    );
-  }
-});
-
-test("tries index candidates after Node rejects a directory import", () => {
-  const hooks = createHooks({ modules: [] });
-  const seen = [];
-  const result = hooks.resolve(
-    "./tool",
-    {
-      conditions: ["import"],
-      parentURL: "file:///opt/helmr/program/pkg/main.js",
-    },
-    (specifier) => {
-      seen.push(specifier);
-      if (specifier === "./tool") {
-        throw unsupportedDirectory();
-      }
-      if (specifier === "file:///opt/helmr/program/pkg/tool/index.ts") {
-        return { url: specifier };
-      }
-      throw notFound();
-    },
+test("executes imported TypeScript without generated sidecars", async (context) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "helmr-preload-")));
+  context.after(() => rm(root, { force: true, recursive: true }));
+  await mkdir(join(root, "pkg"));
+  await writeFile(
+    join(root, "preload.mjs"),
+    source.replace(
+      'const programRoot = "/opt/helmr/program";',
+      `const programRoot = ${JSON.stringify(root)};`,
+    ),
   );
-  assert.equal(
-    result.url,
-    "file:///opt/helmr/program/pkg/tool/index.ts",
+  await writeFile(
+    join(root, "pkg", "esm.ts"),
+    'enum Value { ESM = "esm" }; export const esmValue: Value = Value.ESM;\n',
   );
-  assert.equal(seen.at(-1), result.url);
+  await writeFile(
+    join(root, "pkg", "common.cts"),
+    'enum Value { Common = "common" }; module.exports = { commonValue: Value.Common };\n',
+  );
+  await writeFile(
+    join(root, "probe.mjs"),
+    [
+      'import assert from "node:assert/strict";',
+      'import { createRequire } from "node:module";',
+      'import { esmValue } from "./pkg/esm.ts";',
+      'assert.equal(esmValue, "esm");',
+      'assert.deepEqual(createRequire(import.meta.url)("./pkg/common.cts"), { commonValue: "common" });',
+    ].join("\n"),
+  );
+
+  await execFileAsync(process.execPath, [
+    "--experimental-transform-types",
+    "--import",
+    pathToFileURL(join(root, "preload.mjs")).href,
+    join(root, "probe.mjs"),
+  ]);
 });
 
-test("does not rewrite bare, exact-extension, or dependency specifiers", () => {
-  const hooks = createHooks({ modules: [] });
-  for (const specifier of [
-    "package",
-    "./exact.ts",
-    "file:///opt/helmr/program/node_modules/pkg/tool",
-  ]) {
-    let calls = 0;
-    assert.throws(() => hooks.resolve(
-      specifier,
-      {
-        conditions: ["import"],
-        parentURL: "file:///opt/helmr/program/main.js",
-      },
-      () => {
-        calls++;
-        throw notFound();
-      },
-    ), { code: "ERR_MODULE_NOT_FOUND" });
-    assert.equal(calls, 1);
-  }
-});
-
-test("loads mapped sidecars while preserving the original URL", () => {
+test("delegates executable first-party TypeScript after Node resolves it", () => {
   const hooks = createHooks({
-    modules: [{
-      codePath: "helmr/files/modules/a.mjs",
-      format: "module",
-      path: "pkg/source.ts",
-    }],
-  }, {
-    readFile: (path) => Buffer.from(`sidecar:${path}`),
     realpath: () => "/opt/helmr/program/pkg/source.ts",
   });
   const result = hooks.load(
     "file:///opt/helmr/program/link/source.ts",
-    {},
-    () => assert.fail("mapped module delegated"),
+    { format: "module-typescript" },
+    (url, context) => ({ context, url }),
   );
-  assert.equal(result.format, "module");
-  assert.equal(result.shortCircuit, true);
-  assert.match(result.source.toString(), /helmr\/files\/modules\/a\.mjs$/);
+  assert.deepEqual(result, {
+    context: { format: "module-typescript" },
+    url: "file:///opt/helmr/program/link/source.ts",
+  });
 });
 
 test("rejects declaration-only first-party modules and delegates dependencies", () => {
-  const declarationHooks = createHooks({ modules: [] }, {
+  const declarationHooks = createHooks({
     realpath: () => "/opt/helmr/program/pkg/types.d.ts",
   });
   assert.throws(() => declarationHooks.load(
@@ -143,12 +77,12 @@ test("rejects declaration-only first-party modules and delegates dependencies", 
     () => assert.fail("declaration delegated"),
   ), { code: "ERR_HELMR_DECLARATION_MODULE" });
 
-  const dependencyHooks = createHooks({ modules: [] }, {
-    realpath: () => "/opt/helmr/program/node_modules/pkg/index.js",
+  const dependencyHooks = createHooks({
+    realpath: () => "/opt/helmr/program/packages/app/node_modules/pkg/index.js",
   });
   assert.equal(
     dependencyHooks.load(
-      "file:///opt/helmr/program/node_modules/pkg/index.js",
+      "file:///opt/helmr/program/packages/app/node_modules/pkg/index.js",
       {},
       () => "delegated",
     ),

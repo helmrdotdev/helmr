@@ -30,10 +30,16 @@ func TestProgramArtifactsRejectsContractDivergence(t *testing.T) {
 		"code dependency": func(pair *testProgramPair) {
 			pair.code.addFile("node_modules/unexpected", []byte("x"), 0644)
 		},
-		"module map": func(pair *testProgramPair) {
-			pair.code.files["helmr/modules.json"] = []byte(
-				`{"formatVersion":0,"modules":[],"transformer":"other"}`,
+		"declaration locator": func(pair *testProgramPair) {
+			pair.code.files["helmr/declarations.json"] = []byte(
+				`{"declarations":[],"formatVersion":0}`,
 			)
+		},
+		"program entry": func(pair *testProgramPair) {
+			pair.code.files["helmr/entry.mjs"] = []byte("process.exit(0)\n")
+		},
+		"unknown Platform-owned path": func(pair *testProgramPair) {
+			pair.code.addFile("helmr/modules.json", []byte("{}"), 0o644)
 		},
 	}
 	for name, mutate := range tests {
@@ -91,56 +97,32 @@ func TestProgramArtifactsValidatesCombinedNamespaceLinks(t *testing.T) {
 	}
 }
 
-func TestProgramArtifactsRequiresCompleteModuleMap(t *testing.T) {
+func TestProgramArtifactsAcceptsUnrelatedTypeScriptWithoutSidecars(t *testing.T) {
 	pair := newProgramPair(t)
 	pair.code.addFile("source.ts", []byte("export const value = 1\n"), 0644)
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err == nil {
-		t.Fatal("verifyProgramArtifacts accepted an unlisted TypeScript source")
+	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
+		t.Fatal(err)
 	}
 }
 
-func TestProgramArtifactsUsesFrozenNearestPackageScope(t *testing.T) {
+func TestProgramArtifactsAcceptsTypeScriptDeclarationLocator(t *testing.T) {
 	pair := newProgramPair(t)
-	source := []byte("export const value = 1\n")
-	sidecar := []byte("export const value = 1;\n")
-	codePath := moduleCodePath("source.ts", ModuleFormatESM)
-	pair.code.addDirectory("helmr/files")
-	pair.code.addDirectory("helmr/files/modules")
-	pair.code.addFile("source.ts", source, 0644)
-	pair.code.addFile(codePath, sidecar, 0644)
-	pair.code.setFile("package.json", []byte(`{"type":"module"}`))
-	moduleRaw, err := CanonicalModuleMap(ModuleMap{
-		FormatVersion: ModuleMapFormatVersion,
-		Modules: []Module{{
-			CodeDigest:   digestBytes(sidecar),
-			CodePath:     codePath,
-			Format:       ModuleFormatESM,
-			Path:         "source.ts",
-			SourceDigest: digestBytes(source),
+	pair.code.addFile("source.ts", []byte("export const build = {}\n"), 0644)
+	locatorRaw, err := CanonicalDeclarationLocator(DeclarationLocator{
+		FormatVersion: DeclarationLocatorFormatVersion,
+		Declarations: []LocatedDeclaration{{
+			Kind:       DeclarationKindTask,
+			DeclaredID: "build",
+			ModulePath: "source.ts",
+			ExportName: "build",
 		}},
-		Transformer: TypeScriptTransformer,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	pair.code.setFile("helmr/modules.json", moduleRaw)
-	program, err := ParseProgramIndex(pair.code.files["helmr/program.json"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	program.ModuleMapDigest = digestBytes(moduleRaw)
-	programRaw, err := CanonicalProgramIndex(program)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pair.code.setFile("helmr/program.json", programRaw)
+	pair.code.setFile("helmr/declarations.json", locatorRaw)
 	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err != nil {
 		t.Fatal(err)
-	}
-
-	pair.code.setFile("package.json", []byte(`{"type":"commonjs"}`))
-	if _, err := verifyProgramArtifacts(context.Background(), pair.artifacts); err == nil {
-		t.Fatal("verifyProgramArtifacts ignored the frozen nearest package scope")
 	}
 }
 
@@ -154,14 +136,6 @@ func newProgramPair(t *testing.T) *testProgramPair {
 	t.Helper()
 	dependencyDigest := testDigest("dependency Artifact")
 	lockfile := []byte("lockfileVersion = 1\n")
-	moduleRaw, err := CanonicalModuleMap(ModuleMap{
-		FormatVersion: ModuleMapFormatVersion,
-		Modules:       []Module{},
-		Transformer:   TypeScriptTransformer,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	programRaw, err := CanonicalProgramIndex(ProgramIndex{
 		Architecture:         ArchitectureX8664,
 		BuildContractVersion: ProgramBuildContractVersion,
@@ -177,7 +151,6 @@ func newProgramPair(t *testing.T) *testProgramPair {
 			Name:          PackageManagerBun,
 			Version:       "1.3.10",
 		},
-		ModuleMapDigest:         digestBytes(moduleRaw),
 		RuntimeAPIVersion:       RuntimeAPIVersion,
 		RuntimeDigest:           testDigest("runtime"),
 		StandardToolchainDigest: testDigest("toolchain"),
@@ -190,13 +163,26 @@ func newProgramPair(t *testing.T) *testProgramPair {
 	if err != nil {
 		t.Fatal(err)
 	}
+	locatorRaw, err := CanonicalDeclarationLocator(DeclarationLocator{
+		FormatVersion: DeclarationLocatorFormatVersion,
+		Declarations: []LocatedDeclaration{{
+			Kind:       DeclarationKindTask,
+			DeclaredID: "build",
+			ModulePath: "build.js",
+			ExportName: "build",
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	code := newMemoryArtifact()
 	code.addDirectory("helmr")
 	code.addDirectory("node_modules")
 	code.addFile("helmr/program.json", programRaw, 0644)
-	code.addFile("helmr/modules.json", moduleRaw, 0644)
-	code.addFile("helmr/entry.mjs", []byte("export const program = {}\n"), 0644)
+	code.addFile("helmr/declarations.json", locatorRaw, 0644)
+	code.addFile("helmr/entry.mjs", []byte(ProgramEntry), 0644)
+	code.addFile("build.js", []byte("export const build = {}\n"), 0644)
 	code.addFile("package.json", []byte(`{"packageManager":"bun@1.3.10"}`), 0644)
 	code.addFile("bun.lock", lockfile, 0644)
 	dependencies := newMemoryArtifact()

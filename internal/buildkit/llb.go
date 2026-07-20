@@ -336,6 +336,18 @@ func (p *imagePlanner) subImage(copy *bundlev0.CopyFromImage, stack []string) (*
 }
 
 func resolveSourcePath(root, raw string) (string, string, error) {
+	return resolveSourcePathWithExcludes(root, raw, true)
+}
+
+func resolveApplicationSourcePath(root, raw string) (string, string, error) {
+	return resolveSourcePathWithExcludes(root, raw, false)
+}
+
+func resolveSourcePathWithExcludes(
+	root string,
+	raw string,
+	applyHardExcludes bool,
+) (string, string, error) {
 	if strings.TrimSpace(root) == "" {
 		return "", "", errors.New("source root is required")
 	}
@@ -343,7 +355,7 @@ func resolveSourcePath(root, raw string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	if isBuildInputHardExcluded(relative) {
+	if applyHardExcludes && isBuildInputHardExcluded(relative) {
 		return "", "", fmt.Errorf("source ref points at a hard-excluded path: %s", relative)
 	}
 	rootAbs, err := filepath.Abs(root)

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
 	"net/netip"
 	"strings"
 	"time"
@@ -40,6 +39,9 @@ const (
 	maxWorkspaceKeyBytes       = 512
 	minRunDurationMs     int64 = 5000
 	maxRunDurationMs     int64 = 86400000
+	maxQueuedRunTTLMs    int64 = 31536000000
+	maxActorIdleMs       int64 = 3600000
+	maxRetryDelayMs      int64 = 86400000
 )
 
 type DefinitionKind string
@@ -83,6 +85,18 @@ type WorkspaceInputManifest struct {
 	Architecture RuntimeArchitecture `json:"architecture"`
 }
 
+type WorkspaceManifest struct {
+	Image        WorkspaceArtifactManifest `json:"image"`
+	Resources    ResourcesManifest         `json:"resources"`
+	Network      NetworkManifest           `json:"network"`
+	Architecture RuntimeArchitecture       `json:"architecture"`
+}
+
+type WorkspaceArtifactManifest struct {
+	ArtifactDigest string `json:"artifactDigest"`
+	MediaType      string `json:"mediaType"`
+}
+
 type SchemaManifest struct {
 	Kind SchemaKind `json:"kind"`
 }
@@ -103,7 +117,7 @@ type RetryManifest struct {
 type RetryBackoff struct {
 	MinMs  int64       `json:"minMs"`
 	MaxMs  int64       `json:"maxMs"`
-	Factor float64     `json:"factor"`
+	Factor int64       `json:"factor"`
 	Jitter RetryJitter `json:"jitter"`
 }
 
@@ -132,6 +146,58 @@ type NetworkManifest struct {
 type QueueInput struct {
 	Name             string `json:"name"`
 	ConcurrencyLimit *int64 `json:"concurrencyLimit,omitempty"`
+}
+
+type QueueConfig struct {
+	FormatVersion int          `json:"formatVersion"`
+	Queues        []QueueInput `json:"queues"`
+}
+
+func QueueConfigFromPlan(plan BuildPlan) (QueueConfig, error) {
+	if err := ValidateBuildPlan(plan); err != nil {
+		return QueueConfig{}, err
+	}
+	config := QueueConfig{
+		FormatVersion: BuildPlanFormatVersion,
+		Queues:        append([]QueueInput(nil), plan.Queues...),
+	}
+	for index := range config.Queues {
+		if plan.Queues[index].ConcurrencyLimit != nil {
+			limit := *plan.Queues[index].ConcurrencyLimit
+			config.Queues[index].ConcurrencyLimit = &limit
+		}
+	}
+	return config, nil
+}
+
+func CanonicalQueueConfig(config QueueConfig) ([]byte, error) {
+	if config.FormatVersion != BuildPlanFormatVersion {
+		return nil, fmt.Errorf(
+			"queue config formatVersion = %d, want %d",
+			config.FormatVersion,
+			BuildPlanFormatVersion,
+		)
+	}
+	for index, queue := range config.Queues {
+		if err := validateQueueInput(queue); err != nil {
+			return nil, fmt.Errorf("queue config queue %d: %w", index, err)
+		}
+		if index > 0 && bytes.Compare(
+			[]byte(config.Queues[index-1].Name),
+			[]byte(queue.Name),
+		) >= 0 {
+			return nil, fmt.Errorf("queue config queues are not in canonical name order at position %d", index)
+		}
+	}
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("encode queue config: %w", err)
+	}
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize queue config: %w", err)
+	}
+	return canonical, nil
 }
 
 func ParseBuildPlan(raw []byte) (BuildPlan, error) {
@@ -405,8 +471,8 @@ func validateDefinitionInput(input DefinitionInput, queues map[string]struct{}) 
 		if err := validateRunManifest(input.Actor.Run, queues); err != nil {
 			return fmt.Errorf("actor run: %w", err)
 		}
-		if !positiveSafeInteger(input.Actor.IdleTimeoutMs) {
-			return errors.New("actor idleTimeoutMs must be a positive JavaScript-safe integer")
+		if input.Actor.IdleTimeoutMs < 1 || input.Actor.IdleTimeoutMs > maxActorIdleMs {
+			return fmt.Errorf("actor idleTimeoutMs must be in [1,%d]", maxActorIdleMs)
 		}
 	case DefinitionKindRunStream:
 		if input.RunStream == nil {
@@ -454,8 +520,8 @@ func validateRunManifest(run RunManifest, queues map[string]struct{}) error {
 			maxRunDurationMs,
 		)
 	}
-	if run.TTLMs != nil && !positiveSafeInteger(*run.TTLMs) {
-		return errors.New("ttlMs must be a positive JavaScript-safe integer")
+	if run.TTLMs != nil && (*run.TTLMs < 1 || *run.TTLMs > maxQueuedRunTTLMs) {
+		return fmt.Errorf("ttlMs must be in [1,%d]", maxQueuedRunTTLMs)
 	}
 	return validateRetryManifest(run.Retry)
 }
@@ -473,16 +539,17 @@ func validateRetryManifest(retry RetryManifest) error {
 	if retry.Backoff == nil {
 		return errors.New("enabled retry requires backoff")
 	}
-	if !positiveSafeInteger(retry.Backoff.MinMs) {
-		return errors.New("retry backoff minMs must be a positive JavaScript-safe integer")
+	if retry.Backoff.MinMs < 1 || retry.Backoff.MinMs > maxRetryDelayMs {
+		return fmt.Errorf("retry backoff minMs must be in [1,%d]", maxRetryDelayMs)
 	}
-	if !positiveSafeInteger(retry.Backoff.MaxMs) {
-		return errors.New("retry backoff maxMs must be a positive JavaScript-safe integer")
+	if retry.Backoff.MaxMs < 1 || retry.Backoff.MaxMs > maxRetryDelayMs {
+		return fmt.Errorf("retry backoff maxMs must be in [1,%d]", maxRetryDelayMs)
 	}
-	if math.IsNaN(retry.Backoff.Factor) ||
-		math.IsInf(retry.Backoff.Factor, 0) ||
-		retry.Backoff.Factor <= 0 {
-		return errors.New("retry backoff factor must be a finite positive number")
+	if retry.Backoff.MinMs > retry.Backoff.MaxMs {
+		return errors.New("retry backoff minMs must not exceed maxMs")
+	}
+	if retry.Backoff.Factor < 1 || retry.Backoff.Factor > 100 {
+		return errors.New("retry backoff factor must be an integer in [1,100]")
 	}
 	if retry.Backoff.Jitter != RetryJitterNone && retry.Backoff.Jitter != RetryJitterFull {
 		return fmt.Errorf("retry backoff jitter %q is unsupported", retry.Backoff.Jitter)

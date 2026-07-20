@@ -123,26 +123,79 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
 		return builder.Artifact{}, errors.New("source project root is required")
 	}
-	plan, err := planImage(request.Bundle.Image, request.Bundle.SubImages, request.Source.ProjectRoot, defaultPlatform, b.requestCacheNamespace(request))
+	plan, err := planImage(
+		request.Bundle.Image,
+		request.Bundle.SubImages,
+		request.Source.ProjectRoot,
+		defaultPlatform,
+		b.cacheNamespaceFor(request.CacheScope, request.TaskID),
+	)
 	if err != nil {
 		return builder.Artifact{}, err
 	}
 	if err := validateBuildSecrets(request.Bundle.Image, request.Bundle.SubImages, request.BuildSecrets); err != nil {
 		return builder.Artifact{}, err
 	}
-	output, err := b.output(request)
+	return b.solve(ctx, imageSolveRequest{
+		runID:        request.RunID,
+		itemID:       request.TaskID,
+		sourceSHA:    request.Source.SHA,
+		plan:         plan,
+		buildSecrets: request.BuildSecrets,
+	})
+}
+
+func (b *Builder) BuildImage(
+	ctx context.Context,
+	request builder.ImageRequest,
+) (builder.Artifact, error) {
+	if b.client == nil {
+		return builder.Artifact{}, errors.New("buildkit client is required")
+	}
+	if strings.TrimSpace(request.Source.ProjectRoot) == "" {
+		return builder.Artifact{}, errors.New("source project root is required")
+	}
+	plan, err := planDeclaredImage(
+		request.Build,
+		request.Source.ProjectRoot,
+		b.cacheNamespaceFor(request.CacheScope, request.WorkspaceID),
+	)
 	if err != nil {
 		return builder.Artifact{}, err
 	}
-	platform, err := platformSpec(plan.Platform)
+	return b.solve(ctx, imageSolveRequest{
+		runID:     request.RunID,
+		itemID:    request.WorkspaceID,
+		sourceSHA: request.Source.SHA,
+		plan:      plan,
+	})
+}
+
+type imageSolveRequest struct {
+	runID        string
+	itemID       string
+	sourceSHA    string
+	plan         llbPlan
+	buildSecrets map[string][]byte
+}
+
+func (b *Builder) solve(
+	ctx context.Context,
+	request imageSolveRequest,
+) (builder.Artifact, error) {
+	output, err := b.output(request.runID, request.itemID)
 	if err != nil {
 		return builder.Artifact{}, err
 	}
-	definition, err := plan.State.Marshal(ctx, llb.Platform(platform))
+	platform, err := platformSpec(request.plan.Platform)
+	if err != nil {
+		return builder.Artifact{}, err
+	}
+	definition, err := request.plan.State.Marshal(ctx, llb.Platform(platform))
 	if err != nil {
 		return builder.Artifact{}, fmt.Errorf("marshal build graph: %w", err)
 	}
-	configJSON, err := json.Marshal(plan.Config)
+	configJSON, err := json.Marshal(request.plan.Config)
 	if err != nil {
 		return builder.Artifact{}, fmt.Errorf("encode image config: %w", err)
 	}
@@ -161,11 +214,11 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 	defer func() { _ = closeImage() }()
 
 	response, err := b.client.Solve(ctx, definition, bkclient.SolveOpt{
-		LocalMounts: plan.LocalMounts,
+		LocalMounts: request.plan.LocalMounts,
 		Exports: []bkclient.ExportEntry{{
 			Type: bkclient.ExporterOCI,
 			Attrs: map[string]string{
-				"name":                          "helmr/" + safeSegment(request.RunID),
+				"name":                          "helmr/" + safeSegment(request.runID),
 				"platform-split":                "false",
 				exptypes.ExporterImageConfigKey: string(configJSON),
 			},
@@ -173,12 +226,12 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 				return noCloseWriteCloser{Writer: imageFile}, nil
 			},
 		}},
-		Session: buildSecretSession(request.BuildSecrets),
+		Session: buildSecretSession(request.buildSecrets),
 	}, nil)
 	if err != nil {
 		closeErr := closeImage()
 		removeErr := os.RemoveAll(output.root)
-		solveErr := b.solveError(ctx, err, request.BuildSecrets)
+		solveErr := b.solveError(ctx, err, request.buildSecrets)
 		if closeErr != nil || removeErr != nil {
 			return builder.Artifact{}, &ServiceFailure{Cause: errors.Join(solveErr, closeErr, removeErr)}
 		}
@@ -193,10 +246,10 @@ func (b *Builder) Build(ctx context.Context, request builder.Request) (builder.A
 	}
 	if err := writeJSONFile(output.manifest, map[string]any{
 		"kind":      "buildkit-oci-tar",
-		"runID":     request.RunID,
-		"taskID":    request.TaskID,
-		"sourceSHA": request.Source.SHA,
-		"platform":  plan.Platform,
+		"runID":     request.runID,
+		"itemID":    request.itemID,
+		"sourceSHA": request.sourceSHA,
+		"platform":  request.plan.Platform,
 		"exporter":  exporterResponse(response),
 	}); err != nil {
 		return builder.Artifact{}, err
@@ -224,8 +277,8 @@ func (b *Builder) solveError(ctx context.Context, solveErr error, secrets map[st
 	return redacted
 }
 
-func (b *Builder) output(request builder.Request) (buildOutput, error) {
-	root := filepath.Join(b.outputRoot, safeSegment(request.RunID), safeSegment(request.TaskID))
+func (b *Builder) output(runID, itemID string) (buildOutput, error) {
+	root := filepath.Join(b.outputRoot, safeSegment(runID), safeSegment(itemID))
 	if err := os.RemoveAll(root); err != nil {
 		return buildOutput{}, fmt.Errorf("clean build output: %w", err)
 	}
@@ -240,10 +293,10 @@ func (b *Builder) output(request builder.Request) (buildOutput, error) {
 	}, nil
 }
 
-func (b *Builder) requestCacheNamespace(request builder.Request) string {
-	scope := safeNamespace(request.CacheScope)
+func (b *Builder) cacheNamespaceFor(scope, itemID string) string {
+	scope = safeNamespace(scope)
 	if scope == "_" {
-		scope = safeSegment(request.TaskID)
+		scope = safeSegment(itemID)
 	}
 	if scope == "_" {
 		return b.cacheNamespace

@@ -303,7 +303,6 @@ in
           "$root/etc" \
           "$root/lib" \
           "$runtime" \
-          "$program/helmr/files/modules" \
           "$program/pkg"
         unsquashfs -no-progress -d "$runtime" "$TMPDIR/verify/runtime.squashfs"
         case "$(jq -r '.architecture' "$TMPDIR/verify/runtime.descriptor.json")" in
@@ -359,31 +358,29 @@ in
         printf '%s\n' 'hosts: evil files dns' >"$root/etc/nsswitch.conf"
         chmod a-w "$runtime/lib/nsswitch.conf"
         cat >"$program/pkg/esm.ts" <<'EOF'
-        throw new Error("raw ESM source executed");
+        enum Label {
+          ESM = "raw-esm",
+        }
+        export const esmValue: Label = Label.ESM;
         EOF
         cat >"$program/pkg/index.ts" <<'EOF'
-        throw new Error("raw index source executed");
+        interface Value {
+          label: string;
+        }
+        const value: Value = { label: "raw-index" };
+        export const indexValue = value.label;
         EOF
         cat >"$program/pkg/common.cts" <<'EOF'
-        throw new Error("raw CommonJS source executed");
-        EOF
-        cat >"$program/helmr/files/modules/esm.mjs" <<'EOF'
-        export const esmValue = "mapped-esm";
-        EOF
-        cat >"$program/helmr/files/modules/index.mjs" <<'EOF'
-        export const indexValue = "mapped-index";
-        EOF
-        cat >"$program/helmr/files/modules/common.cjs" <<'EOF'
-        module.exports = { commonValue: "mapped-commonjs" };
+        enum Label {
+          CommonJS = "raw-commonjs",
+        }
+        module.exports = { commonValue: Label.CommonJS };
         EOF
         cat >"$program/worker.mjs" <<'EOF'
         import { parentPort } from "node:worker_threads";
-        import { esmValue } from "./pkg/esm";
+        import { esmValue } from "./pkg/esm.ts";
 
         parentPort.postMessage(esmValue);
-        EOF
-        cat >"$program/helmr/modules.json" <<'EOF'
-        {"formatVersion":0,"modules":[{"codePath":"helmr/files/modules/common.cjs","format":"commonjs","path":"pkg/common.cts"},{"codePath":"helmr/files/modules/esm.mjs","format":"module","path":"pkg/esm.ts"},{"codePath":"helmr/files/modules/index.mjs","format":"module","path":"pkg/index.ts"}],"transformer":"helmr.typescript.v0"}
         EOF
         cat >"$program/probe.mjs" <<'EOF'
         import assert from "node:assert/strict";
@@ -393,11 +390,12 @@ in
         import { createRequire } from "node:module";
         import tls from "node:tls";
         import { Worker } from "node:worker_threads";
-        import { esmValue } from "./pkg/esm";
-        import { indexValue } from "./pkg";
+        import { esmValue } from "./pkg/esm.ts";
+        import { indexValue } from "./pkg/index.ts";
 
         assert.equal(process.execPath, "/opt/helmr/runtime/bin/node");
         assert.deepEqual(process.execArgv, [
+          "--experimental-transform-types",
           "--import=file:///opt/helmr/runtime/helmr/preload.mjs",
         ]);
         assert.equal(process.env.NODE_OPTIONS, undefined);
@@ -418,19 +416,19 @@ in
           Boolean(process.config.variables.node_use_openssl_ca),
           false,
         );
-        assert.equal(esmValue, "mapped-esm");
-        assert.equal(indexValue, "mapped-index");
+        assert.equal(esmValue, "raw-esm");
+        assert.equal(indexValue, "raw-index");
         const require = createRequire(import.meta.url);
-        assert.deepEqual(require("./pkg/common"), {
-          commonValue: "mapped-commonjs",
+        assert.deepEqual(require("./pkg/common.cts"), {
+          commonValue: "raw-commonjs",
         });
-        assert.match(require.resolve("./pkg/common"), /\/pkg\/common\.cts$/);
+        assert.match(require.resolve("./pkg/common.cts"), /\/pkg\/common\.cts$/);
         const workerValue = await new Promise((resolve, reject) => {
           const worker = new Worker(new URL("./worker.mjs", import.meta.url));
           worker.once("message", resolve);
           worker.once("error", reject);
         });
-        assert.equal(workerValue, "mapped-esm");
+        assert.equal(workerValue, "raw-esm");
         assert.equal(new Intl.DateTimeFormat("ja-JP").resolvedOptions().locale, "ja-JP");
         assert.equal(
           new TextDecoder("shift_jis").decode(
@@ -527,6 +525,7 @@ in
         env "''${clean_runtime_env[@]}" \
           ${pkgs.proot}/bin/proot "''${base_proot[@]}" \
           /opt/helmr/runtime/bin/node \
+          --experimental-transform-types \
           --import=file:///opt/helmr/runtime/helmr/preload.mjs \
           /opt/helmr/program/probe.mjs
         test -e "$root/evil-loaded"
@@ -534,6 +533,7 @@ in
         env "''${clean_runtime_env[@]}" \
           ${pkgs.proot}/bin/proot "''${common_proot[@]}" \
           /opt/helmr/runtime/bin/node \
+          --experimental-transform-types \
           --import=file:///opt/helmr/runtime/helmr/preload.mjs \
           /opt/helmr/program/probe.mjs
         test ! -e "$root/evil-loaded"

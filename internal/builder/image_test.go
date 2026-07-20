@@ -200,13 +200,6 @@ func TestValidateImageBuildRejectsInvalidOperations(t *testing.T) {
 			errMsg: "Deployment-relative",
 		},
 		{
-			name: "file digest",
-			change: func(build *ImageBuild) {
-				build.Images[0].Steps[2].CopySourceFile.Digest = "SHA256:abc"
-			},
-			errMsg: "lowercase SHA-256",
-		},
-		{
 			name: "directory dot path",
 			change: func(build *ImageBuild) {
 				build.Images[0].Steps[3].CopySourceDir.Path = "."
@@ -218,20 +211,6 @@ func TestValidateImageBuildRejectsInvalidOperations(t *testing.T) {
 				build.Images[0].Steps[2].CopySourceFile.Path = "."
 			},
 			errMsg: "Deployment-relative",
-		},
-		{
-			name: "directory ignore array",
-			change: func(build *ImageBuild) {
-				build.Images[0].Steps[3].CopySourceDir.Ignore = nil
-			},
-			errMsg: "ignore must be an array",
-		},
-		{
-			name: "empty ignore pattern",
-			change: func(build *ImageBuild) {
-				build.Images[0].Steps[3].CopySourceDir.Ignore = []string{""}
-			},
-			errMsg: "ignore[0]",
 		},
 		{
 			name: "workdir parent",
@@ -321,7 +300,6 @@ func TestValidateImageBuildEnforcesIndependentBounds(t *testing.T) {
 }
 
 func validImageBuild() ImageBuild {
-	digest := "sha256:" + strings.Repeat("a", 64)
 	return ImageBuild{
 		FormatVersion: ImageBuildFormatVersion,
 		Root:          "app",
@@ -344,15 +322,12 @@ func validImageBuild() ImageBuild {
 						}},
 					}},
 					{CopySourceFile: &ImageCopySourceFile{
-						Dst:    "/app/package.json",
-						Path:   "package.json",
-						Digest: digest,
+						Dst:  "/app/package.json",
+						Path: "package.json",
 					}},
 					{CopySourceDir: &ImageCopySourceDir{
-						Dst:        "/app/src",
-						Path:       "src",
-						TreeDigest: digest,
-						Ignore:     []string{"**/*.test.ts"},
+						Dst:  "/app/src",
+						Path: "src",
 					}},
 					{Workdir: &ImageWorkdir{Path: "/app"}},
 					{User: &ImageUser{Name: "1000:1000"}},

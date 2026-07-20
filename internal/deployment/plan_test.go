@@ -34,6 +34,26 @@ func TestBuildPlanCanonicalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestQueueConfigFromPlan(t *testing.T) {
+	plan := testBuildPlan()
+	config, err := QueueConfigFromPlan(plan)
+	if err != nil {
+		t.Fatalf("QueueConfigFromPlan: %v", err)
+	}
+	raw, err := CanonicalQueueConfig(config)
+	if err != nil {
+		t.Fatalf("CanonicalQueueConfig: %v", err)
+	}
+	want := `{"formatVersion":0,"queues":[{"concurrencyLimit":1,"name":"actor/chat"},{"name":"task/build"}]}`
+	if string(raw) != want {
+		t.Fatalf("queue config = %s, want %s", raw, want)
+	}
+	*config.Queues[0].ConcurrencyLimit = 3
+	if *plan.Queues[0].ConcurrencyLimit != 1 {
+		t.Fatal("queue config retained a plan pointer")
+	}
+}
+
 func TestParseBuildPlanRequiresClosedCanonicalShape(t *testing.T) {
 	raw := canonicalTestBuildPlan(t)
 	tests := []struct {
@@ -198,6 +218,13 @@ func TestValidateBuildPlanDefinitions(t *testing.T) {
 			errMsg: "idleTimeoutMs",
 		},
 		{
+			name: "actor idle timeout maximum",
+			change: func(plan *BuildPlan) {
+				plan.Definitions[1].Actor.IdleTimeoutMs = maxActorIdleMs + 1
+			},
+			errMsg: "idleTimeoutMs",
+		},
+		{
 			name: "workspace architecture",
 			change: func(plan *BuildPlan) {
 				plan.Definitions[3].Workspace.Architecture = "amd64"
@@ -331,6 +358,13 @@ func TestValidateBuildPlanRunPolicy(t *testing.T) {
 			errMsg: "ttlMs",
 		},
 		{
+			name: "ttl maximum",
+			change: func(run *RunManifest) {
+				run.TTLMs = pointer(maxQueuedRunTTLMs + 1)
+			},
+			errMsg: "ttlMs",
+		},
+		{
 			name: "disabled retry fields",
 			change: func(run *RunManifest) {
 				run.Retry.MaxAttempts = pointer(int64(1))
@@ -360,6 +394,22 @@ func TestValidateBuildPlanRunPolicy(t *testing.T) {
 				run.Retry.Backoff.Factor = 0
 			},
 			errMsg: "factor",
+		},
+		{
+			name: "retry delay order",
+			change: func(run *RunManifest) {
+				run.Retry = validRetryManifest()
+				run.Retry.Backoff.MinMs = run.Retry.Backoff.MaxMs + 1
+			},
+			errMsg: "must not exceed",
+		},
+		{
+			name: "retry delay maximum",
+			change: func(run *RunManifest) {
+				run.Retry = validRetryManifest()
+				run.Retry.Backoff.MaxMs = maxRetryDelayMs + 1
+			},
+			errMsg: "maxMs",
 		},
 		{
 			name: "retry jitter",
@@ -512,7 +562,6 @@ func TestValidateBuildPlanQueues(t *testing.T) {
 }
 
 func testBuildPlan() BuildPlan {
-	digest := "sha256:" + strings.Repeat("a", 64)
 	return BuildPlan{
 		FormatVersion: BuildPlanFormatVersion,
 		Definitions: []DefinitionInput{
@@ -570,9 +619,8 @@ func testBuildPlan() BuildPlan {
 							Steps: []builder.ImageStep{
 								{From: &builder.ImageFrom{Ref: "debian:bookworm-slim"}},
 								{CopySourceFile: &builder.ImageCopySourceFile{
-									Dst:    "/app/package.json",
-									Path:   "package.json",
-									Digest: digest,
+									Dst:  "/app/package.json",
+									Path: "package.json",
 								}},
 							},
 						}},

@@ -212,7 +212,7 @@ func TestCacheIDUsesNamespace(t *testing.T) {
 
 func TestRequestCacheNamespaceUsesScope(t *testing.T) {
 	b := New(&fakeBuildKitSolver{}, t.TempDir(), "tenant")
-	got := b.requestCacheNamespace(builder.Request{TaskID: "deploy", CacheScope: "helmrdotdev/helmr/deploy"})
+	got := b.cacheNamespaceFor("helmrdotdev/helmr/deploy", "deploy")
 	if got != "tenant/helmrdotdev/helmr/deploy" {
 		t.Fatalf("cache namespace = %q", got)
 	}

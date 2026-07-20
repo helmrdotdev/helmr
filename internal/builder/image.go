@@ -18,7 +18,6 @@ const (
 	maxImageIdentifierBytes = 512
 	maxImageReferenceBytes  = 4096
 	maxImagePathBytes       = 4096
-	maxImageIgnorePatterns  = 4096
 	maxImageArguments       = 1024
 	maxImageArgumentBytes   = 65536
 	maxImageArgumentsBytes  = 1 << 20
@@ -31,7 +30,6 @@ const (
 )
 
 var (
-	imageDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	imageEnvKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,255}$`)
 	imageSecretPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	imageUserPattern   = regexp.MustCompile(`^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+)?$`)
@@ -87,16 +85,13 @@ type ImageSecretMount struct {
 }
 
 type ImageCopySourceFile struct {
-	Dst    string `json:"dst"`
-	Path   string `json:"path"`
-	Digest string `json:"digest"`
+	Dst  string `json:"dst"`
+	Path string `json:"path"`
 }
 
 type ImageCopySourceDir struct {
-	Dst        string   `json:"dst"`
-	Path       string   `json:"path"`
-	TreeDigest string   `json:"treeDigest"`
-	Ignore     []string `json:"ignore"`
+	Dst  string `json:"dst"`
+	Path string `json:"path"`
 }
 
 type ImageCopyFromImage struct {
@@ -273,9 +268,6 @@ func validateImageStep(step ImageStep, imageKey string, index int) (int, error) 
 		if err := validateImageSourcePath(value.Path, false, label+" copySourceFile.path"); err != nil {
 			return 0, err
 		}
-		if !imageDigestPattern.MatchString(value.Digest) {
-			return 0, fmt.Errorf("%s copySourceFile.digest is not a lowercase SHA-256 digest", label)
-		}
 	case step.CopySourceDir != nil:
 		value := step.CopySourceDir
 		if err := validateImageAbsolutePath(value.Dst, label+" copySourceDir.dst"); err != nil {
@@ -283,20 +275,6 @@ func validateImageStep(step ImageStep, imageKey string, index int) (int, error) 
 		}
 		if err := validateImageSourcePath(value.Path, true, label+" copySourceDir.path"); err != nil {
 			return 0, err
-		}
-		if !imageDigestPattern.MatchString(value.TreeDigest) {
-			return 0, fmt.Errorf("%s copySourceDir.treeDigest is not a lowercase SHA-256 digest", label)
-		}
-		if value.Ignore == nil {
-			return 0, fmt.Errorf("%s copySourceDir.ignore must be an array", label)
-		}
-		if len(value.Ignore) > maxImageIgnorePatterns {
-			return 0, fmt.Errorf("%s copySourceDir.ignore has more than %d patterns", label, maxImageIgnorePatterns)
-		}
-		for patternIndex, pattern := range value.Ignore {
-			if pattern == "" || !validImageString(pattern, maxImagePathBytes) {
-				return 0, fmt.Errorf("%s copySourceDir.ignore[%d] is invalid", label, patternIndex)
-			}
 		}
 	case step.CopyFromImage != nil:
 		value := step.CopyFromImage

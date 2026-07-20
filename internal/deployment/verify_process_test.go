@@ -224,7 +224,6 @@ func canonicalVerifierProgramIndex(t *testing.T) []byte {
 			Name:          PackageManagerBun,
 			Version:       "1.3.10",
 		},
-		ModuleMapDigest:         "sha256:" + strings.Repeat("3", 64),
 		RuntimeAPIVersion:       RuntimeAPIVersion,
 		RuntimeDigest:           "sha256:" + strings.Repeat("0", 64),
 		StandardToolchainDigest: "sha256:" + strings.Repeat("4", 64),

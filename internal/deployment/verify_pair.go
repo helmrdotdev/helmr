@@ -13,8 +13,7 @@ type pairVerifier struct {
 	code      *inspectedArtifact
 	deps      *inspectedArtifact
 	index     ProgramIndex
-	modules   ModuleMap
-	manifests map[string]packageManifest
+	locator   DeclarationLocator
 }
 
 func (verifier *pairVerifier) verify() error {
@@ -27,10 +26,7 @@ func (verifier *pairVerifier) verify() error {
 	if err := verifier.verifyDependencyLayout(); err != nil {
 		return err
 	}
-	if err := verifier.readManifests(); err != nil {
-		return err
-	}
-	if err := verifier.verifyModules(); err != nil {
+	if err := verifier.verifyDeclarations(); err != nil {
 		return err
 	}
 	return verifier.verifyLinks()
@@ -49,24 +45,29 @@ func (verifier *pairVerifier) readDocuments() error {
 		return fmt.Errorf("program index dependenciesDigest does not match the dependency Artifact")
 	}
 
-	moduleRaw, err := verifier.code.read(verifier.ctx, "helmr/modules.json", maxProgramFileSizeBytes)
+	declarationsRaw, err := verifier.code.read(
+		verifier.ctx,
+		"helmr/declarations.json",
+		maxProgramFileSizeBytes,
+	)
 	if err != nil {
-		return fmt.Errorf("module map: %w", err)
+		return fmt.Errorf("declaration locator: %w", err)
 	}
-	if digestBytes(moduleRaw) != verifier.index.ModuleMapDigest {
-		return fmt.Errorf("module map digest does not match the program index")
-	}
-	verifier.modules, err = ParseModuleMap(moduleRaw)
+	verifier.locator, err = ParseDeclarationLocator(declarationsRaw)
 	if err != nil {
-		return fmt.Errorf("module map: %w", err)
+		return fmt.Errorf("declaration locator: %w", err)
 	}
 
-	entry, err := verifier.code.require("helmr/entry.mjs", artifactEntryRegular)
+	entryRaw, err := verifier.code.read(
+		verifier.ctx,
+		"helmr/entry.mjs",
+		maxProgramFileSizeBytes,
+	)
 	if err != nil {
 		return err
 	}
-	if entry.SizeBytes > maxProgramFileSizeBytes {
-		return fmt.Errorf("helmr/entry.mjs exceeds %d bytes", maxProgramFileSizeBytes)
+	if string(entryRaw) != ProgramEntry {
+		return fmt.Errorf("helmr/entry.mjs does not match the fixed Program entry")
 	}
 
 	return nil
@@ -79,8 +80,8 @@ func (verifier *pairVerifier) verifyCodeLayout() error {
 		}
 	}
 	for _, required := range []string{
+		"helmr/declarations.json",
 		"helmr/entry.mjs",
-		"helmr/modules.json",
 		"helmr/program.json",
 	} {
 		if _, err := verifier.code.require(required, artifactEntryRegular); err != nil {
@@ -90,6 +91,13 @@ func (verifier *pairVerifier) verifyCodeLayout() error {
 	for _, entry := range verifier.code.ordered {
 		if strings.HasPrefix(entry.Path, "node_modules/") {
 			return fmt.Errorf("code Artifact dependency mountpoint is not empty at %q", entry.Path)
+		}
+		if strings.HasPrefix(entry.Path, "helmr/") {
+			switch entry.Path {
+			case "helmr/declarations.json", "helmr/entry.mjs", "helmr/program.json":
+			default:
+				return fmt.Errorf("code Artifact contains unknown Platform-owned path %q", entry.Path)
+			}
 		}
 	}
 	return nil
@@ -102,129 +110,32 @@ func (verifier *pairVerifier) verifyDependencyLayout() error {
 	return nil
 }
 
-func (verifier *pairVerifier) readManifests() error {
-	verifier.manifests = make(map[string]packageManifest)
-	var totalBytes int64
-	for _, entry := range verifier.code.ordered {
-		if path.Base(entry.Path) != "package.json" ||
-			entry.Path == "helmr" || strings.HasPrefix(entry.Path, "helmr/") {
-			continue
-		}
-		if entry.Kind != artifactEntryRegular {
-			return fmt.Errorf("code Artifact package.json %q is not a regular file", entry.Path)
-		}
-		if totalBytes > maxPackageJSONBytes-entry.SizeBytes {
-			return fmt.Errorf("code Artifact package.json bytes exceed %d", maxPackageJSONBytes)
-		}
-		totalBytes += entry.SizeBytes
-		raw, err := verifier.code.read(verifier.ctx, entry.Path, maxPackageManifestSizeBytes)
-		if err != nil {
-			return err
-		}
-		manifest, err := parsePackageScope(raw)
-		if err != nil {
-			return fmt.Errorf("%s: %w", entry.Path, err)
-		}
-		verifier.manifests[entry.Path] = manifest
+func (verifier *pairVerifier) verifyDeclarations() error {
+	if len(verifier.locator.Declarations) != len(verifier.index.Declarations) {
+		return fmt.Errorf(
+			"declaration locator count %d does not match program index count %d",
+			len(verifier.locator.Declarations),
+			len(verifier.index.Declarations),
+		)
 	}
-	return nil
-}
-
-func (verifier *pairVerifier) verifyModules() error {
-	byPath := make(map[string]Module, len(verifier.modules.Modules))
-	sidecars := make(map[string]struct{}, len(verifier.modules.Modules))
-	for _, module := range verifier.modules.Modules {
-		byPath[module.Path] = module
-		sidecars[module.CodePath] = struct{}{}
-	}
-
-	for _, entry := range verifier.code.ordered {
-		if entry.Kind != artifactEntryRegular || strings.HasPrefix(entry.Path, "helmr/") ||
-			!isRuntimeTypeScript(entry.Path) {
-			continue
+	for index, located := range verifier.locator.Declarations {
+		projection := verifier.index.Declarations[index]
+		if located.Kind != projection.Kind ||
+			located.DeclaredID != projection.DeclaredID {
+			return fmt.Errorf(
+				"declaration locator identity at position %d does not match program index",
+				index,
+			)
 		}
-		module, exists := byPath[entry.Path]
-		if !exists {
-			return fmt.Errorf("TypeScript source %q is absent from the module map", entry.Path)
-		}
-		source := entry
-		if source.SizeBytes > maxProgramFileSizeBytes {
-			return fmt.Errorf("TypeScript source %q exceeds %d bytes", entry.Path, maxProgramFileSizeBytes)
-		}
-		sourceDigest, err := verifier.code.digest(verifier.ctx, entry.Path)
-		if err != nil {
-			return err
-		}
-		if sourceDigest != module.SourceDigest {
-			return fmt.Errorf("TypeScript source %q digest does not match the module map", entry.Path)
-		}
-		if _, err := verifier.code.require(module.CodePath, artifactEntryRegular); err != nil {
-			return fmt.Errorf("TypeScript sidecar %q: %w", module.CodePath, err)
-		}
-		codeDigest, err := verifier.code.digest(verifier.ctx, module.CodePath)
-		if err != nil {
-			return err
-		}
-		if codeDigest != module.CodeDigest {
-			return fmt.Errorf("TypeScript sidecar %q digest does not match the module map", module.CodePath)
-		}
-		wantFormat, err := verifier.moduleFormat(entry.Path)
-		if err != nil {
-			return err
-		}
-		if module.Format != wantFormat {
-			return fmt.Errorf("TypeScript source %q format does not match its nearest manifest", entry.Path)
-		}
-		delete(byPath, entry.Path)
-	}
-	if len(byPath) != 0 {
-		for source := range byPath {
-			return fmt.Errorf("module map contains non-regular or ineligible source %q", source)
-		}
-	}
-	for _, entry := range verifier.code.ordered {
-		if strings.HasPrefix(entry.Path, "helmr/files/modules/") {
-			if _, exists := sidecars[entry.Path]; !exists && entry.Kind == artifactEntryRegular {
-				return fmt.Errorf("unlisted module sidecar path %q", entry.Path)
-			}
+		if _, err := verifier.code.require(located.ModulePath, artifactEntryRegular); err != nil {
+			return fmt.Errorf(
+				"declaration locator module %q: %w",
+				located.ModulePath,
+				err,
+			)
 		}
 	}
 	return nil
-}
-
-func isRuntimeTypeScript(value string) bool {
-	if strings.HasSuffix(value, ".d.ts") || strings.HasSuffix(value, ".d.mts") ||
-		strings.HasSuffix(value, ".d.cts") {
-		return false
-	}
-	return strings.HasSuffix(value, ".ts") || strings.HasSuffix(value, ".mts") ||
-		strings.HasSuffix(value, ".cts")
-}
-
-func (verifier *pairVerifier) moduleFormat(source string) (ModuleFormat, error) {
-	switch {
-	case strings.HasSuffix(source, ".mts"):
-		return ModuleFormatESM, nil
-	case strings.HasSuffix(source, ".cts"):
-		return ModuleFormatCommonJS, nil
-	}
-	parent := path.Dir(source)
-	for {
-		manifestPath := path.Join(parent, "package.json")
-		if parent == "." {
-			manifestPath = "package.json"
-		}
-		if manifest, exists := verifier.manifests[manifestPath]; exists {
-			if manifest.Type == "module" {
-				return ModuleFormatESM, nil
-			}
-			return ModuleFormatCommonJS, nil
-		}
-		if parent == "." {
-			return "", fmt.Errorf("TypeScript source %q has no package.json ancestor", source)
-		}
-		parent = path.Dir(parent)
-	}
 }
 
 func (verifier *pairVerifier) verifyLinks() error {

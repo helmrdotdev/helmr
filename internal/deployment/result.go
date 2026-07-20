@@ -49,6 +49,7 @@ type BuildResult struct {
 
 type BuildSucceeded struct {
 	Plan            BuildPlan        `json:"plan"`
+	Provenance      BuildProvenance  `json:"provenance"`
 	ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
 	WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 }
@@ -171,6 +172,12 @@ func ValidateBuildResultTarget(
 		return nil
 	}
 	succeeded := result.Succeeded
+	if succeeded.Provenance.RuntimeDigest != runtimeDigest {
+		return errors.New("build result provenance runtime digest does not match target")
+	}
+	if succeeded.Provenance.Architecture != architecture {
+		return errors.New("build result provenance architecture does not match target")
+	}
 	if succeeded.ProgramReceipt != nil {
 		if succeeded.ProgramReceipt.Index.RuntimeDigest != runtimeDigest {
 			return errors.New("build result program runtime digest does not match target")
@@ -203,12 +210,14 @@ func (result BuildResult) MarshalJSON() ([]byte, error) {
 			FormatVersion   int              `json:"formatVersion"`
 			Outcome         BuildOutcome     `json:"outcome"`
 			Plan            BuildPlan        `json:"plan"`
+			Provenance      BuildProvenance  `json:"provenance"`
 			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}{
 			result.FormatVersion,
 			result.Outcome,
 			result.Succeeded.Plan,
+			result.Succeeded.Provenance,
 			result.Succeeded.ProgramReceipt,
 			result.Succeeded.WorkspaceImages,
 		})
@@ -249,6 +258,7 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 			FormatVersion   int              `json:"formatVersion"`
 			Outcome         BuildOutcome     `json:"outcome"`
 			Plan            BuildPlan        `json:"plan"`
+			Provenance      BuildProvenance  `json:"provenance"`
 			ProgramReceipt  *ProgramReceipt  `json:"programReceipt,omitempty"`
 			WorkspaceImages []WorkspaceImage `json:"workspaceImages"`
 		}
@@ -257,6 +267,7 @@ func (result *BuildResult) UnmarshalJSON(raw []byte) error {
 		}
 		result.Succeeded = &BuildSucceeded{
 			Plan:            wire.Plan,
+			Provenance:      wire.Provenance,
 			ProgramReceipt:  wire.ProgramReceipt,
 			WorkspaceImages: wire.WorkspaceImages,
 		}
@@ -289,6 +300,9 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 	if _, err := CanonicalBuildPlan(succeeded.Plan); err != nil {
 		return fmt.Errorf("build result plan: %w", err)
 	}
+	if err := validateBuildProvenance("build result provenance", succeeded.Provenance); err != nil {
+		return err
+	}
 	if succeeded.WorkspaceImages == nil {
 		return errors.New("build result workspaceImages must be an array")
 	}
@@ -311,17 +325,23 @@ func validateBuildSucceeded(succeeded BuildSucceeded) error {
 		) {
 			return errors.New("build result programReceipt declarations do not match plan")
 		}
+		if succeeded.ProgramReceipt.Index.Architecture != succeeded.Provenance.Architecture ||
+			succeeded.ProgramReceipt.Index.BuildContractVersion != succeeded.Provenance.BuildContractVersion ||
+			succeeded.ProgramReceipt.Index.Manager != succeeded.Provenance.Manager ||
+			succeeded.ProgramReceipt.Index.RuntimeDigest != succeeded.Provenance.RuntimeDigest ||
+			succeeded.ProgramReceipt.Index.StandardToolchainDigest != succeeded.Provenance.StandardToolchainDigest ||
+			succeeded.ProgramReceipt.Index.Submitted != succeeded.Provenance.Submitted {
+			return errors.New("build result programReceipt provenance does not match")
+		}
 	}
 
 	workspaces := buildPlanWorkspaces(succeeded.Plan)
-	if succeeded.ProgramReceipt != nil {
-		for _, workspace := range workspaces {
-			if workspace.Architecture != succeeded.ProgramReceipt.Index.Architecture {
-				return fmt.Errorf(
-					"build result workspace %q architecture does not match program",
-					workspace.DeclaredID,
-				)
-			}
+	for _, workspace := range workspaces {
+		if workspace.Architecture != succeeded.Provenance.Architecture {
+			return fmt.Errorf(
+				"build result workspace %q architecture does not match provenance",
+				workspace.DeclaredID,
+			)
 		}
 	}
 	if len(succeeded.WorkspaceImages) != len(workspaces) {

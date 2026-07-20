@@ -12,6 +12,10 @@ type Engine interface {
 	Build(context.Context, Request) (Artifact, error)
 }
 
+type ImageEngine interface {
+	BuildImage(context.Context, ImageRequest) (Artifact, error)
+}
+
 type Request struct {
 	RunID        string
 	TaskID       string
@@ -21,6 +25,14 @@ type Request struct {
 	BuildSecrets map[string][]byte
 	Source       Source
 	MaxDuration  time.Duration
+}
+
+type ImageRequest struct {
+	RunID       string
+	WorkspaceID string
+	CacheScope  string
+	Build       ImageBuild
+	Source      Source
 }
 
 type Source struct {

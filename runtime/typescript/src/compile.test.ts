@@ -1,0 +1,522 @@
+import { describe, expect, test } from "bun:test"
+
+import {
+  actor,
+  image,
+  queue,
+  schedules,
+  source,
+  streams,
+  task,
+  workspace,
+  workspaces,
+  type JsonValue,
+  type PayloadSchema,
+} from "@helmr/sdk"
+import {
+  PROGRAM_ENTRYPOINT,
+  analyze,
+  normalizeWorkspaceNetwork,
+  normalizeWorkspaceResources,
+} from "./compile"
+import {
+  encodeAnalysisResultFrame,
+  failedAnalysisResult,
+  successfulAnalysisResult,
+} from "./analysis"
+
+const identitySchema: PayloadSchema<JsonValue> = {
+  "~standard": {
+    version: 1,
+    vendor: "test",
+    validate(value) {
+      return { value: value as JsonValue }
+    },
+  },
+}
+
+describe("greenfield declaration analysis", () => {
+  test("emits one deterministic BuildPlan and declaration locator", () => {
+    const jobs = queue({ id: "jobs", concurrencyLimit: 3 })
+    const payloadTask = task({
+      id: "constructor",
+      payload: identitySchema,
+      queue: jobs,
+      maxDuration: "60s",
+      ttl: "1500ms",
+      retry: { enabled: true, maxAttempts: 2 },
+      run: (payload) => payload,
+    })
+    const noPayloadTask = task({
+      id: "toString",
+      run: () => ({ ok: true }),
+    })
+    const service = actor({
+      id: "service",
+      idleTimeout: "1500ms",
+      run: async () => {},
+    })
+    const events = streams.define({
+      id: "events",
+      schema: identitySchema,
+    })
+    const machine = workspace("machine")
+      .image(image("root").from("debian:bookworm"))
+      .resources({ cpu: 0.125, memory: "1024MiB", disk: "2GiB" })
+      .network({
+        denyCidrs: [
+          "10.0.0.5/24",
+          "2001:0db8:0000:0000:0000:0000:0000:0001/64",
+          "10.0.0.0/24",
+        ],
+      })
+    const exports = [
+      { modulePath: "src/machine.ts", exportName: "machine", value: machine },
+      { modulePath: "src/events.ts", exportName: "events", value: events },
+      { modulePath: "src/tasks.ts", exportName: "toString", value: noPayloadTask },
+      { modulePath: "src/actor.ts", exportName: "service", value: service },
+      { modulePath: "src/tasks.ts", exportName: "constructor", value: payloadTask },
+      { modulePath: "src/queues.ts", exportName: "jobs", value: jobs },
+    ] as const
+
+    const result = analyze({ architecture: "x86_64", exports })
+    const reversed = analyze({
+      architecture: "x86_64",
+      exports: [...exports].reverse(),
+    })
+
+    expect(result.buildPlanBytes).toEqual(reversed.buildPlanBytes)
+    expect(result.declarationLocatorBytes).toEqual(
+      reversed.declarationLocatorBytes,
+    )
+    expect(result.buildPlan.definitions.map((item) => item.kind)).toEqual([
+      "task",
+      "task",
+      "actor",
+      "run_stream",
+      "workspace",
+    ])
+    expect(result.buildPlan.queues).toEqual([
+      { name: "actor/service" },
+      { name: "jobs", concurrencyLimit: 3 },
+      { name: "task/toString" },
+    ])
+    expect(result.declarationLocator.declarations).toEqual([
+      {
+        declaredId: "constructor",
+        exportName: "constructor",
+        kind: "task",
+        modulePath: "src/tasks.ts",
+      },
+      {
+        declaredId: "toString",
+        exportName: "toString",
+        kind: "task",
+        modulePath: "src/tasks.ts",
+      },
+      {
+        declaredId: "service",
+        exportName: "service",
+        kind: "actor",
+        modulePath: "src/actor.ts",
+      },
+      {
+        declaredId: "events",
+        exportName: "events",
+        kind: "run_stream",
+        modulePath: "src/events.ts",
+      },
+    ])
+    const workspaceDefinition = result.buildPlan.definitions[4]
+    expect(workspaceDefinition?.kind).toBe("workspace")
+    if (workspaceDefinition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(workspaceDefinition.manifest.resources).toEqual({
+      milliCpu: 125,
+      memoryMiB: 1024,
+      diskMiB: 2048,
+    })
+    expect(workspaceDefinition.manifest.network).toEqual({
+      internet: true,
+      denyCidrs: ["10.0.0.0/24", "2001:db8::/64"],
+    })
+    expect(new TextDecoder().decode(result.entrypointBytes)).toBe(
+      PROGRAM_ENTRYPOINT,
+    )
+    expect(JSON.stringify(result.buildPlan)).not.toContain("registry")
+  })
+
+  test("accepts the same declared ID in distinct kind namespaces", () => {
+    const sharedTask = task({ id: "shared", run: () => null })
+    const sharedActor = actor({ id: "shared", run: async () => {} })
+    expect(
+      analyze({
+        architecture: "aarch64",
+        exports: [
+          { modulePath: "src/task.ts", exportName: "sharedTask", value: sharedTask },
+          { modulePath: "src/actor.ts", exportName: "sharedActor", value: sharedActor },
+        ],
+      }).buildPlan.definitions,
+    ).toHaveLength(2)
+  })
+
+  test("rejects duplicate same-kind declarations", () => {
+    const first = task({ id: "duplicate", run: () => null })
+    const second = task({ id: "duplicate", run: () => null })
+    expect(() =>
+      analyze({
+        architecture: "x86_64",
+        exports: [
+          { modulePath: "src/a.ts", exportName: "first", value: first },
+          { modulePath: "src/b.ts", exportName: "second", value: second },
+        ],
+      }),
+    ).toThrow("duplicate task declaration")
+  })
+
+  test("deduplicates one Queue object and rejects distinct objects with the same ID", () => {
+    const shared = queue({ id: "shared", concurrencyLimit: 2 })
+    expect(() =>
+      analyze({
+        architecture: "x86_64",
+        exports: [
+          { modulePath: "src/queue.ts", exportName: "shared", value: shared },
+          {
+            modulePath: "src/task.ts",
+            exportName: "usesShared",
+            value: task({
+              id: "uses-shared",
+              queue: shared,
+              run: () => null,
+            }),
+          },
+        ],
+      }),
+    ).not.toThrow()
+
+    const first = queue({ id: "duplicate", concurrencyLimit: 2 })
+    const second = queue({ id: "duplicate", concurrencyLimit: 2 })
+    expect(() =>
+      analyze({
+        architecture: "x86_64",
+        exports: [
+          { modulePath: "src/a.ts", exportName: "first", value: first },
+          { modulePath: "src/b.ts", exportName: "second", value: second },
+          {
+            modulePath: "src/task.ts",
+            exportName: "task",
+            value: task({ id: "task", queue: first, run: () => null }),
+          },
+        ],
+      }),
+    ).toThrow("duplicate queue declaration")
+  })
+
+  test("deduplicates re-exports and selects the smallest locator", () => {
+    const definition = task({
+      id: "shared",
+      payload: identitySchema,
+      run: (payload) => payload,
+    })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [
+        {
+          modulePath: "src/z-barrel.ts",
+          exportName: "shared",
+          value: definition,
+        },
+        {
+          modulePath: "src/a-direct.ts",
+          exportName: "renamed",
+          value: definition,
+        },
+      ],
+    })
+
+    expect(result.buildPlan.definitions).toHaveLength(1)
+    expect(result.declarationLocator.declarations).toEqual([
+      {
+        declaredId: "shared",
+        exportName: "renamed",
+        kind: "task",
+        modulePath: "src/a-direct.ts",
+      },
+    ])
+    expect(result.programDeclarations[0]?.slots).toEqual([
+      "handler",
+      "payloadSchema",
+    ])
+  })
+
+  test("rejects invalid locator text before canonicalization", () => {
+    const definition = task({ id: "located", run: () => null })
+    for (const item of [
+      { modulePath: "src/\ud800.ts", exportName: "located" },
+      { modulePath: "src/located.ts", exportName: "\udc00" },
+      { modulePath: "node_modules/pkg/task.ts", exportName: "located" },
+      { modulePath: "src/task.d.ts", exportName: "located" },
+    ]) {
+      expect(() =>
+        analyze({
+          architecture: "x86_64",
+          exports: [{ ...item, value: definition }],
+        }),
+      ).toThrow()
+    }
+  })
+
+  test("normalizes resources exactly and rejects rounding or aliases", () => {
+    expect(
+      normalizeWorkspaceResources({
+        cpu: 1e-3,
+        memory: "1GiB",
+        disk: "2048MiB",
+      }),
+    ).toEqual({ milliCpu: 1, memoryMiB: 1024, diskMiB: 2048 })
+
+    for (const cpu of [0, -1, Number.NaN, Number.POSITIVE_INFINITY, 0.0001]) {
+      expect(() =>
+        normalizeWorkspaceResources({
+          cpu,
+          memory: "1MiB",
+          disk: "1MiB",
+        }),
+      ).toThrow()
+    }
+    for (const memory of ["01MiB", "1GB", "1.5GiB", " 1GiB", "+1MiB"]) {
+      expect(() =>
+        normalizeWorkspaceResources({
+          cpu: 1,
+          memory,
+          disk: "1MiB",
+        }),
+      ).toThrow()
+    }
+  })
+
+  test("pins the omitted and disabled network policies", () => {
+    expect(normalizeWorkspaceNetwork(undefined)).toEqual({
+      internet: true,
+      denyCidrs: [],
+    })
+    expect(normalizeWorkspaceNetwork({ internet: false })).toEqual({
+      internet: false,
+      denyCidrs: [],
+    })
+  })
+
+  test("emits source copies without caller-provided integrity fields", () => {
+    const machine = workspace("source-copy")
+      .image(
+        image("root")
+          .from("debian:bookworm")
+          .copy("/app/package.json", source.file("package.json"))
+          .copy("/app/src", source.directory("src")),
+      )
+      .resources({ cpu: 1, memory: "1GiB", disk: "1GiB" })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [{
+        modulePath: "src/workspace.ts",
+        exportName: "machine",
+        value: machine,
+      }],
+    })
+    const definition = result.buildPlan.definitions[0]
+    expect(definition?.kind).toBe("workspace")
+    if (definition?.kind !== "workspace") throw new Error("workspace missing")
+    expect(definition.manifest.imageBuild.images[0]?.steps.slice(1)).toEqual([
+      {
+        copySourceFile: {
+          dst: "/app/package.json",
+          path: "package.json",
+        },
+      },
+      {
+        copySourceDir: {
+          dst: "/app/src",
+          path: "src",
+        },
+      },
+    ])
+  })
+
+  test("normalizes scheduler-owned payload and declarative workspace", () => {
+    const scheduled = schedules.task({
+      id: "nightly",
+      cron: { pattern: "0 3 * * *", timezone: "UTC" },
+      workspace: workspaces.ref({ key: "maintenance" }),
+      run: () => null,
+    })
+    const result = analyze({
+      architecture: "x86_64",
+      exports: [
+        {
+          modulePath: "src/schedules.ts",
+          exportName: "nightly",
+          value: scheduled,
+        },
+      ],
+    })
+    const definition = result.buildPlan.definitions[0]
+    expect(definition?.kind).toBe("task")
+    if (definition?.kind !== "task") throw new Error("task missing")
+    expect(definition.manifest.schedule).toEqual({
+      cron: "0 3 * * *",
+      timezone: "UTC",
+      workspace: { key: "maintenance" },
+    })
+    expect(definition.manifest.payload).toEqual({
+      kind: "standard_schema",
+    })
+  })
+
+  test("enforces the closed Duration grammar and bounds", () => {
+    for (const maxDuration of ["0s", "01s", "1.5s", "1h30m", " 5s", "25h"]) {
+      const definition = task({
+        id: "duration",
+        maxDuration,
+        run: () => null,
+      })
+      expect(() =>
+        analyze({
+          architecture: "x86_64",
+          exports: [{
+            modulePath: "src/task.ts",
+            exportName: "task",
+            value: definition,
+          }],
+        }),
+      ).toThrow()
+    }
+    const definition = task({
+      id: "retry",
+      retry: {
+        maxAttempts: 2,
+        backoff: { minDelay: "2s", maxDelay: "1s", factor: 1.5 },
+      },
+      run: () => null,
+    })
+    expect(() =>
+      analyze({
+        architecture: "x86_64",
+        exports: [{
+          modulePath: "src/task.ts",
+          exportName: "task",
+          value: definition,
+        }],
+      }),
+    ).toThrow()
+  })
+
+  test("enforces the closed cron and timezone contract", () => {
+    const valid = [
+      "*/15 0-23/2 1,15 * 0-7",
+      "0 3 * * 1,3,5",
+    ]
+    for (const [index, pattern] of valid.entries()) {
+      expect(() =>
+        schedules.task({
+          id: `valid-${index}`,
+          cron: { pattern, timezone: "UTC" },
+          workspace: workspaces.ref({ key: "maintenance" }),
+          run: () => null,
+        }),
+      ).not.toThrow()
+    }
+    for (const pattern of [
+      "0  3 * * *",
+      "00 3 * * *",
+      "0 3 * * 0,7",
+      "0 3 * * 5,3",
+      "0 3 * * 1/2",
+      "@daily",
+    ]) {
+      expect(() =>
+        schedules.task({
+          id: "invalid",
+          cron: { pattern, timezone: "UTC" },
+          workspace: workspaces.ref({ key: "maintenance" }),
+          run: () => null,
+        }),
+      ).toThrow()
+    }
+    expect(() =>
+      schedules.task({
+        id: "timezone",
+        cron: { pattern: "0 3 * * *", timezone: "utc" },
+        workspace: workspaces.ref({ key: "maintenance" }),
+        run: () => null,
+      }),
+    ).toThrow()
+  })
+
+  test("encodes the closed analysis result frame", () => {
+    const program = analyze({
+      architecture: "x86_64",
+      exports: [{
+        modulePath: "src/task.ts",
+        exportName: "build",
+        value: task({ id: "build", run: () => null }),
+      }],
+    })
+    const succeeded = decodeAnalysisFrame(
+      encodeAnalysisResultFrame(successfulAnalysisResult(program)),
+    )
+    expect(succeeded).toEqual({
+      formatVersion: 0,
+      outcome: "succeeded",
+      files: [
+        {
+          path: "helmr/build-plan.json",
+          content: new TextDecoder().decode(program.buildPlanBytes),
+        },
+        {
+          path: "helmr/declarations.json",
+          content: new TextDecoder().decode(program.declarationLocatorBytes),
+        },
+        {
+          path: "helmr/entry.mjs",
+          content: PROGRAM_ENTRYPOINT,
+        },
+      ],
+    })
+
+    const machine = workspace("machine")
+      .image(image("root").from("debian:bookworm"))
+      .resources({ cpu: 1, memory: "1GiB", disk: "8GiB" })
+    const workspaceOnly = analyze({
+      architecture: "x86_64",
+      exports: [{
+        modulePath: "src/workspace.ts",
+        exportName: "machine",
+        value: machine,
+      }],
+    })
+    const workspaceResult = decodeAnalysisFrame(
+      encodeAnalysisResultFrame(successfulAnalysisResult(workspaceOnly)),
+    ) as { files: unknown[] }
+    expect(workspaceResult.files).toHaveLength(1)
+
+    expect(decodeAnalysisFrame(
+      encodeAnalysisResultFrame(failedAnalysisResult("module import failed")),
+    )).toEqual({
+      formatVersion: 0,
+      outcome: "failed",
+      error: {
+        reason: "analysis_failed",
+        message: "module import failed",
+      },
+    })
+  })
+})
+
+function decodeAnalysisFrame(frame: Uint8Array): unknown {
+  const size = new DataView(
+    frame.buffer,
+    frame.byteOffset,
+    frame.byteLength,
+  ).getUint32(0, false)
+  expect(size).toBe(frame.byteLength - 4)
+  return JSON.parse(new TextDecoder().decode(frame.subarray(4)))
+}

@@ -139,6 +139,13 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			errMsg: "requires programReceipt",
 		},
 		{
+			name: "missing provenance",
+			change: func(result *BuildResult) {
+				result.Succeeded.Provenance = BuildProvenance{}
+			},
+			errMsg: "build result provenance",
+		},
+		{
 			name: "invalid receipt",
 			change: func(result *BuildResult) {
 				result.Succeeded.ProgramReceipt.Code.Digest = "invalid"
@@ -156,8 +163,16 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			name: "program Workspace architecture",
 			change: func(result *BuildResult) {
 				result.Succeeded.ProgramReceipt.Index.Architecture = ArchitectureAArch64
+				result.Succeeded.Provenance.Architecture = ArchitectureAArch64
 			},
-			errMsg: "architecture does not match program",
+			errMsg: "architecture does not match provenance",
+		},
+		{
+			name: "receipt provenance",
+			change: func(result *BuildResult) {
+				result.Succeeded.ProgramReceipt.Index.Manager.Version = "11.0.1"
+			},
+			errMsg: "programReceipt provenance does not match",
 		},
 		{
 			name: "workspace image array",
@@ -260,7 +275,7 @@ func TestValidateBuildResultTarget(t *testing.T) {
 			name:          "architecture",
 			runtimeDigest: runtimeDigest,
 			architecture:  ArchitectureAArch64,
-			errMsg:        "program architecture does not match",
+			errMsg:        "provenance architecture does not match",
 		},
 		{
 			name:          "invalid runtime",
@@ -288,6 +303,7 @@ func TestValidateBuildResultTarget(t *testing.T) {
 	workspaceOnly.Succeeded.Plan.Definitions = workspaceOnly.Succeeded.Plan.Definitions[3:]
 	workspaceOnly.Succeeded.Plan.Queues = []QueueInput{}
 	workspaceOnly.Succeeded.ProgramReceipt = nil
+	workspaceOnly.Succeeded.Provenance.Architecture = ArchitectureAArch64
 	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.Architecture = ArchitectureAArch64
 	workspaceOnly.Succeeded.Plan.Definitions[0].Workspace.ImageBuild.Images[0].Platform.Architecture = "aarch64"
 	workspaceOnly.Succeeded.WorkspaceImages[0].Artifact.Architecture = ArchitectureAArch64
@@ -296,7 +312,7 @@ func TestValidateBuildResultTarget(t *testing.T) {
 		runtimeDigest,
 		ArchitectureX8664,
 	)
-	if err == nil || !strings.Contains(err.Error(), "workspace \"repo\" architecture does not match") {
+	if err == nil || !strings.Contains(err.Error(), "provenance architecture does not match") {
 		t.Fatalf("workspace target error = %v", err)
 	}
 }
@@ -357,6 +373,7 @@ func TestValidateBuildResultAppliesPlanSizeBound(t *testing.T) {
 		Outcome:       BuildOutcomeSucceeded,
 		Succeeded: &BuildSucceeded{
 			Plan:            plan,
+			Provenance:      testBuildProvenance(t),
 			WorkspaceImages: images,
 		},
 	}
@@ -447,6 +464,7 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 		Outcome:       BuildOutcomeSucceeded,
 		Succeeded: &BuildSucceeded{
 			Plan:           plan,
+			Provenance:     testBuildProvenance(t),
 			ProgramReceipt: &receipt,
 			WorkspaceImages: []WorkspaceImage{{
 				DeclaredID: "repo",
@@ -458,6 +476,19 @@ func testSucceededBuildResult(t *testing.T) BuildResult {
 				},
 			}},
 		},
+	}
+}
+
+func testBuildProvenance(t *testing.T) BuildProvenance {
+	t.Helper()
+	index := testProgramReceipt(t).Index
+	return BuildProvenance{
+		Architecture:            index.Architecture,
+		BuildContractVersion:    index.BuildContractVersion,
+		Manager:                 index.Manager,
+		RuntimeDigest:           index.RuntimeDigest,
+		StandardToolchainDigest: index.StandardToolchainDigest,
+		Submitted:               index.Submitted,
 	}
 }
 
