@@ -2,114 +2,127 @@ package schedule
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	DefaultRepairEvery        = 5 * time.Second
-	DefaultRepairLimit        = int32(100)
-	DefaultTriggerConcurrency = int32(10)
-	DefaultTriggerLease       = 5 * time.Minute
-	DefaultMaxAttempts        = int32(10)
-	DefaultJitter             = 30 * time.Second
-	DefaultRepairLookahead    = 2*DefaultRepairEvery + DefaultJitter
-	reconcileUnlockTimeout    = 5 * time.Second
+	DefaultPollInterval = time.Second
+	DefaultClaimLimit   = int32(100)
+	DefaultConcurrency  = int32(10)
+	DefaultClaimLease   = 5 * time.Minute
 )
 
-type RunCreator interface {
-	CreateScheduleRun(context.Context, db.GetScheduleTriggerCandidateRow) (pgtype.UUID, error)
+var ErrClaimSuperseded = errors.New("schedule claim was superseded")
+
+type ErrorCode string
+
+const (
+	ErrorTaskAuthorityInvalid     ErrorCode = "task-authority-invalid"
+	ErrorWorkspaceUnavailable     ErrorCode = "workspace-unavailable"
+	ErrorArchitectureIncompatible ErrorCode = "architecture-incompatible"
+	ErrorGenerationInvalid        ErrorCode = "generation-invalid"
+	ErrorInputInvalid             ErrorCode = "input-invalid"
+)
+
+type AdmissionError struct {
+	Code    ErrorCode
+	Message string
 }
 
-type Index interface {
-	Enqueue(context.Context, IndexEntry) error
-	Delete(context.Context, uuid.UUID) error
-	Dequeue(context.Context, DequeueRequest) ([]IndexLease, error)
-	Ack(context.Context, IndexLease) error
-	Nack(context.Context, IndexLease, time.Time) error
+func (e *AdmissionError) Error() string {
+	return e.Message
 }
 
-type dbConn interface {
-	db.DBTX
+type Store interface {
+	ClaimDueSchedules(context.Context, db.ClaimDueSchedulesParams) ([]db.Schedule, error)
+	MarkScheduleAdmissionErrored(context.Context, db.MarkScheduleAdmissionErroredParams) (db.Schedule, error)
+	MarkScheduleAdmissionRetryable(context.Context, db.MarkScheduleAdmissionRetryableParams) (db.Schedule, error)
 }
 
-type RepairStore interface {
-	ListScheduleRepairEntries(context.Context, db.ListScheduleRepairEntriesParams) ([]db.ListScheduleRepairEntriesRow, error)
-}
-
-type ReconcileLock interface {
-	TryLock(ctx context.Context) (ReconcileLockGuard, bool, error)
-}
-
-type ReconcileLockGuard interface {
-	Store(fallback RepairStore) RepairStore
-	Unlock(ctx context.Context) error
+type Admitter interface {
+	AdmitSchedule(context.Context, Admission) error
 }
 
 type Worker struct {
 	log         *slog.Logger
-	engine      *Engine
-	workerID    uuid.UUID
+	store       Store
+	admitter    Admitter
+	workerID    string
 	interval    time.Duration
 	limit       int32
 	concurrency int32
 	lease       time.Duration
 	now         func() time.Time
+	jitter      func(time.Duration) (time.Duration, error)
 }
 
 type WorkerOption func(*Worker)
 
-func WithRepairEvery(value time.Duration) WorkerOption {
+func WithPollInterval(value time.Duration) WorkerOption {
 	return func(worker *Worker) {
 		worker.interval = value
 	}
 }
 
-func WithRepairLimit(value int32) WorkerOption {
+func WithClaimLimit(value int32) WorkerOption {
 	return func(worker *Worker) {
 		worker.limit = value
 	}
 }
 
-func WithTriggerConcurrency(value int32) WorkerOption {
+func WithConcurrency(value int32) WorkerOption {
 	return func(worker *Worker) {
 		worker.concurrency = value
 	}
 }
 
-func WithLease(value time.Duration) WorkerOption {
+func WithClaimLease(value time.Duration) WorkerOption {
 	return func(worker *Worker) {
 		worker.lease = value
 	}
 }
 
-func NewWorker(log *slog.Logger, engine *Engine, opts ...WorkerOption) (*Worker, error) {
+func NewWorker(log *slog.Logger, store Store, admitter Admitter, opts ...WorkerOption) (*Worker, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	if engine == nil {
-		return nil, errors.New("schedule engine is required")
+	if store == nil {
+		return nil, errors.New("schedule store is required")
+	}
+	if admitter == nil {
+		return nil, errors.New("schedule admitter is required")
 	}
 	worker := &Worker{
 		log:         log,
-		engine:      engine,
-		workerID:    uuid.Must(uuid.NewV7()),
-		interval:    DefaultRepairEvery,
-		limit:       DefaultRepairLimit,
-		concurrency: DefaultTriggerConcurrency,
-		lease:       DefaultTriggerLease,
+		store:       store,
+		admitter:    admitter,
+		workerID:    uuid.Must(uuid.NewV7()).String(),
+		interval:    DefaultPollInterval,
+		limit:       DefaultClaimLimit,
+		concurrency: DefaultConcurrency,
+		lease:       DefaultClaimLease,
 		now:         func() time.Time { return time.Now().UTC() },
+		jitter:      randomJitter,
 	}
-	for _, opt := range opts {
-		opt(worker)
+	for _, option := range opts {
+		option(worker)
 	}
-	if worker.interval <= 0 || worker.limit <= 0 || worker.concurrency <= 0 || worker.lease <= 0 || worker.now == nil {
+	if worker.interval <= 0 || worker.limit <= 0 || worker.concurrency <= 0 || worker.lease <= 0 {
 		return nil, errors.New("invalid schedule worker configuration")
 	}
 	return worker, nil
@@ -131,31 +144,25 @@ func (w *Worker) Run(ctx context.Context) error {
 }
 
 func (w *Worker) tick(ctx context.Context) error {
-	if err := w.engine.Repair(ctx); err != nil {
-		return err
-	}
-	return w.runDue(ctx)
-}
-
-func (w *Worker) runDue(ctx context.Context) error {
-	leases, err := w.engine.index.Dequeue(ctx, DequeueRequest{
-		WorkerID: w.workerID,
-		Limit:    w.limit,
-		Now:      w.now(),
-		Lease:    w.lease,
+	now := w.now().UTC()
+	claimed, err := w.store.ClaimDueSchedules(ctx, db.ClaimDueSchedulesParams{
+		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
+		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.lease)),
+		LimitCount:     w.limit,
 	})
 	if err != nil {
 		return err
 	}
 	group, groupCtx := errgroup.WithContext(ctx)
 	group.SetLimit(int(w.concurrency))
-	for _, lease := range leases {
+	for _, value := range claimed {
+		value := value
 		group.Go(func() error {
-			if err := w.engine.Fire(groupCtx, lease); err != nil {
+			if err := w.process(groupCtx, value); err != nil {
 				if errors.Is(err, context.Canceled) {
 					return err
 				}
-				w.log.Error("schedule trigger failed", "instance_id", lease.Entry.InstanceID.String(), "error", err)
+				w.log.Error("schedule admission failed", "schedule_id", value.PublicID, "error", err)
 			}
 			return nil
 		})
@@ -163,9 +170,134 @@ func (w *Worker) runDue(ctx context.Context) error {
 	return group.Wait()
 }
 
-func triggerErrorKind(err error) string {
-	if err == nil {
+func (w *Worker) process(ctx context.Context, value db.Schedule) error {
+	admission, err := BuildAdmissionAt(value, w.now())
+	if err != nil {
+		var permanent *AdmissionError
+		if errors.As(err, &permanent) {
+			return w.markErrored(ctx, value, permanent)
+		}
+		return err
+	}
+	err = w.admitter.AdmitSchedule(ctx, admission)
+	if err == nil || errors.Is(err, ErrClaimSuperseded) {
+		return nil
+	}
+	var permanent *AdmissionError
+	if errors.As(err, &permanent) {
+		return w.markErrored(ctx, value, permanent)
+	}
+	if markErr := w.markRetryable(ctx, value); markErr != nil {
+		return errors.Join(err, markErr)
+	}
+	return err
+}
+
+func (w *Worker) markErrored(ctx context.Context, value db.Schedule, admissionErr *AdmissionError) error {
+	if !validErrorCode(admissionErr.Code) {
+		return fmt.Errorf("invalid Schedule error code %q", admissionErr.Code)
+	}
+	lastError, err := json.Marshal(struct {
+		Code    ErrorCode `json:"code"`
+		Message string    `json:"message"`
+	}{
+		Code:    admissionErr.Code,
+		Message: truncateUTF8(admissionErr.Message, 1024),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = w.store.MarkScheduleAdmissionErrored(ctx, db.MarkScheduleAdmissionErroredParams{
+		LastError:           lastError,
+		EnvironmentID:       value.EnvironmentID,
+		ID:                  value.ID,
+		ExpectedGeneration:  value.Generation,
+		ExpectedScheduledAt: value.NextFireAt,
+		ClaimedBy:           value.ClaimedBy,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func (w *Worker) markRetryable(ctx context.Context, value db.Schedule) error {
+	step := int16(1)
+	if value.RetryStep.Valid {
+		step = min(int16(10), value.RetryStep.Int16+1)
+	}
+	delay, err := w.jitter(retryBase(step))
+	if err != nil {
+		return err
+	}
+	_, err = w.store.MarkScheduleAdmissionRetryable(ctx, db.MarkScheduleAdmissionRetryableParams{
+		RetryStep:           pgtype.Int2{Int16: step, Valid: true},
+		RetryAfter:          pgvalue.TimestamptzUTCZeroInvalid(w.now().UTC().Add(delay)),
+		EnvironmentID:       value.EnvironmentID,
+		ID:                  value.ID,
+		ExpectedGeneration:  value.Generation,
+		ExpectedScheduledAt: value.NextFireAt,
+		ExpectedRetryStep:   value.RetryStep,
+		ClaimedBy:           value.ClaimedBy,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func retryBase(step int16) time.Duration {
+	if step < 1 {
+		step = 1
+	}
+	if step > 10 {
+		step = 10
+	}
+	base := time.Second << (step - 1)
+	return min(5*time.Minute, base)
+}
+
+func randomJitter(maximum time.Duration) (time.Duration, error) {
+	if maximum <= 0 {
+		return 0, nil
+	}
+	var buffer [8]byte
+	if _, err := rand.Read(buffer[:]); err != nil {
+		return 0, fmt.Errorf("sample schedule retry jitter: %w", err)
+	}
+	return time.Duration(binary.BigEndian.Uint64(buffer[:]) % (uint64(maximum) + 1)), nil
+}
+
+func validErrorCode(code ErrorCode) bool {
+	switch code {
+	case ErrorTaskAuthorityInvalid,
+		ErrorWorkspaceUnavailable,
+		ErrorArchitectureIncompatible,
+		ErrorGenerationInvalid,
+		ErrorInputInvalid:
+		return true
+	default:
+		return false
+	}
+}
+
+func truncateUTF8(value string, maximum int) string {
+	if maximum <= 0 {
 		return ""
 	}
-	return "trigger_failed"
+	value = strings.ToValidUTF8(value, "")
+	if strings.TrimSpace(value) == "" {
+		return "Schedule admission failed"
+	}
+	if len(value) <= maximum {
+		return value
+	}
+	value = value[:maximum]
+	for !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	if strings.TrimSpace(value) == "" {
+		return "Schedule admission failed"
+	}
+	return value
 }
