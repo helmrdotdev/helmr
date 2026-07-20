@@ -36,10 +36,12 @@ helmr secret list
 helmr secret get API_TOKEN
 ```
 
-Delete a stored secret when the task should no longer be able to resolve it. Delete removes the stored encrypted value:
+Revoke a Secret when Tasks should no longer be able to resolve it. Revocation
+blocks every retained version and future rotation without deleting the stable
+Secret identity or its immutable encrypted history:
 
 ```sh
-helmr secret delete API_TOKEN --yes
+helmr secret revoke API_TOKEN --yes
 ```
 
 The task secret `name` is the Helmr secret name. If the task declares

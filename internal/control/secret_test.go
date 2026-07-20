@@ -186,12 +186,11 @@ func TestSetSecret(t *testing.T) {
 
 func TestGetSecretReturnsMetadataOnly(t *testing.T) {
 	store := &fakeStore{
-		secret: db.GetScopedSecretMetadataByNameRow{
+		secret: db.Secret{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
+			State:         "active",
 			CreatedAt:     testTime(),
 			UpdatedAt:     testTime(),
 		},
@@ -238,27 +237,65 @@ func TestSetSecretRequiresOwner(t *testing.T) {
 	}
 }
 
-func TestDeleteSecret(t *testing.T) {
-	store := &fakeStore{deleteSecretRows: 1}
-	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: store, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
+func TestRevokeSecret(t *testing.T) {
+	secretID := uuid.Must(uuid.NewV7())
+	store := &fakeStore{secret: db.Secret{
+		ID:            pgvalue.UUID(secretID),
+		EnvironmentID: testEnvironmentID(),
+		Name:          "github-token",
+		State:         "active",
+		CreatedAt:     testTime(),
+	}}
+	var revokedEnvironmentID uuid.UUID
+	var revokedSecretID uuid.UUID
+	server := newTestServer(testServerConfig{
+		Log:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:   store,
+		Auth: fakeAuth{},
+		Secrets: fakeSecrets{revoke: func(environmentID, id uuid.UUID, idempotencyKey string) error {
+			revokedEnvironmentID = environmentID
+			revokedSecretID = id
+			if idempotencyKey != "revoke-1" {
+				t.Fatalf("idempotency key = %q", idempotencyKey)
+			}
+			return nil
+		}},
+	})
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/secrets/github-token/revoke",
+		strings.NewReader(`{"idempotency_key":"revoke-1"}`),
+	)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
 
-	if rec.Code != http.StatusNoContent {
+	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
-	if store.deleteSecret.Name != "github-token" || store.deleteSecret.ProjectID != testProjectID() || store.deleteSecret.EnvironmentID != testEnvironmentID() {
-		t.Fatalf("delete scope = %+v", store.deleteSecret)
+	if revokedEnvironmentID != pgvalue.MustUUIDValue(testEnvironmentID()) ||
+		revokedSecretID != secretID {
+		t.Fatalf("revoke scope = %s/%s", revokedEnvironmentID, revokedSecretID)
+	}
+	var response api.SecretResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ID != secretID.String() || response.State != "revoked" ||
+		response.RevokedAt == nil {
+		t.Fatalf("response = %+v", response)
 	}
 }
 
-func TestDeleteSecretNotFound(t *testing.T) {
+func TestRevokeSecretNotFound(t *testing.T) {
 	server := newTestServer(testServerConfig{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DB: &fakeStore{}, Auth: fakeAuth{}, Secrets: fakeSecrets{}})
 
-	req := httptest.NewRequest(http.MethodDelete, "/api/secrets/github-token", nil)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/secrets/github-token/revoke",
+		strings.NewReader(`{"idempotency_key":"revoke-1"}`),
+	)
 	req.Header.Set("authorization", "Bearer test-key")
 	rec := httptest.NewRecorder()
 	server.ServeHTTP(rec, req)
@@ -268,18 +305,45 @@ func TestDeleteSecretNotFound(t *testing.T) {
 	}
 }
 
+func TestRevokeSecretRequiresIdempotencyKey(t *testing.T) {
+	store := &fakeStore{secret: db.Secret{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID: testEnvironmentID(),
+		Name:          "github-token",
+		State:         "active",
+		CreatedAt:     testTime(),
+	}}
+	server := newTestServer(testServerConfig{
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DB:      store,
+		Auth:    fakeAuth{},
+		Secrets: fakeSecrets{},
+	})
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/secrets/github-token/revoke",
+		strings.NewReader(`{"idempotency_key":""}`),
+	)
+	req.Header.Set("authorization", "Bearer test-key")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 	store := &fakeStore{
-		secret: db.GetScopedSecretMetadataByNameRow{
+		secret: db.Secret{
 			ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:         pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:     testProjectID(),
 			EnvironmentID: testEnvironmentID(),
 			Name:          "github-token",
+			State:         "active",
 			CreatedAt:     testTime(),
 			UpdatedAt:     testTime(),
 		},
-		deleteSecretRows:     1,
 		defaultProjectID:     otherProjectID(),
 		defaultEnvironmentID: otherEnvironmentID(),
 	}
@@ -319,10 +383,11 @@ func TestSecretRoutesAllowScopedAPIKeyGrant(t *testing.T) {
 			wantStatus: http.StatusOK,
 		},
 		{
-			name:       "delete",
-			method:     http.MethodDelete,
-			path:       "/api/secrets/github-token",
-			wantStatus: http.StatusNoContent,
+			name:       "revoke",
+			method:     http.MethodPost,
+			path:       "/api/secrets/github-token/revoke",
+			body:       `{"idempotency_key":"revoke-1"}`,
+			wantStatus: http.StatusOK,
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -426,11 +491,10 @@ func (f *fakeStore) AuthenticateWorkerInstanceCredential(context.Context, db.Aut
 func (f fakeSecrets) PutScoped(_ context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
 	return db.Secret{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     pgvalue.UUID(projectID),
 		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,
-		Ciphertext:    append([]byte(nil), value...),
+		State:         "active",
+		StateVersion:  1,
 		CreatedAt:     testTime(),
 		UpdatedAt:     testTime(),
 	}, nil
@@ -460,32 +524,56 @@ func (f fakeSecrets) ResolveScopedNames(_ context.Context, _ uuid.UUID, _ uuid.U
 	return resolved, nil
 }
 
-func (f *fakeStore) GetScopedSecretMetadataByName(_ context.Context, arg db.GetScopedSecretMetadataByNameParams) (db.GetScopedSecretMetadataByNameRow, error) {
+func (f fakeSecrets) Revoke(_ context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+	if f.revoke != nil {
+		if err := f.revoke(environmentID, secretID, idempotencyKey); err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+	}
+	return db.GetSecretSnapshotRow{
+		ID:            pgvalue.UUID(secretID),
+		EnvironmentID: pgvalue.UUID(environmentID),
+		Name:          "github-token",
+		State:         "revoked",
+		CreatedAt:     testTime(),
+		RevokedAt:     testTime(),
+	}, nil
+}
+
+func (f *fakeStore) GetSecretByName(_ context.Context, arg db.GetSecretByNameParams) (db.Secret, error) {
 	if f.secret.Name == "" || f.secret.Name != arg.Name {
-		return db.GetScopedSecretMetadataByNameRow{}, pgx.ErrNoRows
+		return db.Secret{}, pgx.ErrNoRows
 	}
 	return f.secret, nil
 }
 
-func (f *fakeStore) ListScopedSecrets(_ context.Context, arg db.ListScopedSecretsParams) ([]db.ListScopedSecretsRow, error) {
+func (f *fakeStore) GetSecretSnapshotByName(_ context.Context, arg db.GetSecretSnapshotByNameParams) (db.GetSecretSnapshotByNameRow, error) {
+	if f.secret.Name == "" || f.secret.Name != arg.Name {
+		return db.GetSecretSnapshotByNameRow{}, pgx.ErrNoRows
+	}
+	return db.GetSecretSnapshotByNameRow{
+		ID:            f.secret.ID,
+		EnvironmentID: f.secret.EnvironmentID,
+		Name:          f.secret.Name,
+		State:         f.secret.State,
+		CreatedAt:     f.secret.CreatedAt,
+		RevokedAt:     f.secret.RevokedAt,
+	}, nil
+}
+
+func (f *fakeStore) ListSecrets(_ context.Context, arg db.ListSecretsParams) ([]db.ListSecretsRow, error) {
 	if len(f.secrets) > 0 {
 		return f.secrets, nil
 	}
 	if f.secret.Name == "" {
 		return nil, nil
 	}
-	return []db.ListScopedSecretsRow{{
+	return []db.ListSecretsRow{{
 		ID:            f.secret.ID,
-		OrgID:         f.secret.OrgID,
-		ProjectID:     f.secret.ProjectID,
 		EnvironmentID: f.secret.EnvironmentID,
 		Name:          f.secret.Name,
+		State:         f.secret.State,
 		CreatedAt:     f.secret.CreatedAt,
-		UpdatedAt:     f.secret.UpdatedAt,
+		RevokedAt:     f.secret.RevokedAt,
 	}}, nil
-}
-
-func (f *fakeStore) DeleteScopedSecret(_ context.Context, arg db.DeleteScopedSecretParams) (int64, error) {
-	f.deleteSecret = arg
-	return f.deleteSecretRows, nil
 }

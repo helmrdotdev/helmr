@@ -285,6 +285,116 @@ func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams
 	return i, err
 }
 
+const getSecretSnapshot = `-- name: GetSecretSnapshot :one
+SELECT
+    secrets.id,
+    secrets.environment_id,
+    secrets.name,
+    secrets.state,
+    secrets.created_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
+    secrets.revoked_at
+FROM secrets
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
+WHERE secrets.environment_id = $1
+  AND secrets.id = $2
+  AND secrets.state <> 'deleted'
+`
+
+type GetSecretSnapshotParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+type GetSecretSnapshotRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Name          string             `json:"name"`
+	State         string             `json:"state"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+}
+
+func (q *Queries) GetSecretSnapshot(ctx context.Context, arg GetSecretSnapshotParams) (GetSecretSnapshotRow, error) {
+	row := q.db.QueryRow(ctx, getSecretSnapshot, arg.EnvironmentID, arg.ID)
+	var i GetSecretSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.State,
+		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
+const getSecretSnapshotByName = `-- name: GetSecretSnapshotByName :one
+SELECT
+    secrets.id,
+    secrets.environment_id,
+    secrets.name,
+    secrets.state,
+    secrets.created_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
+    secrets.revoked_at
+FROM secrets
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
+WHERE secrets.environment_id = $1
+  AND secrets.name = $2
+  AND secrets.state <> 'deleted'
+`
+
+type GetSecretSnapshotByNameParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
+}
+
+type GetSecretSnapshotByNameRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	Name          string             `json:"name"`
+	State         string             `json:"state"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
+}
+
+func (q *Queries) GetSecretSnapshotByName(ctx context.Context, arg GetSecretSnapshotByNameParams) (GetSecretSnapshotByNameRow, error) {
+	row := q.db.QueryRow(ctx, getSecretSnapshotByName, arg.EnvironmentID, arg.Name)
+	var i GetSecretSnapshotByNameRow
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.State,
+		&i.CreatedAt,
+		&i.RotatedAt,
+		&i.RevokedAt,
+	)
+	return i, err
+}
+
 const getSecretVersion = `-- name: GetSecretVersion :one
 SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.authenticator_key_version, secret_versions.created_at
 FROM secret_versions
@@ -521,16 +631,22 @@ const listSecrets = `-- name: ListSecrets :many
 SELECT
     secrets.id,
     secrets.environment_id,
-    environments.project_id,
-    environments.org_id,
     secrets.name,
     secrets.state,
-    secrets.state_version,
     secrets.created_at,
-    secrets.updated_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
     secrets.revoked_at
 FROM secrets
-JOIN environments ON environments.id = secrets.environment_id
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
 WHERE secrets.environment_id = $1
   AND secrets.state <> 'deleted'
 ORDER BY secrets.name, secrets.id
@@ -545,13 +661,10 @@ type ListSecretsParams struct {
 type ListSecretsRow struct {
 	ID            pgtype.UUID        `json:"id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
 	Name          string             `json:"name"`
 	State         string             `json:"state"`
-	StateVersion  int64              `json:"state_version"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	RotatedAt     pgtype.Timestamptz `json:"rotated_at"`
 	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
 }
 
@@ -567,13 +680,10 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 		if err := rows.Scan(
 			&i.ID,
 			&i.EnvironmentID,
-			&i.ProjectID,
-			&i.OrgID,
 			&i.Name,
 			&i.State,
-			&i.StateVersion,
 			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.RotatedAt,
 			&i.RevokedAt,
 		); err != nil {
 			return nil, err

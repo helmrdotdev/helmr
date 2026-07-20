@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -23,7 +24,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -32,9 +33,7 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	rows, err := s.db.ListScopedSecrets(r.Context(), db.ListScopedSecretsParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
+	rows, err := s.db.ListSecrets(r.Context(), db.ListSecretsParams{
 		EnvironmentID: environmentID,
 		RowLimit:      secretListLimit,
 	})
@@ -44,7 +43,14 @@ func (s *Server) listSecrets(w http.ResponseWriter, r *http.Request) {
 	}
 	response := api.ListSecretsResponse{Secrets: make([]api.SecretResponse, 0, len(rows))}
 	for _, row := range rows {
-		response.Secrets = append(response.Secrets, secretResponse(row.ProjectID, row.EnvironmentID, row.Name, row.CreatedAt, row.UpdatedAt))
+		response.Secrets = append(response.Secrets, secretResponse(
+			row.ID,
+			row.Name,
+			row.State,
+			row.CreatedAt,
+			row.RotatedAt,
+			row.RevokedAt,
+		))
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -60,7 +66,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -69,9 +75,7 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	record, err := s.db.GetScopedSecretMetadataByName(r.Context(), db.GetScopedSecretMetadataByNameParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
+	record, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
 		EnvironmentID: environmentID,
 		Name:          name,
 	})
@@ -83,7 +87,14 @@ func (s *Server) getSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load secret"))
 		return
 	}
-	writeJSON(w, http.StatusOK, secretResponse(record.ProjectID, record.EnvironmentID, record.Name, record.CreatedAt, record.UpdatedAt))
+	writeJSON(w, http.StatusOK, secretResponse(
+		record.ID,
+		record.Name,
+		record.State,
+		record.CreatedAt,
+		record.RotatedAt,
+		record.RevokedAt,
+	))
 }
 
 func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
@@ -123,12 +134,23 @@ func (s *Server) setSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("set secret"))
 		return
 	}
-	writeJSON(w, http.StatusOK, secretResponse(record.ProjectID, record.EnvironmentID, record.Name, record.CreatedAt, record.UpdatedAt))
+	var rotatedAt pgtype.Timestamptz
+	if record.StateVersion > 1 {
+		rotatedAt = record.UpdatedAt
+	}
+	writeJSON(w, http.StatusOK, secretResponse(
+		record.ID,
+		record.Name,
+		record.State,
+		record.CreatedAt,
+		rotatedAt,
+		record.RevokedAt,
+	))
 }
 
-func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("secret storage is not configured")))
+func (s *Server) revokeSecret(w http.ResponseWriter, r *http.Request) {
+	if s.secrets == nil || s.db == nil {
+		writeError(w, unavailable(errors.New("secret store is not configured")))
 		return
 	}
 	name := chi.URLParam(r, "name")
@@ -136,8 +158,22 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
+	var request api.RevokeSecretRequest
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, badRequest(fmt.Errorf("invalid secret revoke request JSON: %w", err)))
+		return
+	}
+	idempotencyKey, err := normalizeIdempotencyKey(request.IdempotencyKey)
+	if err != nil {
+		writeError(w, badRequest(err))
+		return
+	}
+	if idempotencyKey == "" {
+		writeError(w, badRequest(errors.New("idempotency_key is required")))
+		return
+	}
 	actor := actorFromContext(r.Context())
-	scope, projectID, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
+	scope, _, environmentID, err := s.requestEnvironmentScopeFromRequest(r, actor, r.URL.Query().Get("project_id"), r.URL.Query().Get("environment_id"))
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -146,29 +182,57 @@ func (s *Server) deleteSecret(w http.ResponseWriter, r *http.Request) {
 		writeError(w, forbidden(errors.New("permission is required")))
 		return
 	}
-	rows, err := s.db.DeleteScopedSecret(r.Context(), db.DeleteScopedSecretParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
+	snapshot, err := s.db.GetSecretSnapshotByName(r.Context(), db.GetSecretSnapshotByNameParams{
 		EnvironmentID: environmentID,
 		Name:          name,
 	})
-	if err != nil {
-		writeError(w, errors.New("delete secret"))
-		return
-	}
-	if rows == 0 {
+	if isNoRows(err) {
 		writeError(w, notFound(errors.New("secret not found")))
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	if err != nil {
+		writeError(w, errors.New("load secret"))
+		return
+	}
+	record, err := s.secrets.Revoke(
+		r.Context(),
+		pgvalue.MustUUIDValue(environmentID),
+		pgvalue.MustUUIDValue(snapshot.ID),
+		idempotencyKey,
+	)
+	if err != nil {
+		var conflictErr idempotency.ConflictError
+		if errors.As(err, &conflictErr) {
+			writeError(w, conflict(conflictErr))
+			return
+		}
+		writeError(w, errors.New("revoke secret"))
+		return
+	}
+	writeJSON(w, http.StatusOK, secretResponse(
+		record.ID,
+		record.Name,
+		record.State,
+		record.CreatedAt,
+		record.RotatedAt,
+		record.RevokedAt,
+	))
 }
 
-func secretResponse(projectID pgtype.UUID, environmentID pgtype.UUID, name string, createdAt pgtype.Timestamptz, updatedAt pgtype.Timestamptz) api.SecretResponse {
+func secretResponse(
+	id pgtype.UUID,
+	name string,
+	state string,
+	createdAt pgtype.Timestamptz,
+	rotatedAt pgtype.Timestamptz,
+	revokedAt pgtype.Timestamptz,
+) api.SecretResponse {
 	return api.SecretResponse{
-		ProjectID:     pgvalue.MustUUIDValue(projectID).String(),
-		EnvironmentID: pgvalue.MustUUIDValue(environmentID).String(),
-		Name:          name,
-		CreatedAt:     pgvalue.Time(createdAt),
-		UpdatedAt:     pgvalue.Time(updatedAt),
+		ID:        pgvalue.MustUUIDValue(id).String(),
+		Name:      name,
+		State:     state,
+		CreatedAt: pgvalue.Time(createdAt),
+		RotatedAt: pgvalue.TimePtr(rotatedAt),
+		RevokedAt: pgvalue.TimePtr(revokedAt),
 	}
 }

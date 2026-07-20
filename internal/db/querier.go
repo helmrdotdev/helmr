@@ -182,6 +182,8 @@ type Querier interface {
 	GetScheduledRunReceipt(ctx context.Context, arg GetScheduledRunReceiptParams) (Run, error)
 	GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error)
 	GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error)
+	GetSecretSnapshot(ctx context.Context, arg GetSecretSnapshotParams) (GetSecretSnapshotRow, error)
+	GetSecretSnapshotByName(ctx context.Context, arg GetSecretSnapshotByNameParams) (GetSecretSnapshotByNameRow, error)
 	GetSecretVersion(ctx context.Context, arg GetSecretVersionParams) (SecretVersion, error)
 	GetStartedDeploymentBuildLease(ctx context.Context, arg GetStartedDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
 	GetToken(ctx context.Context, arg GetTokenParams) (Token, error)

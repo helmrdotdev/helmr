@@ -102,7 +102,7 @@ Common user/API-key routes:
 | `GET` | `/api/secrets` |
 | `GET` | `/api/secrets/{name}` |
 | `PUT` | `/api/secrets/{name}` |
-| `DELETE` | `/api/secrets/{name}` |
+| `POST` | `/api/secrets/{name}/revoke` |
 
 Auth routes include GitHub OAuth, magic links, device auth, logout, API keys, members, invitations, projects, and environments.
 

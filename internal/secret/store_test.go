@@ -78,9 +78,12 @@ func TestStoreRevokesWholeSecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	revoked, err := store.Revoke(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID))
+	revoked, changed, err := store.revoke(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID))
 	if err != nil {
 		t.Fatal(err)
+	}
+	if !changed {
+		t.Fatal("secret revocation did not report a state change")
 	}
 	if revoked.State != "revoked" || revoked.CurrentVersionID.Valid || revoked.RevocationGeneration != 1 {
 		t.Fatalf("revoked = %+v", revoked)

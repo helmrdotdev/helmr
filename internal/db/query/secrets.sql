@@ -120,6 +120,54 @@ WHERE environment_id = sqlc.arg(environment_id)
   AND name = sqlc.arg(name)
   AND state <> 'deleted';
 
+-- name: GetSecretSnapshotByName :one
+SELECT
+    secrets.id,
+    secrets.environment_id,
+    secrets.name,
+    secrets.state,
+    secrets.created_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
+    secrets.revoked_at
+FROM secrets
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
+WHERE secrets.environment_id = sqlc.arg(environment_id)
+  AND secrets.name = sqlc.arg(name)
+  AND secrets.state <> 'deleted';
+
+-- name: GetSecretSnapshot :one
+SELECT
+    secrets.id,
+    secrets.environment_id,
+    secrets.name,
+    secrets.state,
+    secrets.created_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
+    secrets.revoked_at
+FROM secrets
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
+WHERE secrets.environment_id = sqlc.arg(environment_id)
+  AND secrets.id = sqlc.arg(id)
+  AND secrets.state <> 'deleted';
+
 -- name: GetSecret :one
 SELECT secrets.*
 FROM secrets
@@ -149,16 +197,22 @@ WHERE secrets.environment_id = sqlc.arg(environment_id)
 SELECT
     secrets.id,
     secrets.environment_id,
-    environments.project_id,
-    environments.org_id,
     secrets.name,
     secrets.state,
-    secrets.state_version,
     secrets.created_at,
-    secrets.updated_at,
+    CASE
+        WHEN latest.version > 1 THEN latest.created_at
+        ELSE NULL::timestamptz
+    END AS rotated_at,
     secrets.revoked_at
 FROM secrets
-JOIN environments ON environments.id = secrets.environment_id
+LEFT JOIN LATERAL (
+    SELECT secret_versions.version, secret_versions.created_at
+    FROM secret_versions
+    WHERE secret_versions.secret_id = secrets.id
+    ORDER BY secret_versions.version DESC
+    LIMIT 1
+) AS latest ON true
 WHERE secrets.environment_id = sqlc.arg(environment_id)
   AND secrets.state <> 'deleted'
 ORDER BY secrets.name, secrets.id

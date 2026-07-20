@@ -378,16 +378,18 @@ func (c *Client) SetSecret(ctx context.Context, name string, value string, opts 
 	return response, nil
 }
 
-func (c *Client) DeleteSecret(ctx context.Context, name string, opts ...SecretOptions) error {
+func (c *Client) RevokeSecret(ctx context.Context, name string, idempotencyKey string, opts ...SecretOptions) (api.SecretResponse, error) {
+	var response api.SecretResponse
 	path, err := c.secretItemPath(name, opts...)
 	if err != nil {
-		return err
+		return api.SecretResponse{}, err
 	}
-	req, err := c.newRequest(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return err
+	if err := c.postJSON(ctx, path+"/revoke", api.RevokeSecretRequest{
+		IdempotencyKey: idempotencyKey,
+	}, &response); err != nil {
+		return api.SecretResponse{}, err
 	}
-	return c.doJSON(req, nil)
+	return response, nil
 }
 
 func (c *Client) secretCollectionPath(opts ...SecretOptions) (string, error) {

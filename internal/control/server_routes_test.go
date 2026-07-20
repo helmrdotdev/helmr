@@ -35,10 +35,8 @@ DELETE /api/projects/{projectID}
 DELETE /api/projects/{projectID}/environments/{environmentID}
 DELETE /api/projects/{projectID}/environments/{environmentID}/api-keys/{id}
 DELETE /api/projects/{projectID}/environments/{environmentID}/schedules/{id}
-DELETE /api/projects/{projectID}/environments/{environmentID}/secrets/{name}
 DELETE /api/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}
 DELETE /api/schedules/{id}
-DELETE /api/secrets/{name}
 DELETE /api/workspaces/{workspaceID}
 GET /api/auth/device/status
 GET /api/deployments
@@ -184,6 +182,7 @@ POST /api/projects/{projectID}/environments/{environmentID}/runs/{id}/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/schedules
 POST /api/projects/{projectID}/environments/{environmentID}/schedules/{id}/activate
 POST /api/projects/{projectID}/environments/{environmentID}/schedules/{id}/deactivate
+POST /api/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke
 POST /api/projects/{projectID}/environments/{environmentID}/sessions
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/by-external-id/cancel
 POST /api/projects/{projectID}/environments/{environmentID}/sessions/by-external-id/close
@@ -213,6 +212,7 @@ POST /api/runs/{id}/cancel
 POST /api/schedules
 POST /api/schedules/{id}/activate
 POST /api/schedules/{id}/deactivate
+POST /api/secrets/{name}/revoke
 POST /api/sessions
 POST /api/sessions/by-external-id/cancel
 POST /api/sessions/by-external-id/close

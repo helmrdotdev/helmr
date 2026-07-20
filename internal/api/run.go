@@ -92,12 +92,17 @@ type SetSecretRequest struct {
 	Value         string `json:"value"`
 }
 
+type RevokeSecretRequest struct {
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
 type SecretResponse struct {
-	ProjectID     string    `json:"project_id"`
-	EnvironmentID string    `json:"environment_id"`
-	Name          string    `json:"name"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ID        string     `json:"id"`
+	Name      string     `json:"name"`
+	State     string     `json:"state"`
+	CreatedAt time.Time  `json:"created_at"`
+	RotatedAt *time.Time `json:"rotated_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
 }
 
 type ListSecretsResponse struct {

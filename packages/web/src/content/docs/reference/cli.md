@@ -61,7 +61,7 @@ The `helmr` CLI talks to the control plane over HTTP(S). Choose the endpoint wit
 | `helmr secret list [--json]` | List remote secret metadata. |
 | `helmr secret get NAME [--json]` | Show remote secret metadata. Secret values are never returned. |
 | `helmr secret set NAME [VALUE] [--json]` | Create or update a remote secret; reads stdin if value is omitted. |
-| `helmr secret delete NAME --yes` | Delete a remote secret. |
+| `helmr secret revoke NAME --yes` | Revoke a remote secret. |
 
 Common options:
 

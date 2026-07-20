@@ -43,6 +43,7 @@ const (
 
 type SecretManager interface {
 	PutScoped(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error)
+	Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error)
 	CheckScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) error
 	ResolveScopedNames(ctx context.Context, orgID uuid.UUID, projectID uuid.UUID, environmentID uuid.UUID, names []string) (api.ResolvedSecrets, error)
 }
@@ -497,7 +498,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.deleteSecret)
+		r.Post("/projects/{projectID}/environments/{environmentID}/secrets/{name}/revoke", s.revokeSecret)
 	})
 	r.Group(func(r chi.Router) {
 		r.Use(func(next http.Handler) http.Handler {
@@ -524,7 +525,7 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/secrets", s.listSecrets)
 		r.Get("/secrets/{name}", s.getSecret)
 		r.Put("/secrets/{name}", s.setSecret)
-		r.Delete("/secrets/{name}", s.deleteSecret)
+		r.Post("/secrets/{name}/revoke", s.revokeSecret)
 	})
 }
 

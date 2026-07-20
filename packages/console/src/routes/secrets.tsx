@@ -2,7 +2,7 @@ import { createQuery, useQueryClient } from "@tanstack/solid-query";
 import { createMemo, createSignal, For, Show } from "solid-js";
 import { formatRelative } from "../features/runs/display";
 import { ApiError } from "../lib/api";
-import { deleteSecret, listSecrets, setSecret, type Secret } from "../lib/secrets";
+import { listSecrets, revokeSecret, setSecret, type Secret } from "../lib/secrets";
 import { useScope } from "../lib/scope";
 import { ActionMenu } from "../ui/ActionMenu";
 import { Modal } from "../ui/Modal";
@@ -107,15 +107,16 @@ function SecretModal(props: {
 
 function SecretRow(props: {
   secret: Secret;
-  deleting: boolean;
+  revoking: boolean;
   error: string | null;
   onUpdate: (secret: Secret) => void;
-  onDelete: (secret: Secret) => void;
+  onRevoke: (secret: Secret) => void;
 }) {
   return (
     <tr>
       <td><code>{props.secret.name}</code></td>
-      <td>{formatRelative(props.secret.updated_at)}</td>
+      <td>{props.secret.state}</td>
+      <td>{props.secret.rotated_at ? formatRelative(props.secret.rotated_at) : "Never"}</td>
       <td>{formatRelative(props.secret.created_at)}</td>
       <td class={ui.actionsCell}>
         <ActionMenu
@@ -123,15 +124,15 @@ function SecretRow(props: {
           items={[
             {
               label: "Update",
-              disabled: props.deleting,
+              disabled: props.revoking || props.secret.state === "revoked",
               onSelect: () => props.onUpdate(props.secret),
             },
             {
-              label: "Delete",
-              busyLabel: props.deleting ? "Deleting..." : undefined,
-              disabled: props.deleting,
+              label: "Revoke",
+              busyLabel: props.revoking ? "Revoking..." : undefined,
+              disabled: props.revoking || props.secret.state === "revoked",
               tone: "danger",
-              onSelect: () => props.onDelete(props.secret),
+              onSelect: () => props.onRevoke(props.secret),
             },
           ]}
         />
@@ -147,8 +148,8 @@ export function Secrets() {
   const scope = useScope();
   const queryClient = useQueryClient();
   const [modalSecretName, setModalSecretName] = createSignal<string | null | undefined>(undefined);
-  const [deletingName, setDeletingName] = createSignal<string | null>(null);
-  const [deleteError, setDeleteError] = createSignal<{ name: string; message: string } | null>(null);
+  const [revokingName, setRevokingName] = createSignal<string | null>(null);
+  const [revokeError, setRevokeError] = createSignal<{ name: string; message: string } | null>(null);
   const secrets = createQuery(() => ({
     queryKey: ["secrets", scope.selectedProjectID(), scope.selectedEnvironmentID()],
     queryFn: () => listSecrets(scope.selectedProjectID(), scope.selectedEnvironmentID()),
@@ -158,17 +159,17 @@ export function Secrets() {
 
   const invalidateSecrets = () => queryClient.invalidateQueries({ queryKey: ["secrets"] });
 
-  const remove = async (secret: Secret) => {
-    if (!window.confirm(`Delete secret "${secret.name}"?`)) return;
-    setDeleteError(null);
-    setDeletingName(secret.name);
+  const revoke = async (secret: Secret) => {
+    if (!window.confirm(`Revoke secret "${secret.name}"?`)) return;
+    setRevokeError(null);
+    setRevokingName(secret.name);
     try {
-      await deleteSecret(secret.name, scope.selectedProjectID(), scope.selectedEnvironmentID());
+      await revokeSecret(secret.name, scope.selectedProjectID(), scope.selectedEnvironmentID());
       await invalidateSecrets();
-    } catch (removeError) {
-      setDeleteError({ name: secret.name, message: secretErrorMessage(removeError) });
+    } catch (error) {
+      setRevokeError({ name: secret.name, message: secretErrorMessage(error) });
     } finally {
-      setDeletingName(null);
+      setRevokingName(null);
     }
   };
 
@@ -193,7 +194,8 @@ export function Secrets() {
               <thead>
                 <tr>
                   <th>Name</th>
-                  <th>Updated</th>
+                  <th>State</th>
+                  <th>Rotated</th>
                   <th>Created</th>
                   <th><span class="sr-only">Actions</span></th>
                 </tr>
@@ -203,10 +205,10 @@ export function Secrets() {
                   {(secret) => (
                     <SecretRow
                       secret={secret}
-                      deleting={deletingName() === secret.name}
-                      error={deleteError()?.name === secret.name ? deleteError()?.message ?? null : null}
+                      revoking={revokingName() === secret.name}
+                      error={revokeError()?.name === secret.name ? revokeError()?.message ?? null : null}
                       onUpdate={(secret) => setModalSecretName(secret.name)}
-                      onDelete={remove}
+                      onRevoke={revoke}
                     />
                   )}
                 </For>

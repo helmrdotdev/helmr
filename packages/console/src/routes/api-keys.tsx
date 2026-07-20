@@ -88,7 +88,7 @@ const API_KEY_SCOPE_OPTIONS: {
   {
     value: "secrets:write",
     label: "Manage secrets",
-    description: "Allow automation to list, create, update, and delete secrets in the selected project and environment.",
+    description: "Allow automation to list, create, rotate, and revoke secrets in the selected project and environment.",
   },
   {
     value: "tokens:create",

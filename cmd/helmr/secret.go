@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cli/format"
 	"github.com/helmrdotdev/helmr/internal/client"
@@ -25,7 +26,7 @@ func secretCommand() *cobra.Command {
 		secretListCommand(),
 		secretGetCommand(),
 		secretSetCommand(),
-		secretDeleteCommand(),
+		secretRevokeCommand(),
 	)
 	return secret
 }
@@ -51,7 +52,7 @@ func secretListCommand() *cobra.Command {
 				return format.JSON(cmd.OutOrStdout(), response)
 			}
 			for _, secret := range response.Secrets {
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.UpdatedAt.Format(apiTimeFormat), secret.CreatedAt.Format(apiTimeFormat))
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s\n", secret.Name, secret.State, secret.CreatedAt.Format(apiTimeFormat))
 			}
 			return nil
 		},
@@ -134,31 +135,42 @@ func secretSetCommand() *cobra.Command {
 	return cmd
 }
 
-func secretDeleteCommand() *cobra.Command {
+func secretRevokeCommand() *cobra.Command {
 	var projectID string
 	var environmentID string
+	var idempotencyKey string
 	var yes bool
 	cmd := &cobra.Command{
-		Use:   "delete NAME --yes",
-		Short: "Delete a remote secret.",
+		Use:   "revoke NAME --yes",
+		Short: "Revoke a remote secret.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if !yes {
-				return errors.New("secret delete requires --yes")
+				return errors.New("secret revoke requires --yes")
 			}
 			control, err := controlClient(cmd)
 			if err != nil {
 				return err
 			}
-			if err := control.DeleteSecret(cmd.Context(), args[0], secretOptions(projectID, environmentID)); err != nil {
+			if strings.TrimSpace(idempotencyKey) == "" {
+				idempotencyKey = uuid.Must(uuid.NewV7()).String()
+			}
+			secret, err := control.RevokeSecret(
+				cmd.Context(),
+				args[0],
+				idempotencyKey,
+				secretOptions(projectID, environmentID),
+			)
+			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", args[0])
+			fmt.Fprintf(cmd.OutOrStdout(), "%s\n", secret.Name)
 			return nil
 		},
 	}
 	addSecretScopeFlags(cmd, &projectID, &environmentID)
-	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm deletion.")
+	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "", "Stable key for retrying this revocation.")
+	cmd.Flags().BoolVar(&yes, "yes", false, "Confirm revocation.")
 	return cmd
 }
 
@@ -178,9 +190,13 @@ func secretOptions(projectID string, environmentID string) client.SecretOptions 
 
 func writeSecret(w io.Writer, secret api.SecretResponse) error {
 	fmt.Fprintf(w, "Name: %s\n", secret.Name)
-	fmt.Fprintf(w, "Project: %s\n", secret.ProjectID)
-	fmt.Fprintf(w, "Environment: %s\n", secret.EnvironmentID)
+	fmt.Fprintf(w, "State: %s\n", secret.State)
 	fmt.Fprintf(w, "Created: %s\n", secret.CreatedAt.Format(apiTimeFormat))
-	fmt.Fprintf(w, "Updated: %s\n", secret.UpdatedAt.Format(apiTimeFormat))
+	if secret.RotatedAt != nil {
+		fmt.Fprintf(w, "Rotated: %s\n", secret.RotatedAt.Format(apiTimeFormat))
+	}
+	if secret.RevokedAt != nil {
+		fmt.Fprintf(w, "Revoked: %s\n", secret.RevokedAt.Format(apiTimeFormat))
+	}
 	return nil
 }

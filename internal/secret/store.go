@@ -8,15 +8,18 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/idempotency"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +42,7 @@ type Store struct {
 	encryption Keyring
 	hashes     keyedhash.Keyring
 	authority  keyedhash.Authority
+	claims     idempotency.Manager
 	rand       io.Reader
 }
 
@@ -112,6 +116,7 @@ func New(ctx context.Context, database db.Querier, transactions transactionBegin
 		encryption: encryption,
 		hashes:     hashes,
 		authority:  authority,
+		claims:     idempotency.New(hashes),
 		rand:       rand.Reader,
 	}, nil
 }
@@ -285,7 +290,102 @@ func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uu
 	return db.Secret{}, fmt.Errorf("rotate secret after concurrent updates: %w", lastErr)
 }
 
-func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID) (db.Secret, error) {
+func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, idempotencyKey string) (db.GetSecretSnapshotRow, error) {
+	if s.tx == nil {
+		return db.GetSecretSnapshotRow{}, errors.New("secret transaction beginner is required")
+	}
+	request, err := idempotency.NewSecretRevokeRequest(
+		environmentID,
+		secretID,
+		strings.TrimSpace(idempotencyKey),
+	)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("begin Secret revocation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	claims, err := s.claims.Transaction(tx)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	acquired, err := claims.Acquire(ctx, request)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	queries := claims.Queries()
+	if !acquired.New {
+		if acquired.Claim.State != "completed" {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf(
+				"secret revoke claim is %s",
+				acquired.Claim.State,
+			)
+		}
+		snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+			EnvironmentID: pgvalue.UUID(environmentID),
+			ID:            pgvalue.UUID(secretID),
+		})
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revoke replay: %w", err)
+		}
+		return snapshot, nil
+	}
+	bound := *s
+	bound.db = queries
+	record, changed, err := bound.revoke(ctx, environmentID, secretID)
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if changed {
+		payload, err := json.Marshal(map[string]any{
+			"environmentId":        environmentID.String(),
+			"revocationGeneration": record.RevocationGeneration,
+			"secretId":             secretID.String(),
+		})
+		if err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revocation intent: %w", err)
+		}
+		if _, err := queries.CreateOutboxMessage(ctx, db.CreateOutboxMessageParams{
+			ID:           pgvalue.UUID(uuid.Must(uuid.NewV7())),
+			Lane:         "control",
+			Topic:        "secret.revoked",
+			PartitionKey: secretID.String(),
+			Payload:      payload,
+			AvailableAt:  pgvalue.TimestamptzUTCZeroInvalid(time.Now()),
+		}); err != nil {
+			return db.GetSecretSnapshotRow{}, fmt.Errorf("create Secret revocation intent: %w", err)
+		}
+	}
+	snapshot, err := queries.GetSecretSnapshot(ctx, db.GetSecretSnapshotParams{
+		EnvironmentID: pgvalue.UUID(environmentID),
+		ID:            pgvalue.UUID(secretID),
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	receipt, err := json.Marshal(map[string]any{
+		"revocationGeneration": record.RevocationGeneration,
+		"secretId":             secretID.String(),
+		"stateVersion":         record.StateVersion,
+	})
+	if err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("marshal Secret revoke receipt: %w", err)
+	}
+	if _, err := claims.Complete(ctx, acquired.Claim, receipt); err != nil {
+		return db.GetSecretSnapshotRow{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GetSecretSnapshotRow{}, fmt.Errorf("commit Secret revocation: %w", err)
+	}
+	return snapshot, nil
+}
+
+func (s *Store) revoke(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID) (db.Secret, bool, error) {
 	var lastErr error
 	for range maxWriteAttempts {
 		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
@@ -293,13 +393,13 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			ID:            pgvalue.UUID(secretID),
 		})
 		if err != nil {
-			return db.Secret{}, err
+			return db.Secret{}, false, err
 		}
 		if record.State == "revoked" {
-			return record, nil
+			return record, false, nil
 		}
 		if record.State != "active" {
-			return db.Secret{}, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
+			return db.Secret{}, false, UnavailableError{Err: fmt.Errorf("secret %q is %s", record.Name, record.State)}
 		}
 		revoked, err := s.db.RevokeSecret(ctx, db.RevokeSecretParams{
 			EnvironmentID:        pgvalue.UUID(environmentID),
@@ -307,15 +407,15 @@ func (s *Store) Revoke(ctx context.Context, environmentID uuid.UUID, secretID uu
 			ExpectedStateVersion: record.StateVersion,
 		})
 		if err == nil {
-			return revoked, nil
+			return revoked, true, nil
 		}
 		if errors.Is(err, pgx.ErrNoRows) {
 			lastErr = err
 			continue
 		}
-		return db.Secret{}, err
+		return db.Secret{}, false, err
 	}
-	return db.Secret{}, fmt.Errorf("revoke secret after concurrent updates: %w", lastErr)
+	return db.Secret{}, false, fmt.Errorf("revoke secret after concurrent updates: %w", lastErr)
 }
 
 func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []byte) (db.Secret, error) {

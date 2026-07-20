@@ -2469,10 +2469,8 @@ type fakeStore struct {
 	logChunks                               []db.AppendRunLogChunkRow
 	logTruncated                            bool
 	updateRunMetadata                       db.UpdateRunMetadataForExecutionParams
-	secret                                  db.GetScopedSecretMetadataByNameRow
-	secrets                                 []db.ListScopedSecretsRow
-	deleteSecret                            db.DeleteScopedSecretParams
-	deleteSecretRows                        int64
+	secret                                  db.Secret
+	secrets                                 []db.ListSecretsRow
 	defaultProjectID                        pgtype.UUID
 	defaultEnvironmentID                    pgtype.UUID
 	logCursor                               int64
@@ -2588,6 +2586,7 @@ func (f *fakeRunEnqueuer) EnqueueRun(_ context.Context, orgID pgtype.UUID, runID
 
 type fakeSecrets struct {
 	values api.ResolvedSecrets
+	revoke func(uuid.UUID, uuid.UUID, string) error
 }
 
 func (f *fakeStore) CreateScopedRun(_ context.Context, arg db.CreateScopedRunParams) (db.CreateScopedRunRow, error) {
