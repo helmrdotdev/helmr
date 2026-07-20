@@ -43,7 +43,6 @@ export interface ProgramIndex {
     name: "bun" | "npm"
     version: string
   }>
-  readonly moduleMapDigest: string
   readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
   readonly runtimeDigest: string
   readonly standardToolchainDigest: string
@@ -104,7 +103,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
       "dependenciesDigest",
       "formatVersion",
       "manager",
-      "moduleMapDigest",
       "runtimeApiVersion",
       "runtimeDigest",
       "standardToolchainDigest",
@@ -142,8 +140,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     root["dependenciesDigest"],
     "program index dependenciesDigest",
   )
-  const moduleMapDigest = requireDigest(root["moduleMapDigest"], "program index moduleMapDigest")
-
   const managerValue = requireObject(root["manager"], "program index manager")
   requireKeys(managerValue, ["capsuleDigest", "name", "version"], "program index manager")
   const managerName = requireString(managerValue["name"], "program index manager.name")
@@ -224,7 +220,6 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     dependenciesDigest,
     formatVersion: PROGRAM_INDEX_FORMAT_VERSION,
     manager,
-    moduleMapDigest,
     runtimeApiVersion,
     runtimeDigest,
     standardToolchainDigest,
@@ -306,13 +301,6 @@ function requireDigest(value: JsonValue | undefined, label: string): string {
     throw new Error(`${label} must be a lowercase SHA-256 digest`)
   }
   return digest
-}
-
-function requirePositiveSafeInteger(value: JsonValue | undefined, label: string): number {
-  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
-    throw new Error(`${label} must be a positive JavaScript-safe integer`)
-  }
-  return value
 }
 
 function requireKeys(value: JsonObject, expected: readonly string[], label: string): void {
