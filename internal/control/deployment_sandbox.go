@@ -89,8 +89,6 @@ func sandboxResponse(row db.DeploymentSandbox) api.SandboxResponse {
 		DiskFloorMib:        int32(row.DiskFloorMib),
 		NetworkPolicy:       json.RawMessage(row.NetworkPolicy),
 		RuntimeABI:          row.RuntimeABI,
-		GuestdABI:           row.GuestdAbi,
-		AdapterABI:          row.AdapterAbi,
 		FilesystemFormat:    row.FilesystemFormat,
 		DefaultUID:          int8Response(row.DefaultUid),
 		DefaultGID:          int8Response(row.DefaultGid),

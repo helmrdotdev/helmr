@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-const goldenRuntimeIdentityKey = `{"runtime_id":"runtime-1","deployment_sandbox_id":"sandbox-1","image_digest":"sha256:image","image_format":"oci-tar","rootfs_digest":"sha256:rootfs","runtime_abi":"runtime-abi","guestd_abi":"guestd-abi","adapter_abi":"adapter-abi","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:9d06f1ce620cdfa34be30058524cfb49331aeb7451524c5358c4154a2bfb381c","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
+const goldenRuntimeIdentityKey = `{"runtime_id":"runtime-1","deployment_sandbox_id":"sandbox-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:64ac7d1a22a09bd0f1765f2b62d2dcec9f089aaf5703c8ac560e47d75182ed9e","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
 
 func TestKeyMatchesGoldenIdentity(t *testing.T) {
 	key := Key(Identity{
@@ -13,30 +13,26 @@ func TestKeyMatchesGoldenIdentity(t *testing.T) {
 		DeploymentSandboxID:        "sandbox-1",
 		ImageDigest:                "sha256:image",
 		ImageFormat:                "oci-tar",
-		RootfsDigest:               "sha256:rootfs",
-		RuntimeABI:                 "runtime-abi",
-		GuestdABI:                  "guestd-abi",
-		AdapterABI:                 "adapter-abi",
 		WorkspaceMountPath:         "/workspace",
 		SandboxImageArtifactDigest: "sha256:sandbox",
 		SandboxImageArtifactFormat: "oci-tar",
-		RuntimeSubstrateCacheKey:   "sha256:9d06f1ce620cdfa34be30058524cfb49331aeb7451524c5358c4154a2bfb381c",
+		RuntimeSubstrateCacheKey:   "sha256:64ac7d1a22a09bd0f1765f2b62d2dcec9f089aaf5703c8ac560e47d75182ed9e",
 		Network:                    json.RawMessage(`{"internet":false,"deny":["10.0.0.0/8"]}`),
 	})
 	if key != goldenRuntimeIdentityKey {
 		t.Fatalf("key = %s, want %s", key, goldenRuntimeIdentityKey)
 	}
-	if got := Hash(key); got != "46b507b394ef59614c5991d6952196851dd6e95d9a558fc40b25b48e4f782aff" {
+	if got := Hash(key); got != "aaecef8bfeefdda802b6e7b4df8d384768f4982e269894f5674dd488b1e072ae" {
 		t.Fatalf("hash = %s", got)
 	}
-	if got := ID(key); got != "46b507b394ef5961" {
+	if got := ID(key); got != "aaecef8bfeefdda8" {
 		t.Fatalf("id = %s", got)
 	}
 }
 
 func TestKeyNormalizesEmptyNetworkToObject(t *testing.T) {
 	key := Key(Identity{RuntimeID: "runtime-1"})
-	want := `{"runtime_id":"runtime-1","deployment_sandbox_id":"","image_digest":"","image_format":"","rootfs_digest":"","runtime_abi":"","guestd_abi":"","adapter_abi":"","workspace_mount_path":"","sandbox_artifact_digest":"","sandbox_artifact_format":"","substrate_key":"","network":{}}`
+	want := `{"runtime_id":"runtime-1","deployment_sandbox_id":"","image_digest":"","image_format":"","workspace_mount_path":"","sandbox_artifact_digest":"","sandbox_artifact_format":"","substrate_key":"","network":{}}`
 	if key != want {
 		t.Fatalf("key = %s, want %s", key, want)
 	}
@@ -48,10 +44,6 @@ func TestKeyNormalizesIdentityFields(t *testing.T) {
 		RuntimeID:                  "runtime-1",
 		ImageDigest:                "sha256:image",
 		ImageFormat:                "oci-tar",
-		RootfsDigest:               "sha256:rootfs",
-		RuntimeABI:                 "runtime-abi",
-		GuestdABI:                  "guestd-abi",
-		AdapterABI:                 "adapter-abi",
 		WorkspaceMountPath:         "/workspace",
 		SandboxImageArtifactDigest: "sha256:sandbox",
 		SandboxImageArtifactFormat: "oci-tar",

@@ -160,6 +160,8 @@ WITH candidate AS (
     RETURNING workspace_mounts.*
 )
 SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi,
        worker_network_slots.id AS network_slot_id,
        worker_network_slots.generation AS network_slot_generation,
        runtime_instances.reserved_cpu_millis,
@@ -177,6 +179,7 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
+  JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id

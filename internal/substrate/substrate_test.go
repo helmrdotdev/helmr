@@ -131,7 +131,7 @@ func TestResolverRejectsMismatchedCacheMetadataIdentity(t *testing.T) {
 	if err := json.Unmarshal(body, &metadata); err != nil {
 		t.Fatal(err)
 	}
-	metadata.Identity.Source.AdapterABI = "other-adapter"
+	metadata.Identity.Source.WorkspaceImageMediaType = "application/other"
 	mutated, err := json.Marshal(metadata)
 	if err != nil {
 		t.Fatal(err)
@@ -161,8 +161,8 @@ func TestCacheKeyNormalizesSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source.SandboxArtifactDigest = "  " + source.SandboxArtifactDigest + "  "
-	source.AdapterABI = source.AdapterABI + " "
+	source.WorkspaceImageDigest = "  " + source.WorkspaceImageDigest + "  "
+	source.WorkspaceImageMediaType = source.WorkspaceImageMediaType + " "
 	withWhitespace, err := CacheKey(source)
 	if err != nil {
 		t.Fatal(err)
@@ -174,19 +174,13 @@ func TestCacheKeyNormalizesSource(t *testing.T) {
 
 func TestCacheKeyMatchesGoldenSource(t *testing.T) {
 	key, err := CacheKey(Source{
-		SandboxArtifactDigest: "sha256:sandbox",
-		SandboxArtifactFormat: "oci-tar",
-		ImageDigest:           "sha256:image",
-		RootfsDigest:          "sha256:rootfs",
-		RuntimeABI:            "runtime-abi",
-		GuestdABI:             "guestd-abi",
-		AdapterABI:            "adapter-abi",
-		WorkspaceMountPath:    "/workspace",
+		WorkspaceImageDigest:    "sha256:image",
+		WorkspaceImageMediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = "sha256:9d06f1ce620cdfa34be30058524cfb49331aeb7451524c5358c4154a2bfb381c"
+	const want = "sha256:81af2bcec14402036cfccdd2e6396b378ddde06422a7838ec8e3edfc1669f537"
 	if key != want {
 		t.Fatalf("cache key = %s, want %s", key, want)
 	}
@@ -338,14 +332,8 @@ printf "fake-ext4:%s\n" "$*" > "$last"
 
 func testSource() Source {
 	return Source{
-		SandboxArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		SandboxArtifactFormat: "oci-tar",
-		ImageDigest:           "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		RootfsDigest:          "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-		RuntimeABI:            "runtime-v1",
-		GuestdABI:             "guestd-v1",
-		AdapterABI:            "adapter-v1",
-		WorkspaceMountPath:    "/workspace",
+		WorkspaceImageDigest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WorkspaceImageMediaType: "application/vnd.helmr.workspace-image.v0.oci-tar",
 	}
 }
 

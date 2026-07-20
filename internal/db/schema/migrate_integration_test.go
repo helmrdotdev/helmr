@@ -281,6 +281,24 @@ func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pg
 	if mountProjectionColumns != 0 {
 		t.Fatalf("workspace mount copied projections = %d, want 0", mountProjectionColumns)
 	}
+	var runtimeProjectionColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'runtime_instances'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"rootfs_digest",
+		"runtime_abi",
+		"guestd_abi",
+		"adapter_abi",
+	}).Scan(&runtimeProjectionColumns); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeProjectionColumns != 0 {
+		t.Fatalf("runtime instance copied profile fields = %d, want 0", runtimeProjectionColumns)
+	}
 }
 
 func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {

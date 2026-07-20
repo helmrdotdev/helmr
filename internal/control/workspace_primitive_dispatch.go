@@ -115,7 +115,6 @@ func workspaceMountFromEnsureRow(row db.EnsureWorkspaceMountRequestedRow) db.Wor
 		WorkspaceArtifactSizeBytes:  row.WorkspaceArtifactSizeBytes,
 		WorkspaceArtifactMediaType:  row.WorkspaceArtifactMediaType,
 		WorkspaceMountPath:          row.WorkspaceMountPath, RuntimeABI: row.RuntimeABI,
-		GuestdAbi: row.GuestdAbi, AdapterAbi: row.AdapterAbi,
 		RequestedAt: row.RequestedAt, MountedAt: row.MountedAt, UnmountedAt: row.UnmountedAt,
 		StoppedAt: row.StoppedAt, LostAt: row.LostAt, FailedAt: row.FailedAt,
 		TerminalAt: row.TerminalAt, TerminalReasonCode: row.TerminalReasonCode,

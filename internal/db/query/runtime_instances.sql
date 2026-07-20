@@ -6,6 +6,8 @@ SELECT runtime_instances.*,
        artifacts.size_bytes AS sandbox_image_artifact_size_bytes,
        artifacts.media_type AS sandbox_image_artifact_media_type,
        '/workspace'::text AS workspace_mount_path,
+       runtime_identities.rootfs_digest,
+       runtime_identities.runtime_abi,
        runtime_substrates.substrate_digest,
        runtime_substrates.substrate_format,
        runtime_substrates.builder_abi,
@@ -17,6 +19,7 @@ SELECT runtime_instances.*,
   FROM runtime_instances
   JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
                        AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+  JOIN runtime_identities ON runtime_identities.id = runtime_instances.runtime_identity_id
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id

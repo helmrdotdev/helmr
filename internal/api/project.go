@@ -171,8 +171,6 @@ type SandboxResponse struct {
 	DiskFloorMib        int32           `json:"disk_floor_mib"`
 	NetworkPolicy       json.RawMessage `json:"network_policy,omitempty"`
 	RuntimeABI          string          `json:"runtime_abi"`
-	GuestdABI           string          `json:"guestd_abi"`
-	AdapterABI          string          `json:"adapter_abi"`
 	FilesystemFormat    string          `json:"filesystem_format"`
 	DefaultUID          *int32          `json:"default_uid,omitempty"`
 	DefaultGID          *int32          `json:"default_gid,omitempty"`

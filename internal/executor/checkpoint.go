@@ -538,14 +538,8 @@ func runtimeSubstrateSource(source *api.WorkerRuntimeSubstrateSource, metadata m
 	maps.Copy(body, metadata)
 	if source != nil {
 		body["substrate_source"] = map[string]string{
-			"sandbox_artifact_digest": strings.TrimSpace(source.SandboxImageArtifact.Digest),
-			"sandbox_artifact_format": strings.TrimSpace(source.SandboxImageArtifactFormat),
-			"image_digest":            strings.TrimSpace(source.ImageDigest),
-			"rootfs_digest":           strings.TrimSpace(source.RootfsDigest),
-			"runtime_abi":             strings.TrimSpace(source.RuntimeABI),
-			"guestd_abi":              strings.TrimSpace(source.GuestdABI),
-			"adapter_abi":             strings.TrimSpace(source.AdapterABI),
-			"workspace_mount_path":    strings.TrimSpace(source.WorkspaceMountPath),
+			"workspace_image_digest":     strings.TrimSpace(source.WorkspaceImage.Digest),
+			"workspace_image_media_type": strings.TrimSpace(source.WorkspaceImage.MediaType),
 		}
 	}
 	return json.Marshal(body)

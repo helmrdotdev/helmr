@@ -272,8 +272,6 @@ type WorkerPreparedRuntimeSource struct {
 	ReservedDiskMiB            int64                   `json:"reserved_disk_mib"`
 	ReservedExecutionSlots     int32                   `json:"reserved_execution_slots"`
 	RuntimeABI                 string                  `json:"runtime_abi"`
-	GuestdABI                  string                  `json:"guestd_abi"`
-	AdapterABI                 string                  `json:"adapter_abi"`
 	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
@@ -443,17 +441,9 @@ type WorkerWorkspace struct {
 }
 
 type WorkerRuntimeSubstrateSource struct {
-	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
-	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
-	RootfsDigest               string                  `json:"rootfs_digest"`
-	ImageDigest                string                  `json:"image_digest"`
-	ImageFormat                string                  `json:"image_format"`
-	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
-	RuntimeABI                 string                  `json:"runtime_abi"`
-	GuestdABI                  string                  `json:"guestd_abi"`
-	AdapterABI                 string                  `json:"adapter_abi"`
-	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
+	DeploymentSandboxID string                  `json:"deployment_sandbox_id"`
+	WorkspaceImage      CASObject               `json:"workspace_image"`
+	RuntimeSubstrate    *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
 type WorkerRuntimeSubstrate struct {

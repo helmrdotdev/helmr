@@ -291,8 +291,6 @@ type workerWorkspaceMountFields struct {
 	requestedDiskMiB           int64
 	requestedExecutionSlots    int32
 	runtimeABI                 string
-	guestdABI                  string
-	adapterABI                 string
 	fencingGeneration          int64
 	expiresAt                  time.Time
 }
@@ -335,8 +333,6 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 		requestedDiskMiB:        row.ReservedWorkloadDiskBytes / (1024 * 1024),
 		requestedExecutionSlots: row.ReservedExecutionSlots,
 		runtimeABI:              row.RuntimeABI,
-		guestdABI:               row.GuestdAbi,
-		adapterABI:              row.AdapterAbi,
 		fencingGeneration:       row.FencingGeneration,
 		expiresAt:               row.GuestdChannelTokenExpiresAt.Time,
 	})
@@ -369,8 +365,6 @@ func workerWorkspaceMountFromFields(fields workerWorkspaceMountFields) *api.Work
 		RequestedDiskMiB:           fields.requestedDiskMiB,
 		RequestedExecutionSlots:    fields.requestedExecutionSlots,
 		RuntimeABI:                 fields.runtimeABI,
-		GuestdABI:                  fields.guestdABI,
-		AdapterABI:                 fields.adapterABI,
 		FencingGeneration:          fields.fencingGeneration,
 		ExpiresAt:                  fields.expiresAt,
 	}

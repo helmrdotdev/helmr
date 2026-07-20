@@ -17,10 +17,6 @@ func preparedRuntimeIdentityFromWorkspaceMount(mount api.WorkerWorkspaceMount, n
 		DeploymentSandboxID:        mount.DeploymentSandboxID,
 		ImageDigest:                mount.ImageDigest,
 		ImageFormat:                mount.ImageFormat,
-		RootfsDigest:               mount.RootfsDigest,
-		RuntimeABI:                 mount.RuntimeABI,
-		GuestdABI:                  mount.GuestdABI,
-		AdapterABI:                 mount.AdapterABI,
 		WorkspaceMountPath:         mount.WorkspaceMountPath,
 		SandboxImageArtifactDigest: mount.SandboxImageArtifact.Digest,
 		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
@@ -31,13 +27,7 @@ func preparedRuntimeIdentityFromWorkspaceMount(mount api.WorkerWorkspaceMount, n
 
 func preparedRuntimeSubstrateCacheKey(mount api.WorkerWorkspaceMount) string {
 	return substrate.OptionalCacheKey(substrate.Source{
-		SandboxArtifactDigest: mount.SandboxImageArtifact.Digest,
-		SandboxArtifactFormat: mount.SandboxImageArtifactFormat,
-		ImageDigest:           mount.ImageDigest,
-		RootfsDigest:          mount.RootfsDigest,
-		RuntimeABI:            mount.RuntimeABI,
-		GuestdABI:             mount.GuestdABI,
-		AdapterABI:            mount.AdapterABI,
-		WorkspaceMountPath:    mount.WorkspaceMountPath,
+		WorkspaceImageDigest:    mount.SandboxImageArtifact.Digest,
+		WorkspaceImageMediaType: mount.SandboxImageArtifact.MediaType,
 	})
 }

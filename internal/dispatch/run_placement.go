@@ -288,20 +288,19 @@ SELECT id, generation FROM worker_network_slots
 INSERT INTO runtime_instances (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, runtime_identity_id, deployment_sandbox_id,
-    runtime_key_hash, runtime_key, sandbox_fingerprint, rootfs_digest,
+    runtime_key_hash, runtime_key, sandbox_fingerprint,
     image_digest, image_format, sandbox_image_artifact_id,
     sandbox_image_artifact_digest, sandbox_image_artifact_format,
-    runtime_abi, guestd_abi, adapter_abi, network_policy,
+    network_policy,
     reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes,
     reserved_scratch_bytes, reserved_execution_slots, desired_reason, allocated_at)
 SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9::text, sandboxes.id,
        md5(concat_ws(':', $9::text, sandboxes.id::text, sandboxes.fingerprint, $11::text)),
        jsonb_build_object('runtime_identity_id',$9::text,'deployment_sandbox_id',sandboxes.id,
                           'sandbox_fingerprint',sandboxes.fingerprint,'network_policy',$11::jsonb),
-       sandboxes.fingerprint, sandboxes.rootfs_digest, sandboxes.image_digest,
+       sandboxes.fingerprint, sandboxes.image_digest,
        sandboxes.image_format, sandboxes.image_artifact_id, sandboxes.image_digest,
-       sandboxes.image_artifact_format, sandboxes.runtime_abi, sandboxes.guestd_abi,
-       sandboxes.adapter_abi, $11::jsonb, $12, $13, $14, $15, $16,
+       sandboxes.image_artifact_format, $11::jsonb, $12, $13, $14, $15, $16,
        'prepared_supply', now()
   FROM deployment_sandboxes AS sandboxes
  WHERE sandboxes.org_id = $2 AND sandboxes.project_id = $3

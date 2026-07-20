@@ -2396,15 +2396,11 @@ type RuntimeInstance struct {
 	WorkerEpoch                int64                `json:"worker_epoch"`
 	RuntimeKeyHash             string               `json:"runtime_key_hash"`
 	RuntimeKey                 []byte               `json:"runtime_key"`
-	RootfsDigest               string               `json:"rootfs_digest"`
 	ImageDigest                string               `json:"image_digest"`
 	ImageFormat                string               `json:"image_format"`
 	SandboxImageArtifactID     pgtype.UUID          `json:"sandbox_image_artifact_id"`
 	SandboxImageArtifactDigest pgtype.Text          `json:"sandbox_image_artifact_digest"`
 	SandboxImageArtifactFormat pgtype.Text          `json:"sandbox_image_artifact_format"`
-	RuntimeABI                 string               `json:"runtime_abi"`
-	GuestdAbi                  string               `json:"guestd_abi"`
-	AdapterAbi                 string               `json:"adapter_abi"`
 	NetworkPolicy              []byte               `json:"network_policy"`
 	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`

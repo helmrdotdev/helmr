@@ -295,11 +295,12 @@ func workerWorkspaceFromLease(row db.ClaimAssignedRunLeaseRow) api.WorkerWorkspa
 		Artifact: &api.WorkerWorkspaceArtifact{Digest: row.WorkspaceArtifactDigest, MediaType: row.WorkspaceArtifactMediaType,
 			Encoding: row.WorkspaceArtifactEncoding, SizeBytes: row.WorkspaceArtifactSizeBytes, EntryCount: row.WorkspaceArtifactEntryCount},
 		SubstrateSource: &api.WorkerRuntimeSubstrateSource{
-			DeploymentSandboxID:        pgvalue.MustUUIDValue(row.WorkspaceDeploymentSandboxID).String(),
-			SandboxImageArtifact:       api.CASObject{Digest: row.WorkspaceSandboxImageArtifactDigest, SizeBytes: row.WorkspaceSandboxImageArtifactSizeBytes, MediaType: row.WorkspaceSandboxImageArtifactMediaType},
-			SandboxImageArtifactFormat: row.WorkspaceSandboxImageArtifactFormat, RootfsDigest: row.WorkspaceSandboxRootfsDigest,
-			ImageDigest: row.WorkspaceSandboxImageDigest, ImageFormat: row.WorkspaceSandboxImageFormat, WorkspaceMountPath: row.WorkspaceMountPath,
-			RuntimeABI: row.WorkspaceRuntimeAbi, GuestdABI: row.WorkspaceGuestdAbi, AdapterABI: row.WorkspaceAdapterAbi,
+			DeploymentSandboxID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentSandboxID).String(),
+			WorkspaceImage: api.CASObject{
+				Digest:    row.WorkspaceSandboxImageArtifactDigest,
+				SizeBytes: row.WorkspaceSandboxImageArtifactSizeBytes,
+				MediaType: row.WorkspaceSandboxImageArtifactMediaType,
+			},
 		},
 	}
 	if row.WorkspaceBaseVersionID.Valid {

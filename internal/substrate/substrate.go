@@ -39,14 +39,8 @@ type Resolver struct {
 }
 
 type Source struct {
-	SandboxArtifactDigest string `json:"sandbox_artifact_digest"`
-	SandboxArtifactFormat string `json:"sandbox_artifact_format"`
-	ImageDigest           string `json:"image_digest"`
-	RootfsDigest          string `json:"rootfs_digest"`
-	RuntimeABI            string `json:"runtime_abi"`
-	GuestdABI             string `json:"guestd_abi"`
-	AdapterABI            string `json:"adapter_abi"`
-	WorkspaceMountPath    string `json:"workspace_mount_path"`
+	WorkspaceImageDigest    string `json:"workspace_image_digest"`
+	WorkspaceImageMediaType string `json:"workspace_image_media_type"`
 }
 
 type Result struct {
@@ -248,13 +242,8 @@ func (r *Resolver) resolveLocked(ctx context.Context, imagePath string, source S
 func validateSource(source Source) error {
 	source = normalizeSource(source)
 	required := map[string]string{
-		"sandbox artifact digest": source.SandboxArtifactDigest,
-		"sandbox artifact format": source.SandboxArtifactFormat,
-		"image digest":            source.ImageDigest,
-		"rootfs digest":           source.RootfsDigest,
-		"runtime abi":             source.RuntimeABI,
-		"guestd abi":              source.GuestdABI,
-		"adapter abi":             source.AdapterABI,
+		"workspace image digest":     source.WorkspaceImageDigest,
+		"workspace image media type": source.WorkspaceImageMediaType,
 	}
 	for label, value := range required {
 		if value == "" {
@@ -266,14 +255,8 @@ func validateSource(source Source) error {
 
 func normalizeSource(source Source) Source {
 	return Source{
-		SandboxArtifactDigest: strings.TrimSpace(source.SandboxArtifactDigest),
-		SandboxArtifactFormat: strings.TrimSpace(source.SandboxArtifactFormat),
-		ImageDigest:           strings.TrimSpace(source.ImageDigest),
-		RootfsDigest:          strings.TrimSpace(source.RootfsDigest),
-		RuntimeABI:            strings.TrimSpace(source.RuntimeABI),
-		GuestdABI:             strings.TrimSpace(source.GuestdABI),
-		AdapterABI:            strings.TrimSpace(source.AdapterABI),
-		WorkspaceMountPath:    strings.TrimSpace(source.WorkspaceMountPath),
+		WorkspaceImageDigest:    strings.TrimSpace(source.WorkspaceImageDigest),
+		WorkspaceImageMediaType: strings.TrimSpace(source.WorkspaceImageMediaType),
 	}
 }
 

@@ -26,47 +26,23 @@ type RuntimeSubstrateLookup interface {
 
 func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
 	return runtimeSubstrateTopologyFromSource(ctx, resolver, imagePath, api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        mount.DeploymentSandboxID,
-		SandboxImageArtifact:       mount.SandboxImageArtifact,
-		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
-		ImageDigest:                mount.ImageDigest,
-		ImageFormat:                mount.ImageFormat,
-		RootfsDigest:               mount.RootfsDigest,
-		RuntimeABI:                 mount.RuntimeABI,
-		GuestdABI:                  mount.GuestdABI,
-		AdapterABI:                 mount.AdapterABI,
-		WorkspaceMountPath:         mount.WorkspaceMountPath,
+		DeploymentSandboxID: mount.DeploymentSandboxID,
+		WorkspaceImage:      mount.SandboxImageArtifact,
 	})
 }
 
 func runtimeSubstrateSourceFromPreparedSource(source api.WorkerPreparedRuntimeSource) *api.WorkerRuntimeSubstrateSource {
 	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        source.DeploymentSandboxID,
-		SandboxImageArtifact:       source.SandboxImageArtifact,
-		SandboxImageArtifactFormat: source.SandboxImageArtifactFormat,
-		RootfsDigest:               source.RootfsDigest,
-		ImageDigest:                source.ImageDigest,
-		ImageFormat:                source.ImageFormat,
-		WorkspaceMountPath:         source.WorkspaceMountPath,
-		RuntimeABI:                 source.RuntimeABI,
-		GuestdABI:                  source.GuestdABI,
-		AdapterABI:                 source.AdapterABI,
-		RuntimeSubstrate:           source.RuntimeSubstrate,
+		DeploymentSandboxID: source.DeploymentSandboxID,
+		WorkspaceImage:      source.SandboxImageArtifact,
+		RuntimeSubstrate:    source.RuntimeSubstrate,
 	}
 }
 
 func runtimeSubstrateSourceFromWorkspaceMount(mount api.WorkerWorkspaceMount) *api.WorkerRuntimeSubstrateSource {
 	return &api.WorkerRuntimeSubstrateSource{
-		DeploymentSandboxID:        mount.DeploymentSandboxID,
-		SandboxImageArtifact:       mount.SandboxImageArtifact,
-		SandboxImageArtifactFormat: mount.SandboxImageArtifactFormat,
-		RootfsDigest:               mount.RootfsDigest,
-		ImageDigest:                mount.ImageDigest,
-		ImageFormat:                mount.ImageFormat,
-		WorkspaceMountPath:         mount.WorkspaceMountPath,
-		RuntimeABI:                 mount.RuntimeABI,
-		GuestdABI:                  mount.GuestdABI,
-		AdapterABI:                 mount.AdapterABI,
+		DeploymentSandboxID: mount.DeploymentSandboxID,
+		WorkspaceImage:      mount.SandboxImageArtifact,
 	}
 }
 
@@ -75,14 +51,8 @@ func runtimeSubstrateTopologyFromSource(ctx context.Context, resolver RuntimeSub
 		return vm.RuntimeTopology{}, nil
 	}
 	result, err := resolver.Resolve(ctx, imagePath, substrate.Source{
-		SandboxArtifactDigest: source.SandboxImageArtifact.Digest,
-		SandboxArtifactFormat: source.SandboxImageArtifactFormat,
-		ImageDigest:           source.ImageDigest,
-		RootfsDigest:          source.RootfsDigest,
-		RuntimeABI:            source.RuntimeABI,
-		GuestdABI:             source.GuestdABI,
-		AdapterABI:            source.AdapterABI,
-		WorkspaceMountPath:    source.WorkspaceMountPath,
+		WorkspaceImageDigest:    source.WorkspaceImage.Digest,
+		WorkspaceImageMediaType: source.WorkspaceImage.MediaType,
 	})
 	if err != nil {
 		return vm.RuntimeTopology{}, err

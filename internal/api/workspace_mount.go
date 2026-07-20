@@ -77,8 +77,6 @@ type WorkerWorkspaceMount struct {
 	RequestedDiskMiB           int64                   `json:"requested_disk_mib"`
 	RequestedExecutionSlots    int32                   `json:"requested_execution_slots"`
 	RuntimeABI                 string                  `json:"runtime_abi"`
-	GuestdABI                  string                  `json:"guestd_abi"`
-	AdapterABI                 string                  `json:"adapter_abi"`
 	FencingGeneration          int64                   `json:"fencing_generation"`
 	ExpiresAt                  time.Time               `json:"expires_at"`
 }

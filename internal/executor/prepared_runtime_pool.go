@@ -1081,8 +1081,6 @@ func preparedRuntimeWorkspaceMountFromSource(source api.WorkerPreparedRuntimeSou
 		RequestedDiskMiB:           source.ReservedDiskMiB,
 		RequestedExecutionSlots:    source.ReservedExecutionSlots,
 		RuntimeABI:                 strings.TrimSpace(source.RuntimeABI),
-		GuestdABI:                  strings.TrimSpace(source.GuestdABI),
-		AdapterABI:                 strings.TrimSpace(source.AdapterABI),
 	}
 }
 

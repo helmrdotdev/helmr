@@ -42,7 +42,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		ImageDigest: row.ImageDigest, ImageFormat: row.ImageFormat, WorkspaceMountPath: row.WorkspaceMountPath,
 		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI: row.RuntimeABI, GuestdABI: row.GuestdAbi, AdapterABI: row.AdapterAbi,
+		RuntimeABI: row.RuntimeABI,
 	}
 	if row.RuntimeSubstrateID.Valid {
 		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{

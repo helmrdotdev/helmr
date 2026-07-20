@@ -606,8 +606,6 @@ func (s *Server) createOrAttachSessionStartWorkspace(ctx context.Context, store 
 	}
 	if workspace.WorkspaceMountPath != task.WorkspaceMountPath ||
 		workspace.DeploymentSandboxRuntimeAbi != task.DeploymentSandboxRuntimeAbi ||
-		workspace.DeploymentSandboxGuestdAbi != task.DeploymentSandboxGuestdAbi ||
-		workspace.DeploymentSandboxAdapterAbi != task.DeploymentSandboxAdapterAbi ||
 		workspace.DeploymentSandboxFilesystemFormat != task.DeploymentSandboxFilesystemFormat ||
 		workspace.DeploymentSandboxContractVersion != task.DeploymentSandboxContractVersion {
 		return db.Workspace{}, errWorkspaceSandboxIncompatible
