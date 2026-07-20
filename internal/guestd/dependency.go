@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -20,10 +21,49 @@ type dependencyComponent struct {
 	noexec   bool
 }
 
-func handleDependencyConnection(ctx context.Context, conn io.ReadWriteCloser) (retErr error) {
+func dependencyResolveShape(actual []string) (bool, error) {
+	actual = slices.Clone(actual)
+	slices.Sort(actual)
+	probe := []string{"vda", "vdb", "vdc", "vdd", "vde"}
+	resolve := append(slices.Clone(probe), "vdf")
+	lifecycle := append(slices.Clone(resolve), "vdg")
+	switch {
+	case slices.Equal(actual, probe), slices.Equal(actual, lifecycle):
+		return false, nil
+	case slices.Equal(actual, resolve):
+		return true, nil
+	default:
+		return false, fmt.Errorf(
+			"dependency block devices = %v, want probe, resolve, or lifecycle shape",
+			actual,
+		)
+	}
+}
+
+func handleDependencyConnection(
+	ctx context.Context,
+	conn io.ReadWriteCloser,
+	token *deployment.RelayCapability,
+) (retErr error) {
+	if token != nil {
+		defer func() {
+			for index := range token {
+				token[index] = 0
+			}
+		}()
+	}
 	request, err := deployment.ReadManagerRequest(ctx, conn)
 	if err != nil {
 		return err
+	}
+	if request.Operation == deployment.ManagerResolve && token == nil {
+		return errors.New("manager resolve requires relay bootstrap")
+	}
+	if request.Operation != deployment.ManagerResolve && token != nil {
+		return fmt.Errorf(
+			"relay bootstrap does not match manager operation %q",
+			request.Operation,
+		)
 	}
 	staged, err := stageDependencyComponents(ctx, request)
 	if err != nil {

@@ -58,7 +58,9 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, err
 	}
 	if profile == dependencyGuestProfile {
-		return false, handleDependencyConnection(ctx, conn)
+		return false, errors.New(
+			"dependency guest connections require dedicated admission",
+		)
 	}
 	start, err := readConnectionStart(conn)
 	if err != nil {

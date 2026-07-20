@@ -20,6 +20,18 @@ type linuxStagedDependencyComponents struct {
 	root   string
 }
 
+func dependencyResolveProfile() (bool, error) {
+	devices, err := filepath.Glob("/sys/class/block/vd*")
+	if err != nil {
+		return false, fmt.Errorf("enumerate dependency block devices: %w", err)
+	}
+	actual := make([]string, 0, len(devices))
+	for _, device := range devices {
+		actual = append(actual, filepath.Base(device))
+	}
+	return dependencyResolveShape(actual)
+}
+
 func stageDependencyComponents(
 	ctx context.Context,
 	request deployment.ManagerRequest,

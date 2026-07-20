@@ -103,6 +103,78 @@ func TestDependencyComponents(t *testing.T) {
 	}
 }
 
+func TestDependencyResolveShapeIsExact(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		devices []string
+		resolve bool
+		valid   bool
+	}{
+		{
+			name:    "probe",
+			devices: []string{"vde", "vda", "vdc", "vdb", "vdd"},
+			valid:   true,
+		},
+		{
+			name: "resolve",
+			devices: []string{
+				"vdf",
+				"vda",
+				"vdc",
+				"vdb",
+				"vde",
+				"vdd",
+			},
+			resolve: true,
+			valid:   true,
+		},
+		{
+			name: "lifecycle",
+			devices: []string{
+				"vdg",
+				"vda",
+				"vdc",
+				"vdb",
+				"vdf",
+				"vde",
+				"vdd",
+			},
+			valid: true,
+		},
+		{
+			name:    "missing",
+			devices: []string{"vda", "vdb", "vdc", "vdd"},
+		},
+		{
+			name: "extra",
+			devices: []string{
+				"vda",
+				"vdb",
+				"vdc",
+				"vdd",
+				"vde",
+				"vdf",
+				"vdg",
+				"vdh",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolve, err := dependencyResolveShape(test.devices)
+			if (err == nil) != test.valid {
+				t.Fatalf("dependencyResolveShape() error = %v", err)
+			}
+			if resolve != test.resolve {
+				t.Fatalf(
+					"dependencyResolveShape() = %t, want %t",
+					resolve,
+					test.resolve,
+				)
+			}
+		})
+	}
+}
+
 func TestVerifyDependencyContent(t *testing.T) {
 	t.Parallel()
 

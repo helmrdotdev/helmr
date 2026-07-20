@@ -111,6 +111,67 @@ func (c *Connector) RuntimeCapabilities() (RuntimeCapabilities, error) {
 }
 
 func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.Session, error) {
+	if isPreparedResolveRequest(request) {
+		return nil, errors.New(
+			"dependency resolve guests require prepared connection",
+		)
+	}
+	child, err := c.connectorForRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	return child.start(
+		ctx,
+		request.ID,
+		request.OwnerKind,
+		"",
+		"",
+		"",
+		nil,
+		request.Network,
+		request.Topology,
+		request.BuildDrives,
+		nil,
+	)
+}
+
+func (c *Connector) Prepare(
+	ctx context.Context,
+	request vm.ConnectRequest,
+) (vm.PreparedSession, error) {
+	child, err := c.connectorForRequest(request)
+	if err != nil {
+		return nil, err
+	}
+	if !isPreparedResolveRequest(request) {
+		return nil, errors.New(
+			"only dependency resolve guests support prepared connection",
+		)
+	}
+	return child.prepareSession(
+		ctx,
+		request.ID,
+		request.OwnerKind,
+		"",
+		"",
+		"",
+		nil,
+		request.Network,
+		request.Topology,
+		request.BuildDrives,
+		nil,
+	)
+}
+
+func isPreparedResolveRequest(request vm.ConnectRequest) bool {
+	return request.OwnerKind == vm.OwnerBuild &&
+		len(request.BuildDrives) == 4 &&
+		isDependencyDriveSet(request.BuildDrives)
+}
+
+func (c *Connector) connectorForRequest(
+	request vm.ConnectRequest,
+) (*Connector, error) {
 	cfg := c.cfg
 	kernelArgs := c.kernelArgsValue()
 	networkless := false
@@ -142,19 +203,7 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 	child.cfg = cfg
 	child.kernelArgs = kernelArgs
 	child.networkless = networkless
-	return child.start(
-		ctx,
-		request.ID,
-		request.OwnerKind,
-		"",
-		"",
-		"",
-		nil,
-		request.Network,
-		request.Topology,
-		request.BuildDrives,
-		nil,
-	)
+	return &child, nil
 }
 
 func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
@@ -723,7 +772,18 @@ func removeFiles(paths []string) {
 	}
 }
 
-func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ vm.CheckpointableSession, retErr error) {
+func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (vm.CheckpointableSession, error) {
+	session, err := c.prepareSession(ctx, instanceID, ownerKind, snapshotMemoryPath, snapshotStatePath, scratchDiskRestorePath, restoreNetwork, network, topology, readOnlyDrives, recordPhase)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := session.Open(ctx); err != nil {
+		return nil, errors.Join(err, session.Close(context.Background()))
+	}
+	return session, nil
+}
+
+func (c *Connector) prepareSession(ctx context.Context, instanceID string, ownerKind vm.OwnerKind, snapshotMemoryPath string, snapshotStatePath string, scratchDiskRestorePath string, restoreNetwork *snapshotNetworkManifest, network compute.NetworkPolicy, topology vm.RuntimeTopology, readOnlyDrives []vm.ReadOnlyDrive, recordPhase func(vm.RuntimePhase)) (_ *guestSession, retErr error) {
 	instanceID = strings.TrimSpace(instanceID)
 	if ownerKind == vm.OwnerBuild && instanceID == "" {
 		instanceID = uuid.NewString()
@@ -873,7 +933,7 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	}
 	machine.Logger().Printf("waiting for guest health")
 	phaseStarted = time.Now()
-	conn, err := c.connectReadyGuest(ctx, vsockHostPath, machineExit, machine.Logger().Printf)
+	err = c.waitForHealth(ctx, vsockHostPath, machineExit, machine.Logger().Printf)
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_wait_guest_health", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(phaseStarted)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		started = false
@@ -881,7 +941,6 @@ func (c *Connector) start(ctx context.Context, instanceID string, ownerKind vm.O
 	}
 	machine.Logger().Printf("guest health ready")
 	return &guestSession{
-		stream:        conn,
 		machine:       machine,
 		machineCancel: machineCancel,
 		machineExit:   machineExit,
@@ -909,13 +968,6 @@ func startMachineContext(ctx context.Context, machine *firecracker.Machine, mach
 		machineCancel()
 		return ctx.Err()
 	}
-}
-
-func (c *Connector) connectReadyGuest(ctx context.Context, vsockHostPath string, machineExit *machineExit, logf func(string, ...interface{})) (vm.Stream, error) {
-	if err := c.waitForHealth(ctx, vsockHostPath, machineExit, logf); err != nil {
-		return nil, err
-	}
-	return c.connectGuestPort(ctx, vsockHostPath, machineExit)
 }
 
 func (c *Connector) createScratchDisk(ctx context.Context, scratchDiskPath string) error {
@@ -1184,6 +1236,10 @@ func healthAttemptContext(ctx context.Context, attemptTimeout time.Duration) (co
 }
 
 func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, machineExit *machineExit) (vm.Stream, error) {
+	return c.connectGuestPortAt(ctx, vsockPath, c.cfg.GuestPort, machineExit)
+}
+
+func (c *Connector) connectGuestPortAt(ctx context.Context, vsockPath string, port uint32, machineExit *machineExit) (vm.Stream, error) {
 	connectCtx, cancel := context.WithTimeout(ctx, c.cfg.HealthTimeout)
 	defer cancel()
 	if machineExit != nil {
@@ -1198,9 +1254,9 @@ func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, mach
 	var lastErr error
 	for {
 		if err, ok := machineExit.Err(); ok {
-			return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", c.cfg.GuestPort, err)
+			return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, err)
 		}
-		conn, err := dialVsock(connectCtx, vsockPath, c.cfg.GuestPort)
+		conn, err := dialVsock(connectCtx, vsockPath, port)
 		if err == nil {
 			stream, ok := conn.(vm.Stream)
 			if !ok {
@@ -1212,15 +1268,15 @@ func (c *Connector) connectGuestPort(ctx context.Context, vsockPath string, mach
 		lastErr = err
 		if connectCtx.Err() != nil {
 			if exitErr, ok := machineExit.Err(); ok {
-				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", c.cfg.GuestPort, exitErr)
+				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, exitErr)
 			}
-			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(connectCtx.Err(), lastErr))
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", port, c.cfg.HealthTimeout, errors.Join(connectCtx.Err(), lastErr))
 		}
 		if err := sleepHealthRetry(connectCtx); err != nil {
 			if exitErr, ok := machineExit.Err(); ok {
-				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", c.cfg.GuestPort, exitErr)
+				return nil, fmt.Errorf("firecracker machine exited before guest port %d connection: %w", port, exitErr)
 			}
-			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", c.cfg.GuestPort, c.cfg.HealthTimeout, errors.Join(err, lastErr))
+			return nil, fmt.Errorf("guest port %d connection timed out after %s: %w", port, c.cfg.HealthTimeout, errors.Join(err, lastErr))
 		}
 	}
 }
@@ -1438,7 +1494,11 @@ func healthProbeErrorBucket(err error) string {
 }
 
 type guestSession struct {
+	mu            sync.Mutex
 	stream        vm.Stream
+	opened        bool
+	closed        bool
+	endpoints     map[*hostEndpoint]struct{}
 	machine       *firecracker.Machine
 	machineCancel context.CancelFunc
 	machineExit   *machineExit
@@ -1457,7 +1517,134 @@ type guestSession struct {
 }
 
 func (s *guestSession) Stream() vm.Stream {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.stream
+}
+
+func (s *guestSession) Open(ctx context.Context) (vm.Session, error) {
+	if ctx == nil {
+		return nil, errors.New("prepared session open context is nil")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.New("firecracker prepared session is closed")
+	}
+	if s.opened {
+		s.mu.Unlock()
+		return nil, errors.New("firecracker prepared session is already opened")
+	}
+	s.opened = true
+	s.mu.Unlock()
+
+	stream, err := (&Connector{cfg: s.cfg}).connectGuestPort(
+		ctx,
+		s.vsockHostPath,
+		s.machineExit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.Join(
+			errors.New("firecracker prepared session closed while opening"),
+			stream.Close(),
+		)
+	}
+	s.stream = stream
+	s.mu.Unlock()
+	return s, nil
+}
+
+func (s *guestSession) DialGuest(
+	ctx context.Context,
+	port uint32,
+) (vm.Stream, error) {
+	if ctx == nil {
+		return nil, errors.New("guest dial context is nil")
+	}
+	if port == 0 {
+		return nil, errors.New("guest port is required")
+	}
+	s.mu.Lock()
+	closed := s.closed
+	s.mu.Unlock()
+	if closed {
+		return nil, errors.New("firecracker prepared session is closed")
+	}
+	return (&Connector{cfg: s.cfg}).connectGuestPortAt(
+		ctx,
+		s.vsockHostPath,
+		port,
+		s.machineExit,
+	)
+}
+
+func (s *guestSession) BindHost(
+	ctx context.Context,
+	port uint32,
+) (vm.HostEndpoint, error) {
+	if ctx == nil {
+		return nil, errors.New("host endpoint context is nil")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if port == 0 {
+		return nil, errors.New("host endpoint port is required")
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, errors.New("firecracker prepared session is closed")
+	}
+	s.mu.Unlock()
+
+	socketPath := s.vsockHostPath + "_" + strconv.FormatUint(uint64(port), 10)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{
+		Name: socketPath,
+		Net:  "unix",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("bind firecracker host endpoint for port %d: %w", port, err)
+	}
+	listener.SetUnlinkOnClose(false)
+	fail := func(cause error) (vm.HostEndpoint, error) {
+		return nil, errors.Join(cause, listener.Close(), removeHostEndpoint(socketPath))
+	}
+	if err := os.Chown(socketPath, s.cfg.JailerUID, s.cfg.JailerGID); err != nil {
+		return fail(fmt.Errorf("set firecracker host endpoint owner: %w", err))
+	}
+	if err := os.Chmod(socketPath, 0o600); err != nil {
+		return fail(fmt.Errorf("set firecracker host endpoint mode: %w", err))
+	}
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
+	endpoint := &hostEndpoint{
+		listener: listener,
+		path:     socketPath,
+		streams:  make(map[*hostStream]struct{}),
+	}
+	endpoint.remove = func() {
+		s.mu.Lock()
+		delete(s.endpoints, endpoint)
+		s.mu.Unlock()
+	}
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fail(errors.New("firecracker prepared session closed while binding host endpoint"))
+	}
+	if s.endpoints == nil {
+		s.endpoints = make(map[*hostEndpoint]struct{})
+	}
+	s.endpoints[endpoint] = struct{}{}
+	s.mu.Unlock()
+	return endpoint, nil
 }
 
 func (s *guestSession) OpenStream(ctx context.Context) (vm.Stream, error) {
@@ -1500,11 +1687,26 @@ func (s *guestSession) Wait(ctx context.Context) error {
 
 func (s *guestSession) Close(ctx context.Context) error {
 	s.once.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		endpoints := make([]*hostEndpoint, 0, len(s.endpoints))
+		for endpoint := range s.endpoints {
+			endpoints = append(endpoints, endpoint)
+		}
+		stream := s.stream
+		s.mu.Unlock()
+		var endpointErrs []error
+		for _, endpoint := range endpoints {
+			endpointErrs = append(endpointErrs, endpoint.Close())
+		}
 		stopErr := stopSessionMachine(ctx, s.machine, s.machineExit)
 		if s.machineCancel != nil {
 			s.machineCancel()
 		}
-		streamErr := closeGuestStream(ctx, s.stream)
+		var streamErr error
+		if stream != nil {
+			streamErr = closeGuestStream(ctx, stream)
+		}
 		if errors.Is(streamErr, net.ErrClosed) || errors.Is(streamErr, os.ErrClosed) {
 			streamErr = nil
 		}
@@ -1514,9 +1716,136 @@ func (s *guestSession) Close(ctx context.Context) error {
 		} else {
 			cleanupErr = cleanupUnproven(s.owner, errors.New("firecracker session cleaner is not configured"))
 		}
-		s.err = errors.Join(streamErr, stopErr, cleanupErr)
+		s.err = errors.Join(
+			errors.Join(endpointErrs...),
+			streamErr,
+			stopErr,
+			cleanupErr,
+		)
 	})
 	return s.err
+}
+
+type hostEndpoint struct {
+	mu       sync.Mutex
+	listener *net.UnixListener
+	path     string
+	streams  map[*hostStream]struct{}
+	remove   func()
+	once     sync.Once
+	err      error
+}
+
+func (endpoint *hostEndpoint) Accept(ctx context.Context) (vm.Stream, error) {
+	if ctx == nil {
+		return nil, errors.New("host endpoint accept context is nil")
+	}
+	endpoint.mu.Lock()
+	listener := endpoint.listener
+	endpoint.mu.Unlock()
+	if listener == nil {
+		return nil, errors.New("firecracker host endpoint is closed")
+	}
+	if deadline, ok := ctx.Deadline(); ok {
+		if err := listener.SetDeadline(deadline); err != nil {
+			return nil, fmt.Errorf("set host endpoint accept deadline: %w", err)
+		}
+		defer listener.SetDeadline(time.Time{})
+	}
+	stop := context.AfterFunc(ctx, func() {
+		_ = endpoint.Close()
+	})
+	defer stop()
+	conn, err := listener.AcceptUnix()
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf("accept firecracker host endpoint: %w", err)
+	}
+	stream := &hostStream{UnixConn: conn, endpoint: endpoint}
+	endpoint.mu.Lock()
+	if endpoint.listener == nil {
+		endpoint.mu.Unlock()
+		return nil, errors.Join(
+			errors.New("firecracker host endpoint closed while accepting"),
+			conn.Close(),
+		)
+	}
+	endpoint.streams[stream] = struct{}{}
+	endpoint.mu.Unlock()
+	return stream, nil
+}
+
+func (endpoint *hostEndpoint) Close() error {
+	if endpoint == nil {
+		return nil
+	}
+	endpoint.once.Do(func() {
+		endpoint.mu.Lock()
+		listener := endpoint.listener
+		endpoint.listener = nil
+		streams := make([]*hostStream, 0, len(endpoint.streams))
+		for stream := range endpoint.streams {
+			streams = append(streams, stream)
+		}
+		endpoint.mu.Unlock()
+		var streamErrs []error
+		for _, stream := range streams {
+			streamErrs = append(streamErrs, stream.Close())
+		}
+		var listenerErr error
+		if listener != nil {
+			listenerErr = listener.Close()
+			if errors.Is(listenerErr, net.ErrClosed) ||
+				errors.Is(listenerErr, os.ErrClosed) {
+				listenerErr = nil
+			}
+		}
+		endpoint.err = errors.Join(
+			errors.Join(streamErrs...),
+			listenerErr,
+			removeHostEndpoint(endpoint.path),
+		)
+		if endpoint.remove != nil {
+			endpoint.remove()
+		}
+	})
+	return endpoint.err
+}
+
+type hostStream struct {
+	*net.UnixConn
+	endpoint *hostEndpoint
+	once     sync.Once
+	err      error
+}
+
+func (stream *hostStream) Close() error {
+	stream.once.Do(func() {
+		stream.err = stream.UnixConn.Close()
+		if stream.endpoint != nil {
+			stream.endpoint.mu.Lock()
+			delete(stream.endpoint.streams, stream)
+			stream.endpoint.mu.Unlock()
+		}
+	})
+	return stream.err
+}
+
+func removeHostEndpoint(socketPath string) error {
+	if socketPath == "" {
+		return nil
+	}
+	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove firecracker host endpoint: %w", err)
+	}
+	if _, err := os.Lstat(socketPath); err == nil {
+		return errors.New("firecracker host endpoint remains after removal")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("verify firecracker host endpoint removal: %w", err)
+	}
+	return nil
 }
 
 func cleanupGuestSessionResources(cleanup func()) {

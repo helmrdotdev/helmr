@@ -1012,7 +1012,7 @@ func TestReadHealthAcceptsChunkedBody(t *testing.T) {
 	}
 }
 
-func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
+func TestPreparedGuestSeparatesHealthFromGuestPort(t *testing.T) {
 	previousDial := dialVsock
 	defer func() { dialVsock = previousDial }()
 
@@ -1042,7 +1042,22 @@ func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
 	}
 
 	connector := &Connector{cfg: (Config{HealthTimeout: time.Second}).WithDefaults()}
-	conn, err := connector.connectReadyGuest(context.Background(), "vsock.sock", nil, nil)
+	if err := connector.waitForHealth(
+		context.Background(),
+		"vsock.sock",
+		nil,
+		nil,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if len(ports) != 2 {
+		t.Fatalf("ports after health = %v, want health only", ports)
+	}
+	conn, err := connector.connectGuestPort(
+		context.Background(),
+		"vsock.sock",
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1055,6 +1070,116 @@ func TestConnectReadyGuestWaitsForHealthBeforeGuestPort(t *testing.T) {
 		if ports[i] != want[i] {
 			t.Fatalf("ports = %v, want %v", ports, want)
 		}
+	}
+}
+
+func TestPreparedGuestOwnsPrivateHostEndpoints(t *testing.T) {
+	socketBase := filepath.Join(t.TempDir(), "vsock.sock")
+	session := &guestSession{
+		cfg: Config{
+			JailerUID: os.Getuid(),
+			JailerGID: os.Getgid(),
+		},
+		vsockHostPath: socketBase,
+	}
+	endpoint, err := session.BindHost(context.Background(), 5003)
+	if err != nil {
+		t.Fatal(err)
+	}
+	socketPath := socketBase + "_5003"
+	info, err := os.Stat(socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("host endpoint mode = %o, want 600", info.Mode().Perm())
+	}
+
+	for attempt := 0; attempt < 2; attempt++ {
+		client, err := net.DialUnix(
+			"unix",
+			nil,
+			&net.UnixAddr{Name: socketPath, Net: "unix"},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, err := endpoint.Accept(context.Background())
+		if err != nil {
+			_ = client.Close()
+			t.Fatal(err)
+		}
+		if _, err := client.Write([]byte("request")); err != nil {
+			t.Fatal(err)
+		}
+		request := make([]byte, len("request"))
+		if _, err := io.ReadFull(server, request); err != nil {
+			t.Fatal(err)
+		}
+		if string(request) != "request" {
+			t.Fatalf("request = %q", request)
+		}
+		if _, err := server.Write([]byte("response")); err != nil {
+			t.Fatal(err)
+		}
+		response := make([]byte, len("response"))
+		if _, err := io.ReadFull(client, response); err != nil {
+			t.Fatal(err)
+		}
+		if string(response) != "response" {
+			t.Fatalf("response = %q", response)
+		}
+		if err := server.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := endpoint.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(socketPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("host endpoint remains after close: %v", err)
+	}
+	if _, err := endpoint.Accept(context.Background()); err == nil {
+		t.Fatal("closed host endpoint accepted a connection")
+	}
+	if _, err := net.DialUnix(
+		"unix",
+		nil,
+		&net.UnixAddr{Name: socketPath, Net: "unix"},
+	); err == nil {
+		t.Fatal("closed host endpoint remained reachable")
+	}
+}
+
+func TestHostEndpointCancellationClosesPendingAccept(t *testing.T) {
+	socketBase := filepath.Join(t.TempDir(), "vsock.sock")
+	session := &guestSession{
+		cfg: Config{
+			JailerUID: os.Getuid(),
+			JailerGID: os.Getgid(),
+		},
+		vsockHostPath: socketBase,
+	}
+	endpoint, err := session.BindHost(context.Background(), 5003)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := endpoint.Accept(ctx)
+		result <- err
+	}()
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("accept error = %v, want context canceled", err)
+	}
+	if _, err := os.Lstat(socketBase + "_5003"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("host endpoint remains after cancellation: %v", err)
 	}
 }
 
@@ -1291,6 +1416,27 @@ func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
 				t.Fatalf("profile = (%q, %t), want dependency profile", kernelArgs, networkless)
 			}
 		})
+	}
+}
+
+func TestConnectRejectsEagerDependencyResolve(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	connector := &Connector{}
+	_, err := connector.Connect(context.Background(), vm.ConnectRequest{
+		OwnerKind: vm.OwnerBuild,
+		BuildDrives: []vm.ReadOnlyDrive{
+			{ID: vm.ManagerDrive, Source: source},
+			{ID: vm.ManagedRuntimeDrive, Source: source},
+			{ID: vm.ToolchainDrive, Source: source},
+			{ID: vm.ProjectDrive, Source: source},
+		},
+	})
+	if err == nil ||
+		err.Error() != "dependency resolve guests require prepared connection" {
+		t.Fatalf("Connect() error = %v", err)
+	}
+	if source.directory != "" {
+		t.Fatalf("Connect() linked drives before rejection: %q", source.directory)
 	}
 }
 

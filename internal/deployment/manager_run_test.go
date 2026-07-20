@@ -131,6 +131,79 @@ func TestManagerRunnerReturnsDeterministicManagerFailure(t *testing.T) {
 	}
 }
 
+func TestManagerRunnerPreparesResolveTransportBeforeManagerConnection(
+	t *testing.T,
+) {
+	request := managerResolveRequest()
+	reason := ManagerProcessFailed
+	message := "manager rejected its fixed activation"
+	response := appendFramedManagerTree(t, ManagerMetadata{
+		FormatVersion: ManagerFormatVersion,
+		Operation:     request.Operation,
+		Outcome:       ManagerFailed,
+		RequestDigest: mustManagerRequestDigest(t, request),
+		Reason:        &reason,
+		Message:       &message,
+	}, nil)
+	managerStream := newManagerRunTestStream(response)
+	bootstrapStream := &relayTestStream{
+		response: bytes.NewReader(resolveBootstrapAck[:]),
+	}
+	prepared := &managerRunPreparedSession{
+		endpoint:  &relayTestEndpoint{},
+		bootstrap: bootstrapStream,
+		manager:   &managerRunTestSession{stream: managerStream},
+	}
+	connector := &managerRunPreparedConnector{prepared: prepared}
+	runner := ManagerRunner{
+		Connector: connector,
+		Toolchains: authenticatedToolchainCatalogForTest(
+			t,
+			[]Toolchain{managerRequestToolchain(request)},
+		),
+		TempDir: t.TempDir(),
+		random:  bytes.NewReader(bytes.Repeat([]byte{0x5a}, relayTokenBytes)),
+	}
+	source := managerRunDriveSource{}
+
+	metadata, tree, err := runner.Run(
+		context.Background(),
+		request,
+		ManagerRunDrives{
+			Manager:           source,
+			Runtime:           source,
+			StandardToolchain: source,
+			Project:           source,
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree != nil {
+		t.Fatal("failed resolve returned a tree")
+	}
+	if metadata.Outcome != ManagerFailed {
+		t.Fatalf("manager metadata = %#v", metadata)
+	}
+	wantEvents := []string{"prepare", "bind", "bootstrap", "open", "close"}
+	if len(connector.events) != len(wantEvents) {
+		t.Fatalf("events = %v, want %v", connector.events, wantEvents)
+	}
+	for index := range wantEvents {
+		if connector.events[index] != wantEvents[index] {
+			t.Fatalf("events = %v, want %v", connector.events, wantEvents)
+		}
+	}
+	if len(connector.requests) != 1 ||
+		len(connector.requests[0].BuildDrives) != 4 {
+		t.Fatalf("prepare requests = %#v", connector.requests)
+	}
+	if managerStream.request.Len() == 0 {
+		t.Fatal("manager request was not written after transport preparation")
+	}
+}
+
 func TestManagerRunnerClosesBlockedResponseOnCancellation(t *testing.T) {
 	request := managerProbeRequest()
 	stream := newManagerRunTestStream(nil)
@@ -387,6 +460,70 @@ type managerRunTestConnector struct {
 	newStream func() *managerRunTestStream
 	requests  []vm.ConnectRequest
 	streams   []*managerRunTestStream
+}
+
+type managerRunPreparedConnector struct {
+	prepared *managerRunPreparedSession
+	requests []vm.ConnectRequest
+	events   []string
+}
+
+func (*managerRunPreparedConnector) Connect(
+	context.Context,
+	vm.ConnectRequest,
+) (vm.Session, error) {
+	return nil, errors.New("resolve must not use eager connection")
+}
+
+func (connector *managerRunPreparedConnector) Prepare(
+	_ context.Context,
+	request vm.ConnectRequest,
+) (vm.PreparedSession, error) {
+	connector.events = append(connector.events, "prepare")
+	connector.requests = append(connector.requests, request)
+	connector.prepared.events = &connector.events
+	return connector.prepared, nil
+}
+
+type managerRunPreparedSession struct {
+	endpoint  vm.HostEndpoint
+	bootstrap vm.Stream
+	manager   vm.Session
+	events    *[]string
+}
+
+func (session *managerRunPreparedSession) Open(
+	context.Context,
+) (vm.Session, error) {
+	*session.events = append(*session.events, "open")
+	return session.manager, nil
+}
+
+func (session *managerRunPreparedSession) DialGuest(
+	_ context.Context,
+	port uint32,
+) (vm.Stream, error) {
+	if port != ResolveBootstrapPort {
+		return nil, errors.New("unexpected guest port")
+	}
+	*session.events = append(*session.events, "bootstrap")
+	return session.bootstrap, nil
+}
+
+func (session *managerRunPreparedSession) BindHost(
+	_ context.Context,
+	port uint32,
+) (vm.HostEndpoint, error) {
+	if port != ResolveHostPort {
+		return nil, errors.New("unexpected host port")
+	}
+	*session.events = append(*session.events, "bind")
+	return session.endpoint, nil
+}
+
+func (session *managerRunPreparedSession) Close(context.Context) error {
+	*session.events = append(*session.events, "close")
+	return session.manager.Close(context.Background())
 }
 
 func (connector *managerRunTestConnector) Connect(

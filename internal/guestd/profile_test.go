@@ -26,6 +26,50 @@ type oneShotTestListener struct {
 	accepted int
 }
 
+type orderedTestListener struct {
+	name   string
+	conn   net.Conn
+	events *[]string
+}
+
+func (listener *orderedTestListener) Accept() (net.Conn, error) {
+	*listener.events = append(*listener.events, listener.name)
+	if listener.conn == nil {
+		return nil, errors.New("unexpected second accept")
+	}
+	conn := listener.conn
+	listener.conn = nil
+	return conn, nil
+}
+
+func (*orderedTestListener) Close() error {
+	return nil
+}
+
+func (*orderedTestListener) Addr() net.Addr {
+	return nil
+}
+
+type scriptedNetConn struct {
+	reader  *bytes.Reader
+	written bytes.Buffer
+}
+
+func (conn *scriptedNetConn) Read(value []byte) (int, error) {
+	return conn.reader.Read(value)
+}
+
+func (conn *scriptedNetConn) Write(value []byte) (int, error) {
+	return conn.written.Write(value)
+}
+
+func (*scriptedNetConn) Close() error                     { return nil }
+func (*scriptedNetConn) LocalAddr() net.Addr              { return nil }
+func (*scriptedNetConn) RemoteAddr() net.Addr             { return nil }
+func (*scriptedNetConn) SetDeadline(time.Time) error      { return nil }
+func (*scriptedNetConn) SetReadDeadline(time.Time) error  { return nil }
+func (*scriptedNetConn) SetWriteDeadline(time.Time) error { return nil }
+
 func (listener *oneShotTestListener) Accept() (net.Conn, error) {
 	listener.accepted++
 	if listener.conn == nil {
@@ -133,7 +177,7 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 		}
 	})
 
-	t.Run("dependency uses exact manager reader", func(t *testing.T) {
+	t.Run("dependency requires dedicated admission", func(t *testing.T) {
 		t.Parallel()
 
 		connection := &profileTestConnection{}
@@ -152,7 +196,8 @@ func TestGuestProfileProtocolIsolation(t *testing.T) {
 			newWaitingRunRegistry(),
 			newWorkspaceOperationRegistry(),
 		)
-		if err == nil || !strings.Contains(err.Error(), "manager request header is not the exact v0 header") {
+		if err == nil || err.Error() !=
+			"dependency guest connections require dedicated admission" {
 			t.Fatalf("handleConnection() error = %v", err)
 		}
 	})
@@ -195,6 +240,45 @@ func TestBuildGuestIsOneShot(t *testing.T) {
 	}
 	if listener.accepted != 1 {
 		t.Fatalf("listener accepted %d connections, want 1", listener.accepted)
+	}
+}
+
+func TestResolveBootstrapPrecedesManagerAdmission(t *testing.T) {
+	token := bytes.Repeat([]byte{0x5a}, 32)
+	record := make([]byte, 37)
+	copy(record[:4], []byte("HRB0"))
+	record[4] = 0x01
+	copy(record[5:], token)
+	bootstrapConn := &scriptedNetConn{reader: bytes.NewReader(record)}
+	managerConn := &scriptedNetConn{reader: bytes.NewReader(nil)}
+	var events []string
+
+	err := serveDependencyGuest(
+		context.Background(),
+		&orderedTestListener{
+			name:   "manager",
+			conn:   managerConn,
+			events: &events,
+		},
+		&orderedTestListener{
+			name:   "bootstrap",
+			conn:   bootstrapConn,
+			events: &events,
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "read manager request header") {
+		t.Fatalf("serveDependencyGuest() error = %v", err)
+	}
+	if len(events) != 2 ||
+		events[0] != "bootstrap" ||
+		events[1] != "manager" {
+		t.Fatalf("accept order = %v", events)
+	}
+	if bootstrapConn.written.String() != "HRA0" {
+		t.Fatalf(
+			"bootstrap acknowledgement = %q",
+			bootstrapConn.written.String(),
+		)
 	}
 }
 

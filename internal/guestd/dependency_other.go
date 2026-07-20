@@ -9,6 +9,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 )
 
+func dependencyResolveProfile() (bool, error) {
+	return false, errors.New("dependency guest profile requires Linux")
+}
+
 func stageDependencyComponents(
 	context.Context,
 	deployment.ManagerRequest,

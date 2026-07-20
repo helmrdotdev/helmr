@@ -16,6 +16,11 @@ type Connector interface {
 	Connect(context.Context, ConnectRequest) (Session, error)
 }
 
+type PreparedConnector interface {
+	Connector
+	Prepare(context.Context, ConnectRequest) (PreparedSession, error)
+}
+
 type RestoringConnector interface {
 	Connector
 	Restore(context.Context, RestoreRequest) (Session, error)
@@ -40,6 +45,18 @@ type Session interface {
 	OpenStream(context.Context) (Stream, error)
 	Wait(context.Context) error
 	Close(context.Context) error
+}
+
+type PreparedSession interface {
+	Open(context.Context) (Session, error)
+	DialGuest(context.Context, uint32) (Stream, error)
+	BindHost(context.Context, uint32) (HostEndpoint, error)
+	Close(context.Context) error
+}
+
+type HostEndpoint interface {
+	Accept(context.Context) (Stream, error)
+	Close() error
 }
 
 // NetworkFacts are CNI-assigned facts observed after runtime materialization.
