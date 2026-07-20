@@ -753,6 +753,64 @@ func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.U
 	return items, nil
 }
 
+const lockWorkspaceSecretsForAdmission = `-- name: LockWorkspaceSecretsForAdmission :many
+SELECT
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    secrets.state AS secret_state,
+    secrets.state_version AS secret_state_version,
+    secrets.current_version_id,
+    secrets.revocation_generation
+FROM workspace_secrets
+JOIN secrets ON secrets.id = workspace_secrets.secret_id
+WHERE workspace_secrets.workspace_id = $1
+ORDER BY workspace_secrets.secret_id
+FOR UPDATE OF secrets
+`
+
+type LockWorkspaceSecretsForAdmissionRow struct {
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	PlacementKind        string             `json:"placement_kind"`
+	PlacementTarget      string             `json:"placement_target"`
+	SecretID             pgtype.UUID        `json:"secret_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	SecretState          string             `json:"secret_state"`
+	SecretStateVersion   int64              `json:"secret_state_version"`
+	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
+	RevocationGeneration int64              `json:"revocation_generation"`
+}
+
+func (q *Queries) LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error) {
+	rows, err := q.db.Query(ctx, lockWorkspaceSecretsForAdmission, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LockWorkspaceSecretsForAdmissionRow
+	for rows.Next() {
+		var i LockWorkspaceSecretsForAdmissionRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.EnvironmentID,
+			&i.PlacementKind,
+			&i.PlacementTarget,
+			&i.SecretID,
+			&i.CreatedAt,
+			&i.SecretState,
+			&i.SecretStateVersion,
+			&i.CurrentVersionID,
+			&i.RevocationGeneration,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const revokeSecret = `-- name: RevokeSecret :one
 UPDATE secrets
 SET state = 'revoked',

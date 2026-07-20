@@ -200,3 +200,62 @@ UPDATE workspaces
    AND workspaces.state = 'active'
    AND workspaces.deleted_at IS NULL
 RETURNING *;
+
+-- name: GetWorkspaceAdmissionAuthority :one
+SELECT workspaces.*,
+       definitions.workspace_architecture,
+       EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       ) AS has_active_lease,
+       EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+       ) AS has_active_process
+  FROM workspaces
+  JOIN deployment_definitions AS definitions
+    ON definitions.environment_id = workspaces.environment_id
+   AND definitions.id = workspaces.deployment_definition_id
+   AND definitions.kind = 'workspace'
+   AND definitions.declared_id = workspaces.workspace_declared_id
+  JOIN workspace_versions AS head
+    ON head.workspace_id = workspaces.id
+   AND head.id = workspaces.head_version_id
+   AND head.state = 'committed'
+ WHERE workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(id);
+
+-- name: ReserveWorkspaceForRun :one
+UPDATE workspaces
+   SET owner_run_id = sqlc.arg(run_id),
+       ownership_generation = ownership_generation + 1,
+       state_version = state_version + 1,
+       desired_state = 'active',
+       last_activity_at = now(),
+       updated_at = now()
+ WHERE workspaces.environment_id = sqlc.arg(environment_id)
+   AND workspaces.id = sqlc.arg(id)
+   AND workspaces.state_version = sqlc.arg(expected_state_version)
+   AND workspaces.head_version_id = sqlc.arg(expected_head_version_id)
+   AND workspaces.state = 'active'
+   AND workspaces.desired_state IN ('active', 'stopped')
+   AND workspaces.dirty_state = 'clean'
+   AND workspaces.owner_actor_id IS NULL
+   AND workspaces.owner_run_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_leases
+        WHERE workspace_leases.workspace_id = workspaces.id
+          AND workspace_leases.state IN ('active', 'releasing')
+   )
+   AND NOT EXISTS (
+       SELECT 1
+         FROM workspace_processes
+        WHERE workspace_processes.workspace_id = workspaces.id
+          AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+   )
+RETURNING *;

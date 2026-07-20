@@ -303,6 +303,19 @@ JOIN secrets ON secrets.id = workspace_secrets.secret_id
 WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
 ORDER BY workspace_secrets.placement_kind, workspace_secrets.placement_target;
 
+-- name: LockWorkspaceSecretsForAdmission :many
+SELECT
+    workspace_secrets.*,
+    secrets.state AS secret_state,
+    secrets.state_version AS secret_state_version,
+    secrets.current_version_id,
+    secrets.revocation_generation
+FROM workspace_secrets
+JOIN secrets ON secrets.id = workspace_secrets.secret_id
+WHERE workspace_secrets.workspace_id = sqlc.arg(workspace_id)
+ORDER BY workspace_secrets.secret_id
+FOR UPDATE OF secrets;
+
 -- name: CreateSecretResolution :one
 INSERT INTO secret_resolutions (
     id,

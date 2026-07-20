@@ -69,6 +69,12 @@ SELECT *
  WHERE environment_id = sqlc.arg(environment_id)
    AND id = sqlc.arg(id);
 
+-- name: LockEnvironmentForScheduleAdmission :one
+SELECT current_deployment_id
+  FROM environments
+ WHERE id = sqlc.arg(environment_id)
+ FOR SHARE;
+
 -- name: ClaimDueSchedules :many
 WITH candidates AS (
     SELECT id

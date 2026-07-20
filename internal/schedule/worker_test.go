@@ -144,11 +144,11 @@ func (s *workerStore) MarkScheduleAdmissionErrored(_ context.Context, value db.M
 }
 
 type workerAdmitter struct {
-	admissions []Admission
+	admissions []db.Schedule
 	err        error
 }
 
-func (a *workerAdmitter) AdmitSchedule(_ context.Context, value Admission) error {
+func (a *workerAdmitter) AdmitSchedule(_ context.Context, value db.Schedule) error {
 	a.admissions = append(a.admissions, value)
 	return a.err
 }

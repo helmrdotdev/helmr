@@ -17,6 +17,28 @@ VALUES (
 )
 RETURNING *;
 
+-- name: CreateRunAdmissionOutbox :one
+INSERT INTO outbox_messages (
+    id,
+    lane,
+    topic,
+    partition_key,
+    payload,
+    available_at
+)
+VALUES (
+    sqlc.arg(id),
+    'control',
+    'run.admit',
+    sqlc.arg(workspace_id)::uuid::text,
+    jsonb_build_object(
+        'environmentId', sqlc.arg(environment_id)::uuid::text,
+        'runId', sqlc.arg(run_id)::uuid::text
+    ),
+    now()
+)
+RETURNING *;
+
 -- name: ClaimOutboxMessages :many
 WITH candidates AS (
     SELECT id

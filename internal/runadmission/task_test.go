@@ -1,0 +1,90 @@
+package runadmission
+
+import (
+	"context"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+func TestCreateTaskBuildsCompleteAdmissionTuple(t *testing.T) {
+	runID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	workspaceID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	environmentID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	versionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	secretID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	secretVersionID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &taskStore{
+		bindings: []db.LockWorkspaceSecretsForAdmissionRow{{
+			WorkspaceID:          workspaceID,
+			PlacementKind:        "env",
+			PlacementTarget:      "API_TOKEN",
+			SecretID:             secretID,
+			SecretState:          "active",
+			CurrentVersionID:     secretVersionID,
+			RevocationGeneration: 3,
+		}},
+		run: db.CreateAdmittedRootTaskRunRow{ID: runID},
+	}
+	created, err := CreateTask(context.Background(), store, TaskRequest{
+		Run: db.CreateAdmittedRootTaskRunParams{
+			EnvironmentID:          environmentID,
+			WorkspaceID:            workspaceID,
+			BaseWorkspaceVersionID: versionID,
+		},
+		WorkspaceStateVersion: 7,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.ID != runID {
+		t.Fatalf("run ID = %+v", created.ID)
+	}
+	if len(store.resolutions) != 1 {
+		t.Fatalf("Secret resolutions = %d, want 1", len(store.resolutions))
+	}
+	resolution := store.resolutions[0]
+	if resolution.RunID != runID || resolution.SecretVersionID != secretVersionID || resolution.RevocationGeneration != 3 {
+		t.Fatalf("Secret resolution = %+v", resolution)
+	}
+	if len(store.outboxes) != 1 || store.outboxes[0].RunID != runID {
+		t.Fatalf("outboxes = %+v", store.outboxes)
+	}
+	if store.reserve.ExpectedStateVersion != 7 || store.reserve.ExpectedHeadVersionID != versionID {
+		t.Fatalf("Workspace reservation = %+v", store.reserve)
+	}
+}
+
+type taskStore struct {
+	bindings    []db.LockWorkspaceSecretsForAdmissionRow
+	run         db.CreateAdmittedRootTaskRunRow
+	reserve     db.ReserveWorkspaceForRunParams
+	resolutions []db.CreateSecretResolutionParams
+	outboxes    []db.CreateRunAdmissionOutboxParams
+}
+
+func (s *taskStore) LockWorkspaceSecretsForAdmission(context.Context, pgtype.UUID) ([]db.LockWorkspaceSecretsForAdmissionRow, error) {
+	return s.bindings, nil
+}
+
+func (s *taskStore) CreateAdmittedRootTaskRun(context.Context, db.CreateAdmittedRootTaskRunParams) (db.CreateAdmittedRootTaskRunRow, error) {
+	return s.run, nil
+}
+
+func (s *taskStore) ReserveWorkspaceForRun(_ context.Context, value db.ReserveWorkspaceForRunParams) (db.Workspace, error) {
+	s.reserve = value
+	return db.Workspace{}, nil
+}
+
+func (s *taskStore) CreateSecretResolution(_ context.Context, value db.CreateSecretResolutionParams) (db.SecretResolution, error) {
+	s.resolutions = append(s.resolutions, value)
+	return db.SecretResolution{}, nil
+}
+
+func (s *taskStore) CreateRunAdmissionOutbox(_ context.Context, value db.CreateRunAdmissionOutboxParams) (db.OutboxMessage, error) {
+	s.outboxes = append(s.outboxes, value)
+	return db.OutboxMessage{}, nil
+}

@@ -124,6 +124,102 @@ SELECT created_run.*
   FROM created_run
   JOIN created_attempt ON created_attempt.run_id = created_run.id;
 
+-- name: CreateAdmittedRootTaskRun :one
+WITH created_run AS (
+    INSERT INTO runs (
+        id,
+        public_id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        deployment_definition_id,
+        entrypoint_kind,
+        entrypoint_declared_id,
+        cause_kind,
+        schedule_id,
+        schedule_generation,
+        scheduled_at,
+        previous_scheduled_at,
+        schedule_timezone,
+        workspace_id,
+        base_workspace_version_id,
+        payload,
+        payload_artifact_id,
+        metadata,
+        tags,
+        queue_name,
+        concurrency_key,
+        queue_concurrency_limit,
+        priority,
+        queue_origin_at,
+        queue_score_at,
+        queued_expires_at,
+        max_active_duration_ms,
+        retry_policy,
+        trace_id,
+        root_span_id,
+        claim_id
+    )
+    VALUES (
+        sqlc.arg(id),
+        sqlc.arg(public_id),
+        sqlc.arg(org_id),
+        sqlc.arg(project_id),
+        sqlc.arg(environment_id),
+        sqlc.arg(deployment_id),
+        sqlc.arg(deployment_definition_id),
+        'task',
+        sqlc.arg(entrypoint_declared_id),
+        sqlc.arg(cause_kind),
+        sqlc.narg(schedule_id),
+        sqlc.narg(schedule_generation),
+        sqlc.narg(scheduled_at),
+        sqlc.narg(previous_scheduled_at),
+        sqlc.narg(schedule_timezone),
+        sqlc.arg(workspace_id),
+        sqlc.arg(base_workspace_version_id),
+        sqlc.narg(payload),
+        sqlc.narg(payload_artifact_id),
+        coalesce(sqlc.narg(metadata)::jsonb, '{}'::jsonb),
+        coalesce(sqlc.narg(tags)::text[], '{}'::text[]),
+        sqlc.arg(queue_name),
+        sqlc.narg(concurrency_key),
+        sqlc.narg(queue_concurrency_limit),
+        sqlc.arg(priority)::integer,
+        now(),
+        now() - (sqlc.arg(priority)::double precision * interval '1 second'),
+        CASE
+            WHEN sqlc.narg(queued_ttl_ms)::bigint IS NULL THEN NULL
+            ELSE now() + (sqlc.narg(queued_ttl_ms)::bigint::double precision * interval '1 millisecond')
+        END,
+        sqlc.arg(max_active_duration_ms),
+        sqlc.arg(retry_policy),
+        sqlc.narg(trace_id),
+        sqlc.arg(root_span_id),
+        sqlc.narg(claim_id)
+    )
+    RETURNING *
+), created_attempt AS (
+    INSERT INTO run_attempts (
+        run_id,
+        number,
+        entrypoint_kind,
+        workspace_id,
+        base_workspace_version_id
+    )
+    SELECT created_run.id,
+           1,
+           created_run.entrypoint_kind,
+           created_run.workspace_id,
+           created_run.base_workspace_version_id
+      FROM created_run
+    RETURNING run_id
+)
+SELECT created_run.*
+  FROM created_run
+  JOIN created_attempt ON created_attempt.run_id = created_run.id;
+
 -- name: CreateChildRunFromParentDeployment :one
 WITH selected_target AS MATERIALIZED (
     SELECT definitions.environment_id,

@@ -55,7 +55,7 @@ type Store interface {
 }
 
 type Admitter interface {
-	AdmitSchedule(context.Context, Admission) error
+	AdmitSchedule(context.Context, db.Schedule) error
 }
 
 type Worker struct {
@@ -171,15 +171,7 @@ func (w *Worker) tick(ctx context.Context) error {
 }
 
 func (w *Worker) process(ctx context.Context, value db.Schedule) error {
-	admission, err := BuildAdmissionAt(value, w.now())
-	if err != nil {
-		var permanent *AdmissionError
-		if errors.As(err, &permanent) {
-			return w.markErrored(ctx, value, permanent)
-		}
-		return err
-	}
-	err = w.admitter.AdmitSchedule(ctx, admission)
+	err := w.admitter.AdmitSchedule(ctx, value)
 	if err == nil || errors.Is(err, ErrClaimSuperseded) {
 		return nil
 	}

@@ -63,6 +63,7 @@ type Querier interface {
 	CountUncertifiedRunLaunchAttestations(ctx context.Context, workerGroupID string) (int64, error)
 	CreateAPIKeyGrant(ctx context.Context, arg CreateAPIKeyGrantParams) (ApiKeyGrant, error)
 	CreateActor(ctx context.Context, arg CreateActorParams) (Actor, error)
+	CreateAdmittedRootTaskRun(ctx context.Context, arg CreateAdmittedRootTaskRunParams) (CreateAdmittedRootTaskRunRow, error)
 	CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
@@ -83,6 +84,7 @@ type Querier interface {
 	CreatePublicAccessToken(ctx context.Context, arg CreatePublicAccessTokenParams) (PublicAccessToken, error)
 	CreatePublicAccessTokenScope(ctx context.Context, arg CreatePublicAccessTokenScopeParams) (PublicAccessTokenScope, error)
 	CreateRootRunFromCurrentDeployment(ctx context.Context, arg CreateRootRunFromCurrentDeploymentParams) (CreateRootRunFromCurrentDeploymentRow, error)
+	CreateRunAdmissionOutbox(ctx context.Context, arg CreateRunAdmissionOutboxParams) (OutboxMessage, error)
 	CreateRunCheckpoint(ctx context.Context, arg CreateRunCheckpointParams) (RunCheckpoint, error)
 	CreateRunStream(ctx context.Context, arg CreateRunStreamParams) (RunStream, error)
 	CreateRunWait(ctx context.Context, arg CreateRunWaitParams) (RunWait, error)
@@ -194,6 +196,7 @@ type Querier interface {
 	GetWorkerInstanceRunDispatchCapacity(ctx context.Context, arg GetWorkerInstanceRunDispatchCapacityParams) (GetWorkerInstanceRunDispatchCapacityRow, error)
 	GetWorkerInstanceState(ctx context.Context, arg GetWorkerInstanceStateParams) (GetWorkerInstanceStateRow, error)
 	GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Workspace, error)
+	GetWorkspaceAdmissionAuthority(ctx context.Context, arg GetWorkspaceAdmissionAuthorityParams) (GetWorkspaceAdmissionAuthorityRow, error)
 	GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWorkspaceByCreateIdempotencyParams) (Workspace, error)
 	GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceByOrgAndIDParams) (Workspace, error)
 	GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeaseParams) (WorkspaceLease, error)
@@ -261,6 +264,7 @@ type Querier interface {
 	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
+	LockEnvironmentForScheduleAdmission(ctx context.Context, environmentID pgtype.UUID) (pgtype.UUID, error)
 	LockIdempotencySlot(ctx context.Context, lockKey int64) error
 	LockLookupHMACMaintenance(ctx context.Context) error
 	LockLookupHMACVersionsForMaintenance(ctx context.Context) ([]LookupHmacVersion, error)
@@ -269,6 +273,7 @@ type Querier interface {
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (pgtype.UUID, error)
 	LockWorkerGroupsForReconciliation(ctx context.Context, arg LockWorkerGroupsForReconciliationParams) ([]string, error)
+	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
 	MarkExpiredRuntimeInstancesLost(ctx context.Context, limitCount int32) ([]RuntimeInstance, error)
@@ -317,6 +322,7 @@ type Querier interface {
 	RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error)
 	RequeueExpiredDeploymentBuildLeases(ctx context.Context) error
 	RequeueWrittenTelemetryOutbox(ctx context.Context, arg RequeueWrittenTelemetryOutboxParams) error
+	ReserveWorkspaceForRun(ctx context.Context, arg ReserveWorkspaceForRunParams) (Workspace, error)
 	ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)

@@ -11,6 +11,284 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const createAdmittedRootTaskRun = `-- name: CreateAdmittedRootTaskRun :one
+WITH created_run AS (
+    INSERT INTO runs (
+        id,
+        public_id,
+        org_id,
+        project_id,
+        environment_id,
+        deployment_id,
+        deployment_definition_id,
+        entrypoint_kind,
+        entrypoint_declared_id,
+        cause_kind,
+        schedule_id,
+        schedule_generation,
+        scheduled_at,
+        previous_scheduled_at,
+        schedule_timezone,
+        workspace_id,
+        base_workspace_version_id,
+        payload,
+        payload_artifact_id,
+        metadata,
+        tags,
+        queue_name,
+        concurrency_key,
+        queue_concurrency_limit,
+        priority,
+        queue_origin_at,
+        queue_score_at,
+        queued_expires_at,
+        max_active_duration_ms,
+        retry_policy,
+        trace_id,
+        root_span_id,
+        claim_id
+    )
+    VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        'task',
+        $8,
+        $9,
+        $10,
+        $11,
+        $12,
+        $13,
+        $14,
+        $15,
+        $16,
+        $17,
+        $18,
+        coalesce($19::jsonb, '{}'::jsonb),
+        coalesce($20::text[], '{}'::text[]),
+        $21,
+        $22,
+        $23,
+        $24::integer,
+        now(),
+        now() - ($24::double precision * interval '1 second'),
+        CASE
+            WHEN $25::bigint IS NULL THEN NULL
+            ELSE now() + ($25::bigint::double precision * interval '1 millisecond')
+        END,
+        $26,
+        $27,
+        $28,
+        $29,
+        $30
+    )
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+), created_attempt AS (
+    INSERT INTO run_attempts (
+        run_id,
+        number,
+        entrypoint_kind,
+        workspace_id,
+        base_workspace_version_id
+    )
+    SELECT created_run.id,
+           1,
+           created_run.entrypoint_kind,
+           created_run.workspace_id,
+           created_run.base_workspace_version_id
+      FROM created_run
+    RETURNING run_id
+)
+SELECT created_run.id, created_run.public_id, created_run.org_id, created_run.project_id, created_run.environment_id, created_run.deployment_id, created_run.deployment_definition_id, created_run.entrypoint_kind, created_run.entrypoint_declared_id, created_run.actor_id, created_run.cause_kind, created_run.schedule_id, created_run.schedule_generation, created_run.scheduled_at, created_run.previous_scheduled_at, created_run.schedule_timezone, created_run.parent_run_id, created_run.parent_owns_lifecycle, created_run.workspace_id, created_run.base_workspace_version_id, created_run.actor_start_input_sequence, created_run.actor_start_input_high_watermark, created_run.payload, created_run.payload_artifact_id, created_run.output, created_run.terminal_reason_code, created_run.error, created_run.status, created_run.state_version, created_run.current_attempt_number, created_run.current_run_lease_id, created_run.metadata, created_run.tags, created_run.queue_name, created_run.concurrency_key, created_run.queue_concurrency_limit, created_run.priority, created_run.queue_origin_at, created_run.queue_score_at, created_run.queued_expires_at, created_run.max_active_duration_ms, created_run.retry_policy, created_run.active_elapsed_ms, created_run.active_started_at, created_run.trace_id, created_run.root_span_id, created_run.claim_id, created_run.created_at, created_run.updated_at, created_run.first_lease_at, created_run.started_at, created_run.retry_at, created_run.terminal_at
+  FROM created_run
+  JOIN created_attempt ON created_attempt.run_id = created_run.id
+`
+
+type CreateAdmittedRootTaskRunParams struct {
+	ID                     pgtype.UUID        `json:"id"`
+	PublicID               string             `json:"public_id"`
+	OrgID                  pgtype.UUID        `json:"org_id"`
+	ProjectID              pgtype.UUID        `json:"project_id"`
+	EnvironmentID          pgtype.UUID        `json:"environment_id"`
+	DeploymentID           pgtype.UUID        `json:"deployment_id"`
+	DeploymentDefinitionID pgtype.UUID        `json:"deployment_definition_id"`
+	EntrypointDeclaredID   string             `json:"entrypoint_declared_id"`
+	CauseKind              string             `json:"cause_kind"`
+	ScheduleID             pgtype.UUID        `json:"schedule_id"`
+	ScheduleGeneration     pgtype.Int8        `json:"schedule_generation"`
+	ScheduledAt            pgtype.Timestamptz `json:"scheduled_at"`
+	PreviousScheduledAt    pgtype.Timestamptz `json:"previous_scheduled_at"`
+	ScheduleTimezone       pgtype.Text        `json:"schedule_timezone"`
+	WorkspaceID            pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID pgtype.UUID        `json:"base_workspace_version_id"`
+	Payload                []byte             `json:"payload"`
+	PayloadArtifactID      pgtype.UUID        `json:"payload_artifact_id"`
+	Metadata               []byte             `json:"metadata"`
+	Tags                   []string           `json:"tags"`
+	QueueName              string             `json:"queue_name"`
+	ConcurrencyKey         pgtype.Text        `json:"concurrency_key"`
+	QueueConcurrencyLimit  pgtype.Int8        `json:"queue_concurrency_limit"`
+	Priority               int32              `json:"priority"`
+	QueuedTtlMs            pgtype.Int8        `json:"queued_ttl_ms"`
+	MaxActiveDurationMs    int64              `json:"max_active_duration_ms"`
+	RetryPolicy            []byte             `json:"retry_policy"`
+	TraceID                pgtype.Text        `json:"trace_id"`
+	RootSpanID             string             `json:"root_span_id"`
+	ClaimID                pgtype.UUID        `json:"claim_id"`
+}
+
+type CreateAdmittedRootTaskRunRow struct {
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	EntrypointKind               string             `json:"entrypoint_kind"`
+	EntrypointDeclaredID         string             `json:"entrypoint_declared_id"`
+	ActorID                      pgtype.UUID        `json:"actor_id"`
+	CauseKind                    string             `json:"cause_kind"`
+	ScheduleID                   pgtype.UUID        `json:"schedule_id"`
+	ScheduleGeneration           pgtype.Int8        `json:"schedule_generation"`
+	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
+	PreviousScheduledAt          pgtype.Timestamptz `json:"previous_scheduled_at"`
+	ScheduleTimezone             pgtype.Text        `json:"schedule_timezone"`
+	ParentRunID                  pgtype.UUID        `json:"parent_run_id"`
+	ParentOwnsLifecycle          pgtype.Bool        `json:"parent_owns_lifecycle"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID       pgtype.UUID        `json:"base_workspace_version_id"`
+	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
+	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
+	Payload                      []byte             `json:"payload"`
+	PayloadArtifactID            pgtype.UUID        `json:"payload_artifact_id"`
+	Output                       []byte             `json:"output"`
+	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
+	Error                        []byte             `json:"error"`
+	Status                       RunStatus          `json:"status"`
+	StateVersion                 int64              `json:"state_version"`
+	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
+	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	QueueName                    string             `json:"queue_name"`
+	ConcurrencyKey               pgtype.Text        `json:"concurrency_key"`
+	QueueConcurrencyLimit        pgtype.Int8        `json:"queue_concurrency_limit"`
+	Priority                     int32              `json:"priority"`
+	QueueOriginAt                pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt                 pgtype.Timestamptz `json:"queue_score_at"`
+	QueuedExpiresAt              pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxActiveDurationMs          int64              `json:"max_active_duration_ms"`
+	RetryPolicy                  []byte             `json:"retry_policy"`
+	ActiveElapsedMs              int64              `json:"active_elapsed_ms"`
+	ActiveStartedAt              pgtype.Timestamptz `json:"active_started_at"`
+	TraceID                      pgtype.Text        `json:"trace_id"`
+	RootSpanID                   string             `json:"root_span_id"`
+	ClaimID                      pgtype.UUID        `json:"claim_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	FirstLeaseAt                 pgtype.Timestamptz `json:"first_lease_at"`
+	StartedAt                    pgtype.Timestamptz `json:"started_at"`
+	RetryAt                      pgtype.Timestamptz `json:"retry_at"`
+	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
+}
+
+func (q *Queries) CreateAdmittedRootTaskRun(ctx context.Context, arg CreateAdmittedRootTaskRunParams) (CreateAdmittedRootTaskRunRow, error) {
+	row := q.db.QueryRow(ctx, createAdmittedRootTaskRun,
+		arg.ID,
+		arg.PublicID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentID,
+		arg.DeploymentDefinitionID,
+		arg.EntrypointDeclaredID,
+		arg.CauseKind,
+		arg.ScheduleID,
+		arg.ScheduleGeneration,
+		arg.ScheduledAt,
+		arg.PreviousScheduledAt,
+		arg.ScheduleTimezone,
+		arg.WorkspaceID,
+		arg.BaseWorkspaceVersionID,
+		arg.Payload,
+		arg.PayloadArtifactID,
+		arg.Metadata,
+		arg.Tags,
+		arg.QueueName,
+		arg.ConcurrencyKey,
+		arg.QueueConcurrencyLimit,
+		arg.Priority,
+		arg.QueuedTtlMs,
+		arg.MaxActiveDurationMs,
+		arg.RetryPolicy,
+		arg.TraceID,
+		arg.RootSpanID,
+		arg.ClaimID,
+	)
+	var i CreateAdmittedRootTaskRunRow
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.PayloadArtifactID,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const createChildRunFromParentDeployment = `-- name: CreateChildRunFromParentDeployment :one
 WITH selected_target AS MATERIALIZED (
     SELECT definitions.environment_id,

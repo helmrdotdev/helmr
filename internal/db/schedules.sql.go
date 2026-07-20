@@ -582,6 +582,20 @@ func (q *Queries) LockClaimedSchedule(ctx context.Context, arg LockClaimedSchedu
 	return i, err
 }
 
+const lockEnvironmentForScheduleAdmission = `-- name: LockEnvironmentForScheduleAdmission :one
+SELECT current_deployment_id
+  FROM environments
+ WHERE id = $1
+ FOR SHARE
+`
+
+func (q *Queries) LockEnvironmentForScheduleAdmission(ctx context.Context, environmentID pgtype.UUID) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockEnvironmentForScheduleAdmission, environmentID)
+	var current_deployment_id pgtype.UUID
+	err := row.Scan(&current_deployment_id)
+	return current_deployment_id, err
+}
+
 const markScheduleAdmissionErrored = `-- name: MarkScheduleAdmissionErrored :one
 UPDATE schedules
    SET state = 'errored',
