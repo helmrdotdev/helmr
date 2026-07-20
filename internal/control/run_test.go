@@ -2439,6 +2439,7 @@ type fakeStore struct {
 	cancelRunErr                            error
 	cancelRunCalls                          int
 	deployment                              db.Deployment
+	deploymentDefinitions                   []db.DeploymentDefinition
 	currentDeploymentTaskSecretDeclarations []byte
 	currentDeploymentMissing                bool
 	archivedTask                            bool

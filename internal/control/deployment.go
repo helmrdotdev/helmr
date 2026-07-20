@@ -35,7 +35,7 @@ type deploymentStore interface {
 type currentDeploymentStore interface {
 	GetCurrentDeployment(context.Context, db.GetCurrentDeploymentParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
+	ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
 }
 
 type deploymentStatusStore interface {
@@ -45,7 +45,7 @@ type deploymentStatusStore interface {
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.Deployment, error)
 	ListDeploymentsByVersionForOrg(context.Context, db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error)
-	ListDeploymentTasks(context.Context, db.ListDeploymentTasksParams) ([]db.DeploymentTask, error)
+	ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
 	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 }
 
@@ -110,7 +110,11 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 			writeError(w, errors.New("list deployments"))
 			return
 		}
-		item.Tasks = []api.DeploymentTaskResponse{}
+		if err := populateDeploymentDeclarations(r.Context(), store, row, &item); err != nil {
+			s.log.Error("list deployment declarations failed", "deployment_id", pgvalue.MustUUIDValue(row.ID).String(), "error", err)
+			writeError(w, errors.New("list deployments"))
+			return
+		}
 		response = append(response, item)
 	}
 	writeJSON(w, http.StatusOK, api.ListDeploymentsResponse{Deployments: response})
@@ -194,27 +198,10 @@ func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get deployment"))
 		return
 	}
-	response.Tasks = []api.DeploymentTaskResponse{}
-	if deployment.Status == db.DeploymentStatusDeployed {
-		tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
-			OrgID:         pgvalue.UUID(actor.OrgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			DeploymentID:  deployment.ID,
-		})
-		if err != nil {
-			s.log.Error("list deployment tasks failed", "deployment_id", deploymentID.String(), "error", err)
-			writeError(w, errors.New("list deployment tasks"))
-			return
-		}
-		response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
-		taskResponses, err := deploymentTaskResponses(r.Context(), store, tasks)
-		if err != nil {
-			s.log.Error("get deployment task artifacts failed", "deployment_id", deploymentID.String(), "error", err)
-			writeError(w, errors.New("list deployment tasks"))
-			return
-		}
-		response.Tasks = taskResponses
+	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
+		s.log.Error("list deployment declarations failed", "deployment_id", deploymentID.String(), "error", err)
+		writeError(w, errors.New("get deployment"))
+		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
@@ -259,31 +246,17 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
-	tasks, err := store.ListDeploymentTasks(r.Context(), db.ListDeploymentTasksParams{
-		OrgID:         pgvalue.UUID(actor.OrgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		DeploymentID:  deployment.ID,
-	})
-	if err != nil {
-		s.log.Error("list deployment tasks failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
-		writeError(w, errors.New("list deployment tasks"))
-		return
-	}
 	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
 	if err != nil {
 		s.log.Error("get current deployment artifacts failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
 		writeError(w, errors.New("get current deployment"))
 		return
 	}
-	response.Tasks = make([]api.DeploymentTaskResponse, 0, len(tasks))
-	taskResponses, err := deploymentTaskResponses(r.Context(), store, tasks)
-	if err != nil {
-		s.log.Error("get current deployment task artifacts failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
-		writeError(w, errors.New("list deployment tasks"))
+	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
+		s.log.Error("list current deployment declarations failed", "deployment_id", pgvalue.MustUUIDValue(deployment.ID).String(), "error", err)
+		writeError(w, errors.New("get current deployment"))
 		return
 	}
-	response.Tasks = taskResponses
 	writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{Deployment: &response})
 }
 
@@ -356,6 +329,17 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		PromotedByPrincipal: principal,
 		Reason:              strings.TrimSpace(request.Reason),
 	}
+	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
+	if err != nil {
+		s.log.Error("get promotion deployment artifacts failed", "deployment", deploymentRef, "error", err)
+		writeError(w, errors.New("promote deployment"))
+		return
+	}
+	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
+		s.log.Error("list promotion deployment declarations failed", "deployment", deploymentRef, "error", err)
+		writeError(w, errors.New("promote deployment"))
+		return
+	}
 	promoteStore := interface {
 		PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
 	}(store)
@@ -384,12 +368,6 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		writeError(w, err)
-		return
-	}
-	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
-	if err != nil {
-		s.log.Error("get promoted deployment artifacts failed", "deployment", deploymentRef, "error", err)
-		writeError(w, errors.New("promote deployment"))
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
@@ -629,29 +607,72 @@ func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, o
 	})
 }
 
-func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact, buildManifestDigest string, deploymentManifestDigest string) api.DeploymentResponse {
+func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) api.DeploymentResponse {
 	return api.DeploymentResponse{
-		ID:                       pgvalue.MustUUIDValue(deployment.ID).String(),
-		Version:                  deployment.Version,
-		APIVersion:               deployment.ApiVersion,
-		SDKVersion:               deployment.SdkVersion,
-		CLIVersion:               deployment.CliVersion,
-		BundleFormatVersion:      deployment.BundleFormatVersion,
-		WorkerProtocolVersion:    deployment.WorkerProtocolVersion,
-		ProjectID:                pgvalue.MustUUIDValue(deployment.ProjectID).String(),
-		EnvironmentID:            pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
-		ContentHash:              deployment.ContentHash,
-		DeploymentSource:         artifact,
-		BuildManifestDigest:      buildManifestDigest,
-		DeploymentManifestDigest: deploymentManifestDigest,
-		Status:                   string(deployment.Status),
-		Error:                    deploymentErrorResponse(deployment.Failure),
-		CreatedAt:                pgvalue.Time(deployment.CreatedAt),
-		BuildingAt:               pgvalue.Time(deployment.BuildingAt),
-		BuiltAt:                  pgvalue.Time(deployment.BuiltAt),
-		DeployedAt:               pgvalue.Time(deployment.DeployedAt),
-		FailedAt:                 pgvalue.Time(deployment.FailedAt),
+		ID:                    pgvalue.MustUUIDValue(deployment.ID).String(),
+		Version:               deployment.Version,
+		APIVersion:            deployment.ApiVersion,
+		SDKVersion:            deployment.SdkVersion,
+		CLIVersion:            deployment.CliVersion,
+		BundleFormatVersion:   deployment.BundleFormatVersion,
+		WorkerProtocolVersion: deployment.WorkerProtocolVersion,
+		ProjectID:             pgvalue.MustUUIDValue(deployment.ProjectID).String(),
+		EnvironmentID:         pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
+		ContentHash:           deployment.ContentHash,
+		DeploymentSource:      artifact,
+		Status:                string(deployment.Status),
+		Error:                 deploymentErrorResponse(deployment.Failure),
+		Tasks:                 []string{},
+		Actors:                []string{},
+		Workspaces:            []string{},
+		RunStreams:            []string{},
+		CreatedAt:             pgvalue.Time(deployment.CreatedAt),
+		BuildingAt:            pgvalue.Time(deployment.BuildingAt),
+		BuiltAt:               pgvalue.Time(deployment.BuiltAt),
+		DeployedAt:            pgvalue.Time(deployment.DeployedAt),
+		FailedAt:              pgvalue.Time(deployment.FailedAt),
 	}
+}
+
+func populateDeploymentDeclarations(
+	ctx context.Context,
+	store interface {
+		ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
+	},
+	record db.Deployment,
+	response *api.DeploymentResponse,
+) error {
+	if response == nil {
+		return errors.New("deployment response is required")
+	}
+	if record.Status != db.DeploymentStatusDeployed {
+		return nil
+	}
+	rows, err := store.ListDeploymentDefinitionsForDeployment(
+		ctx,
+		db.ListDeploymentDefinitionsForDeploymentParams{
+			EnvironmentID: record.EnvironmentID,
+			DeploymentID:  record.ID,
+		},
+	)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		switch row.Kind {
+		case string(deployment.DefinitionKindTask):
+			response.Tasks = append(response.Tasks, row.DeclaredID)
+		case string(deployment.DefinitionKindActor):
+			response.Actors = append(response.Actors, row.DeclaredID)
+		case string(deployment.DefinitionKindWorkspace):
+			response.Workspaces = append(response.Workspaces, row.DeclaredID)
+		case string(deployment.DefinitionKindRunStream):
+			response.RunStreams = append(response.RunStreams, row.DeclaredID)
+		default:
+			return fmt.Errorf("deployment definition kind %q is unsupported", row.Kind)
+		}
+	}
+	return nil
 }
 
 func deploymentErrorResponse(raw []byte) *api.DeploymentErrorResponse {

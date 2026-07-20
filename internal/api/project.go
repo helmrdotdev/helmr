@@ -84,27 +84,28 @@ type GetDeploymentRequest struct {
 }
 
 type DeploymentResponse struct {
-	ID                       string                   `json:"id"`
-	Version                  string                   `json:"version"`
-	APIVersion               string                   `json:"api_version"`
-	SDKVersion               string                   `json:"sdk_version,omitempty"`
-	CLIVersion               string                   `json:"cli_version,omitempty"`
-	BundleFormatVersion      int32                    `json:"bundle_format_version"`
-	WorkerProtocolVersion    string                   `json:"worker_protocol_version"`
-	ProjectID                string                   `json:"project_id"`
-	EnvironmentID            string                   `json:"environment_id"`
-	ContentHash              string                   `json:"content_hash"`
-	DeploymentSource         DeploymentSourceArtifact `json:"deployment_source"`
-	BuildManifestDigest      string                   `json:"build_manifest_digest,omitempty"`
-	DeploymentManifestDigest string                   `json:"deployment_manifest_digest,omitempty"`
-	Status                   string                   `json:"status"`
-	Error                    *DeploymentErrorResponse `json:"error,omitempty"`
-	Tasks                    []DeploymentTaskResponse `json:"tasks"`
-	CreatedAt                time.Time                `json:"created_at"`
-	BuildingAt               time.Time                `json:"building_at"`
-	BuiltAt                  time.Time                `json:"built_at"`
-	DeployedAt               time.Time                `json:"deployed_at"`
-	FailedAt                 time.Time                `json:"failed_at"`
+	ID                    string                   `json:"id"`
+	Version               string                   `json:"version"`
+	APIVersion            string                   `json:"api_version"`
+	SDKVersion            string                   `json:"sdk_version,omitempty"`
+	CLIVersion            string                   `json:"cli_version,omitempty"`
+	BundleFormatVersion   int32                    `json:"bundle_format_version"`
+	WorkerProtocolVersion string                   `json:"worker_protocol_version"`
+	ProjectID             string                   `json:"project_id"`
+	EnvironmentID         string                   `json:"environment_id"`
+	ContentHash           string                   `json:"content_hash"`
+	DeploymentSource      DeploymentSourceArtifact `json:"deployment_source"`
+	Status                string                   `json:"status"`
+	Error                 *DeploymentErrorResponse `json:"error,omitempty"`
+	Tasks                 []string                 `json:"tasks"`
+	Actors                []string                 `json:"actors"`
+	Workspaces            []string                 `json:"workspaces"`
+	RunStreams            []string                 `json:"run_streams"`
+	CreatedAt             time.Time                `json:"created_at"`
+	BuildingAt            time.Time                `json:"building_at"`
+	BuiltAt               time.Time                `json:"built_at"`
+	DeployedAt            time.Time                `json:"deployed_at"`
+	FailedAt              time.Time                `json:"failed_at"`
 }
 
 type PromoteDeploymentRequest struct {

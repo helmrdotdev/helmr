@@ -346,12 +346,6 @@ type artifactLister interface {
 
 func deploymentResponseWithArtifacts(ctx context.Context, store artifactLister, deployment db.Deployment) (api.DeploymentResponse, error) {
 	idsToResolve := []pgtype.UUID{deployment.DeploymentSourceArtifactID}
-	if deployment.BuildManifestArtifactID.Valid {
-		idsToResolve = append(idsToResolve, deployment.BuildManifestArtifactID)
-	}
-	if deployment.DeploymentManifestArtifactID.Valid {
-		idsToResolve = append(idsToResolve, deployment.DeploymentManifestArtifactID)
-	}
 	artifacts, err := scopedArtifactsByID(ctx, store, deployment.OrgID, deployment.ProjectID, deployment.EnvironmentID, idsToResolve)
 	if err != nil {
 		return api.DeploymentResponse{}, err
@@ -360,15 +354,7 @@ func deploymentResponseWithArtifacts(ctx context.Context, store artifactLister, 
 	if err != nil {
 		return api.DeploymentResponse{}, err
 	}
-	buildManifestDigest, err := optionalDeploymentArtifactDigest(artifacts, deployment.BuildManifestArtifactID)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	deploymentManifestDigest, err := optionalDeploymentArtifactDigest(artifacts, deployment.DeploymentManifestArtifactID)
-	if err != nil {
-		return api.DeploymentResponse{}, err
-	}
-	return deploymentResponse(deployment, sourceArtifact, buildManifestDigest, deploymentManifestDigest), nil
+	return deploymentResponse(deployment, sourceArtifact), nil
 }
 
 func deploymentSourceArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (api.DeploymentSourceArtifact, error) {
@@ -381,17 +367,6 @@ func deploymentSourceArtifact(artifacts map[pgtype.UUID]db.Artifact, artifactID 
 		SizeBytes: artifact.SizeBytes,
 		MediaType: artifact.MediaType,
 	}, nil
-}
-
-func optionalDeploymentArtifactDigest(artifacts map[pgtype.UUID]db.Artifact, artifactID pgtype.UUID) (string, error) {
-	if !artifactID.Valid {
-		return "", nil
-	}
-	artifact, err := requiredArtifact(artifacts, artifactID)
-	if err != nil {
-		return "", err
-	}
-	return artifact.Digest, nil
 }
 
 func scopedArtifactsByID(ctx context.Context, store artifactLister, orgID pgtype.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, artifactIDs []pgtype.UUID) (map[pgtype.UUID]db.Artifact, error) {

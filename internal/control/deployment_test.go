@@ -18,7 +18,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/cas"
-	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/deployment"
@@ -93,58 +92,6 @@ func testBuildPolicy() *deployment.BuildPolicy {
 		panic(err)
 	}
 	return policy
-}
-
-func TestDeploymentSandboxContractFingerprintCanonicalizesNetworkLists(t *testing.T) {
-	first := deploymentSandboxContractFingerprintInput{
-		RootfsDigest:       "sha256:" + strings.Repeat("a", 64),
-		RuntimeABI:         "helmr.runtime.v1",
-		GuestdABI:          currentGuestdABI,
-		AdapterABI:         currentAdapterABI,
-		WorkspaceMountPath: "/workspace",
-		NetworkPolicy:      compute.NetworkPolicy{Internet: true, Allow: []string{"b.example", "a.example"}},
-		FilesystemFormat:   "tar",
-		ContractVersion:    1,
-	}
-	second := first
-	second.NetworkPolicy.Allow = []string{"a.example", "b.example"}
-
-	firstFingerprint, err := deploymentSandboxContractFingerprint(first)
-	if err != nil {
-		t.Fatal(err)
-	}
-	secondFingerprint, err := deploymentSandboxContractFingerprint(second)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if firstFingerprint != secondFingerprint {
-		t.Fatalf("network list order changed fingerprint: %s != %s", firstFingerprint, secondFingerprint)
-	}
-}
-
-func TestDeploymentSandboxContractFingerprintChangesForContractFields(t *testing.T) {
-	base := deploymentSandboxContractFingerprintInput{
-		RootfsDigest:       "sha256:" + strings.Repeat("a", 64),
-		RuntimeABI:         "helmr.runtime.v1",
-		GuestdABI:          currentGuestdABI,
-		AdapterABI:         currentAdapterABI,
-		WorkspaceMountPath: "/workspace",
-		NetworkPolicy:      compute.NetworkPolicy{Internet: true},
-		FilesystemFormat:   "tar",
-		ContractVersion:    1,
-	}
-	first, err := deploymentSandboxContractFingerprint(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	base.RootfsDigest = "sha256:" + strings.Repeat("b", 64)
-	second, err := deploymentSandboxContractFingerprint(base)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first == second {
-		t.Fatalf("rootfs digest did not change fingerprint: %s", first)
-	}
 }
 
 func TestCreateDeploymentQueuesDeploymentSourceForBuild(t *testing.T) {
@@ -551,18 +498,14 @@ func TestGetCurrentDeploymentReturnsDeploymentSnapshot(t *testing.T) {
 			CreatedAt:                  testTime(),
 			DeployedAt:                 testTime(),
 		},
-		deploymentTasks: []db.DeploymentTask{
+		deploymentDefinitions: []db.DeploymentDefinition{
 			{
-				ID:               testDeploymentTaskID(),
-				OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-				ProjectID:        testProjectID(),
-				EnvironmentID:    testEnvironmentID(),
-				DeploymentID:     testDeploymentID(),
-				BundleArtifactID: testArtifactID(),
-				TaskID:           "review-pr",
-				FilePath:         "tasks/review-pr.ts",
-				ExportName:       "reviewPr",
-				CreatedAt:        testTime(),
+				ID:            testDeploymentTaskID(),
+				EnvironmentID: testEnvironmentID(),
+				DeploymentID:  testDeploymentID(),
+				Kind:          string(deployment.DefinitionKindTask),
+				DeclaredID:    "review-pr",
+				CreatedAt:     testTime(),
 			},
 		},
 	}
@@ -585,7 +528,7 @@ func TestGetCurrentDeploymentReturnsDeploymentSnapshot(t *testing.T) {
 	if response.Deployment.DeploymentSource.Digest != digest {
 		t.Fatalf("deployment source = %+v", response.Deployment.DeploymentSource)
 	}
-	if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0].TaskID != "review-pr" {
+	if len(response.Deployment.Tasks) != 1 || response.Deployment.Tasks[0] != "review-pr" {
 		t.Fatalf("tasks = %+v", response.Deployment.Tasks)
 	}
 }
@@ -695,41 +638,25 @@ func TestGetDeploymentAllowsDeployPermission(t *testing.T) {
 
 func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	sourceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	bundleArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	buildManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
-	deploymentManifestArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
 	store := &fakeStore{
 		deployment: db.Deployment{
-			ID:                           testDeploymentID(),
-			OrgID:                        pgvalue.UUID(dbtest.DefaultOrgID),
-			ProjectID:                    testProjectID(),
-			EnvironmentID:                testEnvironmentID(),
-			DeploymentSourceArtifactID:   sourceArtifactID,
-			BuildManifestArtifactID:      buildManifestArtifactID,
-			DeploymentManifestArtifactID: deploymentManifestArtifactID,
-			Status:                       db.DeploymentStatusDeployed,
-			CreatedAt:                    testTime(),
-			DeployedAt:                   testTime(),
+			ID:                         testDeploymentID(),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			DeploymentSourceArtifactID: sourceArtifactID,
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			DeployedAt:                 testTime(),
 		},
-		deploymentTasks: []db.DeploymentTask{
-			{
-				ID:               testDeploymentTaskID(),
-				OrgID:            pgvalue.UUID(dbtest.DefaultOrgID),
-				ProjectID:        testProjectID(),
-				EnvironmentID:    testEnvironmentID(),
-				DeploymentID:     testDeploymentID(),
-				BundleArtifactID: bundleArtifactID,
-				TaskID:           "deploy",
-				FilePath:         "tasks/deploy.ts",
-				ExportName:       "deploy",
-				CreatedAt:        testTime(),
-			},
+		deploymentDefinitions: []db.DeploymentDefinition{
+			{Kind: string(deployment.DefinitionKindTask), DeclaredID: "deploy"},
+			{Kind: string(deployment.DefinitionKindActor), DeclaredID: "assistant"},
+			{Kind: string(deployment.DefinitionKindWorkspace), DeclaredID: "repo"},
+			{Kind: string(deployment.DefinitionKindRunStream), DeclaredID: "progress"},
 		},
 		artifacts: []db.Artifact{
 			testScopedArtifact(sourceArtifactID, db.ArtifactKindDeploymentSource, "sha256:"+strings.Repeat("b", 64), api.DeploymentSourceArtifactMediaType),
-			testScopedArtifact(bundleArtifactID, db.ArtifactKindTaskBundle, "sha256:"+strings.Repeat("c", 64), api.TaskBundleArtifactMediaType),
-			testScopedArtifact(buildManifestArtifactID, db.ArtifactKindBuildManifest, "sha256:"+strings.Repeat("d", 64), api.BuildManifestArtifactMediaType),
-			testScopedArtifact(deploymentManifestArtifactID, db.ArtifactKindDeploymentManifest, "sha256:"+strings.Repeat("e", 64), api.DeploymentManifestArtifactMediaType),
 		},
 	}
 	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -745,14 +672,49 @@ func TestGetDeploymentReturnsTasksWhenDeployed(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if len(response.Tasks) != 1 || response.Tasks[0].TaskID != "deploy" {
+	if len(response.Tasks) != 1 || response.Tasks[0] != "deploy" {
 		t.Fatalf("tasks = %+v", response.Tasks)
 	}
-	if response.BuildManifestDigest != "sha256:"+strings.Repeat("d", 64) || response.DeploymentManifestDigest != "sha256:"+strings.Repeat("e", 64) {
-		t.Fatalf("manifest digests = %q %q", response.BuildManifestDigest, response.DeploymentManifestDigest)
+	if len(response.Actors) != 1 || response.Actors[0] != "assistant" ||
+		len(response.Workspaces) != 1 || response.Workspaces[0] != "repo" ||
+		len(response.RunStreams) != 1 || response.RunStreams[0] != "progress" {
+		t.Fatalf(
+			"declarations = actors:%v workspaces:%v runStreams:%v",
+			response.Actors,
+			response.Workspaces,
+			response.RunStreams,
+		)
 	}
-	if response.Tasks[0].BundleDigest != "sha256:"+strings.Repeat("c", 64) {
-		t.Fatalf("task bundle digest = %q", response.Tasks[0].BundleDigest)
+}
+
+func TestGetDeploymentRejectsUnknownDefinitionKind(t *testing.T) {
+	sourceArtifactID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store := &fakeStore{
+		deployment: db.Deployment{
+			ID:                         testDeploymentID(),
+			OrgID:                      pgvalue.UUID(dbtest.DefaultOrgID),
+			ProjectID:                  testProjectID(),
+			EnvironmentID:              testEnvironmentID(),
+			DeploymentSourceArtifactID: sourceArtifactID,
+			Status:                     db.DeploymentStatusDeployed,
+			CreatedAt:                  testTime(),
+			DeployedAt:                 testTime(),
+		},
+		deploymentDefinitions: []db.DeploymentDefinition{
+			{Kind: "unknown", DeclaredID: "unsupported"},
+		},
+		artifacts: []db.Artifact{
+			testScopedArtifact(sourceArtifactID, db.ArtifactKindDeploymentSource, "sha256:"+strings.Repeat("b", 64), api.DeploymentSourceArtifactMediaType),
+		},
+	}
+	server := &Server{db: store, workerGroupID: "us-east-1-worker-group-1", defaultRegionID: "us-east-1", log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	req := deploymentStatusRequest(testDeploymentID())
+	rec := httptest.NewRecorder()
+
+	server.getDeployment(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -932,20 +894,18 @@ func (f *fakeStore) GetCurrentDeployment(_ context.Context, arg db.GetCurrentDep
 		return db.Deployment{}, pgx.ErrNoRows
 	}
 	return db.Deployment{
-		ID:                           f.deployment.ID,
-		OrgID:                        f.deployment.OrgID,
-		ProjectID:                    f.deployment.ProjectID,
-		EnvironmentID:                f.deployment.EnvironmentID,
-		DeploymentSourceArtifactID:   f.deployment.DeploymentSourceArtifactID,
-		BuildManifestArtifactID:      f.deployment.BuildManifestArtifactID,
-		DeploymentManifestArtifactID: f.deployment.DeploymentManifestArtifactID,
-		Status:                       f.deployment.Status,
-		Failure:                      f.deployment.Failure,
-		CreatedAt:                    f.deployment.CreatedAt,
-		BuildingAt:                   f.deployment.BuildingAt,
-		BuiltAt:                      f.deployment.BuiltAt,
-		DeployedAt:                   f.deployment.DeployedAt,
-		FailedAt:                     f.deployment.FailedAt,
+		ID:                         f.deployment.ID,
+		OrgID:                      f.deployment.OrgID,
+		ProjectID:                  f.deployment.ProjectID,
+		EnvironmentID:              f.deployment.EnvironmentID,
+		DeploymentSourceArtifactID: f.deployment.DeploymentSourceArtifactID,
+		Status:                     f.deployment.Status,
+		Failure:                    f.deployment.Failure,
+		CreatedAt:                  f.deployment.CreatedAt,
+		BuildingAt:                 f.deployment.BuildingAt,
+		BuiltAt:                    f.deployment.BuiltAt,
+		DeployedAt:                 f.deployment.DeployedAt,
+		FailedAt:                   f.deployment.FailedAt,
 	}, nil
 }
 
@@ -965,6 +925,13 @@ func (f *fakeStore) ListDeploymentTasks(_ context.Context, arg db.ListDeployment
 		}
 	}
 	return tasks, nil
+}
+
+func (f *fakeStore) ListDeploymentDefinitionsForDeployment(
+	_ context.Context,
+	_ db.ListDeploymentDefinitionsForDeploymentParams,
+) ([]db.DeploymentDefinition, error) {
+	return append([]db.DeploymentDefinition(nil), f.deploymentDefinitions...), nil
 }
 
 func (f *fakeStore) ListDeclarativeScheduleSummariesForEnvironment(context.Context, db.ListDeclarativeScheduleSummariesForEnvironmentParams) ([]db.ListDeclarativeScheduleSummariesForEnvironmentRow, error) {
