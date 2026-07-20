@@ -64,12 +64,6 @@ WITH target AS MATERIALIZED (
               AND workspace_leases.state IN ('active', 'releasing')
        )
        AND NOT EXISTS (
-           SELECT 1 FROM workspace_process_operations
-            WHERE workspace_process_operations.claimed_by_worker_instance_id = target.id
-              AND workspace_process_operations.claimed_worker_epoch = target.current_epoch
-              AND workspace_process_operations.state IN ('claimed', 'running')
-       )
-       AND NOT EXISTS (
            SELECT 1 FROM workspace_processes
             WHERE workspace_processes.worker_instance_id = target.id
               AND workspace_processes.worker_epoch = target.current_epoch

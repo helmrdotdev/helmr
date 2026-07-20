@@ -3,7 +3,7 @@ SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
        workspaces.region_id,
-       runs.queue_class,
+       runs.concurrency_key,
        runs.queue_name
   FROM runs
   JOIN workspaces
@@ -14,15 +14,14 @@ SELECT runs.org_id,
   JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
  WHERE runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
+          runs.concurrency_key, runs.queue_name
  ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
               runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-              runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text),
+              coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text),
           runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
+          runs.concurrency_key, runs.queue_name
  LIMIT sqlc.arg(row_limit)
 OFFSET sqlc.arg(row_offset);
 
@@ -167,10 +166,6 @@ SELECT worker_instances.*,
          WHERE workspace_mounts.worker_instance_id = worker_instances.id
            AND workspace_mounts.worker_epoch = worker_instances.current_epoch
            AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')) +
-        (SELECT count(*) FROM workspace_process_operations
-         WHERE workspace_process_operations.claimed_by_worker_instance_id = worker_instances.id
-           AND workspace_process_operations.claimed_worker_epoch = worker_instances.current_epoch
-           AND workspace_process_operations.state IN ('claimed', 'running')) +
         (SELECT count(*) FROM runtime_instances
          WHERE runtime_instances.worker_instance_id = worker_instances.id
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
@@ -318,36 +313,34 @@ SELECT runs.*, workspaces.region_id
    AND runs.id = sqlc.arg(run_id)
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  FOR UPDATE OF runs;
 
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-           runs.queue_class, runs.queue_name,
+           runs.concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-               runs.queue_class || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
+               coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || sqlc.arg(scan_seed)::text) AS sort_key
       FROM runs
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-       AND runs.queue_timestamp <= now()
-       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-              runs.queue_class, runs.queue_name
+              runs.concurrency_key, runs.queue_name
 )
 SELECT * FROM candidate_scopes
  WHERE sqlc.arg(after_sort_key)::text = ''
-    OR (sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name)
+    OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > (sqlc.arg(after_sort_key)::text, sqlc.arg(after_org_id)::uuid,
           sqlc.arg(after_project_id)::uuid, sqlc.arg(after_environment_id)::uuid,
           sqlc.arg(after_region_id)::text, sqlc.arg(after_queue_class)::text,
           sqlc.arg(after_queue_name)::text)
- ORDER BY sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name
+ ORDER BY sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name
  LIMIT sqlc.arg(row_limit);
 
 -- name: ListQueuedRunDispatchCandidatesForScope :many
@@ -361,12 +354,11 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND runs.project_id = sqlc.arg(project_id)
    AND runs.environment_id = sqlc.arg(environment_id)
    AND workspaces.region_id = sqlc.arg(region_id)
-   AND runs.queue_class = sqlc.arg(queue_class)
+   AND runs.concurrency_key IS NOT DISTINCT FROM sqlc.narg(concurrency_key)::text
    AND runs.queue_name = sqlc.arg(queue_name)
    AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- ORDER BY runs.priority DESC, runs.queue_timestamp, runs.id
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+ ORDER BY runs.queue_score_at, runs.id
  LIMIT sqlc.arg(row_limit);
 
 -- name: CompleteRunDispatch :one
@@ -375,25 +367,16 @@ SELECT * FROM runs WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(run_id);
 -- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
-       SET status = 'failed', execution_status = 'finished', terminal_outcome = 'dead_lettered',
+       SET status = 'system_failed',
            current_run_lease_id = NULL, state_version = state_version + 1,
-           error_message = sqlc.arg(last_error), finished_at = COALESCE(finished_at, now()),
+           terminal_reason_code = 'dispatch_dead_lettered',
+           error = jsonb_build_object('message', sqlc.arg(last_error)::text),
+           terminal_at = COALESCE(terminal_at, now()),
            updated_at = now()
      WHERE runs.org_id = sqlc.arg(org_id) AND runs.id = sqlc.arg(run_id)
        AND runs.status = 'queued' AND runs.state_version = sqlc.arg(expected_run_state_version)
     RETURNING *
-), snapshot AS (
-    INSERT INTO run_state_snapshots
-        (org_id, run_id, version, status, execution_status, terminal_outcome,
-         attempt_number, previous_version, transition, reason, error)
-    SELECT terminalized.org_id, terminalized.id, terminalized.state_version,
-           terminalized.status, terminalized.execution_status, terminalized.terminal_outcome,
-           terminalized.current_attempt_number, terminalized.state_version - 1, 'run.dead_lettered',
-           jsonb_build_object('message', sqlc.arg(last_error)::text),
-           jsonb_build_object('message', sqlc.arg(last_error)::text)
-      FROM terminalized
-    RETURNING run_id
 )
 SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
        terminalized.environment_id, terminalized.state_version
-  FROM terminalized JOIN snapshot ON snapshot.run_id = terminalized.id;
+  FROM terminalized;

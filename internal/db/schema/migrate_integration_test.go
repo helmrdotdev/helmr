@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -85,6 +86,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertWorkerSchema(t, dbctx, pool)
 	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
+	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -107,6 +109,153 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 		t.Fatal("runs table was not recreated after down migration")
 	}
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
+	assertWorkspaceVersionAuthority(t, dbctx, pool)
+}
+
+func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	var states []string
+	if err := pool.QueryRow(ctx, `
+		SELECT array_agg(enumlabel ORDER BY enumsortorder)
+		  FROM pg_enum
+		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+		 WHERE pg_type.typname = 'workspace_version_state'
+	`).Scan(&states); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(states, ","), "private,committed,discarded"; got != want {
+		t.Fatalf("workspace version states = %q, want %q", got, want)
+	}
+	var authorityColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_versions'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"parent_version_id",
+		"artifact_id",
+		"artifact_kind",
+		"content_digest",
+		"entry_count",
+		"source_workspace_lease_id",
+		"ownership_generation",
+		"writer_generation",
+		"published_at",
+		"discarded_at",
+	}).Scan(&authorityColumns); err != nil {
+		t.Fatal(err)
+	}
+	if authorityColumns != 10 {
+		t.Fatalf("workspace version authority columns = %d, want 10", authorityColumns)
+	}
+	var legacyColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_versions'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"source_workspace_mount_id",
+		"source_write_lease_id",
+		"produced_by_run_id",
+		"artifact_encoding",
+		"artifact_entry_count",
+		"message",
+		"error",
+		"promoted_at",
+	}).Scan(&legacyColumns); err != nil {
+		t.Fatal(err)
+	}
+	if legacyColumns != 0 {
+		t.Fatalf("legacy workspace version columns = %d, want 0", legacyColumns)
+	}
+	var emptyTreeCheck bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_constraint
+			 WHERE conrelid = 'workspace_versions'::regclass
+			   AND contype = 'c'
+			   AND pg_get_constraintdef(oid) LIKE '%' || $1 || '%'
+		)
+	`, workspace.CanonicalEmptyTreeDigest).Scan(&emptyTreeCheck); err != nil {
+		t.Fatal(err)
+	}
+	if !emptyTreeCheck {
+		t.Fatal("workspace generation zero does not pin the canonical empty tree digest")
+	}
+	var oneRoot bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_indexes
+			 WHERE schemaname = 'public'
+			   AND tablename = 'workspace_versions'
+			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
+			   AND indexdef LIKE '%(workspace_id)%'
+			   AND indexdef LIKE '%WHERE (parent_version_id IS NULL)%'
+		)
+	`).Scan(&oneRoot); err != nil {
+		t.Fatal(err)
+	}
+	if !oneRoot {
+		t.Fatal("workspace versions do not enforce one generation-zero root")
+	}
+	var fencedSource bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_constraint
+			 WHERE conrelid = 'workspace_versions'::regclass
+			   AND contype = 'f'
+			   AND pg_get_constraintdef(oid) LIKE '%source_workspace_lease_id, ownership_generation, writer_generation%'
+		)
+	`).Scan(&fencedSource); err != nil {
+		t.Fatal(err)
+	}
+	if !fencedSource {
+		t.Fatal("workspace versions do not bind their source lease and writer fence")
+	}
+	var artifactKindBinding bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			  FROM pg_constraint
+			 WHERE conrelid = 'workspace_versions'::regclass
+			   AND contype = 'f'
+			   AND pg_get_constraintdef(oid) LIKE '%artifact_id, artifact_kind%'
+		)
+	`).Scan(&artifactKindBinding); err != nil {
+		t.Fatal(err)
+	}
+	if !artifactKindBinding {
+		t.Fatal("workspace versions do not bind their artifact kind")
+	}
+	var mountProjectionColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_mounts'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"image_artifact_id",
+		"rootfs_digest",
+		"workspace_artifact_id",
+		"workspace_artifact_digest",
+		"workspace_mount_path",
+		"runtime_abi",
+		"guestd_abi",
+		"adapter_abi",
+	}).Scan(&mountProjectionColumns); err != nil {
+		t.Fatal(err)
+	}
+	if mountProjectionColumns != 0 {
+		t.Fatalf("workspace mount copied projections = %d, want 0", mountProjectionColumns)
+	}
 }
 
 func assertDeploymentBuildCapacitySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -766,7 +915,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"network_slots_runtime_active_uidx",
 		"workspace_mounts_workspace_active_uidx",
 		"workspace_mounts_runtime_active_uidx",
-		"workspace_leases_workspace_write_active_uidx",
+		"workspace_leases_workspace_active_uidx",
 		"run_waits_active_run_uidx",
 	}
 	var indexCount int

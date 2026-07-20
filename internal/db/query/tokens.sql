@@ -141,27 +141,18 @@ selected_token AS (
      WHERE NOT EXISTS (SELECT 1 FROM completed)
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'completed',
-           result = COALESCE(selected_token.completion_data, 'null'::jsonb),
-           completed_at = COALESCE(selected_token.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'completed',
+           condition_result = COALESCE(selected_token.completion_data, 'null'::jsonb),
+           condition_terminal_at = COALESCE(selected_token.completed_at, now()),
            updated_at = now()
       FROM selected_token
-     WHERE waits.org_id = selected_token.org_id
-       AND waits.project_id = selected_token.project_id
-       AND waits.environment_id = selected_token.environment_id
-       AND waits.token_id = selected_token.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
+     WHERE run_waits.environment_id = selected_token.environment_id
+       AND run_waits.token_id = selected_token.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
        AND selected_token.state = 'completed'
-    RETURNING waits.id, waits.org_id
-),
-resolved_wait AS (
-    SELECT run_waits.id
-      FROM matched_wait
-      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
-                    AND run_waits.wait_id = matched_wait.id
-     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id
 )
 SELECT selected_token.*,
        (
@@ -173,7 +164,7 @@ SELECT selected_token.*,
            AND selected_token.completion_fingerprint <> COALESCE(sqlc.arg(completion_fingerprint)::text, '')
        )::boolean AS completion_conflict,
        selected_token.is_expired AS completion_expired,
-       (SELECT count(*) FROM resolved_wait)::bigint AS resolved_wait_count
+       (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
   FROM selected_token;
 
 -- name: CancelToken :one
@@ -191,27 +182,19 @@ WITH cancelled AS (
     RETURNING tokens.*
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'cancelled',
-           completed_at = COALESCE(waits.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'cancelled',
+           condition_terminal_at = now(),
+           condition_reason_code = 'token_cancelled',
            updated_at = now()
      FROM cancelled
-     WHERE waits.org_id = cancelled.org_id
-       AND waits.project_id = cancelled.project_id
-       AND waits.environment_id = cancelled.environment_id
-       AND waits.token_id = cancelled.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
-    RETURNING waits.id, waits.org_id
-),
-resolved_cancelled_wait AS (
-    SELECT run_waits.id
-      FROM matched_wait
-      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
-                    AND run_waits.wait_id = matched_wait.id
-     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     WHERE run_waits.environment_id = cancelled.environment_id
+       AND run_waits.token_id = cancelled.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
+    RETURNING run_waits.id
 )
-SELECT cancelled.*, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
+SELECT cancelled.*, (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
   FROM cancelled;
 
 -- name: ExpireDueTokens :many
@@ -226,19 +209,19 @@ WITH expired AS (
     RETURNING tokens.*
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'expired',
-           completed_at = COALESCE(waits.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'failed',
+           condition_terminal_at = now(),
+           condition_reason_code = 'token_expired',
            updated_at = now()
       FROM expired
-     WHERE waits.org_id = expired.org_id
-       AND waits.project_id = expired.project_id
-       AND waits.environment_id = expired.environment_id
-       AND waits.token_id = expired.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
-    RETURNING waits.id, waits.org_id
+     WHERE run_waits.environment_id = expired.environment_id
+       AND run_waits.token_id = expired.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
+    RETURNING run_waits.id
 )
 SELECT *
   FROM expired
+ WHERE (SELECT count(*) FROM matched_wait) >= 0
  ORDER BY expired.timeout_at ASC, expired.id ASC;

@@ -1,48 +1,31 @@
 -- name: EnsureWorkspaceMountRequested :one
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id,
-    sandbox_fingerprint, base_version_id, runtime_instance_id, priority,
-    guestd_channel_token_hash, guestd_channel_token_expires_at, request,
-    network_namespace, port_namespace, image_artifact_id, image_artifact_format,
-    rootfs_digest, image_digest, image_format, workspace_artifact_id,
-    workspace_artifact_encoding, workspace_artifact_entry_count,
-    workspace_artifact_digest, workspace_artifact_size_bytes,
-    workspace_artifact_media_type, workspace_mount_path, runtime_abi,
-    guestd_abi, adapter_abi
+    worker_instance_id, worker_epoch, workspace_id,
+    materialized_version_id, runtime_instance_id, request
 )
 SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch, workspaces.id, workspaces.deployment_sandbox_id,
-       workspaces.sandbox_fingerprint, workspaces.current_version_id, runtime_instances.id,
-       sqlc.arg(priority), '', NULL, sqlc.arg(request), '', '',
-       deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format,
-       deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest,
-       deployment_sandboxes.image_format, workspace_versions.artifact_id,
-       workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
-       workspace_versions.content_digest, workspace_versions.size_bytes,
-       workspace_artifacts.media_type, deployment_sandboxes.workspace_mount_path,
-       runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi
+       runtime_instances.worker_epoch, workspaces.id,
+       workspaces.head_version_id, runtime_instances.id, sqlc.arg(request)
   FROM workspaces
-  JOIN deployment_sandboxes ON deployment_sandboxes.org_id = workspaces.org_id
-                           AND deployment_sandboxes.project_id = workspaces.project_id
-                           AND deployment_sandboxes.environment_id = workspaces.environment_id
-                           AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
                          AND workspace_versions.workspace_id = workspaces.id
-                         AND workspace_versions.id = workspaces.current_version_id
-                         AND workspace_versions.state = 'ready'
-  JOIN artifacts AS workspace_artifacts ON workspace_artifacts.org_id = workspace_versions.org_id
-                                       AND workspace_artifacts.id = workspace_versions.artifact_id
+                         AND workspace_versions.id = workspaces.head_version_id
+                         AND workspace_versions.state = 'committed'
   JOIN runtime_instances ON runtime_instances.org_id = workspaces.org_id
                         AND runtime_instances.project_id = workspaces.project_id
                         AND runtime_instances.environment_id = workspaces.environment_id
                         AND runtime_instances.workspace_id = workspaces.id
+                        AND runtime_instances.workspace_version_id = workspaces.head_version_id
+                        AND runtime_instances.deployment_definition_id = workspaces.deployment_definition_id
                         AND runtime_instances.observed_state = 'ready'
  WHERE workspaces.org_id = sqlc.arg(org_id) AND workspaces.id = sqlc.arg(workspace_id)
 ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
+WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
+  AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
 RETURNING workspace_mounts.*, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision;
 
@@ -74,28 +57,29 @@ SELECT * FROM workspace_mounts
    AND state IN ('mounting','mounted','unmounting');
 
 -- name: GetWorkspaceMountPrerequisites :one
-SELECT workspaces.id AS workspace_id, workspaces.current_version_id,
+SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
        workspace_versions.id AS current_workspace_version_id,
        workspace_versions.state AS current_workspace_version_state,
        workspace_versions.artifact_id AS current_workspace_artifact_id,
        workspace_artifacts.id AS workspace_artifact_id,
        workspace_artifacts.media_type AS workspace_artifact_media_type,
-       deployment_sandboxes.image_artifact_id AS sandbox_image_artifact_id,
+       deployment_definitions.artifact_id AS workspace_image_artifact_id,
        image_artifacts.id AS image_artifact_id,
        image_artifacts.media_type AS image_artifact_media_type,
        active_mount.state AS active_mount_state
   FROM workspaces
   LEFT JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
                               AND workspace_versions.workspace_id = workspaces.id
-                              AND workspace_versions.id = workspaces.current_version_id
+                              AND workspace_versions.id = workspaces.head_version_id
   LEFT JOIN artifacts AS workspace_artifacts ON workspace_artifacts.org_id = workspace_versions.org_id
                                              AND workspace_artifacts.id = workspace_versions.artifact_id
-  LEFT JOIN deployment_sandboxes ON deployment_sandboxes.org_id = workspaces.org_id
-                                AND deployment_sandboxes.project_id = workspaces.project_id
-                                AND deployment_sandboxes.environment_id = workspaces.environment_id
-                                AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-  LEFT JOIN artifacts AS image_artifacts ON image_artifacts.org_id = deployment_sandboxes.org_id
-                                        AND image_artifacts.id = deployment_sandboxes.image_artifact_id
+  LEFT JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  LEFT JOIN artifacts AS image_artifacts
+    ON image_artifacts.environment_id = deployment_definitions.environment_id
+   AND image_artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN workspace_mounts AS active_mount ON active_mount.org_id = workspaces.org_id
                                              AND active_mount.workspace_id = workspaces.id
                                              AND active_mount.state IN ('mounting','mounted','unmounting')
@@ -122,8 +106,8 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE workspace_mounts
        SET claim_attempt = claim_attempt + 1,
-           guestd_channel_token_hash = sqlc.arg(guestd_channel_token_hash),
-           guestd_channel_token_expires_at = sqlc.arg(guestd_channel_token_expires_at),
+           guest_channel_token_hash = sqlc.arg(guest_channel_token_hash),
+           guest_channel_token_expires_at = sqlc.arg(guest_channel_token_expires_at),
            updated_at = now()
       FROM candidate
      WHERE workspace_mounts.id = candidate.id
@@ -136,21 +120,35 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_workload_disk_bytes,
        runtime_instances.reserved_execution_slots,
+       image_artifacts.id AS image_artifact_id,
+       image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
-       image_artifacts.media_type AS image_artifact_media_type
+       image_artifacts.media_type AS image_artifact_media_type,
+       workspace_versions.artifact_id AS workspace_artifact_id,
+       workspace_versions.content_digest AS workspace_content_digest,
+       workspace_versions.size_bytes AS workspace_size_bytes,
+       workspace_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_instances.environment_id
+   AND deployment_definitions.id = runtime_instances.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = claimed.workspace_id
+   AND workspace_versions.id = claimed.materialized_version_id
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
                     AND worker_network_slots.state = 'bound'
-  JOIN artifacts AS image_artifacts ON image_artifacts.org_id = claimed.org_id
-                                   AND image_artifacts.id = claimed.image_artifact_id;
+  JOIN artifacts AS image_artifacts
+    ON image_artifacts.environment_id = deployment_definitions.environment_id
+   AND image_artifacts.id = deployment_definitions.artifact_id;
 
 -- name: RenewWorkspaceMount :one
 UPDATE workspace_mounts
-   SET guestd_channel_token_expires_at = sqlc.arg(guestd_channel_token_expires_at),
+   SET guest_channel_token_expires_at = sqlc.arg(guest_channel_token_expires_at),
        updated_at = now()
  WHERE org_id = sqlc.arg(org_id) AND id = sqlc.arg(id)
    AND worker_instance_id = sqlc.arg(worker_instance_id)
@@ -185,12 +183,22 @@ RETURNING mount.*;
 
 -- name: PromoteWorkspaceMountStopCapture :one
 WITH target AS (
-    SELECT workspace_mounts.*, workspaces.current_version_id
+    SELECT workspace_mounts.*, workspaces.head_version_id,
+           workspaces.ownership_generation, workspaces.writer_generation,
+           workspace_leases.id AS source_workspace_lease_id
       FROM workspace_mounts
       JOIN workspaces ON workspaces.org_id = workspace_mounts.org_id
                      AND workspaces.project_id = workspace_mounts.project_id
                      AND workspaces.environment_id = workspace_mounts.environment_id
                      AND workspaces.id = workspace_mounts.workspace_id
+      JOIN workspace_leases
+        ON workspace_leases.workspace_id = workspace_mounts.workspace_id
+       AND workspace_leases.workspace_mount_id = workspace_mounts.id
+       AND workspace_leases.state IN ('active', 'releasing')
+       AND workspace_leases.expires_at > now()
+       AND workspace_leases.ownership_generation = workspaces.ownership_generation
+       AND workspace_leases.writer_generation = workspaces.writer_generation
+       AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
      WHERE workspace_mounts.org_id = sqlc.arg(org_id)
        AND workspace_mounts.project_id = sqlc.arg(project_id)
        AND workspace_mounts.environment_id = sqlc.arg(environment_id)
@@ -201,35 +209,37 @@ WITH target AS (
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.runtime_instance_id = sqlc.arg(runtime_instance_id)
        AND workspace_mounts.fencing_generation = sqlc.arg(fencing_generation)
+       AND workspaces.ownership_generation = sqlc.arg(ownership_generation)
+       AND workspaces.writer_generation = sqlc.arg(writer_generation)
      FOR UPDATE OF workspace_mounts, workspaces
 ), created AS (
     INSERT INTO workspace_versions (
         id, public_id, org_id, project_id, environment_id, workspace_id,
-        parent_version_id, source_workspace_mount_id, kind, state, artifact_id,
-        artifact_encoding, artifact_entry_count, content_digest, size_bytes,
-        message, promoted_at
+        parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes,
+        entry_count, state, source_workspace_lease_id, ownership_generation,
+        writer_generation, published_at
     )
     SELECT sqlc.arg(workspace_version_id), sqlc.arg(workspace_version_public_id),
            target.org_id, target.project_id, target.environment_id, target.workspace_id,
-           COALESCE(target.current_version_id, target.base_version_id), target.id,
-           'system', 'ready', sqlc.arg(artifact_id), sqlc.arg(artifact_encoding),
-           sqlc.arg(artifact_entry_count), sqlc.arg(content_digest), sqlc.arg(size_bytes),
-           sqlc.arg(message), now()
+           target.head_version_id, sqlc.arg(artifact_id), 'workspace_version', 'system',
+           sqlc.arg(content_digest), sqlc.arg(size_bytes),
+           sqlc.arg(entry_count), 'committed', target.source_workspace_lease_id,
+           target.ownership_generation, target.writer_generation, now()
       FROM target
     RETURNING *
 ), updated_workspace AS (
     UPDATE workspaces
-       SET current_version_id = created.id, dirty_state = 'clean', updated_at = now()
+       SET head_version_id = created.id, dirty_state = 'clean', updated_at = now()
       FROM created
      WHERE workspaces.org_id = created.org_id AND workspaces.id = created.workspace_id
     RETURNING workspaces.id
 ), updated_mount AS (
     UPDATE workspace_mounts
-       SET base_version_id = created.id, dirty_generation = dirty_generation + 1,
+       SET materialized_version_id = created.id, dirty_generation = dirty_generation + 1,
            updated_at = now()
-      FROM created, updated_workspace
+      FROM created, updated_workspace, target
      WHERE workspace_mounts.org_id = created.org_id
-       AND workspace_mounts.id = created.source_workspace_mount_id
+       AND workspace_mounts.id = target.id
     RETURNING workspace_mounts.id
 )
 SELECT created.* FROM created JOIN updated_mount ON true;

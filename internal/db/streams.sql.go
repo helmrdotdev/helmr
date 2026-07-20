@@ -11,225 +11,179 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const ensureSessionStream = `-- name: EnsureSessionStream :one
-INSERT INTO streams (
+const createRunStream = `-- name: CreateRunStream :one
+INSERT INTO run_streams (
     id,
     public_id,
     org_id,
     project_id,
     environment_id,
-    session_id,
-    deployment_stream_id,
-    name,
-    direction,
-    schema_fingerprint,
-    metadata
+    run_id,
+    deployment_id,
+    deployment_definition_id,
+    declaration_kind,
+    stream_declared_id
 )
 SELECT $1,
        $2,
-       sessions.org_id,
-       sessions.project_id,
-       sessions.environment_id,
-       sessions.id,
-       deployment_streams.id,
-       deployment_streams.name,
-       deployment_streams.direction,
-       deployment_streams.schema_fingerprint,
-       COALESCE($3::jsonb, '{}'::jsonb)
-  FROM sessions
-  JOIN deployment_streams
-    ON deployment_streams.org_id = sessions.org_id
-   AND deployment_streams.project_id = sessions.project_id
-   AND deployment_streams.environment_id = sessions.environment_id
-   AND deployment_streams.id = $4
- WHERE sessions.org_id = $5
-   AND sessions.project_id = $6
-   AND sessions.environment_id = $7
-   AND sessions.id = $8
-ON CONFLICT (org_id, session_id, name, direction)
-DO UPDATE SET
-    deployment_stream_id = streams.deployment_stream_id,
-    schema_fingerprint = streams.schema_fingerprint,
-    metadata = streams.metadata
-RETURNING id, public_id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
+       runs.org_id,
+       runs.project_id,
+       runs.environment_id,
+       runs.id,
+       runs.deployment_id,
+       deployment_definitions.id,
+       deployment_definitions.kind,
+       deployment_definitions.declared_id
+  FROM runs
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runs.environment_id
+   AND deployment_definitions.deployment_id = runs.deployment_id
+   AND deployment_definitions.id = $3
+   AND deployment_definitions.kind = 'run_stream'
+   AND deployment_definitions.declared_id = $4
+ WHERE runs.org_id = $5
+   AND runs.project_id = $6
+   AND runs.environment_id = $7
+   AND runs.id = $8
+ON CONFLICT (run_id, deployment_definition_id)
+DO UPDATE SET updated_at = run_streams.updated_at
+RETURNING id, public_id, org_id, project_id, environment_id, run_id, deployment_id, deployment_definition_id, declaration_kind, stream_declared_id, next_sequence, retention_floor, created_at, updated_at
 `
 
-type EnsureSessionStreamParams struct {
-	ID                 pgtype.UUID `json:"id"`
-	PublicID           string      `json:"public_id"`
-	Metadata           []byte      `json:"metadata"`
-	DeploymentStreamID pgtype.UUID `json:"deployment_stream_id"`
-	OrgID              pgtype.UUID `json:"org_id"`
-	ProjectID          pgtype.UUID `json:"project_id"`
-	EnvironmentID      pgtype.UUID `json:"environment_id"`
-	SessionID          pgtype.UUID `json:"session_id"`
+type CreateRunStreamParams struct {
+	ID                     pgtype.UUID `json:"id"`
+	PublicID               string      `json:"public_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	StreamDeclaredID       string      `json:"stream_declared_id"`
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	RunID                  pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) EnsureSessionStream(ctx context.Context, arg EnsureSessionStreamParams) (Stream, error) {
-	row := q.db.QueryRow(ctx, ensureSessionStream,
+func (q *Queries) CreateRunStream(ctx context.Context, arg CreateRunStreamParams) (RunStream, error) {
+	row := q.db.QueryRow(ctx, createRunStream,
 		arg.ID,
 		arg.PublicID,
-		arg.Metadata,
-		arg.DeploymentStreamID,
+		arg.DeploymentDefinitionID,
+		arg.StreamDeclaredID,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.SessionID,
+		arg.RunID,
 	)
-	var i Stream
+	var i RunStream
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SessionID,
-		&i.DeploymentStreamID,
-		&i.Name,
-		&i.Direction,
-		&i.SchemaFingerprint,
-		&i.Metadata,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.DeclarationKind,
+		&i.StreamDeclaredID,
 		&i.NextSequence,
+		&i.RetentionFloor,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const getSessionStreamByName = `-- name: GetSessionStreamByName :one
-SELECT id, public_id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
- FROM streams
+const getRunStream = `-- name: GetRunStream :one
+SELECT id, public_id, org_id, project_id, environment_id, run_id, deployment_id, deployment_definition_id, declaration_kind, stream_declared_id, next_sequence, retention_floor, created_at, updated_at
+  FROM run_streams
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND session_id = $4
-   AND name = $5
-   AND direction = $6::stream_direction
+   AND run_id = $4
+   AND id = $5
 `
 
-type GetSessionStreamByNameParams struct {
-	OrgID         pgtype.UUID     `json:"org_id"`
-	ProjectID     pgtype.UUID     `json:"project_id"`
-	EnvironmentID pgtype.UUID     `json:"environment_id"`
-	SessionID     pgtype.UUID     `json:"session_id"`
-	Name          string          `json:"name"`
-	Direction     StreamDirection `json:"direction"`
-}
-
-func (q *Queries) GetSessionStreamByName(ctx context.Context, arg GetSessionStreamByNameParams) (Stream, error) {
-	row := q.db.QueryRow(ctx, getSessionStreamByName,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.SessionID,
-		arg.Name,
-		arg.Direction,
-	)
-	var i Stream
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.SessionID,
-		&i.DeploymentStreamID,
-		&i.Name,
-		&i.Direction,
-		&i.SchemaFingerprint,
-		&i.Metadata,
-		&i.NextSequence,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const getStream = `-- name: GetStream :one
-SELECT id, public_id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
- FROM streams
- WHERE org_id = $1
-   AND project_id = $2
-   AND environment_id = $3
-   AND id = $4
-`
-
-type GetStreamParams struct {
+type GetRunStreamParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
 	ID            pgtype.UUID `json:"id"`
 }
 
-func (q *Queries) GetStream(ctx context.Context, arg GetStreamParams) (Stream, error) {
-	row := q.db.QueryRow(ctx, getStream,
+func (q *Queries) GetRunStream(ctx context.Context, arg GetRunStreamParams) (RunStream, error) {
+	row := q.db.QueryRow(ctx, getRunStream,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
+		arg.RunID,
 		arg.ID,
 	)
-	var i Stream
+	var i RunStream
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.SessionID,
-		&i.DeploymentStreamID,
-		&i.Name,
-		&i.Direction,
-		&i.SchemaFingerprint,
-		&i.Metadata,
+		&i.RunID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.DeclarationKind,
+		&i.StreamDeclaredID,
 		&i.NextSequence,
+		&i.RetentionFloor,
 		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
-const listSessionStreams = `-- name: ListSessionStreams :many
-SELECT id, public_id, org_id, project_id, environment_id, session_id, deployment_stream_id, name, direction, schema_fingerprint, metadata, next_sequence, created_at
- FROM streams
+const listRunStreams = `-- name: ListRunStreams :many
+SELECT id, public_id, org_id, project_id, environment_id, run_id, deployment_id, deployment_definition_id, declaration_kind, stream_declared_id, next_sequence, retention_floor, created_at, updated_at
+  FROM run_streams
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
-   AND session_id = $4
- ORDER BY name ASC, direction ASC
+   AND run_id = $4
+ ORDER BY stream_declared_id, id
 `
 
-type ListSessionStreamsParams struct {
+type ListRunStreamsParams struct {
 	OrgID         pgtype.UUID `json:"org_id"`
 	ProjectID     pgtype.UUID `json:"project_id"`
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SessionID     pgtype.UUID `json:"session_id"`
+	RunID         pgtype.UUID `json:"run_id"`
 }
 
-func (q *Queries) ListSessionStreams(ctx context.Context, arg ListSessionStreamsParams) ([]Stream, error) {
-	rows, err := q.db.Query(ctx, listSessionStreams,
+func (q *Queries) ListRunStreams(ctx context.Context, arg ListRunStreamsParams) ([]RunStream, error) {
+	rows, err := q.db.Query(ctx, listRunStreams,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.SessionID,
+		arg.RunID,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Stream
+	var items []RunStream
 	for rows.Next() {
-		var i Stream
+		var i RunStream
 		if err := rows.Scan(
 			&i.ID,
 			&i.PublicID,
 			&i.OrgID,
 			&i.ProjectID,
 			&i.EnvironmentID,
-			&i.SessionID,
-			&i.DeploymentStreamID,
-			&i.Name,
-			&i.Direction,
-			&i.SchemaFingerprint,
-			&i.Metadata,
+			&i.RunID,
+			&i.DeploymentID,
+			&i.DeploymentDefinitionID,
+			&i.DeclarationKind,
+			&i.StreamDeclaredID,
 			&i.NextSequence,
+			&i.RetentionFloor,
 			&i.CreatedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}

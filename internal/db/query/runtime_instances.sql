@@ -1,8 +1,8 @@
 -- name: CreatePreparedRuntimeInstanceForWorkspaceMountSource :one
 INSERT INTO runtime_instances (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_sandbox_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
+    worker_instance_id, worker_epoch, runtime_identity_id, deployment_definition_id,
+    runtime_substrate_id, runtime_key_hash, runtime_key,
     rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
     sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
     guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
@@ -12,9 +12,9 @@ INSERT INTO runtime_instances (
 ) VALUES (
     sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(project_id), sqlc.arg(environment_id),
     sqlc.arg(region_id), sqlc.arg(worker_group_id), sqlc.arg(worker_instance_id),
-    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_sandbox_id),
+    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_definition_id),
     sqlc.narg(runtime_substrate_id), sqlc.arg(runtime_key_hash), sqlc.arg(runtime_key),
-    sqlc.arg(sandbox_fingerprint), sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
+    sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
     sqlc.arg(image_format), sqlc.narg(sandbox_image_artifact_id),
     sqlc.narg(sandbox_image_artifact_digest), sqlc.narg(sandbox_image_artifact_format),
     sqlc.arg(runtime_abi), sqlc.arg(guestd_abi), sqlc.arg(adapter_abi),
@@ -33,7 +33,7 @@ SELECT runtime_instances.*,
        artifacts.digest AS sandbox_image_artifact_digest_value,
        artifacts.size_bytes AS sandbox_image_artifact_size_bytes,
        artifacts.media_type AS sandbox_image_artifact_media_type,
-       deployment_sandboxes.workspace_mount_path,
+       '/workspace'::text AS workspace_mount_path,
        runtime_substrates.substrate_digest,
        runtime_substrates.substrate_format,
        runtime_substrates.builder_abi,
@@ -53,10 +53,10 @@ SELECT runtime_instances.*,
                 AND artifacts.project_id = runtime_instances.project_id
                 AND artifacts.environment_id = runtime_instances.environment_id
                 AND artifacts.id = runtime_instances.sandbox_image_artifact_id
-  JOIN deployment_sandboxes ON deployment_sandboxes.org_id = runtime_instances.org_id
-                           AND deployment_sandboxes.project_id = runtime_instances.project_id
-                           AND deployment_sandboxes.environment_id = runtime_instances.environment_id
-                           AND deployment_sandboxes.id = runtime_instances.deployment_sandbox_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_instances.environment_id
+   AND deployment_definitions.id = runtime_instances.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
   LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
                               AND runtime_substrates.project_id = runtime_instances.project_id
                               AND runtime_substrates.environment_id = runtime_instances.environment_id
@@ -94,11 +94,11 @@ SELECT runtime_instances.*,
  ORDER BY runtime_instances.desired_at, runtime_instances.id
  LIMIT 1;
 
--- name: CreateRuntimeInstanceForDeploymentSandbox :one
+-- name: CreateRuntimeInstanceForWorkspaceDefinition :one
 INSERT INTO runtime_instances (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_sandbox_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key, sandbox_fingerprint,
+    worker_instance_id, worker_epoch, runtime_identity_id, deployment_definition_id,
+    runtime_substrate_id, runtime_key_hash, runtime_key,
     rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
     sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
     guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
@@ -107,9 +107,9 @@ INSERT INTO runtime_instances (
 ) VALUES (
     sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(project_id), sqlc.arg(environment_id),
     sqlc.arg(region_id), sqlc.arg(worker_group_id), sqlc.arg(worker_instance_id),
-    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_sandbox_id),
+    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_definition_id),
     sqlc.narg(runtime_substrate_id), sqlc.arg(runtime_key_hash), sqlc.arg(runtime_key),
-    sqlc.arg(sandbox_fingerprint), sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
+    sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
     sqlc.arg(image_format), sqlc.narg(sandbox_image_artifact_id),
     sqlc.narg(sandbox_image_artifact_digest), sqlc.narg(sandbox_image_artifact_format),
     sqlc.arg(runtime_abi), sqlc.arg(guestd_abi), sqlc.arg(adapter_abi),

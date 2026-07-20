@@ -12,7 +12,7 @@ import (
 )
 
 const completeRunDispatch = `-- name: CompleteRunDispatch :one
-SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at FROM runs WHERE org_id = $1 AND id = $2
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at FROM runs WHERE org_id = $1 AND id = $2
 `
 
 type CompleteRunDispatchParams struct {
@@ -30,61 +30,53 @@ func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispat
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
 		&i.ScheduleID,
-		&i.ScheduleInstanceID,
+		&i.ScheduleGeneration,
 		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
 		&i.Payload,
+		&i.PayloadArtifactID,
 		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
 		&i.Metadata,
 		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
 		&i.QueueName,
-		&i.QueueConcurrencyLimit,
 		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
 		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
 		&i.QueuedExpiresAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeIdentityID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
 		&i.TraceID,
 		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRunCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
+		&i.ClaimID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FirstLeaseAt,
 		&i.StartedAt,
-		&i.FinishedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
 	)
 	return i, err
 }
@@ -92,32 +84,23 @@ func (q *Queries) CompleteRunDispatch(ctx context.Context, arg CompleteRunDispat
 const deadLetterRunDispatch = `-- name: DeadLetterRunDispatch :one
 WITH terminalized AS (
     UPDATE runs
-       SET status = 'failed', execution_status = 'finished', terminal_outcome = 'dead_lettered',
+       SET status = 'system_failed',
            current_run_lease_id = NULL, state_version = state_version + 1,
-           error_message = $1, finished_at = COALESCE(finished_at, now()),
+           terminal_reason_code = 'dispatch_dead_lettered',
+           error = jsonb_build_object('message', $1::text),
+           terminal_at = COALESCE(terminal_at, now()),
            updated_at = now()
      WHERE runs.org_id = $2 AND runs.id = $3
        AND runs.status = 'queued' AND runs.state_version = $4
-    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_task_id, workspace_id, deployment_version, api_version, sdk_version, cli_version, task_id, session_id, schedule_id, schedule_instance_id, scheduled_at, status, execution_status, terminal_outcome, payload, output, metadata, tags, locked_retry_policy, queue_class, queue_name, queue_concurrency_limit, concurrency_key, priority, queue_timestamp, ttl, queued_expires_at, requested_milli_cpu, requested_memory_mib, requested_disk_mib, requested_execution_slots, runtime_identity_id, runtime_arch, runtime_abi, kernel_digest, initramfs_digest, rootfs_digest, cni_profile, network_policy, resource_placement_policy, max_active_duration_ms, active_elapsed_ms, active_started_at, trace_id, root_span_id, state_version, current_attempt_number, current_run_lease_id, latest_run_checkpoint_id, exit_code, error_message, created_at, updated_at, started_at, finished_at
-), snapshot AS (
-    INSERT INTO run_state_snapshots
-        (org_id, run_id, version, status, execution_status, terminal_outcome,
-         attempt_number, previous_version, transition, reason, error)
-    SELECT terminalized.org_id, terminalized.id, terminalized.state_version,
-           terminalized.status, terminalized.execution_status, terminalized.terminal_outcome,
-           terminalized.current_attempt_number, terminalized.state_version - 1, 'run.dead_lettered',
-           jsonb_build_object('message', $1::text),
-           jsonb_build_object('message', $1::text)
-      FROM terminalized
-    RETURNING run_id
+    RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 )
 SELECT terminalized.id AS run_id, terminalized.org_id, terminalized.project_id,
        terminalized.environment_id, terminalized.state_version
-  FROM terminalized JOIN snapshot ON snapshot.run_id = terminalized.id
+  FROM terminalized
 `
 
 type DeadLetterRunDispatchParams struct {
-	LastError               pgtype.Text `json:"last_error"`
+	LastError               string      `json:"last_error"`
 	OrgID                   pgtype.UUID `json:"org_id"`
 	RunID                   pgtype.UUID `json:"run_id"`
 	ExpectedRunStateVersion int64       `json:"expected_run_state_version"`
@@ -683,10 +666,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worke
          WHERE workspace_mounts.worker_instance_id = worker_instances.id
            AND workspace_mounts.worker_epoch = worker_instances.current_epoch
            AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')) +
-        (SELECT count(*) FROM workspace_process_operations
-         WHERE workspace_process_operations.claimed_by_worker_instance_id = worker_instances.id
-           AND workspace_process_operations.claimed_worker_epoch = worker_instances.current_epoch
-           AND workspace_process_operations.state IN ('claimed', 'running')) +
         (SELECT count(*) FROM runtime_instances
          WHERE runtime_instances.worker_instance_id = worker_instances.id
            AND runtime_instances.worker_epoch = worker_instances.current_epoch
@@ -818,7 +797,7 @@ SELECT runs.org_id,
        runs.project_id,
        runs.environment_id,
        workspaces.region_id,
-       runs.queue_class,
+       runs.concurrency_key,
        runs.queue_name
   FROM runs
   JOIN workspaces
@@ -829,15 +808,14 @@ SELECT runs.org_id,
   JOIN regions ON regions.id = workspaces.region_id AND regions.state = 'available'
  WHERE runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
+          runs.concurrency_key, runs.queue_name
  ORDER BY md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
               runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-              runs.queue_class || ':' || runs.queue_name || ':' || $1::text),
+              coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $1::text),
           runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-          runs.queue_class, runs.queue_name
+          runs.concurrency_key, runs.queue_name
  LIMIT $3
 OFFSET $2
 `
@@ -849,12 +827,12 @@ type ListQueueScopesParams struct {
 }
 
 type ListQueueScopesRow struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	RegionID       string      `json:"region_id"`
+	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
+	QueueName      string      `json:"queue_name"`
 }
 
 func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams) ([]ListQueueScopesRow, error) {
@@ -871,7 +849,7 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RegionID,
-			&i.QueueClass,
+			&i.ConcurrencyKey,
 			&i.QueueName,
 		); err != nil {
 			return nil, err
@@ -887,29 +865,28 @@ func (q *Queries) ListQueueScopes(ctx context.Context, arg ListQueueScopesParams
 const listQueuedRunCandidateScopes = `-- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-           runs.queue_class, runs.queue_name,
+           runs.concurrency_key, runs.queue_name,
            md5(runs.org_id::text || ':' || runs.project_id::text || ':' ||
                runs.environment_id::text || ':' || workspaces.region_id || ':' ||
-               runs.queue_class || ':' || runs.queue_name || ':' || $9::text) AS sort_key
+               coalesce(runs.concurrency_key, '') || ':' || runs.queue_name || ':' || $9::text) AS sort_key
       FROM runs
       JOIN workspaces ON workspaces.org_id = runs.org_id
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-       AND runs.queue_timestamp <= now()
-       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+       AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
-              runs.queue_class, runs.queue_name
+              runs.concurrency_key, runs.queue_name
 )
-SELECT org_id, project_id, environment_id, region_id, queue_class, queue_name, sort_key FROM candidate_scopes
+SELECT org_id, project_id, environment_id, region_id, concurrency_key, queue_name, sort_key FROM candidate_scopes
  WHERE $1::text = ''
-    OR (sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name)
+    OR (sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name)
        > ($1::text, $2::uuid,
           $3::uuid, $4::uuid,
           $5::text, $6::text,
           $7::text)
- ORDER BY sort_key, org_id, project_id, environment_id, region_id, queue_class, queue_name
+ ORDER BY sort_key, org_id, project_id, environment_id, region_id, concurrency_key, queue_name
  LIMIT $8
 `
 
@@ -926,13 +903,13 @@ type ListQueuedRunCandidateScopesParams struct {
 }
 
 type ListQueuedRunCandidateScopesRow struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
-	SortKey       string      `json:"sort_key"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	RegionID       string      `json:"region_id"`
+	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
+	QueueName      string      `json:"queue_name"`
+	SortKey        string      `json:"sort_key"`
 }
 
 func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueuedRunCandidateScopesParams) ([]ListQueuedRunCandidateScopesRow, error) {
@@ -959,7 +936,7 @@ func (q *Queries) ListQueuedRunCandidateScopes(ctx context.Context, arg ListQueu
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RegionID,
-			&i.QueueClass,
+			&i.ConcurrencyKey,
 			&i.QueueName,
 			&i.SortKey,
 		); err != nil {
@@ -984,23 +961,22 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND runs.project_id = $2
    AND runs.environment_id = $3
    AND workspaces.region_id = $4
-   AND runs.queue_class = $5
+   AND runs.concurrency_key IS NOT DISTINCT FROM $5::text
    AND runs.queue_name = $6
    AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
- ORDER BY runs.priority DESC, runs.queue_timestamp, runs.id
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+ ORDER BY runs.queue_score_at, runs.id
  LIMIT $7
 `
 
 type ListQueuedRunDispatchCandidatesForScopeParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RegionID      string      `json:"region_id"`
-	QueueClass    string      `json:"queue_class"`
-	QueueName     string      `json:"queue_name"`
-	RowLimit      int32       `json:"row_limit"`
+	OrgID          pgtype.UUID `json:"org_id"`
+	ProjectID      pgtype.UUID `json:"project_id"`
+	EnvironmentID  pgtype.UUID `json:"environment_id"`
+	RegionID       string      `json:"region_id"`
+	ConcurrencyKey pgtype.Text `json:"concurrency_key"`
+	QueueName      string      `json:"queue_name"`
+	RowLimit       int32       `json:"row_limit"`
 }
 
 type ListQueuedRunDispatchCandidatesForScopeRow struct {
@@ -1015,7 +991,7 @@ func (q *Queries) ListQueuedRunDispatchCandidatesForScope(ctx context.Context, a
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.RegionID,
-		arg.QueueClass,
+		arg.ConcurrencyKey,
 		arg.QueueName,
 		arg.RowLimit,
 	)
@@ -1117,7 +1093,7 @@ func (q *Queries) ListWorkerInstances(ctx context.Context, arg ListWorkerInstanc
 }
 
 const prepareQueuedRunDispatch = `-- name: PrepareQueuedRunDispatch :one
-SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_task_id, runs.workspace_id, runs.deployment_version, runs.api_version, runs.sdk_version, runs.cli_version, runs.task_id, runs.session_id, runs.schedule_id, runs.schedule_instance_id, runs.scheduled_at, runs.status, runs.execution_status, runs.terminal_outcome, runs.payload, runs.output, runs.metadata, runs.tags, runs.locked_retry_policy, runs.queue_class, runs.queue_name, runs.queue_concurrency_limit, runs.concurrency_key, runs.priority, runs.queue_timestamp, runs.ttl, runs.queued_expires_at, runs.requested_milli_cpu, runs.requested_memory_mib, runs.requested_disk_mib, runs.requested_execution_slots, runs.runtime_identity_id, runs.runtime_arch, runs.runtime_abi, runs.kernel_digest, runs.initramfs_digest, runs.rootfs_digest, runs.cni_profile, runs.network_policy, runs.resource_placement_policy, runs.max_active_duration_ms, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.latest_run_checkpoint_id, runs.exit_code, runs.error_message, runs.created_at, runs.updated_at, runs.started_at, runs.finished_at, workspaces.region_id
+SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.payload_artifact_id, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at, workspaces.region_id
   FROM runs
   JOIN workspaces
     ON workspaces.org_id = runs.org_id
@@ -1128,8 +1104,7 @@ SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_i
    AND runs.id = $2
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  FOR UPDATE OF runs
 `
 
@@ -1139,68 +1114,60 @@ type PrepareQueuedRunDispatchParams struct {
 }
 
 type PrepareQueuedRunDispatchRow struct {
-	ID                      pgtype.UUID            `json:"id"`
-	PublicID                string                 `json:"public_id"`
-	OrgID                   pgtype.UUID            `json:"org_id"`
-	ProjectID               pgtype.UUID            `json:"project_id"`
-	EnvironmentID           pgtype.UUID            `json:"environment_id"`
-	DeploymentID            pgtype.UUID            `json:"deployment_id"`
-	DeploymentTaskID        pgtype.UUID            `json:"deployment_task_id"`
-	WorkspaceID             pgtype.UUID            `json:"workspace_id"`
-	DeploymentVersion       string                 `json:"deployment_version"`
-	ApiVersion              string                 `json:"api_version"`
-	SdkVersion              string                 `json:"sdk_version"`
-	CliVersion              string                 `json:"cli_version"`
-	TaskID                  string                 `json:"task_id"`
-	SessionID               pgtype.UUID            `json:"session_id"`
-	ScheduleID              pgtype.UUID            `json:"schedule_id"`
-	ScheduleInstanceID      pgtype.UUID            `json:"schedule_instance_id"`
-	ScheduledAt             pgtype.Timestamptz     `json:"scheduled_at"`
-	Status                  RunStatus              `json:"status"`
-	ExecutionStatus         RunExecutionStatus     `json:"execution_status"`
-	TerminalOutcome         NullRunTerminalOutcome `json:"terminal_outcome"`
-	Payload                 []byte                 `json:"payload"`
-	Output                  []byte                 `json:"output"`
-	Metadata                []byte                 `json:"metadata"`
-	Tags                    []string               `json:"tags"`
-	LockedRetryPolicy       []byte                 `json:"locked_retry_policy"`
-	QueueClass              string                 `json:"queue_class"`
-	QueueName               string                 `json:"queue_name"`
-	QueueConcurrencyLimit   pgtype.Int4            `json:"queue_concurrency_limit"`
-	ConcurrencyKey          pgtype.Text            `json:"concurrency_key"`
-	Priority                int32                  `json:"priority"`
-	QueueTimestamp          pgtype.Timestamptz     `json:"queue_timestamp"`
-	Ttl                     string                 `json:"ttl"`
-	QueuedExpiresAt         pgtype.Timestamptz     `json:"queued_expires_at"`
-	RequestedMilliCpu       int64                  `json:"requested_milli_cpu"`
-	RequestedMemoryMib      int64                  `json:"requested_memory_mib"`
-	RequestedDiskMib        int64                  `json:"requested_disk_mib"`
-	RequestedExecutionSlots int32                  `json:"requested_execution_slots"`
-	RuntimeIdentityID       string                 `json:"runtime_identity_id"`
-	RuntimeArch             string                 `json:"runtime_arch"`
-	RuntimeABI              string                 `json:"runtime_abi"`
-	KernelDigest            string                 `json:"kernel_digest"`
-	InitramfsDigest         string                 `json:"initramfs_digest"`
-	RootfsDigest            string                 `json:"rootfs_digest"`
-	CniProfile              string                 `json:"cni_profile"`
-	NetworkPolicy           []byte                 `json:"network_policy"`
-	ResourcePlacementPolicy []byte                 `json:"resource_placement_policy"`
-	MaxActiveDurationMs     int64                  `json:"max_active_duration_ms"`
-	ActiveElapsedMs         int64                  `json:"active_elapsed_ms"`
-	ActiveStartedAt         pgtype.Timestamptz     `json:"active_started_at"`
-	TraceID                 pgtype.Text            `json:"trace_id"`
-	RootSpanID              string                 `json:"root_span_id"`
-	StateVersion            int64                  `json:"state_version"`
-	CurrentAttemptNumber    int32                  `json:"current_attempt_number"`
-	CurrentRunLeaseID       pgtype.UUID            `json:"current_run_lease_id"`
-	LatestRunCheckpointID   pgtype.UUID            `json:"latest_run_checkpoint_id"`
-	ExitCode                pgtype.Int4            `json:"exit_code"`
-	ErrorMessage            pgtype.Text            `json:"error_message"`
-	CreatedAt               pgtype.Timestamptz     `json:"created_at"`
-	UpdatedAt               pgtype.Timestamptz     `json:"updated_at"`
-	StartedAt               pgtype.Timestamptz     `json:"started_at"`
-	FinishedAt              pgtype.Timestamptz     `json:"finished_at"`
-	RegionID                string                 `json:"region_id"`
+	ID                           pgtype.UUID        `json:"id"`
+	PublicID                     string             `json:"public_id"`
+	OrgID                        pgtype.UUID        `json:"org_id"`
+	ProjectID                    pgtype.UUID        `json:"project_id"`
+	EnvironmentID                pgtype.UUID        `json:"environment_id"`
+	DeploymentID                 pgtype.UUID        `json:"deployment_id"`
+	DeploymentDefinitionID       pgtype.UUID        `json:"deployment_definition_id"`
+	EntrypointKind               string             `json:"entrypoint_kind"`
+	EntrypointDeclaredID         string             `json:"entrypoint_declared_id"`
+	ActorID                      pgtype.UUID        `json:"actor_id"`
+	CauseKind                    string             `json:"cause_kind"`
+	ScheduleID                   pgtype.UUID        `json:"schedule_id"`
+	ScheduleGeneration           pgtype.Int8        `json:"schedule_generation"`
+	ScheduledAt                  pgtype.Timestamptz `json:"scheduled_at"`
+	PreviousScheduledAt          pgtype.Timestamptz `json:"previous_scheduled_at"`
+	ScheduleTimezone             pgtype.Text        `json:"schedule_timezone"`
+	ParentRunID                  pgtype.UUID        `json:"parent_run_id"`
+	ParentOwnsLifecycle          pgtype.Bool        `json:"parent_owns_lifecycle"`
+	WorkspaceID                  pgtype.UUID        `json:"workspace_id"`
+	BaseWorkspaceVersionID       pgtype.UUID        `json:"base_workspace_version_id"`
+	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
+	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
+	Payload                      []byte             `json:"payload"`
+	PayloadArtifactID            pgtype.UUID        `json:"payload_artifact_id"`
+	Output                       []byte             `json:"output"`
+	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
+	Error                        []byte             `json:"error"`
+	Status                       RunStatus          `json:"status"`
+	StateVersion                 int64              `json:"state_version"`
+	CurrentAttemptNumber         int32              `json:"current_attempt_number"`
+	CurrentRunLeaseID            pgtype.UUID        `json:"current_run_lease_id"`
+	Metadata                     []byte             `json:"metadata"`
+	Tags                         []string           `json:"tags"`
+	QueueName                    string             `json:"queue_name"`
+	ConcurrencyKey               pgtype.Text        `json:"concurrency_key"`
+	QueueConcurrencyLimit        pgtype.Int8        `json:"queue_concurrency_limit"`
+	Priority                     int32              `json:"priority"`
+	QueueOriginAt                pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt                 pgtype.Timestamptz `json:"queue_score_at"`
+	QueuedExpiresAt              pgtype.Timestamptz `json:"queued_expires_at"`
+	MaxActiveDurationMs          int64              `json:"max_active_duration_ms"`
+	RetryPolicy                  []byte             `json:"retry_policy"`
+	ActiveElapsedMs              int64              `json:"active_elapsed_ms"`
+	ActiveStartedAt              pgtype.Timestamptz `json:"active_started_at"`
+	TraceID                      pgtype.Text        `json:"trace_id"`
+	RootSpanID                   string             `json:"root_span_id"`
+	ClaimID                      pgtype.UUID        `json:"claim_id"`
+	CreatedAt                    pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                    pgtype.Timestamptz `json:"updated_at"`
+	FirstLeaseAt                 pgtype.Timestamptz `json:"first_lease_at"`
+	StartedAt                    pgtype.Timestamptz `json:"started_at"`
+	RetryAt                      pgtype.Timestamptz `json:"retry_at"`
+	TerminalAt                   pgtype.Timestamptz `json:"terminal_at"`
+	RegionID                     string             `json:"region_id"`
 }
 
 func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueuedRunDispatchParams) (PrepareQueuedRunDispatchRow, error) {
@@ -1213,61 +1180,53 @@ func (q *Queries) PrepareQueuedRunDispatch(ctx context.Context, arg PrepareQueue
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
-		&i.DeploymentTaskID,
-		&i.WorkspaceID,
-		&i.DeploymentVersion,
-		&i.ApiVersion,
-		&i.SdkVersion,
-		&i.CliVersion,
-		&i.TaskID,
-		&i.SessionID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
 		&i.ScheduleID,
-		&i.ScheduleInstanceID,
+		&i.ScheduleGeneration,
 		&i.ScheduledAt,
-		&i.Status,
-		&i.ExecutionStatus,
-		&i.TerminalOutcome,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
 		&i.Payload,
+		&i.PayloadArtifactID,
 		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
 		&i.Metadata,
 		&i.Tags,
-		&i.LockedRetryPolicy,
-		&i.QueueClass,
 		&i.QueueName,
-		&i.QueueConcurrencyLimit,
 		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
 		&i.Priority,
-		&i.QueueTimestamp,
-		&i.Ttl,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
 		&i.QueuedExpiresAt,
-		&i.RequestedMilliCpu,
-		&i.RequestedMemoryMib,
-		&i.RequestedDiskMib,
-		&i.RequestedExecutionSlots,
-		&i.RuntimeIdentityID,
-		&i.RuntimeArch,
-		&i.RuntimeABI,
-		&i.KernelDigest,
-		&i.InitramfsDigest,
-		&i.RootfsDigest,
-		&i.CniProfile,
-		&i.NetworkPolicy,
-		&i.ResourcePlacementPolicy,
 		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
 		&i.ActiveElapsedMs,
 		&i.ActiveStartedAt,
 		&i.TraceID,
 		&i.RootSpanID,
-		&i.StateVersion,
-		&i.CurrentAttemptNumber,
-		&i.CurrentRunLeaseID,
-		&i.LatestRunCheckpointID,
-		&i.ExitCode,
-		&i.ErrorMessage,
+		&i.ClaimID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.FirstLeaseAt,
 		&i.StartedAt,
-		&i.FinishedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
 		&i.RegionID,
 	)
 	return i, err

@@ -26,27 +26,19 @@ WITH cancelled AS (
     RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'cancelled',
-           completed_at = COALESCE(waits.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'cancelled',
+           condition_terminal_at = now(),
+           condition_reason_code = 'token_cancelled',
            updated_at = now()
      FROM cancelled
-     WHERE waits.org_id = cancelled.org_id
-       AND waits.project_id = cancelled.project_id
-       AND waits.environment_id = cancelled.environment_id
-       AND waits.token_id = cancelled.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
-    RETURNING waits.id, waits.org_id
-),
-resolved_cancelled_wait AS (
-    SELECT run_waits.id
-      FROM matched_wait
-      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
-                    AND run_waits.wait_id = matched_wait.id
-     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+     WHERE run_waits.environment_id = cancelled.environment_id
+       AND run_waits.token_id = cancelled.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
+    RETURNING run_waits.id
 )
-SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, (SELECT count(*) FROM resolved_cancelled_wait)::bigint AS resolved_wait_count
+SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
   FROM cancelled
 `
 
@@ -158,27 +150,18 @@ selected_token AS (
      WHERE NOT EXISTS (SELECT 1 FROM completed)
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'completed',
-           result = COALESCE(selected_token.completion_data, 'null'::jsonb),
-           completed_at = COALESCE(selected_token.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'completed',
+           condition_result = COALESCE(selected_token.completion_data, 'null'::jsonb),
+           condition_terminal_at = COALESCE(selected_token.completed_at, now()),
            updated_at = now()
       FROM selected_token
-     WHERE waits.org_id = selected_token.org_id
-       AND waits.project_id = selected_token.project_id
-       AND waits.environment_id = selected_token.environment_id
-       AND waits.token_id = selected_token.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
+     WHERE run_waits.environment_id = selected_token.environment_id
+       AND run_waits.token_id = selected_token.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
        AND selected_token.state = 'completed'
-    RETURNING waits.id, waits.org_id
-),
-resolved_wait AS (
-    SELECT run_waits.id
-      FROM matched_wait
-      JOIN run_waits ON run_waits.org_id = matched_wait.org_id
-                    AND run_waits.wait_id = matched_wait.id
-     WHERE run_waits.state IN ('hot_waiting', 'checkpointed_waiting')
+    RETURNING run_waits.id
 )
 SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.was_already_completed, selected_token.is_expired,
        (
@@ -190,7 +173,7 @@ SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selec
            AND selected_token.completion_fingerprint <> COALESCE($1::text, '')
        )::boolean AS completion_conflict,
        selected_token.is_expired AS completion_expired,
-       (SELECT count(*) FROM resolved_wait)::bigint AS resolved_wait_count
+       (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
   FROM selected_token
 `
 
@@ -446,21 +429,21 @@ WITH expired AS (
     RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
 matched_wait AS (
-    UPDATE waits
-       SET state = 'expired',
-           completed_at = COALESCE(waits.completed_at, now()),
+    UPDATE run_waits
+       SET condition_state = 'failed',
+           condition_terminal_at = now(),
+           condition_reason_code = 'token_expired',
            updated_at = now()
       FROM expired
-     WHERE waits.org_id = expired.org_id
-       AND waits.project_id = expired.project_id
-       AND waits.environment_id = expired.environment_id
-       AND waits.token_id = expired.id
-       AND waits.kind = 'token'
-       AND waits.state = 'pending'
-    RETURNING waits.id, waits.org_id
+     WHERE run_waits.environment_id = expired.environment_id
+       AND run_waits.token_id = expired.id
+       AND run_waits.kind = 'token'
+       AND run_waits.condition_state = 'pending'
+    RETURNING run_waits.id
 )
 SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
   FROM expired
+ WHERE (SELECT count(*) FROM matched_wait) >= 0
  ORDER BY expired.timeout_at ASC, expired.id ASC
 `
 

@@ -189,24 +189,15 @@ func (f *deploymentBuildFixture) failDelivery(t *testing.T, leaseID uuid.UUID, s
 
 func (f *deploymentBuildFixture) complete(t *testing.T, leaseID uuid.UUID, sequence int64) db.CompleteDeploymentBuildRow {
 	t.Helper()
-	var artifactID pgtype.UUID
-	if err := f.pool.QueryRow(f.ctx, `
-		SELECT deployment_source_artifact_id
-		  FROM deployments
-		 WHERE org_id = $1 AND id = $2
-	`, f.orgID, f.deploymentID).Scan(&artifactID); err != nil {
-		t.Fatal(err)
-	}
 	row, err := f.queries.CompleteDeploymentBuild(f.ctx, db.CompleteDeploymentBuildParams{
-		TerminalRequestFingerprint:   "sha256:complete-" + leaseID.String(),
-		OrgID:                        pgvalue.UUID(f.orgID),
-		ID:                           pgvalue.UUID(f.deploymentID),
-		BuildLeaseID:                 pgvalue.UUID(leaseID),
-		BuildWorkerInstanceID:        pgvalue.UUID(f.workerID),
-		WorkerEpoch:                  1,
-		LeaseSequence:                sequence,
-		BuildManifestArtifactID:      artifactID,
-		DeploymentManifestArtifactID: artifactID,
+		TerminalRequestFingerprint: "sha256:complete-" + leaseID.String(),
+		OrgID:                      pgvalue.UUID(f.orgID),
+		ID:                         pgvalue.UUID(f.deploymentID),
+		BuildLeaseID:               pgvalue.UUID(leaseID),
+		BuildWorkerInstanceID:      pgvalue.UUID(f.workerID),
+		WorkerEpoch:                1,
+		LeaseSequence:              sequence,
+		QueueConfig:                []byte(`{"formatVersion":0,"queues":[]}`),
 	})
 	if err != nil {
 		t.Fatal(err)

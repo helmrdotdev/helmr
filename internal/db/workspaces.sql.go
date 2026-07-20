@@ -11,74 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const archiveWorkspace = `-- name: ArchiveWorkspace :one
-UPDATE workspaces
-   SET desired_state = 'archived',
-       state = 'archived',
-       archived_at = coalesce(workspaces.archived_at, now()),
-       updated_at = now()
- WHERE workspaces.org_id = $1
-   AND workspaces.project_id = $2
-   AND workspaces.environment_id = $3
-   AND workspaces.id = $4
-   AND workspaces.deleted_at IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM workspace_mounts
-        WHERE workspace_mounts.org_id = workspaces.org_id
-          AND workspace_mounts.project_id = workspaces.project_id
-          AND workspace_mounts.environment_id = workspaces.environment_id
-          AND workspace_mounts.workspace_id = workspaces.id
-          AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
-   )
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
-`
-
-type ArchiveWorkspaceParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	ID            pgtype.UUID `json:"id"`
-}
-
-func (q *Queries) ArchiveWorkspace(ctx context.Context, arg ArchiveWorkspaceParams) (Workspace, error) {
-	row := q.db.QueryRow(ctx, archiveWorkspace,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.ID,
-	)
-	var i Workspace
-	err := row.Scan(
-		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
-		&i.CreateIdempotencyKey,
-		&i.CreateIdempotencyExpiresAt,
-		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
-		&i.State,
-		&i.DesiredState,
-		&i.DirtyState,
-		&i.Metadata,
-		&i.Tags,
-		&i.RetentionPolicy,
-		&i.LastActivityAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.ArchivedAt,
-		&i.DeletedAt,
-	)
-	return i, err
-}
-
 const clearExpiredWorkspaceCreateIdempotency = `-- name: ClearExpiredWorkspaceCreateIdempotency :exec
 UPDATE workspaces
    SET create_idempotency_key = '',
@@ -109,8 +41,30 @@ func (q *Queries) ClearExpiredWorkspaceCreateIdempotency(ctx context.Context, ar
 	return err
 }
 
-const createWorkspaceFromSandbox = `-- name: CreateWorkspaceFromSandbox :one
-WITH created_workspace AS (
+const createWorkspaceFromCurrentDeployment = `-- name: CreateWorkspaceFromCurrentDeployment :one
+WITH selected_definition AS (
+    SELECT deployment_definitions.environment_id,
+           deployment_definitions.id AS deployment_definition_id,
+           deployment_definitions.declared_id AS workspace_declared_id,
+           projects.org_id,
+           projects.id AS project_id,
+           projects.default_region_id
+      FROM deployment_definitions
+      JOIN environments
+        ON environments.id = deployment_definitions.environment_id
+       AND environments.current_deployment_id = deployment_definitions.deployment_id
+      JOIN deployments
+        ON deployments.environment_id = deployment_definitions.environment_id
+       AND deployments.id = deployment_definitions.deployment_id
+       AND deployments.status = 'deployed'
+      JOIN projects
+        ON projects.id = $1
+       AND projects.org_id = $2
+     WHERE deployment_definitions.environment_id = $3
+       AND deployment_definitions.id = $4
+       AND deployment_definitions.kind = 'workspace'
+       AND deployment_definitions.declared_id = $5
+), created_workspace AS (
     INSERT INTO workspaces (
         id,
         public_id,
@@ -118,11 +72,11 @@ WITH created_workspace AS (
         project_id,
         environment_id,
         region_id,
-        deployment_sandbox_id,
-        sandbox_id,
-        sandbox_fingerprint,
-        current_version_id,
-        external_id,
+        declaration_kind,
+        workspace_declared_id,
+        deployment_definition_id,
+        head_version_id,
+        key,
         create_idempotency_key,
         create_idempotency_expires_at,
         create_request_fingerprint,
@@ -130,40 +84,26 @@ WITH created_workspace AS (
         tags,
         retention_policy
     )
-    SELECT $1,
-           $2,
-           deployment_sandboxes.org_id,
-           deployment_sandboxes.project_id,
-           deployment_sandboxes.environment_id,
-           projects.default_region_id,
-           deployment_sandboxes.id,
-           deployment_sandboxes.sandbox_id,
-           deployment_sandboxes.fingerprint,
-           $3,
-           coalesce($4::text, ''),
-           coalesce($5::text, ''),
-           $6,
-           coalesce($7::text, ''),
-           coalesce($8::jsonb, '{}'::jsonb),
-           coalesce($9::text[], '{}'::text[]),
-           coalesce($10::jsonb, '{}'::jsonb)
-      FROM deployment_sandboxes
-      JOIN deployments
-        ON deployments.org_id = deployment_sandboxes.org_id
-       AND deployments.project_id = deployment_sandboxes.project_id
-       AND deployments.environment_id = deployment_sandboxes.environment_id
-       AND deployments.id = deployment_sandboxes.deployment_id
-       AND deployments.status = 'deployed'
-      JOIN projects
-        ON projects.org_id = deployment_sandboxes.org_id
-       AND projects.id = deployment_sandboxes.project_id
-     WHERE deployment_sandboxes.org_id = $11
-       AND deployment_sandboxes.project_id = $12
-       AND deployment_sandboxes.environment_id = $13
-       AND deployment_sandboxes.id = $14
-    RETURNING id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
-),
-created_version AS (
+    SELECT $6,
+           $7,
+           selected_definition.org_id,
+           selected_definition.project_id,
+           selected_definition.environment_id,
+           selected_definition.default_region_id,
+           'workspace',
+           selected_definition.workspace_declared_id,
+           selected_definition.deployment_definition_id,
+           $8,
+           $9,
+           coalesce($10::text, ''),
+           $11,
+           coalesce($12::text, ''),
+           coalesce($13::jsonb, '{}'::jsonb),
+           coalesce($14::text[], '{}'::text[]),
+           coalesce($15::jsonb, '{}'::jsonb)
+      FROM selected_definition
+    RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+), created_version AS (
     INSERT INTO workspace_versions (
         id,
         public_id,
@@ -173,79 +113,75 @@ created_version AS (
         workspace_id,
         kind,
         state,
-        artifact_id,
-        artifact_encoding,
-        artifact_entry_count,
         content_digest,
         size_bytes,
-        message,
-        promoted_at
+        entry_count,
+        ownership_generation,
+        writer_generation,
+        published_at
     )
-    SELECT $3,
-           $15,
+    SELECT $8,
+           $16,
            created_workspace.org_id,
            created_workspace.project_id,
            created_workspace.environment_id,
            created_workspace.id,
            'system'::workspace_version_kind,
-           'ready'::workspace_version_state,
-           $16,
-           $17,
-           $18,
-           $19,
-           $20,
-           'initial empty workspace',
+           'committed'::workspace_version_state,
+           'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96',
+           0,
+           0,
+           0,
+           0,
            now()
       FROM created_workspace
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
+    RETURNING workspace_id
 )
-SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.deployment_sandbox_id, created_workspace.sandbox_id, created_workspace.sandbox_fingerprint, created_workspace.external_id, created_workspace.create_idempotency_key, created_workspace.create_idempotency_expires_at, created_workspace.create_request_fingerprint, created_workspace.current_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.archived_at, created_workspace.deleted_at
+SELECT created_workspace.id, created_workspace.public_id, created_workspace.org_id, created_workspace.project_id, created_workspace.environment_id, created_workspace.region_id, created_workspace.declaration_kind, created_workspace.workspace_declared_id, created_workspace.deployment_definition_id, created_workspace.key, created_workspace.create_idempotency_key, created_workspace.create_idempotency_expires_at, created_workspace.create_request_fingerprint, created_workspace.state_version, created_workspace.stop_generation, created_workspace.owner_actor_id, created_workspace.owner_run_id, created_workspace.ownership_generation, created_workspace.writer_generation, created_workspace.head_version_id, created_workspace.state, created_workspace.desired_state, created_workspace.dirty_state, created_workspace.metadata, created_workspace.tags, created_workspace.retention_policy, created_workspace.last_activity_at, created_workspace.created_at, created_workspace.updated_at, created_workspace.deleted_at
   FROM created_workspace
-  JOIN created_version
-    ON created_version.org_id = created_workspace.org_id
-   AND created_version.project_id = created_workspace.project_id
-   AND created_version.environment_id = created_workspace.environment_id
-   AND created_version.workspace_id = created_workspace.id
+  JOIN created_version ON created_version.workspace_id = created_workspace.id
 `
 
-type CreateWorkspaceFromSandboxParams struct {
+type CreateWorkspaceFromCurrentDeploymentParams struct {
+	ProjectID                  pgtype.UUID        `json:"project_id"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	EnvironmentID              pgtype.UUID        `json:"environment_id"`
+	DeploymentDefinitionID     pgtype.UUID        `json:"deployment_definition_id"`
+	WorkspaceDeclaredID        string             `json:"workspace_declared_id"`
 	ID                         pgtype.UUID        `json:"id"`
 	PublicID                   string             `json:"public_id"`
 	InitialVersionID           pgtype.UUID        `json:"initial_version_id"`
-	ExternalID                 string             `json:"external_id"`
+	Key                        pgtype.Text        `json:"key"`
 	CreateIdempotencyKey       string             `json:"create_idempotency_key"`
 	CreateIdempotencyExpiresAt pgtype.Timestamptz `json:"create_idempotency_expires_at"`
 	CreateRequestFingerprint   string             `json:"create_request_fingerprint"`
 	Metadata                   []byte             `json:"metadata"`
 	Tags                       []string           `json:"tags"`
 	RetentionPolicy            []byte             `json:"retention_policy"`
-	OrgID                      pgtype.UUID        `json:"org_id"`
-	ProjectID                  pgtype.UUID        `json:"project_id"`
-	EnvironmentID              pgtype.UUID        `json:"environment_id"`
-	DeploymentSandboxID        pgtype.UUID        `json:"deployment_sandbox_id"`
 	InitialVersionPublicID     string             `json:"initial_version_public_id"`
-	InitialArtifactID          pgtype.UUID        `json:"initial_artifact_id"`
-	InitialArtifactEncoding    string             `json:"initial_artifact_encoding"`
-	InitialArtifactEntryCount  int32              `json:"initial_artifact_entry_count"`
-	InitialContentDigest       string             `json:"initial_content_digest"`
-	InitialSizeBytes           int64              `json:"initial_size_bytes"`
 }
 
-type CreateWorkspaceFromSandboxRow struct {
+type CreateWorkspaceFromCurrentDeploymentRow struct {
 	ID                         pgtype.UUID           `json:"id"`
 	PublicID                   string                `json:"public_id"`
 	OrgID                      pgtype.UUID           `json:"org_id"`
 	ProjectID                  pgtype.UUID           `json:"project_id"`
 	EnvironmentID              pgtype.UUID           `json:"environment_id"`
 	RegionID                   string                `json:"region_id"`
-	DeploymentSandboxID        pgtype.UUID           `json:"deployment_sandbox_id"`
-	SandboxID                  string                `json:"sandbox_id"`
-	SandboxFingerprint         string                `json:"sandbox_fingerprint"`
-	ExternalID                 string                `json:"external_id"`
+	DeclarationKind            pgtype.Text           `json:"declaration_kind"`
+	WorkspaceDeclaredID        pgtype.Text           `json:"workspace_declared_id"`
+	DeploymentDefinitionID     pgtype.UUID           `json:"deployment_definition_id"`
+	Key                        pgtype.Text           `json:"key"`
 	CreateIdempotencyKey       string                `json:"create_idempotency_key"`
 	CreateIdempotencyExpiresAt pgtype.Timestamptz    `json:"create_idempotency_expires_at"`
 	CreateRequestFingerprint   string                `json:"create_request_fingerprint"`
-	CurrentVersionID           pgtype.UUID           `json:"current_version_id"`
+	StateVersion               int64                 `json:"state_version"`
+	StopGeneration             int64                 `json:"stop_generation"`
+	OwnerActorID               pgtype.UUID           `json:"owner_actor_id"`
+	OwnerRunID                 pgtype.UUID           `json:"owner_run_id"`
+	OwnershipGeneration        int64                 `json:"ownership_generation"`
+	WriterGeneration           int64                 `json:"writer_generation"`
+	HeadVersionID              pgtype.UUID           `json:"head_version_id"`
 	State                      WorkspaceState        `json:"state"`
 	DesiredState               WorkspaceDesiredState `json:"desired_state"`
 	DirtyState                 WorkspaceDirtyState   `json:"dirty_state"`
@@ -255,34 +191,29 @@ type CreateWorkspaceFromSandboxRow struct {
 	LastActivityAt             pgtype.Timestamptz    `json:"last_activity_at"`
 	CreatedAt                  pgtype.Timestamptz    `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz    `json:"updated_at"`
-	ArchivedAt                 pgtype.Timestamptz    `json:"archived_at"`
 	DeletedAt                  pgtype.Timestamptz    `json:"deleted_at"`
 }
 
-func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWorkspaceFromSandboxParams) (CreateWorkspaceFromSandboxRow, error) {
-	row := q.db.QueryRow(ctx, createWorkspaceFromSandbox,
+func (q *Queries) CreateWorkspaceFromCurrentDeployment(ctx context.Context, arg CreateWorkspaceFromCurrentDeploymentParams) (CreateWorkspaceFromCurrentDeploymentRow, error) {
+	row := q.db.QueryRow(ctx, createWorkspaceFromCurrentDeployment,
+		arg.ProjectID,
+		arg.OrgID,
+		arg.EnvironmentID,
+		arg.DeploymentDefinitionID,
+		arg.WorkspaceDeclaredID,
 		arg.ID,
 		arg.PublicID,
 		arg.InitialVersionID,
-		arg.ExternalID,
+		arg.Key,
 		arg.CreateIdempotencyKey,
 		arg.CreateIdempotencyExpiresAt,
 		arg.CreateRequestFingerprint,
 		arg.Metadata,
 		arg.Tags,
 		arg.RetentionPolicy,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.DeploymentSandboxID,
 		arg.InitialVersionPublicID,
-		arg.InitialArtifactID,
-		arg.InitialArtifactEncoding,
-		arg.InitialArtifactEntryCount,
-		arg.InitialContentDigest,
-		arg.InitialSizeBytes,
 	)
-	var i CreateWorkspaceFromSandboxRow
+	var i CreateWorkspaceFromCurrentDeploymentRow
 	err := row.Scan(
 		&i.ID,
 		&i.PublicID,
@@ -290,14 +221,20 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -307,14 +244,13 @@ func (q *Queries) CreateWorkspaceFromSandbox(ctx context.Context, arg CreateWork
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -345,14 +281,20 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -362,14 +304,13 @@ func (q *Queries) GetWorkspace(ctx context.Context, arg GetWorkspaceParams) (Wor
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getWorkspaceByCreateIdempotency = `-- name: GetWorkspaceByCreateIdempotency :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND project_id = $2
@@ -401,14 +342,20 @@ func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWo
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -418,14 +365,13 @@ func (q *Queries) GetWorkspaceByCreateIdempotency(ctx context.Context, arg GetWo
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const getWorkspaceByOrgAndID = `-- name: GetWorkspaceByOrgAndID :one
-SELECT id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
   FROM workspaces
  WHERE org_id = $1
    AND id = $2
@@ -447,14 +393,20 @@ func (q *Queries) GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceBy
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -464,21 +416,20 @@ func (q *Queries) GetWorkspaceByOrgAndID(ctx context.Context, arg GetWorkspaceBy
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
 const listWorkspaces = `-- name: ListWorkspaces :many
-SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.deployment_sandbox_id, workspaces.sandbox_id, workspaces.sandbox_fingerprint, workspaces.external_id, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.current_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.archived_at, workspaces.deleted_at
+SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.project_id, workspaces.environment_id, workspaces.region_id, workspaces.declaration_kind, workspaces.workspace_declared_id, workspaces.deployment_definition_id, workspaces.key, workspaces.create_idempotency_key, workspaces.create_idempotency_expires_at, workspaces.create_request_fingerprint, workspaces.state_version, workspaces.stop_generation, workspaces.owner_actor_id, workspaces.owner_run_id, workspaces.ownership_generation, workspaces.writer_generation, workspaces.head_version_id, workspaces.state, workspaces.desired_state, workspaces.dirty_state, workspaces.metadata, workspaces.tags, workspaces.retention_policy, workspaces.last_activity_at, workspaces.created_at, workspaces.updated_at, workspaces.deleted_at
   FROM workspaces
 WHERE workspaces.org_id = $1
    AND workspaces.project_id = $2
    AND workspaces.environment_id = $3
    AND workspaces.deleted_at IS NULL
    AND ($4::workspace_state IS NULL OR workspaces.state = $4::workspace_state)
-   AND ($5::text IS NULL OR workspaces.external_id = $5::text)
+   AND ($5::text IS NULL OR workspaces.key = $5::text)
    AND ($6::text IS NULL OR workspaces.tags @> ARRAY[$6::text])
  ORDER BY workspaces.updated_at DESC, workspaces.id DESC
  LIMIT $7
@@ -489,7 +440,7 @@ type ListWorkspacesParams struct {
 	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
 	State         NullWorkspaceState `json:"state"`
-	ExternalID    pgtype.Text        `json:"external_id"`
+	Key           pgtype.Text        `json:"key"`
 	Tag           pgtype.Text        `json:"tag"`
 	LimitCount    int32              `json:"limit_count"`
 }
@@ -500,7 +451,7 @@ func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) 
 		arg.ProjectID,
 		arg.EnvironmentID,
 		arg.State,
-		arg.ExternalID,
+		arg.Key,
 		arg.Tag,
 		arg.LimitCount,
 	)
@@ -518,14 +469,20 @@ func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) 
 			&i.ProjectID,
 			&i.EnvironmentID,
 			&i.RegionID,
-			&i.DeploymentSandboxID,
-			&i.SandboxID,
-			&i.SandboxFingerprint,
-			&i.ExternalID,
+			&i.DeclarationKind,
+			&i.WorkspaceDeclaredID,
+			&i.DeploymentDefinitionID,
+			&i.Key,
 			&i.CreateIdempotencyKey,
 			&i.CreateIdempotencyExpiresAt,
 			&i.CreateRequestFingerprint,
-			&i.CurrentVersionID,
+			&i.StateVersion,
+			&i.StopGeneration,
+			&i.OwnerActorID,
+			&i.OwnerRunID,
+			&i.OwnershipGeneration,
+			&i.WriterGeneration,
+			&i.HeadVersionID,
 			&i.State,
 			&i.DesiredState,
 			&i.DirtyState,
@@ -535,7 +492,6 @@ func (q *Queries) ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) 
 			&i.LastActivityAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
-			&i.ArchivedAt,
 			&i.DeletedAt,
 		); err != nil {
 			return nil, err
@@ -558,7 +514,7 @@ UPDATE workspaces
    AND workspaces.environment_id = $5
    AND workspaces.id = $6
    AND workspaces.deleted_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type PatchWorkspaceParams struct {
@@ -587,14 +543,20 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -604,83 +566,85 @@ func (q *Queries) PatchWorkspace(ctx context.Context, arg PatchWorkspaceParams) 
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err
 }
 
-const resolveDeploymentSandboxForWorkspaceCreate = `-- name: ResolveDeploymentSandboxForWorkspaceCreate :one
-SELECT deployment_sandboxes.id, deployment_sandboxes.public_id, deployment_sandboxes.org_id, deployment_sandboxes.project_id, deployment_sandboxes.environment_id, deployment_sandboxes.deployment_id, deployment_sandboxes.sandbox_id, deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format, deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest, deployment_sandboxes.image_format, deployment_sandboxes.workspace_mount_path, deployment_sandboxes.resource_floor, deployment_sandboxes.disk_floor_mib, deployment_sandboxes.network_policy, deployment_sandboxes.runtime_abi, deployment_sandboxes.guestd_abi, deployment_sandboxes.adapter_abi, deployment_sandboxes.filesystem_format, deployment_sandboxes.default_uid, deployment_sandboxes.default_gid, deployment_sandboxes.default_workdir, deployment_sandboxes.contract_version, deployment_sandboxes.fingerprint, deployment_sandboxes.created_at
-  FROM deployment_sandboxes
+const resolveCurrentWorkspaceDefinitionForCreate = `-- name: ResolveCurrentWorkspaceDefinitionForCreate :one
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+  FROM deployment_definitions
   JOIN deployments
-    ON deployments.org_id = deployment_sandboxes.org_id
-   AND deployments.project_id = deployment_sandboxes.project_id
-   AND deployments.environment_id = deployment_sandboxes.environment_id
-   AND deployments.id = deployment_sandboxes.deployment_id
-  JOIN projects
-    ON projects.org_id = deployment_sandboxes.org_id
-   AND projects.id = deployment_sandboxes.project_id
-  JOIN environments
-    ON environments.org_id = deployment_sandboxes.org_id
-   AND environments.project_id = deployment_sandboxes.project_id
-   AND environments.id = deployment_sandboxes.environment_id
- WHERE deployment_sandboxes.org_id = $1
-   AND deployment_sandboxes.project_id = $2
-   AND deployment_sandboxes.environment_id = $3
-   AND deployment_sandboxes.sandbox_id = $4
+    ON deployments.environment_id = deployment_definitions.environment_id
+   AND deployments.id = deployment_definitions.deployment_id
    AND deployments.status = 'deployed'
-   AND (
-       ($5::uuid IS NOT NULL AND deployments.id = $5::uuid)
-       OR
-       ($5::uuid IS NULL AND environments.current_deployment_id = deployments.id)
-   )
+  JOIN environments
+    ON environments.id = deployment_definitions.environment_id
+ WHERE deployment_definitions.environment_id = $1
+   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.declared_id = $2
+   AND environments.current_deployment_id = deployment_definitions.deployment_id
  LIMIT 1
 `
 
-type ResolveDeploymentSandboxForWorkspaceCreateParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	SandboxID     string      `json:"sandbox_id"`
-	DeploymentID  pgtype.UUID `json:"deployment_id"`
+type ResolveCurrentWorkspaceDefinitionForCreateParams struct {
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	WorkspaceDeclaredID string      `json:"workspace_declared_id"`
 }
 
-func (q *Queries) ResolveDeploymentSandboxForWorkspaceCreate(ctx context.Context, arg ResolveDeploymentSandboxForWorkspaceCreateParams) (DeploymentSandbox, error) {
-	row := q.db.QueryRow(ctx, resolveDeploymentSandboxForWorkspaceCreate,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.SandboxID,
-		arg.DeploymentID,
-	)
-	var i DeploymentSandbox
+func (q *Queries) ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error) {
+	row := q.db.QueryRow(ctx, resolveCurrentWorkspaceDefinitionForCreate, arg.EnvironmentID, arg.WorkspaceDeclaredID)
+	var i DeploymentDefinition
 	err := row.Scan(
 		&i.ID,
-		&i.PublicID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentID,
-		&i.SandboxID,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceMountPath,
-		&i.ResourceFloor,
-		&i.DiskFloorMib,
-		&i.NetworkPolicy,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
-		&i.FilesystemFormat,
-		&i.DefaultUid,
-		&i.DefaultGid,
-		&i.DefaultWorkdir,
-		&i.ContractVersion,
-		&i.Fingerprint,
+		&i.Kind,
+		&i.DeclaredID,
+		&i.ManifestVersion,
+		&i.Manifest,
+		&i.ManifestDigest,
+		&i.WorkspaceArchitecture,
+		&i.ArtifactID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const resolveRunPinnedWorkspaceDefinitionForCreate = `-- name: ResolveRunPinnedWorkspaceDefinitionForCreate :one
+SELECT deployment_definitions.id, deployment_definitions.environment_id, deployment_definitions.deployment_id, deployment_definitions.kind, deployment_definitions.declared_id, deployment_definitions.manifest_version, deployment_definitions.manifest, deployment_definitions.manifest_digest, deployment_definitions.workspace_architecture, deployment_definitions.artifact_id, deployment_definitions.created_at
+  FROM runs
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runs.environment_id
+   AND deployment_definitions.deployment_id = runs.deployment_id
+   AND deployment_definitions.kind = 'workspace'
+   AND deployment_definitions.declared_id = $1
+ WHERE runs.environment_id = $2
+   AND runs.id = $3
+   AND runs.status IN ('queued', 'running', 'waiting', 'retry_delayed', 'cancel_requested')
+ LIMIT 1
+`
+
+type ResolveRunPinnedWorkspaceDefinitionForCreateParams struct {
+	WorkspaceDeclaredID string      `json:"workspace_declared_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	RunID               pgtype.UUID `json:"run_id"`
+}
+
+func (q *Queries) ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error) {
+	row := q.db.QueryRow(ctx, resolveRunPinnedWorkspaceDefinitionForCreate, arg.WorkspaceDeclaredID, arg.EnvironmentID, arg.RunID)
+	var i DeploymentDefinition
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.Kind,
+		&i.DeclaredID,
+		&i.ManifestVersion,
+		&i.Manifest,
+		&i.ManifestDigest,
+		&i.WorkspaceArchitecture,
+		&i.ArtifactID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -695,9 +659,8 @@ UPDATE workspaces
    AND workspaces.environment_id = $3
    AND workspaces.id = $4
    AND workspaces.state = 'active'
-   AND workspaces.archived_at IS NULL
    AND workspaces.deleted_at IS NULL
-RETURNING id, public_id, org_id, project_id, environment_id, region_id, deployment_sandbox_id, sandbox_id, sandbox_fingerprint, external_id, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, current_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, archived_at, deleted_at
+RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
 `
 
 type SetWorkspaceDesiredStoppedParams struct {
@@ -722,14 +685,20 @@ func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspa
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.RegionID,
-		&i.DeploymentSandboxID,
-		&i.SandboxID,
-		&i.SandboxFingerprint,
-		&i.ExternalID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
 		&i.CreateIdempotencyKey,
 		&i.CreateIdempotencyExpiresAt,
 		&i.CreateRequestFingerprint,
-		&i.CurrentVersionID,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
 		&i.State,
 		&i.DesiredState,
 		&i.DirtyState,
@@ -739,7 +708,6 @@ func (q *Queries) SetWorkspaceDesiredStopped(ctx context.Context, arg SetWorkspa
 		&i.LastActivityAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.ArchivedAt,
 		&i.DeletedAt,
 	)
 	return i, err

@@ -139,83 +139,35 @@ INSERT INTO public_access_token_scopes (
     environment_id,
     public_access_token_id,
     scope_type,
-    token_id,
-    stream_id,
-    correlation_id
+    token_id
 )
 SELECT $1,
        $2,
        $3,
        $4,
        public_access_tokens.id,
-       $5::public_access_token_scope_type,
-       $6::uuid,
-       $7::uuid,
-       CASE
-           WHEN $5::public_access_token_scope_type = 'token.complete' THEN ''
-           ELSE COALESCE($8::text, '')
-       END
+       'token.complete',
+       tokens.id
  FROM public_access_tokens
+ JOIN tokens
+   ON tokens.org_id = public_access_tokens.org_id
+  AND tokens.project_id = public_access_tokens.project_id
+  AND tokens.environment_id = public_access_tokens.environment_id
+  AND tokens.id = $5
  WHERE public_access_tokens.org_id = $2
    AND public_access_tokens.project_id = $3
    AND public_access_tokens.environment_id = $4
-   AND public_access_tokens.id = $9
-   AND (
-       (
-           $5::public_access_token_scope_type = 'token.complete'
-           AND $6::uuid IS NOT NULL
-           AND $7::uuid IS NULL
-           AND EXISTS (
-               SELECT 1
-                FROM tokens
-                WHERE tokens.org_id = $2
-                  AND tokens.project_id = $3
-                  AND tokens.environment_id = $4
-                  AND tokens.id = $6::uuid
-           )
-       )
-       OR (
-           $5::public_access_token_scope_type = 'session.input.send'
-           AND $6::uuid IS NULL
-           AND $7::uuid IS NOT NULL
-           AND EXISTS (
-               SELECT 1
-                FROM streams
-                WHERE streams.org_id = $2
-                  AND streams.project_id = $3
-                  AND streams.environment_id = $4
-                  AND streams.id = $7::uuid
-                  AND streams.direction = 'input'
-           )
-       )
-       OR (
-           $5::public_access_token_scope_type = 'session.output.read'
-           AND $6::uuid IS NULL
-           AND $7::uuid IS NOT NULL
-           AND EXISTS (
-               SELECT 1
-                FROM streams
-                WHERE streams.org_id = $2
-                  AND streams.project_id = $3
-                  AND streams.environment_id = $4
-                  AND streams.id = $7::uuid
-                  AND streams.direction = 'output'
-           )
-       )
-   )
-RETURNING id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
+   AND public_access_tokens.id = $6
+RETURNING id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, created_at
 `
 
 type CreatePublicAccessTokenScopeParams struct {
-	ID                  pgtype.UUID                `json:"id"`
-	OrgID               pgtype.UUID                `json:"org_id"`
-	ProjectID           pgtype.UUID                `json:"project_id"`
-	EnvironmentID       pgtype.UUID                `json:"environment_id"`
-	ScopeType           PublicAccessTokenScopeType `json:"scope_type"`
-	TokenID             pgtype.UUID                `json:"token_id"`
-	StreamID            pgtype.UUID                `json:"stream_id"`
-	CorrelationID       pgtype.Text                `json:"correlation_id"`
-	PublicAccessTokenID pgtype.UUID                `json:"public_access_token_id"`
+	ID                  pgtype.UUID `json:"id"`
+	OrgID               pgtype.UUID `json:"org_id"`
+	ProjectID           pgtype.UUID `json:"project_id"`
+	EnvironmentID       pgtype.UUID `json:"environment_id"`
+	TokenID             pgtype.UUID `json:"token_id"`
+	PublicAccessTokenID pgtype.UUID `json:"public_access_token_id"`
 }
 
 func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePublicAccessTokenScopeParams) (PublicAccessTokenScope, error) {
@@ -224,10 +176,7 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.ScopeType,
 		arg.TokenID,
-		arg.StreamID,
-		arg.CorrelationID,
 		arg.PublicAccessTokenID,
 	)
 	var i PublicAccessTokenScope
@@ -239,8 +188,6 @@ func (q *Queries) CreatePublicAccessTokenScope(ctx context.Context, arg CreatePu
 		&i.PublicAccessTokenID,
 		&i.ScopeType,
 		&i.TokenID,
-		&i.StreamID,
-		&i.CorrelationID,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -283,66 +230,8 @@ func (q *Queries) GetPublicAccessToken(ctx context.Context, arg GetPublicAccessT
 	return i, err
 }
 
-const getPublicAccessTokenStreamScope = `-- name: GetPublicAccessTokenStreamScope :one
-SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
-  FROM public_access_token_scopes
-  JOIN public_access_tokens
-    ON public_access_tokens.org_id = public_access_token_scopes.org_id
-   AND public_access_tokens.project_id = public_access_token_scopes.project_id
-   AND public_access_tokens.environment_id = public_access_token_scopes.environment_id
-   AND public_access_tokens.id = public_access_token_scopes.public_access_token_id
- WHERE public_access_token_scopes.org_id = $1
-   AND public_access_token_scopes.project_id = $2
-   AND public_access_token_scopes.environment_id = $3
-   AND public_access_token_scopes.public_access_token_id = $4
-   AND public_access_token_scopes.scope_type = $5::public_access_token_scope_type
-   AND public_access_token_scopes.stream_id = $6
-   AND (
-       public_access_token_scopes.correlation_id = ''
-       OR public_access_token_scopes.correlation_id = COALESCE($7::text, '')
-   )
-   AND public_access_tokens.state = 'active'
-   AND public_access_tokens.expires_at > now()
-`
-
-type GetPublicAccessTokenStreamScopeParams struct {
-	OrgID               pgtype.UUID                `json:"org_id"`
-	ProjectID           pgtype.UUID                `json:"project_id"`
-	EnvironmentID       pgtype.UUID                `json:"environment_id"`
-	PublicAccessTokenID pgtype.UUID                `json:"public_access_token_id"`
-	ScopeType           PublicAccessTokenScopeType `json:"scope_type"`
-	StreamID            pgtype.UUID                `json:"stream_id"`
-	CorrelationID       pgtype.Text                `json:"correlation_id"`
-}
-
-func (q *Queries) GetPublicAccessTokenStreamScope(ctx context.Context, arg GetPublicAccessTokenStreamScopeParams) (PublicAccessTokenScope, error) {
-	row := q.db.QueryRow(ctx, getPublicAccessTokenStreamScope,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.PublicAccessTokenID,
-		arg.ScopeType,
-		arg.StreamID,
-		arg.CorrelationID,
-	)
-	var i PublicAccessTokenScope
-	err := row.Scan(
-		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.PublicAccessTokenID,
-		&i.ScopeType,
-		&i.TokenID,
-		&i.StreamID,
-		&i.CorrelationID,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const getPublicAccessTokenTokenScope = `-- name: GetPublicAccessTokenTokenScope :one
-SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.stream_id, public_access_token_scopes.correlation_id, public_access_token_scopes.created_at
+SELECT public_access_token_scopes.id, public_access_token_scopes.org_id, public_access_token_scopes.project_id, public_access_token_scopes.environment_id, public_access_token_scopes.public_access_token_id, public_access_token_scopes.scope_type, public_access_token_scopes.token_id, public_access_token_scopes.created_at
   FROM public_access_token_scopes
   JOIN public_access_tokens
     ON public_access_tokens.org_id = public_access_token_scopes.org_id
@@ -384,15 +273,13 @@ func (q *Queries) GetPublicAccessTokenTokenScope(ctx context.Context, arg GetPub
 		&i.PublicAccessTokenID,
 		&i.ScopeType,
 		&i.TokenID,
-		&i.StreamID,
-		&i.CorrelationID,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const listPublicAccessTokenScopes = `-- name: ListPublicAccessTokenScopes :many
-SELECT id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, stream_id, correlation_id, created_at
+SELECT id, org_id, project_id, environment_id, public_access_token_id, scope_type, token_id, created_at
  FROM public_access_token_scopes
  WHERE org_id = $1
    AND project_id = $2
@@ -430,8 +317,6 @@ func (q *Queries) ListPublicAccessTokenScopes(ctx context.Context, arg ListPubli
 			&i.PublicAccessTokenID,
 			&i.ScopeType,
 			&i.TokenID,
-			&i.StreamID,
-			&i.CorrelationID,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err

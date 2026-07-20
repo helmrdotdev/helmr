@@ -1,15 +1,22 @@
 -- name: ListFleetRunDemand :many
 WITH target_group AS (
-    SELECT worker_groups.id, worker_groups.region_id FROM worker_groups
+    SELECT worker_groups.id,
+           worker_groups.region_id,
+           worker_groups.required_cpu_millis,
+           worker_groups.required_memory_bytes,
+           worker_groups.required_workload_disk_bytes,
+           worker_groups.required_scratch_bytes,
+           worker_groups.required_vm_slots
+      FROM worker_groups
      WHERE worker_groups.id = sqlc.arg(worker_group_id) AND worker_groups.allows_run
 ), demand AS (
     SELECT 'queued'::text AS demand_state,
            target_group.id AS compatibility_key,
-           runs.requested_milli_cpu AS milli_cpu,
-           CAST(runs.requested_memory_mib * 1048576 AS bigint) AS memory_bytes,
-           CAST(runs.requested_disk_mib * 1048576 AS bigint) AS workload_disk_bytes,
-           0::bigint AS scratch_bytes,
-           runs.requested_execution_slots::bigint AS vm_slots,
+           target_group.required_cpu_millis AS milli_cpu,
+           target_group.required_memory_bytes AS memory_bytes,
+           target_group.required_workload_disk_bytes AS workload_disk_bytes,
+           target_group.required_scratch_bytes AS scratch_bytes,
+           target_group.required_vm_slots::bigint AS vm_slots,
            count(*)::bigint AS demand_count
       FROM runs
       JOIN workspaces ON workspaces.org_id = runs.org_id
@@ -18,11 +25,13 @@ WITH target_group AS (
                      AND workspaces.id = runs.workspace_id
       JOIN target_group ON target_group.region_id = workspaces.region_id
      WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-       AND runs.queue_timestamp <= now()
-       AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
-     GROUP BY target_group.id, runs.requested_milli_cpu,
-              runs.requested_memory_mib, runs.requested_disk_mib,
-              runs.requested_execution_slots
+       AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+     GROUP BY target_group.id,
+              target_group.required_cpu_millis,
+              target_group.required_memory_bytes,
+              target_group.required_workload_disk_bytes,
+              target_group.required_scratch_bytes,
+              target_group.required_vm_slots
     UNION ALL
     SELECT 'active'::text,
            target_group.id,
@@ -77,7 +86,7 @@ UPDATE worker_groups
 RETURNING id;
 
 -- name: GetFleetOldestRunQueueTime :one
-SELECT min(runs.queue_timestamp)::timestamptz
+SELECT min(runs.queue_origin_at)::timestamptz
   FROM runs
   JOIN workspaces ON workspaces.org_id = runs.org_id
                  AND workspaces.project_id = runs.project_id
@@ -87,8 +96,7 @@ SELECT min(runs.queue_timestamp)::timestamptz
                     AND worker_groups.region_id = workspaces.region_id
                     AND worker_groups.allows_run
  WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
-   AND runs.queue_timestamp <= now()
-   AND (runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
 
 -- name: ListFleetBuildDemand :many
 WITH target_group AS (
@@ -233,10 +241,6 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
                AND state IN ('starting', 'running', 'closing'))
-         + (SELECT count(*) FROM workspace_process_operations
-             WHERE claimed_by_worker_instance_id = worker_instances.id
-               AND claimed_worker_epoch = worker_instances.current_epoch
-               AND state IN ('claimed', 'running'))
          + (SELECT count(*) FROM worker_network_slots
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
@@ -296,10 +300,6 @@ WITH target AS MATERIALIZED (
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch
                    AND state IN ('starting', 'running', 'closing'))
-             + (SELECT count(*) FROM workspace_process_operations
-                 WHERE claimed_by_worker_instance_id = target.id
-                   AND claimed_worker_epoch = target.current_epoch
-                   AND state IN ('claimed', 'running'))
              + (SELECT count(*) FROM worker_network_slots
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch

@@ -11,8 +11,8 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const getRuntimeSubstrateForSandbox = `-- name: GetRuntimeSubstrateForSandbox :one
-SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_sandbox_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
+const getRuntimeSubstrateForWorkspaceDefinition = `-- name: GetRuntimeSubstrateForWorkspaceDefinition :one
+SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.project_id, runtime_substrates.environment_id, runtime_substrates.deployment_definition_id, runtime_substrates.artifact_id, runtime_substrates.substrate_digest, runtime_substrates.substrate_format, runtime_substrates.builder_abi, runtime_substrates.layout_abi, runtime_substrates.substrate_size_bytes, runtime_substrates.source, runtime_substrates.created_by_worker_instance_id, runtime_substrates.created_at, runtime_substrates.updated_at, runtime_substrates.retired_at, runtime_substrates.last_referenced_at,
        artifacts.digest AS artifact_digest,
        artifacts.size_bytes AS artifact_size_bytes,
        artifacts.media_type AS artifact_media_type
@@ -22,20 +22,17 @@ SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.proj
    AND artifacts.project_id = runtime_substrates.project_id
    AND artifacts.environment_id = runtime_substrates.environment_id
    AND artifacts.id = runtime_substrates.artifact_id
-  JOIN deployment_sandboxes
-    ON deployment_sandboxes.org_id = runtime_substrates.org_id
-   AND deployment_sandboxes.project_id = runtime_substrates.project_id
-   AND deployment_sandboxes.environment_id = runtime_substrates.environment_id
-   AND deployment_sandboxes.id = runtime_substrates.deployment_sandbox_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_substrates.environment_id
+   AND deployment_definitions.id = runtime_substrates.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
   JOIN deployments
-    ON deployments.org_id = deployment_sandboxes.org_id
-   AND deployments.project_id = deployment_sandboxes.project_id
-   AND deployments.environment_id = deployment_sandboxes.environment_id
-   AND deployments.id = deployment_sandboxes.deployment_id
+    ON deployments.environment_id = deployment_definitions.environment_id
+   AND deployments.id = deployment_definitions.deployment_id
  WHERE runtime_substrates.org_id = $1
    AND runtime_substrates.project_id = $2
    AND runtime_substrates.environment_id = $3
-   AND runtime_substrates.deployment_sandbox_id = $4
+   AND runtime_substrates.deployment_definition_id = $4
    AND runtime_substrates.substrate_digest = $5
    AND runtime_substrates.substrate_format = $6
    AND runtime_substrates.builder_abi = $7
@@ -44,23 +41,23 @@ SELECT runtime_substrates.id, runtime_substrates.org_id, runtime_substrates.proj
  LIMIT 1
 `
 
-type GetRuntimeSubstrateForSandboxParams struct {
-	OrgID               pgtype.UUID `json:"org_id"`
-	ProjectID           pgtype.UUID `json:"project_id"`
-	EnvironmentID       pgtype.UUID `json:"environment_id"`
-	DeploymentSandboxID pgtype.UUID `json:"deployment_sandbox_id"`
-	SubstrateDigest     string      `json:"substrate_digest"`
-	SubstrateFormat     string      `json:"substrate_format"`
-	BuilderAbi          string      `json:"builder_abi"`
-	LayoutAbi           string      `json:"layout_abi"`
+type GetRuntimeSubstrateForWorkspaceDefinitionParams struct {
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	SubstrateDigest        string      `json:"substrate_digest"`
+	SubstrateFormat        string      `json:"substrate_format"`
+	BuilderAbi             string      `json:"builder_abi"`
+	LayoutAbi              string      `json:"layout_abi"`
 }
 
-type GetRuntimeSubstrateForSandboxRow struct {
+type GetRuntimeSubstrateForWorkspaceDefinitionRow struct {
 	ID                        pgtype.UUID        `json:"id"`
 	OrgID                     pgtype.UUID        `json:"org_id"`
 	ProjectID                 pgtype.UUID        `json:"project_id"`
 	EnvironmentID             pgtype.UUID        `json:"environment_id"`
-	DeploymentSandboxID       pgtype.UUID        `json:"deployment_sandbox_id"`
+	DeploymentDefinitionID    pgtype.UUID        `json:"deployment_definition_id"`
 	ArtifactID                pgtype.UUID        `json:"artifact_id"`
 	SubstrateDigest           string             `json:"substrate_digest"`
 	SubstrateFormat           string             `json:"substrate_format"`
@@ -78,24 +75,24 @@ type GetRuntimeSubstrateForSandboxRow struct {
 	ArtifactMediaType         string             `json:"artifact_media_type"`
 }
 
-func (q *Queries) GetRuntimeSubstrateForSandbox(ctx context.Context, arg GetRuntimeSubstrateForSandboxParams) (GetRuntimeSubstrateForSandboxRow, error) {
-	row := q.db.QueryRow(ctx, getRuntimeSubstrateForSandbox,
+func (q *Queries) GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context, arg GetRuntimeSubstrateForWorkspaceDefinitionParams) (GetRuntimeSubstrateForWorkspaceDefinitionRow, error) {
+	row := q.db.QueryRow(ctx, getRuntimeSubstrateForWorkspaceDefinition,
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.DeploymentSandboxID,
+		arg.DeploymentDefinitionID,
 		arg.SubstrateDigest,
 		arg.SubstrateFormat,
 		arg.BuilderAbi,
 		arg.LayoutAbi,
 	)
-	var i GetRuntimeSubstrateForSandboxRow
+	var i GetRuntimeSubstrateForWorkspaceDefinitionRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.ArtifactID,
 		&i.SubstrateDigest,
 		&i.SubstrateFormat,
@@ -121,7 +118,7 @@ INSERT INTO runtime_substrates (
     org_id,
     project_id,
     environment_id,
-    deployment_sandbox_id,
+    deployment_definition_id,
     artifact_id,
     substrate_digest,
     substrate_format,
@@ -147,12 +144,12 @@ INSERT INTO runtime_substrates (
     $13,
     now()
 )
-ON CONFLICT (org_id, project_id, environment_id, deployment_sandbox_id, substrate_digest, substrate_format, builder_abi, layout_abi)
+ON CONFLICT (org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi)
 DO UPDATE
    SET retired_at = NULL,
        last_referenced_at = now(),
        updated_at = now()
-RETURNING id, org_id, project_id, environment_id, deployment_sandbox_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+RETURNING id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
 `
 
 type UpsertRuntimeSubstrateParams struct {
@@ -160,7 +157,7 @@ type UpsertRuntimeSubstrateParams struct {
 	OrgID                     pgtype.UUID `json:"org_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
 	EnvironmentID             pgtype.UUID `json:"environment_id"`
-	DeploymentSandboxID       pgtype.UUID `json:"deployment_sandbox_id"`
+	DeploymentDefinitionID    pgtype.UUID `json:"deployment_definition_id"`
 	ArtifactID                pgtype.UUID `json:"artifact_id"`
 	SubstrateDigest           string      `json:"substrate_digest"`
 	SubstrateFormat           string      `json:"substrate_format"`
@@ -177,7 +174,7 @@ func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeS
 		arg.OrgID,
 		arg.ProjectID,
 		arg.EnvironmentID,
-		arg.DeploymentSandboxID,
+		arg.DeploymentDefinitionID,
 		arg.ArtifactID,
 		arg.SubstrateDigest,
 		arg.SubstrateFormat,
@@ -193,7 +190,7 @@ func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeS
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
-		&i.DeploymentSandboxID,
+		&i.DeploymentDefinitionID,
 		&i.ArtifactID,
 		&i.SubstrateDigest,
 		&i.SubstrateFormat,

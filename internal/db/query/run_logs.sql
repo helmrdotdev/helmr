@@ -14,7 +14,7 @@ current_run_lease AS (
            run_leases.span_id,
            run_leases.parent_span_id,
            run_leases.traceparent,
-           run_leases.task_attempt_number AS attempt_number
+           run_leases.attempt_number AS attempt_number
       FROM runs
       JOIN run_leases ON run_leases.id = runs.current_run_lease_id
                      AND run_leases.org_id = runs.org_id

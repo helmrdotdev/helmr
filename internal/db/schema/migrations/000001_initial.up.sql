@@ -635,6 +635,7 @@ CREATE TABLE artifacts (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, id),
     CONSTRAINT artifacts_environment_id_id_key UNIQUE (environment_id, id),
+    UNIQUE (environment_id, id, kind),
     UNIQUE (environment_id, id, kind, digest, size_bytes),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id, digest),
@@ -788,11 +789,9 @@ CREATE TYPE workspace_dirty_state AS ENUM (
 );
 
 CREATE TYPE workspace_version_state AS ENUM (
-    'capturing',
-    'artifact_verified',
-    'ready',
-    'failed',
-    'deleted'
+    'private',
+    'committed',
+    'discarded'
 );
 
 CREATE TYPE workspace_version_kind AS ENUM (
@@ -807,11 +806,6 @@ CREATE TYPE workspace_mount_state AS ENUM (
     'unmounted',
     'lost',
     'failed'
-);
-
-CREATE TYPE workspace_lease_kind AS ENUM (
-    'instance',
-    'write'
 );
 
 CREATE TYPE workspace_lease_state AS ENUM (
@@ -1976,33 +1970,15 @@ CREATE TABLE workspace_mounts (
     worker_instance_id UUID NOT NULL,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
     workspace_id UUID NOT NULL,
-    base_version_id UUID,
+    materialized_version_id UUID NOT NULL,
     runtime_instance_id UUID NOT NULL,
     claim_attempt INTEGER NOT NULL DEFAULT 0 CHECK (claim_attempt >= 0),
-    priority INTEGER NOT NULL DEFAULT 0,
-    guestd_channel_token_hash TEXT NOT NULL DEFAULT '',
-    guestd_channel_token_expires_at TIMESTAMPTZ,
+    guest_channel_token_hash TEXT NOT NULL DEFAULT '',
+    guest_channel_token_expires_at TIMESTAMPTZ,
     state workspace_mount_state NOT NULL DEFAULT 'mounting',
     request JSONB NOT NULL DEFAULT '{}'::jsonb,
     dirty_generation BIGINT NOT NULL DEFAULT 0 CHECK (dirty_generation >= 0),
     fencing_generation BIGINT NOT NULL DEFAULT 1 CHECK (fencing_generation > 0),
-    network_namespace TEXT NOT NULL DEFAULT '',
-    port_namespace TEXT NOT NULL DEFAULT '',
-    image_artifact_id UUID NOT NULL,
-    image_artifact_format TEXT NOT NULL CHECK (btrim(image_artifact_format) <> ''),
-    rootfs_digest TEXT NOT NULL CHECK (btrim(rootfs_digest) <> ''),
-    image_digest TEXT NOT NULL CHECK (btrim(image_digest) <> ''),
-    image_format TEXT NOT NULL CHECK (btrim(image_format) <> ''),
-    workspace_artifact_id UUID NOT NULL,
-    workspace_artifact_encoding TEXT NOT NULL CHECK (btrim(workspace_artifact_encoding) <> ''),
-    workspace_artifact_entry_count INTEGER NOT NULL CHECK (workspace_artifact_entry_count >= 0),
-    workspace_artifact_digest TEXT NOT NULL CHECK (btrim(workspace_artifact_digest) <> ''),
-    workspace_artifact_size_bytes BIGINT NOT NULL CHECK (workspace_artifact_size_bytes >= 0),
-    workspace_artifact_media_type TEXT NOT NULL CHECK (btrim(workspace_artifact_media_type) <> ''),
-    workspace_mount_path TEXT NOT NULL CHECK (btrim(workspace_mount_path) <> ''),
-    runtime_abi TEXT NOT NULL CHECK (btrim(runtime_abi) <> ''),
-    guestd_abi TEXT NOT NULL CHECK (btrim(guestd_abi) <> ''),
-    adapter_abi TEXT NOT NULL CHECK (btrim(adapter_abi) <> ''),
     requested_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     mounted_at TIMESTAMPTZ,
     unmounted_at TIMESTAMPTZ,
@@ -2019,6 +1995,7 @@ CREATE TABLE workspace_mounts (
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id),
+    UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id, fencing_generation),
     FOREIGN KEY (worker_group_id, region_id)
         REFERENCES worker_groups(id, region_id)
         ON DELETE RESTRICT,
@@ -2027,19 +2004,8 @@ CREATE TABLE workspace_mounts (
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, image_artifact_id, image_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_artifact_id, workspace_artifact_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
-        ON DELETE RESTRICT,
+    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 16384),
     CHECK (
         (state IN ('mounting', 'mounted', 'unmounting') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
         OR (
@@ -2085,14 +2051,14 @@ CREATE TABLE workspace_leases (
     runtime_instance_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     workspace_mount_id UUID NOT NULL,
-    lease_kind workspace_lease_kind NOT NULL,
     state workspace_lease_state NOT NULL DEFAULT 'active',
     owner_run_lease_id UUID,
     owner_process_id UUID,
-    base_version_id UUID,
-    acquired_version_id UUID,
-    acquired_fencing_generation BIGINT NOT NULL CHECK (acquired_fencing_generation > 0),
-    fencing_token TEXT NOT NULL CHECK (btrim(fencing_token) <> ''),
+    base_version_id UUID NOT NULL,
+    ownership_generation BIGINT NOT NULL CHECK (ownership_generation > 0),
+    writer_generation BIGINT NOT NULL CHECK (writer_generation > 0),
+    mount_fencing_generation BIGINT NOT NULL CHECK (mount_fencing_generation > 0),
+    fencing_token_hash TEXT NOT NULL CHECK (btrim(fencing_token_hash) <> ''),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     renewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at TIMESTAMPTZ NOT NULL,
@@ -2106,6 +2072,8 @@ CREATE TABLE workspace_leases (
     UNIQUE (workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
+    UNIQUE (workspace_id, id, ownership_generation, writer_generation),
+    UNIQUE (workspace_id, writer_generation),
     UNIQUE (workspace_id, owner_run_lease_id, id),
     UNIQUE (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id),
     CHECK (num_nonnulls(owner_run_lease_id, owner_process_id) = 1),
@@ -2117,9 +2085,9 @@ CREATE TABLE workspace_leases (
         ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, mount_fencing_generation)
+        REFERENCES workspace_mounts(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id, fencing_generation)
         ON DELETE RESTRICT,
     CHECK (
         (state IN ('active', 'releasing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
@@ -2253,13 +2221,17 @@ ALTER TABLE workspace_leases
     REFERENCES workspace_processes(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE RESTRICT;
 
-CREATE UNIQUE INDEX workspace_leases_mount_instance_active_uidx
+CREATE UNIQUE INDEX workspace_leases_mount_active_uidx
     ON workspace_leases (workspace_mount_id)
-    WHERE lease_kind = 'instance' AND state IN ('active', 'releasing');
+    WHERE state IN ('active', 'releasing');
 
-CREATE UNIQUE INDEX workspace_leases_workspace_write_active_uidx
+CREATE UNIQUE INDEX workspace_leases_workspace_active_uidx
     ON workspace_leases (workspace_id)
-    WHERE lease_kind = 'write' AND state IN ('active', 'releasing');
+    WHERE state IN ('active', 'releasing');
+
+CREATE UNIQUE INDEX workspace_leases_owner_process_uidx
+    ON workspace_leases (owner_process_id)
+    WHERE owner_process_id IS NOT NULL;
 
 CREATE INDEX workspace_leases_expiry_idx
     ON workspace_leases (expires_at, id)
@@ -2277,58 +2249,82 @@ CREATE TABLE workspace_versions (
     environment_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     parent_version_id UUID,
-    source_workspace_mount_id UUID,
-    source_write_lease_id UUID,
-    produced_by_run_id UUID,
-    kind workspace_version_kind NOT NULL DEFAULT 'user',
-    state workspace_version_state NOT NULL DEFAULT 'capturing',
     artifact_id UUID,
-    artifact_encoding TEXT NOT NULL DEFAULT '',
-    artifact_entry_count INTEGER NOT NULL DEFAULT 0 CHECK (artifact_entry_count >= 0),
-    content_digest TEXT NOT NULL DEFAULT '',
+    artifact_kind artifact_kind,
+    kind workspace_version_kind NOT NULL DEFAULT 'user',
+    content_digest TEXT NOT NULL CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$'),
     size_bytes BIGINT NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
-    message TEXT NOT NULL DEFAULT '',
-    error JSONB NOT NULL DEFAULT '{}'::jsonb,
-    promoted_at TIMESTAMPTZ,
+    entry_count INTEGER NOT NULL DEFAULT 0 CHECK (entry_count >= 0),
+    state workspace_version_state NOT NULL DEFAULT 'private',
+    source_workspace_lease_id UUID,
+    ownership_generation BIGINT NOT NULL CHECK (ownership_generation >= 0),
+    writer_generation BIGINT NOT NULL CHECK (writer_generation >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    published_at TIMESTAMPTZ,
+    discarded_at TIMESTAMPTZ,
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (workspace_id, id),
     UNIQUE (org_id, workspace_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
-    UNIQUE (org_id, project_id, environment_id, workspace_id, id, state),
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id)
         REFERENCES workspaces(org_id, project_id, environment_id, id)
-        ON DELETE CASCADE,
-    FOREIGN KEY (org_id, workspace_id, parent_version_id)
-        REFERENCES workspace_versions(org_id, workspace_id, id)
-        ON DELETE SET NULL (parent_version_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_workspace_mount_id)
-        REFERENCES workspace_mounts(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE SET NULL (source_workspace_mount_id),
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, source_write_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE SET NULL (source_write_lease_id),
-    FOREIGN KEY (org_id, project_id, environment_id, artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
-        ON DELETE SET NULL (artifact_id)
-        DEFERRABLE INITIALLY DEFERRED,
-    FOREIGN KEY (org_id, project_id, environment_id, produced_by_run_id)
-        REFERENCES runs(org_id, project_id, environment_id, id)
-        ON DELETE SET NULL (produced_by_run_id),
-    CHECK (
-        state NOT IN ('artifact_verified', 'ready')
-        OR (
-            artifact_id IS NOT NULL
-            AND artifact_encoding <> ''
-            AND content_digest <> ''
-            AND size_bytes >= 0
+        ON DELETE RESTRICT,
+    FOREIGN KEY (workspace_id, parent_version_id)
+        REFERENCES workspace_versions(workspace_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (
+        workspace_id,
+        source_workspace_lease_id,
+        ownership_generation,
+        writer_generation
+    )
+        REFERENCES workspace_leases(
+            workspace_id,
+            id,
+            ownership_generation,
+            writer_generation
         )
+        ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, artifact_id, artifact_kind)
+        REFERENCES artifacts(environment_id, id, kind)
+        ON DELETE RESTRICT,
+    CHECK (
+        (
+            parent_version_id IS NULL
+            AND artifact_id IS NULL
+            AND artifact_kind IS NULL
+            AND kind = 'system'
+            AND content_digest = 'sha256:d2ce8eece19cb4f6db14e37f6d986da7eec7f654f3b91c5c706e9d74e7d2bc96'
+            AND size_bytes = 0
+            AND entry_count = 0
+            AND state = 'committed'
+            AND source_workspace_lease_id IS NULL
+            AND ownership_generation = 0
+            AND writer_generation = 0
+            AND published_at IS NOT NULL
+            AND discarded_at IS NULL
+        )
+        OR (
+            parent_version_id IS NOT NULL
+            AND artifact_id IS NOT NULL
+            AND artifact_kind = 'workspace_version'
+            AND source_workspace_lease_id IS NOT NULL
+        )
+    ),
+    CHECK (
+        (state = 'private' AND published_at IS NULL AND discarded_at IS NULL)
+        OR (state = 'committed' AND published_at IS NOT NULL AND discarded_at IS NULL)
+        OR (state = 'discarded' AND published_at IS NULL AND discarded_at IS NOT NULL)
     )
 );
 
+CREATE UNIQUE INDEX workspace_versions_root_uidx
+    ON workspace_versions (workspace_id)
+    WHERE parent_version_id IS NULL;
+
 ALTER TABLE workspace_mounts
-    ADD CONSTRAINT workspace_mounts_base_version_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, base_version_id)
+    ADD CONSTRAINT workspace_mounts_materialized_version_id_fkey
+    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, materialized_version_id)
     REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;
@@ -2336,13 +2332,6 @@ ALTER TABLE workspace_mounts
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_base_version_id_fkey
     FOREIGN KEY (org_id, project_id, environment_id, workspace_id, base_version_id)
-    REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
-    ON DELETE SET NULL (base_version_id)
-    DEFERRABLE INITIALLY DEFERRED;
-
-ALTER TABLE workspace_leases
-    ADD CONSTRAINT workspace_leases_acquired_version_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, acquired_version_id)
     REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
     ON DELETE RESTRICT
     DEFERRABLE INITIALLY DEFERRED;

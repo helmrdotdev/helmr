@@ -11,260 +11,292 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countSecretsByKeyID = `-- name: CountSecretsByKeyID :one
-SELECT count(*)::bigint
-  FROM secrets
- WHERE key_id = $1
+const createSecret = `-- name: CreateSecret :one
+WITH secret AS (
+    INSERT INTO secrets (
+        id,
+        environment_id,
+        name,
+        current_version_id
+    )
+    VALUES (
+        $1,
+        $2,
+        $3,
+        $4
+    )
+    RETURNING id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at, deleted_at
+),
+version AS (
+    INSERT INTO secret_versions (
+        id,
+        secret_id,
+        version,
+        key_id,
+        nonce,
+        ciphertext,
+        value_authenticator
+    )
+    SELECT
+        $4,
+        secret.id,
+        1,
+        $5,
+        $6,
+        $7,
+        $8
+    FROM secret
+    RETURNING secret_id
+)
+SELECT secret.id, secret.environment_id, secret.name, secret.state, secret.state_version, secret.current_version_id, secret.revocation_generation, secret.created_at, secret.updated_at, secret.revoked_at, secret.deleted_at
+FROM secret
+JOIN version ON version.secret_id = secret.id
 `
 
-func (q *Queries) CountSecretsByKeyID(ctx context.Context, keyID string) (int64, error) {
-	row := q.db.QueryRow(ctx, countSecretsByKeyID, keyID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
+type CreateSecretParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	Name               string      `json:"name"`
+	VersionID          pgtype.UUID `json:"version_id"`
+	KeyID              string      `json:"key_id"`
+	Nonce              []byte      `json:"nonce"`
+	Ciphertext         []byte      `json:"ciphertext"`
+	ValueAuthenticator []byte      `json:"value_authenticator"`
 }
 
-const deleteScopedSecret = `-- name: DeleteScopedSecret :execrows
-DELETE FROM secrets
- WHERE secrets.org_id = $1
-   AND secrets.project_id = $2
-   AND secrets.environment_id = $3
-   AND secrets.name = $4
-`
-
-type DeleteScopedSecretParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Name          string      `json:"name"`
+type CreateSecretRow struct {
+	ID                   pgtype.UUID        `json:"id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	Name                 string             `json:"name"`
+	State                string             `json:"state"`
+	StateVersion         int64              `json:"state_version"`
+	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
+	RevocationGeneration int64              `json:"revocation_generation"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt            pgtype.Timestamptz `json:"revoked_at"`
+	DeletedAt            pgtype.Timestamptz `json:"deleted_at"`
 }
 
-func (q *Queries) DeleteScopedSecret(ctx context.Context, arg DeleteScopedSecretParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteScopedSecret,
-		arg.OrgID,
-		arg.ProjectID,
+func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error) {
+	row := q.db.QueryRow(ctx, createSecret,
+		arg.ID,
 		arg.EnvironmentID,
 		arg.Name,
+		arg.VersionID,
+		arg.KeyID,
+		arg.Nonce,
+		arg.Ciphertext,
+		arg.ValueAuthenticator,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const getScopedSecretByName = `-- name: GetScopedSecretByName :one
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
-  FROM secrets
- WHERE secrets.org_id = $1
-   AND secrets.project_id = $2
-   AND secrets.environment_id = $3
-   AND secrets.name = $4
-`
-
-type GetScopedSecretByNameParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Name          string      `json:"name"`
-}
-
-func (q *Queries) GetScopedSecretByName(ctx context.Context, arg GetScopedSecretByNameParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, getScopedSecretByName,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.Name,
-	)
-	var i Secret
+	var i CreateSecretRow
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Version,
-		&i.KeyID,
-		&i.Nonce,
-		&i.Ciphertext,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
-const getScopedSecretMetadataByName = `-- name: GetScopedSecretMetadataByName :one
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
-  FROM secrets
- WHERE secrets.org_id = $1
-   AND secrets.project_id = $2
-   AND secrets.environment_id = $3
-   AND secrets.name = $4
+const createSecretResolution = `-- name: CreateSecretResolution :one
+INSERT INTO secret_resolutions (
+    id,
+    workspace_id,
+    run_id,
+    attempt_number,
+    process_id,
+    placement_kind,
+    placement_target,
+    secret_id,
+    secret_version_id,
+    revocation_generation
+)
+VALUES (
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    $9,
+    $10
+)
+RETURNING id, workspace_id, run_id, attempt_number, process_id, placement_kind, placement_target, secret_id, secret_version_id, revocation_generation, created_at
 `
 
-type GetScopedSecretMetadataByNameParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
-	EnvironmentID pgtype.UUID `json:"environment_id"`
-	Name          string      `json:"name"`
+type CreateSecretResolutionParams struct {
+	ID                   pgtype.UUID `json:"id"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	AttemptNumber        pgtype.Int4 `json:"attempt_number"`
+	ProcessID            pgtype.UUID `json:"process_id"`
+	PlacementKind        string      `json:"placement_kind"`
+	PlacementTarget      string      `json:"placement_target"`
+	SecretID             pgtype.UUID `json:"secret_id"`
+	SecretVersionID      pgtype.UUID `json:"secret_version_id"`
+	RevocationGeneration int64       `json:"revocation_generation"`
 }
 
-type GetScopedSecretMetadataByNameRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	Name          string             `json:"name"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) GetScopedSecretMetadataByName(ctx context.Context, arg GetScopedSecretMetadataByNameParams) (GetScopedSecretMetadataByNameRow, error) {
-	row := q.db.QueryRow(ctx, getScopedSecretMetadataByName,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.Name,
+func (q *Queries) CreateSecretResolution(ctx context.Context, arg CreateSecretResolutionParams) (SecretResolution, error) {
+	row := q.db.QueryRow(ctx, createSecretResolution,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.ProcessID,
+		arg.PlacementKind,
+		arg.PlacementTarget,
+		arg.SecretID,
+		arg.SecretVersionID,
+		arg.RevocationGeneration,
 	)
-	var i GetScopedSecretMetadataByNameRow
+	var i SecretResolution
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
-		&i.EnvironmentID,
-		&i.Name,
+		&i.WorkspaceID,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.ProcessID,
+		&i.PlacementKind,
+		&i.PlacementTarget,
+		&i.SecretID,
+		&i.SecretVersionID,
+		&i.RevocationGeneration,
 		&i.CreatedAt,
-		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getCurrentSecretValue = `-- name: GetCurrentSecretValue :one
+SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.created_at
+FROM secrets
+JOIN secret_versions
+  ON secret_versions.secret_id = secrets.id
+ AND secret_versions.id = secrets.current_version_id
+WHERE secrets.environment_id = $1
+  AND secrets.id = $2
+  AND secrets.state = 'active'
+`
+
+type GetCurrentSecretValueParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	SecretID      pgtype.UUID `json:"secret_id"`
+}
+
+func (q *Queries) GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecretValueParams) (SecretVersion, error) {
+	row := q.db.QueryRow(ctx, getCurrentSecretValue, arg.EnvironmentID, arg.SecretID)
+	var i SecretVersion
+	err := row.Scan(
+		&i.ID,
+		&i.SecretID,
+		&i.Version,
+		&i.KeyID,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ValueAuthenticator,
+		&i.CreatedAt,
 	)
 	return i, err
 }
 
 const getSecretByName = `-- name: GetSecretByName :one
-WITH default_scope AS (
-    SELECT projects.id AS project_id,
-           environments.id AS environment_id
-      FROM projects
-      JOIN environments ON environments.org_id = projects.org_id
-                       AND environments.project_id = projects.id
-                       AND environments.is_default
-     WHERE projects.org_id = $1
-       AND projects.is_default
-     LIMIT 1
-)
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.version, secrets.key_id, secrets.nonce, secrets.ciphertext, secrets.created_at, secrets.updated_at, secrets.rotated_at
-  FROM secrets
- JOIN default_scope ON default_scope.project_id = secrets.project_id
-                    AND default_scope.environment_id = secrets.environment_id
- WHERE secrets.org_id = $1
-   AND secrets.name = $2
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
+FROM secrets
+WHERE environment_id = $1
+  AND name = $2
+  AND state <> 'deleted'
 `
 
 type GetSecretByNameParams struct {
-	OrgID pgtype.UUID `json:"org_id"`
-	Name  string      `json:"name"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	Name          string      `json:"name"`
 }
 
 func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, getSecretByName, arg.OrgID, arg.Name)
+	row := q.db.QueryRow(ctx, getSecretByName, arg.EnvironmentID, arg.Name)
 	var i Secret
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Version,
-		&i.KeyID,
-		&i.Nonce,
-		&i.Ciphertext,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
 
-const listScopedSecrets = `-- name: ListScopedSecrets :many
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
-  FROM secrets
- WHERE secrets.org_id = $1
-   AND secrets.project_id = $2
-   AND secrets.environment_id = $3
- ORDER BY name ASC
- LIMIT $4
+const getSecretVersion = `-- name: GetSecretVersion :one
+SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.created_at
+FROM secret_versions
+JOIN secrets ON secrets.id = secret_versions.secret_id
+WHERE secrets.environment_id = $1
+  AND secret_versions.secret_id = $2
+  AND secret_versions.id = $3
 `
 
-type ListScopedSecretsParams struct {
-	OrgID         pgtype.UUID `json:"org_id"`
-	ProjectID     pgtype.UUID `json:"project_id"`
+type GetSecretVersionParams struct {
 	EnvironmentID pgtype.UUID `json:"environment_id"`
-	RowLimit      int32       `json:"row_limit"`
+	SecretID      pgtype.UUID `json:"secret_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
 }
 
-type ListScopedSecretsRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	EnvironmentID pgtype.UUID        `json:"environment_id"`
-	Name          string             `json:"name"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-}
-
-func (q *Queries) ListScopedSecrets(ctx context.Context, arg ListScopedSecretsParams) ([]ListScopedSecretsRow, error) {
-	rows, err := q.db.Query(ctx, listScopedSecrets,
-		arg.OrgID,
-		arg.ProjectID,
-		arg.EnvironmentID,
-		arg.RowLimit,
+func (q *Queries) GetSecretVersion(ctx context.Context, arg GetSecretVersionParams) (SecretVersion, error) {
+	row := q.db.QueryRow(ctx, getSecretVersion, arg.EnvironmentID, arg.SecretID, arg.VersionID)
+	var i SecretVersion
+	err := row.Scan(
+		&i.ID,
+		&i.SecretID,
+		&i.Version,
+		&i.KeyID,
+		&i.Nonce,
+		&i.Ciphertext,
+		&i.ValueAuthenticator,
+		&i.CreatedAt,
 	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListScopedSecretsRow
-	for rows.Next() {
-		var i ListScopedSecretsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
-			&i.EnvironmentID,
-			&i.Name,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+	return i, err
 }
 
-const listSecretKeyUsage = `-- name: ListSecretKeyUsage :many
-SELECT key_id, count(*)::bigint AS secret_count
-  FROM secrets
- GROUP BY key_id
- ORDER BY key_id ASC
+const listCurrentSecretKeyUsage = `-- name: ListCurrentSecretKeyUsage :many
+SELECT secret_versions.key_id, count(*)::bigint AS secret_count
+FROM secrets
+JOIN secret_versions
+  ON secret_versions.secret_id = secrets.id
+ AND secret_versions.id = secrets.current_version_id
+WHERE secrets.state = 'active'
+GROUP BY secret_versions.key_id
+ORDER BY secret_versions.key_id
 `
 
-type ListSecretKeyUsageRow struct {
+type ListCurrentSecretKeyUsageRow struct {
 	KeyID       string `json:"key_id"`
 	SecretCount int64  `json:"secret_count"`
 }
 
-func (q *Queries) ListSecretKeyUsage(ctx context.Context) ([]ListSecretKeyUsageRow, error) {
-	rows, err := q.db.Query(ctx, listSecretKeyUsage)
+func (q *Queries) ListCurrentSecretKeyUsage(ctx context.Context) ([]ListCurrentSecretKeyUsageRow, error) {
+	rows, err := q.db.Query(ctx, listCurrentSecretKeyUsage)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListSecretKeyUsageRow
+	var items []ListCurrentSecretKeyUsageRow
 	for rows.Next() {
-		var i ListSecretKeyUsageRow
+		var i ListCurrentSecretKeyUsageRow
 		if err := rows.Scan(&i.KeyID, &i.SecretCount); err != nil {
 			return nil, err
 		}
@@ -276,44 +308,114 @@ func (q *Queries) ListSecretKeyUsage(ctx context.Context) ([]ListSecretKeyUsageR
 	return items, nil
 }
 
+const listCurrentSecretsByKeyID = `-- name: ListCurrentSecretsByKeyID :many
+SELECT
+    secrets.id AS secret_id,
+    secrets.environment_id,
+    secrets.state_version,
+    secret_versions.id AS version_id,
+    secret_versions.version,
+    secret_versions.key_id,
+    secret_versions.nonce,
+    secret_versions.ciphertext,
+    secret_versions.value_authenticator
+FROM secrets
+JOIN secret_versions
+  ON secret_versions.secret_id = secrets.id
+ AND secret_versions.id = secrets.current_version_id
+WHERE secrets.state = 'active'
+  AND secret_versions.key_id = $1
+ORDER BY secrets.updated_at, secrets.id
+LIMIT $2
+`
+
+type ListCurrentSecretsByKeyIDParams struct {
+	KeyID    string `json:"key_id"`
+	RowLimit int32  `json:"row_limit"`
+}
+
+type ListCurrentSecretsByKeyIDRow struct {
+	SecretID           pgtype.UUID `json:"secret_id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	StateVersion       int64       `json:"state_version"`
+	VersionID          pgtype.UUID `json:"version_id"`
+	Version            int64       `json:"version"`
+	KeyID              string      `json:"key_id"`
+	Nonce              []byte      `json:"nonce"`
+	Ciphertext         []byte      `json:"ciphertext"`
+	ValueAuthenticator []byte      `json:"value_authenticator"`
+}
+
+func (q *Queries) ListCurrentSecretsByKeyID(ctx context.Context, arg ListCurrentSecretsByKeyIDParams) ([]ListCurrentSecretsByKeyIDRow, error) {
+	rows, err := q.db.Query(ctx, listCurrentSecretsByKeyID, arg.KeyID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListCurrentSecretsByKeyIDRow
+	for rows.Next() {
+		var i ListCurrentSecretsByKeyIDRow
+		if err := rows.Scan(
+			&i.SecretID,
+			&i.EnvironmentID,
+			&i.StateVersion,
+			&i.VersionID,
+			&i.Version,
+			&i.KeyID,
+			&i.Nonce,
+			&i.Ciphertext,
+			&i.ValueAuthenticator,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSecrets = `-- name: ListSecrets :many
-WITH default_scope AS (
-    SELECT projects.id AS project_id,
-           environments.id AS environment_id
-      FROM projects
-      JOIN environments ON environments.org_id = projects.org_id
-                       AND environments.project_id = projects.id
-                       AND environments.is_default
-     WHERE projects.org_id = $1
-       AND projects.is_default
-     LIMIT 1
-)
-SELECT secrets.id, secrets.org_id, secrets.project_id, secrets.environment_id, secrets.name, secrets.created_at, secrets.updated_at
-  FROM secrets
- JOIN default_scope ON default_scope.project_id = secrets.project_id
-                    AND default_scope.environment_id = secrets.environment_id
- WHERE secrets.org_id = $1
- ORDER BY name ASC
- LIMIT $2
+SELECT
+    secrets.id,
+    secrets.environment_id,
+    environments.project_id,
+    environments.org_id,
+    secrets.name,
+    secrets.state,
+    secrets.state_version,
+    secrets.created_at,
+    secrets.updated_at,
+    secrets.revoked_at
+FROM secrets
+JOIN environments ON environments.id = secrets.environment_id
+WHERE secrets.environment_id = $1
+  AND secrets.state <> 'deleted'
+ORDER BY secrets.name, secrets.id
+LIMIT $2
 `
 
 type ListSecretsParams struct {
-	OrgID    pgtype.UUID `json:"org_id"`
-	RowLimit int32       `json:"row_limit"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RowLimit      int32       `json:"row_limit"`
 }
 
 type ListSecretsRow struct {
 	ID            pgtype.UUID        `json:"id"`
-	OrgID         pgtype.UUID        `json:"org_id"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
 	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
 	Name          string             `json:"name"`
+	State         string             `json:"state"`
+	StateVersion  int64              `json:"state_version"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt     pgtype.Timestamptz `json:"revoked_at"`
 }
 
 func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]ListSecretsRow, error) {
-	rows, err := q.db.Query(ctx, listSecrets, arg.OrgID, arg.RowLimit)
+	rows, err := q.db.Query(ctx, listSecrets, arg.EnvironmentID, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -323,12 +425,15 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 		var i ListSecretsRow
 		if err := rows.Scan(
 			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
 			&i.EnvironmentID,
+			&i.ProjectID,
+			&i.OrgID,
 			&i.Name,
+			&i.State,
+			&i.StateVersion,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.RevokedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -340,41 +445,52 @@ func (q *Queries) ListSecrets(ctx context.Context, arg ListSecretsParams) ([]Lis
 	return items, nil
 }
 
-const listSecretsByKeyIDForRotation = `-- name: ListSecretsByKeyIDForRotation :many
-SELECT id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
-  FROM secrets
- WHERE key_id = $1
- ORDER BY updated_at ASC, id ASC
- LIMIT $2
+const listWorkspaceSecrets = `-- name: ListWorkspaceSecrets :many
+SELECT
+    workspace_secrets.workspace_id, workspace_secrets.environment_id, workspace_secrets.placement_kind, workspace_secrets.placement_target, workspace_secrets.secret_id, workspace_secrets.created_at,
+    secrets.state AS secret_state,
+    secrets.state_version AS secret_state_version,
+    secrets.current_version_id,
+    secrets.revocation_generation
+FROM workspace_secrets
+JOIN secrets ON secrets.id = workspace_secrets.secret_id
+WHERE workspace_secrets.workspace_id = $1
+ORDER BY workspace_secrets.placement_kind, workspace_secrets.placement_target
 `
 
-type ListSecretsByKeyIDForRotationParams struct {
-	KeyID    string `json:"key_id"`
-	RowLimit int32  `json:"row_limit"`
+type ListWorkspaceSecretsRow struct {
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	EnvironmentID        pgtype.UUID        `json:"environment_id"`
+	PlacementKind        string             `json:"placement_kind"`
+	PlacementTarget      string             `json:"placement_target"`
+	SecretID             pgtype.UUID        `json:"secret_id"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	SecretState          string             `json:"secret_state"`
+	SecretStateVersion   int64              `json:"secret_state_version"`
+	CurrentVersionID     pgtype.UUID        `json:"current_version_id"`
+	RevocationGeneration int64              `json:"revocation_generation"`
 }
 
-func (q *Queries) ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSecretsByKeyIDForRotationParams) ([]Secret, error) {
-	rows, err := q.db.Query(ctx, listSecretsByKeyIDForRotation, arg.KeyID, arg.RowLimit)
+func (q *Queries) ListWorkspaceSecrets(ctx context.Context, workspaceID pgtype.UUID) ([]ListWorkspaceSecretsRow, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceSecrets, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []Secret
+	var items []ListWorkspaceSecretsRow
 	for rows.Next() {
-		var i Secret
+		var i ListWorkspaceSecretsRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.OrgID,
-			&i.ProjectID,
+			&i.WorkspaceID,
 			&i.EnvironmentID,
-			&i.Name,
-			&i.Version,
-			&i.KeyID,
-			&i.Nonce,
-			&i.Ciphertext,
+			&i.PlacementKind,
+			&i.PlacementTarget,
+			&i.SecretID,
 			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.RotatedAt,
+			&i.SecretState,
+			&i.SecretStateVersion,
+			&i.CurrentVersionID,
+			&i.RevocationGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -386,117 +502,126 @@ func (q *Queries) ListSecretsByKeyIDForRotation(ctx context.Context, arg ListSec
 	return items, nil
 }
 
-const updateSecretCiphertextForRotation = `-- name: UpdateSecretCiphertextForRotation :execrows
+const revokeSecret = `-- name: RevokeSecret :one
 UPDATE secrets
-   SET version = $1,
-       key_id = $2,
-       nonce = $3,
-       ciphertext = $4,
-       updated_at = now(),
-       rotated_at = now()
- WHERE id = $5
-   AND key_id = $6
-   AND version = $7
+SET state = 'revoked',
+    state_version = state_version + 1,
+    current_version_id = NULL,
+    revocation_generation = revocation_generation + 1,
+    revoked_at = now(),
+    updated_at = now()
+WHERE environment_id = $1
+  AND id = $2
+  AND state = 'active'
+  AND state_version = $3
+RETURNING id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at, deleted_at
 `
 
-type UpdateSecretCiphertextForRotationParams struct {
-	NewVersion      int32       `json:"new_version"`
-	NewKeyID        string      `json:"new_key_id"`
-	Nonce           []byte      `json:"nonce"`
-	Ciphertext      []byte      `json:"ciphertext"`
-	ID              pgtype.UUID `json:"id"`
-	PreviousKeyID   string      `json:"previous_key_id"`
-	PreviousVersion int32       `json:"previous_version"`
+type RevokeSecretParams struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	ID                   pgtype.UUID `json:"id"`
+	ExpectedStateVersion int64       `json:"expected_state_version"`
 }
 
-func (q *Queries) UpdateSecretCiphertextForRotation(ctx context.Context, arg UpdateSecretCiphertextForRotationParams) (int64, error) {
-	result, err := q.db.Exec(ctx, updateSecretCiphertextForRotation,
-		arg.NewVersion,
-		arg.NewKeyID,
-		arg.Nonce,
-		arg.Ciphertext,
-		arg.ID,
-		arg.PreviousKeyID,
-		arg.PreviousVersion,
+func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Secret, error) {
+	row := q.db.QueryRow(ctx, revokeSecret, arg.EnvironmentID, arg.ID, arg.ExpectedStateVersion)
+	var i Secret
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
 	)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	return i, err
 }
 
-const upsertScopedSecret = `-- name: UpsertScopedSecret :one
-INSERT INTO secrets (
-    id,
-    org_id,
-    project_id,
-    environment_id,
-    name,
-    version,
-    key_id,
-    nonce,
-    ciphertext
+const rotateSecret = `-- name: RotateSecret :one
+WITH locked AS (
+    SELECT id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at, deleted_at
+    FROM secrets
+    WHERE secrets.environment_id = $1
+      AND secrets.id = $2
+      AND secrets.state = 'active'
+      AND secrets.state_version = $3
+      AND secrets.current_version_id = $4
+    FOR UPDATE
+),
+version AS (
+    INSERT INTO secret_versions (
+        id,
+        secret_id,
+        version,
+        key_id,
+        nonce,
+        ciphertext,
+        value_authenticator
+    )
+    SELECT
+        $5,
+        locked.id,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10
+    FROM locked
+    RETURNING secret_id, id
 )
-SELECT
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9
-ON CONFLICT (org_id, project_id, environment_id, name) DO UPDATE
-   SET version = EXCLUDED.version,
-       key_id = EXCLUDED.key_id,
-       nonce = EXCLUDED.nonce,
-       ciphertext = EXCLUDED.ciphertext,
-       updated_at = now()
- WHERE secrets.version = $10
-RETURNING id, org_id, project_id, environment_id, name, version, key_id, nonce, ciphertext, created_at, updated_at, rotated_at
+UPDATE secrets
+SET current_version_id = version.id,
+    state_version = state_version + 1,
+    updated_at = now()
+FROM version
+WHERE secrets.id = version.secret_id
+RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
 `
 
-type UpsertScopedSecretParams struct {
-	ID              pgtype.UUID `json:"id"`
-	OrgID           pgtype.UUID `json:"org_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	EnvironmentID   pgtype.UUID `json:"environment_id"`
-	Name            string      `json:"name"`
-	Version         int32       `json:"version"`
-	KeyID           string      `json:"key_id"`
-	Nonce           []byte      `json:"nonce"`
-	Ciphertext      []byte      `json:"ciphertext"`
-	PreviousVersion int32       `json:"previous_version"`
+type RotateSecretParams struct {
+	EnvironmentID            pgtype.UUID `json:"environment_id"`
+	SecretID                 pgtype.UUID `json:"secret_id"`
+	ExpectedStateVersion     int64       `json:"expected_state_version"`
+	ExpectedCurrentVersionID pgtype.UUID `json:"expected_current_version_id"`
+	VersionID                pgtype.UUID `json:"version_id"`
+	Version                  int64       `json:"version"`
+	KeyID                    string      `json:"key_id"`
+	Nonce                    []byte      `json:"nonce"`
+	Ciphertext               []byte      `json:"ciphertext"`
+	ValueAuthenticator       []byte      `json:"value_authenticator"`
 }
 
-func (q *Queries) UpsertScopedSecret(ctx context.Context, arg UpsertScopedSecretParams) (Secret, error) {
-	row := q.db.QueryRow(ctx, upsertScopedSecret,
-		arg.ID,
-		arg.OrgID,
-		arg.ProjectID,
+func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error) {
+	row := q.db.QueryRow(ctx, rotateSecret,
 		arg.EnvironmentID,
-		arg.Name,
+		arg.SecretID,
+		arg.ExpectedStateVersion,
+		arg.ExpectedCurrentVersionID,
+		arg.VersionID,
 		arg.Version,
 		arg.KeyID,
 		arg.Nonce,
 		arg.Ciphertext,
-		arg.PreviousVersion,
+		arg.ValueAuthenticator,
 	)
 	var i Secret
 	err := row.Scan(
 		&i.ID,
-		&i.OrgID,
-		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.Name,
-		&i.Version,
-		&i.KeyID,
-		&i.Nonce,
-		&i.Ciphertext,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
 		&i.CreatedAt,
 		&i.UpdatedAt,
-		&i.RotatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }

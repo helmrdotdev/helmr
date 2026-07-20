@@ -29,107 +29,107 @@ WITH candidate AS (
 ), claimed AS (
     UPDATE workspace_mounts
        SET claim_attempt = claim_attempt + 1,
-           guestd_channel_token_hash = $3,
-           guestd_channel_token_expires_at = $4,
+           guest_channel_token_hash = $3,
+           guest_channel_token_expires_at = $4,
            updated_at = now()
       FROM candidate
      WHERE workspace_mounts.id = candidate.id
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
-SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.deployment_sandbox_id, claimed.sandbox_fingerprint, claimed.base_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.priority, claimed.guestd_channel_token_hash, claimed.guestd_channel_token_expires_at, claimed.state, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.network_namespace, claimed.port_namespace, claimed.image_artifact_id, claimed.image_artifact_format, claimed.rootfs_digest, claimed.image_digest, claimed.image_format, claimed.workspace_artifact_id, claimed.workspace_artifact_encoding, claimed.workspace_artifact_entry_count, claimed.workspace_artifact_digest, claimed.workspace_artifact_size_bytes, claimed.workspace_artifact_media_type, claimed.workspace_mount_path, claimed.runtime_abi, claimed.guestd_abi, claimed.adapter_abi, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
+SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.state, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
        worker_network_slots.id AS network_slot_id,
        worker_network_slots.generation AS network_slot_generation,
        runtime_instances.reserved_cpu_millis,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_workload_disk_bytes,
        runtime_instances.reserved_execution_slots,
+       image_artifacts.id AS image_artifact_id,
+       image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
-       image_artifacts.media_type AS image_artifact_media_type
+       image_artifacts.media_type AS image_artifact_media_type,
+       workspace_versions.artifact_id AS workspace_artifact_id,
+       workspace_versions.content_digest AS workspace_content_digest,
+       workspace_versions.size_bytes AS workspace_size_bytes,
+       workspace_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
                         AND runtime_instances.id = claimed.runtime_instance_id
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_instances.environment_id
+   AND deployment_definitions.id = runtime_instances.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = claimed.workspace_id
+   AND workspace_versions.id = claimed.materialized_version_id
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
                     AND worker_network_slots.state = 'bound'
-  JOIN artifacts AS image_artifacts ON image_artifacts.org_id = claimed.org_id
-                                   AND image_artifacts.id = claimed.image_artifact_id
+  JOIN artifacts AS image_artifacts
+    ON image_artifacts.environment_id = deployment_definitions.environment_id
+   AND image_artifacts.id = deployment_definitions.artifact_id
 `
 
 type ClaimWorkspaceMountParams struct {
-	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                 int64              `json:"worker_epoch"`
-	GuestdChannelTokenHash      string             `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz `json:"guestd_channel_token_expires_at"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	GuestChannelTokenHash      string             `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
 }
 
 type ClaimWorkspaceMountRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	OrgID                       pgtype.UUID         `json:"org_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	ProjectID                   pgtype.UUID         `json:"project_id"`
-	EnvironmentID               pgtype.UUID         `json:"environment_id"`
-	RegionID                    string              `json:"region_id"`
-	WorkerInstanceID            pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                 int64               `json:"worker_epoch"`
-	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
-	DeploymentSandboxID         pgtype.UUID         `json:"deployment_sandbox_id"`
-	SandboxFingerprint          string              `json:"sandbox_fingerprint"`
-	BaseVersionID               pgtype.UUID         `json:"base_version_id"`
-	RuntimeInstanceID           pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt                int32               `json:"claim_attempt"`
-	Priority                    int32               `json:"priority"`
-	GuestdChannelTokenHash      string              `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz  `json:"guestd_channel_token_expires_at"`
-	State                       WorkspaceMountState `json:"state"`
-	Request                     []byte              `json:"request"`
-	DirtyGeneration             int64               `json:"dirty_generation"`
-	FencingGeneration           int64               `json:"fencing_generation"`
-	NetworkNamespace            string              `json:"network_namespace"`
-	PortNamespace               string              `json:"port_namespace"`
-	ImageArtifactID             pgtype.UUID         `json:"image_artifact_id"`
-	ImageArtifactFormat         string              `json:"image_artifact_format"`
-	RootfsDigest                string              `json:"rootfs_digest"`
-	ImageDigest                 string              `json:"image_digest"`
-	ImageFormat                 string              `json:"image_format"`
-	WorkspaceArtifactID         pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceArtifactEncoding   string              `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount int32               `json:"workspace_artifact_entry_count"`
-	WorkspaceArtifactDigest     string              `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes  int64               `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType  string              `json:"workspace_artifact_media_type"`
-	WorkspaceMountPath          string              `json:"workspace_mount_path"`
-	RuntimeABI                  string              `json:"runtime_abi"`
-	GuestdAbi                   string              `json:"guestd_abi"`
-	AdapterAbi                  string              `json:"adapter_abi"`
-	RequestedAt                 pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                   pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                 pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                   pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                    pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                  pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode          pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError               []byte              `json:"terminal_error"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
-	RuntimeID                   string              `json:"runtime_id"`
-	NetworkSlotID               pgtype.UUID         `json:"network_slot_id"`
-	NetworkSlotGeneration       int64               `json:"network_slot_generation"`
-	ReservedCpuMillis           int64               `json:"reserved_cpu_millis"`
-	ReservedMemoryBytes         int64               `json:"reserved_memory_bytes"`
-	ReservedWorkloadDiskBytes   int64               `json:"reserved_workload_disk_bytes"`
-	ReservedExecutionSlots      int32               `json:"reserved_execution_slots"`
-	ImageArtifactSizeBytes      int64               `json:"image_artifact_size_bytes"`
-	ImageArtifactMediaType      string              `json:"image_artifact_media_type"`
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	RuntimeID                  string              `json:"runtime_id"`
+	NetworkSlotID              pgtype.UUID         `json:"network_slot_id"`
+	NetworkSlotGeneration      int64               `json:"network_slot_generation"`
+	ReservedCpuMillis          int64               `json:"reserved_cpu_millis"`
+	ReservedMemoryBytes        int64               `json:"reserved_memory_bytes"`
+	ReservedWorkloadDiskBytes  int64               `json:"reserved_workload_disk_bytes"`
+	ReservedExecutionSlots     int32               `json:"reserved_execution_slots"`
+	ImageArtifactID            pgtype.UUID         `json:"image_artifact_id"`
+	ImageArtifactDigest        string              `json:"image_artifact_digest"`
+	ImageArtifactSizeBytes     int64               `json:"image_artifact_size_bytes"`
+	ImageArtifactMediaType     string              `json:"image_artifact_media_type"`
+	WorkspaceArtifactID        pgtype.UUID         `json:"workspace_artifact_id"`
+	WorkspaceContentDigest     string              `json:"workspace_content_digest"`
+	WorkspaceSizeBytes         int64               `json:"workspace_size_bytes"`
+	WorkspaceEntryCount        int32               `json:"workspace_entry_count"`
 }
 
 func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error) {
 	row := q.db.QueryRow(ctx, claimWorkspaceMount,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
-		arg.GuestdChannelTokenHash,
-		arg.GuestdChannelTokenExpiresAt,
+		arg.GuestChannelTokenHash,
+		arg.GuestChannelTokenExpiresAt,
 	)
 	var i ClaimWorkspaceMountRow
 	err := row.Scan(
@@ -142,35 +142,15 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -189,8 +169,14 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.ReservedMemoryBytes,
 		&i.ReservedWorkloadDiskBytes,
 		&i.ReservedExecutionSlots,
+		&i.ImageArtifactID,
+		&i.ImageArtifactDigest,
 		&i.ImageArtifactSizeBytes,
 		&i.ImageArtifactMediaType,
+		&i.WorkspaceArtifactID,
+		&i.WorkspaceContentDigest,
+		&i.WorkspaceSizeBytes,
+		&i.WorkspaceEntryCount,
 	)
 	return i, err
 }
@@ -234,118 +220,79 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id,
-    sandbox_fingerprint, base_version_id, runtime_instance_id, priority,
-    guestd_channel_token_hash, guestd_channel_token_expires_at, request,
-    network_namespace, port_namespace, image_artifact_id, image_artifact_format,
-    rootfs_digest, image_digest, image_format, workspace_artifact_id,
-    workspace_artifact_encoding, workspace_artifact_entry_count,
-    workspace_artifact_digest, workspace_artifact_size_bytes,
-    workspace_artifact_media_type, workspace_mount_path, runtime_abi,
-    guestd_abi, adapter_abi
+    worker_instance_id, worker_epoch, workspace_id,
+    materialized_version_id, runtime_instance_id, request
 )
 SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch, workspaces.id, workspaces.deployment_sandbox_id,
-       workspaces.sandbox_fingerprint, workspaces.current_version_id, runtime_instances.id,
-       $2, '', NULL, $3, '', '',
-       deployment_sandboxes.image_artifact_id, deployment_sandboxes.image_artifact_format,
-       deployment_sandboxes.rootfs_digest, deployment_sandboxes.image_digest,
-       deployment_sandboxes.image_format, workspace_versions.artifact_id,
-       workspace_versions.artifact_encoding, workspace_versions.artifact_entry_count,
-       workspace_versions.content_digest, workspace_versions.size_bytes,
-       workspace_artifacts.media_type, deployment_sandboxes.workspace_mount_path,
-       runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi
+       runtime_instances.worker_epoch, workspaces.id,
+       workspaces.head_version_id, runtime_instances.id, $2
   FROM workspaces
-  JOIN deployment_sandboxes ON deployment_sandboxes.org_id = workspaces.org_id
-                           AND deployment_sandboxes.project_id = workspaces.project_id
-                           AND deployment_sandboxes.environment_id = workspaces.environment_id
-                           AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
   JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
                          AND workspace_versions.workspace_id = workspaces.id
-                         AND workspace_versions.id = workspaces.current_version_id
-                         AND workspace_versions.state = 'ready'
-  JOIN artifacts AS workspace_artifacts ON workspace_artifacts.org_id = workspace_versions.org_id
-                                       AND workspace_artifacts.id = workspace_versions.artifact_id
+                         AND workspace_versions.id = workspaces.head_version_id
+                         AND workspace_versions.state = 'committed'
   JOIN runtime_instances ON runtime_instances.org_id = workspaces.org_id
                         AND runtime_instances.project_id = workspaces.project_id
                         AND runtime_instances.environment_id = workspaces.environment_id
                         AND runtime_instances.workspace_id = workspaces.id
+                        AND runtime_instances.workspace_version_id = workspaces.head_version_id
+                        AND runtime_instances.deployment_definition_id = workspaces.deployment_definition_id
                         AND runtime_instances.observed_state = 'ready'
- WHERE workspaces.org_id = $4 AND workspaces.id = $5
+ WHERE workspaces.org_id = $3 AND workspaces.id = $4
 ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
+WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
+  AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
 `
 
 type EnsureWorkspaceMountRequestedParams struct {
 	ID          pgtype.UUID `json:"id"`
-	Priority    int32       `json:"priority"`
 	Request     []byte      `json:"request"`
 	OrgID       pgtype.UUID `json:"org_id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
 type EnsureWorkspaceMountRequestedRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	OrgID                       pgtype.UUID         `json:"org_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	ProjectID                   pgtype.UUID         `json:"project_id"`
-	EnvironmentID               pgtype.UUID         `json:"environment_id"`
-	RegionID                    string              `json:"region_id"`
-	WorkerInstanceID            pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                 int64               `json:"worker_epoch"`
-	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
-	DeploymentSandboxID         pgtype.UUID         `json:"deployment_sandbox_id"`
-	SandboxFingerprint          string              `json:"sandbox_fingerprint"`
-	BaseVersionID               pgtype.UUID         `json:"base_version_id"`
-	RuntimeInstanceID           pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt                int32               `json:"claim_attempt"`
-	Priority                    int32               `json:"priority"`
-	GuestdChannelTokenHash      string              `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz  `json:"guestd_channel_token_expires_at"`
-	State                       WorkspaceMountState `json:"state"`
-	Request                     []byte              `json:"request"`
-	DirtyGeneration             int64               `json:"dirty_generation"`
-	FencingGeneration           int64               `json:"fencing_generation"`
-	NetworkNamespace            string              `json:"network_namespace"`
-	PortNamespace               string              `json:"port_namespace"`
-	ImageArtifactID             pgtype.UUID         `json:"image_artifact_id"`
-	ImageArtifactFormat         string              `json:"image_artifact_format"`
-	RootfsDigest                string              `json:"rootfs_digest"`
-	ImageDigest                 string              `json:"image_digest"`
-	ImageFormat                 string              `json:"image_format"`
-	WorkspaceArtifactID         pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceArtifactEncoding   string              `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount int32               `json:"workspace_artifact_entry_count"`
-	WorkspaceArtifactDigest     string              `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes  int64               `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType  string              `json:"workspace_artifact_media_type"`
-	WorkspaceMountPath          string              `json:"workspace_mount_path"`
-	RuntimeABI                  string              `json:"runtime_abi"`
-	GuestdAbi                   string              `json:"guestd_abi"`
-	AdapterAbi                  string              `json:"adapter_abi"`
-	RequestedAt                 pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                   pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                 pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                   pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                    pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                  pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode          pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError               []byte              `json:"terminal_error"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
-	Inserted                    bool                `json:"inserted"`
-	Decision                    string              `json:"decision"`
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	Inserted                   bool                `json:"inserted"`
+	Decision                   string              `json:"decision"`
 }
 
 func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureWorkspaceMountRequestedParams) (EnsureWorkspaceMountRequestedRow, error) {
 	row := q.db.QueryRow(ctx, ensureWorkspaceMountRequested,
 		arg.ID,
-		arg.Priority,
 		arg.Request,
 		arg.OrgID,
 		arg.WorkspaceID,
@@ -361,35 +308,15 @@ func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureW
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -409,7 +336,7 @@ func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureW
 
 const failWorkspaceMount = `-- name: FailWorkspaceMount :one
 WITH target AS (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
       FROM workspace_mounts
       JOIN runtime_instances
         ON runtime_instances.org_id = workspace_mounts.org_id
@@ -442,7 +369,7 @@ WITH target AS (
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), quarantined_slot AS (
     UPDATE worker_network_slots
        SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
@@ -464,7 +391,7 @@ UPDATE workspace_mounts
  WHERE workspace_mounts.org_id = target.org_id
    AND workspace_mounts.id = target.id
    AND failed_runtime.id = target.runtime_instance_id
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type FailWorkspaceMountParams struct {
@@ -500,35 +427,15 @@ func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMount
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -545,7 +452,7 @@ func (q *Queries) FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMount
 }
 
 const getWorkspaceMount = `-- name: GetWorkspaceMount :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
  WHERE org_id = $1 AND workspace_id = $2
    AND id = $3
 `
@@ -569,35 +476,15 @@ func (q *Queries) GetWorkspaceMount(ctx context.Context, arg GetWorkspaceMountPa
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -614,7 +501,7 @@ func (q *Queries) GetWorkspaceMount(ctx context.Context, arg GetWorkspaceMountPa
 }
 
 const getWorkspaceMountForWorkerPrimitiveScope = `-- name: GetWorkspaceMountForWorkerPrimitiveScope :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
  WHERE org_id = $1 AND workspace_id = $2
    AND id = $3 AND worker_instance_id = $4
    AND worker_epoch = $5 AND runtime_instance_id = $6
@@ -649,35 +536,15 @@ func (q *Queries) GetWorkspaceMountForWorkerPrimitiveScope(ctx context.Context, 
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -694,7 +561,7 @@ func (q *Queries) GetWorkspaceMountForWorkerPrimitiveScope(ctx context.Context, 
 }
 
 const getWorkspaceMountForWorkerTransition = `-- name: GetWorkspaceMountForWorkerTransition :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at FROM workspace_mounts
  WHERE org_id = $1 AND id = $2
    AND worker_instance_id = $3
    AND worker_epoch = $4
@@ -726,35 +593,15 @@ func (q *Queries) GetWorkspaceMountForWorkerTransition(ctx context.Context, arg 
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -771,28 +618,29 @@ func (q *Queries) GetWorkspaceMountForWorkerTransition(ctx context.Context, arg 
 }
 
 const getWorkspaceMountPrerequisites = `-- name: GetWorkspaceMountPrerequisites :one
-SELECT workspaces.id AS workspace_id, workspaces.current_version_id,
+SELECT workspaces.id AS workspace_id, workspaces.head_version_id,
        workspace_versions.id AS current_workspace_version_id,
        workspace_versions.state AS current_workspace_version_state,
        workspace_versions.artifact_id AS current_workspace_artifact_id,
        workspace_artifacts.id AS workspace_artifact_id,
        workspace_artifacts.media_type AS workspace_artifact_media_type,
-       deployment_sandboxes.image_artifact_id AS sandbox_image_artifact_id,
+       deployment_definitions.artifact_id AS workspace_image_artifact_id,
        image_artifacts.id AS image_artifact_id,
        image_artifacts.media_type AS image_artifact_media_type,
        active_mount.state AS active_mount_state
   FROM workspaces
   LEFT JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
                               AND workspace_versions.workspace_id = workspaces.id
-                              AND workspace_versions.id = workspaces.current_version_id
+                              AND workspace_versions.id = workspaces.head_version_id
   LEFT JOIN artifacts AS workspace_artifacts ON workspace_artifacts.org_id = workspace_versions.org_id
                                              AND workspace_artifacts.id = workspace_versions.artifact_id
-  LEFT JOIN deployment_sandboxes ON deployment_sandboxes.org_id = workspaces.org_id
-                                AND deployment_sandboxes.project_id = workspaces.project_id
-                                AND deployment_sandboxes.environment_id = workspaces.environment_id
-                                AND deployment_sandboxes.id = workspaces.deployment_sandbox_id
-  LEFT JOIN artifacts AS image_artifacts ON image_artifacts.org_id = deployment_sandboxes.org_id
-                                        AND image_artifacts.id = deployment_sandboxes.image_artifact_id
+  LEFT JOIN deployment_definitions
+    ON deployment_definitions.environment_id = workspaces.environment_id
+   AND deployment_definitions.id = workspaces.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  LEFT JOIN artifacts AS image_artifacts
+    ON image_artifacts.environment_id = deployment_definitions.environment_id
+   AND image_artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN workspace_mounts AS active_mount ON active_mount.org_id = workspaces.org_id
                                              AND active_mount.workspace_id = workspaces.id
                                              AND active_mount.state IN ('mounting','mounted','unmounting')
@@ -811,13 +659,13 @@ type GetWorkspaceMountPrerequisitesParams struct {
 
 type GetWorkspaceMountPrerequisitesRow struct {
 	WorkspaceID                  pgtype.UUID               `json:"workspace_id"`
-	CurrentVersionID             pgtype.UUID               `json:"current_version_id"`
+	HeadVersionID                pgtype.UUID               `json:"head_version_id"`
 	CurrentWorkspaceVersionID    pgtype.UUID               `json:"current_workspace_version_id"`
 	CurrentWorkspaceVersionState NullWorkspaceVersionState `json:"current_workspace_version_state"`
 	CurrentWorkspaceArtifactID   pgtype.UUID               `json:"current_workspace_artifact_id"`
 	WorkspaceArtifactID          pgtype.UUID               `json:"workspace_artifact_id"`
 	WorkspaceArtifactMediaType   pgtype.Text               `json:"workspace_artifact_media_type"`
-	SandboxImageArtifactID       pgtype.UUID               `json:"sandbox_image_artifact_id"`
+	WorkspaceImageArtifactID     pgtype.UUID               `json:"workspace_image_artifact_id"`
 	ImageArtifactID              pgtype.UUID               `json:"image_artifact_id"`
 	ImageArtifactMediaType       pgtype.Text               `json:"image_artifact_media_type"`
 	ActiveMountState             NullWorkspaceMountState   `json:"active_mount_state"`
@@ -833,13 +681,13 @@ func (q *Queries) GetWorkspaceMountPrerequisites(ctx context.Context, arg GetWor
 	var i GetWorkspaceMountPrerequisitesRow
 	err := row.Scan(
 		&i.WorkspaceID,
-		&i.CurrentVersionID,
+		&i.HeadVersionID,
 		&i.CurrentWorkspaceVersionID,
 		&i.CurrentWorkspaceVersionState,
 		&i.CurrentWorkspaceArtifactID,
 		&i.WorkspaceArtifactID,
 		&i.WorkspaceArtifactMediaType,
-		&i.SandboxImageArtifactID,
+		&i.WorkspaceImageArtifactID,
 		&i.ImageArtifactID,
 		&i.ImageArtifactMediaType,
 		&i.ActiveMountState,
@@ -860,7 +708,7 @@ UPDATE workspace_mounts
       ORDER BY workspace_mounts.updated_at, workspace_mounts.id
       LIMIT $1 FOR UPDATE OF workspace_mounts SKIP LOCKED
  )
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 func (q *Queries) MarkStaleWorkspaceMountsLost(ctx context.Context, limitCount int32) ([]WorkspaceMount, error) {
@@ -882,35 +730,15 @@ func (q *Queries) MarkStaleWorkspaceMountsLost(ctx context.Context, limitCount i
 			&i.WorkerInstanceID,
 			&i.WorkerEpoch,
 			&i.WorkspaceID,
-			&i.DeploymentSandboxID,
-			&i.SandboxFingerprint,
-			&i.BaseVersionID,
+			&i.MaterializedVersionID,
 			&i.RuntimeInstanceID,
 			&i.ClaimAttempt,
-			&i.Priority,
-			&i.GuestdChannelTokenHash,
-			&i.GuestdChannelTokenExpiresAt,
+			&i.GuestChannelTokenHash,
+			&i.GuestChannelTokenExpiresAt,
 			&i.State,
 			&i.Request,
 			&i.DirtyGeneration,
 			&i.FencingGeneration,
-			&i.NetworkNamespace,
-			&i.PortNamespace,
-			&i.ImageArtifactID,
-			&i.ImageArtifactFormat,
-			&i.RootfsDigest,
-			&i.ImageDigest,
-			&i.ImageFormat,
-			&i.WorkspaceArtifactID,
-			&i.WorkspaceArtifactEncoding,
-			&i.WorkspaceArtifactEntryCount,
-			&i.WorkspaceArtifactDigest,
-			&i.WorkspaceArtifactSizeBytes,
-			&i.WorkspaceArtifactMediaType,
-			&i.WorkspaceMountPath,
-			&i.RuntimeABI,
-			&i.GuestdAbi,
-			&i.AdapterAbi,
 			&i.RequestedAt,
 			&i.MountedAt,
 			&i.UnmountedAt,
@@ -940,7 +768,7 @@ UPDATE workspace_mounts
    AND worker_instance_id = $3 AND worker_epoch = $4
    AND runtime_instance_id = $5
    AND fencing_generation = $6 AND state = 'mounting'
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type MarkWorkspaceMountMountedParams struct {
@@ -972,35 +800,15 @@ func (q *Queries) MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspa
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -1018,12 +826,22 @@ func (q *Queries) MarkWorkspaceMountMounted(ctx context.Context, arg MarkWorkspa
 
 const promoteWorkspaceMountStopCapture = `-- name: PromoteWorkspaceMountStopCapture :one
 WITH target AS (
-    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspaces.current_version_id
+    SELECT workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, workspaces.head_version_id,
+           workspaces.ownership_generation, workspaces.writer_generation,
+           workspace_leases.id AS source_workspace_lease_id
       FROM workspace_mounts
       JOIN workspaces ON workspaces.org_id = workspace_mounts.org_id
                      AND workspaces.project_id = workspace_mounts.project_id
                      AND workspaces.environment_id = workspace_mounts.environment_id
                      AND workspaces.id = workspace_mounts.workspace_id
+      JOIN workspace_leases
+        ON workspace_leases.workspace_id = workspace_mounts.workspace_id
+       AND workspace_leases.workspace_mount_id = workspace_mounts.id
+       AND workspace_leases.state IN ('active', 'releasing')
+       AND workspace_leases.expires_at > now()
+       AND workspace_leases.ownership_generation = workspaces.ownership_generation
+       AND workspace_leases.writer_generation = workspaces.writer_generation
+       AND workspace_leases.mount_fencing_generation = workspace_mounts.fencing_generation
      WHERE workspace_mounts.org_id = $1
        AND workspace_mounts.project_id = $2
        AND workspace_mounts.environment_id = $3
@@ -1034,38 +852,40 @@ WITH target AS (
        AND workspace_mounts.worker_epoch = $7
        AND workspace_mounts.runtime_instance_id = $8
        AND workspace_mounts.fencing_generation = $9
+       AND workspaces.ownership_generation = $10
+       AND workspaces.writer_generation = $11
      FOR UPDATE OF workspace_mounts, workspaces
 ), created AS (
     INSERT INTO workspace_versions (
         id, public_id, org_id, project_id, environment_id, workspace_id,
-        parent_version_id, source_workspace_mount_id, kind, state, artifact_id,
-        artifact_encoding, artifact_entry_count, content_digest, size_bytes,
-        message, promoted_at
+        parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes,
+        entry_count, state, source_workspace_lease_id, ownership_generation,
+        writer_generation, published_at
     )
-    SELECT $10, $11,
+    SELECT $12, $13,
            target.org_id, target.project_id, target.environment_id, target.workspace_id,
-           COALESCE(target.current_version_id, target.base_version_id), target.id,
-           'system', 'ready', $12, $13,
-           $14, $15, $16,
-           $17, now()
+           target.head_version_id, $14, 'workspace_version', 'system',
+           $15, $16,
+           $17, 'committed', target.source_workspace_lease_id,
+           target.ownership_generation, target.writer_generation, now()
       FROM target
-    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
+    RETURNING id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
 ), updated_workspace AS (
     UPDATE workspaces
-       SET current_version_id = created.id, dirty_state = 'clean', updated_at = now()
+       SET head_version_id = created.id, dirty_state = 'clean', updated_at = now()
       FROM created
      WHERE workspaces.org_id = created.org_id AND workspaces.id = created.workspace_id
     RETURNING workspaces.id
 ), updated_mount AS (
     UPDATE workspace_mounts
-       SET base_version_id = created.id, dirty_generation = dirty_generation + 1,
+       SET materialized_version_id = created.id, dirty_generation = dirty_generation + 1,
            updated_at = now()
-      FROM created, updated_workspace
+      FROM created, updated_workspace, target
      WHERE workspace_mounts.org_id = created.org_id
-       AND workspace_mounts.id = created.source_workspace_mount_id
+       AND workspace_mounts.id = target.id
     RETURNING workspace_mounts.id
 )
-SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.source_workspace_mount_id, created.source_write_lease_id, created.produced_by_run_id, created.kind, created.state, created.artifact_id, created.artifact_encoding, created.artifact_entry_count, created.content_digest, created.size_bytes, created.message, created.error, created.promoted_at, created.created_at FROM created JOIN updated_mount ON true
+SELECT created.id, created.public_id, created.org_id, created.project_id, created.environment_id, created.workspace_id, created.parent_version_id, created.artifact_id, created.artifact_kind, created.kind, created.content_digest, created.size_bytes, created.entry_count, created.state, created.source_workspace_lease_id, created.ownership_generation, created.writer_generation, created.created_at, created.published_at, created.discarded_at FROM created JOIN updated_mount ON true
 `
 
 type PromoteWorkspaceMountStopCaptureParams struct {
@@ -1078,14 +898,14 @@ type PromoteWorkspaceMountStopCaptureParams struct {
 	WorkerEpoch              int64       `json:"worker_epoch"`
 	RuntimeInstanceID        pgtype.UUID `json:"runtime_instance_id"`
 	FencingGeneration        int64       `json:"fencing_generation"`
+	OwnershipGeneration      int64       `json:"ownership_generation"`
+	WriterGeneration         int64       `json:"writer_generation"`
 	WorkspaceVersionID       pgtype.UUID `json:"workspace_version_id"`
 	WorkspaceVersionPublicID string      `json:"workspace_version_public_id"`
 	ArtifactID               pgtype.UUID `json:"artifact_id"`
-	ArtifactEncoding         string      `json:"artifact_encoding"`
-	ArtifactEntryCount       int32       `json:"artifact_entry_count"`
 	ContentDigest            string      `json:"content_digest"`
 	SizeBytes                int64       `json:"size_bytes"`
-	Message                  string      `json:"message"`
+	EntryCount               int32       `json:"entry_count"`
 }
 
 type PromoteWorkspaceMountStopCaptureRow struct {
@@ -1096,20 +916,19 @@ type PromoteWorkspaceMountStopCaptureRow struct {
 	EnvironmentID          pgtype.UUID           `json:"environment_id"`
 	WorkspaceID            pgtype.UUID           `json:"workspace_id"`
 	ParentVersionID        pgtype.UUID           `json:"parent_version_id"`
-	SourceWorkspaceMountID pgtype.UUID           `json:"source_workspace_mount_id"`
-	SourceWriteLeaseID     pgtype.UUID           `json:"source_write_lease_id"`
-	ProducedByRunID        pgtype.UUID           `json:"produced_by_run_id"`
-	Kind                   WorkspaceVersionKind  `json:"kind"`
-	State                  WorkspaceVersionState `json:"state"`
 	ArtifactID             pgtype.UUID           `json:"artifact_id"`
-	ArtifactEncoding       string                `json:"artifact_encoding"`
-	ArtifactEntryCount     int32                 `json:"artifact_entry_count"`
+	ArtifactKind           NullArtifactKind      `json:"artifact_kind"`
+	Kind                   WorkspaceVersionKind  `json:"kind"`
 	ContentDigest          string                `json:"content_digest"`
 	SizeBytes              int64                 `json:"size_bytes"`
-	Message                string                `json:"message"`
-	Error                  []byte                `json:"error"`
-	PromotedAt             pgtype.Timestamptz    `json:"promoted_at"`
+	EntryCount             int32                 `json:"entry_count"`
+	State                  WorkspaceVersionState `json:"state"`
+	SourceWorkspaceLeaseID pgtype.UUID           `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                 `json:"ownership_generation"`
+	WriterGeneration       int64                 `json:"writer_generation"`
 	CreatedAt              pgtype.Timestamptz    `json:"created_at"`
+	PublishedAt            pgtype.Timestamptz    `json:"published_at"`
+	DiscardedAt            pgtype.Timestamptz    `json:"discarded_at"`
 }
 
 func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg PromoteWorkspaceMountStopCaptureParams) (PromoteWorkspaceMountStopCaptureRow, error) {
@@ -1123,14 +942,14 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		arg.WorkerEpoch,
 		arg.RuntimeInstanceID,
 		arg.FencingGeneration,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
 		arg.WorkspaceVersionID,
 		arg.WorkspaceVersionPublicID,
 		arg.ArtifactID,
-		arg.ArtifactEncoding,
-		arg.ArtifactEntryCount,
 		arg.ContentDigest,
 		arg.SizeBytes,
-		arg.Message,
+		arg.EntryCount,
 	)
 	var i PromoteWorkspaceMountStopCaptureRow
 	err := row.Scan(
@@ -1141,47 +960,46 @@ func (q *Queries) PromoteWorkspaceMountStopCapture(ctx context.Context, arg Prom
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
-		&i.SourceWorkspaceMountID,
-		&i.SourceWriteLeaseID,
-		&i.ProducedByRunID,
-		&i.Kind,
-		&i.State,
 		&i.ArtifactID,
-		&i.ArtifactEncoding,
-		&i.ArtifactEntryCount,
+		&i.ArtifactKind,
+		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
-		&i.Message,
-		&i.Error,
-		&i.PromotedAt,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
 		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
 	)
 	return i, err
 }
 
 const renewWorkspaceMount = `-- name: RenewWorkspaceMount :one
 UPDATE workspace_mounts
-   SET guestd_channel_token_expires_at = $1,
+   SET guest_channel_token_expires_at = $1,
        updated_at = now()
  WHERE org_id = $2 AND id = $3
    AND worker_instance_id = $4
    AND worker_epoch = $5 AND runtime_instance_id = $6
    AND state IN ('mounting','mounted','unmounting')
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 `
 
 type RenewWorkspaceMountParams struct {
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz `json:"guestd_channel_token_expires_at"`
-	OrgID                       pgtype.UUID        `json:"org_id"`
-	ID                          pgtype.UUID        `json:"id"`
-	WorkerInstanceID            pgtype.UUID        `json:"worker_instance_id"`
-	WorkerEpoch                 int64              `json:"worker_epoch"`
-	RuntimeInstanceID           pgtype.UUID        `json:"runtime_instance_id"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz `json:"guest_channel_token_expires_at"`
+	OrgID                      pgtype.UUID        `json:"org_id"`
+	ID                         pgtype.UUID        `json:"id"`
+	WorkerInstanceID           pgtype.UUID        `json:"worker_instance_id"`
+	WorkerEpoch                int64              `json:"worker_epoch"`
+	RuntimeInstanceID          pgtype.UUID        `json:"runtime_instance_id"`
 }
 
 func (q *Queries) RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMountParams) (WorkspaceMount, error) {
 	row := q.db.QueryRow(ctx, renewWorkspaceMount,
-		arg.GuestdChannelTokenExpiresAt,
+		arg.GuestChannelTokenExpiresAt,
 		arg.OrgID,
 		arg.ID,
 		arg.WorkerInstanceID,
@@ -1199,35 +1017,15 @@ func (q *Queries) RenewWorkspaceMount(ctx context.Context, arg RenewWorkspaceMou
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -1254,7 +1052,7 @@ WITH candidates AS (
 )
 UPDATE workspace_mounts SET state = 'unmounting', stopped_at = now(), updated_at = now()
   FROM candidates WHERE workspace_mounts.id = candidates.id
-RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 `
 
 type RequestCapacityPressureIdleWorkspaceMountStopsForWorkerParams struct {
@@ -1282,35 +1080,15 @@ func (q *Queries) RequestCapacityPressureIdleWorkspaceMountStopsForWorker(ctx co
 			&i.WorkerInstanceID,
 			&i.WorkerEpoch,
 			&i.WorkspaceID,
-			&i.DeploymentSandboxID,
-			&i.SandboxFingerprint,
-			&i.BaseVersionID,
+			&i.MaterializedVersionID,
 			&i.RuntimeInstanceID,
 			&i.ClaimAttempt,
-			&i.Priority,
-			&i.GuestdChannelTokenHash,
-			&i.GuestdChannelTokenExpiresAt,
+			&i.GuestChannelTokenHash,
+			&i.GuestChannelTokenExpiresAt,
 			&i.State,
 			&i.Request,
 			&i.DirtyGeneration,
 			&i.FencingGeneration,
-			&i.NetworkNamespace,
-			&i.PortNamespace,
-			&i.ImageArtifactID,
-			&i.ImageArtifactFormat,
-			&i.RootfsDigest,
-			&i.ImageDigest,
-			&i.ImageFormat,
-			&i.WorkspaceArtifactID,
-			&i.WorkspaceArtifactEncoding,
-			&i.WorkspaceArtifactEntryCount,
-			&i.WorkspaceArtifactDigest,
-			&i.WorkspaceArtifactSizeBytes,
-			&i.WorkspaceArtifactMediaType,
-			&i.WorkspaceMountPath,
-			&i.RuntimeABI,
-			&i.GuestdAbi,
-			&i.AdapterAbi,
 			&i.RequestedAt,
 			&i.MountedAt,
 			&i.UnmountedAt,
@@ -1342,12 +1120,12 @@ WITH mount AS (
        AND workspace_mounts.environment_id = $4
        AND workspace_mounts.workspace_id = $5
        AND workspace_mounts.state IN ('mounting','mounted')
-    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, deployment_sandbox_id, sandbox_fingerprint, base_version_id, runtime_instance_id, claim_attempt, priority, guestd_channel_token_hash, guestd_channel_token_expires_at, state, request, dirty_generation, fencing_generation, network_namespace, port_namespace, image_artifact_id, image_artifact_format, rootfs_digest, image_digest, image_format, workspace_artifact_id, workspace_artifact_encoding, workspace_artifact_entry_count, workspace_artifact_digest, workspace_artifact_size_bytes, workspace_artifact_media_type, workspace_mount_path, runtime_abi, guestd_abi, adapter_abi, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+    RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
 )
 UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
                              desired_at = now(), desired_reason = $1, updated_at = now()
   FROM mount WHERE runtime_instances.id = mount.runtime_instance_id
-RETURNING mount.id, mount.org_id, mount.worker_group_id, mount.project_id, mount.environment_id, mount.region_id, mount.worker_instance_id, mount.worker_epoch, mount.workspace_id, mount.deployment_sandbox_id, mount.sandbox_fingerprint, mount.base_version_id, mount.runtime_instance_id, mount.claim_attempt, mount.priority, mount.guestd_channel_token_hash, mount.guestd_channel_token_expires_at, mount.state, mount.request, mount.dirty_generation, mount.fencing_generation, mount.network_namespace, mount.port_namespace, mount.image_artifact_id, mount.image_artifact_format, mount.rootfs_digest, mount.image_digest, mount.image_format, mount.workspace_artifact_id, mount.workspace_artifact_encoding, mount.workspace_artifact_entry_count, mount.workspace_artifact_digest, mount.workspace_artifact_size_bytes, mount.workspace_artifact_media_type, mount.workspace_mount_path, mount.runtime_abi, mount.guestd_abi, mount.adapter_abi, mount.requested_at, mount.mounted_at, mount.unmounted_at, mount.stopped_at, mount.lost_at, mount.failed_at, mount.terminal_at, mount.terminal_reason_code, mount.terminal_error, mount.created_at, mount.updated_at
+RETURNING mount.id, mount.org_id, mount.worker_group_id, mount.project_id, mount.environment_id, mount.region_id, mount.worker_instance_id, mount.worker_epoch, mount.workspace_id, mount.materialized_version_id, mount.runtime_instance_id, mount.claim_attempt, mount.guest_channel_token_hash, mount.guest_channel_token_expires_at, mount.state, mount.request, mount.dirty_generation, mount.fencing_generation, mount.requested_at, mount.mounted_at, mount.unmounted_at, mount.stopped_at, mount.lost_at, mount.failed_at, mount.terminal_at, mount.terminal_reason_code, mount.terminal_error, mount.created_at, mount.updated_at
 `
 
 type RequestWorkspaceMountStopParams struct {
@@ -1359,55 +1137,35 @@ type RequestWorkspaceMountStopParams struct {
 }
 
 type RequestWorkspaceMountStopRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	OrgID                       pgtype.UUID         `json:"org_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	ProjectID                   pgtype.UUID         `json:"project_id"`
-	EnvironmentID               pgtype.UUID         `json:"environment_id"`
-	RegionID                    string              `json:"region_id"`
-	WorkerInstanceID            pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                 int64               `json:"worker_epoch"`
-	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
-	DeploymentSandboxID         pgtype.UUID         `json:"deployment_sandbox_id"`
-	SandboxFingerprint          string              `json:"sandbox_fingerprint"`
-	BaseVersionID               pgtype.UUID         `json:"base_version_id"`
-	RuntimeInstanceID           pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt                int32               `json:"claim_attempt"`
-	Priority                    int32               `json:"priority"`
-	GuestdChannelTokenHash      string              `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz  `json:"guestd_channel_token_expires_at"`
-	State                       WorkspaceMountState `json:"state"`
-	Request                     []byte              `json:"request"`
-	DirtyGeneration             int64               `json:"dirty_generation"`
-	FencingGeneration           int64               `json:"fencing_generation"`
-	NetworkNamespace            string              `json:"network_namespace"`
-	PortNamespace               string              `json:"port_namespace"`
-	ImageArtifactID             pgtype.UUID         `json:"image_artifact_id"`
-	ImageArtifactFormat         string              `json:"image_artifact_format"`
-	RootfsDigest                string              `json:"rootfs_digest"`
-	ImageDigest                 string              `json:"image_digest"`
-	ImageFormat                 string              `json:"image_format"`
-	WorkspaceArtifactID         pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceArtifactEncoding   string              `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount int32               `json:"workspace_artifact_entry_count"`
-	WorkspaceArtifactDigest     string              `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes  int64               `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType  string              `json:"workspace_artifact_media_type"`
-	WorkspaceMountPath          string              `json:"workspace_mount_path"`
-	RuntimeABI                  string              `json:"runtime_abi"`
-	GuestdAbi                   string              `json:"guestd_abi"`
-	AdapterAbi                  string              `json:"adapter_abi"`
-	RequestedAt                 pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                   pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                 pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                   pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                    pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                  pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode          pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError               []byte              `json:"terminal_error"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
 }
 
 func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWorkspaceMountStopParams) (RequestWorkspaceMountStopRow, error) {
@@ -1429,35 +1187,15 @@ func (q *Queries) RequestWorkspaceMountStop(ctx context.Context, arg RequestWork
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,
@@ -1484,7 +1222,7 @@ WITH stopped AS (
        AND workspace_mounts.worker_epoch = $5
        AND workspace_mounts.runtime_instance_id = $6
        AND workspace_mounts.fencing_generation = $7
-    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.deployment_sandbox_id, workspace_mounts.sandbox_fingerprint, workspace_mounts.base_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.priority, workspace_mounts.guestd_channel_token_hash, workspace_mounts.guestd_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.network_namespace, workspace_mounts.port_namespace, workspace_mounts.image_artifact_id, workspace_mounts.image_artifact_format, workspace_mounts.rootfs_digest, workspace_mounts.image_digest, workspace_mounts.image_format, workspace_mounts.workspace_artifact_id, workspace_mounts.workspace_artifact_encoding, workspace_mounts.workspace_artifact_entry_count, workspace_mounts.workspace_artifact_digest, workspace_mounts.workspace_artifact_size_bytes, workspace_mounts.workspace_artifact_media_type, workspace_mounts.workspace_mount_path, workspace_mounts.runtime_abi, workspace_mounts.guestd_abi, workspace_mounts.adapter_abi, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
+    RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 ), closed_runtime AS (
     UPDATE runtime_instances
        SET desired_state = 'closed',
@@ -1505,7 +1243,7 @@ WITH stopped AS (
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_sandbox_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.sandbox_fingerprint, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), reclaimed_slot AS (
     UPDATE worker_network_slots
        SET state = 'available', generation = worker_network_slots.generation + 1,
@@ -1522,7 +1260,7 @@ WITH stopped AS (
        AND worker_network_slots.state IN ('bound','reclaiming')
     RETURNING worker_network_slots.id
 )
-SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.deployment_sandbox_id, stopped.sandbox_fingerprint, stopped.base_version_id, stopped.runtime_instance_id, stopped.claim_attempt, stopped.priority, stopped.guestd_channel_token_hash, stopped.guestd_channel_token_expires_at, stopped.state, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.network_namespace, stopped.port_namespace, stopped.image_artifact_id, stopped.image_artifact_format, stopped.rootfs_digest, stopped.image_digest, stopped.image_format, stopped.workspace_artifact_id, stopped.workspace_artifact_encoding, stopped.workspace_artifact_entry_count, stopped.workspace_artifact_digest, stopped.workspace_artifact_size_bytes, stopped.workspace_artifact_media_type, stopped.workspace_mount_path, stopped.runtime_abi, stopped.guestd_abi, stopped.adapter_abi, stopped.requested_at, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
+SELECT stopped.id, stopped.org_id, stopped.worker_group_id, stopped.project_id, stopped.environment_id, stopped.region_id, stopped.worker_instance_id, stopped.worker_epoch, stopped.workspace_id, stopped.materialized_version_id, stopped.runtime_instance_id, stopped.claim_attempt, stopped.guest_channel_token_hash, stopped.guest_channel_token_expires_at, stopped.state, stopped.request, stopped.dirty_generation, stopped.fencing_generation, stopped.requested_at, stopped.mounted_at, stopped.unmounted_at, stopped.stopped_at, stopped.lost_at, stopped.failed_at, stopped.terminal_at, stopped.terminal_reason_code, stopped.terminal_error, stopped.created_at, stopped.updated_at FROM stopped
   JOIN closed_runtime ON closed_runtime.id = stopped.runtime_instance_id
   JOIN reclaimed_slot ON true
 `
@@ -1538,55 +1276,35 @@ type StopWorkspaceMountParams struct {
 }
 
 type StopWorkspaceMountRow struct {
-	ID                          pgtype.UUID         `json:"id"`
-	OrgID                       pgtype.UUID         `json:"org_id"`
-	WorkerGroupID               string              `json:"worker_group_id"`
-	ProjectID                   pgtype.UUID         `json:"project_id"`
-	EnvironmentID               pgtype.UUID         `json:"environment_id"`
-	RegionID                    string              `json:"region_id"`
-	WorkerInstanceID            pgtype.UUID         `json:"worker_instance_id"`
-	WorkerEpoch                 int64               `json:"worker_epoch"`
-	WorkspaceID                 pgtype.UUID         `json:"workspace_id"`
-	DeploymentSandboxID         pgtype.UUID         `json:"deployment_sandbox_id"`
-	SandboxFingerprint          string              `json:"sandbox_fingerprint"`
-	BaseVersionID               pgtype.UUID         `json:"base_version_id"`
-	RuntimeInstanceID           pgtype.UUID         `json:"runtime_instance_id"`
-	ClaimAttempt                int32               `json:"claim_attempt"`
-	Priority                    int32               `json:"priority"`
-	GuestdChannelTokenHash      string              `json:"guestd_channel_token_hash"`
-	GuestdChannelTokenExpiresAt pgtype.Timestamptz  `json:"guestd_channel_token_expires_at"`
-	State                       WorkspaceMountState `json:"state"`
-	Request                     []byte              `json:"request"`
-	DirtyGeneration             int64               `json:"dirty_generation"`
-	FencingGeneration           int64               `json:"fencing_generation"`
-	NetworkNamespace            string              `json:"network_namespace"`
-	PortNamespace               string              `json:"port_namespace"`
-	ImageArtifactID             pgtype.UUID         `json:"image_artifact_id"`
-	ImageArtifactFormat         string              `json:"image_artifact_format"`
-	RootfsDigest                string              `json:"rootfs_digest"`
-	ImageDigest                 string              `json:"image_digest"`
-	ImageFormat                 string              `json:"image_format"`
-	WorkspaceArtifactID         pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceArtifactEncoding   string              `json:"workspace_artifact_encoding"`
-	WorkspaceArtifactEntryCount int32               `json:"workspace_artifact_entry_count"`
-	WorkspaceArtifactDigest     string              `json:"workspace_artifact_digest"`
-	WorkspaceArtifactSizeBytes  int64               `json:"workspace_artifact_size_bytes"`
-	WorkspaceArtifactMediaType  string              `json:"workspace_artifact_media_type"`
-	WorkspaceMountPath          string              `json:"workspace_mount_path"`
-	RuntimeABI                  string              `json:"runtime_abi"`
-	GuestdAbi                   string              `json:"guestd_abi"`
-	AdapterAbi                  string              `json:"adapter_abi"`
-	RequestedAt                 pgtype.Timestamptz  `json:"requested_at"`
-	MountedAt                   pgtype.Timestamptz  `json:"mounted_at"`
-	UnmountedAt                 pgtype.Timestamptz  `json:"unmounted_at"`
-	StoppedAt                   pgtype.Timestamptz  `json:"stopped_at"`
-	LostAt                      pgtype.Timestamptz  `json:"lost_at"`
-	FailedAt                    pgtype.Timestamptz  `json:"failed_at"`
-	TerminalAt                  pgtype.Timestamptz  `json:"terminal_at"`
-	TerminalReasonCode          pgtype.Text         `json:"terminal_reason_code"`
-	TerminalError               []byte              `json:"terminal_error"`
-	CreatedAt                   pgtype.Timestamptz  `json:"created_at"`
-	UpdatedAt                   pgtype.Timestamptz  `json:"updated_at"`
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
 }
 
 func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMountParams) (StopWorkspaceMountRow, error) {
@@ -1610,35 +1328,15 @@ func (q *Queries) StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMount
 		&i.WorkerInstanceID,
 		&i.WorkerEpoch,
 		&i.WorkspaceID,
-		&i.DeploymentSandboxID,
-		&i.SandboxFingerprint,
-		&i.BaseVersionID,
+		&i.MaterializedVersionID,
 		&i.RuntimeInstanceID,
 		&i.ClaimAttempt,
-		&i.Priority,
-		&i.GuestdChannelTokenHash,
-		&i.GuestdChannelTokenExpiresAt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
 		&i.State,
 		&i.Request,
 		&i.DirtyGeneration,
 		&i.FencingGeneration,
-		&i.NetworkNamespace,
-		&i.PortNamespace,
-		&i.ImageArtifactID,
-		&i.ImageArtifactFormat,
-		&i.RootfsDigest,
-		&i.ImageDigest,
-		&i.ImageFormat,
-		&i.WorkspaceArtifactID,
-		&i.WorkspaceArtifactEncoding,
-		&i.WorkspaceArtifactEntryCount,
-		&i.WorkspaceArtifactDigest,
-		&i.WorkspaceArtifactSizeBytes,
-		&i.WorkspaceArtifactMediaType,
-		&i.WorkspaceMountPath,
-		&i.RuntimeABI,
-		&i.GuestdAbi,
-		&i.AdapterAbi,
 		&i.RequestedAt,
 		&i.MountedAt,
 		&i.UnmountedAt,

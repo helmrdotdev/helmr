@@ -12,14 +12,14 @@ import (
 )
 
 const getWorkspaceVersion = `-- name: GetWorkspaceVersion :one
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
+SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND workspace_id = $4
    AND id = $5
-   AND state = 'ready'
+   AND state = 'committed'
 `
 
 type GetWorkspaceVersionParams struct {
@@ -47,32 +47,31 @@ func (q *Queries) GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersi
 		&i.EnvironmentID,
 		&i.WorkspaceID,
 		&i.ParentVersionID,
-		&i.SourceWorkspaceMountID,
-		&i.SourceWriteLeaseID,
-		&i.ProducedByRunID,
-		&i.Kind,
-		&i.State,
 		&i.ArtifactID,
-		&i.ArtifactEncoding,
-		&i.ArtifactEntryCount,
+		&i.ArtifactKind,
+		&i.Kind,
 		&i.ContentDigest,
 		&i.SizeBytes,
-		&i.Message,
-		&i.Error,
-		&i.PromotedAt,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
 		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
 	)
 	return i, err
 }
 
 const listWorkspaceVersions = `-- name: ListWorkspaceVersions :many
-SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, source_workspace_mount_id, source_write_lease_id, produced_by_run_id, kind, state, artifact_id, artifact_encoding, artifact_entry_count, content_digest, size_bytes, message, error, promoted_at, created_at
+SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions
  WHERE org_id = $1
    AND project_id = $2
    AND environment_id = $3
    AND workspace_id = $4
-   AND state = 'ready'
+   AND state = 'committed'
    AND ($5::workspace_version_kind IS NULL OR kind = $5::workspace_version_kind)
  ORDER BY created_at DESC, id DESC
  LIMIT $6
@@ -111,20 +110,19 @@ func (q *Queries) ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVe
 			&i.EnvironmentID,
 			&i.WorkspaceID,
 			&i.ParentVersionID,
-			&i.SourceWorkspaceMountID,
-			&i.SourceWriteLeaseID,
-			&i.ProducedByRunID,
-			&i.Kind,
-			&i.State,
 			&i.ArtifactID,
-			&i.ArtifactEncoding,
-			&i.ArtifactEntryCount,
+			&i.ArtifactKind,
+			&i.Kind,
 			&i.ContentDigest,
 			&i.SizeBytes,
-			&i.Message,
-			&i.Error,
-			&i.PromotedAt,
+			&i.EntryCount,
+			&i.State,
+			&i.SourceWorkspaceLeaseID,
+			&i.OwnershipGeneration,
+			&i.WriterGeneration,
 			&i.CreatedAt,
+			&i.PublishedAt,
+			&i.DiscardedAt,
 		); err != nil {
 			return nil, err
 		}
