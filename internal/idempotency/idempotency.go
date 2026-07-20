@@ -1,0 +1,414 @@
+package idempotency
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/json"
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	scopeDomain       = "helmr.idempotency-scope.v0"
+	keyDomain         = "helmr.idempotency-key.v0"
+	lockDomain        = "helmr.idempotency-lock.v0"
+	fingerprintDomain = "helmr.idempotency-fingerprint.v0"
+)
+
+type operation string
+
+const (
+	operationSecretCreate operation = "secret.create"
+	operationSecretRotate operation = "secret.rotate"
+	operationSecretRevoke operation = "secret.revoke"
+)
+
+type Manager struct {
+	hashes    keyedhash.Keyring
+	authority keyedhash.Authority
+}
+
+type Transaction struct {
+	manager Manager
+	store   claimStore
+	queries *db.Queries
+}
+
+type Request interface {
+	idempotencyRequest() request
+}
+
+type request struct {
+	environmentID uuid.UUID
+	operation     operation
+	scope         []byte
+	key           string
+	fingerprint   func(hashKeyVersion int32) ([sha256.Size]byte, error)
+}
+
+type sealedRequest struct {
+	value request
+}
+
+func (r sealedRequest) idempotencyRequest() request {
+	return r.value
+}
+
+type Result struct {
+	Claim db.IdempotencyClaim
+	New   bool
+}
+
+type ConflictError struct {
+	ClaimID uuid.UUID
+}
+
+func (e ConflictError) Error() string {
+	return fmt.Sprintf("idempotency key conflicts with claim %s", e.ClaimID)
+}
+
+func New(hashes keyedhash.Keyring) Manager {
+	return Manager{hashes: hashes, authority: keyedhash.NewAuthority(hashes)}
+}
+
+func NewSecretCreateRequest(environmentID uuid.UUID, name string, key string, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+	if name == "" {
+		return nil, errors.New("secret name is required")
+	}
+	return newSecretValueRequest(environmentID, operationSecretCreate, secretNameScope(name), key, []byte(name), authenticator)
+}
+
+func NewSecretRotateRequest(environmentID uuid.UUID, secretID uuid.UUID, key string, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+	if secretID == uuid.Nil {
+		return nil, errors.New("secret ID is required")
+	}
+	return newSecretValueRequest(environmentID, operationSecretRotate, secretID[:], key, nil, authenticator)
+}
+
+func NewSecretRevokeRequest(environmentID uuid.UUID, secretID uuid.UUID, key string) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if secretID == uuid.Nil {
+		return nil, errors.New("secret ID is required")
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operationSecretRevoke,
+		scope:         bytes.Clone(secretID[:]),
+		key:           key,
+		fingerprint: func(int32) ([sha256.Size]byte, error) {
+			return operationFingerprint(operationSecretRevoke, nil, 0, nil), nil
+		},
+	}}, nil
+}
+
+func newSecretValueRequest(environmentID uuid.UUID, operation operation, scope []byte, key string, fields []byte, authenticator func(int32) ([sha256.Size]byte, error)) (Request, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("idempotency environment is required")
+	}
+	if authenticator == nil {
+		return nil, errors.New("secret value authenticator is required")
+	}
+	return sealedRequest{value: request{
+		environmentID: environmentID,
+		operation:     operation,
+		scope:         bytes.Clone(scope),
+		key:           key,
+		fingerprint: func(version int32) ([sha256.Size]byte, error) {
+			valueAuthenticator, err := authenticator(version)
+			if err != nil {
+				return [sha256.Size]byte{}, err
+			}
+			return operationFingerprint(operation, fields, version, valueAuthenticator[:]), nil
+		},
+	}}, nil
+}
+
+func (m Manager) Transaction(tx pgx.Tx) (*Transaction, error) {
+	if tx == nil {
+		return nil, errors.New("idempotency transaction is required")
+	}
+	queries := db.New(tx)
+	return &Transaction{manager: m, store: queries, queries: queries}, nil
+}
+
+func (t *Transaction) Queries() *db.Queries {
+	return t.queries
+}
+
+func (t *Transaction) Acquire(ctx context.Context, input Request) (Result, error) {
+	if input == nil {
+		return Result{}, errors.New("idempotency request is required")
+	}
+	request := input.idempotencyRequest()
+	if request.environmentID == uuid.Nil {
+		return Result{}, errors.New("idempotency environment is required")
+	}
+	if !supportedOperation(request.operation) {
+		return Result{}, fmt.Errorf("unsupported idempotency operation %q", request.operation)
+	}
+	if request.key == "" {
+		return Result{}, errors.New("idempotency key is required")
+	}
+	if request.fingerprint == nil {
+		return Result{}, errors.New("idempotency fingerprint function is required")
+	}
+
+	if err := t.store.LockIdempotencySlot(ctx, lockKey(request)); err != nil {
+		return Result{}, fmt.Errorf("lock idempotency slot: %w", err)
+	}
+	selection, err := t.manager.authority.Lock(ctx, t.store)
+	if err != nil {
+		return Result{}, err
+	}
+	candidates, err := t.candidates(request, selection.Versions)
+	if err != nil {
+		return Result{}, err
+	}
+	claims, err := t.store.FindLiveIdempotencyClaims(ctx, db.FindLiveIdempotencyClaimsParams{
+		HashKeyVersions: candidates.versions,
+		ScopeHashes:     candidates.scopeHashes,
+		KeyHashes:       candidates.keyHashes,
+		EnvironmentID:   pgvalue.UUID(request.environmentID),
+		Operation:       string(request.operation),
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("find idempotency claim: %w", err)
+	}
+	if len(claims) > 1 {
+		return Result{}, errors.New("multiple live idempotency claims matched one raw key")
+	}
+	if len(claims) == 0 {
+		generation, err := t.store.GetLatestIdempotencyClaimGeneration(ctx, db.GetLatestIdempotencyClaimGenerationParams{
+			HashKeyVersions: candidates.versions,
+			ScopeHashes:     candidates.scopeHashes,
+			KeyHashes:       candidates.keyHashes,
+			EnvironmentID:   pgvalue.UUID(request.environmentID),
+			Operation:       string(request.operation),
+		})
+		if err != nil {
+			return Result{}, fmt.Errorf("read idempotency generation: %w", err)
+		}
+		return t.create(ctx, request, generation+1, selection.Current)
+	}
+
+	matched := claims[0]
+	claim := claimFromRow(matched)
+	if matched.Expired {
+		if _, err := t.store.RetireExpiredIdempotencyClaim(ctx, db.RetireExpiredIdempotencyClaimParams{
+			EnvironmentID: pgvalue.UUID(request.environmentID),
+			ID:            claim.ID,
+		}); err != nil {
+			return Result{}, fmt.Errorf("retire idempotency claim: %w", err)
+		}
+		return t.create(ctx, request, claim.Generation+1, selection.Current)
+	}
+	fingerprint, err := request.fingerprint(claim.HashKeyVersion)
+	if err != nil {
+		return Result{}, fmt.Errorf("fingerprint idempotency request: %w", err)
+	}
+	if !bytes.Equal(claim.RequestFingerprint, fingerprint[:]) {
+		claimID, _ := pgvalue.UUIDValue(claim.ID)
+		return Result{}, ConflictError{ClaimID: claimID}
+	}
+	return Result{Claim: claim}, nil
+}
+
+func supportedOperation(value operation) bool {
+	switch value {
+	case operationSecretCreate, operationSecretRotate, operationSecretRevoke:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *Transaction) Complete(ctx context.Context, claim db.IdempotencyClaim, receipt []byte) (db.IdempotencyClaim, error) {
+	if err := validateReceipt(receipt); err != nil {
+		return db.IdempotencyClaim{}, err
+	}
+	completed, err := t.store.CompleteIdempotencyClaim(ctx, db.CompleteIdempotencyClaimParams{
+		Receipt:            bytes.Clone(receipt),
+		EnvironmentID:      claim.EnvironmentID,
+		ID:                 claim.ID,
+		RequestFingerprint: bytes.Clone(claim.RequestFingerprint),
+	})
+	if err != nil {
+		return db.IdempotencyClaim{}, fmt.Errorf("complete idempotency claim: %w", err)
+	}
+	return completed, nil
+}
+
+func (t *Transaction) Fail(ctx context.Context, claim db.IdempotencyClaim, receipt []byte) (db.IdempotencyClaim, error) {
+	if err := validateReceipt(receipt); err != nil {
+		return db.IdempotencyClaim{}, err
+	}
+	failed, err := t.store.FailIdempotencyClaim(ctx, db.FailIdempotencyClaimParams{
+		Receipt:            bytes.Clone(receipt),
+		EnvironmentID:      claim.EnvironmentID,
+		ID:                 claim.ID,
+		RequestFingerprint: bytes.Clone(claim.RequestFingerprint),
+	})
+	if err != nil {
+		return db.IdempotencyClaim{}, fmt.Errorf("fail idempotency claim: %w", err)
+	}
+	return failed, nil
+}
+
+func (t *Transaction) create(ctx context.Context, request request, generation int64, version int32) (Result, error) {
+	fingerprint, err := request.fingerprint(version)
+	if err != nil {
+		return Result{}, fmt.Errorf("fingerprint idempotency request: %w", err)
+	}
+	scopeHash, keyHash, err := t.hashes(request, version)
+	if err != nil {
+		return Result{}, err
+	}
+	claim, err := t.store.CreateIdempotencyClaim(ctx, db.CreateIdempotencyClaimParams{
+		ID:                 pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID:      pgvalue.UUID(request.environmentID),
+		Operation:          string(request.operation),
+		ScopeHash:          scopeHash,
+		KeyHash:            keyHash,
+		HashKeyVersion:     version,
+		Generation:         generation,
+		RequestFingerprint: fingerprint[:],
+	})
+	if err != nil {
+		return Result{}, fmt.Errorf("create idempotency claim: %w", err)
+	}
+	return Result{Claim: claim, New: true}, nil
+}
+
+type hashCandidates struct {
+	versions    []int32
+	scopeHashes [][]byte
+	keyHashes   [][]byte
+}
+
+func (t *Transaction) candidates(request request, versions []int32) (hashCandidates, error) {
+	result := hashCandidates{
+		versions:    make([]int32, 0, len(versions)),
+		scopeHashes: make([][]byte, 0, len(versions)),
+		keyHashes:   make([][]byte, 0, len(versions)),
+	}
+	for _, version := range versions {
+		scopeHash, keyHash, err := t.hashes(request, version)
+		if err != nil {
+			return hashCandidates{}, err
+		}
+		result.versions = append(result.versions, version)
+		result.scopeHashes = append(result.scopeHashes, scopeHash)
+		result.keyHashes = append(result.keyHashes, keyHash)
+	}
+	return result, nil
+}
+
+func (t *Transaction) hashes(request request, version int32) ([]byte, []byte, error) {
+	scope, err := t.manager.hashes.Sum(version, lookupFrame(scopeDomain, request, request.scope))
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash idempotency scope: %w", err)
+	}
+	key, err := t.manager.hashes.Sum(version, lookupFrame(keyDomain, request, []byte(request.key)))
+	if err != nil {
+		return nil, nil, fmt.Errorf("hash idempotency key: %w", err)
+	}
+	return bytes.Clone(scope.Value[:]), bytes.Clone(key.Value[:]), nil
+}
+
+func lookupFrame(domain string, request request, value []byte) []byte {
+	frame := make([]byte, 0, len(domain)+1+16+8+len(request.operation)+8+len(value))
+	frame = append(frame, domain...)
+	frame = append(frame, 0)
+	frame = append(frame, request.environmentID[:]...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.operation)))
+	frame = append(frame, request.operation...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(value)))
+	frame = append(frame, value...)
+	return frame
+}
+
+func lockKey(request request) int64 {
+	frame := make([]byte, 0, len(lockDomain)+1+16+8+len(request.operation)+8+len(request.scope)+8+len(request.key))
+	frame = append(frame, lockDomain...)
+	frame = append(frame, 0)
+	frame = append(frame, request.environmentID[:]...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.operation)))
+	frame = append(frame, request.operation...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.scope)))
+	frame = append(frame, request.scope...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(request.key)))
+	frame = append(frame, request.key...)
+	sum := sha256.Sum256(frame)
+	return int64(binary.BigEndian.Uint64(sum[:8]))
+}
+
+func secretNameScope(name string) []byte {
+	scope := make([]byte, 0, 8+len(name))
+	scope = binary.BigEndian.AppendUint64(scope, uint64(len(name)))
+	return append(scope, name...)
+}
+
+func operationFingerprint(operation operation, fields []byte, hashKeyVersion int32, authenticator []byte) [sha256.Size]byte {
+	frame := make([]byte, 0, len(fingerprintDomain)+1+8+len(operation)+8+len(fields)+4+8+len(authenticator))
+	frame = append(frame, fingerprintDomain...)
+	frame = append(frame, 0)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(operation)))
+	frame = append(frame, operation...)
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(fields)))
+	frame = append(frame, fields...)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(hashKeyVersion))
+	frame = binary.BigEndian.AppendUint64(frame, uint64(len(authenticator)))
+	frame = append(frame, authenticator...)
+	return sha256.Sum256(frame)
+}
+
+func claimFromRow(row db.FindLiveIdempotencyClaimsRow) db.IdempotencyClaim {
+	return db.IdempotencyClaim{
+		ID:                 row.ID,
+		EnvironmentID:      row.EnvironmentID,
+		Operation:          row.Operation,
+		ScopeHash:          row.ScopeHash,
+		KeyHash:            row.KeyHash,
+		HashKeyVersion:     row.HashKeyVersion,
+		Generation:         row.Generation,
+		RequestFingerprint: row.RequestFingerprint,
+		State:              row.State,
+		Receipt:            row.Receipt,
+		AcceptedAt:         row.AcceptedAt,
+		ExpiresAt:          row.ExpiresAt,
+		RetiredAt:          row.RetiredAt,
+		CompletedAt:        row.CompletedAt,
+	}
+}
+
+func validateReceipt(receipt []byte) error {
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(receipt, &value); err != nil {
+		return fmt.Errorf("idempotency receipt must be a JSON object: %w", err)
+	}
+	if value == nil {
+		return errors.New("idempotency receipt must be a JSON object")
+	}
+	return nil
+}
+
+type claimStore interface {
+	LockIdempotencySlot(context.Context, int64) error
+	LockActiveLookupHMACVersions(context.Context) ([]db.LookupHmacVersion, error)
+	FindLiveIdempotencyClaims(context.Context, db.FindLiveIdempotencyClaimsParams) ([]db.FindLiveIdempotencyClaimsRow, error)
+	GetLatestIdempotencyClaimGeneration(context.Context, db.GetLatestIdempotencyClaimGenerationParams) (int64, error)
+	CreateIdempotencyClaim(context.Context, db.CreateIdempotencyClaimParams) (db.IdempotencyClaim, error)
+	RetireExpiredIdempotencyClaim(context.Context, db.RetireExpiredIdempotencyClaimParams) (db.IdempotencyClaim, error)
+	CompleteIdempotencyClaim(context.Context, db.CompleteIdempotencyClaimParams) (db.IdempotencyClaim, error)
+	FailIdempotencyClaim(context.Context, db.FailIdempotencyClaimParams) (db.IdempotencyClaim, error)
+}

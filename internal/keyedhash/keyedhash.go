@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -15,8 +16,7 @@ import (
 const KeySize = 32
 
 type Keyring struct {
-	current int32
-	keys    map[int32][KeySize]byte
+	keys map[int32][KeySize]byte
 }
 
 type Digest struct {
@@ -24,10 +24,18 @@ type Digest struct {
 	Value   [sha256.Size]byte
 }
 
-func New(current int32, keys map[int32][]byte) (Keyring, error) {
-	if current <= 0 {
-		return Keyring{}, errors.New("current keyed-hash version must be positive")
-	}
+type Version struct {
+	Number      int32
+	Fingerprint []byte
+	Current     bool
+}
+
+type Selection struct {
+	Versions []int32
+	Current  int32
+}
+
+func New(keys map[int32][]byte) (Keyring, error) {
 	if len(keys) == 0 {
 		return Keyring{}, errors.New("at least one keyed-hash key is required")
 	}
@@ -43,25 +51,43 @@ func New(current int32, keys map[int32][]byte) (Keyring, error) {
 		copy(key[:], raw)
 		copied[version] = key
 	}
-	if _, ok := copied[current]; !ok {
-		return Keyring{}, fmt.Errorf("current keyed-hash version %d is not configured", current)
-	}
-	return Keyring{current: current, keys: copied}, nil
+	return Keyring{keys: copied}, nil
 }
 
 func FromBase64JSON(raw string) (Keyring, error) {
-	var registry struct {
-		Current int32             `json:"current"`
-		Keys    map[string]string `json:"keys"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &registry); err != nil {
+	decoder := json.NewDecoder(strings.NewReader(strings.TrimSpace(raw)))
+	token, err := decoder.Token()
+	if err != nil {
 		return Keyring{}, fmt.Errorf("decode keyed-hash keys: %w", err)
 	}
-	keys := make(map[int32][]byte, len(registry.Keys))
-	for rawVersion, rawKey := range registry.Keys {
+	if delimiter, ok := token.(json.Delim); !ok || delimiter != '{' {
+		return Keyring{}, errors.New("decode keyed-hash keys: expected JSON object")
+	}
+	keys := make(map[int32][]byte)
+	rawVersions := make(map[string]struct{})
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return Keyring{}, fmt.Errorf("decode keyed-hash version: %w", err)
+		}
+		rawVersion, ok := token.(string)
+		if !ok {
+			return Keyring{}, errors.New("decode keyed-hash version: expected object key")
+		}
+		if _, exists := rawVersions[rawVersion]; exists {
+			return Keyring{}, fmt.Errorf("decode keyed-hash version %q: duplicate key", rawVersion)
+		}
+		rawVersions[rawVersion] = struct{}{}
 		version, err := strconv.ParseInt(rawVersion, 10, 32)
-		if err != nil || version <= 0 {
+		if err != nil || version <= 0 || strconv.FormatInt(version, 10) != rawVersion {
 			return Keyring{}, fmt.Errorf("decode keyed-hash version %q", rawVersion)
+		}
+		if _, exists := keys[int32(version)]; exists {
+			return Keyring{}, fmt.Errorf("decode keyed-hash version %q: duplicate version", rawVersion)
+		}
+		var rawKey string
+		if err := decoder.Decode(&rawKey); err != nil {
+			return Keyring{}, fmt.Errorf("decode keyed-hash version %d: %w", version, err)
 		}
 		key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(rawKey))
 		if err != nil {
@@ -69,11 +95,21 @@ func FromBase64JSON(raw string) (Keyring, error) {
 		}
 		keys[int32(version)] = key
 	}
-	return New(registry.Current, keys)
+	if _, err := decoder.Token(); err != nil {
+		return Keyring{}, fmt.Errorf("decode keyed-hash keys: %w", err)
+	}
+	if token, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err != nil {
+			return Keyring{}, fmt.Errorf("decode keyed-hash keys: %w", err)
+		}
+		return Keyring{}, fmt.Errorf("decode keyed-hash keys: unexpected token %v", token)
+	}
+	return New(keys)
 }
 
-func (k Keyring) CurrentVersion() int32 {
-	return k.current
+func (k Keyring) Has(version int32) bool {
+	_, ok := k.keys[version]
+	return ok
 }
 
 func (k Keyring) Sum(version int32, value []byte) (Digest, error) {
@@ -88,25 +124,53 @@ func (k Keyring) Sum(version int32, value []byte) (Digest, error) {
 	return Digest{Version: version, Value: sum}, nil
 }
 
-func (k Keyring) Current(value []byte) (Digest, error) {
-	return k.Sum(k.current, value)
+func (k Keyring) Fingerprint(version int32) ([sha256.Size]byte, error) {
+	key, ok := k.keys[version]
+	if !ok {
+		return [sha256.Size]byte{}, fmt.Errorf("keyed-hash version %d is not configured", version)
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte("helmr.lookup-hmac-key.v0"))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(key[:])
+	var fingerprint [sha256.Size]byte
+	copy(fingerprint[:], hash.Sum(nil))
+	return fingerprint, nil
 }
 
-func (k Keyring) All(value []byte) []Digest {
-	versions := make([]int, 0, len(k.keys))
-	for version := range k.keys {
-		if version == k.current {
-			continue
+func (k Keyring) Select(versions []Version) (Selection, error) {
+	if len(versions) == 0 {
+		return Selection{}, errors.New("lookup HMAC authority has no active versions")
+	}
+	sorted := append([]Version(nil), versions...)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Number < sorted[j].Number
+	})
+	selection := Selection{Versions: make([]int32, 0, len(sorted))}
+	for index, version := range sorted {
+		if version.Number <= 0 {
+			return Selection{}, fmt.Errorf("lookup HMAC authority version %d must be positive", version.Number)
 		}
-		versions = append(versions, int(version))
+		if index > 0 && sorted[index-1].Number == version.Number {
+			return Selection{}, fmt.Errorf("lookup HMAC authority repeats version %d", version.Number)
+		}
+		expected, err := k.Fingerprint(version.Number)
+		if err != nil {
+			return Selection{}, err
+		}
+		if !hmac.Equal(expected[:], version.Fingerprint) {
+			return Selection{}, fmt.Errorf("lookup HMAC version %d has different key bytes", version.Number)
+		}
+		selection.Versions = append(selection.Versions, version.Number)
+		if version.Current {
+			if selection.Current != 0 {
+				return Selection{}, errors.New("lookup HMAC authority has multiple current versions")
+			}
+			selection.Current = version.Number
+		}
 	}
-	sort.Sort(sort.Reverse(sort.IntSlice(versions)))
-	digests := make([]Digest, 0, len(versions)+1)
-	current, _ := k.Sum(k.current, value)
-	digests = append(digests, current)
-	for _, version := range versions {
-		digest, _ := k.Sum(int32(version), value)
-		digests = append(digests, digest)
+	if selection.Current == 0 {
+		return Selection{}, errors.New("lookup HMAC authority has no current version")
 	}
-	return digests
+	return selection, nil
 }

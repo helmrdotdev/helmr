@@ -12,7 +12,6 @@ import (
 
 type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
-	AcquireIdempotencyClaim(ctx context.Context, arg AcquireIdempotencyClaimParams) (IdempotencyClaim, error)
 	AddRunCheckpointArtifact(ctx context.Context, arg AddRunCheckpointArtifactParams) (RunCheckpointArtifact, error)
 	AdvanceScheduleCursor(ctx context.Context, arg AdvanceScheduleCursorParams) (Schedule, error)
 	AllocateDeploymentVersion(ctx context.Context, arg AllocateDeploymentVersionParams) (string, error)
@@ -42,8 +41,10 @@ type Querier interface {
 	ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMountParams) (ClaimWorkspaceMountRow, error)
 	ClaimWorkspaceProcessTerminalOutputIngestBatch(ctx context.Context, arg ClaimWorkspaceProcessTerminalOutputIngestBatchParams) ([]ClaimWorkspaceProcessTerminalOutputIngestBatchRow, error)
 	ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRunWorkspaceReuseParams) (ClassifyRunWorkspaceReuseRow, error)
+	ClearCurrentLookupHMACVersion(ctx context.Context) (int64, error)
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	ClearExpiredWorkspaceCreateIdempotency(ctx context.Context, arg ClearExpiredWorkspaceCreateIdempotencyParams) error
+	CollectRetiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error)
 	CollectWorkspaceProcessRecordPayload(ctx context.Context, id pgtype.UUID) (WorkspaceProcessRecord, error)
 	CommitActorInputCursor(ctx context.Context, arg CommitActorInputCursorParams) (Actor, error)
 	CompleteDeletionJob(ctx context.Context, arg CompleteDeletionJobParams) (DeletionJob, error)
@@ -65,11 +66,13 @@ type Querier interface {
 	CreateArtifact(ctx context.Context, arg CreateArtifactParams) (Artifact, error)
 	CreateAuthSession(ctx context.Context, arg CreateAuthSessionParams) (AuthSession, error)
 	CreateChildRunFromParentDeployment(ctx context.Context, arg CreateChildRunFromParentDeploymentParams) (CreateChildRunFromParentDeploymentRow, error)
+	CreateCurrentLookupHMACVersion(ctx context.Context, arg CreateCurrentLookupHMACVersionParams) (LookupHmacVersion, error)
 	CreateDeletionJob(ctx context.Context, arg CreateDeletionJobParams) (DeletionJob, error)
 	CreateDeployment(ctx context.Context, arg CreateDeploymentParams) (Deployment, error)
 	CreateDeploymentDefinition(ctx context.Context, arg CreateDeploymentDefinitionParams) (DeploymentDefinition, error)
 	CreateDeviceCode(ctx context.Context, arg CreateDeviceCodeParams) (DeviceCode, error)
 	CreateEnvironment(ctx context.Context, arg CreateEnvironmentParams) (Environment, error)
+	CreateIdempotencyClaim(ctx context.Context, arg CreateIdempotencyClaimParams) (IdempotencyClaim, error)
 	CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error)
 	CreateMagicLink(ctx context.Context, arg CreateMagicLinkParams) (MagicLink, error)
 	CreateOrganization(ctx context.Context, arg CreateOrganizationParams) (Organization, error)
@@ -118,6 +121,7 @@ type Querier interface {
 	FailRunWaitCondition(ctx context.Context, arg FailRunWaitConditionParams) (RunWait, error)
 	FailWorkspaceMount(ctx context.Context, arg FailWorkspaceMountParams) (WorkspaceMount, error)
 	FenceWorkerInstance(ctx context.Context, arg FenceWorkerInstanceParams) (FenceWorkerInstanceRow, error)
+	FindLiveIdempotencyClaims(ctx context.Context, arg FindLiveIdempotencyClaimsParams) ([]FindLiveIdempotencyClaimsRow, error)
 	GetActiveInvitation(ctx context.Context, tokenHash []byte) (GetActiveInvitationRow, error)
 	GetActiveInvitationByID(ctx context.Context, id pgtype.UUID) (GetActiveInvitationByIDRow, error)
 	GetActiveMagicLinkByTokenHash(ctx context.Context, tokenHash []byte) (GetActiveMagicLinkByTokenHashRow, error)
@@ -151,6 +155,7 @@ type Querier interface {
 	GetFleetOldestRunQueueTime(ctx context.Context, workerGroupID string) (pgtype.Timestamptz, error)
 	GetFleetTerminationProof(ctx context.Context, arg GetFleetTerminationProofParams) (GetFleetTerminationProofRow, error)
 	GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (IdempotencyClaim, error)
+	GetLatestIdempotencyClaimGeneration(ctx context.Context, arg GetLatestIdempotencyClaimGenerationParams) (int64, error)
 	GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) (User, error)
 	GetNextRuntimeReconcileTarget(ctx context.Context, arg GetNextRuntimeReconcileTargetParams) (GetNextRuntimeReconcileTargetRow, error)
 	GetOrgMember(ctx context.Context, arg GetOrgMemberParams) (GetOrgMemberRow, error)
@@ -211,8 +216,10 @@ type Querier interface {
 	ListFleetBuildDemand(ctx context.Context, workerGroupID string) ([]ListFleetBuildDemandRow, error)
 	ListFleetRunDemand(ctx context.Context, workerGroupID string) ([]ListFleetRunDemandRow, error)
 	ListFleetWorkers(ctx context.Context, workerGroupID string) ([]ListFleetWorkersRow, error)
+	ListIdempotencyHashKeyUsage(ctx context.Context) ([]ListIdempotencyHashKeyUsageRow, error)
 	ListInvitations(ctx context.Context, arg ListInvitationsParams) ([]ListInvitationsRow, error)
 	ListLiveAbsentWorkerGroupIDs(ctx context.Context, arg ListLiveAbsentWorkerGroupIDsParams) ([]string, error)
+	ListLookupHMACVersions(ctx context.Context) ([]LookupHmacVersion, error)
 	ListOrgMembers(ctx context.Context, orgID pgtype.UUID) ([]ListOrgMembersRow, error)
 	ListOrganizationIDs(ctx context.Context, rowLimit int32) ([]pgtype.UUID, error)
 	ListOrganizationIDsPage(ctx context.Context, arg ListOrganizationIDsPageParams) ([]pgtype.UUID, error)
@@ -247,10 +254,14 @@ type Querier interface {
 	ListWorkspaceVersions(ctx context.Context, arg ListWorkspaceVersionsParams) ([]WorkspaceVersion, error)
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error)
+	LockActiveLookupHMACVersions(ctx context.Context) ([]LookupHmacVersion, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
+	LockIdempotencySlot(ctx context.Context, lockKey int64) error
+	LockLookupHMACMaintenance(ctx context.Context) error
+	LockLookupHMACVersionsForMaintenance(ctx context.Context) ([]LookupHmacVersion, error)
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
@@ -307,6 +318,8 @@ type Querier interface {
 	ResolveCurrentWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveCurrentWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	ResolveRunPinnedWorkspaceDefinitionForCreate(ctx context.Context, arg ResolveRunPinnedWorkspaceDefinitionForCreateParams) (DeploymentDefinition, error)
 	RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireExpiredIdempotencyClaimParams) (IdempotencyClaim, error)
+	RetireExpiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error)
+	RetireLookupHMACVersion(ctx context.Context, version int32) (LookupHmacVersion, error)
 	RetryOutboxMessage(ctx context.Context, arg RetryOutboxMessageParams) (OutboxMessage, error)
 	RevokeAPIKey(ctx context.Context, arg RevokeAPIKeyParams) (int64, error)
 	RevokeAuthSessionByTokenHash(ctx context.Context, tokenHash []byte) (int64, error)

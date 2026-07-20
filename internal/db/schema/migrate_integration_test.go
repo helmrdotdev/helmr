@@ -87,6 +87,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertDeploymentBuildCapacitySchema(t, dbctx, pool)
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
+	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -110,6 +111,31 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	}
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
+	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
+}
+
+func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	required := []string{
+		"idempotency_claims_live_expiry_idx",
+		"idempotency_claims_retired_idx",
+		"runs_claim_idx",
+		"actor_records_claim_idx",
+		"run_stream_records_claim_lookup_idx",
+		"run_waits_child_claim_idx",
+	}
+	var count int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND indexname = ANY($1::text[])
+	`, required).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != len(required) {
+		t.Fatalf("idempotency claim collection indexes = %d, want %d", count, len(required))
+	}
 }
 
 func assertWorkspaceVersionAuthority(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
@@ -376,6 +402,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	}
 	requiredExecutionTables := []string{
 		"deployment_definitions",
+		"lookup_hmac_versions",
 		"idempotency_claims",
 		"workspaces",
 		"workspace_versions",

@@ -203,7 +203,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load lookup HMAC keys: %w", err)
 	}
-	secretStore, err := secret.New(queries, keyring, hashes)
+	secretStore, err := secret.New(ctx, queries, pool, keyring, hashes)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}

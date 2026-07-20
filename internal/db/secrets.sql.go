@@ -12,19 +12,26 @@ import (
 )
 
 const createSecret = `-- name: CreateSecret :one
-WITH secret AS (
+WITH authority AS (
+    SELECT lookup_hmac_versions.version
+    FROM lookup_hmac_versions
+    WHERE lookup_hmac_versions.version = $1
+      AND is_current
+      AND retired_at IS NULL
+),
+secret AS (
     INSERT INTO secrets (
         id,
         environment_id,
         name,
         current_version_id
     )
-    VALUES (
-        $1,
+    SELECT
         $2,
         $3,
-        $4
-    )
+        $4,
+        $5
+    FROM authority
     RETURNING id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at, deleted_at
 ),
 version AS (
@@ -39,14 +46,14 @@ version AS (
         authenticator_key_version
     )
     SELECT
-        $4,
+        $5,
         secret.id,
         1,
-        $5,
         $6,
         $7,
         $8,
-        $9
+        $9,
+        $1
     FROM secret
     RETURNING secret_id
 )
@@ -56,6 +63,7 @@ JOIN version ON version.secret_id = secret.id
 `
 
 type CreateSecretParams struct {
+	AuthenticatorKeyVersion int32       `json:"authenticator_key_version"`
 	ID                      pgtype.UUID `json:"id"`
 	EnvironmentID           pgtype.UUID `json:"environment_id"`
 	Name                    string      `json:"name"`
@@ -64,7 +72,6 @@ type CreateSecretParams struct {
 	Nonce                   []byte      `json:"nonce"`
 	Ciphertext              []byte      `json:"ciphertext"`
 	ValueAuthenticator      []byte      `json:"value_authenticator"`
-	AuthenticatorKeyVersion int32       `json:"authenticator_key_version"`
 }
 
 type CreateSecretRow struct {
@@ -83,6 +90,7 @@ type CreateSecretRow struct {
 
 func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (CreateSecretRow, error) {
 	row := q.db.QueryRow(ctx, createSecret,
+		arg.AuthenticatorKeyVersion,
 		arg.ID,
 		arg.EnvironmentID,
 		arg.Name,
@@ -91,7 +99,6 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		arg.Nonce,
 		arg.Ciphertext,
 		arg.ValueAuthenticator,
-		arg.AuthenticatorKeyVersion,
 	)
 	var i CreateSecretRow
 	err := row.Scan(
@@ -677,14 +684,21 @@ func (q *Queries) RevokeSecret(ctx context.Context, arg RevokeSecretParams) (Sec
 }
 
 const rotateSecret = `-- name: RotateSecret :one
-WITH locked AS (
+WITH authority AS (
+    SELECT lookup_hmac_versions.version
+    FROM lookup_hmac_versions
+    WHERE lookup_hmac_versions.version = $1
+      AND is_current
+      AND retired_at IS NULL
+),
+locked AS (
     SELECT id, environment_id, name, state, state_version, current_version_id, revocation_generation, created_at, updated_at, revoked_at, deleted_at
     FROM secrets
-    WHERE secrets.environment_id = $1
-      AND secrets.id = $2
+    WHERE secrets.environment_id = $2
+      AND secrets.id = $3
       AND secrets.state = 'active'
-      AND secrets.state_version = $3
-      AND secrets.current_version_id = $4
+      AND secrets.state_version = $4
+      AND secrets.current_version_id = $5
     FOR UPDATE
 ),
 version AS (
@@ -699,15 +713,17 @@ version AS (
         authenticator_key_version
     )
     SELECT
-        $5,
-        locked.id,
         $6,
+        locked.id,
         $7,
         $8,
         $9,
         $10,
-        $11
+        $11,
+        $1
     FROM locked
+    JOIN authority
+      ON authority.version = $1
     RETURNING secret_id, id
 )
 UPDATE secrets
@@ -720,6 +736,7 @@ RETURNING secrets.id, secrets.environment_id, secrets.name, secrets.state, secre
 `
 
 type RotateSecretParams struct {
+	AuthenticatorKeyVersion  int32       `json:"authenticator_key_version"`
 	EnvironmentID            pgtype.UUID `json:"environment_id"`
 	SecretID                 pgtype.UUID `json:"secret_id"`
 	ExpectedStateVersion     int64       `json:"expected_state_version"`
@@ -730,11 +747,11 @@ type RotateSecretParams struct {
 	Nonce                    []byte      `json:"nonce"`
 	Ciphertext               []byte      `json:"ciphertext"`
 	ValueAuthenticator       []byte      `json:"value_authenticator"`
-	AuthenticatorKeyVersion  int32       `json:"authenticator_key_version"`
 }
 
 func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error) {
 	row := q.db.QueryRow(ctx, rotateSecret,
+		arg.AuthenticatorKeyVersion,
 		arg.EnvironmentID,
 		arg.SecretID,
 		arg.ExpectedStateVersion,
@@ -745,7 +762,6 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		arg.Nonce,
 		arg.Ciphertext,
 		arg.ValueAuthenticator,
-		arg.AuthenticatorKeyVersion,
 	)
 	var i Secret
 	err := row.Scan(
@@ -771,6 +787,13 @@ SET value_authenticator = $1,
 WHERE id = $3
   AND authenticator_key_version = $4
   AND value_authenticator = $5
+  AND EXISTS (
+      SELECT 1
+      FROM lookup_hmac_versions
+      WHERE lookup_hmac_versions.version = $2
+        AND is_current
+        AND retired_at IS NULL
+  )
 `
 
 type UpdateSecretVersionAuthenticatorParams struct {

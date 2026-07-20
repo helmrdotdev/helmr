@@ -1,17 +1,24 @@
 -- name: CreateSecret :one
-WITH secret AS (
+WITH authority AS (
+    SELECT lookup_hmac_versions.version
+    FROM lookup_hmac_versions
+    WHERE lookup_hmac_versions.version = sqlc.arg(authenticator_key_version)
+      AND is_current
+      AND retired_at IS NULL
+),
+secret AS (
     INSERT INTO secrets (
         id,
         environment_id,
         name,
         current_version_id
     )
-    VALUES (
+    SELECT
         sqlc.arg(id),
         sqlc.arg(environment_id),
         sqlc.arg(name),
         sqlc.arg(version_id)
-    )
+    FROM authority
     RETURNING *
 ),
 version AS (
@@ -42,7 +49,14 @@ FROM secret
 JOIN version ON version.secret_id = secret.id;
 
 -- name: RotateSecret :one
-WITH locked AS (
+WITH authority AS (
+    SELECT lookup_hmac_versions.version
+    FROM lookup_hmac_versions
+    WHERE lookup_hmac_versions.version = sqlc.arg(authenticator_key_version)
+      AND is_current
+      AND retired_at IS NULL
+),
+locked AS (
     SELECT *
     FROM secrets
     WHERE secrets.environment_id = sqlc.arg(environment_id)
@@ -73,6 +87,8 @@ version AS (
         sqlc.arg(value_authenticator),
         sqlc.arg(authenticator_key_version)
     FROM locked
+    JOIN authority
+      ON authority.version = sqlc.arg(authenticator_key_version)
     RETURNING secret_id, id
 )
 UPDATE secrets
@@ -212,7 +228,14 @@ SET value_authenticator = sqlc.arg(new_value_authenticator),
     authenticator_key_version = sqlc.arg(new_authenticator_key_version)
 WHERE id = sqlc.arg(version_id)
   AND authenticator_key_version = sqlc.arg(previous_authenticator_key_version)
-  AND value_authenticator = sqlc.arg(previous_value_authenticator);
+  AND value_authenticator = sqlc.arg(previous_value_authenticator)
+  AND EXISTS (
+      SELECT 1
+      FROM lookup_hmac_versions
+      WHERE lookup_hmac_versions.version = sqlc.arg(new_authenticator_key_version)
+        AND is_current
+        AND retired_at IS NULL
+  );
 
 -- name: ListWorkspaceSecrets :many
 SELECT

@@ -11,77 +11,74 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const acquireIdempotencyClaim = `-- name: AcquireIdempotencyClaim :one
-INSERT INTO idempotency_claims (
-    id,
-    environment_id,
-    operation,
-    scope_hash,
-    key_hash,
-    hash_key_version,
-    generation,
-    request_fingerprint,
-    expires_at
+const collectRetiredIdempotencyClaims = `-- name: CollectRetiredIdempotencyClaims :many
+WITH candidates AS (
+    SELECT id
+      FROM idempotency_claims
+     WHERE retired_at IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1
+             FROM runs
+            WHERE runs.claim_id = idempotency_claims.id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM actor_records
+            WHERE actor_records.claim_id = idempotency_claims.id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_stream_records
+            WHERE run_stream_records.claim_id = idempotency_claims.id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.child_claim_id = idempotency_claims.id
+       )
+     ORDER BY retired_at, id
+     LIMIT $1
+     FOR UPDATE SKIP LOCKED
 )
-VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    $7,
-    $8,
-    $9
-)
-ON CONFLICT (environment_id, operation, scope_hash, key_hash)
-    WHERE retired_at IS NULL
-DO UPDATE SET operation = excluded.operation
-RETURNING id, environment_id, operation, scope_hash, key_hash, hash_key_version, generation, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
+DELETE FROM idempotency_claims
+ USING candidates
+ WHERE idempotency_claims.id = candidates.id
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
 `
 
-type AcquireIdempotencyClaimParams struct {
-	ID                 pgtype.UUID        `json:"id"`
-	EnvironmentID      pgtype.UUID        `json:"environment_id"`
-	Operation          string             `json:"operation"`
-	ScopeHash          []byte             `json:"scope_hash"`
-	KeyHash            []byte             `json:"key_hash"`
-	HashKeyVersion     int32              `json:"hash_key_version"`
-	Generation         int64              `json:"generation"`
-	RequestFingerprint []byte             `json:"request_fingerprint"`
-	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
-}
-
-func (q *Queries) AcquireIdempotencyClaim(ctx context.Context, arg AcquireIdempotencyClaimParams) (IdempotencyClaim, error) {
-	row := q.db.QueryRow(ctx, acquireIdempotencyClaim,
-		arg.ID,
-		arg.EnvironmentID,
-		arg.Operation,
-		arg.ScopeHash,
-		arg.KeyHash,
-		arg.HashKeyVersion,
-		arg.Generation,
-		arg.RequestFingerprint,
-		arg.ExpiresAt,
-	)
-	var i IdempotencyClaim
-	err := row.Scan(
-		&i.ID,
-		&i.EnvironmentID,
-		&i.Operation,
-		&i.ScopeHash,
-		&i.KeyHash,
-		&i.HashKeyVersion,
-		&i.Generation,
-		&i.RequestFingerprint,
-		&i.State,
-		&i.Receipt,
-		&i.AcceptedAt,
-		&i.ExpiresAt,
-		&i.RetiredAt,
-		&i.CompletedAt,
-	)
-	return i, err
+func (q *Queries) CollectRetiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error) {
+	rows, err := q.db.Query(ctx, collectRetiredIdempotencyClaims, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IdempotencyClaim
+	for rows.Next() {
+		var i IdempotencyClaim
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.Operation,
+			&i.ScopeHash,
+			&i.KeyHash,
+			&i.HashKeyVersion,
+			&i.Generation,
+			&i.RequestFingerprint,
+			&i.State,
+			&i.Receipt,
+			&i.AcceptedAt,
+			&i.ExpiresAt,
+			&i.RetiredAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const completeIdempotencyClaim = `-- name: CompleteIdempotencyClaim :one
@@ -109,6 +106,82 @@ func (q *Queries) CompleteIdempotencyClaim(ctx context.Context, arg CompleteIdem
 		arg.Receipt,
 		arg.EnvironmentID,
 		arg.ID,
+		arg.RequestFingerprint,
+	)
+	var i IdempotencyClaim
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Operation,
+		&i.ScopeHash,
+		&i.KeyHash,
+		&i.HashKeyVersion,
+		&i.Generation,
+		&i.RequestFingerprint,
+		&i.State,
+		&i.Receipt,
+		&i.AcceptedAt,
+		&i.ExpiresAt,
+		&i.RetiredAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const createIdempotencyClaim = `-- name: CreateIdempotencyClaim :one
+INSERT INTO idempotency_claims (
+    id,
+    environment_id,
+    operation,
+    scope_hash,
+    key_hash,
+    hash_key_version,
+    generation,
+    request_fingerprint,
+    accepted_at,
+    expires_at
+)
+SELECT
+    $1,
+    $2,
+    $3,
+    $4,
+    $5,
+    $6,
+    $7,
+    $8,
+    statement_timestamp(),
+    CASE
+        WHEN $3::text = 'task.child.invoke' THEN NULL
+        ELSE statement_timestamp() + interval '30 days'
+    END
+  FROM lookup_hmac_versions
+ WHERE version = $6
+   AND is_current
+   AND retired_at IS NULL
+RETURNING id, environment_id, operation, scope_hash, key_hash, hash_key_version, generation, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
+`
+
+type CreateIdempotencyClaimParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	Operation          string      `json:"operation"`
+	ScopeHash          []byte      `json:"scope_hash"`
+	KeyHash            []byte      `json:"key_hash"`
+	HashKeyVersion     int32       `json:"hash_key_version"`
+	Generation         int64       `json:"generation"`
+	RequestFingerprint []byte      `json:"request_fingerprint"`
+}
+
+func (q *Queries) CreateIdempotencyClaim(ctx context.Context, arg CreateIdempotencyClaimParams) (IdempotencyClaim, error) {
+	row := q.db.QueryRow(ctx, createIdempotencyClaim,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.Operation,
+		arg.ScopeHash,
+		arg.KeyHash,
+		arg.HashKeyVersion,
+		arg.Generation,
 		arg.RequestFingerprint,
 	)
 	var i IdempotencyClaim
@@ -178,6 +251,96 @@ func (q *Queries) FailIdempotencyClaim(ctx context.Context, arg FailIdempotencyC
 	return i, err
 }
 
+const findLiveIdempotencyClaims = `-- name: FindLiveIdempotencyClaims :many
+SELECT idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at,
+       coalesce(idempotency_claims.expires_at <= transaction_timestamp(), false)::boolean AS expired
+  FROM idempotency_claims
+  JOIN unnest($1::integer[])
+       WITH ORDINALITY AS versions(hash_key_version, position)
+    ON versions.hash_key_version = idempotency_claims.hash_key_version
+  JOIN unnest($2::bytea[])
+       WITH ORDINALITY AS scopes(scope_hash, position)
+    ON scopes.position = versions.position
+   AND scopes.scope_hash = idempotency_claims.scope_hash
+  JOIN unnest($3::bytea[])
+       WITH ORDINALITY AS keys(key_hash, position)
+    ON keys.position = versions.position
+   AND keys.key_hash = idempotency_claims.key_hash
+ WHERE idempotency_claims.environment_id = $4
+   AND idempotency_claims.operation = $5
+   AND idempotency_claims.retired_at IS NULL
+ ORDER BY idempotency_claims.generation DESC, idempotency_claims.id
+ LIMIT 2
+`
+
+type FindLiveIdempotencyClaimsParams struct {
+	HashKeyVersions []int32     `json:"hash_key_versions"`
+	ScopeHashes     [][]byte    `json:"scope_hashes"`
+	KeyHashes       [][]byte    `json:"key_hashes"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	Operation       string      `json:"operation"`
+}
+
+type FindLiveIdempotencyClaimsRow struct {
+	ID                 pgtype.UUID        `json:"id"`
+	EnvironmentID      pgtype.UUID        `json:"environment_id"`
+	Operation          string             `json:"operation"`
+	ScopeHash          []byte             `json:"scope_hash"`
+	KeyHash            []byte             `json:"key_hash"`
+	HashKeyVersion     int32              `json:"hash_key_version"`
+	Generation         int64              `json:"generation"`
+	RequestFingerprint []byte             `json:"request_fingerprint"`
+	State              string             `json:"state"`
+	Receipt            []byte             `json:"receipt"`
+	AcceptedAt         pgtype.Timestamptz `json:"accepted_at"`
+	ExpiresAt          pgtype.Timestamptz `json:"expires_at"`
+	RetiredAt          pgtype.Timestamptz `json:"retired_at"`
+	CompletedAt        pgtype.Timestamptz `json:"completed_at"`
+	Expired            bool               `json:"expired"`
+}
+
+func (q *Queries) FindLiveIdempotencyClaims(ctx context.Context, arg FindLiveIdempotencyClaimsParams) ([]FindLiveIdempotencyClaimsRow, error) {
+	rows, err := q.db.Query(ctx, findLiveIdempotencyClaims,
+		arg.HashKeyVersions,
+		arg.ScopeHashes,
+		arg.KeyHashes,
+		arg.EnvironmentID,
+		arg.Operation,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []FindLiveIdempotencyClaimsRow
+	for rows.Next() {
+		var i FindLiveIdempotencyClaimsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.Operation,
+			&i.ScopeHash,
+			&i.KeyHash,
+			&i.HashKeyVersion,
+			&i.Generation,
+			&i.RequestFingerprint,
+			&i.State,
+			&i.Receipt,
+			&i.AcceptedAt,
+			&i.ExpiresAt,
+			&i.RetiredAt,
+			&i.CompletedAt,
+			&i.Expired,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getIdempotencyClaim = `-- name: GetIdempotencyClaim :one
 SELECT id, environment_id, operation, scope_hash, key_hash, hash_key_version, generation, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
   FROM idempotency_claims
@@ -210,6 +373,86 @@ func (q *Queries) GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyCla
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const getLatestIdempotencyClaimGeneration = `-- name: GetLatestIdempotencyClaimGeneration :one
+SELECT coalesce(max(idempotency_claims.generation), 0)::bigint
+  FROM idempotency_claims
+  JOIN unnest($1::integer[])
+       WITH ORDINALITY AS versions(hash_key_version, position)
+    ON versions.hash_key_version = idempotency_claims.hash_key_version
+  JOIN unnest($2::bytea[])
+       WITH ORDINALITY AS scopes(scope_hash, position)
+    ON scopes.position = versions.position
+   AND scopes.scope_hash = idempotency_claims.scope_hash
+  JOIN unnest($3::bytea[])
+       WITH ORDINALITY AS keys(key_hash, position)
+    ON keys.position = versions.position
+   AND keys.key_hash = idempotency_claims.key_hash
+ WHERE idempotency_claims.environment_id = $4
+   AND idempotency_claims.operation = $5
+`
+
+type GetLatestIdempotencyClaimGenerationParams struct {
+	HashKeyVersions []int32     `json:"hash_key_versions"`
+	ScopeHashes     [][]byte    `json:"scope_hashes"`
+	KeyHashes       [][]byte    `json:"key_hashes"`
+	EnvironmentID   pgtype.UUID `json:"environment_id"`
+	Operation       string      `json:"operation"`
+}
+
+func (q *Queries) GetLatestIdempotencyClaimGeneration(ctx context.Context, arg GetLatestIdempotencyClaimGenerationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, getLatestIdempotencyClaimGeneration,
+		arg.HashKeyVersions,
+		arg.ScopeHashes,
+		arg.KeyHashes,
+		arg.EnvironmentID,
+		arg.Operation,
+	)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const listIdempotencyHashKeyUsage = `-- name: ListIdempotencyHashKeyUsage :many
+SELECT hash_key_version, count(*)::bigint AS claim_count
+  FROM idempotency_claims
+ GROUP BY hash_key_version
+ ORDER BY hash_key_version
+`
+
+type ListIdempotencyHashKeyUsageRow struct {
+	HashKeyVersion int32 `json:"hash_key_version"`
+	ClaimCount     int64 `json:"claim_count"`
+}
+
+func (q *Queries) ListIdempotencyHashKeyUsage(ctx context.Context) ([]ListIdempotencyHashKeyUsageRow, error) {
+	rows, err := q.db.Query(ctx, listIdempotencyHashKeyUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListIdempotencyHashKeyUsageRow
+	for rows.Next() {
+		var i ListIdempotencyHashKeyUsageRow
+		if err := rows.Scan(&i.HashKeyVersion, &i.ClaimCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockIdempotencySlot = `-- name: LockIdempotencySlot :exec
+SELECT pg_advisory_xact_lock($1::bigint)
+`
+
+func (q *Queries) LockIdempotencySlot(ctx context.Context, lockKey int64) error {
+	_, err := q.db.Exec(ctx, lockIdempotencySlot, lockKey)
+	return err
 }
 
 const retireExpiredIdempotencyClaim = `-- name: RetireExpiredIdempotencyClaim :one
@@ -247,4 +490,56 @@ func (q *Queries) RetireExpiredIdempotencyClaim(ctx context.Context, arg RetireE
 		&i.CompletedAt,
 	)
 	return i, err
+}
+
+const retireExpiredIdempotencyClaims = `-- name: RetireExpiredIdempotencyClaims :many
+WITH candidates AS (
+    SELECT id
+      FROM idempotency_claims
+     WHERE retired_at IS NULL
+       AND expires_at <= transaction_timestamp()
+     ORDER BY expires_at, id
+     LIMIT $1
+     FOR UPDATE SKIP LOCKED
+)
+UPDATE idempotency_claims
+   SET retired_at = statement_timestamp()
+  FROM candidates
+ WHERE idempotency_claims.id = candidates.id
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+`
+
+func (q *Queries) RetireExpiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error) {
+	rows, err := q.db.Query(ctx, retireExpiredIdempotencyClaims, rowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IdempotencyClaim
+	for rows.Next() {
+		var i IdempotencyClaim
+		if err := rows.Scan(
+			&i.ID,
+			&i.EnvironmentID,
+			&i.Operation,
+			&i.ScopeHash,
+			&i.KeyHash,
+			&i.HashKeyVersion,
+			&i.Generation,
+			&i.RequestFingerprint,
+			&i.State,
+			&i.Receipt,
+			&i.AcceptedAt,
+			&i.ExpiresAt,
+			&i.RetiredAt,
+			&i.CompletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

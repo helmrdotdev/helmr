@@ -56,6 +56,10 @@ if [ -z "${HELMR_DATABASE_URL:-}" ]; then
   export HELMR_DEV_RESET_DATABASE="${HELMR_DEV_RESET_DATABASE:-1}"
 fi
 
+if [ "${HELMR_DEV_RESET_DATABASE:-0}" = "1" ]; then
+  export HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION="${HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION:-1}"
+fi
+
 cleanup() {
   if [ -n "${control_pid:-}" ]; then kill "${control_pid}" >/dev/null 2>&1 || true; fi
   if [ -n "${console_pid:-}" ]; then kill "${console_pid}" >/dev/null 2>&1 || true; fi
@@ -71,7 +75,13 @@ export HELMR_PROVIDER="${HELMR_PROVIDER:-"local"}"
 export HELMR_PROVIDER_REGION="${HELMR_PROVIDER_REGION:-"${HELMR_REGION_ID}"}"
 export HELMR_REGION_DISPLAY_NAME="${HELMR_REGION_DISPLAY_NAME:-"Local"}"
 export HELMR_WORKER_GROUP_ID="${HELMR_WORKER_GROUP_ID:-"${HELMR_REGION_ID}-worker-group-1"}"
-export HELMR_WORKER_GROUPS="${HELMR_WORKER_GROUPS:-"[{\"id\":\"${HELMR_WORKER_GROUP_ID}\",\"name\":\"local\",\"region\":\"${HELMR_PROVIDER_REGION}\",\"account_id\":\"000000000000\",\"autoscaling_group\":\"helmr-local\",\"instance_profile_arn\":\"arn:aws:iam::000000000000:instance-profile/helmr-local\",\"ami_ids\":[\"ami-local\"],\"allows_run\":true,\"allows_build\":true}]}"
+if [ -z "${HELMR_WORKER_GROUPS:-}" ]; then
+  export HELMR_WORKER_GROUPS="[{\"id\":\"${HELMR_WORKER_GROUP_ID}\",\"name\":\"local\",\"region\":\"${HELMR_PROVIDER_REGION}\",\"account_id\":\"000000000000\",\"autoscaling_group\":\"helmr-local\",\"instance_profile_arn\":\"arn:aws:iam::000000000000:instance-profile/helmr-local\",\"ami_ids\":[\"ami-local\"],\"allows_run\":true,\"allows_build\":true}]"
+fi
+if ! bun -e 'const groups = JSON.parse(process.env.HELMR_WORKER_GROUPS); if (!Array.isArray(groups) || groups.length === 0) process.exit(1)' >/dev/null; then
+  echo "HELMR_WORKER_GROUPS must be a non-empty JSON array" >&2
+  exit 1
+fi
 case "${HELMR_CONTROL_ADDR}" in
   http://*|https://*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"${HELMR_CONTROL_ADDR}"}" ;;
   :*) export HELMR_DEV_BACKEND_URL="${HELMR_DEV_BACKEND_URL:-"http://127.0.0.1${HELMR_CONTROL_ADDR}"}" ;;

@@ -1993,6 +1993,14 @@ type Invitation struct {
 	RevokedByUserID  pgtype.UUID        `json:"revoked_by_user_id"`
 }
 
+type LookupHmacVersion struct {
+	Version        int32              `json:"version"`
+	KeyFingerprint []byte             `json:"key_fingerprint"`
+	IsCurrent      bool               `json:"is_current"`
+	ActivatedAt    pgtype.Timestamptz `json:"activated_at"`
+	RetiredAt      pgtype.Timestamptz `json:"retired_at"`
+}
+
 type MagicLink struct {
 	ID               pgtype.UUID        `json:"id"`
 	Purpose          MagicLinkPurpose   `json:"purpose"`

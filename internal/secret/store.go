@@ -35,9 +35,15 @@ var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 
 type Store struct {
 	db         db.Querier
+	tx         transactionBeginner
 	encryption Keyring
 	hashes     keyedhash.Keyring
+	authority  keyedhash.Authority
 	rand       io.Reader
+}
+
+type transactionBeginner interface {
+	Begin(context.Context) (pgx.Tx, error)
 }
 
 type Keyring struct {
@@ -56,12 +62,6 @@ type KeyUsage struct {
 	SecretCount int64
 	Current     bool
 	Old         bool
-}
-
-type AuthenticatorKeyUsage struct {
-	Version     int32
-	SecretCount int64
-	Current     bool
 }
 
 type ReencryptBatchResult struct {
@@ -95,17 +95,25 @@ func IsUnavailable(err error) bool {
 	return errors.As(err, &unavailable)
 }
 
-func New(database db.Querier, encryption Keyring, hashes keyedhash.Keyring) (*Store, error) {
+func New(ctx context.Context, database db.Querier, transactions transactionBeginner, encryption Keyring, hashes keyedhash.Keyring) (*Store, error) {
 	if database == nil {
 		return nil, errors.New("secret database is required")
 	}
 	if encryption.current.id == "" {
 		return nil, errors.New("secret encryption keyring current key is required")
 	}
-	if hashes.CurrentVersion() <= 0 {
-		return nil, errors.New("secret authenticator keyring current key is required")
+	authority := keyedhash.NewAuthority(hashes)
+	if err := authority.Validate(ctx, database); err != nil {
+		return nil, err
 	}
-	return &Store{db: database, encryption: encryption, hashes: hashes, rand: rand.Reader}, nil
+	return &Store{
+		db:         database,
+		tx:         transactions,
+		encryption: encryption,
+		hashes:     hashes,
+		authority:  authority,
+		rand:       rand.Reader,
+	}, nil
 }
 
 func NewKeyring(current []byte, old []byte) (Keyring, error) {
@@ -191,7 +199,7 @@ func ValidateName(name string) error {
 	return nil
 }
 
-func (s *Store) Create(ctx context.Context, environmentID uuid.UUID, name string, value []byte, authenticatorKeyVersion int32) (db.Secret, error) {
+func (s *Store) create(ctx context.Context, environmentID uuid.UUID, name string, value []byte, authenticatorKeyVersion int32) (db.Secret, error) {
 	if err := ValidateName(name); err != nil {
 		return db.Secret{}, err
 	}
@@ -222,7 +230,7 @@ func (s *Store) Create(ctx context.Context, environmentID uuid.UUID, name string
 	return secretFromCreate(row), nil
 }
 
-func (s *Store) Rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte, authenticatorKeyVersion int32) (db.Secret, error) {
+func (s *Store) rotate(ctx context.Context, environmentID uuid.UUID, secretID uuid.UUID, value []byte, authenticatorKeyVersion int32) (db.Secret, error) {
 	var lastErr error
 	for range maxWriteAttempts {
 		record, err := s.db.GetSecret(ctx, db.GetSecretParams{
@@ -319,13 +327,39 @@ func (s *Store) Put(ctx context.Context, orgID uuid.UUID, name string, value []b
 }
 
 func (s *Store) PutScoped(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environmentID uuid.UUID, name string, value []byte) (db.Secret, error) {
+	if s.tx == nil {
+		return db.Secret{}, errors.New("secret transaction beginner is required")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return db.Secret{}, fmt.Errorf("begin Secret mutation: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := db.New(tx)
+	selection, err := s.authority.Lock(ctx, queries)
+	if err != nil {
+		return db.Secret{}, err
+	}
+	bound := *s
+	bound.db = queries
+	record, err := bound.putScoped(ctx, environmentID, name, value, selection.Current)
+	if err != nil {
+		return db.Secret{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.Secret{}, fmt.Errorf("commit Secret mutation: %w", err)
+	}
+	return record, nil
+}
+
+func (s *Store) putScoped(ctx context.Context, environmentID uuid.UUID, name string, value []byte, authenticatorKeyVersion int32) (db.Secret, error) {
 	record, err := s.db.GetSecretByName(ctx, db.GetSecretByNameParams{
 		EnvironmentID: pgvalue.UUID(environmentID),
 		Name:          name,
 	})
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
-		return s.Create(ctx, environmentID, name, value, s.hashes.CurrentVersion())
+		return s.create(ctx, environmentID, name, value, authenticatorKeyVersion)
 	case err != nil:
 		return db.Secret{}, err
 	case record.State != "active":
@@ -335,7 +369,7 @@ func (s *Store) PutScoped(ctx context.Context, _ uuid.UUID, _ uuid.UUID, environ
 		if err != nil {
 			return db.Secret{}, err
 		}
-		return s.Rotate(ctx, environmentID, secretID, value, s.hashes.CurrentVersion())
+		return s.rotate(ctx, environmentID, secretID, value, authenticatorKeyVersion)
 	}
 }
 
@@ -479,13 +513,43 @@ func (s *Store) ReauthenticateBatch(ctx context.Context, fromVersion int32, limi
 	if fromVersion <= 0 {
 		return ReauthenticateBatchResult{}, errors.New("source authenticator key version must be positive")
 	}
-	if fromVersion == s.hashes.CurrentVersion() {
-		return ReauthenticateBatchResult{}, errors.New("source authenticator key version must not be current")
-	}
 	if limit <= 0 {
 		return ReauthenticateBatchResult{}, errors.New("rotation batch limit must be positive")
 	}
-	rows, err := s.db.ListSecretVersionsByAuthenticatorKeyVersion(ctx, db.ListSecretVersionsByAuthenticatorKeyVersionParams{
+	if s.tx == nil {
+		return ReauthenticateBatchResult{}, errors.New("secret transaction beginner is required")
+	}
+	tx, err := s.tx.Begin(ctx)
+	if err != nil {
+		return ReauthenticateBatchResult{}, fmt.Errorf("begin Secret authenticator maintenance: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := db.New(tx)
+	selection, err := s.authority.Lock(ctx, queries)
+	if err != nil {
+		return ReauthenticateBatchResult{}, err
+	}
+	if fromVersion == selection.Current {
+		return ReauthenticateBatchResult{}, errors.New("source authenticator key version must not be current")
+	}
+	result, err := s.reauthenticateBatch(ctx, queries, selection.Current, fromVersion, limit)
+	if err != nil {
+		return result, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return result, fmt.Errorf("commit Secret authenticator maintenance: %w", err)
+	}
+	return result, nil
+}
+
+func (s *Store) reauthenticateBatch(
+	ctx context.Context,
+	queries db.Querier,
+	currentVersion int32,
+	fromVersion int32,
+	limit int32,
+) (ReauthenticateBatchResult, error) {
+	rows, err := queries.ListSecretVersionsByAuthenticatorKeyVersion(ctx, db.ListSecretVersionsByAuthenticatorKeyVersionParams{
 		AuthenticatorKeyVersion: fromVersion,
 		RowLimit:                limit,
 	})
@@ -508,13 +572,13 @@ func (s *Store) ReauthenticateBatch(ctx context.Context, fromVersion int32, limi
 			result.Failed++
 			continue
 		}
-		authenticator, err := s.authenticator(environmentID, row.Name, plaintext, s.hashes.CurrentVersion())
+		authenticator, err := s.authenticator(environmentID, row.Name, plaintext, currentVersion)
 		if err != nil {
 			return result, err
 		}
-		updated, err := s.db.UpdateSecretVersionAuthenticator(ctx, db.UpdateSecretVersionAuthenticatorParams{
+		updated, err := queries.UpdateSecretVersionAuthenticator(ctx, db.UpdateSecretVersionAuthenticatorParams{
 			NewValueAuthenticator:           authenticator,
-			NewAuthenticatorKeyVersion:      s.hashes.CurrentVersion(),
+			NewAuthenticatorKeyVersion:      currentVersion,
 			VersionID:                       row.VersionID,
 			PreviousAuthenticatorKeyVersion: row.AuthenticatorKeyVersion,
 			PreviousValueAuthenticator:      row.ValueAuthenticator,
@@ -559,22 +623,6 @@ func (s *Store) CountByKeyID(ctx context.Context, keyID string) (int64, error) {
 		}
 	}
 	return 0, nil
-}
-
-func (s *Store) AuthenticatorKeyUsage(ctx context.Context) ([]AuthenticatorKeyUsage, error) {
-	rows, err := s.db.ListSecretAuthenticatorKeyUsage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	usage := make([]AuthenticatorKeyUsage, 0, len(rows))
-	for _, row := range rows {
-		usage = append(usage, AuthenticatorKeyUsage{
-			Version:     row.AuthenticatorKeyVersion,
-			SecretCount: row.SecretCount,
-			Current:     row.AuthenticatorKeyVersion == s.hashes.CurrentVersion(),
-		})
-	}
-	return usage, nil
 }
 
 func (s *Store) CountByAuthenticatorKeyVersion(ctx context.Context, version int32) (int64, error) {

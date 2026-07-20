@@ -11,6 +11,7 @@ test -z "$(git status --porcelain -- internal/adapter/js)"
 bun audit
 actionlint
 scripts/security-checks.sh
+bash -n scripts/dev-console-stack.sh
 bash tests/install_test.sh
 bash tests/release_manifest_test.sh
 bash tests/release_workflow_test.sh

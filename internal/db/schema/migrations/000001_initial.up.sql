@@ -301,6 +301,20 @@ CREATE TABLE device_codes (
         ON DELETE SET NULL (decided_by_user_id)
 );
 
+CREATE TABLE lookup_hmac_versions (
+    version INTEGER PRIMARY KEY CHECK (version > 0),
+    key_fingerprint BYTEA NOT NULL UNIQUE CHECK (octet_length(key_fingerprint) = 32),
+    is_current BOOLEAN NOT NULL,
+    activated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    retired_at TIMESTAMPTZ,
+    CHECK (NOT is_current OR retired_at IS NULL),
+    CHECK (retired_at IS NULL OR retired_at >= activated_at)
+);
+
+CREATE UNIQUE INDEX lookup_hmac_versions_current_uidx
+    ON lookup_hmac_versions ((1))
+    WHERE is_current;
+
 CREATE TABLE secrets (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     environment_id UUID NOT NULL,
@@ -338,7 +352,10 @@ CREATE TABLE secret_versions (
     UNIQUE (secret_id, id),
     UNIQUE (secret_id, version),
     UNIQUE (key_id, nonce),
-    FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT
+    FOREIGN KEY (secret_id) REFERENCES secrets(id) ON DELETE RESTRICT,
+    FOREIGN KEY (authenticator_key_version)
+        REFERENCES lookup_hmac_versions(version)
+        ON DELETE RESTRICT
 );
 
 ALTER TABLE secrets
@@ -1197,6 +1214,9 @@ CREATE TABLE idempotency_claims (
     UNIQUE (environment_id, id),
     UNIQUE (environment_id, operation, scope_hash, key_hash, generation),
     FOREIGN KEY (environment_id) REFERENCES environments(id) ON DELETE CASCADE,
+    FOREIGN KEY (hash_key_version)
+        REFERENCES lookup_hmac_versions(version)
+        ON DELETE RESTRICT,
     CHECK (
         (state = 'pending' AND receipt IS NULL AND completed_at IS NULL)
         OR
@@ -1214,6 +1234,14 @@ CREATE TABLE idempotency_claims (
 CREATE UNIQUE INDEX idempotency_claims_live_slot_uidx
     ON idempotency_claims (environment_id, operation, scope_hash, key_hash)
     WHERE retired_at IS NULL;
+
+CREATE INDEX idempotency_claims_live_expiry_idx
+    ON idempotency_claims (expires_at, id)
+    WHERE retired_at IS NULL AND expires_at IS NOT NULL;
+
+CREATE INDEX idempotency_claims_retired_idx
+    ON idempotency_claims (retired_at, id)
+    WHERE retired_at IS NOT NULL;
 
 CREATE TABLE schedules (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
@@ -1899,6 +1927,10 @@ CREATE UNIQUE INDEX actor_records_claim_uidx
     ON actor_records (actor_id, direction, claim_id)
     WHERE claim_id IS NOT NULL;
 
+CREATE INDEX actor_records_claim_idx
+    ON actor_records (claim_id)
+    WHERE claim_id IS NOT NULL;
+
 CREATE INDEX actor_records_input_sequence_idx
     ON actor_records (actor_id, sequence, id)
     WHERE direction = 'input';
@@ -1941,6 +1973,10 @@ CREATE INDEX runs_deployment_definition_idx
         entrypoint_kind,
         entrypoint_declared_id
     );
+
+CREATE INDEX runs_claim_idx
+    ON runs (claim_id)
+    WHERE claim_id IS NOT NULL;
 
 CREATE UNIQUE INDEX runs_actor_live_uidx
     ON runs (actor_id)
@@ -3351,6 +3387,10 @@ CREATE INDEX run_waits_checkpoint_due_idx
 CREATE INDEX run_waits_history_idx
     ON run_waits (run_id, created_at, id);
 
+CREATE INDEX run_waits_child_claim_idx
+    ON run_waits (child_claim_id)
+    WHERE child_claim_id IS NOT NULL;
+
 CREATE INDEX run_waits_condition_timeout_idx
     ON run_waits (timeout_at, id)
     WHERE condition_state = 'pending' AND timeout_at IS NOT NULL;
@@ -3738,6 +3778,9 @@ CREATE INDEX run_stream_records_sequence_idx
     ON run_stream_records(run_stream_id, sequence, id);
 CREATE UNIQUE INDEX run_stream_records_claim_idx
     ON run_stream_records(run_stream_id, claim_id)
+    WHERE claim_id IS NOT NULL;
+CREATE INDEX run_stream_records_claim_lookup_idx
+    ON run_stream_records(claim_id)
     WHERE claim_id IS NOT NULL;
 CREATE INDEX public_access_tokens_scope_expiry_idx ON public_access_tokens(org_id, project_id, environment_id, expires_at)
     WHERE state = 'active';

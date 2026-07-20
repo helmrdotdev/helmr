@@ -21,7 +21,7 @@ func TestStoreCreatesEncryptsAndResolves(t *testing.T) {
 	database := newFakeSecretDB()
 	store := newTestStore(t, database, makeKey(1), nil, 1)
 	environmentID := uuid.Must(uuid.NewV7())
-	created, err := store.Create(t.Context(), environmentID, "github-token", []byte("secret-value"), 1)
+	created, err := store.create(t.Context(), environmentID, "github-token", []byte("secret-value"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +45,12 @@ func TestStoreRotatesLogicalVersion(t *testing.T) {
 	database := newFakeSecretDB()
 	store := newTestStore(t, database, makeKey(1), nil, 1)
 	environmentID := uuid.Must(uuid.NewV7())
-	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
+	created, err := store.create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	secretID := pgvalue.MustUUIDValue(created.ID)
-	rotated, err := store.Rotate(t.Context(), environmentID, secretID, []byte("second"), 1)
+	rotated, err := store.rotate(t.Context(), environmentID, secretID, []byte("second"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestStoreRevokesWholeSecret(t *testing.T) {
 	database := newFakeSecretDB()
 	store := newTestStore(t, database, makeKey(1), nil, 1)
 	environmentID := uuid.Must(uuid.NewV7())
-	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
+	created, err := store.create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,11 +94,11 @@ func TestStoreReencryptsEveryRetainedVersion(t *testing.T) {
 	database := newFakeSecretDB()
 	oldStore := newTestStore(t, database, makeKey(1), nil, 1)
 	environmentID := uuid.Must(uuid.NewV7())
-	created, err := oldStore.Create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
+	created, err := oldStore.create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := oldStore.Rotate(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID), []byte("second"), 1); err != nil {
+	if _, err := oldStore.rotate(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID), []byte("second"), 1); err != nil {
 		t.Fatal(err)
 	}
 	rotating := newTestStore(t, database, makeKey(2), makeKey(1), 1)
@@ -131,12 +131,12 @@ func TestStoreReauthenticatesWithoutChangingLogicalVersion(t *testing.T) {
 	database := newFakeSecretDB()
 	store := newTestStore(t, database, makeKey(1), nil, 2)
 	environmentID := uuid.Must(uuid.NewV7())
-	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
+	created, err := store.create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	before := database.versions[created.CurrentVersionID.Bytes]
-	result, err := store.ReauthenticateBatch(t.Context(), 1, 10)
+	result, err := store.reauthenticateBatch(t.Context(), database, 2, 1, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,13 +149,6 @@ func TestStoreReauthenticatesWithoutChangingLogicalVersion(t *testing.T) {
 	}
 	if bytes.Equal(before.ValueAuthenticator, after.ValueAuthenticator) {
 		t.Fatal("authenticator did not change")
-	}
-	usage, err := store.AuthenticatorKeyUsage(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(usage) != 1 || usage[0].Version != 2 || usage[0].SecretCount != 1 || !usage[0].Current {
-		t.Fatalf("usage = %+v", usage)
 	}
 }
 
@@ -174,13 +167,33 @@ func TestStoreRejectsUnsupportedEncryptionKey(t *testing.T) {
 	database := newFakeSecretDB()
 	oldStore := newTestStore(t, database, makeKey(1), nil, 1)
 	environmentID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1); err != nil {
+	if _, err := oldStore.create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1); err != nil {
 		t.Fatal(err)
 	}
 	currentStore := newTestStore(t, database, makeKey(2), nil, 1)
 	_, err := currentStore.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"API_TOKEN"})
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
+	}
+}
+
+func TestStoreRejectsMissingRetainedAuthenticatorKey(t *testing.T) {
+	database := newFakeSecretDB()
+	database.currentHashVersion = 3
+
+	encryption, err := NewKeyring(makeKey(1), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hashes, err := keyedhash.New(map[int32][]byte{
+		1: makeKey(10),
+		2: makeKey(11),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := New(t.Context(), database, nil, encryption, hashes); err == nil {
+		t.Fatal("expected missing retained authenticator key error")
 	}
 }
 
@@ -208,17 +221,52 @@ func TestKeyFromBase64RequiresAES256Key(t *testing.T) {
 
 type fakeSecretDB struct {
 	db.Querier
-	secrets  map[[16]byte]db.Secret
-	byName   map[string][16]byte
-	versions map[[16]byte]db.SecretVersion
+	secrets            map[[16]byte]db.Secret
+	byName             map[string][16]byte
+	versions           map[[16]byte]db.SecretVersion
+	currentHashVersion int32
 }
 
 func newFakeSecretDB() *fakeSecretDB {
 	return &fakeSecretDB{
-		secrets:  map[[16]byte]db.Secret{},
-		byName:   map[string][16]byte{},
-		versions: map[[16]byte]db.SecretVersion{},
+		secrets:            map[[16]byte]db.Secret{},
+		byName:             map[string][16]byte{},
+		versions:           map[[16]byte]db.SecretVersion{},
+		currentHashVersion: 1,
 	}
+}
+
+func (f *fakeSecretDB) ListLookupHMACVersions(context.Context) ([]db.LookupHmacVersion, error) {
+	hashes, err := keyedhash.New(map[int32][]byte{
+		1: makeKey(10),
+		2: makeKey(11),
+	})
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]db.LookupHmacVersion, 0, 2)
+	for _, version := range []int32{1, 2} {
+		fingerprint, err := hashes.Fingerprint(version)
+		if err != nil {
+			return nil, err
+		}
+		rows = append(rows, db.LookupHmacVersion{
+			Version:        version,
+			KeyFingerprint: fingerprint[:],
+			IsCurrent:      version == f.currentHashVersion,
+		})
+	}
+	if f.currentHashVersion > 2 {
+		rows = append(rows, db.LookupHmacVersion{
+			Version:        f.currentHashVersion,
+			KeyFingerprint: bytes.Repeat([]byte{byte(f.currentHashVersion)}, 32),
+			IsCurrent:      true,
+		})
+		for index := range rows[:2] {
+			rows[index].IsCurrent = false
+		}
+	}
+	return rows, nil
 }
 
 func (f *fakeSecretDB) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
@@ -433,20 +481,21 @@ func scopedName(environmentID pgtype.UUID, name string) string {
 	return string(environmentID.Bytes[:]) + "\x00" + name
 }
 
-func newTestStore(t *testing.T, database db.Querier, current []byte, old []byte, currentHashVersion int32) *Store {
+func newTestStore(t *testing.T, database *fakeSecretDB, current []byte, old []byte, currentHashVersion int32) *Store {
 	t.Helper()
+	database.currentHashVersion = currentHashVersion
 	encryption, err := NewKeyring(current, old)
 	if err != nil {
 		t.Fatal(err)
 	}
-	hashes, err := keyedhash.New(currentHashVersion, map[int32][]byte{
+	hashes, err := keyedhash.New(map[int32][]byte{
 		1: makeKey(10),
 		2: makeKey(11),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	store, err := New(database, encryption, hashes)
+	store, err := New(t.Context(), database, nil, encryption, hashes)
 	if err != nil {
 		t.Fatal(err)
 	}

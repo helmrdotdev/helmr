@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -47,7 +48,7 @@ const (
 	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-	defaultLookupHMACKeys      = `{"current":1,"keys":{"1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}}`
+	defaultLookupHMACKeys      = `{"1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}`
 	defaultUserID              = "00000000-0000-0000-0000-000000000101"
 )
 
@@ -90,6 +91,27 @@ func main() {
 	if err := migrate(ctx, pool, cfg.resetDatabase); err != nil {
 		log.Error("migrate database", "error", err)
 		os.Exit(1)
+	}
+	hashes, err := keyedhash.FromBase64JSON(cfg.lookupHMACKeys)
+	if err != nil {
+		log.Error("load lookup HMAC keys", "error", err)
+		os.Exit(1)
+	}
+	if cfg.lookupHMACBootstrapVersion > 0 {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			log.Error("begin lookup HMAC bootstrap", "error", err)
+			os.Exit(1)
+		}
+		if _, err := keyedhash.NewAuthority(hashes).Activate(ctx, tx, cfg.lookupHMACBootstrapVersion); err != nil {
+			_ = tx.Rollback(ctx)
+			log.Error("bootstrap lookup HMAC authority", "error", err)
+			os.Exit(1)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			log.Error("commit lookup HMAC bootstrap", "error", err)
+			os.Exit(1)
+		}
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -190,12 +212,7 @@ func main() {
 		log.Error("load secret encryption key", "error", err)
 		os.Exit(1)
 	}
-	hashes, err := keyedhash.FromBase64JSON(cfg.lookupHMACKeys)
-	if err != nil {
-		log.Error("load lookup HMAC keys", "error", err)
-		os.Exit(1)
-	}
-	secretStore, err := secret.New(queries, keyring, hashes)
+	secretStore, err := secret.New(ctx, queries, pool, keyring, hashes)
 	if err != nil {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
@@ -258,30 +275,31 @@ func main() {
 }
 
 type devConfig struct {
-	addr                   string
-	deploymentMode         string
-	databaseURL            string
-	regionID               string
-	defaultRegionID        string
-	provider               string
-	providerRegion         string
-	regionDisplayName      string
-	workerGroupID          string
-	workerGroups           []enrollment.AWSGroupBoundary
-	clickHouseURL          string
-	clickHouseUser         string
-	clickHousePassword     string
-	redisURL               string
-	casDir                 string
-	publicURL              string
-	authSecret             string
-	setupToken             string
-	workerTokenSecret      string
-	secretEncryptionKey    string
-	secretEncryptionKeyOld string
-	lookupHMACKeys         string
-	resetDatabase          bool
-	seedData               bool
+	addr                       string
+	deploymentMode             string
+	databaseURL                string
+	regionID                   string
+	defaultRegionID            string
+	provider                   string
+	providerRegion             string
+	regionDisplayName          string
+	workerGroupID              string
+	workerGroups               []enrollment.AWSGroupBoundary
+	clickHouseURL              string
+	clickHouseUser             string
+	clickHousePassword         string
+	redisURL                   string
+	casDir                     string
+	publicURL                  string
+	authSecret                 string
+	setupToken                 string
+	workerTokenSecret          string
+	secretEncryptionKey        string
+	secretEncryptionKeyOld     string
+	lookupHMACKeys             string
+	lookupHMACBootstrapVersion int32
+	resetDatabase              bool
+	seedData                   bool
 }
 
 type devWorkerEnrollmentVerifier struct {
@@ -325,6 +343,13 @@ func loadConfig() (devConfig, error) {
 		lookupHMACKeys:         env("HELMR_LOOKUP_HMAC_KEYS", defaultLookupHMACKeys),
 		resetDatabase:          envBool("HELMR_DEV_RESET_DATABASE"),
 		seedData:               envBoolDefault("HELMR_DEV_SEED_DATA", true),
+	}
+	if value := strings.TrimSpace(os.Getenv("HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION")); value != "" {
+		version, err := strconv.ParseInt(value, 10, 32)
+		if err != nil || version <= 0 {
+			return cfg, errors.New("HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION must be a positive integer")
+		}
+		cfg.lookupHMACBootstrapVersion = int32(version)
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

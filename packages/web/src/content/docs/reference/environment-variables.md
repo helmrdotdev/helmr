@@ -42,13 +42,20 @@ decrypt secrets written with the old key, and new writes use
 old-key secrets before removing `HELMR_SECRET_ENCRYPTION_KEY_OLD`; repeat the
 command until `remaining_old_key_count` is `0`.
 
-`HELMR_LOOKUP_HMAC_KEYS` is a JSON registry with a positive integer `current`
-version and a `keys` object from versions to base64-encoded 32-byte keys. New
-equality authenticators use the current key;
-retained keys continue to verify existing idempotency claims and Secret
-versions. After changing the current version, run
+`HELMR_LOOKUP_HMAC_KEYS` is a JSON object from positive integer versions to
+base64-encoded 32-byte keys, for example `{"1":"<base64-key>"}`. It contains
+key bytes only; PostgreSQL selects the active versions and the current write
+version. After adding a new key to every Control and Dispatcher instance, run
+`helmr-control lookup-hmac activate --version <new-version>`. Then run
 `helmr-control secrets reauthenticate --from-version <old-version>` until
-`remaining_old_key_count` is `0` before removing the old key.
+`remaining_old_key_count` is `0`. Then run
+`helmr-control lookup-hmac collect-claims` until both reported counts are `0`,
+followed by
+`helmr-control lookup-hmac key-usage`. When both the old version's
+`claim_count` and `secret_version_count` are `0`, run
+`helmr-control lookup-hmac retire --version <old-version>` before removing its
+bytes from configuration or KMS. A new database must receive its first explicit
+`lookup-hmac activate` before Control or Dispatcher starts.
 
 When using the AWS module with `secret_encryption_key_old_arn`, also set
 `secret_encryption_key_old_kms_key_arns` if that old-key secret uses a
@@ -73,7 +80,8 @@ Set `HELMR_SECRET_ENCRYPTION_KEY_OLD` on the dispatcher during the same rotation
 window as control so scheduled runs can resolve old-key secrets until
 re-encryption completes.
 
-Set the same `HELMR_LOOKUP_HMAC_KEYS` registry on control and dispatcher.
+Set the same active `HELMR_LOOKUP_HMAC_KEYS` versions on control and
+dispatcher.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.

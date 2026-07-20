@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/config"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -60,6 +61,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	}
 	ctx := context.Background()
 	databaseURL := newSmokeDatabase(t, ctx)
+	activateSmokeLookupHMAC(t, ctx, databaseURL)
 	redisServer := miniredis.RunT(t)
 
 	t.Setenv("HELMR_DATABASE_URL", databaseURL)
@@ -68,7 +70,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_SCHEDULE_REPAIR_EVERY", "50ms")
@@ -157,4 +159,28 @@ func newSmokeDatabase(t *testing.T, ctx context.Context) string {
 		t.Fatal(err)
 	}
 	return databaseURL
+}
+
+func activateSmokeLookupHMAC(t *testing.T, ctx context.Context, databaseURL string) {
+	t.Helper()
+	hashes, err := keyedhash.FromBase64JSON(`{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	if _, err := keyedhash.NewAuthority(hashes).Activate(ctx, tx, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
 }

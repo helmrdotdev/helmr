@@ -189,6 +189,7 @@ DROP TABLE IF EXISTS runtime_identities;
 ALTER TABLE secrets DROP CONSTRAINT IF EXISTS secrets_current_version_fk;
 DROP TABLE IF EXISTS secret_versions;
 DROP TABLE IF EXISTS secrets;
+DROP TABLE IF EXISTS lookup_hmac_versions;
 DROP TYPE IF EXISTS telemetry_outbox_state;
 DROP TYPE IF EXISTS telemetry_stream_kind;
 DROP TYPE IF EXISTS worker_group_state;
