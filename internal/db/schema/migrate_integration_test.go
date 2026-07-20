@@ -178,6 +178,193 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 	if !definitionTable {
 		t.Fatal("deployment_definitions table was not created")
 	}
+	var obsoleteProjectionTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM unnest($1::text[]) AS table_name
+		 WHERE to_regclass('public.' || table_name) IS NOT NULL
+	`, []string{
+		"deployment_tasks",
+		"deployment_sandboxes",
+		"deployment_queues",
+		"deployment_streams",
+		"tasks",
+		"sessions",
+		"session_runs",
+		"session_continuation_requests",
+		"run_operations",
+		"run_state_snapshots",
+		"waits",
+		"task_schedules",
+		"task_schedule_instances",
+		"streams",
+		"stream_records",
+		"workspace_process_stream_chunks",
+		"workspace_process_stream_receipts",
+		"workspace_process_operations",
+		"actor_channels",
+		"actor_inputs",
+		"actor_outputs",
+		"workspace_handoffs",
+		"definitions",
+		"queues",
+		"deployment_queues",
+		"schedule_definitions",
+		"schedule_revisions",
+		"schedule_fires",
+		"schedule_leases",
+		"secret_grants",
+		"secret_histories",
+		"outbox_attempts",
+		"batches",
+		"batch_members",
+		"wait_groups",
+	}).Scan(&obsoleteProjectionTables); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteProjectionTables != 0 {
+		t.Fatalf("obsolete deployment projection tables = %d, want 0", obsoleteProjectionTables)
+	}
+	requiredExecutionTables := []string{
+		"deployment_definitions",
+		"idempotency_claims",
+		"workspaces",
+		"workspace_versions",
+		"workspace_mounts",
+		"workspace_leases",
+		"workspace_processes",
+		"workspace_process_records",
+		"secrets",
+		"secret_versions",
+		"workspace_secrets",
+		"secret_resolutions",
+		"actors",
+		"actor_records",
+		"runs",
+		"run_attempts",
+		"run_leases",
+		"run_waits",
+		"run_checkpoints",
+		"run_checkpoint_artifacts",
+		"tokens",
+		"run_streams",
+		"run_stream_records",
+		"schedules",
+		"outbox_messages",
+	}
+	var executionTableCount int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM unnest($1::text[]) AS table_name
+		 WHERE to_regclass('public.' || table_name) IS NOT NULL
+	`, requiredExecutionTables).Scan(&executionTableCount); err != nil {
+		t.Fatal(err)
+	}
+	if executionTableCount != len(requiredExecutionTables) {
+		t.Fatalf("greenfield execution tables = %d, want %d", executionTableCount, len(requiredExecutionTables))
+	}
+	var exactPinColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND (
+		       (table_name = 'workspaces' AND column_name = ANY(ARRAY[
+		           'deployment_definition_id', 'declaration_kind', 'workspace_declared_id'
+		       ]))
+		       OR
+		       (table_name = 'actors' AND column_name = ANY(ARRAY[
+		           'deployment_definition_id', 'declaration_kind', 'actor_declared_id'
+		       ]))
+		       OR
+		       (table_name = 'runs' AND column_name = ANY(ARRAY[
+		           'deployment_definition_id', 'entrypoint_kind', 'entrypoint_declared_id'
+		       ]))
+		   )
+	`).Scan(&exactPinColumns); err != nil {
+		t.Fatal(err)
+	}
+	if exactPinColumns != 9 {
+		t.Fatalf("exact deployed-declaration pin columns = %d, want 9", exactPinColumns)
+	}
+	var exactPinIndexes int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_indexes
+		 WHERE schemaname = 'public'
+		   AND indexname = ANY($1::text[])
+	`, []string{
+		"workspaces_deployment_definition_idx",
+		"actors_deployment_definition_idx",
+		"runs_deployment_definition_idx",
+		"run_streams_deployment_definition_idx",
+	}).Scan(&exactPinIndexes); err != nil {
+		t.Fatal(err)
+	}
+	if exactPinIndexes != 4 {
+		t.Fatalf("exact deployed-declaration pin indexes = %d, want 4", exactPinIndexes)
+	}
+	var actorExpiryIndex bool
+	if err := pool.QueryRow(ctx, `
+		SELECT EXISTS (
+		    SELECT 1
+		      FROM pg_indexes
+		     WHERE schemaname = 'public'
+		       AND indexname = 'actors_expiry_due_idx'
+		       AND indexdef LIKE '%WHERE ((state = ''open''::text) AND (current_run_id IS NULL) AND (expires_at IS NOT NULL))%'
+		)
+	`).Scan(&actorExpiryIndex); err != nil {
+		t.Fatal(err)
+	}
+	if !actorExpiryIndex {
+		t.Fatal("actors_expiry_due_idx must select only open Actors without an incumbent Run and with an absolute expiry")
+	}
+	var safeIntegerColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND data_type = 'bigint'
+		   AND (
+		       (table_name = 'runs' AND column_name = 'queue_concurrency_limit')
+		       OR
+		       (table_name = 'actors' AND column_name = 'managed_queue_concurrency_limit')
+		   )
+	`).Scan(&safeIntegerColumns); err != nil {
+		t.Fatal(err)
+	}
+	if safeIntegerColumns != 2 {
+		t.Fatalf("safe-integer queue limit columns = %d, want 2", safeIntegerColumns)
+	}
+	var safeIntegerConstraints int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM pg_constraint
+		 WHERE conrelid IN ('runs'::regclass, 'actors'::regclass)
+		   AND contype = 'c'
+		   AND pg_get_constraintdef(oid) LIKE '%9007199254740991%'
+		   AND pg_get_constraintdef(oid) ~ '(managed_)?queue_concurrency_limit'
+	`).Scan(&safeIntegerConstraints); err != nil {
+		t.Fatal(err)
+	}
+	if safeIntegerConstraints != 2 {
+		t.Fatalf("safe-integer queue limit constraints = %d, want 2", safeIntegerConstraints)
+	}
+	var leaseQueuePolicyColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'run_leases'
+		   AND column_name = ANY(ARRAY[
+		       'queue_name', 'queue_class', 'concurrency_key', 'queue_concurrency_limit'
+		   ])
+	`).Scan(&leaseQueuePolicyColumns); err != nil {
+		t.Fatal(err)
+	}
+	if leaseQueuePolicyColumns != 0 {
+		t.Fatalf("copied Run Lease queue policy columns = %d, want 0", leaseQueuePolicyColumns)
+	}
 	var programColumns int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*)
@@ -211,11 +398,16 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
 		 WHERE pg_type.typname = 'artifact_kind'
 		   AND pg_enum.enumlabel = ANY($1::text[])
-	`, []string{"deployment_program_code", "deployment_program_dependencies", "workspace_image"}).Scan(&artifactKinds); err != nil {
+	`, []string{
+		"deployment_program_code",
+		"deployment_program_dependencies",
+		"workspace_image",
+		"workspace_process_record",
+	}).Scan(&artifactKinds); err != nil {
 		t.Fatal(err)
 	}
-	if artifactKinds != 3 {
-		t.Fatalf("new artifact kind labels = %d, want 3", artifactKinds)
+	if artifactKinds != 4 {
+		t.Fatalf("new artifact kind labels = %d, want 4", artifactKinds)
 	}
 	var obsoleteArtifactKind bool
 	if err := pool.QueryRow(ctx, `
@@ -533,7 +725,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	assertPreparedSupplySerialization(t, ctx, pool)
 
-	logicalTables := []string{"workspaces", "runs", "run_operations", "sessions", "session_runs", "session_continuation_requests", "streams", "stream_records", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "run_state_snapshots", "meter_events", "telemetry_outbox"}
+	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "actors", "actor_records", "runs", "run_attempts", "run_streams", "run_stream_records", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.columns
@@ -547,7 +739,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 
 	forbiddenColumns := map[string][]string{
-		"runs":              {"dispatch_generation", "dispatch_attempt", "dispatch_message_id", "dispatch_lease_id", "workspace_mount_id", "worker_instance_id"},
+		"runs":              {"dispatch_generation", "dispatch_attempt", "dispatch_message_id", "dispatch_lease_id", "workspace_mount_id", "worker_instance_id", "execution_status", "terminal_outcome", "schedule_instance_id", "queue_class", "queue_timestamp"},
 		"runtime_instances": {"runtime_epoch", "state", "instance_token", "last_heartbeat_at", "owner_run_id", "owner_run_wait_id", "workspace_mount_id"},
 		"worker_instances":  {"available_milli_cpu", "available_memory_mib", "heartbeat", "labels", "last_seen_at", "total_milli_cpu"},
 	}
@@ -575,7 +767,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"workspace_mounts_workspace_active_uidx",
 		"workspace_mounts_runtime_active_uidx",
 		"workspace_leases_workspace_write_active_uidx",
-		"run_waits_reserved_workspace_uidx",
+		"run_waits_active_run_uidx",
 	}
 	var indexCount int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname = ANY($1::text[])`, requiredIndexes).Scan(&indexCount); err != nil {
@@ -673,16 +865,15 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 		 WHERE table_schema = 'public'
 		   AND table_name IN (
 		       'event_hot_payloads',
-		       'run_log_hot_chunks',
-		       'workspace_process_stream_chunks'
+		       'run_log_hot_chunks'
 		   )
 		   AND column_name = 'expires_at'
 		   AND is_nullable = 'NO'
 	`).Scan(&boundedHotTables); err != nil {
 		t.Fatal(err)
 	}
-	if boundedHotTables != 1 {
-		t.Fatalf("bounded telemetry hot payload tables = %d, want 1", boundedHotTables)
+	if boundedHotTables != 0 {
+		t.Fatalf("separate telemetry hot payload tables = %d, want 0", boundedHotTables)
 	}
 	var oldUsageEnums int
 	if err := pool.QueryRow(ctx, `
@@ -710,66 +901,76 @@ func assertTelemetrySchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool
 
 func assertWorkspaceStreamSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
+	var recordColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'workspace_process_records'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"process_id",
+		"direction",
+		"stream",
+		"offset_start",
+		"offset_end",
+		"data",
+		"artifact_id",
+		"content_digest",
+		"size_bytes",
+		"payload_expires_at",
+		"payload_collected_at",
+	}).Scan(&recordColumns); err != nil {
+		t.Fatal(err)
+	}
+	if recordColumns != 11 {
+		t.Fatalf("workspace process record columns = %d, want 11", recordColumns)
+	}
 	var hasSequence bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			  FROM information_schema.columns
 			 WHERE table_schema = 'public'
-			   AND table_name = 'workspace_process_stream_chunks'
+			   AND table_name = 'workspace_process_records'
 			   AND column_name = 'sequence'
 		)
 	`).Scan(&hasSequence); err != nil {
 		t.Fatal(err)
 	}
 	if hasSequence {
-		t.Fatal("workspace stream chunks must use offset cursors, not sequence columns")
+		t.Fatal("workspace process records must use byte offsets, not sequence numbers")
 	}
-	var hasResize bool
-	if err := pool.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			  FROM pg_enum
-			  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
-			 WHERE pg_type.typname = 'workspace_process_stream'
-			   AND pg_enum.enumlabel = 'resize'
-		)
-	`).Scan(&hasResize); err != nil {
-		t.Fatal(err)
-	}
-	if hasResize {
-		t.Fatal("PTY resize must be a control verb, not a byte stream")
-	}
-	var constraintCount int
-	if err := pool.QueryRow(ctx, `
-		SELECT count(*)
-		  FROM pg_constraint
-			 WHERE conname IN (
-				'workspace_process_stream_chunks_no_overlap'
-			 )
-		   AND contype = 'x'
-	`).Scan(&constraintCount); err != nil {
-		t.Fatal(err)
-	}
-	if constraintCount != 1 {
-		t.Fatalf("workspace stream overlap exclusion constraints = %d, want 1", constraintCount)
-	}
-	var hasActiveResourceIndex bool
+	var offsetReceiptKey bool
 	if err := pool.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1
 			  FROM pg_indexes
 			 WHERE schemaname = 'public'
-			   AND tablename = 'workspace_process_operations'
-			   AND indexname = 'workspace_process_operations_active_process_idx'
-			   AND indexdef ILIKE '%WHERE%state%queued%'
-			   AND indexdef ILIKE '%process_id%'
+			   AND tablename = 'workspace_process_records'
+			   AND indexdef LIKE '%(process_id, stream, offset_start)%'
+			   AND indexdef LIKE 'CREATE UNIQUE INDEX%'
 		)
-	`).Scan(&hasActiveResourceIndex); err != nil {
+	`).Scan(&offsetReceiptKey); err != nil {
 		t.Fatal(err)
 	}
-	if !hasActiveResourceIndex {
-		t.Fatal("workspace process operations must prevent duplicate active process dispatch")
+	if !offsetReceiptKey {
+		t.Fatal("workspace process records must retain the stream offset replay key")
+	}
+	var obsoleteTables int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM unnest($1::text[]) AS table_name
+		 WHERE to_regclass('public.' || table_name) IS NOT NULL
+	`, []string{
+		"workspace_process_stream_chunks",
+		"workspace_process_stream_receipts",
+		"workspace_process_operations",
+	}).Scan(&obsoleteTables); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteTables != 0 {
+		t.Fatalf("obsolete workspace process tables = %d, want 0", obsoleteTables)
 	}
 }
 
