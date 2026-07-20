@@ -23,7 +23,7 @@ func TestBuildPolicyLookups(t *testing.T) {
 	}
 	if current.Runtime != runtime ||
 		current.StandardToolchainDigest != toolchainDigest ||
-		current.MaterializerVersion != DependencyMaterializerVersion {
+		current.BuildContractVersion != ProgramBuildContractVersion {
 		t.Fatalf("Current(us-east-1) = %#v", current)
 	}
 	resolved, err := policy.ResolveRuntime(runtime.Digest)
@@ -65,61 +65,23 @@ func TestBuildPolicyValidatesProgramTarget(t *testing.T) {
 	receipt := testProgramReceipt(t)
 	receipt.Index.RuntimeDigest = runtime.Digest
 	receipt.Index.Architecture = runtime.Architecture
-	receipt.DependencyIndex.RuntimeDigest = runtime.Digest
-	receipt.DependencyIndex.Architecture = runtime.Architecture
-	receipt.DependencyIndex.PackageManager = PackageManager{
-		Name:    PackageManagerBun,
-		Version: "1.3.10",
-	}
-	receipt.DependencyIndex.MaterializerVersion = target.MaterializerVersion
-	receipt.DependencyPlan.ManagedRuntimeDigest = runtime.Digest
-	receipt.DependencyPlan.Architecture = runtime.Architecture
-	receipt.DependencyPlan.PackageManager = receipt.DependencyIndex.PackageManager
-	receipt.DependencyPlan.MaterializerVersion = target.MaterializerVersion
-	receipt.DependencyPlan.StandardToolchainDigest = toolchainDigest
-	receipt.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
-		receipt.DependencyPlan,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	receipt.Index.StandardToolchainDigest = toolchainDigest
 	if err := ValidateProgramTarget(target, receipt); err != nil {
 		t.Fatal(err)
 	}
 
 	wrongRuntime := cloneProgramReceipt(receipt)
 	wrongRuntime.Index.RuntimeDigest = "sha256:" + strings.Repeat("b", 64)
-	wrongRuntime.DependencyIndex.RuntimeDigest = wrongRuntime.Index.RuntimeDigest
-	wrongRuntime.DependencyPlan.ManagedRuntimeDigest = wrongRuntime.Index.RuntimeDigest
-	wrongRuntime.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
-		wrongRuntime.DependencyPlan,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
 	if err := ValidateProgramTarget(target, wrongRuntime); err == nil {
 		t.Fatal("ValidateProgramTarget accepted another runtime")
 	}
 	wrongManager := cloneProgramReceipt(receipt)
-	wrongManager.DependencyIndex.PackageManager.Version = "1.3.11"
-	wrongManager.DependencyPlan.PackageManager.Version = "1.3.11"
-	wrongManager.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
-		wrongManager.DependencyPlan,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	wrongManager.Index.Manager.Version = "1.3.11"
 	if err := ValidateProgramTarget(target, wrongManager); err != nil {
 		t.Fatal(err)
 	}
 	wrongToolchain := cloneProgramReceipt(receipt)
-	wrongToolchain.DependencyPlan.StandardToolchainDigest = "sha256:" + strings.Repeat("c", 64)
-	wrongToolchain.DependencyIndex.DependencyPlanDigest, err = DependencyPlanDigest(
-		wrongToolchain.DependencyPlan,
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+	wrongToolchain.Index.StandardToolchainDigest = "sha256:" + strings.Repeat("c", 64)
 	if err := ValidateProgramTarget(target, wrongToolchain); err == nil {
 		t.Fatal("ValidateProgramTarget accepted another standard toolchain")
 	}
@@ -241,7 +203,7 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 	runtime := testRuntimeDescriptor()
 	toolchain, toolchainDigest := testToolchainForRuntime(t, runtime)
 	validTarget := buildPolicyTarget{
-		MaterializerVersion:     DependencyMaterializerVersion,
+		BuildContractVersion:    ProgramBuildContractVersion,
 		RuntimeDigest:           runtime.Digest,
 		StandardToolchainDigest: toolchainDigest,
 	}
@@ -279,7 +241,7 @@ func TestBuildPolicyRejectsInvalidDocuments(t *testing.T) {
 		},
 		"invalid materializer": func(value *buildPolicyDocument) {
 			target := validTarget
-			target.MaterializerVersion = "helmr.dependencies.v1"
+			target.BuildContractVersion = "helmr.dependencies.v1"
 			value.Current = map[string]buildPolicyTarget{"us-east-1": target}
 		},
 		"incompatible toolchain": func(value *buildPolicyDocument) {
@@ -343,7 +305,7 @@ func buildPolicyForRuntime(
 	return buildPolicyDocument{
 		Current: map[string]buildPolicyTarget{
 			"us-east-1": {
-				MaterializerVersion:     DependencyMaterializerVersion,
+				BuildContractVersion:    ProgramBuildContractVersion,
 				RuntimeDigest:           runtime.Digest,
 				StandardToolchainDigest: toolchainDigest,
 			},

@@ -2205,7 +2205,7 @@ type Deployment struct {
 	BuildArchitecture               string             `json:"build_architecture"`
 	BuildRuntimeDigest              []byte             `json:"build_runtime_digest"`
 	BuildStandardToolchainDigest    []byte             `json:"build_standard_toolchain_digest"`
-	BuildMaterializerVersion        string             `json:"build_materializer_version"`
+	BuildContractVersion            string             `json:"build_contract_version"`
 	Version                         string             `json:"version"`
 	ContentHash                     string             `json:"content_hash"`
 	ApiVersion                      string             `json:"api_version"`

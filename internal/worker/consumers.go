@@ -220,10 +220,10 @@ func validateBuildEnvelope(
 	); err != nil {
 		return fmt.Errorf("deployment standard toolchain digest: %w", err)
 	}
-	if build.MaterializerVersion != deployment.DependencyMaterializerVersion {
+	if build.BuildContractVersion != deployment.ProgramBuildContractVersion {
 		return fmt.Errorf(
-			"deployment materializer version %q is unsupported",
-			build.MaterializerVersion,
+			"deployment build contract version %q is unsupported",
+			build.BuildContractVersion,
 		)
 	}
 	if !capabilities.SupportsBuild {
@@ -235,7 +235,7 @@ func validateBuildEnvelope(
 	target, err := policy.Resolve(
 		runtime.Digest,
 		build.StandardToolchainDigest,
-		build.MaterializerVersion,
+		build.BuildContractVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("deployment build target: %w", err)

@@ -4,6 +4,7 @@ import { canonicalizeJsonValue, parseJson, type JsonObject, type JsonValue } fro
 
 export const PROGRAM_INDEX_FORMAT_VERSION = 0 as const
 export const RUNTIME_API_VERSION = "helmr.runtime.v0" as const
+export const PROGRAM_BUILD_CONTRACT_VERSION = "helmr.program-build.v0" as const
 export const PROGRAM_CODE_ARTIFACT_MEDIA_TYPE =
   "application/vnd.helmr.deployment-program-code.v0+squashfs" as const
 export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
@@ -11,8 +12,11 @@ export const PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE =
 
 const declaredIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const sha256DigestPattern = /^sha256:[0-9a-f]{64}$/
+const packageManagerVersionPattern =
+  /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)(\.(0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?$/
 const manifestDigestDomain = "helmr.deployment-definition-manifest.v0\0"
 const maxProgramFileSizeBytes = 16777216
+const maxPackageManagerVersionBytes = 64
 
 export type RuntimeArchitecture = "aarch64" | "x86_64"
 export type ProgramDeclaration =
@@ -28,26 +32,26 @@ export type ProgramDeclaration =
       slots: readonly ["schema"]
     }>
 
-export interface ProgramDependencies {
-  readonly digest: string
-  readonly sizeBytes: number
-  readonly mediaType: typeof PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE
-}
-
-export interface ProgramFile {
-  readonly digest: string
-  readonly sizeBytes: number
-}
-
 export interface ProgramIndex {
+  readonly architecture: RuntimeArchitecture
+  readonly buildContractVersion: typeof PROGRAM_BUILD_CONTRACT_VERSION
+  readonly declarations: readonly ProgramDeclaration[]
+  readonly dependenciesDigest: string
   readonly formatVersion: 0
+  readonly manager: Readonly<{
+    capsuleDigest: string
+    name: "bun" | "npm"
+    version: string
+  }>
+  readonly moduleMapDigest: string
   readonly runtimeApiVersion: typeof RUNTIME_API_VERSION
   readonly runtimeDigest: string
-  readonly architecture: RuntimeArchitecture
-  readonly dependencies: ProgramDependencies
-  readonly packageGraph: ProgramFile
-  readonly modules: ProgramFile
-  readonly declarations: readonly ProgramDeclaration[]
+  readonly standardToolchainDigest: string
+  readonly submitted: Readonly<{
+    lockfileDigest: string
+    lockfileName: "bun.lock" | "bun.lockb" | "package-lock.json"
+    sourceDigest: string
+  }>
 }
 
 export function parseProgramIndex(raw: string | Uint8Array): ProgramIndex {
@@ -95,18 +99,30 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
     root,
     [
       "architecture",
+      "buildContractVersion",
       "declarations",
-      "dependencies",
+      "dependenciesDigest",
       "formatVersion",
-      "modules",
-      "packageGraph",
+      "manager",
+      "moduleMapDigest",
       "runtimeApiVersion",
       "runtimeDigest",
+      "standardToolchainDigest",
+      "submitted",
     ],
     "program index",
   )
   if (root["formatVersion"] !== PROGRAM_INDEX_FORMAT_VERSION) {
     throw new Error(`program index formatVersion must be ${PROGRAM_INDEX_FORMAT_VERSION}`)
+  }
+  const buildContractVersion = requireString(
+    root["buildContractVersion"],
+    "program index buildContractVersion",
+  )
+  if (buildContractVersion !== PROGRAM_BUILD_CONTRACT_VERSION) {
+    throw new Error(
+      `program index buildContractVersion must be ${PROGRAM_BUILD_CONTRACT_VERSION}`,
+    )
   }
 
   const runtimeApiVersion = requireString(
@@ -118,27 +134,70 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   }
   const runtimeDigest = requireDigest(root["runtimeDigest"], "program index runtimeDigest")
   const architecture = requireArchitecture(root["architecture"])
-  const dependencyValue = requireObject(root["dependencies"], "program index dependencies")
-  requireKeys(dependencyValue, ["digest", "mediaType", "sizeBytes"], "program index dependencies")
-  const dependencyMediaType = requireString(
-    dependencyValue["mediaType"],
-    "program index dependencies.mediaType",
+  const standardToolchainDigest = requireDigest(
+    root["standardToolchainDigest"],
+    "program index standardToolchainDigest",
   )
-  if (dependencyMediaType !== PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE) {
+  const dependenciesDigest = requireDigest(
+    root["dependenciesDigest"],
+    "program index dependenciesDigest",
+  )
+  const moduleMapDigest = requireDigest(root["moduleMapDigest"], "program index moduleMapDigest")
+
+  const managerValue = requireObject(root["manager"], "program index manager")
+  requireKeys(managerValue, ["capsuleDigest", "name", "version"], "program index manager")
+  const managerName = requireString(managerValue["name"], "program index manager.name")
+  if (managerName !== "npm" && managerName !== "bun") {
+    throw new Error(`program index manager.name ${JSON.stringify(managerName)} is unsupported`)
+  }
+  const managerVersion = requireString(managerValue["version"], "program index manager.version")
+  if (
+    new TextEncoder().encode(managerVersion).length > maxPackageManagerVersionBytes ||
+    !packageManagerVersionPattern.test(managerVersion)
+  ) {
     throw new Error(
-      `program index dependencies.mediaType must be ${PROGRAM_DEPENDENCY_ARTIFACT_MEDIA_TYPE}`,
+      `program index manager.version ${JSON.stringify(managerVersion)} is not an admitted SemVer`,
     )
   }
-  const dependencies: ProgramDependencies = {
-    digest: requireDigest(dependencyValue["digest"], "program index dependencies.digest"),
-    mediaType: dependencyMediaType,
-    sizeBytes: requirePositiveSafeInteger(
-      dependencyValue["sizeBytes"],
-      "program index dependencies.sizeBytes",
+  const manager = {
+    capsuleDigest: requireDigest(
+      managerValue["capsuleDigest"],
+      "program index manager.capsuleDigest",
+    ),
+    name: managerName,
+    version: managerVersion,
+  } as const
+
+  const submittedValue = requireObject(root["submitted"], "program index submitted")
+  requireKeys(
+    submittedValue,
+    ["lockfileDigest", "lockfileName", "sourceDigest"],
+    "program index submitted",
+  )
+  const lockfileName = requireString(
+    submittedValue["lockfileName"],
+    "program index submitted.lockfileName",
+  )
+  const validLockfile =
+    managerName === "npm"
+      ? lockfileName === "package-lock.json"
+      : lockfileName === "bun.lock" || lockfileName === "bun.lockb"
+  if (!validLockfile) {
+    throw new Error(
+      `program index submitted.lockfileName ${JSON.stringify(lockfileName)} is unsupported for ${managerName}`,
+    )
+  }
+  const submitted = {
+    lockfileDigest: requireDigest(
+      submittedValue["lockfileDigest"],
+      "program index submitted.lockfileDigest",
+    ),
+    lockfileName: lockfileName as "bun.lock" | "bun.lockb" | "package-lock.json",
+    sourceDigest: requireDigest(
+      submittedValue["sourceDigest"],
+      "program index submitted.sourceDigest",
     ),
   }
-  const packageGraph = parseProgramFile(root["packageGraph"], "program index packageGraph")
-  const modules = parseProgramFile(root["modules"], "program index modules")
 
   const declarationValues = requireArray(root["declarations"], "program index declarations")
   if (declarationValues.length === 0) {
@@ -159,27 +218,17 @@ function validateProgramIndexValue(value: JsonValue): ProgramIndex {
   }
 
   return {
+    architecture,
+    buildContractVersion,
+    declarations,
+    dependenciesDigest,
     formatVersion: PROGRAM_INDEX_FORMAT_VERSION,
+    manager,
+    moduleMapDigest,
     runtimeApiVersion,
     runtimeDigest,
-    architecture,
-    dependencies,
-    packageGraph,
-    modules,
-    declarations,
-  }
-}
-
-function parseProgramFile(value: JsonValue | undefined, label: string): ProgramFile {
-  const file = requireObject(value, label)
-  requireKeys(file, ["digest", "sizeBytes"], label)
-  const sizeBytes = requirePositiveSafeInteger(file["sizeBytes"], `${label}.sizeBytes`)
-  if (sizeBytes > maxProgramFileSizeBytes) {
-    throw new Error(`${label}.sizeBytes must be at most ${maxProgramFileSizeBytes}`)
-  }
-  return {
-    digest: requireDigest(file["digest"], `${label}.digest`),
-    sizeBytes,
+    standardToolchainDigest,
+    submitted,
   }
 }
 

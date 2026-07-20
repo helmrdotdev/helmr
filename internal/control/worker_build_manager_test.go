@@ -27,10 +27,12 @@ func TestValidateManagerAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan := deployment.DependencyPlan{
-		Architecture:         capsule.Architecture,
-		ManagerCapsuleDigest: digest,
-		PackageManager:       capsule.PackageManager,
+	index := managerProgramIndex(capsule, digest)
+	sourceDigest, selection := managerSourceSelection(capsule)
+	index.Submitted = deployment.ProgramSubmittedSource{
+		LockfileDigest: selection.LockfileDigest,
+		LockfileName:   selection.LockfileName,
+		SourceDigest:   sourceDigest,
 	}
 	resolver := managerResolverFunc(func(
 		_ context.Context,
@@ -48,7 +50,9 @@ func TestValidateManagerAuthority(t *testing.T) {
 	if err := validateManagerAuthority(
 		context.Background(),
 		resolver,
-		plan,
+		sourceDigest,
+		selection,
+		index,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -56,10 +60,12 @@ func TestValidateManagerAuthority(t *testing.T) {
 
 func TestValidateManagerAuthorityRejectsReceiptDigest(t *testing.T) {
 	capsule := controlManagerCapsule()
-	plan := deployment.DependencyPlan{
-		Architecture:         capsule.Architecture,
-		ManagerCapsuleDigest: "sha256:" + strings.Repeat("9", 64),
-		PackageManager:       capsule.PackageManager,
+	index := managerProgramIndex(capsule, "sha256:"+strings.Repeat("9", 64))
+	sourceDigest, selection := managerSourceSelection(capsule)
+	index.Submitted = deployment.ProgramSubmittedSource{
+		LockfileDigest: selection.LockfileDigest,
+		LockfileName:   selection.LockfileName,
+		SourceDigest:   sourceDigest,
 	}
 	resolver := managerResolverFunc(func(
 		context.Context,
@@ -68,7 +74,13 @@ func TestValidateManagerAuthorityRejectsReceiptDigest(t *testing.T) {
 		return capsule, nil
 	})
 
-	err := validateManagerAuthority(context.Background(), resolver, plan)
+	err := validateManagerAuthority(
+		context.Background(),
+		resolver,
+		sourceDigest,
+		selection,
+		index,
+	)
 	if !errors.Is(err, errManagerAuthorityMismatch) {
 		t.Fatalf("error = %v", err)
 	}
@@ -83,14 +95,22 @@ func TestValidateManagerAuthorityPreservesStoreFailure(t *testing.T) {
 		return deployment.ManagerCapsule{}, want
 	})
 
+	sourceDigest, selection := managerSourceSelection(controlManagerCapsule())
 	err := validateManagerAuthority(
 		context.Background(),
 		resolver,
-		deployment.DependencyPlan{
+		sourceDigest,
+		selection,
+		deployment.ProgramIndex{
 			Architecture: deployment.ArchitectureX8664,
-			PackageManager: deployment.PackageManager{
+			Manager: deployment.ProgramManager{
 				Name:    deployment.PackageManagerBun,
 				Version: "1.3.10",
+			},
+			Submitted: deployment.ProgramSubmittedSource{
+				LockfileDigest: selection.LockfileDigest,
+				LockfileName:   selection.LockfileName,
+				SourceDigest:   sourceDigest,
 			},
 		},
 	)
@@ -99,6 +119,62 @@ func TestValidateManagerAuthorityPreservesStoreFailure(t *testing.T) {
 	}
 	if errors.Is(err, errManagerAuthorityMismatch) {
 		t.Fatalf("store failure classified as receipt mismatch: %v", err)
+	}
+}
+
+func TestValidateManagerAuthorityRejectsSubmittedSourceDivergence(t *testing.T) {
+	capsule := controlManagerCapsule()
+	digest, err := deployment.ManagerCapsuleDigest(capsule)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := managerProgramIndex(capsule, digest)
+	sourceDigest, selection := managerSourceSelection(capsule)
+	index.Submitted = deployment.ProgramSubmittedSource{
+		LockfileDigest: selection.LockfileDigest,
+		LockfileName:   selection.LockfileName,
+		SourceDigest:   sourceDigest,
+	}
+	resolver := managerResolverFunc(func(
+		context.Context,
+		deployment.ManagerSelector,
+	) (deployment.ManagerCapsule, error) {
+		return capsule, nil
+	})
+	index.Submitted.LockfileDigest = "sha256:" + strings.Repeat("9", 64)
+	err = validateManagerAuthority(
+		context.Background(),
+		resolver,
+		sourceDigest,
+		selection,
+		index,
+	)
+	if !errors.Is(err, errManagerAuthorityMismatch) {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func managerProgramIndex(
+	capsule deployment.ManagerCapsule,
+	digest string,
+) deployment.ProgramIndex {
+	return deployment.ProgramIndex{
+		Architecture: capsule.Architecture,
+		Manager: deployment.ProgramManager{
+			CapsuleDigest: digest,
+			Name:          capsule.PackageManager.Name,
+			Version:       capsule.PackageManager.Version,
+		},
+	}
+}
+
+func managerSourceSelection(
+	capsule deployment.ManagerCapsule,
+) (string, deployment.SourceSelection) {
+	return "sha256:" + strings.Repeat("3", 64), deployment.SourceSelection{
+		Manager:        capsule.PackageManager,
+		LockfileName:   "bun.lock",
+		LockfileDigest: "sha256:" + strings.Repeat("4", 64),
 	}
 }
 

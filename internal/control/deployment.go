@@ -434,7 +434,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 		BundleFormatVersion:     metadata.BundleFormatVersion,
 		WorkerProtocolVersion:   metadata.WorkerProtocolVersion,
 		Architecture:            target.Runtime.Architecture,
-		MaterializerVersion:     target.MaterializerVersion,
+		BuildContractVersion:    target.BuildContractVersion,
 		RuntimeDigest:           target.Runtime.Digest,
 		StandardToolchainDigest: target.StandardToolchainDigest,
 	}
@@ -467,7 +467,7 @@ func createDeploymentRecords(ctx context.Context, store deploymentStore, buildRe
 		BuildArchitecture:            string(target.Runtime.Architecture),
 		BuildRuntimeDigest:           runtimeDigest,
 		BuildStandardToolchainDigest: toolchainDigest,
-		BuildMaterializerVersion:     target.MaterializerVersion,
+		BuildContractVersion:         target.BuildContractVersion,
 	})
 	if isNoRows(err) {
 		deployment, err = createQueuedDeployment(ctx, store, buildRegionID, target, runtimeDigest, toolchainDigest, orgID, projectID, environmentID, contentHash, artifact, metadata)
@@ -510,7 +510,7 @@ func createQueuedDeployment(ctx context.Context, store deploymentStore, buildReg
 			BuildArchitecture:            string(target.Runtime.Architecture),
 			BuildRuntimeDigest:           runtimeDigest,
 			BuildStandardToolchainDigest: toolchainDigest,
-			BuildMaterializerVersion:     target.MaterializerVersion,
+			BuildContractVersion:         target.BuildContractVersion,
 			ProjectID:                    projectID,
 			EnvironmentID:                environmentID,
 			Version:                      version,

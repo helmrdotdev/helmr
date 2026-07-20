@@ -8,64 +8,32 @@ import (
 )
 
 type pairVerifier struct {
-	ctx             context.Context
-	artifacts       programArtifacts
-	code            *inspectedArtifact
-	deps            *inspectedArtifact
-	index           ProgramIndex
-	dependencyPlan  DependencyPlan
-	dependencyIndex DependencyIndex
-	graph           PackageGraph
-	modules         ModuleMap
-	codeManifests   map[string]packageManifest
-	depManifests    map[string]packageManifest
-	codeLinks       map[string]string
-	depLinks        map[string]string
-	binLinks        map[string]string
-	depDirs         map[string]struct{}
-	binRoots        map[string]struct{}
-	localByPath     map[string]LocalPackage
-	registryRoots   map[string]struct{}
-	reservedCode    map[string]struct{}
+	ctx       context.Context
+	artifacts programArtifacts
+	code      *inspectedArtifact
+	deps      *inspectedArtifact
+	index     ProgramIndex
+	modules   ModuleMap
+	manifests map[string]packageManifest
 }
 
 func (verifier *pairVerifier) verify() error {
 	if err := verifier.readDocuments(); err != nil {
 		return err
 	}
-	verifier.indexGraph()
-	if err := verifier.verifyManifests(); err != nil {
+	if err := verifier.verifyCodeLayout(); err != nil {
 		return err
 	}
-	if err := verifier.deriveTopology(); err != nil {
+	if err := verifier.verifyDependencyLayout(); err != nil {
+		return err
+	}
+	if err := verifier.readManifests(); err != nil {
 		return err
 	}
 	if err := verifier.verifyModules(); err != nil {
 		return err
 	}
-	if err := verifier.verifyLayouts(); err != nil {
-		return err
-	}
-	if err := verifier.verifyLinks(); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (verifier *pairVerifier) indexGraph() {
-	verifier.localByPath = make(map[string]LocalPackage, len(verifier.graph.LocalPackages))
-	verifier.registryRoots = make(map[string]struct{}, len(verifier.graph.RegistryPackages))
-	verifier.reservedCode = make(map[string]struct{}, 2*len(verifier.graph.LocalPackages))
-	for _, local := range verifier.graph.LocalPackages {
-		verifier.localByPath[local.Path] = local
-		if local.Path != "." {
-			verifier.reservedCode[path.Join(local.Path, "helmr")] = struct{}{}
-			verifier.reservedCode[path.Join(local.Path, ".helmr")] = struct{}{}
-		}
-	}
-	for _, registry := range verifier.graph.RegistryPackages {
-		verifier.registryRoots[registry.InstallPath] = struct{}{}
-	}
+	return verifier.verifyLinks()
 }
 
 func (verifier *pairVerifier) readDocuments() error {
@@ -77,74 +45,16 @@ func (verifier *pairVerifier) readDocuments() error {
 	if err != nil {
 		return fmt.Errorf("program index: %w", err)
 	}
-	if verifier.index.Dependencies.Digest != verifier.artifacts.Dependencies.Digest ||
-		verifier.index.Dependencies.SizeBytes != verifier.artifacts.Dependencies.SizeBytes ||
-		verifier.index.Dependencies.MediaType != verifier.artifacts.Dependencies.MediaType {
-		return fmt.Errorf("program index dependency descriptor does not match the dependency Artifact")
-	}
-
-	dependencyRaw, err := verifier.deps.read(
-		verifier.ctx,
-		".helmr/dependencies.json",
-		maxDependencyIndexSizeBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("dependency index: %w", err)
-	}
-	verifier.dependencyIndex, err = ParseDependencyIndex(dependencyRaw)
-	if err != nil {
-		return fmt.Errorf("dependency index: %w", err)
-	}
-
-	planRaw, err := verifier.deps.read(
-		verifier.ctx,
-		".helmr/dependency-plan.json",
-		maxDependencyPlanBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("dependency plan: %w", err)
-	}
-	verifier.dependencyPlan, err = ParseDependencyPlan(planRaw)
-	if err != nil {
-		return fmt.Errorf("dependency plan: %w", err)
-	}
-	if err := validateDependencyPlanIndex(
-		verifier.dependencyPlan,
-		verifier.dependencyIndex,
-	); err != nil {
-		return err
-	}
-	if verifier.index.RuntimeDigest != verifier.dependencyIndex.RuntimeDigest ||
-		verifier.index.Architecture != verifier.dependencyIndex.Architecture {
-		return fmt.Errorf("program and dependency indexes disagree on runtime or architecture")
-	}
-
-	graphRaw, err := verifier.deps.read(
-		verifier.ctx,
-		".helmr/package-graph.json",
-		maxProgramFileSizeBytes,
-	)
-	if err != nil {
-		return fmt.Errorf("package graph: %w", err)
-	}
-	if int64(len(graphRaw)) != verifier.index.PackageGraph.SizeBytes ||
-		int64(len(graphRaw)) != verifier.dependencyIndex.PackageGraphSizeBytes ||
-		digestBytes(graphRaw) != verifier.index.PackageGraph.Digest ||
-		digestBytes(graphRaw) != verifier.dependencyIndex.PackageGraphDigest {
-		return fmt.Errorf("package graph identity does not match both indexes")
-	}
-	verifier.graph, err = ParsePackageGraph(graphRaw)
-	if err != nil {
-		return fmt.Errorf("package graph: %w", err)
+	if verifier.index.DependenciesDigest != verifier.artifacts.Dependencies.Digest {
+		return fmt.Errorf("program index dependenciesDigest does not match the dependency Artifact")
 	}
 
 	moduleRaw, err := verifier.code.read(verifier.ctx, "helmr/modules.json", maxProgramFileSizeBytes)
 	if err != nil {
 		return fmt.Errorf("module map: %w", err)
 	}
-	if int64(len(moduleRaw)) != verifier.index.Modules.SizeBytes ||
-		digestBytes(moduleRaw) != verifier.index.Modules.Digest {
-		return fmt.Errorf("module map identity does not match the program index")
+	if digestBytes(moduleRaw) != verifier.index.ModuleMapDigest {
+		return fmt.Errorf("module map digest does not match the program index")
 	}
 	verifier.modules, err = ParseModuleMap(moduleRaw)
 	if err != nil {
@@ -159,186 +69,65 @@ func (verifier *pairVerifier) readDocuments() error {
 		return fmt.Errorf("helmr/entry.mjs exceeds %d bytes", maxProgramFileSizeBytes)
 	}
 
-	lockfile := verifier.dependencyIndex.Lockfile.Name
-	lockEntry, err := verifier.code.require(lockfile, artifactEntryRegular)
-	if err != nil {
-		return fmt.Errorf("selected lockfile: %w", err)
+	return nil
+}
+
+func (verifier *pairVerifier) verifyCodeLayout() error {
+	for _, required := range []string{".", "helmr", "node_modules"} {
+		if _, err := verifier.code.require(required, artifactEntryDirectory); err != nil {
+			return fmt.Errorf("code layout: %w", err)
+		}
 	}
-	if lockEntry.SizeBytes > maxLockfileBytes {
-		return fmt.Errorf("selected lockfile exceeds %d bytes", maxLockfileBytes)
+	for _, required := range []string{
+		"helmr/entry.mjs",
+		"helmr/modules.json",
+		"helmr/program.json",
+	} {
+		if _, err := verifier.code.require(required, artifactEntryRegular); err != nil {
+			return fmt.Errorf("code layout: %w", err)
+		}
 	}
-	lockDigest, err := verifier.code.digest(verifier.ctx, lockfile)
-	if err != nil {
-		return err
-	}
-	if lockDigest != verifier.dependencyIndex.Lockfile.Digest {
-		return fmt.Errorf("selected lockfile digest does not match the dependency index")
-	}
-	alternate := "bun.lock"
-	if lockfile == alternate {
-		alternate = "package-lock.json"
-	}
-	if _, exists := verifier.code.entries[alternate]; exists {
-		return fmt.Errorf("unselected recognized root lockfile %q is present", alternate)
+	for _, entry := range verifier.code.ordered {
+		if strings.HasPrefix(entry.Path, "node_modules/") {
+			return fmt.Errorf("code Artifact dependency mountpoint is not empty at %q", entry.Path)
+		}
 	}
 	return nil
 }
 
-func (verifier *pairVerifier) verifyManifests() error {
-	verifier.codeManifests = make(map[string]packageManifest)
-	verifier.depManifests = make(map[string]packageManifest)
-	localRoots := make(map[string]bool, len(verifier.graph.LocalPackages))
-	for _, local := range verifier.graph.LocalPackages {
-		manifestPath := "package.json"
-		if local.Path != "." {
-			manifestPath = path.Join(local.Path, "package.json")
-		}
-		localRoots[manifestPath] = local.Path == "."
+func (verifier *pairVerifier) verifyDependencyLayout() error {
+	if _, err := verifier.deps.require(".", artifactEntryDirectory); err != nil {
+		return fmt.Errorf("dependency layout: %w", err)
 	}
-	registryRoots := make(map[string]struct{}, len(verifier.graph.RegistryPackages))
-	for _, registry := range verifier.graph.RegistryPackages {
-		registryRoots[path.Join(registry.InstallPath, "package.json")] = struct{}{}
-	}
+	return nil
+}
 
-	codeManifests, err := manifestEntries(verifier.code, "helmr", "code")
-	if err != nil {
-		return err
-	}
-	for _, entry := range codeManifests {
+func (verifier *pairVerifier) readManifests() error {
+	verifier.manifests = make(map[string]packageManifest)
+	var totalBytes int64
+	for _, entry := range verifier.code.ordered {
+		if path.Base(entry.Path) != "package.json" ||
+			entry.Path == "helmr" || strings.HasPrefix(entry.Path, "helmr/") {
+			continue
+		}
+		if entry.Kind != artifactEntryRegular {
+			return fmt.Errorf("code Artifact package.json %q is not a regular file", entry.Path)
+		}
+		if totalBytes > maxPackageJSONBytes-entry.SizeBytes {
+			return fmt.Errorf("code Artifact package.json bytes exceed %d", maxPackageJSONBytes)
+		}
+		totalBytes += entry.SizeBytes
 		raw, err := verifier.code.read(verifier.ctx, entry.Path, maxPackageManifestSizeBytes)
 		if err != nil {
 			return err
 		}
-		var manifest packageManifest
-		if root, exists := localRoots[entry.Path]; exists {
-			manifest, err = parseLocalPackageManifest(raw, root)
-		} else {
-			manifest, err = parsePackageScope(raw)
-		}
+		manifest, err := parsePackageScope(raw)
 		if err != nil {
 			return fmt.Errorf("%s: %w", entry.Path, err)
 		}
-		verifier.codeManifests[entry.Path] = manifest
-	}
-
-	dependencyManifests, err := manifestEntries(verifier.deps, ".helmr", "dependency")
-	if err != nil {
-		return err
-	}
-	for _, entry := range dependencyManifests {
-		raw, err := verifier.deps.read(verifier.ctx, entry.Path, maxPackageManifestSizeBytes)
-		if err != nil {
-			return err
-		}
-		var manifest packageManifest
-		if _, exists := registryRoots[entry.Path]; exists {
-			manifest, err = parseRegistryPackageManifest(raw)
-		} else {
-			manifest, err = parsePackageScope(raw)
-		}
-		if err != nil {
-			return fmt.Errorf("%s: %w", entry.Path, err)
-		}
-		verifier.depManifests[entry.Path] = manifest
-	}
-
-	localManifests := LocalManifests{
-		FormatVersion: LocalManifestsFormatVersion,
-		Entries:       make([]LocalManifestEntry, 0, len(verifier.graph.LocalPackages)),
-	}
-	for _, local := range verifier.graph.LocalPackages {
-		manifestPath := "package.json"
-		if local.Path != "." {
-			manifestPath = path.Join(local.Path, "package.json")
-			if _, err := verifier.code.require(local.Path, artifactEntryDirectory); err != nil {
-				return fmt.Errorf("local package %q: %w", local.Path, err)
-			}
-		}
-		manifest, exists := verifier.codeManifests[manifestPath]
-		if !exists {
-			return fmt.Errorf("local package %q has no regular package.json", local.Path)
-		}
-		digest, err := verifier.code.digest(verifier.ctx, manifestPath)
-		if err != nil {
-			return err
-		}
-		if digest != local.ManifestDigest {
-			return fmt.Errorf("local package %q manifest digest does not match the graph", local.Path)
-		}
-		if !pointerStringsEqual(manifest.Name, local.Name) ||
-			!pointerStringsEqual(manifest.Version, local.Version) {
-			return fmt.Errorf("local package %q manifest identity does not match the graph", local.Path)
-		}
-		if len(manifest.AutomaticScripts) != 0 {
-			return fmt.Errorf(
-				"local package %q defines automatic lifecycle script %q",
-				local.Path,
-				manifest.AutomaticScripts[0],
-			)
-		}
-		localManifests.Entries = append(localManifests.Entries, LocalManifestEntry{
-			ManifestDigest: digest,
-			Path:           local.Path,
-		})
-		if local.Path == "." {
-			want := string(verifier.dependencyIndex.PackageManager.Name) + "@" +
-				verifier.dependencyIndex.PackageManager.Version
-			if manifest.PackageManager == nil || *manifest.PackageManager != want {
-				return fmt.Errorf("root packageManager does not equal %q", want)
-			}
-		}
-	}
-	localDigest, err := LocalManifestsDigest(localManifests)
-	if err != nil {
-		return err
-	}
-	if "sha256:"+fmt.Sprintf("%x", localDigest) != verifier.dependencyIndex.LocalManifestsDigest {
-		return fmt.Errorf("local manifest set does not match the dependency index")
-	}
-
-	for _, registry := range verifier.graph.RegistryPackages {
-		if _, err := verifier.deps.require(registry.InstallPath, artifactEntryDirectory); err != nil {
-			return fmt.Errorf("registry package %q: %w", registry.InstallPath, err)
-		}
-		manifestPath := path.Join(registry.InstallPath, "package.json")
-		manifest, exists := verifier.depManifests[manifestPath]
-		if !exists {
-			return fmt.Errorf("registry package %q has no regular package.json", registry.InstallPath)
-		}
-		if manifest.Name == nil || *manifest.Name != registry.Name ||
-			manifest.Version == nil || *manifest.Version != registry.Version {
-			return fmt.Errorf("registry package %q manifest identity does not match the graph", registry.InstallPath)
-		}
+		verifier.manifests[entry.Path] = manifest
 	}
 	return nil
-}
-
-func manifestEntries(
-	artifact *inspectedArtifact,
-	reservedRoot string,
-	label string,
-) ([]artifactEntry, error) {
-	entries := make([]artifactEntry, 0)
-	var logicalBytes int64
-	for _, entry := range artifact.ordered {
-		if path.Base(entry.Path) != "package.json" ||
-			entry.Path == reservedRoot || strings.HasPrefix(entry.Path, reservedRoot+"/") {
-			continue
-		}
-		if entry.Kind != artifactEntryRegular {
-			return nil, fmt.Errorf("%s Artifact package.json %q is not a regular file", label, entry.Path)
-		}
-		if logicalBytes > maxPackageJSONBytes-entry.SizeBytes {
-			return nil, fmt.Errorf(
-				"%s Artifact package.json bytes exceed %d",
-				label,
-				maxPackageJSONBytes,
-			)
-		}
-		logicalBytes += entry.SizeBytes
-		entries = append(entries, entry)
-	}
-	return entries, nil
 }
 
 func (verifier *pairVerifier) verifyModules() error {
@@ -350,15 +139,17 @@ func (verifier *pairVerifier) verifyModules() error {
 	}
 
 	for _, entry := range verifier.code.ordered {
-		if entry.Kind != artifactEntryRegular || strings.HasPrefix(entry.Path, "helmr/") {
-			continue
-		}
-		if !isRuntimeTypeScript(entry.Path) {
+		if entry.Kind != artifactEntryRegular || strings.HasPrefix(entry.Path, "helmr/") ||
+			!isRuntimeTypeScript(entry.Path) {
 			continue
 		}
 		module, exists := byPath[entry.Path]
 		if !exists {
 			return fmt.Errorf("TypeScript source %q is absent from the module map", entry.Path)
+		}
+		source := entry
+		if source.SizeBytes > maxProgramFileSizeBytes {
+			return fmt.Errorf("TypeScript source %q exceeds %d bytes", entry.Path, maxProgramFileSizeBytes)
 		}
 		sourceDigest, err := verifier.code.digest(verifier.ctx, entry.Path)
 		if err != nil {
@@ -366,6 +157,9 @@ func (verifier *pairVerifier) verifyModules() error {
 		}
 		if sourceDigest != module.SourceDigest {
 			return fmt.Errorf("TypeScript source %q digest does not match the module map", entry.Path)
+		}
+		if _, err := verifier.code.require(module.CodePath, artifactEntryRegular); err != nil {
+			return fmt.Errorf("TypeScript sidecar %q: %w", module.CodePath, err)
 		}
 		codeDigest, err := verifier.code.digest(verifier.ctx, module.CodePath)
 		if err != nil {
@@ -390,7 +184,7 @@ func (verifier *pairVerifier) verifyModules() error {
 	}
 	for _, entry := range verifier.code.ordered {
 		if strings.HasPrefix(entry.Path, "helmr/files/modules/") {
-			if _, exists := sidecars[entry.Path]; !exists {
+			if _, exists := sidecars[entry.Path]; !exists && entry.Kind == artifactEntryRegular {
 				return fmt.Errorf("unlisted module sidecar path %q", entry.Path)
 			}
 		}
@@ -420,7 +214,7 @@ func (verifier *pairVerifier) moduleFormat(source string) (ModuleFormat, error) 
 		if parent == "." {
 			manifestPath = "package.json"
 		}
-		if manifest, exists := verifier.codeManifests[manifestPath]; exists {
+		if manifest, exists := verifier.manifests[manifestPath]; exists {
 			if manifest.Type == "module" {
 				return ModuleFormatESM, nil
 			}
@@ -433,11 +227,78 @@ func (verifier *pairVerifier) moduleFormat(source string) (ModuleFormat, error) 
 	}
 }
 
-func hasNodeModulesComponent(value string) bool {
-	for _, item := range strings.Split(value, "/") {
-		if item == "node_modules" {
-			return true
+func (verifier *pairVerifier) verifyLinks() error {
+	for _, entry := range verifier.code.ordered {
+		if entry.Kind == artifactEntrySymlink {
+			if err := verifier.verifyLink(entry.Path, entry.LinkTarget); err != nil {
+				return fmt.Errorf("code link %q: %w", entry.Path, err)
+			}
 		}
 	}
-	return false
+	for _, entry := range verifier.deps.ordered {
+		if entry.Kind == artifactEntrySymlink {
+			link := "node_modules"
+			if entry.Path != "." {
+				link += "/" + entry.Path
+			}
+			if err := verifier.verifyLink(link, entry.LinkTarget); err != nil {
+				return fmt.Errorf("dependency link %q: %w", entry.Path, err)
+			}
+		}
+	}
+	return nil
+}
+
+func (verifier *pairVerifier) verifyLink(link, target string) error {
+	pending := append(
+		strings.Split(path.Dir(link), "/"),
+		strings.Split(target, "/")...,
+	)
+	resolved := make([]string, 0, len(pending))
+	hops := 0
+	for len(pending) != 0 {
+		component := pending[0]
+		pending = pending[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			if len(resolved) == 0 {
+				return fmt.Errorf("target escapes the combined Program namespace")
+			}
+			resolved = resolved[:len(resolved)-1]
+			continue
+		}
+		candidate := strings.Join(append(resolved, component), "/")
+		entry, exists := verifier.combinedEntry(candidate)
+		if !exists {
+			return nil
+		}
+		if entry.Kind == artifactEntrySymlink {
+			hops++
+			if hops > maxSymlinkHops {
+				return fmt.Errorf("target exceeds %d symbolic-link hops", maxSymlinkHops)
+			}
+			pending = append(strings.Split(entry.LinkTarget, "/"), pending...)
+			continue
+		}
+		if entry.Kind != artifactEntryDirectory && len(pending) != 0 {
+			return nil
+		}
+		resolved = append(resolved, component)
+	}
+	return nil
+}
+
+func (verifier *pairVerifier) combinedEntry(name string) (artifactEntry, bool) {
+	if name == "node_modules" {
+		entry, exists := verifier.code.entries[name]
+		return entry, exists
+	}
+	if strings.HasPrefix(name, "node_modules/") {
+		entry, exists := verifier.deps.entries[strings.TrimPrefix(name, "node_modules/")]
+		return entry, exists
+	}
+	entry, exists := verifier.code.entries[name]
+	return entry, exists
 }

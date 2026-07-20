@@ -1189,12 +1189,12 @@ func seedControlStreamTokenFixture(t *testing.T, ctx context.Context, pool *pgxp
 		INSERT INTO deployments (
 			id, public_id, org_id, project_id, environment_id, build_region_id,
 			build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-			build_materializer_version,
+			build_contract_version,
 			version, content_hash, deployment_source_artifact_id, status
 		) VALUES (
 			$1, $8, $2, $3, $4, $5,
 			'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('02', 32), 'hex'),
-			'helmr.dependencies.v0',
+			'helmr.program-build.v0',
 			'v1', $6, $7, 'deployed'
 		)
 	`, ids.deploymentID, ids.orgID, ids.projectID, ids.environmentID, dbtest.DefaultRegionID, digest, artifactID, streamTestPublicID(t, publicid.Deployment)); err != nil {

@@ -384,7 +384,7 @@ type WorkerDeploymentBuild struct {
 	DeploymentSource        DeploymentSourceArtifact `json:"deployment_source"`
 	Runtime                 WorkerRuntimeDescriptor  `json:"runtime"`
 	StandardToolchainDigest string                   `json:"standard_toolchain_digest"`
-	MaterializerVersion     string                   `json:"materializer_version"`
+	BuildContractVersion    string                   `json:"build_contract_version"`
 }
 
 type WorkerRuntimeDescriptor struct {

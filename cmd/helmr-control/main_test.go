@@ -266,7 +266,7 @@ func smokeBuildPolicy(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return `{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` +
+	return `{"current":{"us-east-1":{"buildContractVersion":"helmr.program-build.v0","runtimeDigest":"` +
 		runtime.Digest + `","standardToolchainDigest":"` + toolchainDigest +
 		`"}},"formatVersion":0,"runtimes":[` + string(runtimeRaw) +
 		`],"toolchains":[` + string(toolchainRaw) + `]}`

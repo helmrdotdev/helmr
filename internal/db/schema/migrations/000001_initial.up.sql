@@ -888,7 +888,7 @@ CREATE TABLE deployments (
     build_architecture TEXT NOT NULL CHECK (build_architecture IN ('aarch64', 'x86_64')),
     build_runtime_digest BYTEA NOT NULL CHECK (octet_length(build_runtime_digest) = 32),
     build_standard_toolchain_digest BYTEA NOT NULL CHECK (octet_length(build_standard_toolchain_digest) = 32),
-    build_materializer_version TEXT NOT NULL CHECK (build_materializer_version = 'helmr.dependencies.v0'),
+    build_contract_version TEXT NOT NULL CHECK (build_contract_version = 'helmr.program-build.v0'),
     version TEXT NOT NULL CHECK (btrim(version) <> ''),
     content_hash TEXT NOT NULL CHECK (content_hash ~ '^sha256:[0-9a-f]{64}$'),
     api_version TEXT NOT NULL DEFAULT '2026-06-06' CHECK (
@@ -3426,7 +3426,7 @@ CREATE UNIQUE INDEX deployments_reusable_build_key_idx
         build_architecture,
         build_runtime_digest,
         build_standard_toolchain_digest,
-        build_materializer_version
+        build_contract_version
     )
     WHERE status IN ('queued', 'building');
 CREATE INDEX deployments_build_region_status_idx

@@ -99,11 +99,11 @@ VALUES ($1, $2, $3, $4, $5, 'deployment_source', 1, 'application/vnd.helmr.deplo
 INSERT INTO deployments (
     id, public_id, org_id, project_id, environment_id, build_region_id,
     build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-    build_materializer_version, version, content_hash,
+    build_contract_version, version, content_hash,
     deployment_source_artifact_id, status
 ) VALUES (
     $1, $2, $3, $4, $5, 'us-east-1', $6, $7,
-    decode(repeat('02', 32), 'hex'), 'helmr.dependencies.v0',
+    decode(repeat('02', 32), 'hex'), 'helmr.program-build.v0',
     'v1', $8, $9, 'queued'
 )`,
 		fixture.deploymentID, dispatchPublicID(t, publicid.Deployment), fixture.orgID,

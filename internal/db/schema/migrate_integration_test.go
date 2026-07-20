@@ -277,11 +277,11 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_materializer_version, version, content_hash, deployment_source_artifact_id
+		    build_contract_version, version, content_hash, deployment_source_artifact_id
 		) VALUES
-		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.dependencies.v0', 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
-		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.dependencies.v0', 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
-		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.dependencies.v0', 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
+		('00000000-0000-0000-0000-000000005001', 'dep_' || repeat('e', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-one', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001'),
+		('00000000-0000-0000-0000-000000005002', 'dep_' || repeat('f', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003002', 'definition-region', 'x86_64', decode(repeat('01', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-two', 'sha256:' || repeat('2', 64), '00000000-0000-0000-0000-000000004002'),
+		('00000000-0000-0000-0000-000000005003', 'dep_' || repeat('a', 26), '00000000-0000-0000-0000-000000001000', '00000000-0000-0000-0000-000000002000', '00000000-0000-0000-0000-000000003001', 'definition-region', 'x86_64', decode(repeat('02', 32), 'hex'), decode(repeat('11', 32), 'hex'), 'helmr.program-build.v0', 'definition-one-runtime-two', 'sha256:' || repeat('1', 64), '00000000-0000-0000-0000-000000004001');
 	`); err != nil {
 		t.Fatal(err)
 	}
@@ -297,7 +297,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_materializer_version, version, content_hash,
+		    build_contract_version, version, content_hash,
 		    api_version, sdk_version, cli_version, deployment_source_artifact_id
 		) VALUES (
 		    '00000000-0000-0000-0000-000000005005',
@@ -309,7 +309,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		    'x86_64',
 		    decode(repeat('03', 32), 'hex'),
 		    decode(repeat('13', 32), 'hex'),
-		    'helmr.dependencies.v0',
+		    'helmr.program-build.v0',
 		    'max-width-reuse-key',
 		    'sha256:' || repeat('3', 64),
 		    repeat('a', 255),
@@ -348,7 +348,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		INSERT INTO deployments (
 		    id, public_id, org_id, project_id, environment_id, build_region_id,
 		    build_architecture, build_runtime_digest, build_standard_toolchain_digest,
-		    build_materializer_version, version, content_hash,
+		    build_contract_version, version, content_hash,
 		    deployment_source_artifact_id
 		) VALUES (
 		    '00000000-0000-0000-0000-000000005004',
@@ -360,7 +360,7 @@ func assertDeploymentDefinitionAuthority(t *testing.T, ctx context.Context, pool
 		    'x86_64',
 		    decode(repeat('01', 32), 'hex'),
 		    decode(repeat('11', 32), 'hex'),
-		    'helmr.dependencies.v0',
+		    'helmr.program-build.v0',
 		    'definition-one-duplicate',
 		    'sha256:' || repeat('1', 64),
 		    '00000000-0000-0000-0000-000000004001'

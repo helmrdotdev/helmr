@@ -33,7 +33,7 @@ type ReuseDescriptor struct {
 	BundleFormatVersion     int32               `json:"bundleFormatVersion"`
 	WorkerProtocolVersion   string              `json:"workerProtocolVersion"`
 	Architecture            RuntimeArchitecture `json:"architecture"`
-	MaterializerVersion     string              `json:"materializerVersion"`
+	BuildContractVersion    string              `json:"buildContractVersion"`
 	RuntimeDigest           string              `json:"runtimeDigest"`
 	StandardToolchainDigest string              `json:"standardToolchainDigest"`
 }
@@ -120,11 +120,11 @@ func ValidateReuseDescriptor(descriptor ReuseDescriptor) error {
 	if !sha256DigestPattern.MatchString(descriptor.StandardToolchainDigest) {
 		return fmt.Errorf("deployment reuse descriptor standardToolchainDigest is not a lowercase SHA-256 digest")
 	}
-	if descriptor.MaterializerVersion != DependencyMaterializerVersion {
+	if descriptor.BuildContractVersion != ProgramBuildContractVersion {
 		return fmt.Errorf(
-			"deployment reuse descriptor materializerVersion = %q, want %q",
-			descriptor.MaterializerVersion,
-			DependencyMaterializerVersion,
+			"deployment reuse descriptor buildContractVersion = %q, want %q",
+			descriptor.BuildContractVersion,
+			ProgramBuildContractVersion,
 		)
 	}
 	return nil

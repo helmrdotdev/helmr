@@ -11,9 +11,9 @@ func TestReuseDescriptorCanonicalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantCanonical := `{"apiVersion":"2026-06-06","architecture":"aarch64","buildRegionId":"us-east-1","bundleFormatVersion":2,"cliVersion":"0.4.0","contentHash":"sha256:` +
+	wantCanonical := `{"apiVersion":"2026-06-06","architecture":"aarch64","buildContractVersion":"helmr.program-build.v0","buildRegionId":"us-east-1","bundleFormatVersion":2,"cliVersion":"0.4.0","contentHash":"sha256:` +
 		strings.Repeat("1", 64) +
-		`","environmentId":"00000000-0000-0000-0000-000000000003","formatVersion":0,"materializerVersion":"helmr.dependencies.v0","orgId":"00000000-0000-0000-0000-000000000001","projectId":"00000000-0000-0000-0000-000000000002","runtimeDigest":"sha256:` +
+		`","environmentId":"00000000-0000-0000-0000-000000000003","formatVersion":0,"orgId":"00000000-0000-0000-0000-000000000001","projectId":"00000000-0000-0000-0000-000000000002","runtimeDigest":"sha256:` +
 		strings.Repeat("2", 64) +
 		`","sdkVersion":"0.3.0","standardToolchainDigest":"sha256:` +
 		strings.Repeat("3", 64) +
@@ -25,7 +25,7 @@ func TestReuseDescriptorCanonicalKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if key != "sha256:e3f24fb03c69c0a43482d394375215000c8e08d5d5f3599e0f8a95777b776b28" {
+	if key != "sha256:3fc85a265c6c3928f81c70c572c5c32cb02bae8edfc1a703f876e596aef2c306" {
 		t.Fatalf("reuse key = %q", key)
 	}
 }
@@ -61,7 +61,7 @@ func TestReuseDescriptorRejectsInvalidMembers(t *testing.T) {
 			value.StandardToolchainDigest = "sha256:invalid"
 		},
 		"materializer": func(value *ReuseDescriptor) {
-			value.MaterializerVersion = "helmr.dependencies.v1"
+			value.BuildContractVersion = "helmr.dependencies.v1"
 		},
 	}
 	for name, mutate := range tests {
@@ -126,7 +126,7 @@ func validReuseDescriptor() ReuseDescriptor {
 		BundleFormatVersion:     2,
 		WorkerProtocolVersion:   "helmr.worker.v0",
 		Architecture:            ArchitectureAArch64,
-		MaterializerVersion:     DependencyMaterializerVersion,
+		BuildContractVersion:    ProgramBuildContractVersion,
 		RuntimeDigest:           "sha256:" + strings.Repeat("2", 64),
 		StandardToolchainDigest: "sha256:" + strings.Repeat("3", 64),
 	}

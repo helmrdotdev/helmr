@@ -9,6 +9,7 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
@@ -18,6 +19,7 @@ const (
 	ProgramReceiptFormatVersion = 0
 
 	RuntimeAPIVersion                        = "helmr.runtime.v0"
+	ProgramBuildContractVersion              = "helmr.program-build.v0"
 	ProgramCodeArtifactMediaType             = "application/vnd.helmr.deployment-program-code.v0+squashfs"
 	ProgramDependencyArtifactMediaType       = "application/vnd.helmr.deployment-program-dependencies.v0+squashfs"
 	manifestDigestDomain                     = "helmr.deployment-definition-manifest.v0\x00"
@@ -60,31 +62,42 @@ type ProgramFile struct {
 	SizeBytes int64  `json:"sizeBytes"`
 }
 
+type ProgramManager struct {
+	CapsuleDigest string             `json:"capsuleDigest"`
+	Name          PackageManagerName `json:"name"`
+	Version       string             `json:"version"`
+}
+
+type ProgramSubmittedSource struct {
+	LockfileDigest string `json:"lockfileDigest"`
+	LockfileName   string `json:"lockfileName"`
+	SourceDigest   string `json:"sourceDigest"`
+}
+
 type ProgramIndex struct {
-	FormatVersion     int                  `json:"formatVersion"`
-	RuntimeAPIVersion string               `json:"runtimeApiVersion"`
-	RuntimeDigest     string               `json:"runtimeDigest"`
-	Architecture      RuntimeArchitecture  `json:"architecture"`
-	Dependencies      ProgramDependencies  `json:"dependencies"`
-	PackageGraph      ProgramFile          `json:"packageGraph"`
-	Modules           ProgramFile          `json:"modules"`
-	Declarations      []ProgramDeclaration `json:"declarations"`
+	Architecture            RuntimeArchitecture    `json:"architecture"`
+	BuildContractVersion    string                 `json:"buildContractVersion"`
+	Declarations            []ProgramDeclaration   `json:"declarations"`
+	DependenciesDigest      string                 `json:"dependenciesDigest"`
+	FormatVersion           int                    `json:"formatVersion"`
+	Manager                 ProgramManager         `json:"manager"`
+	ModuleMapDigest         string                 `json:"moduleMapDigest"`
+	RuntimeAPIVersion       string                 `json:"runtimeApiVersion"`
+	RuntimeDigest           string                 `json:"runtimeDigest"`
+	StandardToolchainDigest string                 `json:"standardToolchainDigest"`
+	Submitted               ProgramSubmittedSource `json:"submitted"`
 }
 
 type ProgramReceipt struct {
-	FormatVersion   int               `json:"formatVersion"`
-	Code            ProgramDescriptor `json:"code"`
-	Dependencies    ProgramDescriptor `json:"dependencies"`
-	DependencyPlan  DependencyPlan    `json:"dependencyPlan"`
-	DependencyIndex DependencyIndex   `json:"dependencyIndex"`
-	Index           ProgramIndex      `json:"index"`
+	FormatVersion int               `json:"formatVersion"`
+	Code          ProgramDescriptor `json:"code"`
+	Dependencies  ProgramDescriptor `json:"dependencies"`
+	Index         ProgramIndex      `json:"index"`
 }
 
 type programVerification struct {
-	FormatVersion   int             `json:"formatVersion"`
-	DependencyPlan  DependencyPlan  `json:"dependencyPlan"`
-	DependencyIndex DependencyIndex `json:"dependencyIndex"`
-	Index           ProgramIndex    `json:"index"`
+	FormatVersion int          `json:"formatVersion"`
+	Index         ProgramIndex `json:"index"`
 }
 
 func ParseProgramReceipt(raw []byte) (ProgramReceipt, error) {
@@ -174,24 +187,12 @@ func ValidateProgramReceipt(receipt ProgramReceipt) error {
 	if err := ValidateProgramIndex(receipt.Index); err != nil {
 		return fmt.Errorf("program receipt index: %w", err)
 	}
-	if err := ValidateDependencyIndex(receipt.DependencyIndex); err != nil {
-		return fmt.Errorf("program receipt dependencyIndex: %w", err)
-	}
-	if err := ValidateDependencyPlan(receipt.DependencyPlan); err != nil {
-		return fmt.Errorf("program receipt dependencyPlan: %w", err)
-	}
-	if err := validateDependencyPlanIndex(
-		receipt.DependencyPlan,
-		receipt.DependencyIndex,
-	); err != nil {
-		return fmt.Errorf("program receipt: %w", err)
-	}
-	if receipt.Index.Dependencies != receipt.Dependencies {
+	if receipt.Index.DependenciesDigest != receipt.Dependencies.Digest {
 		return fmt.Errorf(
-			"program receipt index dependency descriptor does not match dependencies",
+			"program receipt index dependenciesDigest does not match dependencies",
 		)
 	}
-	return validateProgramIndexes(receipt.Index, receipt.DependencyIndex)
+	return nil
 }
 
 func validateProgramDescriptor(
@@ -225,19 +226,8 @@ func validateProgramDescriptor(
 }
 
 func cloneProgramReceipt(receipt ProgramReceipt) ProgramReceipt {
-	receipt.DependencyPlan = cloneDependencyPlan(receipt.DependencyPlan)
 	receipt.Index = cloneReceiptProgramIndex(receipt.Index)
 	return receipt
-}
-
-func cloneDependencyPlan(plan DependencyPlan) DependencyPlan {
-	plan.Aliases = append([]PlanAlias(nil), plan.Aliases...)
-	plan.Environment = append([]PlanEnvironment(nil), plan.Environment...)
-	plan.Handshake.Argv = append([]string(nil), plan.Handshake.Argv...)
-	plan.Lifecycle.Argv = append([]string(nil), plan.Lifecycle.Argv...)
-	plan.Probe.Argv = append([]string(nil), plan.Probe.Argv...)
-	plan.Resolution.Argv = append([]string(nil), plan.Resolution.Argv...)
-	return plan
 }
 
 func parseProgramVerification(raw []byte) (programVerification, error) {
@@ -275,7 +265,6 @@ func parseProgramVerification(raw []byte) (programVerification, error) {
 			"program verification does not match the complete canonical v0 shape",
 		)
 	}
-	verified.DependencyPlan = cloneDependencyPlan(verified.DependencyPlan)
 	verified.Index = cloneReceiptProgramIndex(verified.Index)
 	return verified, nil
 }
@@ -311,48 +300,6 @@ func validateProgramVerification(verified programVerification) error {
 	}
 	if err := ValidateProgramIndex(verified.Index); err != nil {
 		return fmt.Errorf("program verification index: %w", err)
-	}
-	if err := ValidateDependencyIndex(verified.DependencyIndex); err != nil {
-		return fmt.Errorf("program verification dependencyIndex: %w", err)
-	}
-	if err := ValidateDependencyPlan(verified.DependencyPlan); err != nil {
-		return fmt.Errorf("program verification dependencyPlan: %w", err)
-	}
-	if err := validateDependencyPlanIndex(
-		verified.DependencyPlan,
-		verified.DependencyIndex,
-	); err != nil {
-		return fmt.Errorf("program verification: %w", err)
-	}
-	return validateProgramIndexes(verified.Index, verified.DependencyIndex)
-}
-
-func validateDependencyPlanIndex(
-	plan DependencyPlan,
-	index DependencyIndex,
-) error {
-	digest, err := DependencyPlanDigest(plan)
-	if err != nil {
-		return err
-	}
-	if index.DependencyPlanDigest != digest ||
-		plan.PackageManager != index.PackageManager ||
-		plan.ManagedRuntimeDigest != index.RuntimeDigest ||
-		plan.Architecture != index.Architecture ||
-		plan.MaterializerVersion != index.MaterializerVersion {
-		return errors.New("dependency plan does not match dependency index inputs")
-	}
-	return nil
-}
-
-func validateProgramIndexes(index ProgramIndex, dependencies DependencyIndex) error {
-	if index.RuntimeDigest != dependencies.RuntimeDigest ||
-		index.Architecture != dependencies.Architecture {
-		return errors.New("program and dependency indexes disagree on runtime or architecture")
-	}
-	if index.PackageGraph.Digest != dependencies.PackageGraphDigest ||
-		index.PackageGraph.SizeBytes != dependencies.PackageGraphSizeBytes {
-		return errors.New("program and dependency indexes disagree on package graph identity")
 	}
 	return nil
 }
@@ -427,26 +374,54 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	if index.RuntimeAPIVersion != RuntimeAPIVersion {
 		return fmt.Errorf("program index runtimeApiVersion = %q, want %q", index.RuntimeAPIVersion, RuntimeAPIVersion)
 	}
+	if index.BuildContractVersion != ProgramBuildContractVersion {
+		return fmt.Errorf(
+			"program index buildContractVersion = %q, want %q",
+			index.BuildContractVersion,
+			ProgramBuildContractVersion,
+		)
+	}
 	if !sha256DigestPattern.MatchString(index.RuntimeDigest) {
 		return fmt.Errorf("program index runtimeDigest is not a lowercase SHA-256 digest")
 	}
 	if !validArchitecture(index.Architecture) {
 		return fmt.Errorf("program index architecture %q is unsupported", index.Architecture)
 	}
-	if !sha256DigestPattern.MatchString(index.Dependencies.Digest) {
-		return fmt.Errorf("program index dependencies.digest is not a lowercase SHA-256 digest")
+	if !sha256DigestPattern.MatchString(index.StandardToolchainDigest) {
+		return fmt.Errorf("program index standardToolchainDigest is not a lowercase SHA-256 digest")
 	}
-	if index.Dependencies.SizeBytes < 1 || index.Dependencies.SizeBytes > maxJSONSafeInteger {
-		return fmt.Errorf("program index dependencies.sizeBytes is not a positive JavaScript-safe integer")
+	if !sha256DigestPattern.MatchString(index.DependenciesDigest) {
+		return fmt.Errorf("program index dependenciesDigest is not a lowercase SHA-256 digest")
 	}
-	if index.Dependencies.MediaType != ProgramDependencyArtifactMediaType {
-		return fmt.Errorf("program index dependencies.mediaType = %q, want %q", index.Dependencies.MediaType, ProgramDependencyArtifactMediaType)
+	if !sha256DigestPattern.MatchString(index.ModuleMapDigest) {
+		return fmt.Errorf("program index moduleMapDigest is not a lowercase SHA-256 digest")
 	}
-	if err := validateProgramFile(index.PackageGraph, "packageGraph"); err != nil {
-		return err
+	if !sha256DigestPattern.MatchString(index.Manager.CapsuleDigest) {
+		return fmt.Errorf("program index manager.capsuleDigest is not a lowercase SHA-256 digest")
 	}
-	if err := validateProgramFile(index.Modules, "modules"); err != nil {
-		return err
+	if index.Manager.Name != PackageManagerNPM && index.Manager.Name != PackageManagerBun {
+		return fmt.Errorf("program index manager.name %q is unsupported", index.Manager.Name)
+	}
+	if len(index.Manager.Version) == 0 ||
+		len(index.Manager.Version) > maxPackageManagerVersionBytes ||
+		!packageManagerVersionPattern.MatchString(index.Manager.Version) {
+		return fmt.Errorf(
+			"program index manager.version %q is not an admitted SemVer",
+			index.Manager.Version,
+		)
+	}
+	if !validProgramLockfile(index.Manager.Name, index.Submitted.LockfileName) {
+		return fmt.Errorf(
+			"program index submitted.lockfileName = %q is unsupported for %s",
+			index.Submitted.LockfileName,
+			index.Manager.Name,
+		)
+	}
+	if !sha256DigestPattern.MatchString(index.Submitted.LockfileDigest) {
+		return fmt.Errorf("program index submitted.lockfileDigest is not a lowercase SHA-256 digest")
+	}
+	if !sha256DigestPattern.MatchString(index.Submitted.SourceDigest) {
+		return fmt.Errorf("program index submitted.sourceDigest is not a lowercase SHA-256 digest")
 	}
 	if len(index.Declarations) == 0 {
 		return fmt.Errorf("program index declarations must not be empty")
@@ -462,14 +437,15 @@ func ValidateProgramIndex(index ProgramIndex) error {
 	return nil
 }
 
-func validateProgramFile(file ProgramFile, name string) error {
-	if !sha256DigestPattern.MatchString(file.Digest) {
-		return fmt.Errorf("program index %s.digest is not a lowercase SHA-256 digest", name)
+func validProgramLockfile(manager PackageManagerName, lockfile string) bool {
+	switch manager {
+	case PackageManagerNPM:
+		return lockfile == "package-lock.json"
+	case PackageManagerBun:
+		return lockfile == "bun.lock" || lockfile == "bun.lockb"
+	default:
+		return false
 	}
-	if file.SizeBytes < 1 || file.SizeBytes > maxProgramFileSizeBytes {
-		return fmt.Errorf("program index %s.sizeBytes is outside [1,%d]", name, maxProgramFileSizeBytes)
-	}
-	return nil
 }
 
 func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
@@ -485,6 +461,15 @@ func CanonicalManifestAndDigest(raw []byte) ([]byte, [sha256.Size]byte, error) {
 
 func validArchitecture(architecture RuntimeArchitecture) bool {
 	return architecture == ArchitectureAArch64 || architecture == ArchitectureX8664
+}
+
+func hasNodeModulesComponent(value string) bool {
+	for _, item := range strings.Split(value, "/") {
+		if item == "node_modules" {
+			return true
+		}
+	}
+	return false
 }
 
 func validateDeclaration(declaration ProgramDeclaration) error {

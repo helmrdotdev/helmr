@@ -87,7 +87,7 @@ func testBuildPolicy() *deployment.BuildPolicy {
 	if err != nil {
 		panic(err)
 	}
-	raw := []byte(`{"current":{"us-east-1":{"materializerVersion":"helmr.dependencies.v0","runtimeDigest":"` + testManagedRuntimeDescriptor().Digest + `","standardToolchainDigest":"` + toolchainDigest + `"}},"formatVersion":0,"runtimes":[` + string(descriptor) + `],"toolchains":[` + string(toolchainDescriptor) + `]}`)
+	raw := []byte(`{"current":{"us-east-1":{"buildContractVersion":"helmr.program-build.v0","runtimeDigest":"` + testManagedRuntimeDescriptor().Digest + `","standardToolchainDigest":"` + toolchainDigest + `"}},"formatVersion":0,"runtimes":[` + string(descriptor) + `],"toolchains":[` + string(toolchainDescriptor) + `]}`)
 	policy, err := deployment.ParseBuildPolicy(raw)
 	if err != nil {
 		panic(err)

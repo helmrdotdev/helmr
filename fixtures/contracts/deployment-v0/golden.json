@@ -27,7 +27,7 @@
     { "name": "non-finite-double", "inputHex": "7b2278223a31653430307d" }
   ],
   "programIndex": {
-    "canonical": "{\"architecture\":\"x86_64\",\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"dependencies\":{\"digest\":\"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"mediaType\":\"application/vnd.helmr.deployment-program-dependencies.v0+squashfs\",\"sizeBytes\":483183820},\"formatVersion\":0,\"modules\":{\"digest\":\"sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567\",\"sizeBytes\":9216},\"packageGraph\":{\"digest\":\"sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210\",\"sizeBytes\":18492},\"runtimeApiVersion\":\"helmr.runtime.v0\",\"runtimeDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\"}"
+    "canonical": "{\"architecture\":\"x86_64\",\"buildContractVersion\":\"helmr.program-build.v0\",\"declarations\":[{\"declaredId\":\"Build-\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build.\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build0\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"BuildA\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Build_\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"Builda\",\"kind\":\"task\",\"slots\":[\"handler\"]},{\"declaredId\":\"operator\",\"kind\":\"actor\",\"slots\":[\"handler\"]},{\"declaredId\":\"progress\",\"kind\":\"run_stream\",\"slots\":[\"schema\"]}],\"dependenciesDigest\":\"sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789\",\"formatVersion\":0,\"manager\":{\"capsuleDigest\":\"sha256:7777777777777777777777777777777777777777777777777777777777777777\",\"name\":\"bun\",\"version\":\"1.3.10\"},\"moduleMapDigest\":\"sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567\",\"runtimeApiVersion\":\"helmr.runtime.v0\",\"runtimeDigest\":\"sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef\",\"standardToolchainDigest\":\"sha256:6666666666666666666666666666666666666666666666666666666666666666\",\"submitted\":{\"lockfileDigest\":\"sha256:1111111111111111111111111111111111111111111111111111111111111111\",\"lockfileName\":\"bun.lock\",\"sourceDigest\":\"sha256:2222222222222222222222222222222222222222222222222222222222222222\"}}"
   },
   "programRejections": [
     { "name": "empty-declarations", "mutation": "empty_declarations" },
@@ -36,22 +36,18 @@
     { "name": "noncanonical-declaration-order", "mutation": "declaration_order" },
     { "name": "invalid-task-slots", "mutation": "task_slots" },
     { "name": "duplicate-declaration", "mutation": "duplicate_declaration" },
+    { "name": "build-contract-mismatch", "mutation": "build_contract" },
     { "name": "runtime-api-mismatch", "mutation": "runtime_api" },
     { "name": "runtime-digest-mismatch", "mutation": "runtime_digest" },
     { "name": "dependency-digest-mismatch", "mutation": "dependency_digest" },
-    { "name": "dependency-size-zero", "mutation": "dependency_size_zero" },
-    { "name": "dependency-size-negative", "mutation": "dependency_size_negative" },
-    { "name": "dependency-size-fractional", "mutation": "dependency_size_fractional" },
-    { "name": "dependency-size-unsafe", "mutation": "dependency_size_unsafe" },
-    { "name": "dependency-media-type-mismatch", "mutation": "dependency_media_type" },
-    { "name": "package-graph-digest-mismatch", "mutation": "package_graph_digest" },
-    { "name": "package-graph-size-zero", "mutation": "package_graph_size_zero" },
-    { "name": "package-graph-size-fractional", "mutation": "package_graph_size_fractional" },
-    { "name": "package-graph-size-oversize", "mutation": "package_graph_size_oversize" },
-    { "name": "modules-digest-mismatch", "mutation": "modules_digest" },
-    { "name": "modules-size-zero", "mutation": "modules_size_zero" },
-    { "name": "modules-size-fractional", "mutation": "modules_size_fractional" },
-    { "name": "modules-size-oversize", "mutation": "modules_size_oversize" },
+    { "name": "module-map-digest-mismatch", "mutation": "module_map_digest" },
+    { "name": "toolchain-digest-mismatch", "mutation": "toolchain_digest" },
+    { "name": "manager-name-mismatch", "mutation": "manager_name" },
+    { "name": "manager-version-range", "mutation": "manager_version" },
+    { "name": "manager-capsule-digest-mismatch", "mutation": "manager_capsule_digest" },
+    { "name": "lockfile-name-mismatch", "mutation": "lockfile_name" },
+    { "name": "lockfile-digest-mismatch", "mutation": "lockfile_digest" },
+    { "name": "source-digest-mismatch", "mutation": "source_digest" },
     { "name": "architecture-mismatch", "mutation": "architecture" },
     { "name": "declared-id-mismatch", "mutation": "declared_id" }
   ],

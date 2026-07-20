@@ -157,7 +157,7 @@ func TestValidateBuildSucceeded(t *testing.T) {
 			change: func(result *BuildResult) {
 				result.Succeeded.ProgramReceipt.Index.Architecture = ArchitectureAArch64
 			},
-			errMsg: "disagree on runtime or architecture",
+			errMsg: "architecture does not match program",
 		},
 		{
 			name: "workspace image array",

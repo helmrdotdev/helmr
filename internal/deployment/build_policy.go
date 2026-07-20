@@ -26,7 +26,7 @@ var (
 type BuildTarget struct {
 	Runtime                 RuntimeDescriptor
 	StandardToolchainDigest string
-	MaterializerVersion     string
+	BuildContractVersion    string
 }
 
 type BuildPolicy struct {
@@ -39,7 +39,7 @@ type BuildPolicy struct {
 }
 
 type buildPolicyTarget struct {
-	MaterializerVersion     string `json:"materializerVersion"`
+	BuildContractVersion    string `json:"buildContractVersion"`
 	RuntimeDigest           string `json:"runtimeDigest"`
 	StandardToolchainDigest string `json:"standardToolchainDigest"`
 }
@@ -157,7 +157,7 @@ func (p *BuildPolicy) Current(region string) (BuildTarget, error) {
 	return BuildTarget{
 		Runtime:                 p.runtimes[target.RuntimeDigest],
 		StandardToolchainDigest: target.StandardToolchainDigest,
-		MaterializerVersion:     target.MaterializerVersion,
+		BuildContractVersion:    target.BuildContractVersion,
 	}, nil
 }
 
@@ -193,7 +193,7 @@ func (p *BuildPolicy) ToolchainCatalogDigest() (string, error) {
 func (p *BuildPolicy) Resolve(
 	runtimeDigest,
 	standardToolchainDigest,
-	materializerVersion string,
+	buildContractVersion string,
 ) (BuildTarget, error) {
 	runtime, err := p.ResolveRuntime(runtimeDigest)
 	if err != nil {
@@ -205,13 +205,13 @@ func (p *BuildPolicy) Resolve(
 	}
 	if toolchain.Architecture != runtime.Architecture ||
 		toolchain.ManagedRuntimeDigest != runtime.Digest ||
-		materializerVersion != DependencyMaterializerVersion {
+		buildContractVersion != ProgramBuildContractVersion {
 		return BuildTarget{}, errors.New("build target is inconsistent")
 	}
 	return BuildTarget{
 		Runtime:                 runtime,
 		StandardToolchainDigest: standardToolchainDigest,
-		MaterializerVersion:     materializerVersion,
+		BuildContractVersion:    buildContractVersion,
 	}, nil
 }
 
@@ -224,11 +224,8 @@ func ValidateProgramTarget(
 	}
 	if receipt.Index.RuntimeDigest != target.Runtime.Digest ||
 		receipt.Index.Architecture != target.Runtime.Architecture ||
-		receipt.DependencyIndex.MaterializerVersion != target.MaterializerVersion ||
-		receipt.DependencyPlan.ManagedRuntimeDigest != target.Runtime.Digest ||
-		receipt.DependencyPlan.StandardToolchainDigest != target.StandardToolchainDigest ||
-		receipt.DependencyPlan.MaterializerVersion != target.MaterializerVersion ||
-		receipt.DependencyPlan.Architecture != target.Runtime.Architecture {
+		receipt.Index.StandardToolchainDigest != target.StandardToolchainDigest ||
+		receipt.Index.BuildContractVersion != ProgramBuildContractVersion {
 		return errors.New("program receipt does not match the build target")
 	}
 	return nil
@@ -355,12 +352,12 @@ func validateBuildPolicyDocument(document buildPolicyDocument) error {
 				target.StandardToolchainDigest,
 			)
 		}
-		if target.MaterializerVersion != DependencyMaterializerVersion {
+		if target.BuildContractVersion != ProgramBuildContractVersion {
 			return fmt.Errorf(
-				"build policy current region %q materializerVersion = %q, want %q",
+				"build policy current region %q buildContractVersion = %q, want %q",
 				region,
-				target.MaterializerVersion,
-				DependencyMaterializerVersion,
+				target.BuildContractVersion,
+				ProgramBuildContractVersion,
 			)
 		}
 		if toolchain.Architecture != runtime.Architecture ||

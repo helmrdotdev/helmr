@@ -106,11 +106,7 @@ type programArtifacts struct {
 }
 
 type verifiedProgram struct {
-	index        ProgramIndex
-	plan         DependencyPlan
-	dependencies DependencyIndex
-	graph        PackageGraph
-	modules      ModuleMap
+	index ProgramIndex
 }
 
 func (program *verifiedProgram) Index() ProgramIndex {
@@ -123,14 +119,6 @@ func (program *verifiedProgram) Index() ProgramIndex {
 		)
 	}
 	return index
-}
-
-func (program *verifiedProgram) DependencyIndex() DependencyIndex {
-	return program.dependencies
-}
-
-func (program *verifiedProgram) DependencyPlan() DependencyPlan {
-	return cloneDependencyPlan(program.plan)
 }
 
 func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*verifiedProgram, error) {
@@ -172,11 +160,7 @@ func verifyProgramArtifacts(ctx context.Context, artifacts programArtifacts) (*v
 		return nil, err
 	}
 	return &verifiedProgram{
-		index:        verifier.index,
-		plan:         verifier.dependencyPlan,
-		dependencies: verifier.dependencyIndex,
-		graph:        verifier.graph,
-		modules:      verifier.modules,
+		index: verifier.index,
 	}, nil
 }
 

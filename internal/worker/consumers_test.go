@@ -16,7 +16,7 @@ import (
 func testWorkerDeploymentBuild() api.WorkerDeploymentBuild {
 	return api.WorkerDeploymentBuild{
 		ID:                      "deployment-1",
-		MaterializerVersion:     "helmr.dependencies.v0",
+		BuildContractVersion:    deployment.ProgramBuildContractVersion,
 		StandardToolchainDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		Runtime: api.WorkerRuntimeDescriptor{
 			Architecture:      "aarch64",
@@ -34,12 +34,12 @@ type consumerBuildPolicy struct{}
 func (consumerBuildPolicy) Resolve(
 	runtimeDigest,
 	standardToolchainDigest,
-	materializerVersion string,
+	buildContractVersion string,
 ) (deployment.BuildTarget, error) {
 	build := testWorkerDeploymentBuild()
 	if runtimeDigest != build.Runtime.Digest ||
 		standardToolchainDigest != build.StandardToolchainDigest ||
-		materializerVersion != build.MaterializerVersion {
+		buildContractVersion != build.BuildContractVersion {
 		return deployment.BuildTarget{}, errors.New("build target is not registered")
 	}
 	return deployment.BuildTarget{
@@ -52,7 +52,7 @@ func (consumerBuildPolicy) Resolve(
 			SizeBytes:         build.Runtime.SizeBytes,
 		},
 		StandardToolchainDigest: standardToolchainDigest,
-		MaterializerVersion:     materializerVersion,
+		BuildContractVersion:    buildContractVersion,
 	}, nil
 }
 

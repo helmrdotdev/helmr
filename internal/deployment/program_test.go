@@ -109,31 +109,6 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 	}
 	for _, test := range fixture.ProgramRejections {
 		t.Run(test.Name, func(t *testing.T) {
-			fractionalField, fractional := map[string]string{
-				"dependency_size_fractional":    "dependencies",
-				"package_graph_size_fractional": "packageGraph",
-				"modules_size_fractional":       "modules",
-			}[test.Mutation]
-			if fractional {
-				var value map[string]any
-				if err := json.Unmarshal([]byte(fixture.ProgramIndex.Canonical), &value); err != nil {
-					t.Fatal(err)
-				}
-				value[fractionalField].(map[string]any)["sizeBytes"] = 1.5
-				raw, err := json.Marshal(value)
-				if err != nil {
-					t.Fatal(err)
-				}
-				canonical, err := canonicalProgramInput(raw)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := ParseProgramIndex(canonical); err == nil {
-					t.Fatal("ParseProgramIndex returned nil error")
-				}
-				return
-			}
-
 			index := cloneProgramIndex(base)
 			switch test.Mutation {
 			case "empty_declarations":
@@ -172,32 +147,30 @@ func TestProgramIndexRejectsSharedMutations(t *testing.T) {
 				index.Declarations[0].Slots = []DeclarationSlot{DeclarationSlotPayloadSchema, DeclarationSlotHandler}
 			case "duplicate_declaration":
 				index.Declarations[1] = index.Declarations[0]
+			case "build_contract":
+				index.BuildContractVersion = "helmr.program-build.v1"
 			case "runtime_api":
 				index.RuntimeAPIVersion = "helmr.runtime.v1"
 			case "runtime_digest":
 				index.RuntimeDigest = "sha256:" + strings.Repeat("A", 64)
 			case "dependency_digest":
-				index.Dependencies.Digest = "sha256:invalid"
-			case "dependency_size_zero":
-				index.Dependencies.SizeBytes = 0
-			case "dependency_size_negative":
-				index.Dependencies.SizeBytes = -1
-			case "dependency_size_unsafe":
-				index.Dependencies.SizeBytes = 9007199254740992
-			case "dependency_media_type":
-				index.Dependencies.MediaType += "; charset=binary"
-			case "package_graph_digest":
-				index.PackageGraph.Digest = "sha256:invalid"
-			case "package_graph_size_zero":
-				index.PackageGraph.SizeBytes = 0
-			case "package_graph_size_oversize":
-				index.PackageGraph.SizeBytes = maxProgramFileSizeBytes + 1
-			case "modules_digest":
-				index.Modules.Digest = "sha256:invalid"
-			case "modules_size_zero":
-				index.Modules.SizeBytes = 0
-			case "modules_size_oversize":
-				index.Modules.SizeBytes = maxProgramFileSizeBytes + 1
+				index.DependenciesDigest = "sha256:invalid"
+			case "module_map_digest":
+				index.ModuleMapDigest = "sha256:invalid"
+			case "toolchain_digest":
+				index.StandardToolchainDigest = "sha256:invalid"
+			case "manager_name":
+				index.Manager.Name = "pnpm"
+			case "manager_version":
+				index.Manager.Version = "^1.3.10"
+			case "manager_capsule_digest":
+				index.Manager.CapsuleDigest = "sha256:invalid"
+			case "lockfile_name":
+				index.Submitted.LockfileName = "package-lock.json"
+			case "lockfile_digest":
+				index.Submitted.LockfileDigest = "sha256:invalid"
+			case "source_digest":
+				index.Submitted.SourceDigest = "sha256:invalid"
 			case "architecture":
 				index.Architecture = "amd64"
 			case "declared_id":
@@ -219,29 +192,24 @@ func TestProgramIndexParserRequiresCanonicalBytes(t *testing.T) {
 	}
 }
 
+func TestProgramIndexAcceptsBunBinaryLockfile(t *testing.T) {
+	fixture := loadContractFixture(t)
+	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
+	if err != nil {
+		t.Fatal(err)
+	}
+	index.Submitted.LockfileName = "bun.lockb"
+	if err := ValidateProgramIndex(index); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestProgramIndexParserEnforcesSizeBound(t *testing.T) {
 	if _, err := ParseProgramIndex(nil); err == nil {
 		t.Fatal("ParseProgramIndex accepted empty input")
 	}
 	if _, err := ParseProgramIndex(make([]byte, maxProgramFileSizeBytes+1)); err == nil {
 		t.Fatal("ParseProgramIndex accepted oversized input")
-	}
-}
-
-func TestProgramIndexAcceptsFileSizeBounds(t *testing.T) {
-	fixture := loadContractFixture(t)
-	index, err := ParseProgramIndex([]byte(fixture.ProgramIndex.Canonical))
-	if err != nil {
-		t.Fatal(err)
-	}
-	index.PackageGraph.SizeBytes = 1
-	index.Modules.SizeBytes = maxProgramFileSizeBytes
-	canonical, err := CanonicalProgramIndex(index)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ParseProgramIndex(canonical); err != nil {
-		t.Fatal(err)
 	}
 }
 

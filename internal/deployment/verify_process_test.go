@@ -210,28 +210,29 @@ func verifierRecordBytes(kind verifierRecordKind, payload []byte) []byte {
 func canonicalVerifierProgramIndex(t *testing.T) []byte {
 	t.Helper()
 	canonical, err := CanonicalProgramIndex(ProgramIndex{
-		FormatVersion:     ProgramIndexFormatVersion,
-		RuntimeAPIVersion: RuntimeAPIVersion,
-		RuntimeDigest:     "sha256:" + strings.Repeat("0", 64),
-		Architecture:      ArchitectureX8664,
-		Dependencies: ProgramDependencies{
-			Digest:    "sha256:" + strings.Repeat("1", 64),
-			SizeBytes: 1,
-			MediaType: ProgramDependencyArtifactMediaType,
-		},
-		PackageGraph: ProgramFile{
-			Digest:    "sha256:" + strings.Repeat("2", 64),
-			SizeBytes: 1,
-		},
-		Modules: ProgramFile{
-			Digest:    "sha256:" + strings.Repeat("3", 64),
-			SizeBytes: 1,
-		},
+		Architecture:         ArchitectureX8664,
+		BuildContractVersion: ProgramBuildContractVersion,
 		Declarations: []ProgramDeclaration{{
 			Kind:       DeclarationKindTask,
 			DeclaredID: "verify",
 			Slots:      []DeclarationSlot{DeclarationSlotHandler},
 		}},
+		DependenciesDigest: "sha256:" + strings.Repeat("1", 64),
+		FormatVersion:      ProgramIndexFormatVersion,
+		Manager: ProgramManager{
+			CapsuleDigest: "sha256:" + strings.Repeat("2", 64),
+			Name:          PackageManagerBun,
+			Version:       "1.3.10",
+		},
+		ModuleMapDigest:         "sha256:" + strings.Repeat("3", 64),
+		RuntimeAPIVersion:       RuntimeAPIVersion,
+		RuntimeDigest:           "sha256:" + strings.Repeat("0", 64),
+		StandardToolchainDigest: "sha256:" + strings.Repeat("4", 64),
+		Submitted: ProgramSubmittedSource{
+			LockfileDigest: "sha256:" + strings.Repeat("5", 64),
+			LockfileName:   "bun.lock",
+			SourceDigest:   "sha256:" + strings.Repeat("6", 64),
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -245,38 +246,9 @@ func canonicalVerifierProgramVerification(t *testing.T) []byte {
 	if err := json.Unmarshal(canonicalVerifierProgramIndex(t), &index); err != nil {
 		t.Fatal(err)
 	}
-	plan := dependencyPlanFixture(
-		t,
-		PackageManagerBun,
-		index.Architecture,
-	)
-	plan.ManagedRuntimeDigest = index.RuntimeDigest
-	planDigest, err := DependencyPlanDigest(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
 	canonical, err := canonicalProgramVerification(programVerification{
-		FormatVersion:  ProgramReceiptFormatVersion,
-		DependencyPlan: plan,
-		DependencyIndex: DependencyIndex{
-			FormatVersion:        DependencyIndexFormatVersion,
-			DependencyPlanDigest: planDigest,
-			PackageManager: PackageManager{
-				Name:    PackageManagerBun,
-				Version: "1.3.10",
-			},
-			Lockfile: DependencyLockfile{
-				Name:   "bun.lock",
-				Digest: "sha256:" + strings.Repeat("5", 64),
-			},
-			LocalManifestsDigest:  "sha256:" + strings.Repeat("6", 64),
-			PackageGraphDigest:    index.PackageGraph.Digest,
-			PackageGraphSizeBytes: index.PackageGraph.SizeBytes,
-			MaterializerVersion:   DependencyMaterializerVersion,
-			RuntimeDigest:         index.RuntimeDigest,
-			Architecture:          index.Architecture,
-		},
-		Index: index,
+		FormatVersion: ProgramReceiptFormatVersion,
+		Index:         index,
 	})
 	if err != nil {
 		t.Fatal(err)

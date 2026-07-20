@@ -173,10 +173,8 @@ func verifyProgramDescriptorPair(ctx context.Context, codeFD, dependencyFD int) 
 		return nil, err
 	}
 	canonical, err := canonicalProgramVerification(programVerification{
-		FormatVersion:   ProgramReceiptFormatVersion,
-		DependencyPlan:  verified.DependencyPlan(),
-		DependencyIndex: verified.DependencyIndex(),
-		Index:           verified.Index(),
+		FormatVersion: ProgramReceiptFormatVersion,
+		Index:         verified.Index(),
 	})
 	if err != nil {
 		return nil, &artifactInfrastructureError{

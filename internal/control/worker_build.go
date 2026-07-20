@@ -70,7 +70,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		target, err := s.buildPolicy.Resolve(
 			runtimeDigest,
 			toolchainDigest,
-			row.BuildMaterializerVersion,
+			row.BuildContractVersion,
 		)
 		if err != nil {
 			return fmt.Errorf("resolve deployment build target: %w", err)
@@ -119,7 +119,7 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 			},
 			Runtime:                 runtimeWire,
 			StandardToolchainDigest: target.StandardToolchainDigest,
-			MaterializerVersion:     target.MaterializerVersion,
+			BuildContractVersion:    target.BuildContractVersion,
 		}
 		response = api.WorkerDeploymentBuildLeaseResponse{Lease: &lease, Deployment: &build}
 		return nil
@@ -556,7 +556,7 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		target, err := s.buildPolicy.Resolve(
 			runtimeDigest,
 			toolchainDigest,
-			locked.BuildMaterializerVersion,
+			locked.BuildContractVersion,
 		)
 		if err != nil || string(target.Runtime.Architecture) != locked.BuildArchitecture {
 			return errors.New("deployment build target is not registered")
@@ -614,10 +614,24 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 		if err := deployment.ValidateProgramTarget(target, receipt); err != nil {
 			return failInvalid(err.Error())
 		}
+		source, err := s.cas.Get(r.Context(), locked.DeploymentSourceDigest)
+		if err != nil {
+			return fmt.Errorf("read deployment source authority: %w", err)
+		}
+		selection, inspectErr := deployment.InspectSource(source)
+		closeErr := source.Close()
+		if inspectErr != nil {
+			return failInvalid(inspectErr.Error())
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close deployment source authority: %w", closeErr)
+		}
 		if err := validateManagerAuthority(
 			r.Context(),
 			s.managerStore,
-			receipt.DependencyPlan,
+			locked.DeploymentSourceDigest,
+			selection,
+			receipt.Index,
 		); err != nil {
 			if errors.Is(err, errManagerAuthorityMismatch) {
 				return failInvalid(err.Error())
@@ -886,20 +900,29 @@ func (s *Server) workerCompleteDeploymentBuild(w http.ResponseWriter, r *http.Re
 }
 
 var errManagerAuthorityMismatch = errors.New(
-	"dependency plan package manager does not match fixed authority",
+	"program package manager does not match fixed authority",
 )
 
 func validateManagerAuthority(
 	ctx context.Context,
 	store ManagerResolver,
-	plan deployment.DependencyPlan,
+	sourceDigest string,
+	selection deployment.SourceSelection,
+	index deployment.ProgramIndex,
 ) error {
 	if store == nil {
 		return errors.New("manager store is required")
 	}
+	if index.Submitted.SourceDigest != sourceDigest ||
+		index.Submitted.LockfileName != selection.LockfileName ||
+		index.Submitted.LockfileDigest != selection.LockfileDigest ||
+		index.Manager.Name != selection.Manager.Name ||
+		index.Manager.Version != selection.Manager.Version {
+		return errManagerAuthorityMismatch
+	}
 	selector := deployment.NewManagerSelector(
-		plan.PackageManager,
-		plan.Architecture,
+		selection.Manager,
+		index.Architecture,
 	)
 	capsule, err := store.Resolve(ctx, selector)
 	if err != nil {
@@ -909,7 +932,7 @@ func validateManagerAuthority(
 	if err != nil {
 		return fmt.Errorf("digest manager capsule: %w", err)
 	}
-	if digest != plan.ManagerCapsuleDigest {
+	if digest != index.Manager.CapsuleDigest {
 		return errManagerAuthorityMismatch
 	}
 	return nil

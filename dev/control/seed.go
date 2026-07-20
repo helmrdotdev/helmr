@@ -94,7 +94,7 @@ ON CONFLICT (id) DO UPDATE
 
 INSERT INTO deployments (
     id, public_id, org_id, build_region_id, build_architecture, build_runtime_digest,
-    build_standard_toolchain_digest, build_materializer_version,
+    build_standard_toolchain_digest, build_contract_version,
     project_id, environment_id, version, content_hash,
     deployment_source_artifact_id, deployment_manifest_artifact_id, status, built_at, deployed_at
 )
@@ -105,7 +105,7 @@ SELECT '00000000-0000-0000-0000-000000000601',
        'x86_64',
        decode(repeat('01', 32), 'hex'),
        decode(repeat('02', 32), 'hex'),
-       'helmr.dependencies.v0',
+       'helmr.program-build.v0',
        '00000000-0000-0000-0000-000000000301',
        '00000000-0000-0000-0000-000000000401',
        'dev-2026-06-22',
@@ -120,7 +120,7 @@ ON CONFLICT (id) DO UPDATE
        build_architecture = EXCLUDED.build_architecture,
        build_runtime_digest = EXCLUDED.build_runtime_digest,
        build_standard_toolchain_digest = EXCLUDED.build_standard_toolchain_digest,
-       build_materializer_version = EXCLUDED.build_materializer_version,
+       build_contract_version = EXCLUDED.build_contract_version,
        version = EXCLUDED.version,
        content_hash = EXCLUDED.content_hash,
        status = EXCLUDED.status,

@@ -80,21 +80,6 @@ describe("canonical deployment contract", async () => {
           expect(() => parseProgramIndex(input), item.name).toThrow()
           continue
         }
-        case "dependency_size_fractional":
-        case "package_graph_size_fractional":
-        case "modules_size_fractional": {
-          const value = JSON.parse(fixture.programIndex.canonical) as Record<string, unknown>
-          const field = {
-            dependency_size_fractional: "dependencies",
-            package_graph_size_fractional: "packageGraph",
-            modules_size_fractional: "modules",
-          }[item.mutation] as string
-          const file = value[field] as Record<string, unknown>
-          file["sizeBytes"] = 1.5
-          const input = decoder.decode(canonicalizeJson(JSON.stringify(value)))
-          expect(() => parseProgramIndex(input), item.name).toThrow()
-          continue
-        }
         case "declaration_order":
           ;[index.declarations[0], index.declarations[1]] = [
             index.declarations[1],
@@ -110,6 +95,9 @@ describe("canonical deployment contract", async () => {
         case "duplicate_declaration":
           index.declarations[1] = structuredClone(index.declarations[0])
           break
+        case "build_contract":
+          index.buildContractVersion = "helmr.program-build.v1"
+          break
         case "runtime_api":
           index.runtimeApiVersion = "helmr.runtime.v1"
           break
@@ -117,37 +105,31 @@ describe("canonical deployment contract", async () => {
           index.runtimeDigest = `sha256:${"A".repeat(64)}`
           break
         case "dependency_digest":
-          index.dependencies.digest = "sha256:invalid"
+          index.dependenciesDigest = "sha256:invalid"
           break
-        case "dependency_size_zero":
-          index.dependencies.sizeBytes = 0
+        case "module_map_digest":
+          index.moduleMapDigest = "sha256:invalid"
           break
-        case "dependency_size_negative":
-          index.dependencies.sizeBytes = -1
+        case "toolchain_digest":
+          index.standardToolchainDigest = "sha256:invalid"
           break
-        case "dependency_size_unsafe":
-          index.dependencies.sizeBytes = 9007199254740992
+        case "manager_name":
+          index.manager.name = "pnpm"
           break
-        case "dependency_media_type":
-          index.dependencies.mediaType += "; charset=binary"
+        case "manager_version":
+          index.manager.version = "^1.3.10"
           break
-        case "package_graph_digest":
-          index.packageGraph.digest = "sha256:invalid"
+        case "manager_capsule_digest":
+          index.manager.capsuleDigest = "sha256:invalid"
           break
-        case "package_graph_size_zero":
-          index.packageGraph.sizeBytes = 0
+        case "lockfile_name":
+          index.submitted.lockfileName = "package-lock.json"
           break
-        case "package_graph_size_oversize":
-          index.packageGraph.sizeBytes = 16777217
+        case "lockfile_digest":
+          index.submitted.lockfileDigest = "sha256:invalid"
           break
-        case "modules_digest":
-          index.modules.digest = "sha256:invalid"
-          break
-        case "modules_size_zero":
-          index.modules.sizeBytes = 0
-          break
-        case "modules_size_oversize":
-          index.modules.sizeBytes = 16777217
+        case "source_digest":
+          index.submitted.sourceDigest = "sha256:invalid"
           break
         case "architecture":
           index.architecture = "amd64"
@@ -169,6 +151,14 @@ describe("canonical deployment contract", async () => {
     expect(() => parseProgramIndex(` ${fixture.programIndex.canonical}`)).toThrow(/canonical/)
   })
 
+  test("accepts Bun's binary lockfile", () => {
+    const index = structuredClone(
+      parseProgramIndex(fixture.programIndex.canonical),
+    ) as MutableProgramIndex
+    index.submitted.lockfileName = "bun.lockb"
+    expect(() => validateProgramIndex(index as ProgramIndex)).not.toThrow()
+  })
+
   test("enforces the program index size bound", () => {
     expect(() => parseProgramIndex(new Uint8Array())).toThrow(/size/)
     expect(() => parseProgramIndex(new Uint8Array(16_777_217))).toThrow(/size/)
@@ -184,15 +174,6 @@ describe("canonical deployment contract", async () => {
     expect(() => canonicalProgramIndex(index as ProgramIndex)).toThrow(/size/)
   })
 
-  test("accepts program file size bounds", () => {
-    const index = structuredClone(
-      parseProgramIndex(fixture.programIndex.canonical),
-    ) as MutableProgramIndex
-    index.packageGraph.sizeBytes = 1
-    index.modules.sizeBytes = 16777216
-    expect(() => parseProgramIndex(canonicalProgramIndex(index as ProgramIndex))).not.toThrow()
-  })
-
   test("matches the shared manifest digest", () => {
     const manifest = canonicalManifestAndDigest(fixture.manifest.input)
     expect(decoder.decode(manifest.canonical)).toBe(fixture.manifest.canonical)
@@ -201,28 +182,29 @@ describe("canonical deployment contract", async () => {
 })
 
 type MutableProgramIndex = {
-  formatVersion: number
-  runtimeApiVersion: string
-  runtimeDigest: string
   architecture: string
-  dependencies: {
-    digest: string
-    sizeBytes: number
-    mediaType: string
-  }
-  packageGraph: {
-    digest: string
-    sizeBytes: number
-  }
-  modules: {
-    digest: string
-    sizeBytes: number
-  }
+  buildContractVersion: string
   declarations: Array<{
     kind: string
     declaredId: string
     slots: string[]
   }>
+  dependenciesDigest: string
+  formatVersion: number
+  manager: {
+    capsuleDigest: string
+    name: string
+    version: string
+  }
+  moduleMapDigest: string
+  runtimeApiVersion: string
+  runtimeDigest: string
+  standardToolchainDigest: string
+  submitted: {
+    lockfileDigest: string
+    lockfileName: string
+    sourceDigest: string
+  }
 }
 
 async function loadFixture(): Promise<GoldenFixture> {
