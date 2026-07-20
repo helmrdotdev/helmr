@@ -11,29 +11,28 @@ import (
 )
 
 const (
-	sweeperLockName             = "helmr.dispatcher.sweeper"
 	runQueueReconcileLockName   = "helmr.dispatcher.run_queue_reconciler"
 	buildQueueReconcileLockName = "helmr.dispatcher.build_queue_reconciler"
 	preparedRuntimeWarmName     = "helmr.dispatcher.runtime_preparer"
 )
 
-type ExpirySweepAdvisoryLock struct {
+type advisoryLock struct {
 	pool *pgxpool.Pool
 	key  int64
 }
 
-func NewExpirySweepAdvisoryLock(pool *pgxpool.Pool) (*ExpirySweepAdvisoryLock, error) {
+func newAdvisoryLock(pool *pgxpool.Pool, name string) (*advisoryLock, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("database pool is required")
 	}
-	return &ExpirySweepAdvisoryLock{
+	return &advisoryLock{
 		pool: pool,
-		key:  advisoryLockKey(sweeperLockName),
+		key:  advisoryLockKey(name),
 	}, nil
 }
 
 type QueueReconcileAdvisoryLock struct {
-	lock *ExpirySweepAdvisoryLock
+	lock *advisoryLock
 }
 
 func NewQueueReconcileAdvisoryLock(pool *pgxpool.Pool) (*QueueReconcileAdvisoryLock, error) {
@@ -48,28 +47,26 @@ func newQueueReconcileAdvisoryLock(pool *pgxpool.Pool, name string) (*QueueRecon
 	if pool == nil {
 		return nil, fmt.Errorf("database pool is required")
 	}
-	return &QueueReconcileAdvisoryLock{
-		lock: &ExpirySweepAdvisoryLock{
-			pool: pool,
-			key:  advisoryLockKey(name),
-		},
-	}, nil
+	lock, err := newAdvisoryLock(pool, name)
+	if err != nil {
+		return nil, err
+	}
+	return &QueueReconcileAdvisoryLock{lock: lock}, nil
 }
 
 type RuntimePrepareAdvisoryLock struct {
-	lock *ExpirySweepAdvisoryLock
+	lock *advisoryLock
 }
 
 func NewRuntimePrepareAdvisoryLock(pool *pgxpool.Pool) (*RuntimePrepareAdvisoryLock, error) {
 	if pool == nil {
 		return nil, fmt.Errorf("database pool is required")
 	}
-	return &RuntimePrepareAdvisoryLock{
-		lock: &ExpirySweepAdvisoryLock{
-			pool: pool,
-			key:  advisoryLockKey(preparedRuntimeWarmName),
-		},
-	}, nil
+	lock, err := newAdvisoryLock(pool, preparedRuntimeWarmName)
+	if err != nil {
+		return nil, err
+	}
+	return &RuntimePrepareAdvisoryLock{lock: lock}, nil
 }
 
 func (l *RuntimePrepareAdvisoryLock) TryLock(ctx context.Context) (RuntimePrepareLockGuard, bool, error) {
@@ -88,11 +85,7 @@ func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcil
 	return queueReconcileAdvisoryLockGuard{guard: guard}, true, nil
 }
 
-func (l *ExpirySweepAdvisoryLock) TryLock(ctx context.Context) (ExpirySweepLockGuard, bool, error) {
-	return l.tryLock(ctx)
-}
-
-func (l *ExpirySweepAdvisoryLock) tryLock(ctx context.Context) (advisoryLockGuard, bool, error) {
+func (l *advisoryLock) tryLock(ctx context.Context) (advisoryLockGuard, bool, error) {
 	conn, err := l.pool.Acquire(ctx)
 	if err != nil {
 		return advisoryLockGuard{}, false, fmt.Errorf("acquire advisory lock connection: %w", err)
@@ -112,10 +105,6 @@ func (l *ExpirySweepAdvisoryLock) tryLock(ctx context.Context) (advisoryLockGuar
 type advisoryLockGuard struct {
 	conn *pgxpool.Conn
 	key  int64
-}
-
-func (g advisoryLockGuard) Store(ExpirySweepStore) ExpirySweepStore {
-	return db.New(g.conn)
 }
 
 type queueReconcileAdvisoryLockGuard struct {

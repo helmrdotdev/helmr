@@ -178,10 +178,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure placement reconciler: %w", err)
 	}
-	checkpointReconciler, err := dispatch.NewCheckpointReconciler(queries, executionAuthority, wakePublisher, log)
-	if err != nil {
-		return fmt.Errorf("configure checkpoint reconciler: %w", err)
-	}
 	runEnqueuer, err := dispatch.NewEnqueuer(runDispatchQueries, queue)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch enqueuer: %w", err)
@@ -193,18 +189,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	telemetryIngestor, err := telemetry.NewIngestor(log, queries, telemetry.NewClickHouseWriter(clickHouseClient))
 	if err != nil {
 		return fmt.Errorf("configure telemetry ingester: %w", err)
-	}
-	sweeperLock, err := dispatch.NewExpirySweepAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure sweeper lock: %w", err)
-	}
-	sweeper, err := dispatch.NewExpirySweeper(
-		queries,
-		dispatch.WithExpirySweepLogger(log),
-		dispatch.WithExpirySweepLock(sweeperLock),
-	)
-	if err != nil {
-		return fmt.Errorf("configure sweeper: %w", err)
 	}
 	buildSweeperLock, err := dispatch.NewBuildExpirySweepAdvisoryLock(buildDispatchPool)
 	if err != nil {
@@ -313,12 +297,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	runners := []func() error{
-		func() error { return sweeper.Run(runCtx) },
 		func() error { return buildSweeper.Run(runCtx) },
 		func() error { return staleWorkerFencer.Run(runCtx) },
 		func() error { return queueReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
-		func() error { return checkpointReconciler.Run(runCtx) },
 		func() error { return preparedRuntimeWarmer.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return runAdmissionDelivery.Run(runCtx) },
