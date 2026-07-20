@@ -190,7 +190,7 @@ func runDependencyFirecrackerProbe(
 	session, err := connector.Connect(context.Background(), vm.ConnectRequest{
 		OwnerKind:   vm.OwnerBuild,
 		Resources:   compute.BuildGuestResources(),
-		PIDsMax:     dependencyGuestPIDsMax,
+		PIDsMax:     compute.DependencyGuestPIDsMax,
 		Networkless: true,
 		BuildDrives: []vm.ReadOnlyDrive{
 			{ID: vm.ManagerDrive, Source: dependencyFirecrackerDrive{managerTree}},

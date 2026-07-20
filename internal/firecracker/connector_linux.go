@@ -39,7 +39,6 @@ import (
 const defaultKernelArgs = "console=ttyS0 reboot=k panic=1 root=/dev/vda rootfstype=ext4 ro init=/init"
 const managerAcquireKernelArgs = defaultKernelArgs + " helmr.profile=manager-acquire helmr.network=none helmr.pids_max=128"
 const dependencyManagerKernelArgs = defaultKernelArgs + " helmr.profile=dependency helmr.network=none helmr.pids_max=1024"
-const dependencyGuestPIDsMax = int64(1024)
 const stopTimeout = 10 * time.Second
 const apiSocketName = "api.sock"
 const vsockSocketName = "vsock.sock"
@@ -172,7 +171,7 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		len(request.BuildDrives) == 0:
 		return managerAcquireKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
-		request.PIDsMax == dependencyGuestPIDsMax &&
+		request.PIDsMax == compute.DependencyGuestPIDsMax &&
 		request.Networkless &&
 		networkDisabled &&
 		noSubstrate &&
