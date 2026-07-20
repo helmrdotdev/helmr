@@ -22,7 +22,8 @@ version AS (
         key_id,
         nonce,
         ciphertext,
-        value_authenticator
+        value_authenticator,
+        authenticator_key_version
     )
     SELECT
         sqlc.arg(version_id),
@@ -31,7 +32,8 @@ version AS (
         sqlc.arg(key_id),
         sqlc.arg(nonce),
         sqlc.arg(ciphertext),
-        sqlc.arg(value_authenticator)
+        sqlc.arg(value_authenticator),
+        sqlc.arg(authenticator_key_version)
     FROM secret
     RETURNING secret_id
 )
@@ -58,7 +60,8 @@ version AS (
         key_id,
         nonce,
         ciphertext,
-        value_authenticator
+        value_authenticator,
+        authenticator_key_version
     )
     SELECT
         sqlc.arg(version_id),
@@ -67,7 +70,8 @@ version AS (
         sqlc.arg(key_id),
         sqlc.arg(nonce),
         sqlc.arg(ciphertext),
-        sqlc.arg(value_authenticator)
+        sqlc.arg(value_authenticator),
+        sqlc.arg(authenticator_key_version)
     FROM locked
     RETURNING secret_id, id
 )
@@ -98,6 +102,13 @@ SELECT secrets.*
 FROM secrets
 WHERE environment_id = sqlc.arg(environment_id)
   AND name = sqlc.arg(name)
+  AND state <> 'deleted';
+
+-- name: GetSecret :one
+SELECT secrets.*
+FROM secrets
+WHERE environment_id = sqlc.arg(environment_id)
+  AND id = sqlc.arg(id)
   AND state <> 'deleted';
 
 -- name: GetSecretVersion :one
@@ -137,35 +148,71 @@ WHERE secrets.environment_id = sqlc.arg(environment_id)
 ORDER BY secrets.name, secrets.id
 LIMIT sqlc.arg(row_limit);
 
--- name: ListCurrentSecretKeyUsage :many
+-- name: ListSecretEncryptionKeyUsage :many
 SELECT secret_versions.key_id, count(*)::bigint AS secret_count
-FROM secrets
-JOIN secret_versions
-  ON secret_versions.secret_id = secrets.id
- AND secret_versions.id = secrets.current_version_id
-WHERE secrets.state = 'active'
+FROM secret_versions
 GROUP BY secret_versions.key_id
 ORDER BY secret_versions.key_id;
 
--- name: ListCurrentSecretsByKeyID :many
+-- name: ListSecretAuthenticatorKeyUsage :many
+SELECT secret_versions.authenticator_key_version, count(*)::bigint AS secret_count
+FROM secret_versions
+GROUP BY secret_versions.authenticator_key_version
+ORDER BY secret_versions.authenticator_key_version;
+
+-- name: ListSecretVersionsByKeyID :many
 SELECT
     secrets.id AS secret_id,
     secrets.environment_id,
-    secrets.state_version,
+    secrets.name,
     secret_versions.id AS version_id,
     secret_versions.version,
     secret_versions.key_id,
     secret_versions.nonce,
     secret_versions.ciphertext,
-    secret_versions.value_authenticator
+    secret_versions.value_authenticator,
+    secret_versions.authenticator_key_version
 FROM secrets
-JOIN secret_versions
-  ON secret_versions.secret_id = secrets.id
- AND secret_versions.id = secrets.current_version_id
-WHERE secrets.state = 'active'
-  AND secret_versions.key_id = sqlc.arg(key_id)
-ORDER BY secrets.updated_at, secrets.id
+JOIN secret_versions ON secret_versions.secret_id = secrets.id
+WHERE secret_versions.key_id = sqlc.arg(key_id)
+ORDER BY secret_versions.created_at, secret_versions.id
 LIMIT sqlc.arg(row_limit);
+
+-- name: UpdateSecretVersionEnvelope :execrows
+UPDATE secret_versions
+SET key_id = sqlc.arg(new_key_id),
+    nonce = sqlc.arg(new_nonce),
+    ciphertext = sqlc.arg(new_ciphertext)
+WHERE id = sqlc.arg(version_id)
+  AND key_id = sqlc.arg(previous_key_id)
+  AND nonce = sqlc.arg(previous_nonce)
+  AND ciphertext = sqlc.arg(previous_ciphertext);
+
+-- name: ListSecretVersionsByAuthenticatorKeyVersion :many
+SELECT
+    secrets.id AS secret_id,
+    secrets.environment_id,
+    secrets.name,
+    secret_versions.id AS version_id,
+    secret_versions.version,
+    secret_versions.key_id,
+    secret_versions.nonce,
+    secret_versions.ciphertext,
+    secret_versions.value_authenticator,
+    secret_versions.authenticator_key_version
+FROM secrets
+JOIN secret_versions ON secret_versions.secret_id = secrets.id
+WHERE secret_versions.authenticator_key_version = sqlc.arg(authenticator_key_version)
+ORDER BY secret_versions.created_at, secret_versions.id
+LIMIT sqlc.arg(row_limit);
+
+-- name: UpdateSecretVersionAuthenticator :execrows
+UPDATE secret_versions
+SET value_authenticator = sqlc.arg(new_value_authenticator),
+    authenticator_key_version = sqlc.arg(new_authenticator_key_version)
+WHERE id = sqlc.arg(version_id)
+  AND authenticator_key_version = sqlc.arg(previous_authenticator_key_version)
+  AND value_authenticator = sqlc.arg(previous_value_authenticator);
 
 -- name: ListWorkspaceSecrets :many
 SELECT

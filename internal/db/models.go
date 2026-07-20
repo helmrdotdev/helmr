@@ -2525,14 +2525,15 @@ type SecretResolution struct {
 }
 
 type SecretVersion struct {
-	ID                 pgtype.UUID        `json:"id"`
-	SecretID           pgtype.UUID        `json:"secret_id"`
-	Version            int64              `json:"version"`
-	KeyID              string             `json:"key_id"`
-	Nonce              []byte             `json:"nonce"`
-	Ciphertext         []byte             `json:"ciphertext"`
-	ValueAuthenticator []byte             `json:"value_authenticator"`
-	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	ID                      pgtype.UUID        `json:"id"`
+	SecretID                pgtype.UUID        `json:"secret_id"`
+	Version                 int64              `json:"version"`
+	KeyID                   string             `json:"key_id"`
+	Nonce                   []byte             `json:"nonce"`
+	Ciphertext              []byte             `json:"ciphertext"`
+	ValueAuthenticator      []byte             `json:"value_authenticator"`
+	AuthenticatorKeyVersion int32              `json:"authenticator_key_version"`
+	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 }
 
 type TelemetryOutbox struct {

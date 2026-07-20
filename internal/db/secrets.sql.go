@@ -35,7 +35,8 @@ version AS (
         key_id,
         nonce,
         ciphertext,
-        value_authenticator
+        value_authenticator,
+        authenticator_key_version
     )
     SELECT
         $4,
@@ -44,7 +45,8 @@ version AS (
         $5,
         $6,
         $7,
-        $8
+        $8,
+        $9
     FROM secret
     RETURNING secret_id
 )
@@ -54,14 +56,15 @@ JOIN version ON version.secret_id = secret.id
 `
 
 type CreateSecretParams struct {
-	ID                 pgtype.UUID `json:"id"`
-	EnvironmentID      pgtype.UUID `json:"environment_id"`
-	Name               string      `json:"name"`
-	VersionID          pgtype.UUID `json:"version_id"`
-	KeyID              string      `json:"key_id"`
-	Nonce              []byte      `json:"nonce"`
-	Ciphertext         []byte      `json:"ciphertext"`
-	ValueAuthenticator []byte      `json:"value_authenticator"`
+	ID                      pgtype.UUID `json:"id"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	Name                    string      `json:"name"`
+	VersionID               pgtype.UUID `json:"version_id"`
+	KeyID                   string      `json:"key_id"`
+	Nonce                   []byte      `json:"nonce"`
+	Ciphertext              []byte      `json:"ciphertext"`
+	ValueAuthenticator      []byte      `json:"value_authenticator"`
+	AuthenticatorKeyVersion int32       `json:"authenticator_key_version"`
 }
 
 type CreateSecretRow struct {
@@ -88,6 +91,7 @@ func (q *Queries) CreateSecret(ctx context.Context, arg CreateSecretParams) (Cre
 		arg.Nonce,
 		arg.Ciphertext,
 		arg.ValueAuthenticator,
+		arg.AuthenticatorKeyVersion,
 	)
 	var i CreateSecretRow
 	err := row.Scan(
@@ -178,7 +182,7 @@ func (q *Queries) CreateSecretResolution(ctx context.Context, arg CreateSecretRe
 }
 
 const getCurrentSecretValue = `-- name: GetCurrentSecretValue :one
-SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.created_at
+SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.authenticator_key_version, secret_versions.created_at
 FROM secrets
 JOIN secret_versions
   ON secret_versions.secret_id = secrets.id
@@ -204,7 +208,40 @@ func (q *Queries) GetCurrentSecretValue(ctx context.Context, arg GetCurrentSecre
 		&i.Nonce,
 		&i.Ciphertext,
 		&i.ValueAuthenticator,
+		&i.AuthenticatorKeyVersion,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getSecret = `-- name: GetSecret :one
+SELECT secrets.id, secrets.environment_id, secrets.name, secrets.state, secrets.state_version, secrets.current_version_id, secrets.revocation_generation, secrets.created_at, secrets.updated_at, secrets.revoked_at, secrets.deleted_at
+FROM secrets
+WHERE environment_id = $1
+  AND id = $2
+  AND state <> 'deleted'
+`
+
+type GetSecretParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetSecret(ctx context.Context, arg GetSecretParams) (Secret, error) {
+	row := q.db.QueryRow(ctx, getSecret, arg.EnvironmentID, arg.ID)
+	var i Secret
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Name,
+		&i.State,
+		&i.StateVersion,
+		&i.CurrentVersionID,
+		&i.RevocationGeneration,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RevokedAt,
+		&i.DeletedAt,
 	)
 	return i, err
 }
@@ -242,7 +279,7 @@ func (q *Queries) GetSecretByName(ctx context.Context, arg GetSecretByNameParams
 }
 
 const getSecretVersion = `-- name: GetSecretVersion :one
-SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.created_at
+SELECT secret_versions.id, secret_versions.secret_id, secret_versions.version, secret_versions.key_id, secret_versions.nonce, secret_versions.ciphertext, secret_versions.value_authenticator, secret_versions.authenticator_key_version, secret_versions.created_at
 FROM secret_versions
 JOIN secrets ON secrets.id = secret_versions.secret_id
 WHERE secrets.environment_id = $1
@@ -267,36 +304,65 @@ func (q *Queries) GetSecretVersion(ctx context.Context, arg GetSecretVersionPara
 		&i.Nonce,
 		&i.Ciphertext,
 		&i.ValueAuthenticator,
+		&i.AuthenticatorKeyVersion,
 		&i.CreatedAt,
 	)
 	return i, err
 }
 
-const listCurrentSecretKeyUsage = `-- name: ListCurrentSecretKeyUsage :many
-SELECT secret_versions.key_id, count(*)::bigint AS secret_count
-FROM secrets
-JOIN secret_versions
-  ON secret_versions.secret_id = secrets.id
- AND secret_versions.id = secrets.current_version_id
-WHERE secrets.state = 'active'
-GROUP BY secret_versions.key_id
-ORDER BY secret_versions.key_id
+const listSecretAuthenticatorKeyUsage = `-- name: ListSecretAuthenticatorKeyUsage :many
+SELECT secret_versions.authenticator_key_version, count(*)::bigint AS secret_count
+FROM secret_versions
+GROUP BY secret_versions.authenticator_key_version
+ORDER BY secret_versions.authenticator_key_version
 `
 
-type ListCurrentSecretKeyUsageRow struct {
-	KeyID       string `json:"key_id"`
-	SecretCount int64  `json:"secret_count"`
+type ListSecretAuthenticatorKeyUsageRow struct {
+	AuthenticatorKeyVersion int32 `json:"authenticator_key_version"`
+	SecretCount             int64 `json:"secret_count"`
 }
 
-func (q *Queries) ListCurrentSecretKeyUsage(ctx context.Context) ([]ListCurrentSecretKeyUsageRow, error) {
-	rows, err := q.db.Query(ctx, listCurrentSecretKeyUsage)
+func (q *Queries) ListSecretAuthenticatorKeyUsage(ctx context.Context) ([]ListSecretAuthenticatorKeyUsageRow, error) {
+	rows, err := q.db.Query(ctx, listSecretAuthenticatorKeyUsage)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListCurrentSecretKeyUsageRow
+	var items []ListSecretAuthenticatorKeyUsageRow
 	for rows.Next() {
-		var i ListCurrentSecretKeyUsageRow
+		var i ListSecretAuthenticatorKeyUsageRow
+		if err := rows.Scan(&i.AuthenticatorKeyVersion, &i.SecretCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSecretEncryptionKeyUsage = `-- name: ListSecretEncryptionKeyUsage :many
+SELECT secret_versions.key_id, count(*)::bigint AS secret_count
+FROM secret_versions
+GROUP BY secret_versions.key_id
+ORDER BY secret_versions.key_id
+`
+
+type ListSecretEncryptionKeyUsageRow struct {
+	KeyID       string `json:"key_id"`
+	SecretCount int64  `json:"secret_count"`
+}
+
+func (q *Queries) ListSecretEncryptionKeyUsage(ctx context.Context) ([]ListSecretEncryptionKeyUsageRow, error) {
+	rows, err := q.db.Query(ctx, listSecretEncryptionKeyUsage)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSecretEncryptionKeyUsageRow
+	for rows.Next() {
+		var i ListSecretEncryptionKeyUsageRow
 		if err := rows.Scan(&i.KeyID, &i.SecretCount); err != nil {
 			return nil, err
 		}
@@ -308,63 +374,131 @@ func (q *Queries) ListCurrentSecretKeyUsage(ctx context.Context) ([]ListCurrentS
 	return items, nil
 }
 
-const listCurrentSecretsByKeyID = `-- name: ListCurrentSecretsByKeyID :many
+const listSecretVersionsByAuthenticatorKeyVersion = `-- name: ListSecretVersionsByAuthenticatorKeyVersion :many
 SELECT
     secrets.id AS secret_id,
     secrets.environment_id,
-    secrets.state_version,
+    secrets.name,
     secret_versions.id AS version_id,
     secret_versions.version,
     secret_versions.key_id,
     secret_versions.nonce,
     secret_versions.ciphertext,
-    secret_versions.value_authenticator
+    secret_versions.value_authenticator,
+    secret_versions.authenticator_key_version
 FROM secrets
-JOIN secret_versions
-  ON secret_versions.secret_id = secrets.id
- AND secret_versions.id = secrets.current_version_id
-WHERE secrets.state = 'active'
-  AND secret_versions.key_id = $1
-ORDER BY secrets.updated_at, secrets.id
+JOIN secret_versions ON secret_versions.secret_id = secrets.id
+WHERE secret_versions.authenticator_key_version = $1
+ORDER BY secret_versions.created_at, secret_versions.id
 LIMIT $2
 `
 
-type ListCurrentSecretsByKeyIDParams struct {
-	KeyID    string `json:"key_id"`
-	RowLimit int32  `json:"row_limit"`
+type ListSecretVersionsByAuthenticatorKeyVersionParams struct {
+	AuthenticatorKeyVersion int32 `json:"authenticator_key_version"`
+	RowLimit                int32 `json:"row_limit"`
 }
 
-type ListCurrentSecretsByKeyIDRow struct {
-	SecretID           pgtype.UUID `json:"secret_id"`
-	EnvironmentID      pgtype.UUID `json:"environment_id"`
-	StateVersion       int64       `json:"state_version"`
-	VersionID          pgtype.UUID `json:"version_id"`
-	Version            int64       `json:"version"`
-	KeyID              string      `json:"key_id"`
-	Nonce              []byte      `json:"nonce"`
-	Ciphertext         []byte      `json:"ciphertext"`
-	ValueAuthenticator []byte      `json:"value_authenticator"`
+type ListSecretVersionsByAuthenticatorKeyVersionRow struct {
+	SecretID                pgtype.UUID `json:"secret_id"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	Name                    string      `json:"name"`
+	VersionID               pgtype.UUID `json:"version_id"`
+	Version                 int64       `json:"version"`
+	KeyID                   string      `json:"key_id"`
+	Nonce                   []byte      `json:"nonce"`
+	Ciphertext              []byte      `json:"ciphertext"`
+	ValueAuthenticator      []byte      `json:"value_authenticator"`
+	AuthenticatorKeyVersion int32       `json:"authenticator_key_version"`
 }
 
-func (q *Queries) ListCurrentSecretsByKeyID(ctx context.Context, arg ListCurrentSecretsByKeyIDParams) ([]ListCurrentSecretsByKeyIDRow, error) {
-	rows, err := q.db.Query(ctx, listCurrentSecretsByKeyID, arg.KeyID, arg.RowLimit)
+func (q *Queries) ListSecretVersionsByAuthenticatorKeyVersion(ctx context.Context, arg ListSecretVersionsByAuthenticatorKeyVersionParams) ([]ListSecretVersionsByAuthenticatorKeyVersionRow, error) {
+	rows, err := q.db.Query(ctx, listSecretVersionsByAuthenticatorKeyVersion, arg.AuthenticatorKeyVersion, arg.RowLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []ListCurrentSecretsByKeyIDRow
+	var items []ListSecretVersionsByAuthenticatorKeyVersionRow
 	for rows.Next() {
-		var i ListCurrentSecretsByKeyIDRow
+		var i ListSecretVersionsByAuthenticatorKeyVersionRow
 		if err := rows.Scan(
 			&i.SecretID,
 			&i.EnvironmentID,
-			&i.StateVersion,
+			&i.Name,
 			&i.VersionID,
 			&i.Version,
 			&i.KeyID,
 			&i.Nonce,
 			&i.Ciphertext,
 			&i.ValueAuthenticator,
+			&i.AuthenticatorKeyVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSecretVersionsByKeyID = `-- name: ListSecretVersionsByKeyID :many
+SELECT
+    secrets.id AS secret_id,
+    secrets.environment_id,
+    secrets.name,
+    secret_versions.id AS version_id,
+    secret_versions.version,
+    secret_versions.key_id,
+    secret_versions.nonce,
+    secret_versions.ciphertext,
+    secret_versions.value_authenticator,
+    secret_versions.authenticator_key_version
+FROM secrets
+JOIN secret_versions ON secret_versions.secret_id = secrets.id
+WHERE secret_versions.key_id = $1
+ORDER BY secret_versions.created_at, secret_versions.id
+LIMIT $2
+`
+
+type ListSecretVersionsByKeyIDParams struct {
+	KeyID    string `json:"key_id"`
+	RowLimit int32  `json:"row_limit"`
+}
+
+type ListSecretVersionsByKeyIDRow struct {
+	SecretID                pgtype.UUID `json:"secret_id"`
+	EnvironmentID           pgtype.UUID `json:"environment_id"`
+	Name                    string      `json:"name"`
+	VersionID               pgtype.UUID `json:"version_id"`
+	Version                 int64       `json:"version"`
+	KeyID                   string      `json:"key_id"`
+	Nonce                   []byte      `json:"nonce"`
+	Ciphertext              []byte      `json:"ciphertext"`
+	ValueAuthenticator      []byte      `json:"value_authenticator"`
+	AuthenticatorKeyVersion int32       `json:"authenticator_key_version"`
+}
+
+func (q *Queries) ListSecretVersionsByKeyID(ctx context.Context, arg ListSecretVersionsByKeyIDParams) ([]ListSecretVersionsByKeyIDRow, error) {
+	rows, err := q.db.Query(ctx, listSecretVersionsByKeyID, arg.KeyID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListSecretVersionsByKeyIDRow
+	for rows.Next() {
+		var i ListSecretVersionsByKeyIDRow
+		if err := rows.Scan(
+			&i.SecretID,
+			&i.EnvironmentID,
+			&i.Name,
+			&i.VersionID,
+			&i.Version,
+			&i.KeyID,
+			&i.Nonce,
+			&i.Ciphertext,
+			&i.ValueAuthenticator,
+			&i.AuthenticatorKeyVersion,
 		); err != nil {
 			return nil, err
 		}
@@ -561,7 +695,8 @@ version AS (
         key_id,
         nonce,
         ciphertext,
-        value_authenticator
+        value_authenticator,
+        authenticator_key_version
     )
     SELECT
         $5,
@@ -570,7 +705,8 @@ version AS (
         $7,
         $8,
         $9,
-        $10
+        $10,
+        $11
     FROM locked
     RETURNING secret_id, id
 )
@@ -594,6 +730,7 @@ type RotateSecretParams struct {
 	Nonce                    []byte      `json:"nonce"`
 	Ciphertext               []byte      `json:"ciphertext"`
 	ValueAuthenticator       []byte      `json:"value_authenticator"`
+	AuthenticatorKeyVersion  int32       `json:"authenticator_key_version"`
 }
 
 func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Secret, error) {
@@ -608,6 +745,7 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		arg.Nonce,
 		arg.Ciphertext,
 		arg.ValueAuthenticator,
+		arg.AuthenticatorKeyVersion,
 	)
 	var i Secret
 	err := row.Scan(
@@ -624,4 +762,72 @@ func (q *Queries) RotateSecret(ctx context.Context, arg RotateSecretParams) (Sec
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const updateSecretVersionAuthenticator = `-- name: UpdateSecretVersionAuthenticator :execrows
+UPDATE secret_versions
+SET value_authenticator = $1,
+    authenticator_key_version = $2
+WHERE id = $3
+  AND authenticator_key_version = $4
+  AND value_authenticator = $5
+`
+
+type UpdateSecretVersionAuthenticatorParams struct {
+	NewValueAuthenticator           []byte      `json:"new_value_authenticator"`
+	NewAuthenticatorKeyVersion      int32       `json:"new_authenticator_key_version"`
+	VersionID                       pgtype.UUID `json:"version_id"`
+	PreviousAuthenticatorKeyVersion int32       `json:"previous_authenticator_key_version"`
+	PreviousValueAuthenticator      []byte      `json:"previous_value_authenticator"`
+}
+
+func (q *Queries) UpdateSecretVersionAuthenticator(ctx context.Context, arg UpdateSecretVersionAuthenticatorParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateSecretVersionAuthenticator,
+		arg.NewValueAuthenticator,
+		arg.NewAuthenticatorKeyVersion,
+		arg.VersionID,
+		arg.PreviousAuthenticatorKeyVersion,
+		arg.PreviousValueAuthenticator,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const updateSecretVersionEnvelope = `-- name: UpdateSecretVersionEnvelope :execrows
+UPDATE secret_versions
+SET key_id = $1,
+    nonce = $2,
+    ciphertext = $3
+WHERE id = $4
+  AND key_id = $5
+  AND nonce = $6
+  AND ciphertext = $7
+`
+
+type UpdateSecretVersionEnvelopeParams struct {
+	NewKeyID           string      `json:"new_key_id"`
+	NewNonce           []byte      `json:"new_nonce"`
+	NewCiphertext      []byte      `json:"new_ciphertext"`
+	VersionID          pgtype.UUID `json:"version_id"`
+	PreviousKeyID      string      `json:"previous_key_id"`
+	PreviousNonce      []byte      `json:"previous_nonce"`
+	PreviousCiphertext []byte      `json:"previous_ciphertext"`
+}
+
+func (q *Queries) UpdateSecretVersionEnvelope(ctx context.Context, arg UpdateSecretVersionEnvelopeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateSecretVersionEnvelope,
+		arg.NewKeyID,
+		arg.NewNonce,
+		arg.NewCiphertext,
+		arg.VersionID,
+		arg.PreviousKeyID,
+		arg.PreviousNonce,
+		arg.PreviousCiphertext,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
