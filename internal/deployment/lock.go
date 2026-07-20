@@ -169,6 +169,9 @@ func InspectDependencySource(projectRoot string, manager PackageManager) (Depend
 }
 
 func ValidateDependencyGraph(source DependencySource, graph PackageGraph) error {
+	if err := validateDependencySource(source); err != nil {
+		return invalidDependencyOutput("preflight source is inconsistent: %v", err)
+	}
 	if err := ValidatePackageGraph(graph); err != nil {
 		return invalidDependencyOutput("%v", err)
 	}
@@ -220,6 +223,93 @@ func ValidateDependencyGraph(source DependencySource, graph PackageGraph) error 
 		}
 	}
 	return nil
+}
+
+func validateDependencySource(source DependencySource) error {
+	if err := validateManagerPackage(source.PackageManager); err != nil {
+		return invalidDependencySource("%v", err)
+	}
+	wantLock := "bun.lock"
+	if source.PackageManager.Name == PackageManagerNPM {
+		wantLock = "package-lock.json"
+	}
+	if source.Lockfile.Name != wantLock ||
+		source.Lockfile.Digest != digestBytes(source.LockfileBytes) ||
+		len(source.LockfileBytes) == 0 ||
+		int64(len(source.LockfileBytes)) > maxLockfileBytes {
+		return invalidDependencySource("selected lockfile identity is inconsistent")
+	}
+	analysis, err := parseDependencyLockfile(
+		source.PackageManager.Name,
+		source.LockfileBytes,
+	)
+	if err != nil {
+		return invalidDependencySource("selected lockfile: %v", err)
+	}
+	paths, err := canonicalLocalPaths(analysis.localPaths)
+	if err != nil {
+		return invalidDependencySource("selected lockfile local packages: %v", err)
+	}
+	pins, err := canonicalRegistryPins(analysis.registryPins)
+	if err != nil {
+		return invalidDependencySource("selected lockfile registry pins: %v", err)
+	}
+	if len(paths) != len(source.ManifestFiles) ||
+		len(paths) != len(source.LocalManifests.Entries) ||
+		len(pins) != len(source.RegistryPins) {
+		return invalidDependencySource("preflight sets are inconsistent")
+	}
+	if err := ValidateLocalManifests(source.LocalManifests); err != nil {
+		return invalidDependencySource("local manifests: %v", err)
+	}
+	var totalBytes int64
+	for i, packagePath := range paths {
+		file := source.ManifestFiles[i]
+		entry := source.LocalManifests.Entries[i]
+		if file.PackagePath != packagePath ||
+			entry.Path != packagePath ||
+			file.ManifestDigest != digestBytes(file.Bytes) ||
+			entry.ManifestDigest != file.ManifestDigest ||
+			len(file.Bytes) == 0 ||
+			int64(len(file.Bytes)) > maxPackageManifestSizeBytes {
+			return invalidDependencySource(
+				"local package %q identity is inconsistent",
+				packagePath,
+			)
+		}
+		totalBytes += int64(len(file.Bytes))
+		if totalBytes > maxLocalManifestBytes {
+			return invalidDependencySource(
+				"local package manifests exceed %d bytes",
+				maxLocalManifestBytes,
+			)
+		}
+		manifest, err := validateSourceManifest(
+			file.Bytes,
+			packagePath == ".",
+			source.PackageManager,
+		)
+		if err != nil {
+			return invalidDependencySource(
+				"local package %q manifest: %v",
+				packagePath,
+				err,
+			)
+		}
+		if !equalOptionalString(file.Name, manifest.Name) ||
+			!equalOptionalString(file.Version, manifest.Version) {
+			return invalidDependencySource(
+				"local package %q metadata is inconsistent",
+				packagePath,
+			)
+		}
+	}
+	for i := range pins {
+		if pins[i] != source.RegistryPins[i] {
+			return invalidDependencySource("registry pin set is inconsistent")
+		}
+	}
+	return validateDependencyProject(source)
 }
 
 func copyOptionalString(value *string) *string {

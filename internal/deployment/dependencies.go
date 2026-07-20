@@ -160,6 +160,48 @@ func DependencyCacheKey(input DependencyCacheInput) (string, error) {
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
+func NewDependencyCacheInput(
+	source DependencySource,
+	plan DependencyPlan,
+) (DependencyCacheInput, error) {
+	if err := validateDependencySource(source); err != nil {
+		return DependencyCacheInput{}, err
+	}
+	if err := ValidateDependencyPlan(plan); err != nil {
+		return DependencyCacheInput{}, err
+	}
+	if source.PackageManager != plan.PackageManager {
+		return DependencyCacheInput{}, invalidDependencySource(
+			"package manager does not match the dependency plan",
+		)
+	}
+	planDigest, err := DependencyPlanDigest(plan)
+	if err != nil {
+		return DependencyCacheInput{}, err
+	}
+	localDigest, err := LocalManifestsDigest(source.LocalManifests)
+	if err != nil {
+		return DependencyCacheInput{}, invalidDependencySource(
+			"local manifest digest: %v",
+			err,
+		)
+	}
+	input := DependencyCacheInput{
+		FormatVersion:        DependencyCacheFormatVersion,
+		DependencyPlanDigest: planDigest,
+		PackageManager:       source.PackageManager,
+		Lockfile:             source.Lockfile,
+		LocalManifestsDigest: "sha256:" + hex.EncodeToString(localDigest[:]),
+		MaterializerVersion:  plan.MaterializerVersion,
+		RuntimeDigest:        plan.ManagedRuntimeDigest,
+		Architecture:         plan.Architecture,
+	}
+	if err := ValidateDependencyCacheInput(input); err != nil {
+		return DependencyCacheInput{}, err
+	}
+	return input, nil
+}
+
 func ValidateDependencyCacheInput(input DependencyCacheInput) error {
 	if input.FormatVersion != DependencyCacheFormatVersion {
 		return fmt.Errorf(
