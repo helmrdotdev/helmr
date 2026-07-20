@@ -1,31 +1,3 @@
--- name: CreatePreparedRuntimeInstanceForWorkspaceMountSource :one
-INSERT INTO runtime_instances (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_definition_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key,
-    rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
-    sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
-    guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
-    reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes,
-    reserved_execution_slots, reserved_workspace_id, reserved_workspace_version_id,
-    reservation_expires_at, desired_reason, allocated_at
-) VALUES (
-    sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(project_id), sqlc.arg(environment_id),
-    sqlc.arg(region_id), sqlc.arg(worker_group_id), sqlc.arg(worker_instance_id),
-    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_definition_id),
-    sqlc.narg(runtime_substrate_id), sqlc.arg(runtime_key_hash), sqlc.arg(runtime_key),
-    sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
-    sqlc.arg(image_format), sqlc.narg(sandbox_image_artifact_id),
-    sqlc.narg(sandbox_image_artifact_digest), sqlc.narg(sandbox_image_artifact_format),
-    sqlc.arg(runtime_abi), sqlc.arg(guestd_abi), sqlc.arg(adapter_abi),
-    sqlc.arg(network_policy), sqlc.arg(reserved_cpu_millis),
-    sqlc.arg(reserved_memory_bytes), sqlc.arg(reserved_workload_disk_bytes),
-    sqlc.arg(reserved_scratch_bytes), sqlc.arg(reserved_execution_slots),
-    sqlc.arg(reserved_workspace_id), sqlc.arg(reserved_workspace_version_id),
-    sqlc.arg(reservation_expires_at), sqlc.arg(desired_reason), now()
-)
-RETURNING *;
-
 -- name: GetNextRuntimeReconcileTarget :one
 SELECT runtime_instances.*,
        worker_network_slots.id AS network_slot_id,
@@ -94,32 +66,6 @@ SELECT runtime_instances.*,
  ORDER BY runtime_instances.desired_at, runtime_instances.id
  LIMIT 1;
 
--- name: CreateRuntimeInstanceForWorkspaceDefinition :one
-INSERT INTO runtime_instances (
-    id, org_id, project_id, environment_id, region_id, worker_group_id,
-    worker_instance_id, worker_epoch, runtime_identity_id, deployment_definition_id,
-    runtime_substrate_id, runtime_key_hash, runtime_key,
-    rootfs_digest, image_digest, image_format, sandbox_image_artifact_id,
-    sandbox_image_artifact_digest, sandbox_image_artifact_format, runtime_abi,
-    guestd_abi, adapter_abi, network_policy, reserved_cpu_millis,
-    reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes,
-    reserved_execution_slots, desired_reason, allocated_at
-) VALUES (
-    sqlc.arg(id), sqlc.arg(org_id), sqlc.arg(project_id), sqlc.arg(environment_id),
-    sqlc.arg(region_id), sqlc.arg(worker_group_id), sqlc.arg(worker_instance_id),
-    sqlc.arg(worker_epoch), sqlc.arg(runtime_identity_id), sqlc.arg(deployment_definition_id),
-    sqlc.narg(runtime_substrate_id), sqlc.arg(runtime_key_hash), sqlc.arg(runtime_key),
-    sqlc.arg(rootfs_digest), sqlc.arg(image_digest),
-    sqlc.arg(image_format), sqlc.narg(sandbox_image_artifact_id),
-    sqlc.narg(sandbox_image_artifact_digest), sqlc.narg(sandbox_image_artifact_format),
-    sqlc.arg(runtime_abi), sqlc.arg(guestd_abi), sqlc.arg(adapter_abi),
-    sqlc.arg(network_policy), sqlc.arg(reserved_cpu_millis),
-    sqlc.arg(reserved_memory_bytes), sqlc.arg(reserved_workload_disk_bytes),
-    sqlc.arg(reserved_scratch_bytes), sqlc.arg(reserved_execution_slots),
-    sqlc.arg(desired_reason), now()
-)
-RETURNING *;
-
 -- name: RenewRuntimeInstance :one
 UPDATE runtime_instances
    SET observed_at = now(), observed_version = observed_version + 1, updated_at = now()
@@ -163,10 +109,7 @@ UPDATE runtime_instances
    SET observed_state = 'ready', observed_version = observed_version + 1,
        observed_desired_version = sqlc.arg(desired_version), observed_at = now(),
        preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
-       workspace_id = COALESCE(workspace_id, reserved_workspace_id),
-       workspace_version_id = COALESCE(workspace_version_id, reserved_workspace_version_id),
-       reserved_workspace_id = NULL, reserved_workspace_version_id = NULL,
-       reservation_expires_at = NULL, updated_at = now()
+       updated_at = now()
   FROM bound
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND bound.runtime_instance_id = runtime_instances.id
@@ -182,7 +125,10 @@ UPDATE runtime_instances
        observed_desired_version = desired_version, observed_at = now(),
        closing_at = COALESCE(closing_at, now()), closed_at = now(),
        terminal_at = now(), terminal_reason_code = sqlc.arg(reason_code),
-       terminal_error = NULL, reclaimed_at = now(), updated_at = now()
+       terminal_error = NULL, reclaimed_at = now(),
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL, updated_at = now()
   FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
    AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
@@ -220,6 +166,9 @@ UPDATE runtime_instances
    SET observed_state = 'failed', observed_version = observed_version + 1,
        observed_at = now(), failed_at = now(), terminal_at = now(),
        terminal_reason_code = sqlc.arg(reason_code), terminal_error = sqlc.narg(error),
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL,
        updated_at = now()
   FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id) AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -252,7 +201,10 @@ SELECT failed.* FROM failed JOIN quarantined ON true;
 -- name: ReclaimFailedRuntimeInstance :one
 WITH reclaimed_runtime AS (
 UPDATE runtime_instances
-   SET reclaimed_at = now(), updated_at = now()
+   SET reclaimed_at = now(),
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+       reservation_expires_at = NULL, updated_at = now()
   FROM worker_network_slots
  WHERE runtime_instances.id = sqlc.arg(id)
    AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
@@ -285,30 +237,6 @@ UPDATE worker_network_slots
 RETURNING worker_network_slots.id
 )
 SELECT reclaimed_runtime.* FROM reclaimed_runtime JOIN reclaimed_slot ON true;
-
--- name: MarkExpiredRuntimeInstancesLost :many
-UPDATE runtime_instances
-   SET observed_state = 'lost', observed_version = observed_version + 1,
-       observed_at = now(), lost_at = now(), terminal_at = now(),
-       terminal_reason_code = 'worker_epoch_lost', updated_at = now()
- WHERE id IN (
-     SELECT runtime_instances.id FROM runtime_instances
-      JOIN worker_instances ON worker_instances.id = runtime_instances.worker_instance_id
-      WHERE runtime_instances.reclaimed_at IS NULL
-        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-        AND (runtime_instances.worker_epoch IS DISTINCT FROM worker_instances.current_epoch
-             OR worker_instances.state IN ('disabled', 'lost'))
-      ORDER BY runtime_instances.updated_at, runtime_instances.id
-      LIMIT sqlc.arg(limit_count) FOR UPDATE OF runtime_instances SKIP LOCKED
- )
-RETURNING *;
-
--- name: ListRuntimeInstanceWarmTargets :many
-SELECT * FROM runtime_instances
- WHERE worker_instance_id = sqlc.arg(worker_instance_id)
-   AND worker_epoch = sqlc.arg(worker_epoch) AND observed_state = 'ready'
-   AND workspace_id IS NULL AND reserved_workspace_id IS NULL
- ORDER BY ready_at, id LIMIT sqlc.arg(limit_count);
 
 -- name: ListRuntimeSubstratePrepareTargets :many
 SELECT runtime_instances.* FROM runtime_instances

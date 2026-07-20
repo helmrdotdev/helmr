@@ -200,9 +200,9 @@ func queueMessage(row db.PrepareQueuedRunDispatchRow) (Message, error) {
 	if err != nil {
 		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
-	limit := int32(0)
+	limit := int64(0)
 	if row.QueueConcurrencyLimit.Valid {
-		limit = row.QueueConcurrencyLimit.Int32
+		limit = row.QueueConcurrencyLimit.Int64
 	}
 	return Message{
 		WorkKind:              WorkKindRun,

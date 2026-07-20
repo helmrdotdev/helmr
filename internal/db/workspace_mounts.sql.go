@@ -23,6 +23,9 @@ WITH candidate AS (
        AND workspace_mounts.worker_epoch = $2
        AND workspace_mounts.state = 'mounting'
        AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.reserved_workspace_version_id = workspace_mounts.materialized_version_id
+       AND num_nonnulls(runtime_instances.reserved_run_id, runtime_instances.reserved_process_id) = 1
+       AND runtime_instances.reservation_expires_at > transaction_timestamp()
      ORDER BY workspace_mounts.requested_at, workspace_mounts.id
      LIMIT 1
      FOR UPDATE OF workspace_mounts SKIP LOCKED
@@ -217,7 +220,7 @@ func (q *Queries) ClassifyRunWorkspaceReuse(ctx context.Context, arg ClassifyRun
 	return i, err
 }
 
-const ensureWorkspaceMountRequested = `-- name: EnsureWorkspaceMountRequested :one
+const ensureProcessWorkspaceMountRequested = `-- name: EnsureProcessWorkspaceMountRequested :one
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, workspace_id,
@@ -226,21 +229,26 @@ INSERT INTO workspace_mounts (
 SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch, workspaces.id,
-       workspaces.head_version_id, runtime_instances.id, $2
-  FROM workspaces
-  JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
-                         AND workspace_versions.workspace_id = workspaces.id
-                         AND workspace_versions.id = workspaces.head_version_id
-                         AND workspace_versions.state = 'committed'
-  JOIN runtime_instances ON runtime_instances.org_id = workspaces.org_id
-                        AND runtime_instances.project_id = workspaces.project_id
-                        AND runtime_instances.environment_id = workspaces.environment_id
-                        AND runtime_instances.workspace_id = workspaces.id
-                        AND runtime_instances.workspace_version_id = workspaces.head_version_id
-                        AND runtime_instances.deployment_definition_id = workspaces.deployment_definition_id
-                        AND runtime_instances.observed_state = 'ready'
- WHERE workspaces.org_id = $3 AND workspaces.id = $4
+       runtime_instances.worker_epoch, runtime_instances.workspace_id,
+       runtime_instances.reserved_workspace_version_id, runtime_instances.id,
+       $2
+  FROM runtime_instances
+  JOIN workspace_processes
+    ON workspace_processes.id = runtime_instances.reserved_process_id
+   AND workspace_processes.workspace_id = runtime_instances.workspace_id
+   AND workspace_processes.state = 'pending'
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = runtime_instances.workspace_id
+   AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+   AND workspace_versions.state = 'committed'
+ WHERE runtime_instances.org_id = $3
+   AND runtime_instances.workspace_id = $4
+   AND runtime_instances.id = $5
+   AND runtime_instances.reserved_process_id = $6
+   AND runtime_instances.reserved_workspace_version_id = $7
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+   AND runtime_instances.reservation_expires_at > transaction_timestamp()
 ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
@@ -249,14 +257,17 @@ RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_
           CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
 `
 
-type EnsureWorkspaceMountRequestedParams struct {
-	ID          pgtype.UUID `json:"id"`
-	Request     []byte      `json:"request"`
-	OrgID       pgtype.UUID `json:"org_id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
+type EnsureProcessWorkspaceMountRequestedParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	Request            []byte      `json:"request"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	RuntimeInstanceID  pgtype.UUID `json:"runtime_instance_id"`
+	ProcessID          pgtype.UUID `json:"process_id"`
+	WorkspaceVersionID pgtype.UUID `json:"workspace_version_id"`
 }
 
-type EnsureWorkspaceMountRequestedRow struct {
+type EnsureProcessWorkspaceMountRequestedRow struct {
 	ID                         pgtype.UUID         `json:"id"`
 	OrgID                      pgtype.UUID         `json:"org_id"`
 	WorkerGroupID              string              `json:"worker_group_id"`
@@ -290,14 +301,149 @@ type EnsureWorkspaceMountRequestedRow struct {
 	Decision                   string              `json:"decision"`
 }
 
-func (q *Queries) EnsureWorkspaceMountRequested(ctx context.Context, arg EnsureWorkspaceMountRequestedParams) (EnsureWorkspaceMountRequestedRow, error) {
-	row := q.db.QueryRow(ctx, ensureWorkspaceMountRequested,
+func (q *Queries) EnsureProcessWorkspaceMountRequested(ctx context.Context, arg EnsureProcessWorkspaceMountRequestedParams) (EnsureProcessWorkspaceMountRequestedRow, error) {
+	row := q.db.QueryRow(ctx, ensureProcessWorkspaceMountRequested,
 		arg.ID,
 		arg.Request,
 		arg.OrgID,
 		arg.WorkspaceID,
+		arg.RuntimeInstanceID,
+		arg.ProcessID,
+		arg.WorkspaceVersionID,
 	)
-	var i EnsureWorkspaceMountRequestedRow
+	var i EnsureProcessWorkspaceMountRequestedRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.ClaimAttempt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.State,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.RequestedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Inserted,
+		&i.Decision,
+	)
+	return i, err
+}
+
+const ensureRunWorkspaceMountRequested = `-- name: EnsureRunWorkspaceMountRequested :one
+INSERT INTO workspace_mounts (
+    id, org_id, project_id, environment_id, region_id, worker_group_id,
+    worker_instance_id, worker_epoch, workspace_id,
+    materialized_version_id, runtime_instance_id, request
+)
+SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
+       runtime_instances.environment_id, runtime_instances.region_id,
+       runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
+       runtime_instances.worker_epoch, runtime_instances.workspace_id,
+       runtime_instances.reserved_workspace_version_id, runtime_instances.id,
+       $2
+  FROM runtime_instances
+  JOIN runs ON runs.environment_id = runtime_instances.environment_id
+           AND runs.id = runtime_instances.reserved_run_id
+           AND runs.deployment_id = runtime_instances.program_deployment_id
+  JOIN run_attempts ON run_attempts.run_id = runtime_instances.reserved_run_id
+                   AND run_attempts.number = runtime_instances.reserved_attempt_number
+                   AND run_attempts.workspace_id = runtime_instances.workspace_id
+  JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
+                         AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+                         AND workspace_versions.state = 'committed'
+ WHERE runtime_instances.org_id = $3
+   AND runtime_instances.workspace_id = $4
+   AND runtime_instances.id = $5
+   AND runtime_instances.reserved_run_id = $6
+   AND runtime_instances.reserved_attempt_number = $7
+   AND runtime_instances.reserved_workspace_version_id = $8
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+   AND runtime_instances.reservation_expires_at > transaction_timestamp()
+ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
+DO UPDATE SET updated_at = workspace_mounts.updated_at
+WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
+  AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
+RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at, (xmax = 0) AS inserted,
+          CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision
+`
+
+type EnsureRunWorkspaceMountRequestedParams struct {
+	ID                 pgtype.UUID `json:"id"`
+	Request            []byte      `json:"request"`
+	OrgID              pgtype.UUID `json:"org_id"`
+	WorkspaceID        pgtype.UUID `json:"workspace_id"`
+	RuntimeInstanceID  pgtype.UUID `json:"runtime_instance_id"`
+	RunID              pgtype.UUID `json:"run_id"`
+	AttemptNumber      pgtype.Int4 `json:"attempt_number"`
+	WorkspaceVersionID pgtype.UUID `json:"workspace_version_id"`
+}
+
+type EnsureRunWorkspaceMountRequestedRow struct {
+	ID                         pgtype.UUID         `json:"id"`
+	OrgID                      pgtype.UUID         `json:"org_id"`
+	WorkerGroupID              string              `json:"worker_group_id"`
+	ProjectID                  pgtype.UUID         `json:"project_id"`
+	EnvironmentID              pgtype.UUID         `json:"environment_id"`
+	RegionID                   string              `json:"region_id"`
+	WorkerInstanceID           pgtype.UUID         `json:"worker_instance_id"`
+	WorkerEpoch                int64               `json:"worker_epoch"`
+	WorkspaceID                pgtype.UUID         `json:"workspace_id"`
+	MaterializedVersionID      pgtype.UUID         `json:"materialized_version_id"`
+	RuntimeInstanceID          pgtype.UUID         `json:"runtime_instance_id"`
+	ClaimAttempt               int32               `json:"claim_attempt"`
+	GuestChannelTokenHash      string              `json:"guest_channel_token_hash"`
+	GuestChannelTokenExpiresAt pgtype.Timestamptz  `json:"guest_channel_token_expires_at"`
+	State                      WorkspaceMountState `json:"state"`
+	Request                    []byte              `json:"request"`
+	DirtyGeneration            int64               `json:"dirty_generation"`
+	FencingGeneration          int64               `json:"fencing_generation"`
+	RequestedAt                pgtype.Timestamptz  `json:"requested_at"`
+	MountedAt                  pgtype.Timestamptz  `json:"mounted_at"`
+	UnmountedAt                pgtype.Timestamptz  `json:"unmounted_at"`
+	StoppedAt                  pgtype.Timestamptz  `json:"stopped_at"`
+	LostAt                     pgtype.Timestamptz  `json:"lost_at"`
+	FailedAt                   pgtype.Timestamptz  `json:"failed_at"`
+	TerminalAt                 pgtype.Timestamptz  `json:"terminal_at"`
+	TerminalReasonCode         pgtype.Text         `json:"terminal_reason_code"`
+	TerminalError              []byte              `json:"terminal_error"`
+	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
+	Inserted                   bool                `json:"inserted"`
+	Decision                   string              `json:"decision"`
+}
+
+func (q *Queries) EnsureRunWorkspaceMountRequested(ctx context.Context, arg EnsureRunWorkspaceMountRequestedParams) (EnsureRunWorkspaceMountRequestedRow, error) {
+	row := q.db.QueryRow(ctx, ensureRunWorkspaceMountRequested,
+		arg.ID,
+		arg.Request,
+		arg.OrgID,
+		arg.WorkspaceID,
+		arg.RuntimeInstanceID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.WorkspaceVersionID,
+	)
+	var i EnsureRunWorkspaceMountRequestedRow
 	err := row.Scan(
 		&i.ID,
 		&i.OrgID,
@@ -363,13 +509,16 @@ WITH target AS (
        SET observed_state = 'failed', observed_version = observed_version + 1,
            observed_at = now(), failed_at = now(), terminal_at = now(),
            terminal_reason_code = 'workspace_mount_failed',
-           terminal_error = $2, updated_at = now()
+           terminal_error = $2,
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtime_instances.org_id = target.org_id
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), quarantined_slot AS (
     UPDATE worker_network_slots
        SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
@@ -1236,14 +1385,17 @@ WITH stopped AS (
                                            ELSE runtime_instances.desired_version + 1 END,
            observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
            closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
-           terminal_error = NULL, reclaimed_at = now(), updated_at = now()
+           terminal_error = NULL, reclaimed_at = now(),
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM stopped
      WHERE runtime_instances.org_id = stopped.org_id
        AND runtime_instances.id = stopped.runtime_instance_id
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.workspace_version_id, runtime_instances.reserved_workspace_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.rootfs_digest, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.runtime_abi, runtime_instances.guestd_abi, runtime_instances.adapter_abi, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), reclaimed_slot AS (
     UPDATE worker_network_slots
        SET state = 'available', generation = worker_network_slots.generation + 1,

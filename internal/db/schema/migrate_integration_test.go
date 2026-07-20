@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -880,27 +879,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	if !exactFit || overShape {
 		t.Fatalf("fixed build guest exact/over shape fence = %t/%t", exactFit, overShape)
 	}
-	var beforeFull, replacementAllowed, replacementRefillsCap, withinVMSlots bool
-	var selectedWorker string
-	if err := pool.QueryRow(ctx, `
-		WITH workers(id, max_runtime_starts, max_vm_slots) AS (VALUES ('worker-a',2,4),('worker-b',2,4)),
-		runtimes(id, worker_id, observed_state) AS (VALUES ('r1','worker-a','ready'),('r2','worker-a','preparing'),('rb','worker-b','ready')),
-		active_run_leases(runtime_id, state) AS (VALUES ('r1','running')),
-		after_replacement AS (SELECT * FROM runtimes UNION ALL SELECT 'r3','worker-a','allocated')
-		SELECT
-			(SELECT count(*) FROM runtimes WHERE worker_id='worker-a') = 2,
-			(SELECT count(*) FROM runtimes WHERE worker_id='worker-a' AND NOT EXISTS (SELECT 1 FROM active_run_leases WHERE runtime_id=runtimes.id AND state IN ('assigned','starting','running','checkpointing'))) < 2,
-			(SELECT count(*) FROM after_replacement WHERE worker_id='worker-a' AND NOT EXISTS (SELECT 1 FROM active_run_leases WHERE runtime_id=after_replacement.id AND state IN ('assigned','starting','running','checkpointing'))) = 2,
-			(SELECT count(*) FROM after_replacement WHERE worker_id='worker-a') <= 4,
-			(SELECT id FROM workers WHERE id <> 'worker-a' AND (SELECT count(*) FROM runtimes WHERE worker_id=workers.id) < max_runtime_starts ORDER BY id LIMIT 1)
-	`).Scan(&beforeFull, &replacementAllowed, &replacementRefillsCap, &withinVMSlots, &selectedWorker); err != nil {
-		t.Fatal(err)
-	}
-	if !beforeFull || !replacementAllowed || !replacementRefillsCap || !withinVMSlots || selectedWorker != "worker-b" {
-		t.Fatalf("prepared transition = before:%t replacement:%t refilled:%t slots:%t next:%q", beforeFull, replacementAllowed, replacementRefillsCap, withinVMSlots, selectedWorker)
-	}
-	assertPreparedSupplySerialization(t, ctx, pool)
-
 	logicalTables := []string{"idempotency_claims", "schedules", "workspaces", "actors", "actor_records", "runs", "run_attempts", "run_streams", "run_stream_records", "run_waits", "run_checkpoints", "run_checkpoint_artifacts", "meter_events", "telemetry_outbox"}
 	var placementLeaks int
 	if err := pool.QueryRow(ctx, `
@@ -916,7 +894,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 
 	forbiddenColumns := map[string][]string{
 		"runs":              {"dispatch_generation", "dispatch_attempt", "dispatch_message_id", "dispatch_lease_id", "workspace_mount_id", "worker_instance_id", "execution_status", "terminal_outcome", "schedule_instance_id", "queue_class", "queue_timestamp"},
-		"runtime_instances": {"runtime_epoch", "state", "instance_token", "last_heartbeat_at", "owner_run_id", "owner_run_wait_id", "workspace_mount_id"},
+		"runtime_instances": {"runtime_epoch", "state", "instance_token", "last_heartbeat_at", "owner_run_id", "owner_run_wait_id", "workspace_mount_id", "workspace_version_id", "reserved_workspace_id"},
 		"worker_instances":  {"available_milli_cpu", "available_memory_mib", "heartbeat", "labels", "last_seen_at", "total_milli_cpu"},
 	}
 	for table, columns := range forbiddenColumns {
@@ -938,11 +916,13 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"run_leases_run_active_uidx",
 		"run_leases_runtime_active_uidx",
 		"runtime_instances_workspace_active_uidx",
-		"runtime_instances_reservation_active_uidx",
+		"runtime_instances_reserved_run_uidx",
+		"runtime_instances_reserved_process_uidx",
 		"network_slots_runtime_active_uidx",
 		"workspace_mounts_workspace_active_uidx",
 		"workspace_mounts_runtime_active_uidx",
 		"workspace_leases_workspace_active_uidx",
+		"workspace_processes_workspace_active_uidx",
 		"run_waits_active_run_uidx",
 	}
 	var indexCount int
@@ -951,6 +931,61 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if indexCount != len(requiredIndexes) {
 		t.Fatalf("required managed-worker indexes = %d, want %d", indexCount, len(requiredIndexes))
+	}
+
+	var placementColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND table_name = 'runtime_instances'
+		   AND column_name = ANY($1::text[])
+	`, []string{
+		"workspace_id",
+		"program_deployment_id",
+		"reserved_run_id",
+		"reserved_attempt_number",
+		"reserved_process_id",
+		"reserved_workspace_version_id",
+		"reservation_expires_at",
+	}).Scan(&placementColumns); err != nil {
+		t.Fatal(err)
+	}
+	if placementColumns != 7 {
+		t.Fatalf("runtime placement columns = %d, want 7", placementColumns)
+	}
+
+	var obsoleteLeaseColumns int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*)
+		  FROM information_schema.columns
+		 WHERE table_schema = 'public'
+		   AND (
+		       (table_name = 'run_leases' AND column_name = 'resource_snapshot')
+		       OR
+		       (table_name = 'workspace_processes' AND column_name = ANY(ARRAY[
+		           'instance_lease_id', 'write_lease_id', 'idempotency_key',
+		           'idempotency_expires_at', 'request_fingerprint'
+		       ]))
+		   )
+	`).Scan(&obsoleteLeaseColumns); err != nil {
+		t.Fatal(err)
+	}
+	if obsoleteLeaseColumns != 0 {
+		t.Fatalf("obsolete placement columns = %d, want 0", obsoleteLeaseColumns)
+	}
+
+	var processStates []string
+	if err := pool.QueryRow(ctx, `
+		SELECT array_agg(enumlabel ORDER BY enumsortorder)
+		  FROM pg_enum
+		  JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+		 WHERE pg_type.typname = 'workspace_process_state'
+	`).Scan(&processStates); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := strings.Join(processStates, ","), "pending,starting,running,exit_requested,exited,cancelled,lost,failed"; got != want {
+		t.Fatalf("workspace process states = %q, want %q", got, want)
 	}
 
 	var enumLabels int
@@ -968,53 +1003,6 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}
 	if enumLabels != 9 {
 		t.Fatalf("managed-worker enum sentinel labels = %d, want 9", enumLabels)
-	}
-}
-
-func assertPreparedSupplySerialization(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
-	t.Helper()
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE prepared_supply_concurrency_test (id bigserial primary key, worker_group text not null, scope text not null, observed_state text not null, active_run_lease boolean not null);
-		INSERT INTO prepared_supply_concurrency_test (worker_group,scope,observed_state,active_run_lease) VALUES
-		('group-a','scope','running',true), ('group-a','scope','ready',false)`); err != nil {
-		t.Fatal(err)
-	}
-	start := make(chan struct{})
-	errs := make(chan error, 2)
-	var wg sync.WaitGroup
-	for _, group := range []string{"group-a", "group-b"} {
-		wg.Go(func() {
-			<-start
-			tx, err := pool.Begin(ctx)
-			if err != nil {
-				errs <- err
-				return
-			}
-			defer tx.Rollback(ctx)
-			if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended('scope',0))`); err == nil {
-				_, err = tx.Exec(ctx, `INSERT INTO prepared_supply_concurrency_test (worker_group,scope,observed_state,active_run_lease)
-					SELECT $1,'scope','allocated',false WHERE (SELECT count(*) FROM prepared_supply_concurrency_test WHERE scope='scope' AND observed_state IN ('allocated','preparing','ready') AND NOT active_run_lease) < 2`, group)
-			}
-			if err == nil {
-				err = tx.Commit(ctx)
-			}
-			if err != nil {
-				errs <- err
-			}
-		})
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-	for err := range errs {
-		t.Fatal(err)
-	}
-	var prepared, occupied int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FILTER (WHERE observed_state IN ('allocated','preparing','ready') AND NOT active_run_lease), count(*) FROM prepared_supply_concurrency_test`).Scan(&prepared, &occupied); err != nil {
-		t.Fatal(err)
-	}
-	if prepared != 2 || occupied != 3 {
-		t.Fatalf("serialized prepared supply = prepared:%d occupied:%d, want 2/3", prepared, occupied)
 	}
 }
 

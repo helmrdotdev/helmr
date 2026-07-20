@@ -19,7 +19,7 @@ UPDATE workspace_leases
        updated_at = now()
  WHERE state IN ('active', 'releasing')
    AND expires_at <= now()
-RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+RETURNING id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_id, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
 `
 
 func (q *Queries) ExpireWorkspaceLeases(ctx context.Context) ([]WorkspaceLease, error) {
@@ -50,6 +50,7 @@ func (q *Queries) ExpireWorkspaceLeases(ctx context.Context) ([]WorkspaceLease, 
 			&i.OwnershipGeneration,
 			&i.WriterGeneration,
 			&i.MountFencingGeneration,
+			&i.FencingKeyID,
 			&i.FencingTokenHash,
 			&i.AcquiredAt,
 			&i.RenewedAt,
@@ -72,7 +73,7 @@ func (q *Queries) ExpireWorkspaceLeases(ctx context.Context) ([]WorkspaceLease, 
 }
 
 const getRunOwnedWorkspaceLease = `-- name: GetRunOwnedWorkspaceLease :one
-SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
+SELECT workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_id, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error
   FROM workspace_leases
   JOIN run_leases
     ON run_leases.workspace_id = workspace_leases.workspace_id
@@ -117,6 +118,7 @@ func (q *Queries) GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwned
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
+		&i.FencingKeyID,
 		&i.FencingTokenHash,
 		&i.AcquiredAt,
 		&i.RenewedAt,
@@ -132,7 +134,7 @@ func (q *Queries) GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwned
 }
 
 const getWorkspaceLease = `-- name: GetWorkspaceLease :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_id, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
   FROM workspace_leases
  WHERE environment_id = $1
    AND workspace_id = $2
@@ -167,6 +169,7 @@ func (q *Queries) GetWorkspaceLease(ctx context.Context, arg GetWorkspaceLeasePa
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
+		&i.FencingKeyID,
 		&i.FencingTokenHash,
 		&i.AcquiredAt,
 		&i.RenewedAt,

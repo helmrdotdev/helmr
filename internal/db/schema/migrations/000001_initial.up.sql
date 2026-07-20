@@ -840,11 +840,12 @@ CREATE TYPE workspace_filesystem_mode AS ENUM (
 );
 
 CREATE TYPE workspace_process_state AS ENUM (
-    'queued',
+    'pending',
     'starting',
     'running',
-    'closing',
+    'exit_requested',
     'exited',
+    'cancelled',
     'lost',
     'failed'
 );
@@ -1427,6 +1428,7 @@ CREATE TABLE workspaces (
     deleted_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
+    UNIQUE (environment_id, id, deployment_definition_id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, region_id, id),
     UNIQUE (org_id, project_id, environment_id, id, region_id),
@@ -1676,6 +1678,7 @@ CREATE TABLE runs (
     terminal_at TIMESTAMPTZ,
     UNIQUE (org_id, id),
     UNIQUE (environment_id, id),
+    UNIQUE (environment_id, id, deployment_id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id, deployment_id),
     UNIQUE (org_id, project_id, environment_id, id, workspace_id),
@@ -2095,6 +2098,9 @@ CREATE TABLE workspace_leases (
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation > 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation > 0),
     mount_fencing_generation BIGINT NOT NULL CHECK (mount_fencing_generation > 0),
+    fencing_key_id TEXT NOT NULL CHECK (
+        fencing_key_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+    ),
     fencing_token_hash TEXT NOT NULL CHECK (btrim(fencing_token_hash) <> ''),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     renewed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2159,18 +2165,11 @@ CREATE TABLE workspace_processes (
     worker_epoch BIGINT CHECK (worker_epoch IS NULL OR worker_epoch > 0),
     runtime_instance_id UUID,
     workspace_mount_id UUID,
-    instance_lease_id UUID,
-    write_lease_id UUID,
-    kind TEXT NOT NULL CHECK (btrim(kind) <> ''),
-    command JSONB NOT NULL DEFAULT '[]'::jsonb,
-    cwd TEXT NOT NULL DEFAULT '',
-    env_shape JSONB NOT NULL DEFAULT '{}'::jsonb,
-    filesystem_mode workspace_filesystem_mode NOT NULL DEFAULT 'write',
-    state workspace_process_state NOT NULL DEFAULT 'queued',
-    detached BOOLEAN NOT NULL DEFAULT false,
-    idempotency_key TEXT NOT NULL DEFAULT '',
-    idempotency_expires_at TIMESTAMPTZ,
-    request_fingerprint TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL CHECK (kind IN ('exec', 'pty')),
+    state workspace_process_state NOT NULL DEFAULT 'pending',
+    state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
+    request JSONB NOT NULL,
+    claim_id UUID,
     runtime_process_id TEXT NOT NULL DEFAULT '',
     exit_code INTEGER,
     signal TEXT NOT NULL DEFAULT '',
@@ -2178,14 +2177,22 @@ CREATE TABLE workspace_processes (
     pty_rows INTEGER CHECK (pty_rows IS NULL OR pty_rows > 0),
     pending_pty_cols INTEGER CHECK (pending_pty_cols IS NULL OR pending_pty_cols > 0),
     pending_pty_rows INTEGER CHECK (pending_pty_rows IS NULL OR pending_pty_rows > 0),
-    stdout_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdout_cursor >= 0),
-    stderr_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stderr_cursor >= 0),
-    stdin_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdin_cursor >= 0),
-    stdin_delivered_cursor BIGINT NOT NULL DEFAULT 0 CHECK (stdin_delivered_cursor >= 0 AND stdin_delivered_cursor <= stdin_cursor),
+    resize_generation BIGINT CHECK (resize_generation IS NULL OR resize_generation >= 0),
+    pending_resize_generation BIGINT CHECK (pending_resize_generation IS NULL OR pending_resize_generation > 0),
+    stdout_cursor BIGINT CHECK (stdout_cursor IS NULL OR stdout_cursor >= 0),
+    stderr_cursor BIGINT CHECK (stderr_cursor IS NULL OR stderr_cursor >= 0),
+    stdin_cursor BIGINT CHECK (stdin_cursor IS NULL OR stdin_cursor >= 0),
+    stdin_delivered_cursor BIGINT CHECK (
+        stdin_delivered_cursor IS NULL
+        OR (stdin_delivered_cursor >= 0 AND stdin_delivered_cursor <= stdin_cursor)
+    ),
     stdin_closed_at TIMESTAMPTZ,
-    input_cursor BIGINT NOT NULL DEFAULT 0 CHECK (input_cursor >= 0),
-    input_delivered_cursor BIGINT NOT NULL DEFAULT 0 CHECK (input_delivered_cursor >= 0 AND input_delivered_cursor <= input_cursor),
-    output_cursor BIGINT NOT NULL DEFAULT 0 CHECK (output_cursor >= 0),
+    input_cursor BIGINT CHECK (input_cursor IS NULL OR input_cursor >= 0),
+    input_delivered_cursor BIGINT CHECK (
+        input_delivered_cursor IS NULL
+        OR (input_delivered_cursor >= 0 AND input_delivered_cursor <= input_cursor)
+    ),
+    output_cursor BIGINT CHECK (output_cursor IS NULL OR output_cursor >= 0),
     created_by_subject_type TEXT NOT NULL DEFAULT '',
     created_by_subject_id TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -2193,34 +2200,86 @@ CREATE TABLE workspace_processes (
     exited_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
-    terminal_error JSONB,
+    error JSONB,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (jsonb_typeof(request) = 'object' AND octet_length(request::text) <= 16384),
     CHECK (
-        (pending_pty_cols IS NULL AND pending_pty_rows IS NULL)
-        OR (pending_pty_cols IS NOT NULL AND pending_pty_rows IS NOT NULL)
+        (kind = 'exec'
+         AND stdout_cursor IS NOT NULL
+         AND stderr_cursor IS NOT NULL
+         AND stdin_cursor IS NOT NULL
+         AND stdin_delivered_cursor IS NOT NULL
+         AND input_cursor IS NULL
+         AND input_delivered_cursor IS NULL
+         AND output_cursor IS NULL
+         AND pty_cols IS NULL
+         AND pty_rows IS NULL
+         AND pending_pty_cols IS NULL
+         AND pending_pty_rows IS NULL
+         AND resize_generation IS NULL
+         AND pending_resize_generation IS NULL)
+        OR
+        (kind = 'pty'
+         AND stdout_cursor IS NULL
+         AND stderr_cursor IS NULL
+         AND stdin_cursor IS NULL
+         AND stdin_delivered_cursor IS NULL
+         AND stdin_closed_at IS NULL
+         AND input_cursor IS NOT NULL
+         AND input_delivered_cursor IS NOT NULL
+         AND output_cursor IS NOT NULL
+         AND pty_cols IS NOT NULL
+         AND pty_rows IS NOT NULL
+         AND resize_generation IS NOT NULL)
     ),
     CHECK (
-        kind <> 'pty'
-        OR (pty_cols IS NOT NULL AND pty_rows IS NOT NULL)
+        (pending_pty_cols IS NULL
+         AND pending_pty_rows IS NULL
+         AND pending_resize_generation IS NULL)
+        OR
+        (pending_pty_cols IS NOT NULL
+         AND pending_pty_rows IS NOT NULL
+         AND pending_resize_generation IS NOT NULL
+         AND pending_resize_generation = resize_generation)
     ),
-    CHECK (num_nonnulls(region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id) IN (0, 5)),
     CHECK (
-        (state = 'queued' AND region_id IS NULL)
-        OR (state IN ('starting', 'running', 'closing', 'exited', 'lost', 'failed') AND region_id IS NOT NULL)
+        num_nonnulls(
+            region_id,
+            worker_group_id,
+            worker_instance_id,
+            worker_epoch,
+            runtime_instance_id,
+            workspace_mount_id
+        ) IN (0, 6)
     ),
     CHECK (
-        (state IN ('queued', 'starting', 'running', 'closing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
+        (state = 'pending' AND region_id IS NULL)
+        OR
+        (state IN ('starting', 'running', 'exit_requested', 'exited', 'lost', 'failed')
+         AND region_id IS NOT NULL)
+        OR
+        (state = 'cancelled')
+    ),
+    CHECK (
+        (state IN ('pending', 'starting', 'running', 'exit_requested')
+         AND terminal_at IS NULL
+         AND terminal_reason_code IS NULL
+         AND error IS NULL)
         OR (
-            state IN ('exited', 'lost', 'failed')
+            state IN ('exited', 'cancelled', 'lost', 'failed')
             AND terminal_at IS NOT NULL
             AND terminal_reason_code IS NOT NULL
             AND btrim(terminal_reason_code) <> ''
             AND octet_length(terminal_reason_code) <= 128
         )
     ),
-    CHECK (terminal_error IS NULL OR (jsonb_typeof(terminal_error) = 'object' AND octet_length(terminal_error::text) <= 16384)),
+    CHECK (state <> 'cancelled' OR num_nonnulls(region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_mount_id) IN (0, 6)),
+    CHECK (state <> 'exited' OR exited_at IS NOT NULL),
+    CHECK (error IS NULL OR (jsonb_typeof(error) = 'object' AND octet_length(error::text) <= 16384)),
     UNIQUE (org_id, id),
     UNIQUE (workspace_id, id),
+    UNIQUE (id, workspace_id, runtime_instance_id),
+    UNIQUE (environment_id, id),
     UNIQUE (environment_id, id, kind),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, workspace_id, id),
@@ -2230,11 +2289,8 @@ CREATE TABLE workspace_processes (
     FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id)
         REFERENCES workspace_mounts(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, instance_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, write_lease_id)
-        REFERENCES workspace_leases(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, id)
+    FOREIGN KEY (environment_id, claim_id)
+        REFERENCES idempotency_claims(environment_id, id)
         ON DELETE RESTRICT,
     FOREIGN KEY (worker_group_id, region_id)
         REFERENCES worker_groups(id, region_id)
@@ -2244,18 +2300,18 @@ CREATE TABLE workspace_processes (
         ON DELETE RESTRICT
 );
 
-CREATE UNIQUE INDEX workspace_processes_idempotency_idx
-    ON workspace_processes (org_id, project_id, environment_id, workspace_id, kind, idempotency_key)
-    WHERE idempotency_key <> '';
+CREATE UNIQUE INDEX workspace_processes_workspace_active_uidx
+    ON workspace_processes (workspace_id)
+    WHERE state IN ('pending', 'starting', 'running', 'exit_requested');
 
 CREATE INDEX workspace_processes_worker_replay_idx
     ON workspace_processes (worker_instance_id, worker_epoch, state, created_at, id)
-    WHERE state IN ('starting', 'running', 'closing');
+    WHERE state IN ('starting', 'running', 'exit_requested');
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_process_id_fkey
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, owner_process_id)
-    REFERENCES workspace_processes(org_id, project_id, environment_id, workspace_id, id)
+    FOREIGN KEY (owner_process_id, workspace_id, runtime_instance_id)
+    REFERENCES workspace_processes(id, workspace_id, runtime_instance_id)
     ON DELETE RESTRICT;
 
 CREATE UNIQUE INDEX workspace_leases_mount_active_uidx
@@ -2862,7 +2918,6 @@ CREATE TABLE run_leases (
     requested_workload_disk_bytes BIGINT NOT NULL CHECK (requested_workload_disk_bytes >= 0),
     requested_scratch_bytes BIGINT NOT NULL CHECK (requested_scratch_bytes >= 0),
     requested_execution_slots INTEGER NOT NULL DEFAULT 1 CHECK (requested_execution_slots > 0),
-    resource_snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     trace_id TEXT,
     span_id TEXT,
     parent_span_id TEXT,
@@ -2906,8 +2961,6 @@ CREATE TABLE run_leases (
     FOREIGN KEY (worker_instance_id, worker_group_id)
         REFERENCES worker_instances(id, worker_group_id)
         ON DELETE RESTRICT,
-    CHECK (jsonb_typeof(resource_snapshot) = 'object'),
-    CHECK (octet_length(resource_snapshot::text) <= 16384),
     CHECK (expires_at > assigned_at),
     CHECK (start_deadline_at <= expires_at),
     CHECK (claimed_at IS NULL OR claimed_at >= assigned_at),
@@ -3455,9 +3508,11 @@ CREATE TABLE runtime_instances (
     reserved_workload_disk_bytes BIGINT NOT NULL CHECK (reserved_workload_disk_bytes >= 0),
     reserved_scratch_bytes BIGINT NOT NULL CHECK (reserved_scratch_bytes >= 0),
     reserved_execution_slots INTEGER NOT NULL CHECK (reserved_execution_slots > 0),
-    workspace_id UUID,
-    workspace_version_id UUID,
-    reserved_workspace_id UUID,
+    workspace_id UUID NOT NULL,
+    program_deployment_id UUID,
+    reserved_run_id UUID,
+    reserved_attempt_number INTEGER CHECK (reserved_attempt_number IS NULL OR reserved_attempt_number > 0),
+    reserved_process_id UUID,
     reserved_workspace_version_id UUID,
     reservation_expires_at TIMESTAMPTZ,
     desired_state runtime_desired_state NOT NULL DEFAULT 'ready',
@@ -3496,6 +3551,24 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, workspace_id, deployment_definition_id)
+        REFERENCES workspaces(environment_id, id, deployment_definition_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, program_deployment_id)
+        REFERENCES deployments(environment_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (reserved_run_id, reserved_attempt_number, workspace_id)
+        REFERENCES run_attempts(run_id, number, workspace_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (environment_id, reserved_run_id, program_deployment_id)
+        REFERENCES runs(environment_id, id, deployment_id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (workspace_id, reserved_workspace_version_id)
+        REFERENCES workspace_versions(workspace_id, id)
+        ON DELETE RESTRICT,
+    FOREIGN KEY (reserved_process_id, workspace_id)
+        REFERENCES workspace_processes(id, workspace_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id)
         REFERENCES artifacts(org_id, project_id, environment_id, id)
         ON DELETE RESTRICT,
@@ -3505,23 +3578,33 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (org_id, project_id, environment_id, deployment_definition_id, runtime_substrate_id)
         REFERENCES runtime_substrates(org_id, project_id, environment_id, deployment_definition_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, workspace_id, workspace_version_id)
-        REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, reserved_workspace_id, reserved_workspace_version_id)
-        REFERENCES workspace_versions(org_id, project_id, environment_id, workspace_id, id)
-        ON DELETE RESTRICT,
-    CHECK ((workspace_id IS NULL) = (workspace_version_id IS NULL)),
-    CHECK ((reserved_workspace_id IS NULL) = (reserved_workspace_version_id IS NULL)),
-    CHECK ((reserved_workspace_id IS NULL) = (reservation_expires_at IS NULL)),
-    CHECK (workspace_id IS NULL OR reserved_workspace_id IS NULL),
+    CHECK (
+        (reserved_run_id IS NULL
+         AND reserved_attempt_number IS NULL
+         AND reserved_process_id IS NULL
+         AND reserved_workspace_version_id IS NULL
+         AND reservation_expires_at IS NULL)
+        OR
+        (reserved_run_id IS NOT NULL
+         AND reserved_attempt_number IS NOT NULL
+         AND reserved_process_id IS NULL
+         AND reserved_workspace_version_id IS NOT NULL
+         AND reservation_expires_at IS NOT NULL
+         AND program_deployment_id IS NOT NULL)
+        OR
+        (reserved_run_id IS NULL
+         AND reserved_attempt_number IS NULL
+         AND reserved_process_id IS NOT NULL
+         AND reserved_workspace_version_id IS NOT NULL
+         AND reservation_expires_at IS NOT NULL)
+    ),
     CHECK ((sandbox_image_artifact_id IS NULL) = (sandbox_image_artifact_digest IS NULL)),
     CHECK ((sandbox_image_artifact_id IS NULL) = (sandbox_image_artifact_format IS NULL)),
     CHECK (sandbox_image_artifact_digest IS NULL OR btrim(sandbox_image_artifact_digest) <> ''),
     CHECK (sandbox_image_artifact_format IS NULL OR btrim(sandbox_image_artifact_format) <> ''),
     CHECK (jsonb_typeof(runtime_key) = 'object' AND octet_length(runtime_key::text) <= 16384),
     CHECK (jsonb_typeof(network_policy) = 'object' AND octet_length(network_policy::text) <= 16384),
-    CHECK (reserved_workspace_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
+    CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
     CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closing', 'closed', 'failed', 'lost')),
     CHECK (preparing_at IS NULL OR preparing_at >= allocated_at),
@@ -3639,10 +3722,6 @@ ALTER TABLE workspace_processes
     REFERENCES runtime_instances(org_id, project_id, environment_id, region_id, worker_group_id, worker_instance_id, worker_epoch, id)
     ON DELETE RESTRICT;
 
-CREATE INDEX runtime_instances_ready_claim_idx
-    ON runtime_instances (worker_instance_id, runtime_identity_id, deployment_definition_id, ready_at, id)
-    WHERE observed_state = 'ready' AND workspace_id IS NULL AND reserved_workspace_id IS NULL;
-
 CREATE INDEX runtime_instances_deployment_definition_idx
     ON runtime_instances (environment_id, deployment_definition_id);
 
@@ -3657,14 +3736,15 @@ CREATE INDEX runtime_instances_reclaim_idx
 
 CREATE UNIQUE INDEX runtime_instances_workspace_active_uidx
     ON runtime_instances (workspace_id)
-    WHERE workspace_id IS NOT NULL
-      AND (observed_state IN ('allocated', 'preparing', 'ready', 'closing')
-           OR (observed_state IN ('failed', 'lost') AND reclaimed_at IS NULL));
+    WHERE reclaimed_at IS NULL;
 
-CREATE UNIQUE INDEX runtime_instances_reservation_active_uidx
-    ON runtime_instances (reserved_workspace_id)
-    WHERE reserved_workspace_id IS NOT NULL
-      AND observed_state IN ('allocated', 'preparing', 'ready');
+CREATE UNIQUE INDEX runtime_instances_reserved_run_uidx
+    ON runtime_instances (reserved_run_id)
+    WHERE reserved_run_id IS NOT NULL;
+
+CREATE UNIQUE INDEX runtime_instances_reserved_process_uidx
+    ON runtime_instances (reserved_process_id)
+    WHERE reserved_process_id IS NOT NULL;
 
 CREATE INDEX runtime_instances_desired_replay_idx
     ON runtime_instances (worker_instance_id, worker_epoch, desired_version, id)
@@ -3771,9 +3851,6 @@ CREATE INDEX workspaces_create_idempotency_expiry_idx ON workspaces(org_id, proj
 CREATE UNIQUE INDEX workspaces_create_idempotency_idx ON workspaces(org_id, project_id, environment_id, create_idempotency_key)
     WHERE create_idempotency_key <> '';
 CREATE INDEX workspace_versions_workspace_created_idx ON workspace_versions(org_id, workspace_id, created_at DESC);
-CREATE INDEX workspace_processes_idempotency_expiry_idx
-    ON workspace_processes(org_id, project_id, environment_id, idempotency_expires_at)
-    WHERE idempotency_key <> '';
 CREATE INDEX run_stream_records_sequence_idx
     ON run_stream_records(run_stream_id, sequence, id);
 CREATE UNIQUE INDEX run_stream_records_claim_idx

@@ -67,7 +67,7 @@ WITH target AS MATERIALIZED (
            SELECT 1 FROM workspace_processes
             WHERE workspace_processes.worker_instance_id = target.id
               AND workspace_processes.worker_epoch = target.current_epoch
-              AND workspace_processes.state IN ('starting', 'running', 'closing')
+              AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
        )
        AND NOT EXISTS (
            SELECT 1 FROM worker_network_slots

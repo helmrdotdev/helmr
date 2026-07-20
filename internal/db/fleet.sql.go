@@ -46,7 +46,7 @@ WITH target AS MATERIALIZED (
              + (SELECT count(*) FROM workspace_processes
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch
-                   AND state IN ('starting', 'running', 'closing'))
+                   AND state IN ('starting', 'running', 'exit_requested'))
              + (SELECT count(*) FROM worker_network_slots
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch
@@ -259,7 +259,7 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
          + (SELECT count(*) FROM workspace_processes
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
-               AND state IN ('starting', 'running', 'closing'))
+               AND state IN ('starting', 'running', 'exit_requested'))
          + (SELECT count(*) FROM worker_network_slots
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch

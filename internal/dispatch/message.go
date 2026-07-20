@@ -40,7 +40,7 @@ type Message struct {
 	QueueClass            string
 	QueueName             string
 	QueueConcurrencyScope string
-	QueueConcurrencyLimit int32
+	QueueConcurrencyLimit int64
 	ConcurrencyKey        string
 	RunStateVersion       int64
 	Requirements          compute.RunRuntimeRequirements

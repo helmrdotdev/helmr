@@ -1,4 +1,4 @@
--- name: EnsureWorkspaceMountRequested :one
+-- name: EnsureRunWorkspaceMountRequested :one
 INSERT INTO workspace_mounts (
     id, org_id, project_id, environment_id, region_id, worker_group_id,
     worker_instance_id, worker_epoch, workspace_id,
@@ -7,21 +7,64 @@ INSERT INTO workspace_mounts (
 SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
        runtime_instances.environment_id, runtime_instances.region_id,
        runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
-       runtime_instances.worker_epoch, workspaces.id,
-       workspaces.head_version_id, runtime_instances.id, sqlc.arg(request)
-  FROM workspaces
-  JOIN workspace_versions ON workspace_versions.org_id = workspaces.org_id
-                         AND workspace_versions.workspace_id = workspaces.id
-                         AND workspace_versions.id = workspaces.head_version_id
+       runtime_instances.worker_epoch, runtime_instances.workspace_id,
+       runtime_instances.reserved_workspace_version_id, runtime_instances.id,
+       sqlc.arg(request)
+  FROM runtime_instances
+  JOIN runs ON runs.environment_id = runtime_instances.environment_id
+           AND runs.id = runtime_instances.reserved_run_id
+           AND runs.deployment_id = runtime_instances.program_deployment_id
+  JOIN run_attempts ON run_attempts.run_id = runtime_instances.reserved_run_id
+                   AND run_attempts.number = runtime_instances.reserved_attempt_number
+                   AND run_attempts.workspace_id = runtime_instances.workspace_id
+  JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
+                         AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
                          AND workspace_versions.state = 'committed'
-  JOIN runtime_instances ON runtime_instances.org_id = workspaces.org_id
-                        AND runtime_instances.project_id = workspaces.project_id
-                        AND runtime_instances.environment_id = workspaces.environment_id
-                        AND runtime_instances.workspace_id = workspaces.id
-                        AND runtime_instances.workspace_version_id = workspaces.head_version_id
-                        AND runtime_instances.deployment_definition_id = workspaces.deployment_definition_id
-                        AND runtime_instances.observed_state = 'ready'
- WHERE workspaces.org_id = sqlc.arg(org_id) AND workspaces.id = sqlc.arg(workspace_id)
+ WHERE runtime_instances.org_id = sqlc.arg(org_id)
+   AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
+   AND runtime_instances.id = sqlc.arg(runtime_instance_id)
+   AND runtime_instances.reserved_run_id = sqlc.arg(run_id)
+   AND runtime_instances.reserved_attempt_number = sqlc.arg(attempt_number)
+   AND runtime_instances.reserved_workspace_version_id = sqlc.arg(workspace_version_id)
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+   AND runtime_instances.reservation_expires_at > transaction_timestamp()
+ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
+DO UPDATE SET updated_at = workspace_mounts.updated_at
+WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
+  AND workspace_mounts.materialized_version_id = excluded.materialized_version_id
+RETURNING workspace_mounts.*, (xmax = 0) AS inserted,
+          CASE WHEN xmax = 0 THEN 'created'::text ELSE 'replayed'::text END AS decision;
+
+-- name: EnsureProcessWorkspaceMountRequested :one
+INSERT INTO workspace_mounts (
+    id, org_id, project_id, environment_id, region_id, worker_group_id,
+    worker_instance_id, worker_epoch, workspace_id,
+    materialized_version_id, runtime_instance_id, request
+)
+SELECT sqlc.arg(id), runtime_instances.org_id, runtime_instances.project_id,
+       runtime_instances.environment_id, runtime_instances.region_id,
+       runtime_instances.worker_group_id, runtime_instances.worker_instance_id,
+       runtime_instances.worker_epoch, runtime_instances.workspace_id,
+       runtime_instances.reserved_workspace_version_id, runtime_instances.id,
+       sqlc.arg(request)
+  FROM runtime_instances
+  JOIN workspace_processes
+    ON workspace_processes.id = runtime_instances.reserved_process_id
+   AND workspace_processes.workspace_id = runtime_instances.workspace_id
+   AND workspace_processes.state = 'pending'
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = runtime_instances.workspace_id
+   AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+   AND workspace_versions.state = 'committed'
+ WHERE runtime_instances.org_id = sqlc.arg(org_id)
+   AND runtime_instances.workspace_id = sqlc.arg(workspace_id)
+   AND runtime_instances.id = sqlc.arg(runtime_instance_id)
+   AND runtime_instances.reserved_process_id = sqlc.arg(process_id)
+   AND runtime_instances.reserved_workspace_version_id = sqlc.arg(workspace_version_id)
+   AND runtime_instances.observed_state = 'ready'
+   AND runtime_instances.reclaimed_at IS NULL
+   AND runtime_instances.reservation_expires_at > transaction_timestamp()
 ON CONFLICT (workspace_id) WHERE state IN ('mounting','mounted','unmounting')
 DO UPDATE SET updated_at = workspace_mounts.updated_at
 WHERE workspace_mounts.runtime_instance_id = excluded.runtime_instance_id
@@ -100,6 +143,9 @@ WITH candidate AS (
        AND workspace_mounts.worker_epoch = sqlc.arg(worker_epoch)
        AND workspace_mounts.state = 'mounting'
        AND runtime_instances.observed_state = 'ready'
+       AND runtime_instances.reserved_workspace_version_id = workspace_mounts.materialized_version_id
+       AND num_nonnulls(runtime_instances.reserved_run_id, runtime_instances.reserved_process_id) = 1
+       AND runtime_instances.reservation_expires_at > transaction_timestamp()
      ORDER BY workspace_mounts.requested_at, workspace_mounts.id
      LIMIT 1
      FOR UPDATE OF workspace_mounts SKIP LOCKED
@@ -269,7 +315,10 @@ WITH stopped AS (
                                            ELSE runtime_instances.desired_version + 1 END,
            observed_at = now(), closing_at = COALESCE(runtime_instances.closing_at, now()),
            closed_at = now(), terminal_at = now(), terminal_reason_code = 'workspace_unmounted',
-           terminal_error = NULL, reclaimed_at = now(), updated_at = now()
+           terminal_error = NULL, reclaimed_at = now(),
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM stopped
      WHERE runtime_instances.org_id = stopped.org_id
        AND runtime_instances.id = stopped.runtime_instance_id
@@ -339,7 +388,10 @@ WITH target AS (
        SET observed_state = 'failed', observed_version = observed_version + 1,
            observed_at = now(), failed_at = now(), terminal_at = now(),
            terminal_reason_code = 'workspace_mount_failed',
-           terminal_error = sqlc.narg(error), updated_at = now()
+           terminal_error = sqlc.narg(error),
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtime_instances.org_id = target.org_id
        AND runtime_instances.id = target.runtime_instance_id

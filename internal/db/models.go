@@ -1494,13 +1494,14 @@ func (ns NullWorkspaceMountState) Value() (driver.Value, error) {
 type WorkspaceProcessState string
 
 const (
-	WorkspaceProcessStateQueued   WorkspaceProcessState = "queued"
-	WorkspaceProcessStateStarting WorkspaceProcessState = "starting"
-	WorkspaceProcessStateRunning  WorkspaceProcessState = "running"
-	WorkspaceProcessStateClosing  WorkspaceProcessState = "closing"
-	WorkspaceProcessStateExited   WorkspaceProcessState = "exited"
-	WorkspaceProcessStateLost     WorkspaceProcessState = "lost"
-	WorkspaceProcessStateFailed   WorkspaceProcessState = "failed"
+	WorkspaceProcessStatePending       WorkspaceProcessState = "pending"
+	WorkspaceProcessStateStarting      WorkspaceProcessState = "starting"
+	WorkspaceProcessStateRunning       WorkspaceProcessState = "running"
+	WorkspaceProcessStateExitRequested WorkspaceProcessState = "exit_requested"
+	WorkspaceProcessStateExited        WorkspaceProcessState = "exited"
+	WorkspaceProcessStateCancelled     WorkspaceProcessState = "cancelled"
+	WorkspaceProcessStateLost          WorkspaceProcessState = "lost"
+	WorkspaceProcessStateFailed        WorkspaceProcessState = "failed"
 )
 
 func (e *WorkspaceProcessState) Scan(src interface{}) error {
@@ -2259,7 +2260,6 @@ type RunLease struct {
 	RequestedWorkloadDiskBytes int64              `json:"requested_workload_disk_bytes"`
 	RequestedScratchBytes      int64              `json:"requested_scratch_bytes"`
 	RequestedExecutionSlots    int32              `json:"requested_execution_slots"`
-	ResourceSnapshot           []byte             `json:"resource_snapshot"`
 	TraceID                    pgtype.Text        `json:"trace_id"`
 	SpanID                     pgtype.Text        `json:"span_id"`
 	ParentSpanID               pgtype.Text        `json:"parent_span_id"`
@@ -2412,8 +2412,10 @@ type RuntimeInstance struct {
 	ReservedScratchBytes       int64                `json:"reserved_scratch_bytes"`
 	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
 	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
-	WorkspaceVersionID         pgtype.UUID          `json:"workspace_version_id"`
-	ReservedWorkspaceID        pgtype.UUID          `json:"reserved_workspace_id"`
+	ProgramDeploymentID        pgtype.UUID          `json:"program_deployment_id"`
+	ReservedRunID              pgtype.UUID          `json:"reserved_run_id"`
+	ReservedAttemptNumber      pgtype.Int4          `json:"reserved_attempt_number"`
+	ReservedProcessID          pgtype.UUID          `json:"reserved_process_id"`
 	ReservedWorkspaceVersionID pgtype.UUID          `json:"reserved_workspace_version_id"`
 	ReservationExpiresAt       pgtype.Timestamptz   `json:"reservation_expires_at"`
 	DesiredState               RuntimeDesiredState  `json:"desired_state"`
@@ -2834,6 +2836,7 @@ type WorkspaceLease struct {
 	OwnershipGeneration    int64               `json:"ownership_generation"`
 	WriterGeneration       int64               `json:"writer_generation"`
 	MountFencingGeneration int64               `json:"mount_fencing_generation"`
+	FencingKeyID           string              `json:"fencing_key_id"`
 	FencingTokenHash       string              `json:"fencing_token_hash"`
 	AcquiredAt             pgtype.Timestamptz  `json:"acquired_at"`
 	RenewedAt              pgtype.Timestamptz  `json:"renewed_at"`
@@ -2879,53 +2882,48 @@ type WorkspaceMount struct {
 }
 
 type WorkspaceProcess struct {
-	ID                   pgtype.UUID             `json:"id"`
-	OrgID                pgtype.UUID             `json:"org_id"`
-	ProjectID            pgtype.UUID             `json:"project_id"`
-	EnvironmentID        pgtype.UUID             `json:"environment_id"`
-	WorkspaceID          pgtype.UUID             `json:"workspace_id"`
-	RegionID             pgtype.Text             `json:"region_id"`
-	WorkerGroupID        pgtype.Text             `json:"worker_group_id"`
-	WorkerInstanceID     pgtype.UUID             `json:"worker_instance_id"`
-	WorkerEpoch          pgtype.Int8             `json:"worker_epoch"`
-	RuntimeInstanceID    pgtype.UUID             `json:"runtime_instance_id"`
-	WorkspaceMountID     pgtype.UUID             `json:"workspace_mount_id"`
-	InstanceLeaseID      pgtype.UUID             `json:"instance_lease_id"`
-	WriteLeaseID         pgtype.UUID             `json:"write_lease_id"`
-	Kind                 string                  `json:"kind"`
-	Command              []byte                  `json:"command"`
-	Cwd                  string                  `json:"cwd"`
-	EnvShape             []byte                  `json:"env_shape"`
-	FilesystemMode       WorkspaceFilesystemMode `json:"filesystem_mode"`
-	State                WorkspaceProcessState   `json:"state"`
-	Detached             bool                    `json:"detached"`
-	IdempotencyKey       string                  `json:"idempotency_key"`
-	IdempotencyExpiresAt pgtype.Timestamptz      `json:"idempotency_expires_at"`
-	RequestFingerprint   string                  `json:"request_fingerprint"`
-	RuntimeProcessID     string                  `json:"runtime_process_id"`
-	ExitCode             pgtype.Int4             `json:"exit_code"`
-	Signal               string                  `json:"signal"`
-	PtyCols              pgtype.Int4             `json:"pty_cols"`
-	PtyRows              pgtype.Int4             `json:"pty_rows"`
-	PendingPtyCols       pgtype.Int4             `json:"pending_pty_cols"`
-	PendingPtyRows       pgtype.Int4             `json:"pending_pty_rows"`
-	StdoutCursor         int64                   `json:"stdout_cursor"`
-	StderrCursor         int64                   `json:"stderr_cursor"`
-	StdinCursor          int64                   `json:"stdin_cursor"`
-	StdinDeliveredCursor int64                   `json:"stdin_delivered_cursor"`
-	StdinClosedAt        pgtype.Timestamptz      `json:"stdin_closed_at"`
-	InputCursor          int64                   `json:"input_cursor"`
-	InputDeliveredCursor int64                   `json:"input_delivered_cursor"`
-	OutputCursor         int64                   `json:"output_cursor"`
-	CreatedBySubjectType string                  `json:"created_by_subject_type"`
-	CreatedBySubjectID   string                  `json:"created_by_subject_id"`
-	CreatedAt            pgtype.Timestamptz      `json:"created_at"`
-	StartedAt            pgtype.Timestamptz      `json:"started_at"`
-	ExitedAt             pgtype.Timestamptz      `json:"exited_at"`
-	TerminalAt           pgtype.Timestamptz      `json:"terminal_at"`
-	TerminalReasonCode   pgtype.Text             `json:"terminal_reason_code"`
-	TerminalError        []byte                  `json:"terminal_error"`
-	UpdatedAt            pgtype.Timestamptz      `json:"updated_at"`
+	ID                      pgtype.UUID           `json:"id"`
+	OrgID                   pgtype.UUID           `json:"org_id"`
+	ProjectID               pgtype.UUID           `json:"project_id"`
+	EnvironmentID           pgtype.UUID           `json:"environment_id"`
+	WorkspaceID             pgtype.UUID           `json:"workspace_id"`
+	RegionID                pgtype.Text           `json:"region_id"`
+	WorkerGroupID           pgtype.Text           `json:"worker_group_id"`
+	WorkerInstanceID        pgtype.UUID           `json:"worker_instance_id"`
+	WorkerEpoch             pgtype.Int8           `json:"worker_epoch"`
+	RuntimeInstanceID       pgtype.UUID           `json:"runtime_instance_id"`
+	WorkspaceMountID        pgtype.UUID           `json:"workspace_mount_id"`
+	Kind                    string                `json:"kind"`
+	State                   WorkspaceProcessState `json:"state"`
+	StateVersion            int64                 `json:"state_version"`
+	Request                 []byte                `json:"request"`
+	ClaimID                 pgtype.UUID           `json:"claim_id"`
+	RuntimeProcessID        string                `json:"runtime_process_id"`
+	ExitCode                pgtype.Int4           `json:"exit_code"`
+	Signal                  string                `json:"signal"`
+	PtyCols                 pgtype.Int4           `json:"pty_cols"`
+	PtyRows                 pgtype.Int4           `json:"pty_rows"`
+	PendingPtyCols          pgtype.Int4           `json:"pending_pty_cols"`
+	PendingPtyRows          pgtype.Int4           `json:"pending_pty_rows"`
+	ResizeGeneration        pgtype.Int8           `json:"resize_generation"`
+	PendingResizeGeneration pgtype.Int8           `json:"pending_resize_generation"`
+	StdoutCursor            pgtype.Int8           `json:"stdout_cursor"`
+	StderrCursor            pgtype.Int8           `json:"stderr_cursor"`
+	StdinCursor             pgtype.Int8           `json:"stdin_cursor"`
+	StdinDeliveredCursor    pgtype.Int8           `json:"stdin_delivered_cursor"`
+	StdinClosedAt           pgtype.Timestamptz    `json:"stdin_closed_at"`
+	InputCursor             pgtype.Int8           `json:"input_cursor"`
+	InputDeliveredCursor    pgtype.Int8           `json:"input_delivered_cursor"`
+	OutputCursor            pgtype.Int8           `json:"output_cursor"`
+	CreatedBySubjectType    string                `json:"created_by_subject_type"`
+	CreatedBySubjectID      string                `json:"created_by_subject_id"`
+	CreatedAt               pgtype.Timestamptz    `json:"created_at"`
+	StartedAt               pgtype.Timestamptz    `json:"started_at"`
+	ExitedAt                pgtype.Timestamptz    `json:"exited_at"`
+	TerminalAt              pgtype.Timestamptz    `json:"terminal_at"`
+	TerminalReasonCode      pgtype.Text           `json:"terminal_reason_code"`
+	Error                   []byte                `json:"error"`
+	UpdatedAt               pgtype.Timestamptz    `json:"updated_at"`
 }
 
 type WorkspaceProcessRecord struct {

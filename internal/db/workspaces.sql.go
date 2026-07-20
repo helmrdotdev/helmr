@@ -322,7 +322,7 @@ SELECT workspaces.id, workspaces.public_id, workspaces.org_id, workspaces.projec
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
   JOIN deployment_definitions AS definitions
@@ -709,7 +709,7 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
 RETURNING id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
 `

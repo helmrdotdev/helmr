@@ -339,7 +339,10 @@ WITH disabled_groups AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'worker_group_removed', updated_at = now()
+           terminal_reason_code = 'worker_group_removed',
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
      WHERE worker_instance_id IN (SELECT id FROM lost_workers)
        AND reclaimed_at IS NULL
        AND observed_state IN ('allocated', 'preparing', 'ready', 'closing')
@@ -715,7 +718,10 @@ WITH desired_group AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = 'enrollment_policy_changed', updated_at = now()
+           terminal_reason_code = 'enrollment_policy_changed',
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
      WHERE runtime_instances.worker_instance_id IN (SELECT id FROM lost_workers)
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready', 'closing')
@@ -972,7 +978,10 @@ WITH target AS (
            lost_at = CASE WHEN observed_state IN ('closed','failed','lost') THEN lost_at ELSE now() END,
            terminal_at = COALESCE(terminal_at, now()),
            terminal_reason_code = COALESCE(terminal_reason_code, 'startup_inventory_reclaimed'),
-           reclaimed_at = now(), updated_at = now()
+           reclaimed_at = now(),
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtime_instances.worker_instance_id = target.id
        AND runtime_instances.worker_epoch < target.current_epoch

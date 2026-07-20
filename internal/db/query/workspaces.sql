@@ -214,7 +214,7 @@ SELECT workspaces.*,
            SELECT 1
              FROM workspace_processes
             WHERE workspace_processes.workspace_id = workspaces.id
-              AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
        ) AS has_active_process
   FROM workspaces
   JOIN deployment_definitions AS definitions
@@ -256,6 +256,6 @@ UPDATE workspaces
        SELECT 1
          FROM workspace_processes
         WHERE workspace_processes.workspace_id = workspaces.id
-          AND workspace_processes.state IN ('queued', 'starting', 'running', 'closing')
+          AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
    )
 RETURNING *;

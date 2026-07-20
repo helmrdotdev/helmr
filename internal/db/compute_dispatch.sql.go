@@ -321,7 +321,10 @@ WITH target AS (
     UPDATE runtime_instances
        SET observed_state = 'lost', observed_version = observed_version + 1,
            observed_at = now(), lost_at = now(), terminal_at = now(),
-           terminal_reason_code = $4, updated_at = now()
+           terminal_reason_code = $4,
+           reserved_run_id = NULL, reserved_attempt_number = NULL,
+           reserved_process_id = NULL, reserved_workspace_version_id = NULL,
+           reservation_expires_at = NULL, updated_at = now()
       FROM target
      WHERE runtime_instances.worker_instance_id = target.id
        AND runtime_instances.worker_epoch = target.current_epoch
