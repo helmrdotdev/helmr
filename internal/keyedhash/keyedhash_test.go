@@ -2,6 +2,7 @@ package keyedhash
 
 import (
 	"bytes"
+	"encoding/base64"
 	"testing"
 )
 
@@ -30,6 +31,32 @@ func TestKeyringUsesExactVersion(t *testing.T) {
 	all := ring.All([]byte("value"))
 	if len(all) != 2 || all[0].Version != 2 || all[1].Version != 1 {
 		t.Fatalf("all = %+v", all)
+	}
+}
+
+func TestKeyringListsCurrentFirst(t *testing.T) {
+	ring, err := New(1, map[int32][]byte{
+		1: bytes.Repeat([]byte{1}, KeySize),
+		2: bytes.Repeat([]byte{2}, KeySize),
+		3: bytes.Repeat([]byte{3}, KeySize),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := ring.All([]byte("value"))
+	if len(all) != 3 || all[0].Version != 1 || all[1].Version != 3 || all[2].Version != 2 {
+		t.Fatalf("all = %+v", all)
+	}
+}
+
+func TestKeyringParsesVersionedJSON(t *testing.T) {
+	encoded := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, KeySize))
+	ring, err := FromBase64JSON(`{"current":3,"keys":{"3":"` + encoded + `"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ring.CurrentVersion() != 3 {
+		t.Fatalf("current version = %d", ring.CurrentVersion())
 	}
 }
 

@@ -23,6 +23,7 @@ import (
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 
 	"github.com/helmrdotdev/helmr/internal/fleet"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
@@ -198,7 +199,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
 	}
-	secretStore, err := secret.New(queries, keyring)
+	hashes, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys)
+	if err != nil {
+		return fmt.Errorf("load lookup HMAC keys: %w", err)
+	}
+	secretStore, err := secret.New(queries, keyring, hashes)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}

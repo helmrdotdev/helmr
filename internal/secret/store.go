@@ -58,6 +58,12 @@ type KeyUsage struct {
 	Old         bool
 }
 
+type AuthenticatorKeyUsage struct {
+	Version     int32
+	SecretCount int64
+	Current     bool
+}
+
 type ReencryptBatchResult struct {
 	Scanned     int
 	Reencrypted int
@@ -549,6 +555,35 @@ func (s *Store) CountByKeyID(ctx context.Context, keyID string) (int64, error) {
 	}
 	for _, row := range usage {
 		if row.KeyID == keyID {
+			return row.SecretCount, nil
+		}
+	}
+	return 0, nil
+}
+
+func (s *Store) AuthenticatorKeyUsage(ctx context.Context) ([]AuthenticatorKeyUsage, error) {
+	rows, err := s.db.ListSecretAuthenticatorKeyUsage(ctx)
+	if err != nil {
+		return nil, err
+	}
+	usage := make([]AuthenticatorKeyUsage, 0, len(rows))
+	for _, row := range rows {
+		usage = append(usage, AuthenticatorKeyUsage{
+			Version:     row.AuthenticatorKeyVersion,
+			SecretCount: row.SecretCount,
+			Current:     row.AuthenticatorKeyVersion == s.hashes.CurrentVersion(),
+		})
+	}
+	return usage, nil
+}
+
+func (s *Store) CountByAuthenticatorKeyVersion(ctx context.Context, version int32) (int64, error) {
+	usage, err := s.db.ListSecretAuthenticatorKeyUsage(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, row := range usage {
+		if row.AuthenticatorKeyVersion == version {
 			return row.SecretCount, nil
 		}
 	}

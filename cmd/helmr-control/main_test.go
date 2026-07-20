@@ -113,6 +113,7 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_PUBLIC_URL", "http://"+addr)
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")

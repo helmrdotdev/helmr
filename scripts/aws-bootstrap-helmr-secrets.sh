@@ -60,6 +60,7 @@ random_base64_32() {
 put_secret worker_token_signing_key "$(openssl rand -hex 32)"
 put_secret auth_secret "$(openssl rand -hex 32)"
 put_secret secret_encryption_key "$(random_base64_32)"
+put_secret lookup_hmac_keys "{\"current\":1,\"keys\":{\"1\":\"$(random_base64_32)\"}}"
 put_secret checkpoint_encryption_key "$(random_base64_32)"
 put_secret setup_token "$(openssl rand -hex 32)"
 

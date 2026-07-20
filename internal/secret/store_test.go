@@ -150,6 +150,13 @@ func TestStoreReauthenticatesWithoutChangingLogicalVersion(t *testing.T) {
 	if bytes.Equal(before.ValueAuthenticator, after.ValueAuthenticator) {
 		t.Fatal("authenticator did not change")
 	}
+	usage, err := store.AuthenticatorKeyUsage(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(usage) != 1 || usage[0].Version != 2 || usage[0].SecretCount != 1 || !usage[0].Current {
+		t.Fatalf("usage = %+v", usage)
+	}
 }
 
 func TestValueAuthenticatorFrameIsScopeBoundAndInjective(t *testing.T) {
@@ -376,6 +383,21 @@ func (f *fakeSecretDB) ListSecretEncryptionKeyUsage(context.Context) ([]db.ListS
 	rows := make([]db.ListSecretEncryptionKeyUsageRow, 0, len(counts))
 	for keyID, count := range counts {
 		rows = append(rows, db.ListSecretEncryptionKeyUsageRow{KeyID: keyID, SecretCount: count})
+	}
+	return rows, nil
+}
+
+func (f *fakeSecretDB) ListSecretAuthenticatorKeyUsage(context.Context) ([]db.ListSecretAuthenticatorKeyUsageRow, error) {
+	counts := map[int32]int64{}
+	for _, version := range f.versions {
+		counts[version.AuthenticatorKeyVersion]++
+	}
+	rows := make([]db.ListSecretAuthenticatorKeyUsageRow, 0, len(counts))
+	for version, count := range counts {
+		rows = append(rows, db.ListSecretAuthenticatorKeyUsageRow{
+			AuthenticatorKeyVersion: version,
+			SecretCount:             count,
+		})
 	}
 	return rows, nil
 }

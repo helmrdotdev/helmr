@@ -136,6 +136,7 @@ output "secret_arns" {
     setup_token                = aws_secretsmanager_secret.setup_token.arn
     auth_secret                = aws_secretsmanager_secret.auth_secret.arn
     secret_encryption_key      = aws_secretsmanager_secret.secret_encryption_key.arn
+    lookup_hmac_keys           = aws_secretsmanager_secret.lookup_hmac_keys.arn
     github_oauth_client_secret = aws_secretsmanager_secret.github_oauth_client_secret.arn
     checkpoint_encryption_key  = aws_secretsmanager_secret.checkpoint_encryption_key.arn
     },

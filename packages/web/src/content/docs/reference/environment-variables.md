@@ -23,7 +23,7 @@ order: 960
 
 ## Control plane
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CAS_URI`, `HELMR_CLICKHOUSE_URL`, `HELMR_WORKER_TOKEN_SIGNING_KEY`, `HELMR_WORKER_GROUPS`, `HELMR_WORKER_GROUP_ID`, `HELMR_REGION_ID`, `HELMR_DEFAULT_REGION_ID`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, `HELMR_LOOKUP_HMAC_KEYS`, `HELMR_GITHUB_OAUTH_CLIENT_ID`, and `HELMR_GITHUB_OAUTH_CLIENT_SECRET`.
 
 Deployment mode: `HELMR_DEPLOYMENT_MODE` defaults to `self-hosted`. In `self-hosted` mode, `HELMR_SETUP_TOKEN` is required to create the first and only organization. In `managed-cloud` mode, authenticated users can create organizations without a setup token.
 
@@ -42,6 +42,14 @@ decrypt secrets written with the old key, and new writes use
 old-key secrets before removing `HELMR_SECRET_ENCRYPTION_KEY_OLD`; repeat the
 command until `remaining_old_key_count` is `0`.
 
+`HELMR_LOOKUP_HMAC_KEYS` is a JSON registry with a positive integer `current`
+version and a `keys` object from versions to base64-encoded 32-byte keys. New
+equality authenticators use the current key;
+retained keys continue to verify existing idempotency claims and Secret
+versions. After changing the current version, run
+`helmr-control secrets reauthenticate --from-version <old-version>` until
+`remaining_old_key_count` is `0` before removing the old key.
+
 When using the AWS module with `secret_encryption_key_old_arn`, also set
 `secret_encryption_key_old_kms_key_arns` if that old-key secret uses a
 customer-managed KMS key other than the module KMS key.
@@ -59,11 +67,13 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 
 ## Dispatcher
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`, `HELMR_AUTH_SECRET`, and `HELMR_SECRET_ENCRYPTION_KEY`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`, `HELMR_AUTH_SECRET`, `HELMR_SECRET_ENCRYPTION_KEY`, and `HELMR_LOOKUP_HMAC_KEYS`.
 
 Set `HELMR_SECRET_ENCRYPTION_KEY_OLD` on the dispatcher during the same rotation
 window as control so scheduled runs can resolve old-key secrets until
 re-encryption completes.
+
+Set the same `HELMR_LOOKUP_HMAC_KEYS` registry on control and dispatcher.
 
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.

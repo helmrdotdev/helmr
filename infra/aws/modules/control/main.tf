@@ -101,6 +101,7 @@ locals {
     HELMR_SETUP_TOKEN                = aws_secretsmanager_secret.setup_token.arn
     HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
+    HELMR_LOOKUP_HMAC_KEYS           = aws_secretsmanager_secret.lookup_hmac_keys.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.secret_encryption_key_old_arn != null ? {
@@ -160,6 +161,7 @@ locals {
     HELMR_AUTH_SECRET           = aws_secretsmanager_secret.auth_secret.arn
     HELMR_DATABASE_URL          = aws_secretsmanager_secret.database_url.arn
     HELMR_SECRET_ENCRYPTION_KEY = aws_secretsmanager_secret.secret_encryption_key.arn
+    HELMR_LOOKUP_HMAC_KEYS      = aws_secretsmanager_secret.lookup_hmac_keys.arn
     },
     var.secret_encryption_key_old_arn != null ? {
       HELMR_SECRET_ENCRYPTION_KEY_OLD = var.secret_encryption_key_old_arn
@@ -1556,6 +1558,13 @@ resource "aws_secretsmanager_secret" "setup_token" {
 
 resource "aws_secretsmanager_secret" "secret_encryption_key" {
   name                    = "${local.name}/control/secret-encryption-key"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "lookup_hmac_keys" {
+  name                    = "${local.name}/control/lookup-hmac-keys"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

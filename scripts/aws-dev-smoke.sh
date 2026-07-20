@@ -1629,6 +1629,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn worker_token_signing_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn auth_secret)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
+  put_secret_value_if_missing "$(dev_secret_arn lookup_hmac_keys)" "{\"current\":1,\"keys\":{\"1\":\"$(random_base64)\"}}"
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
   dev_resend_api_key_secret

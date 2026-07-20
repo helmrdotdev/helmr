@@ -31,6 +31,7 @@ import (
 	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -226,7 +227,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
 	}
-	secretStore, err := secret.New(queries, keyring)
+	hashes, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys)
+	if err != nil {
+		return fmt.Errorf("load lookup HMAC keys: %w", err)
+	}
+	secretStore, err := secret.New(queries, keyring, hashes)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
@@ -408,7 +413,7 @@ func runMigrate(log *slog.Logger, args []string) error {
 
 func runSecretsCommand(log *slog.Logger, args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
+		return secretCommandUsage()
 	}
 	cfg, err := config.LoadDatabase()
 	if err != nil {
@@ -419,6 +424,10 @@ func runSecretsCommand(log *slog.Logger, args []string) error {
 		return errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
 	}
 	oldKey := strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD"))
+	hashes, err := keyedhash.FromBase64JSON(os.Getenv("HELMR_LOOKUP_HMAC_KEYS"))
+	if err != nil {
+		return fmt.Errorf("load lookup HMAC keys: %w", err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	pool, err := pgxpool.New(ctx, cfg.URL)
@@ -431,14 +440,14 @@ func runSecretsCommand(log *slog.Logger, args []string) error {
 	if err != nil {
 		return fmt.Errorf("load secret encryption key: %w", err)
 	}
-	store, err := secret.New(queries, keyring)
+	store, err := secret.New(queries, keyring, hashes)
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
 	switch args[0] {
-	case "key-usage":
+	case "encryption-key-usage":
 		if len(args) != 1 {
-			return errors.New("usage: helmr-control secrets key-usage")
+			return errors.New("usage: helmr-control secrets encryption-key-usage")
 		}
 		usage, err := store.KeyUsage(ctx)
 		if err != nil {
@@ -448,8 +457,20 @@ func runSecretsCommand(log *slog.Logger, args []string) error {
 			log.Info("secret key usage", "key_id", row.KeyID, "secret_count", row.SecretCount, "current", row.Current, "old", row.Old)
 		}
 		return nil
+	case "authenticator-key-usage":
+		if len(args) != 1 {
+			return errors.New("usage: helmr-control secrets authenticator-key-usage")
+		}
+		usage, err := store.AuthenticatorKeyUsage(ctx)
+		if err != nil {
+			return err
+		}
+		for _, row := range usage {
+			log.Info("secret authenticator key usage", "version", row.Version, "secret_count", row.SecretCount, "current", row.Current)
+		}
+		return nil
 	case "reencrypt":
-		limit, err := parseReencryptLimit(args[1:])
+		limit, err := parseBatchLimit(args[1:], "reencrypt")
 		if err != nil {
 			return err
 		}
@@ -470,12 +491,34 @@ func runSecretsCommand(log *slog.Logger, args []string) error {
 			return fmt.Errorf("%d secrets could not be decrypted with HELMR_SECRET_ENCRYPTION_KEY_OLD", result.Failed)
 		}
 		return nil
+	case "reauthenticate":
+		fromVersion, limit, err := parseReauthenticateArgs(args[1:])
+		if err != nil {
+			return err
+		}
+		result, err := store.ReauthenticateBatch(ctx, fromVersion, limit)
+		if err != nil {
+			return err
+		}
+		remaining, err := store.CountByAuthenticatorKeyVersion(ctx, fromVersion)
+		if err != nil {
+			return err
+		}
+		log.Info("secret re-authentication batch complete", "scanned", result.Scanned, "reauthenticated", result.Reauthenticated, "skipped", result.Skipped, "failed", result.Failed, "remaining_old_key_count", remaining)
+		if result.Failed > 0 {
+			return fmt.Errorf("%d secret versions could not be authenticated", result.Failed)
+		}
+		return nil
 	default:
-		return errors.New("usage: helmr-control secrets key-usage|reencrypt [--limit N]")
+		return secretCommandUsage()
 	}
 }
 
-func parseReencryptLimit(args []string) (int32, error) {
+func secretCommandUsage() error {
+	return errors.New("usage: helmr-control secrets encryption-key-usage|authenticator-key-usage|reencrypt [--limit N]|reauthenticate --from-version N [--limit N]")
+}
+
+func parseBatchLimit(args []string, command string) (int32, error) {
 	limit := int64(500)
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -490,11 +533,42 @@ func parseReencryptLimit(args []string) (int32, error) {
 			limit = parsed
 			i++
 		default:
-			return 0, fmt.Errorf("unknown secrets reencrypt argument %q", args[i])
+			return 0, fmt.Errorf("unknown secrets %s argument %q", command, args[i])
 		}
 	}
 	if limit <= 0 {
 		return 0, errors.New("--limit must be positive")
 	}
 	return int32(limit), nil
+}
+
+func parseReauthenticateArgs(args []string) (int32, int32, error) {
+	var fromVersion int64
+	limitArgs := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] != "--from-version" {
+			limitArgs = append(limitArgs, args[i])
+			continue
+		}
+		if fromVersion != 0 {
+			return 0, 0, errors.New("--from-version may only be specified once")
+		}
+		if i+1 >= len(args) {
+			return 0, 0, errors.New("--from-version requires a value")
+		}
+		parsed, err := strconv.ParseInt(args[i+1], 10, 32)
+		if err != nil || parsed <= 0 {
+			return 0, 0, errors.New("--from-version must be a positive 32-bit integer")
+		}
+		fromVersion = parsed
+		i++
+	}
+	if fromVersion == 0 {
+		return 0, 0, errors.New("--from-version is required")
+	}
+	limit, err := parseBatchLimit(limitArgs, "reauthenticate")
+	if err != nil {
+		return 0, 0, err
+	}
+	return int32(fromVersion), limit, nil
 }

@@ -27,6 +27,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_AUTH_SECRET", " abcdefghijabcdefghijabcdefghij12 ")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= ")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY_OLD", " AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE= ")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", ` {"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}} `)
 	t.Setenv("HELMR_PUBLIC_URL", " https://helmr.example.test ")
 	t.Setenv("HELMR_MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("HELMR_SMTP_ADDR", " smtp.example.test:587 ")
@@ -54,6 +55,7 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -84,6 +86,7 @@ func TestLoadControlRequiresManagedRuntimeConfig(t *testing.T) {
 			t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 			t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 			t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+			t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 			t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 			t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 			t.Setenv(variable, "")
@@ -104,6 +107,7 @@ func TestLoadControlRequiresSetupTokenForSelfHosted(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -126,6 +130,7 @@ func TestLoadControlRejectsInvalidDeploymentMode(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -146,6 +151,7 @@ func TestLoadControlRejectsWeakWorkerSigningKey(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "short")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -166,6 +172,7 @@ func TestLoadControlRejectsWeakAuthSecret(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "short")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -187,6 +194,7 @@ func TestLoadControlAllowsHTTPOnlyForLoopbackPublicURL(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
@@ -214,6 +222,7 @@ func TestLoadControlDefaultsPublicURL(t *testing.T) {
 	t.Setenv("HELMR_SETUP_TOKEN", "setup-token")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -246,6 +255,7 @@ func TestLoadControlRequiresCompleteSMTPConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", "client-secret")
 
@@ -276,6 +286,7 @@ func TestLoadControlReadsResendConfig(t *testing.T) {
 	t.Setenv("HELMR_WORKER_TOKEN_SIGNING_KEY", "01234567890123456789012345678901")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_EMAIL_PROVIDER", "resend")
 	t.Setenv("HELMR_RESEND_API_KEY", "\nre_test\n")
 	t.Setenv("HELMR_EMAIL_FROM", "Helmr <noreply@example.test>")

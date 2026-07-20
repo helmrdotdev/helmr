@@ -27,6 +27,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/secret"
@@ -46,6 +47,7 @@ const (
 	defaultSetupToken          = "dev-setup-token"
 	defaultWorkerTokenSecret   = "helmr-dev-worker-token-secret-32"
 	defaultSecretEncryptionKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	defaultLookupHMACKeys      = `{"current":1,"keys":{"1":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}}`
 	defaultUserID              = "00000000-0000-0000-0000-000000000101"
 )
 
@@ -188,7 +190,12 @@ func main() {
 		log.Error("load secret encryption key", "error", err)
 		os.Exit(1)
 	}
-	secretStore, err := secret.New(queries, keyring)
+	hashes, err := keyedhash.FromBase64JSON(cfg.lookupHMACKeys)
+	if err != nil {
+		log.Error("load lookup HMAC keys", "error", err)
+		os.Exit(1)
+	}
+	secretStore, err := secret.New(queries, keyring, hashes)
 	if err != nil {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
@@ -272,6 +279,7 @@ type devConfig struct {
 	workerTokenSecret      string
 	secretEncryptionKey    string
 	secretEncryptionKeyOld string
+	lookupHMACKeys         string
 	resetDatabase          bool
 	seedData               bool
 }
@@ -314,6 +322,7 @@ func loadConfig() (devConfig, error) {
 		workerTokenSecret:      env("HELMR_WORKER_TOKEN_SIGNING_KEY", defaultWorkerTokenSecret),
 		secretEncryptionKey:    env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
 		secretEncryptionKeyOld: strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD")),
+		lookupHMACKeys:         env("HELMR_LOOKUP_HMAC_KEYS", defaultLookupHMACKeys),
 		resetDatabase:          envBool("HELMR_DEV_RESET_DATABASE"),
 		seedData:               envBoolDefault("HELMR_DEV_SEED_DATA", true),
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/auth"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
@@ -26,6 +27,7 @@ func LoadDispatcher() (Dispatcher, error) {
 		AuthSecret:                 envString("HELMR_AUTH_SECRET"),
 		SecretEncryptionKey:        envString("HELMR_SECRET_ENCRYPTION_KEY"),
 		SecretEncryptionKeyOld:     envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
+		LookupHMACKeys:             envString("HELMR_LOOKUP_HMAC_KEYS"),
 		PublicURL:                  publicURL,
 		EmailProvider:              envLower("HELMR_EMAIL_PROVIDER"),
 		ResendAPIKey:               envString("HELMR_RESEND_API_KEY"),
@@ -112,6 +114,12 @@ func LoadDispatcher() (Dispatcher, error) {
 	}
 	if cfg.SecretEncryptionKey == "" {
 		return cfg, errors.New("HELMR_SECRET_ENCRYPTION_KEY is required")
+	}
+	if cfg.LookupHMACKeys == "" {
+		return cfg, errors.New("HELMR_LOOKUP_HMAC_KEYS is required")
+	}
+	if _, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys); err != nil {
+		return cfg, fmt.Errorf("HELMR_LOOKUP_HMAC_KEYS: %w", err)
 	}
 	controlEmail := Control{
 		EmailProvider: cfg.EmailProvider,

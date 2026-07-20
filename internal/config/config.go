@@ -46,6 +46,7 @@ type Control struct {
 	AuthSecret              string
 	SecretEncryptionKey     string
 	SecretEncryptionKeyOld  string
+	LookupHMACKeys          string
 	PublicURL               string
 	MagicLinkDebugURLs      bool
 	EmailProvider           string
@@ -73,6 +74,7 @@ type Dispatcher struct {
 	AuthSecret                 string
 	SecretEncryptionKey        string
 	SecretEncryptionKeyOld     string
+	LookupHMACKeys             string
 	PublicURL                  string
 	EmailProvider              string
 	ResendAPIKey               string

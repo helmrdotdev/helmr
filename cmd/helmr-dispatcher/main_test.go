@@ -68,6 +68,7 @@ func TestRunStartsAndStopsWithConfiguredDependencies(t *testing.T) {
 	t.Setenv("HELMR_CLICKHOUSE_URL", "http://127.0.0.1:1")
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"current":1,"keys":{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}`)
 	t.Setenv("HELMR_PUBLIC_URL", "http://127.0.0.1:8080")
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_SCHEDULE_REPAIR_EVERY", "50ms")
