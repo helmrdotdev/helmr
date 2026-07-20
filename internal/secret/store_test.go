@@ -1,193 +1,177 @@
 package secret
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
+	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func TestStoreEncryptsAndResolvesNames(t *testing.T) {
-	key, err := KeyFromBase64(base64.StdEncoding.EncodeToString(makeKey(1)))
+func TestStoreCreatesEncryptsAndResolves(t *testing.T) {
+	database := newFakeSecretDB()
+	store := newTestStore(t, database, makeKey(1), nil, 1)
+	environmentID := uuid.Must(uuid.NewV7())
+	created, err := store.Create(t.Context(), environmentID, "github-token", []byte("secret-value"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	keyring, err := NewKeyring(key, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	database := &fakeSecretDB{}
-	store, err := New(database, keyring)
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := store.Put(context.Background(), orgID, "github-token", []byte("secret-value")); err != nil {
-		t.Fatal(err)
-	}
-	if err := store.CheckNames(context.Background(), orgID, []string{"github-token"}); err != nil {
-		t.Fatal(err)
-	}
-	if string(database.record.Ciphertext) == "secret-value" {
+	version := database.versions[created.CurrentVersionID.Bytes]
+	if bytes.Equal(version.Ciphertext, []byte("secret-value")) {
 		t.Fatal("secret was stored in plaintext")
 	}
-	if database.record.Version != 1 {
-		t.Fatalf("version = %d, want 1", database.record.Version)
+	if version.Version != 1 || version.AuthenticatorKeyVersion != 1 {
+		t.Fatalf("version = %+v", version)
 	}
-	if database.record.KeyID != keyring.CurrentKeyID() {
-		t.Fatalf("key id = %q, want %q", database.record.KeyID, keyring.CurrentKeyID())
-	}
-	resolved, err := store.ResolveNames(context.Background(), orgID, []string{"github-token"})
+	resolved, err := store.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"github-token"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(resolved["github-token"]) != "secret-value" {
-		t.Fatalf("resolved = %+v", resolved)
+	if got := string(resolved["github-token"]); got != "secret-value" {
+		t.Fatalf("resolved = %q", got)
 	}
 }
 
-func TestStoreIncrementsVersionOnUpdate(t *testing.T) {
-	keyring := newTestKeyring(t, makeKey(1), nil)
-	database := &fakeSecretDB{}
-	store, err := New(database, keyring)
+func TestStoreRotatesLogicalVersion(t *testing.T) {
+	database := newFakeSecretDB()
+	store := newTestStore(t, database, makeKey(1), nil, 1)
+	environmentID := uuid.Must(uuid.NewV7())
+	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := store.Put(context.Background(), orgID, "API_TOKEN", []byte("first")); err != nil {
+	secretID := pgvalue.MustUUIDValue(created.ID)
+	rotated, err := store.Rotate(t.Context(), environmentID, secretID, []byte("second"), 1)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Put(context.Background(), orgID, "API_TOKEN", []byte("second")); err != nil {
-		t.Fatal(err)
+	if rotated.StateVersion != 2 || len(database.versions) != 2 {
+		t.Fatalf("rotated = %+v, versions = %d", rotated, len(database.versions))
 	}
-	if database.record.Version != 2 {
-		t.Fatalf("version = %d, want 2", database.record.Version)
+	current := database.versions[rotated.CurrentVersionID.Bytes]
+	if current.Version != 2 {
+		t.Fatalf("version = %d, want 2", current.Version)
 	}
-	resolved, err := store.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
+	resolved, err := store.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"API_TOKEN"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := string(resolved["API_TOKEN"]); got != "second" {
-		t.Fatalf("resolved = %q, want second", got)
+		t.Fatalf("resolved = %q", got)
 	}
 }
 
-func TestStoreResolvesOldKeyDuringRotation(t *testing.T) {
-	oldKey := makeKey(1)
-	currentKey := makeKey(2)
-	oldKeyring := newTestKeyring(t, oldKey, nil)
-	database := &fakeSecretDB{}
-	oldStore, err := New(database, oldKeyring)
+func TestStoreRevokesWholeSecret(t *testing.T) {
+	database := newFakeSecretDB()
+	store := newTestStore(t, database, makeKey(1), nil, 1)
+	environmentID := uuid.Must(uuid.NewV7())
+	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
-		t.Fatal(err)
-	}
-	rotatingKeyring := newTestKeyring(t, currentKey, oldKey)
-	rotatingStore, err := New(database, rotatingKeyring)
+	revoked, err := store.Revoke(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID))
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved, err := rotatingStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
-	if err != nil {
-		t.Fatal(err)
+	if revoked.State != "revoked" || revoked.CurrentVersionID.Valid || revoked.RevocationGeneration != 1 {
+		t.Fatalf("revoked = %+v", revoked)
 	}
-	if got := string(resolved["API_TOKEN"]); got != "secret-value" {
-		t.Fatalf("resolved = %q, want secret-value", got)
-	}
-}
-
-func TestStoreReencryptBatchMovesOldKeyToCurrentKey(t *testing.T) {
-	oldKey := makeKey(1)
-	currentKey := makeKey(2)
-	oldKeyring := newTestKeyring(t, oldKey, nil)
-	database := &fakeSecretDB{}
-	oldStore, err := New(database, oldKeyring)
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
-		t.Fatal(err)
-	}
-	previousVersion := database.record.Version
-	rotatingKeyring := newTestKeyring(t, currentKey, oldKey)
-	rotatingStore, err := New(database, rotatingKeyring)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldKeyID, ok := rotatingKeyring.OldKeyID()
-	if !ok {
-		t.Fatal("old key id missing")
-	}
-	result, err := rotatingStore.ReencryptBatch(context.Background(), oldKeyID, 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Scanned != 1 || result.Reencrypted != 1 || result.Skipped != 0 {
-		t.Fatalf("result = %+v", result)
-	}
-	if database.record.KeyID != rotatingKeyring.CurrentKeyID() {
-		t.Fatalf("key id = %q, want current %q", database.record.KeyID, rotatingKeyring.CurrentKeyID())
-	}
-	if database.record.Version != previousVersion+1 {
-		t.Fatalf("version = %d, want %d", database.record.Version, previousVersion+1)
-	}
-	resolved, err := rotatingStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := string(resolved["API_TOKEN"]); got != "secret-value" {
-		t.Fatalf("resolved = %q, want secret-value", got)
-	}
-}
-
-func TestStoreRejectsUnsupportedKeyID(t *testing.T) {
-	oldKeyring := newTestKeyring(t, makeKey(1), nil)
-	database := &fakeSecretDB{}
-	oldStore, err := New(database, oldKeyring)
-	if err != nil {
-		t.Fatal(err)
-	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
-		t.Fatal(err)
-	}
-	currentStore, err := New(database, newTestKeyring(t, makeKey(2), nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = currentStore.ResolveNames(context.Background(), orgID, []string{"API_TOKEN"})
-	if !IsUnavailable(err) {
+	if _, err := store.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"API_TOKEN"}); !IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
 	}
 }
 
-func TestStoreCheckNamesRejectsUnsupportedKeyID(t *testing.T) {
-	oldKeyring := newTestKeyring(t, makeKey(1), nil)
-	database := &fakeSecretDB{}
-	oldStore, err := New(database, oldKeyring)
+func TestStoreReencryptsEveryRetainedVersion(t *testing.T) {
+	database := newFakeSecretDB()
+	oldStore := newTestStore(t, database, makeKey(1), nil, 1)
+	environmentID := uuid.Must(uuid.NewV7())
+	created, err := oldStore.Create(t.Context(), environmentID, "API_TOKEN", []byte("first"), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	orgID := uuid.Must(uuid.NewV7())
-	if _, err := oldStore.Put(context.Background(), orgID, "API_TOKEN", []byte("secret-value")); err != nil {
+	if _, err := oldStore.Rotate(t.Context(), environmentID, pgvalue.MustUUIDValue(created.ID), []byte("second"), 1); err != nil {
 		t.Fatal(err)
 	}
-	currentStore, err := New(database, newTestKeyring(t, makeKey(2), nil))
+	rotating := newTestStore(t, database, makeKey(2), makeKey(1), 1)
+	oldKeyID, ok := rotating.encryption.OldKeyID()
+	if !ok {
+		t.Fatal("old key missing")
+	}
+	result, err := rotating.ReencryptBatch(t.Context(), oldKeyID, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = currentStore.CheckNames(context.Background(), orgID, []string{"API_TOKEN"})
+	if result.Reencrypted != 2 || result.Failed != 0 {
+		t.Fatalf("result = %+v", result)
+	}
+	for _, version := range database.versions {
+		if version.KeyID != rotating.encryption.CurrentKeyID() {
+			t.Fatalf("key id = %q", version.KeyID)
+		}
+	}
+	resolved, err := rotating.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"API_TOKEN"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(resolved["API_TOKEN"]); got != "second" {
+		t.Fatalf("resolved = %q", got)
+	}
+}
+
+func TestStoreReauthenticatesWithoutChangingLogicalVersion(t *testing.T) {
+	database := newFakeSecretDB()
+	store := newTestStore(t, database, makeKey(1), nil, 2)
+	environmentID := uuid.Must(uuid.NewV7())
+	created, err := store.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := database.versions[created.CurrentVersionID.Bytes]
+	result, err := store.ReauthenticateBatch(t.Context(), 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := database.versions[created.CurrentVersionID.Bytes]
+	if result.Reauthenticated != 1 || after.AuthenticatorKeyVersion != 2 {
+		t.Fatalf("result = %+v, version = %+v", result, after)
+	}
+	if before.Version != after.Version || before.ID != after.ID || !bytes.Equal(before.Ciphertext, after.Ciphertext) {
+		t.Fatal("reauthentication changed logical or encrypted value identity")
+	}
+	if bytes.Equal(before.ValueAuthenticator, after.ValueAuthenticator) {
+		t.Fatal("authenticator did not change")
+	}
+}
+
+func TestValueAuthenticatorFrameIsScopeBoundAndInjective(t *testing.T) {
+	environmentA := uuid.Must(uuid.NewV7())
+	environmentB := uuid.Must(uuid.NewV7())
+	a := valueAuthenticatorFrame(environmentA, "ab", []byte("c"))
+	b := valueAuthenticatorFrame(environmentA, "a", []byte("bc"))
+	c := valueAuthenticatorFrame(environmentB, "ab", []byte("c"))
+	if bytes.Equal(a, b) || bytes.Equal(a, c) {
+		t.Fatal("distinct value tuples produced the same frame")
+	}
+}
+
+func TestStoreRejectsUnsupportedEncryptionKey(t *testing.T) {
+	database := newFakeSecretDB()
+	oldStore := newTestStore(t, database, makeKey(1), nil, 1)
+	environmentID := uuid.Must(uuid.NewV7())
+	if _, err := oldStore.Create(t.Context(), environmentID, "API_TOKEN", []byte("value"), 1); err != nil {
+		t.Fatal(err)
+	}
+	currentStore := newTestStore(t, database, makeKey(2), nil, 1)
+	_, err := currentStore.ResolveScopedNames(t.Context(), uuid.Nil, uuid.Nil, environmentID, []string{"API_TOKEN"})
 	if !IsUnavailable(err) {
 		t.Fatalf("err = %v, want unavailable", err)
 	}
@@ -217,7 +201,17 @@ func TestKeyFromBase64RequiresAES256Key(t *testing.T) {
 
 type fakeSecretDB struct {
 	db.Querier
-	record db.Secret
+	secrets  map[[16]byte]db.Secret
+	byName   map[string][16]byte
+	versions map[[16]byte]db.SecretVersion
+}
+
+func newFakeSecretDB() *fakeSecretDB {
+	return &fakeSecretDB{
+		secrets:  map[[16]byte]db.Secret{},
+		byName:   map[string][16]byte{},
+		versions: map[[16]byte]db.SecretVersion{},
+	}
 }
 
 func (f *fakeSecretDB) GetDefaultProjectEnvironment(context.Context, pgtype.UUID) (db.GetDefaultProjectEnvironmentRow, error) {
@@ -227,70 +221,214 @@ func (f *fakeSecretDB) GetDefaultProjectEnvironment(context.Context, pgtype.UUID
 	}, nil
 }
 
-func (f *fakeSecretDB) UpsertScopedSecret(_ context.Context, arg db.UpsertScopedSecretParams) (db.Secret, error) {
-	if f.record.ID.Valid && f.record.Version != arg.PreviousVersion {
+func (f *fakeSecretDB) CreateSecret(_ context.Context, arg db.CreateSecretParams) (db.CreateSecretRow, error) {
+	nameKey := scopedName(arg.EnvironmentID, arg.Name)
+	if _, ok := f.byName[nameKey]; ok {
+		return db.CreateSecretRow{}, errors.New("duplicate secret")
+	}
+	record := db.Secret{
+		ID:                   arg.ID,
+		EnvironmentID:        arg.EnvironmentID,
+		Name:                 arg.Name,
+		State:                "active",
+		StateVersion:         1,
+		CurrentVersionID:     arg.VersionID,
+		RevocationGeneration: 0,
+	}
+	version := db.SecretVersion{
+		ID:                      arg.VersionID,
+		SecretID:                arg.ID,
+		Version:                 1,
+		KeyID:                   arg.KeyID,
+		Nonce:                   bytes.Clone(arg.Nonce),
+		Ciphertext:              bytes.Clone(arg.Ciphertext),
+		ValueAuthenticator:      bytes.Clone(arg.ValueAuthenticator),
+		AuthenticatorKeyVersion: arg.AuthenticatorKeyVersion,
+	}
+	f.secrets[arg.ID.Bytes] = record
+	f.versions[arg.VersionID.Bytes] = version
+	f.byName[nameKey] = arg.ID.Bytes
+	return createRow(record), nil
+}
+
+func (f *fakeSecretDB) GetSecret(_ context.Context, arg db.GetSecretParams) (db.Secret, error) {
+	record, ok := f.secrets[arg.ID.Bytes]
+	if !ok || record.EnvironmentID != arg.EnvironmentID {
 		return db.Secret{}, pgx.ErrNoRows
 	}
-	f.record = db.Secret{
-		ID:            arg.ID,
-		OrgID:         arg.OrgID,
-		ProjectID:     arg.ProjectID,
-		EnvironmentID: arg.EnvironmentID,
-		Name:          arg.Name,
-		Version:       arg.Version,
-		KeyID:         arg.KeyID,
-		Nonce:         arg.Nonce,
-		Ciphertext:    arg.Ciphertext,
-	}
-	return f.record, nil
+	return record, nil
 }
 
-func (f *fakeSecretDB) GetScopedSecretByName(_ context.Context, arg db.GetScopedSecretByNameParams) (db.Secret, error) {
-	if f.record.OrgID != arg.OrgID || f.record.ProjectID != arg.ProjectID || f.record.EnvironmentID != arg.EnvironmentID || f.record.Name != arg.Name {
+func (f *fakeSecretDB) GetSecretByName(_ context.Context, arg db.GetSecretByNameParams) (db.Secret, error) {
+	id, ok := f.byName[scopedName(arg.EnvironmentID, arg.Name)]
+	if !ok {
 		return db.Secret{}, pgx.ErrNoRows
 	}
-	return f.record, nil
+	return f.secrets[id], nil
 }
 
-func (f *fakeSecretDB) ListSecretsByKeyIDForRotation(_ context.Context, arg db.ListSecretsByKeyIDForRotationParams) ([]db.Secret, error) {
-	if f.record.KeyID != arg.KeyID || arg.RowLimit == 0 {
-		return nil, nil
+func (f *fakeSecretDB) GetCurrentSecretValue(_ context.Context, arg db.GetCurrentSecretValueParams) (db.SecretVersion, error) {
+	secret, ok := f.secrets[arg.SecretID.Bytes]
+	if !ok || secret.EnvironmentID != arg.EnvironmentID || secret.State != "active" {
+		return db.SecretVersion{}, pgx.ErrNoRows
 	}
-	return []db.Secret{f.record}, nil
+	return f.versions[secret.CurrentVersionID.Bytes], nil
 }
 
-func (f *fakeSecretDB) UpdateSecretCiphertextForRotation(_ context.Context, arg db.UpdateSecretCiphertextForRotationParams) (int64, error) {
-	if f.record.ID != arg.ID || f.record.KeyID != arg.PreviousKeyID || f.record.Version != arg.PreviousVersion {
+func (f *fakeSecretDB) RotateSecret(_ context.Context, arg db.RotateSecretParams) (db.Secret, error) {
+	record, ok := f.secrets[arg.SecretID.Bytes]
+	if !ok || record.EnvironmentID != arg.EnvironmentID || record.State != "active" ||
+		record.StateVersion != arg.ExpectedStateVersion || record.CurrentVersionID != arg.ExpectedCurrentVersionID {
+		return db.Secret{}, pgx.ErrNoRows
+	}
+	f.versions[arg.VersionID.Bytes] = db.SecretVersion{
+		ID:                      arg.VersionID,
+		SecretID:                arg.SecretID,
+		Version:                 arg.Version,
+		KeyID:                   arg.KeyID,
+		Nonce:                   bytes.Clone(arg.Nonce),
+		Ciphertext:              bytes.Clone(arg.Ciphertext),
+		ValueAuthenticator:      bytes.Clone(arg.ValueAuthenticator),
+		AuthenticatorKeyVersion: arg.AuthenticatorKeyVersion,
+	}
+	record.CurrentVersionID = arg.VersionID
+	record.StateVersion++
+	f.secrets[arg.SecretID.Bytes] = record
+	return record, nil
+}
+
+func (f *fakeSecretDB) RevokeSecret(_ context.Context, arg db.RevokeSecretParams) (db.Secret, error) {
+	record, ok := f.secrets[arg.ID.Bytes]
+	if !ok || record.EnvironmentID != arg.EnvironmentID || record.State != "active" || record.StateVersion != arg.ExpectedStateVersion {
+		return db.Secret{}, pgx.ErrNoRows
+	}
+	record.State = "revoked"
+	record.StateVersion++
+	record.CurrentVersionID = pgtype.UUID{}
+	record.RevocationGeneration++
+	f.secrets[arg.ID.Bytes] = record
+	return record, nil
+}
+
+func (f *fakeSecretDB) ListSecretVersionsByKeyID(_ context.Context, arg db.ListSecretVersionsByKeyIDParams) ([]db.ListSecretVersionsByKeyIDRow, error) {
+	rows := make([]db.ListSecretVersionsByKeyIDRow, 0)
+	for _, version := range f.versions {
+		if version.KeyID != arg.KeyID || int32(len(rows)) >= arg.RowLimit {
+			continue
+		}
+		secret := f.secrets[version.SecretID.Bytes]
+		rows = append(rows, versionByKeyRow(secret, version))
+	}
+	return rows, nil
+}
+
+func (f *fakeSecretDB) UpdateSecretVersionEnvelope(_ context.Context, arg db.UpdateSecretVersionEnvelopeParams) (int64, error) {
+	version, ok := f.versions[arg.VersionID.Bytes]
+	if !ok || version.KeyID != arg.PreviousKeyID || !bytes.Equal(version.Nonce, arg.PreviousNonce) || !bytes.Equal(version.Ciphertext, arg.PreviousCiphertext) {
 		return 0, nil
 	}
-	f.record.Version = arg.NewVersion
-	f.record.KeyID = arg.NewKeyID
-	f.record.Nonce = arg.Nonce
-	f.record.Ciphertext = arg.Ciphertext
+	version.KeyID = arg.NewKeyID
+	version.Nonce = bytes.Clone(arg.NewNonce)
+	version.Ciphertext = bytes.Clone(arg.NewCiphertext)
+	f.versions[arg.VersionID.Bytes] = version
 	return 1, nil
 }
 
-func (f *fakeSecretDB) ListSecretKeyUsage(context.Context) ([]db.ListSecretKeyUsageRow, error) {
-	if f.record.KeyID == "" {
-		return nil, nil
+func (f *fakeSecretDB) ListSecretVersionsByAuthenticatorKeyVersion(_ context.Context, arg db.ListSecretVersionsByAuthenticatorKeyVersionParams) ([]db.ListSecretVersionsByAuthenticatorKeyVersionRow, error) {
+	rows := make([]db.ListSecretVersionsByAuthenticatorKeyVersionRow, 0)
+	for _, version := range f.versions {
+		if version.AuthenticatorKeyVersion != arg.AuthenticatorKeyVersion || int32(len(rows)) >= arg.RowLimit {
+			continue
+		}
+		secret := f.secrets[version.SecretID.Bytes]
+		rows = append(rows, db.ListSecretVersionsByAuthenticatorKeyVersionRow{
+			SecretID:                secret.ID,
+			EnvironmentID:           secret.EnvironmentID,
+			Name:                    secret.Name,
+			VersionID:               version.ID,
+			Version:                 version.Version,
+			KeyID:                   version.KeyID,
+			Nonce:                   bytes.Clone(version.Nonce),
+			Ciphertext:              bytes.Clone(version.Ciphertext),
+			ValueAuthenticator:      bytes.Clone(version.ValueAuthenticator),
+			AuthenticatorKeyVersion: version.AuthenticatorKeyVersion,
+		})
 	}
-	return []db.ListSecretKeyUsageRow{{KeyID: f.record.KeyID, SecretCount: 1}}, nil
+	return rows, nil
 }
 
-func (f *fakeSecretDB) CountSecretsByKeyID(_ context.Context, keyID string) (int64, error) {
-	if f.record.KeyID == keyID {
-		return 1, nil
+func (f *fakeSecretDB) UpdateSecretVersionAuthenticator(_ context.Context, arg db.UpdateSecretVersionAuthenticatorParams) (int64, error) {
+	version, ok := f.versions[arg.VersionID.Bytes]
+	if !ok || version.AuthenticatorKeyVersion != arg.PreviousAuthenticatorKeyVersion || !bytes.Equal(version.ValueAuthenticator, arg.PreviousValueAuthenticator) {
+		return 0, nil
 	}
-	return 0, nil
+	version.ValueAuthenticator = bytes.Clone(arg.NewValueAuthenticator)
+	version.AuthenticatorKeyVersion = arg.NewAuthenticatorKeyVersion
+	f.versions[arg.VersionID.Bytes] = version
+	return 1, nil
 }
 
-func newTestKeyring(t *testing.T, current []byte, old []byte) Keyring {
+func (f *fakeSecretDB) ListSecretEncryptionKeyUsage(context.Context) ([]db.ListSecretEncryptionKeyUsageRow, error) {
+	counts := map[string]int64{}
+	for _, version := range f.versions {
+		counts[version.KeyID]++
+	}
+	rows := make([]db.ListSecretEncryptionKeyUsageRow, 0, len(counts))
+	for keyID, count := range counts {
+		rows = append(rows, db.ListSecretEncryptionKeyUsageRow{KeyID: keyID, SecretCount: count})
+	}
+	return rows, nil
+}
+
+func versionByKeyRow(secret db.Secret, version db.SecretVersion) db.ListSecretVersionsByKeyIDRow {
+	return db.ListSecretVersionsByKeyIDRow{
+		SecretID:                secret.ID,
+		EnvironmentID:           secret.EnvironmentID,
+		Name:                    secret.Name,
+		VersionID:               version.ID,
+		Version:                 version.Version,
+		KeyID:                   version.KeyID,
+		Nonce:                   bytes.Clone(version.Nonce),
+		Ciphertext:              bytes.Clone(version.Ciphertext),
+		ValueAuthenticator:      bytes.Clone(version.ValueAuthenticator),
+		AuthenticatorKeyVersion: version.AuthenticatorKeyVersion,
+	}
+}
+
+func createRow(secret db.Secret) db.CreateSecretRow {
+	return db.CreateSecretRow{
+		ID:                   secret.ID,
+		EnvironmentID:        secret.EnvironmentID,
+		Name:                 secret.Name,
+		State:                secret.State,
+		StateVersion:         secret.StateVersion,
+		CurrentVersionID:     secret.CurrentVersionID,
+		RevocationGeneration: secret.RevocationGeneration,
+	}
+}
+
+func scopedName(environmentID pgtype.UUID, name string) string {
+	return string(environmentID.Bytes[:]) + "\x00" + name
+}
+
+func newTestStore(t *testing.T, database db.Querier, current []byte, old []byte, currentHashVersion int32) *Store {
 	t.Helper()
-	keyring, err := NewKeyring(current, old)
+	encryption, err := NewKeyring(current, old)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return keyring
+	hashes, err := keyedhash.New(currentHashVersion, map[int32][]byte{
+		1: makeKey(10),
+		2: makeKey(11),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := New(database, encryption, hashes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store
 }
 
 func makeKey(seed byte) []byte {
