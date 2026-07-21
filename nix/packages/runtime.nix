@@ -58,6 +58,7 @@ stdenvNoCC.mkDerivation {
     tree="$TMPDIR/tree"
     install -d -m0755 "$tree/bin" "$tree/helmr" "$tree/lib"
     install -m0755 ${nodejs_24}/bin/node "$tree/bin/node"
+    install -m0644 ${../../internal/runtime/entry.mjs} "$tree/helmr/entry.mjs"
     install -m0644 ${../../runtime/typescript/src/preload.mjs} "$tree/helmr/preload.mjs"
     printf '%s' \
       '{"architecture":"${target.architecture}","formatVersion":0,"runtimeApiVersion":"helmr.runtime.v0"}' \

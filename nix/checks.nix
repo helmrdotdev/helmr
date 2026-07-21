@@ -346,6 +346,7 @@ in
         cmp \
           "$managed_runtime_loader_source" \
           "$runtime/lib/$managed_runtime_loader"
+        cmp internal/runtime/entry.mjs "$runtime/helmr/entry.mjs"
 
         printf '%s\n' \
           '127.0.0.1 localhost' \
@@ -611,7 +612,7 @@ in
         test "$(tail -c1 "$runtime/helmr/runtime.json" | od -An -tuC | tr -d ' ')" != 10
         test "$(find "$runtime" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "bin helmr lib "
         test "$(find "$runtime/bin" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "node "
-        test "$(find "$runtime/helmr" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "preload.mjs runtime.json "
+        test "$(find "$runtime/helmr" -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort | tr '\n' ' ')" = "entry.mjs preload.mjs runtime.json "
         test ! -e "$runtime/lib/gconv"
         test ! -e "$runtime/lib/locale"
         test ! -e "$runtime/lib/openssl"

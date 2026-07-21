@@ -330,6 +330,7 @@ jobs:
           scripts/build-embedded-adapter.sh
           git diff --exit-code -- internal/adapter/js
           test -z "$(git status --porcelain -- internal/adapter/js)"
+          scripts/build-runtime-entry.sh --check
           mkdir -p dist/cli
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
             os="${target%/*}"

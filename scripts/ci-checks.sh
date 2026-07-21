@@ -8,6 +8,7 @@ bun install --frozen-lockfile --ignore-scripts
 scripts/build-embedded-adapter.sh
 git diff --exit-code -- internal/adapter/js
 test -z "$(git status --porcelain -- internal/adapter/js)"
+scripts/build-runtime-entry.sh --check
 bun audit
 actionlint
 scripts/security-checks.sh

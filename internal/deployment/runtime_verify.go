@@ -16,6 +16,7 @@ import (
 
 const (
 	runtimeNodePath    = "bin/node"
+	runtimeEntryPath   = "helmr/entry.mjs"
 	runtimeIndexPath   = "helmr/runtime.json"
 	runtimePreloadPath = "helmr/preload.mjs"
 	runtimeLibcPath    = "lib/libc.so.6"
@@ -173,6 +174,7 @@ func verifyRuntimeTopology(
 	}
 	requiredFiles := map[string]uint32{
 		runtimeNodePath:    0755,
+		runtimeEntryPath:   0644,
 		runtimeIndexPath:   0644,
 		runtimePreloadPath: 0644,
 		runtimeLibcPath:    0644,

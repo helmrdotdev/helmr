@@ -63,6 +63,7 @@ in
         scripts/build-embedded-adapter.sh
         git diff --exit-code -- internal/adapter/js
         test -z "$(git status --porcelain -- internal/adapter/js)"
+        scripts/build-runtime-entry.sh --check
         make generate
         make fmt
         make console-build

@@ -53,9 +53,27 @@ func TestRuntimeTopologyRejectsOpenOrDivergentLayout(t *testing.T) {
 		"extra helmr": func(artifact *memoryArtifact) {
 			artifact.addFile("helmr/other", []byte("other"), 0644)
 		},
+		"missing entry": func(artifact *memoryArtifact) {
+			for index := range artifact.entries {
+				if artifact.entries[index].Path != runtimeEntryPath {
+					continue
+				}
+				artifact.entries = append(
+					artifact.entries[:index],
+					artifact.entries[index+1:]...,
+				)
+				delete(artifact.files, runtimeEntryPath)
+				break
+			}
+		},
 		"node mode": func(artifact *memoryArtifact) {
 			artifact.mutate(runtimeNodePath, func(entry *artifactEntry) {
 				entry.Mode = 0644
+			})
+		},
+		"entry mode": func(artifact *memoryArtifact) {
+			artifact.mutate(runtimeEntryPath, func(entry *artifactEntry) {
+				entry.Mode = 0755
 			})
 		},
 		"libc mode": func(artifact *memoryArtifact) {
@@ -176,6 +194,7 @@ func newRuntimeTopology(t *testing.T) (RuntimeDescriptor, *memoryArtifact) {
 	artifact.addDirectory("helmr")
 	artifact.addDirectory("lib")
 	artifact.addFile(runtimeNodePath, []byte("node"), 0755)
+	artifact.addFile(runtimeEntryPath, []byte("entry"), 0644)
 	artifact.addFile(runtimeIndexPath, index, 0644)
 	artifact.addFile(runtimePreloadPath, []byte("preload"), 0644)
 	artifact.addFile(runtimeLibcPath, []byte("libc"), 0644)
