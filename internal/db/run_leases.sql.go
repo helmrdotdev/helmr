@@ -11,6 +11,85 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const discoverWorkerRunLeaseWork = `-- name: DiscoverWorkerRunLeaseWork :many
+WITH worker AS (
+    SELECT worker_instances.id,
+           worker_instances.current_epoch,
+           worker_instances.state,
+           worker_instances.max_run_consumers
+      FROM worker_instances
+      JOIN worker_groups
+        ON worker_groups.id = worker_instances.worker_group_id
+       AND worker_groups.state = 'active'
+       AND worker_groups.allows_run
+       AND worker_groups.protocol_version = worker_instances.protocol_version
+     WHERE worker_instances.id = $4
+       AND worker_instances.worker_group_id = $1
+       AND worker_instances.current_epoch = $5::bigint
+       AND worker_instances.protocol_version = $2
+       AND worker_instances.state IN ('active', 'draining')
+       AND worker_instances.supports_run
+)
+SELECT run_leases.id,
+       run_leases.lease_sequence
+  FROM worker
+  JOIN run_leases
+    ON run_leases.worker_instance_id = worker.id
+   AND run_leases.worker_epoch = worker.current_epoch
+ WHERE run_leases.worker_group_id = $1
+   AND run_leases.worker_protocol_version = $2
+   AND run_leases.state IN ('assigned', 'starting')
+   AND run_leases.start_deadline_at > transaction_timestamp()
+   AND run_leases.expires_at > transaction_timestamp()
+   AND (run_leases.state = 'starting' OR worker.state = 'active')
+ ORDER BY CASE run_leases.state
+              WHEN 'starting' THEN 0
+              ELSE 1
+          END,
+          run_leases.assigned_at,
+          run_leases.id
+ LIMIT LEAST($3::int, (SELECT max_run_consumers FROM worker))
+`
+
+type DiscoverWorkerRunLeaseWorkParams struct {
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+	RowLimit              int32       `json:"row_limit"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+}
+
+type DiscoverWorkerRunLeaseWorkRow struct {
+	ID            pgtype.UUID `json:"id"`
+	LeaseSequence int64       `json:"lease_sequence"`
+}
+
+func (q *Queries) DiscoverWorkerRunLeaseWork(ctx context.Context, arg DiscoverWorkerRunLeaseWorkParams) ([]DiscoverWorkerRunLeaseWorkRow, error) {
+	rows, err := q.db.Query(ctx, discoverWorkerRunLeaseWork,
+		arg.WorkerGroupID,
+		arg.WorkerProtocolVersion,
+		arg.RowLimit,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DiscoverWorkerRunLeaseWorkRow
+	for rows.Next() {
+		var i DiscoverWorkerRunLeaseWorkRow
+		if err := rows.Scan(&i.ID, &i.LeaseSequence); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getCurrentRunLease = `-- name: GetCurrentRunLease :one
 SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.network_slot_id, run_leases.network_slot_generation, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes, run_leases.requested_scratch_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at
   FROM runs
@@ -98,6 +177,182 @@ func (q *Queries) GetRunLease(ctx context.Context, arg GetRunLeaseParams) (RunLe
 		arg.AttemptNumber,
 		arg.WorkspaceID,
 		arg.ID,
+	)
+	var i RunLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.RegionID,
+		&i.LeaseSequence,
+		&i.AttemptNumber,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.NetworkSlotID,
+		&i.NetworkSlotGeneration,
+		&i.RuntimeIdentityID,
+		&i.WorkerProtocolVersion,
+		&i.RequestedCpuMillis,
+		&i.RequestedMemoryBytes,
+		&i.RequestedWorkloadDiskBytes,
+		&i.RequestedScratchBytes,
+		&i.RequestedExecutionSlots,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.Traceparent,
+		&i.State,
+		&i.AssignedAt,
+		&i.StartDeadlineAt,
+		&i.ClaimedAt,
+		&i.StartedAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.CheckpointedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.TerminalRequestFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getRunLeaseClaimLocators = `-- name: GetRunLeaseClaimLocators :one
+SELECT run_leases.org_id,
+       run_leases.project_id,
+       run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.workspace_id,
+       run_leases.attempt_number,
+       run_leases.region_id,
+       run_leases.runtime_instance_id,
+       run_leases.network_slot_id,
+       run_leases.network_slot_generation,
+       workspace_leases.id AS workspace_lease_id,
+       workspace_leases.workspace_mount_id
+  FROM run_leases
+  JOIN worker_groups
+    ON worker_groups.id = run_leases.worker_group_id
+   AND worker_groups.region_id = run_leases.region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.allows_run
+   AND worker_groups.protocol_version = run_leases.worker_protocol_version
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+   AND worker_instances.worker_group_id = run_leases.worker_group_id
+   AND worker_instances.current_epoch = run_leases.worker_epoch
+   AND worker_instances.protocol_version = run_leases.worker_protocol_version
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.supports_run
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.state = 'active'
+   AND workspace_leases.expires_at > transaction_timestamp()
+ WHERE run_leases.id = $1
+   AND run_leases.lease_sequence = $2
+   AND run_leases.worker_group_id = $3
+   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_epoch = $5
+   AND run_leases.worker_protocol_version = $6
+   AND run_leases.state IN ('assigned', 'starting')
+   AND run_leases.start_deadline_at > transaction_timestamp()
+   AND run_leases.expires_at > transaction_timestamp()
+   AND (run_leases.state = 'starting' OR worker_instances.state = 'active')
+`
+
+type GetRunLeaseClaimLocatorsParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+type GetRunLeaseClaimLocatorsRow struct {
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	AttemptNumber         int32       `json:"attempt_number"`
+	RegionID              string      `json:"region_id"`
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
+	NetworkSlotGeneration int64       `json:"network_slot_generation"`
+	WorkspaceLeaseID      pgtype.UUID `json:"workspace_lease_id"`
+	WorkspaceMountID      pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error) {
+	row := q.db.QueryRow(ctx, getRunLeaseClaimLocators,
+		arg.ID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+	)
+	var i GetRunLeaseClaimLocatorsRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.AttemptNumber,
+		&i.RegionID,
+		&i.RuntimeInstanceID,
+		&i.NetworkSlotID,
+		&i.NetworkSlotGeneration,
+		&i.WorkspaceLeaseID,
+		&i.WorkspaceMountID,
+	)
+	return i, err
+}
+
+const markRunLeaseStarting = `-- name: MarkRunLeaseStarting :one
+UPDATE run_leases
+   SET state = 'starting',
+       claimed_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND lease_sequence = $2
+   AND worker_group_id = $3
+   AND worker_instance_id = $4
+   AND worker_epoch = $5
+   AND worker_protocol_version = $6
+   AND state = 'assigned'
+   AND start_deadline_at > transaction_timestamp()
+   AND expires_at > transaction_timestamp()
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+`
+
+type MarkRunLeaseStartingParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+func (q *Queries) MarkRunLeaseStarting(ctx context.Context, arg MarkRunLeaseStartingParams) (RunLease, error) {
+	row := q.db.QueryRow(ctx, markRunLeaseStarting,
+		arg.ID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
 	)
 	var i RunLease
 	err := row.Scan(
