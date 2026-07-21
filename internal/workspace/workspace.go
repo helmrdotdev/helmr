@@ -50,9 +50,8 @@ func CreateWorkspaceArtifactFromRootWithExcludes(root string, tempDir string, tr
 	if err := validateRootInside(root, trustedRoot); err != nil {
 		return WorkspaceArtifact{}, func() {}, err
 	}
-	excludes := append([]string{"**/.git/**"}, excludePatterns...)
 	tarArchive, cleanup, err := archive.CreateTarWithOptions(root, tempDir, archive.TarOptions{
-		ExcludePatterns: excludes,
+		ExcludePatterns: append([]string(nil), excludePatterns...),
 		MaxBytes:        MaxArtifactExtractedBytes,
 		MaxEntries:      MaxArtifactEntries,
 	})
