@@ -13,6 +13,7 @@ import (
 var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
 
 type runLeaseClaimAuthority struct {
+	actor          db.Actor
 	run            db.Run
 	workspace      db.Workspace
 	attempt        db.RunAttempt
@@ -108,6 +109,142 @@ func claimFreshTaskRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
+	return claimRunLeasePhysicalInTx(ctx, q, worker, leaseID, leaseSequence, locators, authority)
+}
+
+func (s *Server) claimActorRunLease(
+	ctx context.Context,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+) (runLeaseClaimAuthority, error) {
+	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
+		ID:                    leaseID,
+		LeaseSequence:         leaseSequence,
+		WorkerGroupID:         worker.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:           worker.WorkerEpoch,
+		WorkerProtocolVersion: worker.ProtocolVersion,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+
+	var authority runLeaseClaimAuthority
+	err = s.inTx(ctx, func(work *txWork) error {
+		authority, err = claimActorRunLeaseInTx(ctx, work.q, worker, leaseID, leaseSequence, locators)
+		return err
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, err
+	}
+	return authority, nil
+}
+
+func claimActorRunLeaseInTx(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	locators db.GetRunLeaseClaimLocatorsRow,
+) (runLeaseClaimAuthority, error) {
+	if !locators.ActorID.Valid || !locators.ActorRunGeneration.Valid {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	var authority runLeaseClaimAuthority
+	var err error
+	authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
+		ID:          locators.ActorID,
+		WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	if authority.actor.CurrentRunID != locators.RunID ||
+		authority.actor.RunGeneration != locators.ActorRunGeneration.Int64 ||
+		(authority.actor.State != "open" && authority.actor.State != "closing") {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
+		ID:            locators.RunID,
+		OrgID:         locators.OrgID,
+		ProjectID:     locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID,
+		WorkspaceID:   locators.WorkspaceID,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	if authority.run.Status != db.RunStatusQueued ||
+		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
+		authority.run.CurrentRunLeaseID != leaseID ||
+		authority.run.EntrypointKind != "actor" ||
+		authority.run.ActorID != authority.actor.ID ||
+		authority.run.DeploymentDefinitionID != authority.actor.DeploymentDefinitionID ||
+		authority.run.EntrypointDeclaredID != authority.actor.ActorDeclaredID {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	authority.workspace, err = q.LockRunLeaseClaimWorkspace(ctx, db.LockRunLeaseClaimWorkspaceParams{
+		ID:            locators.WorkspaceID,
+		OrgID:         locators.OrgID,
+		ProjectID:     locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID,
+		RegionID:      locators.RegionID,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	if authority.workspace.State != db.WorkspaceStateActive ||
+		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
+		authority.workspace.OwnerActorID != authority.actor.ID ||
+		authority.workspace.OwnerRunID.Valid {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	authority.attempt, err = q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
+		RunID:       locators.RunID,
+		Number:      locators.AttemptNumber,
+		WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	if authority.attempt.TerminalAt.Valid ||
+		authority.attempt.EntrypointKind != "actor" ||
+		!authority.attempt.ActorStartInputSequence.Valid ||
+		!authority.run.ActorStartInputSequence.Valid ||
+		!authority.run.ActorStartInputHighWatermark.Valid ||
+		authority.actor.CommittedInputSequence != authority.attempt.ActorStartInputSequence.Int64 ||
+		authority.attempt.ActorStartInputSequence.Int64 < authority.run.ActorStartInputSequence.Int64 ||
+		authority.run.ActorStartInputHighWatermark.Int64 < authority.attempt.ActorStartInputSequence.Int64 ||
+		authority.run.ActorStartInputHighWatermark.Int64 >= authority.actor.NextInputSequence ||
+		!authority.workspace.HeadVersionID.Valid ||
+		authority.attempt.BaseWorkspaceVersionID != authority.workspace.HeadVersionID {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	if authority.attempt.Number == 1 &&
+		(authority.attempt.ActorStartInputSequence.Int64 != authority.run.ActorStartInputSequence.Int64 ||
+			authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID) {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+
+	return claimRunLeasePhysicalInTx(ctx, q, worker, leaseID, leaseSequence, locators, authority)
+}
+
+func claimRunLeasePhysicalInTx(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	locators db.GetRunLeaseClaimLocatorsRow,
+	authority runLeaseClaimAuthority,
+) (runLeaseClaimAuthority, error) {
+	var err error
 	authority.workerGroup, err = q.LockRunLeaseClaimWorkerGroup(ctx, db.LockRunLeaseClaimWorkerGroupParams{
 		ID:       worker.WorkerGroupID,
 		RegionID: locators.RegionID,

@@ -202,10 +202,149 @@ func TestClaimFreshTaskRunLeaseInTxRejectsStaleGroupGeneration(t *testing.T) {
 	}
 }
 
+func TestClaimActorRunLeaseInTxLocksActorBeforeRun(t *testing.T) {
+	worker, locators, authority := validActorRunLeaseClaimFixture()
+	store := &runLeaseClaimStore{authority: authority}
+
+	claimed, err := claimActorRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOrder := []string{
+		"actor",
+		"run",
+		"workspace",
+		"attempt",
+		"worker_group",
+		"worker",
+		"network_slot",
+		"runtime",
+		"run_lease",
+		"workspace_mount",
+		"workspace_lease",
+		"mark_starting",
+	}
+	if !slices.Equal(store.calls, wantOrder) {
+		t.Fatalf("lock order = %v, want %v", store.calls, wantOrder)
+	}
+	if claimed.runLease.State != db.RunLeaseStateStarting {
+		t.Fatalf("claim state = %s", claimed.runLease.State)
+	}
+}
+
+func TestClaimActorRunLeaseInTxRejectsStaleActorGeneration(t *testing.T) {
+	worker, locators, authority := validActorRunLeaseClaimFixture()
+	authority.actor.RunGeneration++
+	store := &runLeaseClaimStore{authority: authority}
+
+	_, err := claimActorRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale claim", err)
+	}
+	if !slices.Equal(store.calls, []string{"actor"}) {
+		t.Fatalf("stale Actor generation progressed claim: %v", store.calls)
+	}
+}
+
+func TestClaimActorRunLeaseInTxAcceptsRetryAttemptFrontier(t *testing.T) {
+	worker, locators, authority := validActorRunLeaseClaimFixture()
+	retryVersionID := pgvalue.UUID(uuid.New())
+	locators.AttemptNumber = 2
+	authority.run.CurrentAttemptNumber = 2
+	authority.attempt.Number = 2
+	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.attempt.BaseWorkspaceVersionID = retryVersionID
+	authority.actor.CommittedInputSequence = 2
+	authority.workspace.HeadVersionID = retryVersionID
+	authority.runLease.AttemptNumber = 2
+	authority.workspaceMount.MaterializedVersionID = retryVersionID
+	authority.workspaceLease.BaseVersionID = retryVersionID
+	store := &runLeaseClaimStore{authority: authority}
+
+	if _, err := claimActorRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestClaimActorRunLeaseInTxRejectsRetryCursorMismatch(t *testing.T) {
+	worker, locators, authority := validActorRunLeaseClaimFixture()
+	locators.AttemptNumber = 2
+	authority.run.CurrentAttemptNumber = 2
+	authority.attempt.Number = 2
+	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.runLease.AttemptNumber = 2
+	store := &runLeaseClaimStore{authority: authority}
+
+	_, err := claimActorRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale claim", err)
+	}
+}
+
+func TestClaimActorRunLeaseInTxRejectsRetryBaseThatIsNotWorkspaceHead(t *testing.T) {
+	worker, locators, authority := validActorRunLeaseClaimFixture()
+	retryVersionID := pgvalue.UUID(uuid.New())
+	locators.AttemptNumber = 2
+	authority.run.CurrentAttemptNumber = 2
+	authority.attempt.Number = 2
+	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	authority.attempt.BaseWorkspaceVersionID = retryVersionID
+	authority.actor.CommittedInputSequence = 2
+	authority.runLease.AttemptNumber = 2
+	authority.workspaceMount.MaterializedVersionID = retryVersionID
+	authority.workspaceLease.BaseVersionID = retryVersionID
+	store := &runLeaseClaimStore{authority: authority}
+
+	_, err := claimActorRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale claim", err)
+	}
+}
+
 type runLeaseClaimStore struct {
 	db.Querier
 	authority runLeaseClaimAuthority
 	calls     []string
+}
+
+func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Actor, error) {
+	s.calls = append(s.calls, "actor")
+	return s.authority.actor, nil
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimRun(context.Context, db.LockRunLeaseClaimRunParams) (db.Run, error) {
@@ -331,6 +470,7 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			OwnerRunID:             runID,
 			OwnershipGeneration:    4,
 			WriterGeneration:       5,
+			HeadVersionID:          versionID,
 			State:                  db.WorkspaceStateActive,
 			DesiredState:           db.WorkspaceDesiredStateActive,
 		},
@@ -421,5 +561,33 @@ func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, r
 			MountFencingGeneration: 6,
 		},
 	}
+	return worker, locators, authority
+}
+
+func validActorRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
+	worker, locators, authority := validRunLeaseClaimFixture()
+	actorID := pgvalue.UUID(uuid.New())
+	locators.ActorID = actorID
+	locators.ActorRunGeneration = pgtype.Int8{Int64: 9, Valid: true}
+	authority.actor = db.Actor{
+		ID:                     actorID,
+		ActorDeclaredID:        "test-actor",
+		DeploymentDefinitionID: authority.run.DeploymentDefinitionID,
+		WorkspaceID:            authority.workspace.ID,
+		CurrentRunID:           authority.run.ID,
+		RunGeneration:          9,
+		NextInputSequence:      4,
+		CommittedInputSequence: 1,
+		State:                  "open",
+	}
+	authority.run.EntrypointKind = "actor"
+	authority.run.EntrypointDeclaredID = "test-actor"
+	authority.run.ActorID = actorID
+	authority.run.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
+	authority.run.ActorStartInputHighWatermark = pgtype.Int8{Int64: 3, Valid: true}
+	authority.workspace.OwnerRunID = pgtype.UUID{}
+	authority.workspace.OwnerActorID = actorID
+	authority.attempt.EntrypointKind = "actor"
+	authority.attempt.ActorStartInputSequence = pgtype.Int8{Int64: 1, Valid: true}
 	return worker, locators, authority
 }

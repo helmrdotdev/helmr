@@ -67,9 +67,20 @@ SELECT run_leases.org_id,
        run_leases.runtime_instance_id,
        run_leases.network_slot_id,
        run_leases.network_slot_generation,
+       runs.actor_id,
+       actors.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id
   FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.workspace_id = run_leases.workspace_id
+   AND runs.current_attempt_number = run_leases.attempt_number
+   AND runs.current_run_lease_id = run_leases.id
+   AND runs.status = 'queued'
+  LEFT JOIN actors
+    ON actors.id = runs.actor_id
+   AND actors.workspace_id = runs.workspace_id
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
@@ -106,6 +117,13 @@ SELECT *
    AND org_id = sqlc.arg(org_id)
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimActor :one
+SELECT *
+  FROM actors
+ WHERE id = sqlc.arg(id)
    AND workspace_id = sqlc.arg(workspace_id)
  FOR UPDATE;
 

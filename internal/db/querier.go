@@ -273,6 +273,7 @@ type Querier interface {
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
+	LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Actor, error)
 	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)
 	LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseClaimLeaseParams) (RunLease, error)
 	LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseClaimMountParams) (WorkspaceMount, error)

@@ -235,9 +235,20 @@ SELECT run_leases.org_id,
        run_leases.runtime_instance_id,
        run_leases.network_slot_id,
        run_leases.network_slot_generation,
+       runs.actor_id,
+       actors.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
        workspace_leases.workspace_mount_id
   FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.workspace_id = run_leases.workspace_id
+   AND runs.current_attempt_number = run_leases.attempt_number
+   AND runs.current_run_lease_id = run_leases.id
+   AND runs.status = 'queued'
+  LEFT JOIN actors
+    ON actors.id = runs.actor_id
+   AND actors.workspace_id = runs.workspace_id
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
@@ -288,6 +299,8 @@ type GetRunLeaseClaimLocatorsRow struct {
 	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
 	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
 	NetworkSlotGeneration int64       `json:"network_slot_generation"`
+	ActorID               pgtype.UUID `json:"actor_id"`
+	ActorRunGeneration    pgtype.Int8 `json:"actor_run_generation"`
 	WorkspaceLeaseID      pgtype.UUID `json:"workspace_lease_id"`
 	WorkspaceMountID      pgtype.UUID `json:"workspace_mount_id"`
 }
@@ -313,8 +326,76 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 		&i.RuntimeInstanceID,
 		&i.NetworkSlotID,
 		&i.NetworkSlotGeneration,
+		&i.ActorID,
+		&i.ActorRunGeneration,
 		&i.WorkspaceLeaseID,
 		&i.WorkspaceMountID,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
+SELECT id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, no_progress_input_sequence, no_progress_count, last_no_progress_run_id, failure_reason_code, last_failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
+  FROM actors
+ WHERE id = $1
+   AND workspace_id = $2
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimActorParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Actor, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimActor, arg.ID, arg.WorkspaceID)
+	var i Actor
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeclarationKind,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.StateVersion,
+		&i.ManualRunCancelled,
+		&i.NoProgressInputSequence,
+		&i.NoProgressCount,
+		&i.LastNoProgressRunID,
+		&i.FailureReasonCode,
+		&i.LastFailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextOutputSequence,
+		&i.InputRetentionFloor,
+		&i.OutputRetentionFloor,
+		&i.ManagedQueueName,
+		&i.ManagedConcurrencyKey,
+		&i.ManagedQueueConcurrencyLimit,
+		&i.ManagedPriority,
+		&i.ManagedQueuedTtlMs,
+		&i.ManagedMaxActiveDurationMs,
+		&i.ManagedRetryPolicyVersion,
+		&i.ManagedRetryPolicy,
+		&i.ManagedRunMetadata,
+		&i.ManagedRunTags,
+		&i.State,
+		&i.CloseSequence,
+		&i.ExpiresAt,
+		&i.Metadata,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+		&i.ExpiredAt,
 	)
 	return i, err
 }
