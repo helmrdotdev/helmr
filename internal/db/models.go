@@ -2270,6 +2270,7 @@ type RunLease struct {
 	StartedAt                  pgtype.Timestamptz `json:"started_at"`
 	RenewedAt                  pgtype.Timestamptz `json:"renewed_at"`
 	ExpiresAt                  pgtype.Timestamptz `json:"expires_at"`
+	PreviousExpiresAt          pgtype.Timestamptz `json:"previous_expires_at"`
 	CheckpointedAt             pgtype.Timestamptz `json:"checkpointed_at"`
 	TerminalAt                 pgtype.Timestamptz `json:"terminal_at"`
 	TerminalReasonCode         pgtype.Text        `json:"terminal_reason_code"`

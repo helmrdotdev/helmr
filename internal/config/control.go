@@ -53,9 +53,16 @@ func LoadControl() (Control, error) {
 		GitHubOAuthClientID:     envString("HELMR_GITHUB_OAUTH_CLIENT_ID"),
 		GitHubOAuthClientSecret: envString("HELMR_GITHUB_OAUTH_CLIENT_SECRET"),
 		ScheduleJitter:          30 * time.Second,
+		RunLeaseTTL:             5 * time.Minute,
 	}
 	if cfg.ScheduleJitter, err = envDuration("HELMR_SCHEDULE_JITTER", cfg.ScheduleJitter); err != nil {
 		return cfg, err
+	}
+	if cfg.RunLeaseTTL, err = envDuration("HELMR_RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseTTL <= 0 {
+		return cfg, errors.New("HELMR_RUN_LEASE_TTL must be positive")
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

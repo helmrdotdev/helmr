@@ -97,7 +97,7 @@ Optional Run placement tuning:
 | `HELMR_RUN_PREPARATION_LIMIT` | `32` | Maximum concurrent Run runtime preparations in one queue scope before applying any lower pinned queue limit. |
 | `HELMR_RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
 | `HELMR_RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
-| `HELMR_RUN_LEASE_TTL` | `5m` | Initial lifetime of a newly assigned Run and Workspace Lease. Must be at least the start deadline. |
+| `HELMR_RUN_LEASE_TTL` | `5m` | Operational lifetime sampled when a Run and Workspace Lease are granted or renewed. Must be at least the start deadline. |
 
 Optional Schedule worker tuning:
 

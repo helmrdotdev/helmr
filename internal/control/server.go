@@ -79,6 +79,7 @@ type Server struct {
 	telemetryReader       telemetry.Reader
 	workerTokenSecret     []byte
 	workerTokenTTL        time.Duration
+	runLeaseTTL           time.Duration
 	workerEnrollment      WorkerEnrollmentVerifier
 	workerEnrollmentGuard *workerEnrollmentGuard
 	setupToken            string
@@ -153,6 +154,7 @@ type ServerConfig struct {
 
 	WorkerTokenSecret []byte
 	WorkerTokenTTL    time.Duration
+	RunLeaseTTL       time.Duration
 	WorkerEnrollment  WorkerEnrollmentVerifier
 	SetupToken        string
 	AuthSecret        []byte
@@ -229,6 +231,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if workerTokenTTL <= 0 {
 		workerTokenTTL = defaultWorkerTokenTTL
 	}
+	runLeaseTTL := cfg.RunLeaseTTL
+	if runLeaseTTL <= 0 {
+		runLeaseTTL = workerLeaseDuration
+	}
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
@@ -253,6 +259,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		telemetryReader:       telemetryReader,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
 		workerTokenTTL:        workerTokenTTL,
+		runLeaseTTL:           runLeaseTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
@@ -650,6 +657,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/entrypoint", s.workerEnterRunEntrypoint)
 				r.Post("/leases/reject", s.workerRejectRun)
 				r.Post("/leases/renew", s.workerRenew)
+				r.Post("/leases/run-renew", s.workerRenewRunLease)
 				r.Post("/leases/release", s.workerRelease)
 				r.Post("/leases/tokens", s.workerCreateToken)
 				r.Post("/leases/run-waits", s.workerCreateRunWait)

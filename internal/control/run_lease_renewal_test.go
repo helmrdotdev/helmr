@@ -1,0 +1,281 @@
+package control
+
+import (
+	"context"
+	"errors"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+func TestRenewRunLeaseReplaysOnlyTheImmediatelyPreviousReceipt(t *testing.T) {
+	server, store, worker, first := validRunLeaseRenewalFixture(t)
+
+	second, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, first,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !second.ExpiresAt.After(first.ExpiresAt) || store.renewalWrites != 2 {
+		t.Fatalf("first renewal = %+v, writes = %d", second, store.renewalWrites)
+	}
+	wantCalls := []string{
+		"renewal_locators", "run", "workspace", "attempt", "worker_group", "worker",
+		"network_slot", "runtime", "renewal_lease", "workspace_mount", "workspace_lease",
+		"renewal_time", "renew_run_lease", "renew_workspace_lease", "commit",
+	}
+	if !slices.Equal(store.calls, wantCalls) {
+		t.Fatalf("calls = %v, want %v", store.calls, wantCalls)
+	}
+	store.calls = nil
+	replayed, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, first,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalRunLeaseReceipt(replayed, second) || store.renewalWrites != 2 {
+		t.Fatalf("replay = %+v, writes = %d", replayed, store.renewalWrites)
+	}
+	if slices.Contains(store.calls, "renew_run_lease") || slices.Contains(store.calls, "renew_workspace_lease") {
+		t.Fatalf("replay changed authority: %v", store.calls)
+	}
+
+	store.renewalTime.Time = store.renewalTime.Time.Add(time.Minute)
+	third, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, second,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !third.ExpiresAt.After(second.ExpiresAt) || store.renewalWrites != 4 {
+		t.Fatalf("second renewal = %+v, writes = %d", third, store.renewalWrites)
+	}
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, first,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("two-generation-old receipt error = %v, want stale", err)
+	}
+}
+
+func TestRenewRunLeaseRejectsAlteredReceipt(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	receipt.WriterGeneration++
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale", err)
+	}
+	if store.renewalWrites != 0 {
+		t.Fatalf("writes = %d, want zero", store.renewalWrites)
+	}
+}
+
+func TestRenewRunLeaseRejectsStaleSequence(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	receipt.LeaseSequence++
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale", err)
+	}
+}
+
+func TestRenewRunLeaseRejectsPriorWorkerEpoch(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	worker.WorkerEpoch++
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale", err)
+	}
+}
+
+func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	store.authority.workerGroup.State = db.WorkerGroupStateDraining
+	store.authority.worker.State = db.WorkerInstanceStateDraining
+
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenewRunLeaseReturnsCurrentReceiptWhenOperationalHorizonDoesNotAdvance(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	store.authority.runLease.ExpiresAt.Time = store.renewalTime.Time.Add(server.runLeaseTTL)
+	store.authority.workspaceLease.ExpiresAt = store.authority.runLease.ExpiresAt
+	receipt.ExpiresAt = store.authority.runLease.ExpiresAt.Time
+
+	renewed, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalRunLeaseReceipt(renewed, receipt) || store.renewalWrites != 0 {
+		t.Fatalf("renewed = %+v, writes = %d", renewed, store.renewalWrites)
+	}
+}
+
+func TestRenewRunLeaseUsesConfiguredOperationalHorizon(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	server.runLeaseTTL = 2 * time.Minute
+
+	renewed, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.renewalTime.Time.Add(server.runLeaseTTL)
+	if !renewed.ExpiresAt.Equal(want) {
+		t.Fatalf("expiry = %s, want %s", renewed.ExpiresAt, want)
+	}
+}
+
+func TestRenewRunLeaseRejectsAuthorityThatExpiredWhileWaitingForLocks(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	store.renewalTime.Time = store.authority.runLease.ExpiresAt.Time
+
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale", err)
+	}
+	if store.renewalWrites != 0 {
+		t.Fatalf("writes = %d, want zero", store.renewalWrites)
+	}
+}
+
+func TestRenewRunLeaseRejectsExhaustedActiveBudget(t *testing.T) {
+	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
+	store.authority.run.ActiveStartedAt.Time = store.renewalTime.Time.Add(-time.Hour)
+	store.authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
+	store.authority.run.ActiveElapsedMs = 0
+	receipt.MaxActiveDurationMs = store.authority.run.MaxActiveDurationMs
+
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale", err)
+	}
+	if store.renewalWrites != 0 {
+		t.Fatalf("writes = %d, want zero", store.renewalWrites)
+	}
+}
+
+func validRunLeaseRenewalFixture(
+	t *testing.T,
+) (*Server, *runLeaseClaimStore, workerActor, api.WorkerRunLeaseReceipt) {
+	t.Helper()
+	worker, claimLocators, authority := validRunLeaseClaimFixture()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	authority.run.Status = db.RunStatusRunning
+	authority.run.StartedAt = pgvalue.Timestamptz(now.Add(-time.Minute))
+	authority.run.ActiveStartedAt = authority.run.StartedAt
+	authority.run.MaxActiveDurationMs = int64(time.Hour / time.Millisecond)
+	authority.run.ActiveElapsedMs = 0
+	authority.runLease.State = db.RunLeaseStateRunning
+	authority.runLease.StartDeadlineAt = pgvalue.Timestamptz(now.Add(-30 * time.Second))
+	authority.runLease.StartedAt = authority.run.StartedAt
+	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(time.Minute))
+	authority.workspaceMount.RuntimeInstanceID = authority.runtime.ID
+	authority.workspaceLease.WorkspaceID = authority.workspace.ID
+	authority.workspaceLease.RuntimeInstanceID = authority.runtime.ID
+	authority.workspaceLease.WorkspaceMountID = authority.workspaceMount.ID
+	authority.workspaceLease.ExpiresAt = authority.runLease.ExpiresAt
+
+	store := &runLeaseClaimStore{
+		authority: authority,
+		renewal: db.GetRunLeaseRenewalLocatorsRow{
+			OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
+			EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
+			WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
+			RegionID: claimLocators.RegionID, RuntimeInstanceID: claimLocators.RuntimeInstanceID,
+			NetworkSlotID:         claimLocators.NetworkSlotID,
+			NetworkSlotGeneration: claimLocators.NetworkSlotGeneration,
+			WorkspaceLeaseID:      claimLocators.WorkspaceLeaseID,
+			WorkspaceMountID:      claimLocators.WorkspaceMountID,
+		},
+		renewalTime: pgvalue.Timestamptz(now),
+	}
+	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+		run: authority.run, attempt: authority.attempt, runtime: authority.runtime,
+		networkSlot: authority.networkSlot, runLease: authority.runLease,
+		workspace: authority.workspace, workspaceMount: authority.workspaceMount,
+		workspaceLease: authority.workspaceLease,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &Server{db: store, runLeaseTTL: 5 * time.Minute}, store, worker, receipt
+}
+
+func (s *runLeaseClaimStore) GetRunLeaseRenewalLocators(
+	_ context.Context,
+	params db.GetRunLeaseRenewalLocatorsParams,
+) (db.GetRunLeaseRenewalLocatorsRow, error) {
+	s.calls = append(s.calls, "renewal_locators")
+	lease := s.authority.runLease
+	if params.ID != lease.ID ||
+		params.LeaseSequence != lease.LeaseSequence ||
+		params.WorkerGroupID != lease.WorkerGroupID ||
+		params.WorkerInstanceID != lease.WorkerInstanceID ||
+		params.WorkerEpoch != lease.WorkerEpoch ||
+		params.WorkerProtocolVersion != lease.WorkerProtocolVersion {
+		return db.GetRunLeaseRenewalLocatorsRow{}, pgx.ErrNoRows
+	}
+	return s.renewal, nil
+}
+
+func (s *runLeaseClaimStore) LockRunLeaseRenewalLease(
+	context.Context,
+	db.LockRunLeaseRenewalLeaseParams,
+) (db.RunLease, error) {
+	s.calls = append(s.calls, "renewal_lease")
+	return s.authority.runLease, nil
+}
+
+func (s *runLeaseClaimStore) GetRunLeaseRenewalTime(context.Context) (pgtype.Timestamptz, error) {
+	s.calls = append(s.calls, "renewal_time")
+	return s.renewalTime, nil
+}
+
+func (s *runLeaseClaimStore) RenewRunLeaseExpiry(
+	_ context.Context,
+	params db.RenewRunLeaseExpiryParams,
+) (db.RunLease, error) {
+	s.calls = append(s.calls, "renew_run_lease")
+	if !s.authority.runLease.ExpiresAt.Time.Equal(params.PreviousExpiresAt.Time) {
+		return db.RunLease{}, errStaleRunLeaseClaim
+	}
+	s.authority.runLease.PreviousExpiresAt = s.authority.runLease.ExpiresAt
+	s.authority.runLease.RenewedAt = params.RenewedAt
+	s.authority.runLease.ExpiresAt = params.ExpiresAt
+	s.renewalWrites++
+	return s.authority.runLease, nil
+}
+
+func (s *runLeaseClaimStore) RenewRunWorkspaceLeaseExpiry(
+	_ context.Context,
+	params db.RenewRunWorkspaceLeaseExpiryParams,
+) (db.WorkspaceLease, error) {
+	s.calls = append(s.calls, "renew_workspace_lease")
+	if !s.authority.workspaceLease.ExpiresAt.Time.Equal(params.PreviousExpiresAt.Time) {
+		return db.WorkspaceLease{}, errStaleRunLeaseClaim
+	}
+	s.authority.workspaceLease.RenewedAt = params.RenewedAt
+	s.authority.workspaceLease.ExpiresAt = params.ExpiresAt
+	s.renewalWrites++
+	return s.authority.workspaceLease, nil
+}

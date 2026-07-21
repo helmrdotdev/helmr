@@ -367,6 +367,14 @@ type WorkerRunStartResponse struct {
 	Lease WorkerRunLeaseReceipt `json:"lease"`
 }
 
+type WorkerRunLeaseRenewRequest struct {
+	Lease WorkerRunLeaseReceipt `json:"lease"`
+}
+
+type WorkerRunLeaseRenewResponse struct {
+	Lease WorkerRunLeaseReceipt `json:"lease"`
+}
+
 type WorkerRunEntrypointRequest struct {
 	Lease                WorkerRunLeaseReceipt `json:"lease"`
 	EntrypointKind       string                `json:"entrypoint_kind"`

@@ -1056,6 +1056,9 @@ type runLeaseClaimStore struct {
 	entrypoint      db.GetRunEntrypointLocatorsRow
 	enteredAt       pgtype.Timestamptz
 	entrypointMarks int
+	renewal         db.GetRunLeaseRenewalLocatorsRow
+	renewalTime     pgtype.Timestamptz
+	renewalWrites   int
 	calls           []string
 }
 

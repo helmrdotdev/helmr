@@ -460,6 +460,22 @@ func (c *Client) RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.Wo
 	return response, nil
 }
 
+func (c *Client) RenewRunLease(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+) (api.WorkerRunLeaseRenewResponse, error) {
+	var response api.WorkerRunLeaseRenewResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/run-renew",
+		api.WorkerRunLeaseRenewRequest{Lease: lease},
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseRenewResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error) {
 	var response api.WorkerReleaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {

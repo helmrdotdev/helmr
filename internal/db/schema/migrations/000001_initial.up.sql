@@ -2997,6 +2997,7 @@ CREATE TABLE run_leases (
     started_at TIMESTAMPTZ,
     renewed_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL,
+    previous_expires_at TIMESTAMPTZ,
     checkpointed_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
@@ -3037,6 +3038,12 @@ CREATE TABLE run_leases (
     CHECK (renewed_at IS NULL OR (
         renewed_at >= COALESCE(started_at, claimed_at, assigned_at)
         AND (terminal_at IS NULL OR renewed_at <= terminal_at)
+    )),
+    CHECK ((previous_expires_at IS NULL) = (renewed_at IS NULL)),
+    CHECK (previous_expires_at IS NULL OR (
+        start_deadline_at <= previous_expires_at
+        AND renewed_at < previous_expires_at
+        AND previous_expires_at < expires_at
     )),
     CHECK (
         (state = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)

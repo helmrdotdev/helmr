@@ -845,6 +845,15 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					t.Fatalf("entrypoint request = %+v", request)
 				}
 				w.WriteHeader(http.StatusNoContent)
+			case "/api/worker/leases/run-renew":
+				var request api.WorkerRunLeaseRenewRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt {
+					t.Fatalf("renew request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseRenewResponse{Lease: receipt})
 			case "/api/worker/leases/run-logs":
 				var request api.WorkerRunLogAppendRequest
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -915,6 +924,13 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	renewed, err := client.RenewRunLease(context.Background(), receipt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.Lease != receipt {
+		t.Fatalf("renew response = %+v", renewed)
+	}
 	err = client.AppendRunLog(
 		context.Background(),
 		receipt,
@@ -927,7 +943,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	}
 	if got := strings.Join(paths, ","); got !=
 		"/api/worker/auth/token,/api/worker/leases/claim,"+
-			"/api/worker/leases/start,/api/worker/leases/entrypoint,"+
+			"/api/worker/leases/start,/api/worker/leases/entrypoint,/api/worker/leases/run-renew,"+
 			"/api/worker/leases/run-logs" {
 		t.Fatalf("paths = %s", got)
 	}

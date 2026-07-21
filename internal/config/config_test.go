@@ -141,12 +141,13 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_EMAIL_FROM", " Helmr <noreply@example.test> ")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", " client-id ")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_SECRET", " client-secret ")
+	t.Setenv("HELMR_RUN_LEASE_TTL", " 4m ")
 
 	cfg, err := LoadControl()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.ManagerStoreURI != "s3://helmr-managers" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.WorkspaceFencingKeyFingerprint != "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26" || cfg.WorkspaceFencingKeys != `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}` || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.ManagerStoreURI != "s3://helmr-managers" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.WorkspaceFencingKeyFingerprint != "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26" || cfg.WorkspaceFencingKeys != `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}` || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" || cfg.RunLeaseTTL != 4*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -173,6 +174,16 @@ func TestLoadControlDefaultsToSelfHostedDeploymentMode(t *testing.T) {
 	}
 	if cfg.WorkerGroupID != "us-east-1-worker-group-1" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" {
 		t.Fatalf("worker group config = %+v", cfg)
+	}
+	if cfg.RunLeaseTTL != 5*time.Minute {
+		t.Fatalf("Run Lease TTL = %s", cfg.RunLeaseTTL)
+	}
+}
+
+func TestLoadControlRejectsNonPositiveRunLeaseTTL(t *testing.T) {
+	t.Setenv("HELMR_RUN_LEASE_TTL", "0")
+	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_RUN_LEASE_TTL") {
+		t.Fatalf("error = %v", err)
 	}
 }
 
