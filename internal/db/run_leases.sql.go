@@ -260,7 +260,17 @@ SELECT run_leases.org_id,
        child_handoff_waits.ownership_generation AS handoff_ownership_generation,
        child_handoff_waits.parent_writer_generation AS handoff_parent_writer_generation,
        child_handoff_waits.child_writer_generation AS handoff_child_writer_generation,
-       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation
+       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation,
+       run_waits.child_run_id AS resume_child_run_id,
+       coalesce(resume_child_runs.current_attempt_number, 0)::integer AS resume_child_attempt_number,
+       run_waits.resume_workspace_version_id AS handoff_resume_workspace_version_id,
+       run_waits.handoff_runtime_instance_id AS resume_handoff_runtime_instance_id,
+       run_waits.handoff_workspace_mount_id AS resume_handoff_workspace_mount_id,
+       run_waits.handoff_mount_generation AS resume_handoff_mount_generation,
+       run_waits.ownership_generation AS resume_handoff_ownership_generation,
+       run_waits.parent_writer_generation AS resume_handoff_parent_writer_generation,
+       run_waits.child_writer_generation AS resume_handoff_child_writer_generation,
+       run_waits.resume_writer_generation AS resume_handoff_resume_writer_generation
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
@@ -305,6 +315,10 @@ SELECT run_leases.org_id,
    AND suspend_checkpoints.state = 'ready'
    AND (suspend_checkpoints.expires_at IS NULL
         OR suspend_checkpoints.expires_at > transaction_timestamp())
+  LEFT JOIN runs AS resume_child_runs
+    ON resume_child_runs.id = run_waits.child_run_id
+   AND resume_child_runs.parent_run_id = run_waits.run_id
+   AND resume_child_runs.workspace_id = run_waits.workspace_id
   LEFT JOIN runs AS parent_runs
     ON parent_runs.id = runs.parent_run_id
    AND parent_runs.environment_id = runs.environment_id
@@ -377,6 +391,16 @@ type GetRunLeaseClaimLocatorsRow struct {
 	HandoffParentWriterGeneration       pgtype.Int8 `json:"handoff_parent_writer_generation"`
 	HandoffChildWriterGeneration        pgtype.Int8 `json:"handoff_child_writer_generation"`
 	HandoffResumeWriterGeneration       pgtype.Int8 `json:"handoff_resume_writer_generation"`
+	ResumeChildRunID                    pgtype.UUID `json:"resume_child_run_id"`
+	ResumeChildAttemptNumber            int32       `json:"resume_child_attempt_number"`
+	HandoffResumeWorkspaceVersionID     pgtype.UUID `json:"handoff_resume_workspace_version_id"`
+	ResumeHandoffRuntimeInstanceID      pgtype.UUID `json:"resume_handoff_runtime_instance_id"`
+	ResumeHandoffWorkspaceMountID       pgtype.UUID `json:"resume_handoff_workspace_mount_id"`
+	ResumeHandoffMountGeneration        pgtype.Int8 `json:"resume_handoff_mount_generation"`
+	ResumeHandoffOwnershipGeneration    pgtype.Int8 `json:"resume_handoff_ownership_generation"`
+	ResumeHandoffParentWriterGeneration pgtype.Int8 `json:"resume_handoff_parent_writer_generation"`
+	ResumeHandoffChildWriterGeneration  pgtype.Int8 `json:"resume_handoff_child_writer_generation"`
+	ResumeHandoffResumeWriterGeneration pgtype.Int8 `json:"resume_handoff_resume_writer_generation"`
 }
 
 func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error) {
@@ -426,6 +450,72 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 		&i.HandoffParentWriterGeneration,
 		&i.HandoffChildWriterGeneration,
 		&i.HandoffResumeWriterGeneration,
+		&i.ResumeChildRunID,
+		&i.ResumeChildAttemptNumber,
+		&i.HandoffResumeWorkspaceVersionID,
+		&i.ResumeHandoffRuntimeInstanceID,
+		&i.ResumeHandoffWorkspaceMountID,
+		&i.ResumeHandoffMountGeneration,
+		&i.ResumeHandoffOwnershipGeneration,
+		&i.ResumeHandoffParentWriterGeneration,
+		&i.ResumeHandoffChildWriterGeneration,
+		&i.ResumeHandoffResumeWriterGeneration,
+	)
+	return i, err
+}
+
+const lockReadyRunCheckpoint = `-- name: LockReadyRunCheckpoint :one
+SELECT id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
+  FROM run_checkpoints
+ WHERE id = $1
+   AND kind = $2
+   AND run_id = $3
+   AND attempt_number = $4
+   AND run_wait_id = $5
+   AND workspace_id = $6
+   AND state = 'ready'
+   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
+ FOR UPDATE
+`
+
+type LockReadyRunCheckpointParams struct {
+	ID            pgtype.UUID       `json:"id"`
+	Kind          RunCheckpointKind `json:"kind"`
+	RunID         pgtype.UUID       `json:"run_id"`
+	AttemptNumber int32             `json:"attempt_number"`
+	RunWaitID     pgtype.UUID       `json:"run_wait_id"`
+	WorkspaceID   pgtype.UUID       `json:"workspace_id"`
+}
+
+func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCheckpointParams) (RunCheckpoint, error) {
+	row := q.db.QueryRow(ctx, lockReadyRunCheckpoint,
+		arg.ID,
+		arg.Kind,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.RunWaitID,
+		arg.WorkspaceID,
+	)
+	var i RunCheckpoint
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.RunWaitID,
+		&i.SourceRunLeaseID,
+		&i.SourceWorkspaceLeaseID,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.PrivateWorkspaceVersionID,
+		&i.ActorSpeculativeInputSequence,
+		&i.State,
+		&i.RestoreManifest,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.ReadyAt,
+		&i.InvalidatedAt,
+		&i.InvalidationReasonCode,
 	)
 	return i, err
 }

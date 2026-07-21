@@ -92,7 +92,17 @@ SELECT run_leases.org_id,
        child_handoff_waits.ownership_generation AS handoff_ownership_generation,
        child_handoff_waits.parent_writer_generation AS handoff_parent_writer_generation,
        child_handoff_waits.child_writer_generation AS handoff_child_writer_generation,
-       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation
+       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation,
+       run_waits.child_run_id AS resume_child_run_id,
+       coalesce(resume_child_runs.current_attempt_number, 0)::integer AS resume_child_attempt_number,
+       run_waits.resume_workspace_version_id AS handoff_resume_workspace_version_id,
+       run_waits.handoff_runtime_instance_id AS resume_handoff_runtime_instance_id,
+       run_waits.handoff_workspace_mount_id AS resume_handoff_workspace_mount_id,
+       run_waits.handoff_mount_generation AS resume_handoff_mount_generation,
+       run_waits.ownership_generation AS resume_handoff_ownership_generation,
+       run_waits.parent_writer_generation AS resume_handoff_parent_writer_generation,
+       run_waits.child_writer_generation AS resume_handoff_child_writer_generation,
+       run_waits.resume_writer_generation AS resume_handoff_resume_writer_generation
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
@@ -137,6 +147,10 @@ SELECT run_leases.org_id,
    AND suspend_checkpoints.state = 'ready'
    AND (suspend_checkpoints.expires_at IS NULL
         OR suspend_checkpoints.expires_at > transaction_timestamp())
+  LEFT JOIN runs AS resume_child_runs
+    ON resume_child_runs.id = run_waits.child_run_id
+   AND resume_child_runs.parent_run_id = run_waits.run_id
+   AND resume_child_runs.workspace_id = run_waits.workspace_id
   LEFT JOIN runs AS parent_runs
     ON parent_runs.id = runs.parent_run_id
    AND parent_runs.environment_id = runs.environment_id
@@ -304,6 +318,19 @@ SELECT *
    AND child_run_id = sqlc.arg(child_run_id)
    AND child_parent_owned IS TRUE
    AND suspension_state = 'parked'
+ FOR UPDATE;
+
+-- name: LockReadyRunCheckpoint :one
+SELECT *
+  FROM run_checkpoints
+ WHERE id = sqlc.arg(id)
+   AND kind = sqlc.arg(kind)
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND run_wait_id = sqlc.arg(run_wait_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND state = 'ready'
+   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
  FOR UPDATE;
 
 -- name: MarkRunLeaseStarting :one

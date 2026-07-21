@@ -274,6 +274,7 @@ type Querier interface {
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
+	LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCheckpointParams) (RunCheckpoint, error)
 	LockRestorableRunCheckpoint(ctx context.Context, arg LockRestorableRunCheckpointParams) (RunCheckpoint, error)
 	LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Actor, error)
 	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)

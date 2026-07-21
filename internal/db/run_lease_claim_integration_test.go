@@ -119,6 +119,16 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
 	}
+	if _, err := fixture.queries.LockReadyRunCheckpoint(ctx, LockReadyRunCheckpointParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		Kind:          RunCheckpointKindHandoffResume,
+		RunID:         locators.RunID,
+		AttemptNumber: locators.AttemptNumber,
+		RunWaitID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkspaceID:   locators.WorkspaceID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing handoff Checkpoint error = %v, want no rows", err)
+	}
 	if _, err := fixture.queries.GetRunCheckpointSourceRuntime(ctx, GetRunCheckpointSourceRuntimeParams{
 		SourceRunLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RunID:            locators.RunID,

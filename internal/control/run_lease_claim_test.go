@@ -670,6 +670,93 @@ func TestClaimSameWorkspaceChildRunLeaseInTxRejectsDifferentTarget(t *testing.T)
 	}
 }
 
+func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesHandoffCheckpoint(t *testing.T) {
+	for _, actorParent := range []bool{false, true} {
+		worker, locators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(actorParent, true)
+		store := &runLeaseClaimStore{authority: authority}
+
+		claimed, err := claimSameWorkspaceParentResumeRunLeaseInTx(
+			context.Background(),
+			store,
+			worker,
+			authority.runLease.ID,
+			authority.runLease.LeaseSequence,
+			locators,
+		)
+		if err != nil {
+			t.Fatalf("actorParent=%t: %v", actorParent, err)
+		}
+		wantOrder := []string{
+			"run",
+			"child_run",
+			"workspace",
+			"attempt",
+			"child_attempt",
+			"worker_group",
+			"worker",
+			"network_slot",
+			"runtime",
+			"run_lease",
+			"workspace_mount",
+			"workspace_lease",
+			"mark_starting",
+			"run_wait",
+			"checkpoint",
+			"source_runtime",
+		}
+		if actorParent {
+			wantOrder = append([]string{"actor"}, wantOrder...)
+		}
+		if !slices.Equal(store.calls, wantOrder) {
+			t.Fatalf("actorParent=%t lock order = %v, want %v", actorParent, store.calls, wantOrder)
+		}
+		if claimed.checkpoint.Kind != db.RunCheckpointKindHandoffResume {
+			t.Fatalf("checkpoint kind = %s", claimed.checkpoint.Kind)
+		}
+	}
+}
+
+func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesSuspendCheckpointAfterChildFailure(t *testing.T) {
+	worker, locators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, false)
+	store := &runLeaseClaimStore{authority: authority}
+
+	claimed, err := claimSameWorkspaceParentResumeRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claimed.checkpoint.Kind != db.RunCheckpointKindSuspend {
+		t.Fatalf("checkpoint kind = %s", claimed.checkpoint.Kind)
+	}
+	if claimed.workspaceLease.BaseVersionID != claimed.runWait.BaseWorkspaceVersionID {
+		t.Fatal("failed child did not restore pre-child base")
+	}
+}
+
+func TestClaimSameWorkspaceParentResumeRunLeaseInTxRejectsDifferentMount(t *testing.T) {
+	worker, locators, authority := validSameWorkspaceParentResumeRunLeaseClaimFixture(false, true)
+	authority.runWait.HandoffWorkspaceMountID = pgvalue.UUID(uuid.New())
+	store := &runLeaseClaimStore{authority: authority}
+
+	_, err := claimSameWorkspaceParentResumeRunLeaseInTx(
+		context.Background(),
+		store,
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+		locators,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale claim", err)
+	}
+}
+
 type runLeaseClaimStore struct {
 	db.Querier
 	authority runLeaseClaimAuthority
@@ -686,6 +773,10 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimRun(_ context.Context, params db.L
 		s.calls = append(s.calls, "parent_run")
 		return s.authority.parentRun, nil
 	}
+	if s.authority.childRun.ID.Valid && params.ID == s.authority.childRun.ID {
+		s.calls = append(s.calls, "child_run")
+		return s.authority.childRun, nil
+	}
 	s.calls = append(s.calls, "run")
 	return s.authority.run, nil
 }
@@ -699,6 +790,10 @@ func (s *runLeaseClaimStore) LockRunLeaseClaimAttempt(_ context.Context, params 
 	if s.authority.parentAttempt.RunID.Valid && params.RunID == s.authority.parentAttempt.RunID {
 		s.calls = append(s.calls, "parent_attempt")
 		return s.authority.parentAttempt, nil
+	}
+	if s.authority.childAttempt.RunID.Valid && params.RunID == s.authority.childAttempt.RunID {
+		s.calls = append(s.calls, "child_attempt")
+		return s.authority.childAttempt, nil
 	}
 	s.calls = append(s.calls, "attempt")
 	return s.authority.attempt, nil
@@ -750,6 +845,11 @@ func (s *runLeaseClaimStore) LockSameWorkspaceChildClaimWait(context.Context, db
 }
 
 func (s *runLeaseClaimStore) LockRestorableRunCheckpoint(context.Context, db.LockRestorableRunCheckpointParams) (db.RunCheckpoint, error) {
+	s.calls = append(s.calls, "checkpoint")
+	return s.authority.checkpoint, nil
+}
+
+func (s *runLeaseClaimStore) LockReadyRunCheckpoint(context.Context, db.LockReadyRunCheckpointParams) (db.RunCheckpoint, error) {
 	s.calls = append(s.calls, "checkpoint")
 	return s.authority.checkpoint, nil
 }
@@ -1137,6 +1237,92 @@ func validSameWorkspaceChildRunLeaseClaimFixture(actorParent bool) (workerActor,
 		authority.workspace.OwnerRunID = pgtype.UUID{}
 		authority.workspace.OwnerActorID = actorID
 		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
+	}
+	return worker, locators, authority
+}
+
+func validSameWorkspaceParentResumeRunLeaseClaimFixture(
+	actorParent bool,
+	childSucceeded bool,
+) (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {
+	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(actorParent)
+	childRunID := pgvalue.UUID(uuid.New())
+	resultVersionID := pgvalue.UUID(uuid.New())
+
+	locators.ResumeChildRunID = childRunID
+	locators.ResumeChildAttemptNumber = 1
+	locators.HandoffResumeWorkspaceVersionID = resultVersionID
+	locators.ResumeHandoffRuntimeInstanceID = authority.runtime.ID
+	locators.ResumeHandoffWorkspaceMountID = authority.workspaceMount.ID
+	locators.ResumeHandoffMountGeneration = pgtype.Int8{Int64: authority.workspaceMount.FencingGeneration, Valid: true}
+	locators.ResumeHandoffOwnershipGeneration = pgtype.Int8{Int64: authority.workspace.OwnershipGeneration, Valid: true}
+	locators.ResumeHandoffParentWriterGeneration = pgtype.Int8{Int64: 4, Valid: true}
+	locators.ResumeHandoffChildWriterGeneration = pgtype.Int8{Int64: 5, Valid: true}
+	locators.ResumeHandoffResumeWriterGeneration = pgtype.Int8{Int64: 6, Valid: true}
+
+	authority.childRun = db.Run{
+		ID:                     childRunID,
+		DeploymentID:           authority.run.DeploymentID,
+		DeploymentDefinitionID: authority.run.DeploymentDefinitionID,
+		EntrypointKind:         "task",
+		EntrypointDeclaredID:   "child-task",
+		ParentRunID:            authority.run.ID,
+		ParentOwnsLifecycle:    pgtype.Bool{Bool: true, Valid: true},
+		WorkspaceID:            authority.workspace.ID,
+		BaseWorkspaceVersionID: authority.attempt.BaseWorkspaceVersionID,
+		CurrentAttemptNumber:   1,
+	}
+	authority.childAttempt = db.RunAttempt{
+		RunID:                  childRunID,
+		Number:                 1,
+		EntrypointKind:         "task",
+		WorkspaceID:            authority.workspace.ID,
+		EntrypointEnteredAt:    pgtype.Timestamptz{Valid: true},
+		BaseWorkspaceVersionID: authority.attempt.BaseWorkspaceVersionID,
+		TerminalOutcome:        pgtype.Text{String: "succeeded", Valid: true},
+		TerminalAt:             pgtype.Timestamptz{Valid: true},
+	}
+	authority.workspace.WriterGeneration = 6
+	authority.workspaceLease.WriterGeneration = 6
+	authority.runWait.Kind = db.WaitKindChild
+	authority.runWait.ChildRunID = childRunID
+	authority.runWait.ChildParentOwned = pgtype.Bool{Bool: true, Valid: true}
+	authority.runWait.ChildTargetDeclaredID = pgtype.Text{String: "child-task", Valid: true}
+	authority.runWait.BaseWorkspaceVersionID = authority.attempt.BaseWorkspaceVersionID
+	authority.runWait.BaseWorkspaceContentDigest = pgtype.Text{String: "sha256:test", Valid: true}
+	authority.runWait.ResumeWorkspaceVersionID = resultVersionID
+	authority.runWait.HandoffRuntimeInstanceID = authority.runtime.ID
+	authority.runWait.HandoffWorkspaceMountID = authority.workspaceMount.ID
+	authority.runWait.HandoffMountGeneration = pgtype.Int8{Int64: authority.workspaceMount.FencingGeneration, Valid: true}
+	authority.runWait.OwnershipGeneration = pgtype.Int8{Int64: authority.workspace.OwnershipGeneration, Valid: true}
+	authority.runWait.ParentWriterGeneration = pgtype.Int8{Int64: 4, Valid: true}
+	authority.runWait.ChildWriterGeneration = pgtype.Int8{Int64: 5, Valid: true}
+	authority.runWait.ResumeWriterGeneration = pgtype.Int8{Int64: 6, Valid: true}
+	authority.workspaceMount.MaterializedVersionID = resultVersionID
+	authority.workspaceLease.BaseVersionID = resultVersionID
+	authority.checkpoint.Kind = db.RunCheckpointKindHandoffResume
+	authority.checkpoint.PrivateWorkspaceVersionID = resultVersionID
+	authority.sourceRuntime = authority.runtime
+	authority.sourceRunLease.RuntimeInstanceID = authority.runtime.ID
+
+	if childSucceeded {
+		authority.checkpoint.ID = pgvalue.UUID(uuid.New())
+		authority.childRun.Status = db.RunStatusSucceeded
+		authority.runWait.ConditionState = db.WaitStateCompleted
+		authority.runWait.ChildResultVersionID = resultVersionID
+		authority.runWait.HandoffResumeCheckpointID = authority.checkpoint.ID
+		locators.HandoffResumeCheckpointID = authority.checkpoint.ID
+	} else {
+		authority.childRun.Status = db.RunStatusFailed
+		authority.childAttempt.TerminalOutcome = pgtype.Text{String: "failed", Valid: true}
+		authority.runWait.ConditionState = db.WaitStateFailed
+		authority.runWait.ResumeWorkspaceVersionID = authority.runWait.BaseWorkspaceVersionID
+		locators.HandoffResumeWorkspaceVersionID = authority.runWait.BaseWorkspaceVersionID
+		authority.workspaceMount.MaterializedVersionID = authority.runWait.BaseWorkspaceVersionID
+		authority.workspaceLease.BaseVersionID = authority.runWait.BaseWorkspaceVersionID
+		authority.checkpoint.Kind = db.RunCheckpointKindSuspend
+		authority.checkpoint.PrivateWorkspaceVersionID = authority.runWait.BaseWorkspaceVersionID
+		locators.HandoffResumeCheckpointID = pgtype.UUID{}
 	}
 	return worker, locators, authority
 }
