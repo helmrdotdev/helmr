@@ -77,6 +77,28 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	}
 }
 
+func TestWorkerCompleteTaskRejectsUnknownFields(t *testing.T) {
+	request := validTaskCompletionRequest(t)
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = append(bytes.TrimSuffix(body, []byte("}")), []byte(`,"unexpected":true}`)...)
+	server := &Server{log: taskCompletionTestLogger(), db: &workerTaskCompletionReplayStore{}}
+	httpRequest := httptest.NewRequest(
+		http.MethodPost,
+		"/api/worker/leases/tasks/complete",
+		bytes.NewReader(body),
+	)
+	response := httptest.NewRecorder()
+
+	server.workerCompleteTask(response, httpRequest)
+
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 type workerTaskCompletionReplayStore struct {
 	db.Querier
 	fingerprint pgtype.Text

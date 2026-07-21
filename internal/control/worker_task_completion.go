@@ -17,6 +17,7 @@ func (s *Server) workerCompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	var request api.WorkerCompleteTaskRequest
 	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&request); err != nil {
 		if errors.Is(err, io.EOF) {
 			err = errors.New("request body is required")
