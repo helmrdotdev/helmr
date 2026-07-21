@@ -476,6 +476,34 @@ func (c *Client) RenewRunLease(
 	return response, nil
 }
 
+func (c *Client) BeginRunFinalization(
+	ctx context.Context,
+	request api.WorkerBeginRunFinalizationRequest,
+) (api.WorkerBeginRunFinalizationResponse, error) {
+	var response api.WorkerBeginRunFinalizationResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/finalization/begin",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerBeginRunFinalizationResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) CompleteTask(
+	ctx context.Context,
+	request api.WorkerCompleteTaskRequest,
+) error {
+	return c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/tasks/complete",
+		request,
+		nil,
+	)
+}
+
 func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error) {
 	var response api.WorkerReleaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {
