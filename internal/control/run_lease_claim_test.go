@@ -12,6 +12,80 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+func TestClaimRunLeaseLocksSecretsBeforeExecutionAuthority(t *testing.T) {
+	worker, locators, authority := validRunLeaseClaimFixture()
+	secretRow, secretVersion := validRunLeaseClaimSecretFixture(locators)
+	store := &runLeaseClaimStore{
+		authority: authority,
+		locators:  locators,
+		secretRows: []db.LockAttemptSecretDeliveryRow{
+			secretRow,
+		},
+		secretVersion: secretVersion,
+	}
+	server := &Server{db: store}
+
+	claimed, envelopes, err := server.claimRunLease(
+		context.Background(),
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(envelopes) != 1 ||
+		envelopes[0].Secret.ID != secretRow.Secret.ID ||
+		envelopes[0].Version.ID != secretVersion.ID {
+		t.Fatalf("Secret envelopes = %+v", envelopes)
+	}
+	if claimed.runLease.State != db.RunLeaseStateStarting {
+		t.Fatalf("lease state = %q, want starting", claimed.runLease.State)
+	}
+	if !slices.Equal(store.calls, []string{
+		"secret_locators", "secrets", "secret_version", "locators",
+		"run", "workspace", "attempt",
+		"worker_group", "worker", "network_slot", "runtime", "run_lease",
+		"workspace_mount", "workspace_lease", "mark_starting", "commit",
+	}) {
+		t.Fatalf("claim order = %v", store.calls)
+	}
+}
+
+func TestClaimRunLeaseRollsBackWhenSecretLocatorsChange(t *testing.T) {
+	worker, locators, authority := validRunLeaseClaimFixture()
+	secretLocators := db.GetRunLeaseSecretDeliveryLocatorsRow{
+		EnvironmentID: locators.EnvironmentID,
+		RunID:         locators.RunID,
+		WorkspaceID:   pgvalue.UUID(uuid.New()),
+		AttemptNumber: locators.AttemptNumber,
+	}
+	store := &runLeaseClaimStore{
+		authority:      authority,
+		locators:       locators,
+		secretLocators: &secretLocators,
+	}
+	server := &Server{db: store}
+
+	_, _, err := server.claimRunLease(
+		context.Background(),
+		worker,
+		authority.runLease.ID,
+		authority.runLease.LeaseSequence,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) {
+		t.Fatalf("error = %v, want stale claim", err)
+	}
+	if !slices.Equal(store.calls, []string{
+		"secret_locators", "secrets", "locators", "rollback",
+	}) {
+		t.Fatalf("claim order = %v", store.calls)
+	}
+	if store.authority.runLease.State != db.RunLeaseStateAssigned {
+		t.Fatalf("lease state = %q, want assigned", store.authority.runLease.State)
+	}
+}
+
 func TestClaimFreshTaskRunLeaseInTxLocksCanonicalOrderAndTransitionsOnce(t *testing.T) {
 	worker, locators, authority := validRunLeaseClaimFixture()
 	store := &runLeaseClaimStore{authority: authority}
@@ -968,8 +1042,56 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxRejectsDifferentMount(t *test
 
 type runLeaseClaimStore struct {
 	db.Querier
-	authority runLeaseClaimAuthority
-	calls     []string
+	authority      runLeaseClaimAuthority
+	locators       db.GetRunLeaseClaimLocatorsRow
+	secretLocators *db.GetRunLeaseSecretDeliveryLocatorsRow
+	secretRows     []db.LockAttemptSecretDeliveryRow
+	secretVersion  db.SecretVersion
+	calls          []string
+}
+
+func (s *runLeaseClaimStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
+	return s, runLeaseClaimTransaction{store: s}, nil
+}
+
+func (s *runLeaseClaimStore) GetRunLeaseSecretDeliveryLocators(
+	context.Context,
+	db.GetRunLeaseSecretDeliveryLocatorsParams,
+) (db.GetRunLeaseSecretDeliveryLocatorsRow, error) {
+	s.calls = append(s.calls, "secret_locators")
+	if s.secretLocators != nil {
+		return *s.secretLocators, nil
+	}
+	return db.GetRunLeaseSecretDeliveryLocatorsRow{
+		EnvironmentID: s.locators.EnvironmentID,
+		RunID:         s.locators.RunID,
+		WorkspaceID:   s.locators.WorkspaceID,
+		AttemptNumber: s.locators.AttemptNumber,
+	}, nil
+}
+
+func (s *runLeaseClaimStore) LockAttemptSecretDelivery(
+	context.Context,
+	db.LockAttemptSecretDeliveryParams,
+) ([]db.LockAttemptSecretDeliveryRow, error) {
+	s.calls = append(s.calls, "secrets")
+	return s.secretRows, nil
+}
+
+func (s *runLeaseClaimStore) GetSecretVersion(
+	context.Context,
+	db.GetSecretVersionParams,
+) (db.SecretVersion, error) {
+	s.calls = append(s.calls, "secret_version")
+	return s.secretVersion, nil
+}
+
+func (s *runLeaseClaimStore) GetRunLeaseClaimLocators(
+	context.Context,
+	db.GetRunLeaseClaimLocatorsParams,
+) (db.GetRunLeaseClaimLocatorsRow, error) {
+	s.calls = append(s.calls, "locators")
+	return s.locators, nil
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Actor, error) {
@@ -1083,6 +1205,53 @@ func (s *runLeaseClaimStore) MarkRunLeaseStarting(context.Context, db.MarkRunLea
 	lease.ClaimedAt = pgtype.Timestamptz{Valid: true}
 	s.authority.runLease = lease
 	return lease, nil
+}
+
+type runLeaseClaimTransaction struct {
+	store *runLeaseClaimStore
+}
+
+func (tx runLeaseClaimTransaction) Commit(context.Context) error {
+	tx.store.calls = append(tx.store.calls, "commit")
+	return nil
+}
+
+func (tx runLeaseClaimTransaction) Rollback(context.Context) error {
+	tx.store.calls = append(tx.store.calls, "rollback")
+	return nil
+}
+
+func validRunLeaseClaimSecretFixture(
+	locators db.GetRunLeaseClaimLocatorsRow,
+) (db.LockAttemptSecretDeliveryRow, db.SecretVersion) {
+	secretID := pgvalue.UUID(uuid.New())
+	versionID := pgvalue.UUID(uuid.New())
+	secretRow := db.Secret{
+		ID:                   secretID,
+		EnvironmentID:        locators.EnvironmentID,
+		State:                "active",
+		CurrentVersionID:     versionID,
+		RevocationGeneration: 2,
+	}
+	return db.LockAttemptSecretDeliveryRow{
+			WorkspaceSecret: db.WorkspaceSecret{
+				WorkspaceID:     locators.WorkspaceID,
+				EnvironmentID:   locators.EnvironmentID,
+				PlacementKind:   "env",
+				PlacementTarget: "API_KEY",
+				SecretID:        secretID,
+			},
+			Secret:                         secretRow,
+			ResolutionID:                   pgvalue.UUID(uuid.New()),
+			ResolutionRunID:                locators.RunID,
+			ResolutionAttemptNumber:        pgtype.Int4{Int32: locators.AttemptNumber, Valid: true},
+			ResolutionSecretVersionID:      versionID,
+			ResolutionRevocationGeneration: pgtype.Int8{Int64: 2, Valid: true},
+		}, db.SecretVersion{
+			ID:       versionID,
+			SecretID: secretID,
+			Version:  1,
+		}
 }
 
 func validRunLeaseClaimFixture() (workerActor, db.GetRunLeaseClaimLocatorsRow, runLeaseClaimAuthority) {

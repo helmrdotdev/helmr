@@ -177,6 +177,7 @@ type Querier interface {
 	GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpointSourceParams) (GetRunCheckpointSourceRow, error)
 	GetRunLease(ctx context.Context, arg GetRunLeaseParams) (RunLease, error)
 	GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error)
+	GetRunLeaseSecretDeliveryLocators(ctx context.Context, arg GetRunLeaseSecretDeliveryLocatorsParams) (GetRunLeaseSecretDeliveryLocatorsRow, error)
 	GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error)
 	GetRunStream(ctx context.Context, arg GetRunStreamParams) (RunStream, error)
 	GetRunStreamRecord(ctx context.Context, arg GetRunStreamRecordParams) (RunStreamRecord, error)

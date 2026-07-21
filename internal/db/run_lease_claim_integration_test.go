@@ -86,6 +86,20 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		t.Fatalf("discovery mutated assigned lease to state=%s claimed_at=%v", state, claimedAt)
 	}
 
+	secretLocators, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pgvalue.MustUUIDValue(secretLocators.RunID) != assigned.runID ||
+		secretLocators.EnvironmentID != pgvalue.UUID(fixture.environmentID) ||
+		secretLocators.AttemptNumber != 1 {
+		t.Fatalf("Secret delivery locators = %+v", secretLocators)
+	}
+
 	locators, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
@@ -331,6 +345,20 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 			pgvalue.MustUUIDValue(row.ID) != starting.leaseID {
 			t.Fatalf("draining discovery returned unrelated lease %s", pgvalue.UUIDString(row.ID))
 		}
+	}
+	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
+		ID: pgvalue.UUID(unclaimed.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("draining assigned Secret locator error = %v, want no rows", err)
+	}
+	if _, err := fixture.queries.GetRunLeaseSecretDeliveryLocators(ctx, GetRunLeaseSecretDeliveryLocatorsParams{
+		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
+	}); err != nil {
+		t.Fatalf("draining replay Secret locator: %v", err)
 	}
 }
 

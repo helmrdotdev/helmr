@@ -186,6 +186,36 @@ SELECT run_leases.org_id,
    AND run_leases.expires_at > transaction_timestamp()
    AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
 
+-- name: GetRunLeaseSecretDeliveryLocators :one
+SELECT run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.workspace_id,
+       run_leases.attempt_number
+  FROM run_leases
+  JOIN worker_groups
+    ON worker_groups.id = run_leases.worker_group_id
+   AND worker_groups.region_id = run_leases.region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.allows_run
+   AND worker_groups.protocol_version = run_leases.worker_protocol_version
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+   AND worker_instances.worker_group_id = run_leases.worker_group_id
+   AND worker_instances.current_epoch = run_leases.worker_epoch
+   AND worker_instances.protocol_version = run_leases.worker_protocol_version
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.supports_run
+ WHERE run_leases.id = sqlc.arg(id)
+   AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
+   AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
+   AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
+   AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
+   AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
+   AND run_leases.state IN ('assigned', 'starting')
+   AND run_leases.start_deadline_at > transaction_timestamp()
+   AND run_leases.expires_at > transaction_timestamp()
+   AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
+
 -- name: LockRunLeaseClaimRun :one
 SELECT *
   FROM runs

@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -37,13 +38,13 @@ type runLeaseClaimAuthority struct {
 	sourceRuntime        db.RuntimeInstance
 }
 
-func (s *Server) claimFreshTaskRunLease(
+func (s *Server) claimRunLease(
 	ctx context.Context,
 	worker workerActor,
 	leaseID pgtype.UUID,
 	leaseSequence int64,
-) (runLeaseClaimAuthority, error) {
-	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
+) (runLeaseClaimAuthority, []secret.DeliveryEnvelope, error) {
+	secretLocators, err := s.db.GetRunLeaseSecretDeliveryLocators(ctx, db.GetRunLeaseSecretDeliveryLocatorsParams{
 		ID:                    leaseID,
 		LeaseSequence:         leaseSequence,
 		WorkerGroupID:         worker.WorkerGroupID,
@@ -52,18 +53,67 @@ func (s *Server) claimFreshTaskRunLease(
 		WorkerProtocolVersion: worker.ProtocolVersion,
 	})
 	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		return runLeaseClaimAuthority{}, nil, staleRunLeaseClaim(err)
 	}
 
 	var authority runLeaseClaimAuthority
+	var envelopes []secret.DeliveryEnvelope
 	err = s.inTx(ctx, func(work *txWork) error {
-		authority, err = claimFreshTaskRunLeaseInTx(ctx, work.q, worker, leaseID, leaseSequence, locators)
+		envelopes, err = secret.LockAttemptDelivery(
+			ctx,
+			work.q,
+			secretLocators.RunID,
+			secretLocators.AttemptNumber,
+			secretLocators.WorkspaceID,
+		)
+		if err != nil {
+			return err
+		}
+		locators, err := work.q.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
+			ID:                    leaseID,
+			LeaseSequence:         leaseSequence,
+			WorkerGroupID:         worker.WorkerGroupID,
+			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerEpoch:           worker.WorkerEpoch,
+			WorkerProtocolVersion: worker.ProtocolVersion,
+		})
+		if err != nil {
+			return staleRunLeaseClaim(err)
+		}
+		if locators.EnvironmentID != secretLocators.EnvironmentID ||
+			locators.RunID != secretLocators.RunID ||
+			locators.WorkspaceID != secretLocators.WorkspaceID ||
+			locators.AttemptNumber != secretLocators.AttemptNumber {
+			return errStaleRunLeaseClaim
+		}
+		switch {
+		case locators.RunWaitID.Valid && locators.ResumeChildRunID.Valid:
+			authority, err = claimSameWorkspaceParentResumeRunLeaseInTx(
+				ctx, work.q, worker, leaseID, leaseSequence, locators,
+			)
+		case locators.RunWaitID.Valid:
+			authority, err = claimCheckpointRestoreRunLeaseInTx(
+				ctx, work.q, worker, leaseID, leaseSequence, locators,
+			)
+		case locators.EnclosingWaitID.Valid:
+			authority, err = claimSameWorkspaceChildRunLeaseInTx(
+				ctx, work.q, worker, leaseID, leaseSequence, locators,
+			)
+		case locators.ActorID.Valid:
+			authority, err = claimActorRunLeaseInTx(
+				ctx, work.q, worker, leaseID, leaseSequence, locators,
+			)
+		default:
+			authority, err = claimFreshTaskRunLeaseInTx(
+				ctx, work.q, worker, leaseID, leaseSequence, locators,
+			)
+		}
 		return err
 	})
 	if err != nil {
-		return runLeaseClaimAuthority{}, err
+		return runLeaseClaimAuthority{}, nil, err
 	}
-	return authority, nil
+	return authority, envelopes, nil
 }
 
 func claimFreshTaskRunLeaseInTx(
@@ -133,35 +183,6 @@ func claimFreshTaskRunLeaseInTx(
 		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
-}
-
-func (s *Server) claimActorRunLease(
-	ctx context.Context,
-	worker workerActor,
-	leaseID pgtype.UUID,
-	leaseSequence int64,
-) (runLeaseClaimAuthority, error) {
-	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-
-	var authority runLeaseClaimAuthority
-	err = s.inTx(ctx, func(work *txWork) error {
-		authority, err = claimActorRunLeaseInTx(ctx, work.q, worker, leaseID, leaseSequence, locators)
-		return err
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
-	return authority, nil
 }
 
 func claimActorRunLeaseInTx(
@@ -267,78 +288,6 @@ func claimActorRunLeaseInTx(
 		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
-}
-
-func (s *Server) claimCheckpointRestoreRunLease(
-	ctx context.Context,
-	worker workerActor,
-	leaseID pgtype.UUID,
-	leaseSequence int64,
-) (runLeaseClaimAuthority, error) {
-	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-
-	var authority runLeaseClaimAuthority
-	err = s.inTx(ctx, func(work *txWork) error {
-		authority, err = claimCheckpointRestoreRunLeaseInTx(
-			ctx,
-			work.q,
-			worker,
-			leaseID,
-			leaseSequence,
-			locators,
-		)
-		return err
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
-	return authority, nil
-}
-
-func (s *Server) claimSameWorkspaceChildRunLease(
-	ctx context.Context,
-	worker workerActor,
-	leaseID pgtype.UUID,
-	leaseSequence int64,
-) (runLeaseClaimAuthority, error) {
-	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-
-	var authority runLeaseClaimAuthority
-	err = s.inTx(ctx, func(work *txWork) error {
-		authority, err = claimSameWorkspaceChildRunLeaseInTx(
-			ctx,
-			work.q,
-			worker,
-			leaseID,
-			leaseSequence,
-			locators,
-		)
-		return err
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
-	}
-	return authority, nil
 }
 
 func claimSameWorkspaceChildRunLeaseInTx(
@@ -614,42 +563,6 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
 		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
-	}
-	return authority, nil
-}
-
-func (s *Server) claimSameWorkspaceParentResumeRunLease(
-	ctx context.Context,
-	worker workerActor,
-	leaseID pgtype.UUID,
-	leaseSequence int64,
-) (runLeaseClaimAuthority, error) {
-	locators, err := s.db.GetRunLeaseClaimLocators(ctx, db.GetRunLeaseClaimLocatorsParams{
-		ID:                    leaseID,
-		LeaseSequence:         leaseSequence,
-		WorkerGroupID:         worker.WorkerGroupID,
-		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-		WorkerEpoch:           worker.WorkerEpoch,
-		WorkerProtocolVersion: worker.ProtocolVersion,
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-	}
-
-	var authority runLeaseClaimAuthority
-	err = s.inTx(ctx, func(work *txWork) error {
-		authority, err = claimSameWorkspaceParentResumeRunLeaseInTx(
-			ctx,
-			work.q,
-			worker,
-			leaseID,
-			leaseSequence,
-			locators,
-		)
-		return err
-	})
-	if err != nil {
-		return runLeaseClaimAuthority{}, err
 	}
 	return authority, nil
 }

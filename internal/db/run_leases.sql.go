@@ -480,6 +480,72 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 	return i, err
 }
 
+const getRunLeaseSecretDeliveryLocators = `-- name: GetRunLeaseSecretDeliveryLocators :one
+SELECT run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.workspace_id,
+       run_leases.attempt_number
+  FROM run_leases
+  JOIN worker_groups
+    ON worker_groups.id = run_leases.worker_group_id
+   AND worker_groups.region_id = run_leases.region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.allows_run
+   AND worker_groups.protocol_version = run_leases.worker_protocol_version
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+   AND worker_instances.worker_group_id = run_leases.worker_group_id
+   AND worker_instances.current_epoch = run_leases.worker_epoch
+   AND worker_instances.protocol_version = run_leases.worker_protocol_version
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.supports_run
+ WHERE run_leases.id = $1
+   AND run_leases.lease_sequence = $2
+   AND run_leases.worker_group_id = $3
+   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_epoch = $5
+   AND run_leases.worker_protocol_version = $6
+   AND run_leases.state IN ('assigned', 'starting')
+   AND run_leases.start_deadline_at > transaction_timestamp()
+   AND run_leases.expires_at > transaction_timestamp()
+   AND (run_leases.state = 'starting' OR worker_instances.state = 'active')
+`
+
+type GetRunLeaseSecretDeliveryLocatorsParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+type GetRunLeaseSecretDeliveryLocatorsRow struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+}
+
+func (q *Queries) GetRunLeaseSecretDeliveryLocators(ctx context.Context, arg GetRunLeaseSecretDeliveryLocatorsParams) (GetRunLeaseSecretDeliveryLocatorsRow, error) {
+	row := q.db.QueryRow(ctx, getRunLeaseSecretDeliveryLocators,
+		arg.ID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+	)
+	var i GetRunLeaseSecretDeliveryLocatorsRow
+	err := row.Scan(
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.AttemptNumber,
+	)
+	return i, err
+}
+
 const lockReadyRunCheckpoint = `-- name: LockReadyRunCheckpoint :one
 SELECT id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id, source_workspace_lease_id, workspace_id, base_workspace_version_id, private_workspace_version_id, actor_speculative_input_sequence, state, restore_manifest, expires_at, created_at, ready_at, invalidated_at, invalidation_reason_code
   FROM run_checkpoints
