@@ -63,17 +63,23 @@ type Control struct {
 }
 
 type Dispatcher struct {
-	WorkerFleets          []WorkerFleet
-	FleetMetricsNamespace string
-	DatabaseURL           string
-	RedisURL              string
-	ClickHouseURL         string
-	ClickHouseUser        string
-	ClickHousePassword    string
-	SchedulePollInterval  time.Duration
-	ScheduleClaimLimit    int
-	ScheduleConcurrency   int
-	ScheduleClaimLease    time.Duration
+	WorkerFleets                   []WorkerFleet
+	FleetMetricsNamespace          string
+	DatabaseURL                    string
+	RedisURL                       string
+	ClickHouseURL                  string
+	ClickHouseUser                 string
+	ClickHousePassword             string
+	WorkspaceFencingKeyFingerprint string
+	WorkspaceFencingKeys           string
+	RunPreparationLimit            int
+	RunReservationTTL              time.Duration
+	RunLeaseStartDeadline          time.Duration
+	RunLeaseTTL                    time.Duration
+	SchedulePollInterval           time.Duration
+	ScheduleClaimLimit             int
+	ScheduleConcurrency            int
+	ScheduleClaimLease             time.Duration
 }
 
 type WorkerFleet struct {

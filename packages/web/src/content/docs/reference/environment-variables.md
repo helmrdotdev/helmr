@@ -74,15 +74,32 @@ Email delivery is disabled by default. Set `HELMR_EMAIL_PROVIDER` to choose a se
 
 ## Dispatcher
 
-Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, and `HELMR_CLICKHOUSE_URL`.
+Required: `HELMR_DATABASE_URL`, `HELMR_REDIS_URL`, `HELMR_CLICKHOUSE_URL`,
+`HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT`, and
+`HELMR_WORKSPACE_FENCING_KEYS`.
 
 `HELMR_LOOKUP_HMAC_KEYS` and Secret encryption keys are control-plane
 authority and are not provided to the dispatcher.
 
+The dispatcher uses the same content-addressed Workspace fencing key ring as
+the control service. The fingerprint selects the active write key.
+`HELMR_WORKSPACE_FENCING_KEYS` is a JSON object from key fingerprint to
+base64-encoded 32-byte key. Every key referenced by a nonterminal Workspace
+Lease must remain readable during rollout and retirement.
+
 The AWS control module provisions cluster-mode disabled ElastiCache Valkey/Redis and injects
 `HELMR_REDIS_URL` into both `helmr-control` and `helmr-dispatcher`.
 
-Optional schedule worker tuning:
+Optional Run placement tuning:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `HELMR_RUN_PREPARATION_LIMIT` | `32` | Maximum concurrent Run runtime preparations in one queue scope before applying any lower pinned queue limit. |
+| `HELMR_RUN_RESERVATION_TTL` | `5m` | Lifetime of a cold runtime reservation before fenced cleanup is required. |
+| `HELMR_RUN_LEASE_START_DEADLINE` | `1m` | Time allowed for a worker to claim a newly assigned Run Lease. |
+| `HELMR_RUN_LEASE_TTL` | `5m` | Initial lifetime of a newly assigned Run and Workspace Lease. Must be at least the start deadline. |
+
+Optional Schedule worker tuning:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |

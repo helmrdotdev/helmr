@@ -7,6 +7,7 @@ import (
 )
 
 func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
+	setDispatcherFencing(t)
 	t.Setenv("HELMR_DATABASE_URL", " postgres://example ")
 	t.Setenv("HELMR_REDIS_URL", " redis://redis.example.test:6379/0 ")
 	t.Setenv("HELMR_CLICKHOUSE_URL", " https://clickhouse.example.test ")
@@ -14,6 +15,10 @@ func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 	t.Setenv("HELMR_SCHEDULE_CLAIM_LIMIT", " 25 ")
 	t.Setenv("HELMR_SCHEDULE_CONCURRENCY", " 4 ")
 	t.Setenv("HELMR_SCHEDULE_CLAIM_LEASE", " 2m ")
+	t.Setenv("HELMR_RUN_PREPARATION_LIMIT", " 12 ")
+	t.Setenv("HELMR_RUN_RESERVATION_TTL", " 3m ")
+	t.Setenv("HELMR_RUN_LEASE_START_DEADLINE", " 30s ")
+	t.Setenv("HELMR_RUN_LEASE_TTL", " 4m ")
 
 	cfg, err := LoadDispatcher()
 	if err != nil {
@@ -25,7 +30,11 @@ func TestLoadDispatcherReadsScheduleClaimConfig(t *testing.T) {
 		cfg.SchedulePollInterval != 250*time.Millisecond ||
 		cfg.ScheduleClaimLimit != 25 ||
 		cfg.ScheduleConcurrency != 4 ||
-		cfg.ScheduleClaimLease != 2*time.Minute {
+		cfg.ScheduleClaimLease != 2*time.Minute ||
+		cfg.RunPreparationLimit != 12 ||
+		cfg.RunReservationTTL != 3*time.Minute ||
+		cfg.RunLeaseStartDeadline != 30*time.Second ||
+		cfg.RunLeaseTTL != 4*time.Minute {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -38,6 +47,7 @@ func TestLoadDispatcherRejectsNonPositiveScheduleClaimConfig(t *testing.T) {
 		"HELMR_SCHEDULE_CLAIM_LEASE",
 	} {
 		t.Run(variable, func(t *testing.T) {
+			setDispatcherFencing(t)
 			t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 			t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
 			t.Setenv(variable, "0")
@@ -51,6 +61,7 @@ func TestLoadDispatcherRejectsNonPositiveScheduleClaimConfig(t *testing.T) {
 }
 
 func TestLoadDispatcherRejectsScheduleClaimConfigAboveInt32(t *testing.T) {
+	setDispatcherFencing(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
 	t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
 	t.Setenv("HELMR_SCHEDULE_CLAIM_LIMIT", "2147483648")
@@ -58,6 +69,44 @@ func TestLoadDispatcherRejectsScheduleClaimConfigAboveInt32(t *testing.T) {
 	if _, err := LoadDispatcher(); err == nil {
 		t.Fatal("expected Schedule claim limit error")
 	}
+}
+
+func TestLoadDispatcherRejectsInvalidRunLeasePolicy(t *testing.T) {
+	setDispatcherFencing(t)
+	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
+	t.Setenv("HELMR_RUN_LEASE_START_DEADLINE", "6m")
+	t.Setenv("HELMR_RUN_LEASE_TTL", "5m")
+
+	if _, err := LoadDispatcher(); err == nil {
+		t.Fatal("expected Run Lease policy error")
+	}
+}
+
+func TestLoadDispatcherRejectsMismatchedWorkspaceFencingKey(t *testing.T) {
+	setDispatcherFencing(t)
+	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
+	t.Setenv(
+		"HELMR_WORKSPACE_FENCING_KEYS",
+		`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE="}`,
+	)
+
+	if _, err := LoadDispatcher(); err == nil {
+		t.Fatal("expected Workspace fencing key authority error")
+	}
+}
+
+func setDispatcherFencing(t *testing.T) {
+	t.Helper()
+	t.Setenv(
+		"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
+		"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
+	)
+	t.Setenv(
+		"HELMR_WORKSPACE_FENCING_KEYS",
+		`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`,
+	)
 }
 
 func TestLoadControlReadsRequiredConfig(t *testing.T) {

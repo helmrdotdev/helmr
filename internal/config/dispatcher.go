@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func LoadDispatcher() (Dispatcher, error) {
@@ -20,6 +22,14 @@ func LoadDispatcher() (Dispatcher, error) {
 		ClickHouseURL:         envString("HELMR_CLICKHOUSE_URL"),
 		ClickHouseUser:        envString("HELMR_CLICKHOUSE_USER"),
 		ClickHousePassword:    envString("HELMR_CLICKHOUSE_PASSWORD"),
+		WorkspaceFencingKeyFingerprint: envString(
+			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
+		),
+		WorkspaceFencingKeys:  envString("HELMR_WORKSPACE_FENCING_KEYS"),
+		RunPreparationLimit:   32,
+		RunReservationTTL:     5 * time.Minute,
+		RunLeaseStartDeadline: time.Minute,
+		RunLeaseTTL:           5 * time.Minute,
 		SchedulePollInterval:  time.Second,
 		ScheduleClaimLimit:    100,
 		ScheduleConcurrency:   10,
@@ -46,6 +56,18 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleClaimLease, err = envDuration("HELMR_SCHEDULE_CLAIM_LEASE", cfg.ScheduleClaimLease); err != nil {
 		return cfg, err
 	}
+	if cfg.RunPreparationLimit, err = envInt("HELMR_RUN_PREPARATION_LIMIT", cfg.RunPreparationLimit); err != nil {
+		return cfg, err
+	}
+	if cfg.RunReservationTTL, err = envDuration("HELMR_RUN_RESERVATION_TTL", cfg.RunReservationTTL); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseStartDeadline, err = envDuration("HELMR_RUN_LEASE_START_DEADLINE", cfg.RunLeaseStartDeadline); err != nil {
+		return cfg, err
+	}
+	if cfg.RunLeaseTTL, err = envDuration("HELMR_RUN_LEASE_TTL", cfg.RunLeaseTTL); err != nil {
+		return cfg, err
+	}
 	if cfg.SchedulePollInterval <= 0 ||
 		cfg.ScheduleClaimLimit <= 0 ||
 		cfg.ScheduleConcurrency <= 0 ||
@@ -55,11 +77,32 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.ScheduleClaimLimit > maxInt32 || cfg.ScheduleConcurrency > maxInt32 {
 		return cfg, errors.New("schedule claim and concurrency settings must not exceed 2147483647")
 	}
+	if cfg.RunPreparationLimit <= 0 ||
+		cfg.RunReservationTTL <= 0 ||
+		cfg.RunLeaseStartDeadline <= 0 ||
+		cfg.RunLeaseTTL <= 0 ||
+		cfg.RunLeaseStartDeadline > cfg.RunLeaseTTL {
+		return cfg, errors.New("run preparation and lease settings are invalid")
+	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
 	}
 	if cfg.ClickHouseURL == "" {
 		return cfg, errors.New("HELMR_CLICKHOUSE_URL is required")
+	}
+	if cfg.WorkspaceFencingKeyFingerprint == "" {
+		return cfg, errors.New(
+			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT is required",
+		)
+	}
+	if cfg.WorkspaceFencingKeys == "" {
+		return cfg, errors.New("HELMR_WORKSPACE_FENCING_KEYS is required")
+	}
+	if _, err := workspace.FencingKeysFromBase64JSON(
+		cfg.WorkspaceFencingKeyFingerprint,
+		cfg.WorkspaceFencingKeys,
+	); err != nil {
+		return cfg, fmt.Errorf("HELMR_WORKSPACE_FENCING_KEYS: %w", err)
 	}
 	return cfg, nil
 }

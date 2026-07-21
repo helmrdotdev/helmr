@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/runadmission"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -125,7 +126,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
 	buildDispatchQueries := db.New(buildDispatchPool)
-	runDispatchAuthority, err := dispatch.NewAuthority(runDispatchPool)
+	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
+		cfg.WorkspaceFencingKeyFingerprint,
+		cfg.WorkspaceFencingKeys,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Workspace fencing keys: %w", err)
+	}
+	runDispatchAuthority, err := dispatch.NewRunAuthority(
+		runDispatchPool,
+		workspaceFencingKeys,
+		dispatch.RunPlacementPolicy{
+			PreparationLimit: int64(cfg.RunPreparationLimit),
+			ReservationTTL:   cfg.RunReservationTTL,
+			StartDeadline:    cfg.RunLeaseStartDeadline,
+			LeaseTTL:         cfg.RunLeaseTTL,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
 	}

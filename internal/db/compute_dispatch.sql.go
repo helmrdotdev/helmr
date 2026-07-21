@@ -367,8 +367,20 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = $1
    AND runs.id = $2
+   AND runs.entrypoint_kind = 'task'
+   AND runs.cause_kind IN ('api', 'manual', 'schedule')
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
+   AND workspaces.owner_run_id = runs.id
+   AND workspaces.owner_actor_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = runs.id
+          AND run_waits.suspension_state IN (
+              'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+          )
+   )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
 `
 
@@ -829,7 +841,20 @@ WITH candidate_scopes AS (
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
-     WHERE runs.status = 'queued' AND runs.current_run_lease_id IS NULL
+     WHERE runs.entrypoint_kind = 'task'
+       AND runs.cause_kind IN ('api', 'manual', 'schedule')
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+       AND workspaces.owner_run_id = runs.id
+       AND workspaces.owner_actor_id IS NULL
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state IN (
+                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+              )
+       )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
               coalesce(runs.concurrency_key, ''), runs.queue_name
@@ -918,7 +943,20 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND workspaces.region_id = $4
    AND runs.concurrency_key IS NOT DISTINCT FROM $5::text
    AND runs.queue_name = $6
-   AND runs.status = 'queued' AND runs.current_run_lease_id IS NULL
+   AND runs.entrypoint_kind = 'task'
+   AND runs.cause_kind IN ('api', 'manual', 'schedule')
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND workspaces.owner_run_id = runs.id
+   AND workspaces.owner_actor_id IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = runs.id
+          AND run_waits.suspension_state IN (
+              'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+          )
+   )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id
  LIMIT $7

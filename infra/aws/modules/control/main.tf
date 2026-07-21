@@ -146,11 +146,12 @@ locals {
   control_secrets                  = local.control_secret_defaults
 
   dispatcher_environment_defaults = merge({
-    HELMR_REDIS_URL              = local.redis_url
-    HELMR_SCHEDULE_POLL_INTERVAL = var.schedule_poll_interval
-    HELMR_SCHEDULE_CLAIM_LIMIT   = tostring(var.schedule_claim_limit)
-    HELMR_SCHEDULE_CONCURRENCY   = tostring(var.schedule_concurrency)
-    HELMR_SCHEDULE_CLAIM_LEASE   = var.schedule_claim_lease
+    HELMR_REDIS_URL                         = local.redis_url
+    HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT = var.workspace_fencing_key_fingerprint
+    HELMR_SCHEDULE_POLL_INTERVAL            = var.schedule_poll_interval
+    HELMR_SCHEDULE_CLAIM_LIMIT              = tostring(var.schedule_claim_limit)
+    HELMR_SCHEDULE_CONCURRENCY              = tostring(var.schedule_concurrency)
+    HELMR_SCHEDULE_CLAIM_LEASE              = var.schedule_claim_lease
     }, length(var.worker_fleets) > 0 ? {
     HELMR_WORKER_FLEETS           = jsonencode(var.worker_fleets)
     HELMR_FLEET_METRICS_NAMESPACE = var.fleet_metrics_namespace
@@ -158,7 +159,8 @@ locals {
   dispatcher_environment = merge(var.dispatcher_environment, local.dispatcher_environment_defaults)
 
   dispatcher_secrets = merge({
-    HELMR_DATABASE_URL = aws_secretsmanager_secret.database_url.arn
+    HELMR_DATABASE_URL           = aws_secretsmanager_secret.database_url.arn
+    HELMR_WORKSPACE_FENCING_KEYS = aws_secretsmanager_secret.workspace_fencing_keys.arn
     }, local.telemetry_secrets
   )
 

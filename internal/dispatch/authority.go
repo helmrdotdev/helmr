@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -21,16 +23,49 @@ type Authority struct {
 	pool                   *pgxpool.Pool
 	resolveBuildToolchain  ToolchainResolver
 	toolchainCatalogDigest []byte
+	fencingKeys            workspace.FencingKeys
+	runPolicy              RunPlacementPolicy
 }
 
 type ToolchainResolver func(string) error
+
+type RunPlacementPolicy struct {
+	PreparationLimit int64
+	ReservationTTL   time.Duration
+	StartDeadline    time.Duration
+	LeaseTTL         time.Duration
+}
+
+func NewRunAuthority(
+	pool *pgxpool.Pool,
+	fencingKeys workspace.FencingKeys,
+	policy RunPlacementPolicy,
+) (*Authority, error) {
+	authority, err := newAuthority(pool)
+	if err != nil {
+		return nil, err
+	}
+	if !fencingKeys.Has(fencingKeys.ActiveFingerprint()) {
+		return nil, errors.New("run authority Workspace fencing keys are required")
+	}
+	if policy.PreparationLimit <= 0 ||
+		policy.ReservationTTL <= 0 ||
+		policy.StartDeadline <= 0 ||
+		policy.LeaseTTL <= 0 ||
+		policy.StartDeadline > policy.LeaseTTL {
+		return nil, errors.New("run authority placement policy is invalid")
+	}
+	authority.fencingKeys = fencingKeys
+	authority.runPolicy = policy
+	return authority, nil
+}
 
 func NewBuildAuthority(
 	pool *pgxpool.Pool,
 	catalogDigest []byte,
 	resolve ToolchainResolver,
 ) (*Authority, error) {
-	authority, err := NewAuthority(pool)
+	authority, err := newAuthority(pool)
 	if err != nil {
 		return nil, err
 	}
@@ -45,7 +80,7 @@ func NewBuildAuthority(
 	return authority, nil
 }
 
-func NewAuthority(pool *pgxpool.Pool) (*Authority, error) {
+func newAuthority(pool *pgxpool.Pool) (*Authority, error) {
 	if pool == nil {
 		return nil, ErrNilPool
 	}
@@ -68,6 +103,7 @@ type workerFence struct {
 	WorkerProtocolVersion  string
 	ObservationFreshAfter  pgtype.Timestamptz
 	Role                   string
+	RunArchitecture        string
 	BuildArchitecture      string
 	ToolchainCatalogDigest []byte
 }
@@ -88,6 +124,10 @@ SELECT id
 		return fmt.Errorf("lock eligible worker group: %w", err)
 	}
 
+	architecture := fence.RunArchitecture
+	if fence.Role == "build" {
+		architecture = fence.BuildArchitecture
+	}
 	var workerID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 SELECT worker_instances.id
@@ -109,15 +149,18 @@ SELECT worker_instances.id
    AND (($6 = 'run' AND worker_observations.run_paused_reason IS NULL)
         OR ($6 = 'build' AND worker_observations.build_paused_reason IS NULL))
    AND (
-       $6 <> 'build'
+       ($6 = 'run' AND runtime_identities.runtime_arch = $7)
        OR (
+           $6 = 'build'
+           AND
            runtime_identities.runtime_arch = $7
            AND worker_instances.toolchain_catalog_digest = $8
        )
    )
  FOR UPDATE OF worker_instances`, fence.WorkerInstanceID, fence.GroupID,
 		fence.WorkerEpoch, fence.WorkerProtocolVersion, fence.ObservationFreshAfter,
-		fence.Role, fence.BuildArchitecture, fence.ToolchainCatalogDigest).Scan(&workerID)
+		fence.Role, architecture, fence.ToolchainCatalogDigest,
+	).Scan(&workerID)
 	if err != nil {
 		return fmt.Errorf("lock eligible worker epoch: %w", err)
 	}
