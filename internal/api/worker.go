@@ -826,6 +826,13 @@ type WorkerAppendLogRequest struct {
 	ContentBase64 string          `json:"content_base64"`
 }
 
+type WorkerRunLogAppendRequest struct {
+	Lease         WorkerRunLeaseReceipt `json:"lease"`
+	Stream        WorkerLogStream       `json:"stream"`
+	ObservedSeq   uint64                `json:"observed_seq"`
+	ContentBase64 string                `json:"content_base64"`
+}
+
 type WorkerRecordLogEntryRequest struct {
 	Lease WorkerRunLease `json:"lease"`
 	Entry string         `json:"entry"`

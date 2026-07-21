@@ -489,6 +489,21 @@ func (c *Client) AppendLog(ctx context.Context, lease api.WorkerRunLease, stream
 	return response, nil
 }
 
+func (c *Client) AppendRunLog(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+	stream api.WorkerLogStream,
+	observedSeq uint64,
+	content []byte,
+) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/run-logs", api.WorkerRunLogAppendRequest{
+		Lease:         lease,
+		Stream:        stream,
+		ObservedSeq:   observedSeq,
+		ContentBase64: base64.StdEncoding.EncodeToString(content),
+	}, nil)
+}
+
 func (c *Client) RecordLogEntry(ctx context.Context, lease api.WorkerRunLease, entry string) (api.WorkerEventResponse, error) {
 	var response api.WorkerEventResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/log-entries", api.WorkerRecordLogEntryRequest{

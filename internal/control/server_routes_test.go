@@ -257,6 +257,7 @@ POST /api/worker/leases/reject
 POST /api/worker/leases/release
 POST /api/worker/leases/renew
 POST /api/worker/leases/restores/ack
+POST /api/worker/leases/run-logs
 POST /api/worker/leases/run-waits
 POST /api/worker/leases/run-waits/poll
 POST /api/worker/leases/run-waits/resume-ack

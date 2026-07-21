@@ -4,8 +4,71 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 )
+
+func TestParseRunLeaseReceipt(t *testing.T) {
+	receipt := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	if _, err := parseRunLeaseReceipt(receipt); err != nil {
+		t.Fatal(err)
+	}
+
+	nonCanonical := receipt
+	nonCanonical.ID = "{" + receipt.ID + "}"
+	if _, err := parseRunLeaseReceipt(nonCanonical); err == nil {
+		t.Fatal("non-canonical UUID was accepted")
+	}
+
+	nilID := receipt
+	nilID.ID = uuid.Nil.String()
+	if _, err := parseRunLeaseReceipt(nilID); err == nil {
+		t.Fatal("nil UUID was accepted")
+	}
+
+	invalidFence := receipt
+	invalidFence.WriterGeneration = 0
+	if _, err := parseRunLeaseReceipt(invalidFence); err == nil {
+		t.Fatal("zero writer generation was accepted")
+	}
+
+	invalidDeadline := receipt
+	invalidDeadline.StartDeadlineAt = invalidDeadline.ExpiresAt.Add(time.Second)
+	if _, err := parseRunLeaseReceipt(invalidDeadline); err == nil {
+		t.Fatal("deadline after expiry was accepted")
+	}
+}
+
+func validRunLeaseReceipt(workerID uuid.UUID) api.WorkerRunLeaseReceipt {
+	return api.WorkerRunLeaseReceipt{
+		ID:                         uuid.Must(uuid.NewV7()).String(),
+		RunID:                      uuid.Must(uuid.NewV7()).String(),
+		AttemptNumber:              1,
+		LeaseSequence:              1,
+		WorkerGroupID:              "worker-group",
+		WorkerInstanceID:           workerID.String(),
+		WorkerEpoch:                1,
+		WorkerProtocolVersion:      api.CurrentWorkerProtocolVersion,
+		RuntimeInstanceID:          uuid.Must(uuid.NewV7()).String(),
+		RuntimeIdentityID:          "runtime-identity",
+		NetworkSlotID:              uuid.Must(uuid.NewV7()).String(),
+		NetworkSlotGeneration:      1,
+		WorkspaceID:                uuid.Must(uuid.NewV7()).String(),
+		WorkspaceMountID:           uuid.Must(uuid.NewV7()).String(),
+		WorkspaceLeaseID:           uuid.Must(uuid.NewV7()).String(),
+		BaseWorkspaceVersionID:     uuid.Must(uuid.NewV7()).String(),
+		OwnershipGeneration:        1,
+		WriterGeneration:           1,
+		MountFencingGeneration:     1,
+		RequestedCPUMillis:         1000,
+		RequestedMemoryBytes:       1024,
+		RequestedWorkloadDiskBytes: 1024,
+		RequestedExecutionSlots:    1,
+		MaxActiveDurationMs:        60_000,
+		StartDeadlineAt:            time.Now().Add(time.Minute).UTC(),
+		ExpiresAt:                  time.Now().Add(2 * time.Minute).UTC(),
+	}
+}
 
 func TestEqualRunLeaseReceipt(t *testing.T) {
 	base := api.WorkerRunLeaseReceipt{

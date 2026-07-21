@@ -663,6 +663,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
 				r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
+				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
 				r.Post("/leases/log-entries", s.workerRecordLogEntry)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
 				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)

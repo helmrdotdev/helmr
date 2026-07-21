@@ -845,6 +845,18 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 					t.Fatalf("entrypoint request = %+v", request)
 				}
 				w.WriteHeader(http.StatusNoContent)
+			case "/api/worker/leases/run-logs":
+				var request api.WorkerRunLogAppendRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt ||
+					request.Stream != api.WorkerLogStreamStdout ||
+					request.ObservedSeq != 7 ||
+					request.ContentBase64 != "bG9n" {
+					t.Fatalf("log request = %+v", request)
+				}
+				w.WriteHeader(http.StatusNoContent)
 			default:
 				t.Fatalf("unexpected path %s", r.URL.Path)
 			}
@@ -903,9 +915,20 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	err = client.AppendRunLog(
+		context.Background(),
+		receipt,
+		api.WorkerLogStreamStdout,
+		7,
+		[]byte("log"),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if got := strings.Join(paths, ","); got !=
 		"/api/worker/auth/token,/api/worker/leases/claim,"+
-			"/api/worker/leases/start,/api/worker/leases/entrypoint" {
+			"/api/worker/leases/start,/api/worker/leases/entrypoint,"+
+			"/api/worker/leases/run-logs" {
 		t.Fatalf("paths = %s", got)
 	}
 }

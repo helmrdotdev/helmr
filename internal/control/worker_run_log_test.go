@@ -13,36 +13,30 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 type workerLogReplayStore struct {
 	db.Querier
 	replayMatches bool
+	called        *bool
+	params        *db.AppendReceiptRunLogChunkParams
 }
 
-func (s workerLogReplayStore) GetStartingRunLease(context.Context, db.GetStartingRunLeaseParams) (db.RunLease, error) {
-	return db.RunLease{TaskAttemptNumber: 1}, nil
-}
-
-func (s workerLogReplayStore) GetCurrentRunningRunLease(context.Context, db.GetCurrentRunningRunLeaseParams) (db.RunLease, error) {
-	return db.RunLease{TaskAttemptNumber: 1}, nil
-}
-
-func (s workerLogReplayStore) AppendRunLogChunk(context.Context, db.AppendRunLogChunkParams) (db.AppendRunLogChunkRow, error) {
-	return db.AppendRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
+func (s workerLogReplayStore) AppendReceiptRunLogChunk(_ context.Context, params db.AppendReceiptRunLogChunkParams) (db.AppendReceiptRunLogChunkRow, error) {
+	if s.called != nil {
+		*s.called = true
+	}
+	if s.params != nil {
+		*s.params = params
+	}
+	return db.AppendReceiptRunLogChunkRow{ReplayMatches: s.replayMatches}, nil
 }
 
 func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := api.WorkerRunLease{
-		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
-		RunID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "worker-group",
-		WorkerInstanceID: workerID.String(), WorkerEpoch: 1, LeaseSequence: 1,
-		SnapshotVersion: 1, RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(),
-		NetworkSlotID: uuid.Must(uuid.NewV7()).String(), NetworkSlotGeneration: 1,
-		ProtocolVersion: api.CurrentWorkerProtocolVersion, AttemptNumber: 1,
-	}
-	body, err := json.Marshal(api.WorkerAppendLogRequest{
+	lease := validRunLeaseReceipt(workerID)
+	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
 		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
@@ -53,14 +47,14 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 		db:  workerLogReplayStore{replayMatches: false},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/run-logs", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
-		ProtocolVersion: lease.ProtocolVersion,
+		ProtocolVersion: lease.WorkerProtocolVersion,
 	}))
 	recorder := httptest.NewRecorder()
 
-	server.workerAppendLogs(recorder, request)
+	server.workerAppendRunLogs(recorder, request)
 
 	if recorder.Code != http.StatusConflict {
 		t.Fatalf("status=%d body=%s, want conflict", recorder.Code, recorder.Body.String())
@@ -72,36 +66,76 @@ func TestWorkerAppendLogsReturnsConflictForChangedReplay(t *testing.T) {
 
 func TestWorkerAppendLogsAcceptsIdenticalReplay(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
-	lease := api.WorkerRunLease{
-		ID: uuid.Must(uuid.NewV7()).String(), OrgID: uuid.Must(uuid.NewV7()).String(),
-		RunID: uuid.Must(uuid.NewV7()).String(), WorkerGroupID: "worker-group",
-		WorkerInstanceID: workerID.String(), WorkerEpoch: 1, LeaseSequence: 1,
-		SnapshotVersion: 1, RuntimeInstanceID: uuid.Must(uuid.NewV7()).String(),
-		NetworkSlotID: uuid.Must(uuid.NewV7()).String(), NetworkSlotGeneration: 1,
-		ProtocolVersion: api.CurrentWorkerProtocolVersion, AttemptNumber: 1,
-	}
-	body, err := json.Marshal(api.WorkerAppendLogRequest{
+	lease := validRunLeaseReceipt(workerID)
+	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
 		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
 		ContentBase64: "YWxwaGE=",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	var params db.AppendReceiptRunLogChunkParams
 	server := &Server{
-		db:  workerLogReplayStore{replayMatches: true},
+		db:  workerLogReplayStore{replayMatches: true, params: &params},
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
-	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/logs", bytes.NewReader(body))
+	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/run-logs", bytes.NewReader(body))
 	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
 		WorkerInstanceID: workerID, WorkerGroupID: lease.WorkerGroupID, WorkerEpoch: lease.WorkerEpoch,
-		ProtocolVersion: lease.ProtocolVersion,
+		ProtocolVersion: lease.WorkerProtocolVersion,
 	}))
 	recorder := httptest.NewRecorder()
 
-	server.workerAppendLogs(recorder, request)
+	server.workerAppendRunLogs(recorder, request)
 
-	if recorder.Code != http.StatusOK {
+	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("status=%d body=%s, want success", recorder.Code, recorder.Body.String())
+	}
+	if pgvalue.UUIDString(params.RunLeaseID) != lease.ID ||
+		pgvalue.UUIDString(params.RunID) != lease.RunID ||
+		pgvalue.UUIDString(params.WorkspaceMountID) != lease.WorkspaceMountID ||
+		pgvalue.UUIDString(params.WorkspaceLeaseID) != lease.WorkspaceLeaseID ||
+		pgvalue.UUIDString(params.BaseWorkspaceVersionID) != lease.BaseWorkspaceVersionID ||
+		params.WriterGeneration != lease.WriterGeneration ||
+		params.RequestedMemoryBytes != lease.RequestedMemoryBytes ||
+		params.TraceID.String != lease.Trace.TraceID ||
+		!params.StartDeadlineAt.Time.Equal(lease.StartDeadlineAt) ||
+		!params.ExpiresAt.Time.Equal(lease.ExpiresAt) {
+		t.Fatalf("database receipt params = %+v", params)
+	}
+}
+
+func TestWorkerAppendLogsRejectsAnotherWorkersReceipt(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	lease := validRunLeaseReceipt(workerID)
+	body, err := json.Marshal(api.WorkerRunLogAppendRequest{
+		Lease: lease, Stream: api.WorkerLogStreamStdout, ObservedSeq: 1,
+		ContentBase64: "YWxwaGE=",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	server := &Server{
+		db:  workerLogReplayStore{replayMatches: true, called: &called},
+		log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/worker/leases/run-logs", bytes.NewReader(body))
+	request = request.WithContext(context.WithValue(request.Context(), workerContextKey{}, workerActor{
+		WorkerInstanceID: uuid.Must(uuid.NewV7()),
+		WorkerGroupID:    lease.WorkerGroupID,
+		WorkerEpoch:      lease.WorkerEpoch,
+		ProtocolVersion:  lease.WorkerProtocolVersion,
+	}))
+	recorder := httptest.NewRecorder()
+
+	server.workerAppendRunLogs(recorder, request)
+
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("status=%d body=%s, want forbidden", recorder.Code, recorder.Body.String())
+	}
+	if called {
+		t.Fatal("database was called for another worker's receipt")
 	}
 }
 

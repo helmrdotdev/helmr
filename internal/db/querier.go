@@ -20,6 +20,7 @@ type Querier interface {
 	AppendActorInputRecord(ctx context.Context, arg AppendActorInputRecordParams) (AppendActorInputRecordRow, error)
 	AppendActorOutputRecord(ctx context.Context, arg AppendActorOutputRecordParams) (ActorRecord, error)
 	AppendDeploymentEvent(ctx context.Context, arg AppendDeploymentEventParams) (AppendDeploymentEventRow, error)
+	AppendReceiptRunLogChunk(ctx context.Context, arg AppendReceiptRunLogChunkParams) (AppendReceiptRunLogChunkRow, error)
 	AppendRunEvent(ctx context.Context, arg AppendRunEventParams) (AppendRunEventRow, error)
 	AppendRunEventForExecution(ctx context.Context, arg AppendRunEventForExecutionParams) (AppendRunEventForExecutionRow, error)
 	AppendRunLogChunk(ctx context.Context, arg AppendRunLogChunkParams) (AppendRunLogChunkRow, error)
