@@ -23,6 +23,7 @@ const (
 	StreamTypeWorkspaceMaterialize    StreamType = "workspace-materialize"
 	StreamTypeWorkspaceRuntimePrepare StreamType = "workspace-runtime-prepare"
 	StreamTypeWorkspaceRun            StreamType = "workspace-run"
+	StreamTypeProgramRun              StreamType = "program-run"
 	StreamTypeWorkspaceOperation      StreamType = "workspace-operation"
 	StreamTypeWorkspaceEvents         StreamType = "workspace-events"
 	StreamTypeWorkspaceInput          StreamType = "workspace-input"

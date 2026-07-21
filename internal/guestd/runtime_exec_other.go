@@ -12,6 +12,7 @@ import (
 type adapterCommandOptions struct {
 	ImageMode      bool
 	ManagedProgram bool
+	StartProof     bool
 	Pty            bool
 }
 

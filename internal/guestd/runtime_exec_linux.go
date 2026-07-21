@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"golang.org/x/sys/unix"
@@ -47,6 +48,7 @@ var defaultImageRuntimeDevices = []runtimeDevice{
 func init() {
 	if len(os.Args) > 1 && os.Args[1] == imageAdapterInitArg {
 		if err := runImageAdapterInit(os.Args[2:], os.Environ()); err != nil {
+			writeImageAdapterInitFailure(err)
 			_, _ = fmt.Fprintf(os.Stderr, "helmr image adapter init: %s\n", err)
 			os.Exit(127)
 		}
@@ -57,6 +59,7 @@ func init() {
 type adapterCommandOptions struct {
 	ImageMode      bool
 	ManagedProgram bool
+	StartProof     bool
 	Pty            bool
 }
 
@@ -78,6 +81,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 		strconv.FormatUint(uint64(user.UID), 10),
 		strconv.FormatUint(uint64(user.GID), 10),
 		strconv.FormatBool(opts.ManagedProgram),
+		strconv.FormatBool(opts.StartProof),
 		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
@@ -92,7 +96,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 }
 
 func runImageAdapterInit(args []string, env []string) error {
-	if len(args) < 7 {
+	if len(args) < 8 {
 		return errors.New("missing image adapter init arguments")
 	}
 	imageRoot := args[0]
@@ -113,8 +117,16 @@ func runImageAdapterInit(args []string, env []string) error {
 	default:
 		return fmt.Errorf("invalid managed Program flag %q", args[4])
 	}
-	runtimePath := args[5]
-	adapterArgs := args[6:]
+	var startProof bool
+	switch args[5] {
+	case "true":
+		startProof = true
+	case "false":
+	default:
+		return fmt.Errorf("invalid start proof flag %q", args[5])
+	}
+	runtimePath := args[6]
+	adapterArgs := args[7:]
 	if err := setupImageAdapterNamespace(imageRoot, managedProgram); err != nil {
 		return err
 	}
@@ -128,10 +140,21 @@ func runImageAdapterInit(args []string, env []string) error {
 		return err
 	}
 	argv := append([]string{runtimePath}, adapterArgs...)
+	if startProof {
+		syscall.CloseOnExec(4)
+	}
 	if err := syscall.Exec(runtimePath, argv, env); err != nil {
 		return fmt.Errorf("exec adapter runtime: %w", err)
 	}
 	return nil
+}
+
+func writeImageAdapterInitFailure(err error) {
+	message := err.Error()
+	if len(message) > 64*1024 {
+		message = message[:64*1024]
+	}
+	_, _ = syscall.Write(4, []byte(message))
 }
 
 func pivotIntoImageRoot(imageRoot string) error {
@@ -206,6 +229,9 @@ func setupImageAdapterNamespace(imageRoot string, managedProgram bool) error {
 		if err := mountManagedProgram(imageRoot); err != nil {
 			return err
 		}
+		if err := mountManagedSecretFiles(imageRoot); err != nil {
+			return err
+		}
 	}
 	for _, link := range []struct {
 		name   string
@@ -225,6 +251,72 @@ func setupImageAdapterNamespace(imageRoot string, managedProgram bool) error {
 		}
 	}
 	return nil
+}
+
+func mountManagedSecretFiles(imageRoot string) error {
+	info, err := os.Stat(managedProgramSecretRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect managed Secret root: %w", err)
+	}
+	if !info.IsDir() {
+		return errors.New("managed Secret root is not a directory")
+	}
+	return filepath.WalkDir(managedProgramSecretRoot, func(source string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("managed Secret source is not a regular file: %s", source)
+		}
+		relative, err := filepath.Rel(managedProgramSecretRoot, source)
+		if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return errors.New("managed Secret source escapes staging root")
+		}
+		guestPath := "/" + filepath.ToSlash(relative)
+		if err := validateProgramSecretFilePath(guestPath); err != nil {
+			return err
+		}
+		parent := filepath.Dir(relative)
+		if parent != "." {
+			if err := mkdirAllNoSymlink(imageRoot, filepath.ToSlash(parent), 0o755); err != nil {
+				return err
+			}
+		}
+		target, err := confinedLayerPath(imageRoot, relative)
+		if err != nil {
+			return err
+		}
+		targetInfo, err := os.Lstat(target)
+		if err != nil {
+			return err
+		}
+		if !targetInfo.Mode().IsRegular() {
+			return fmt.Errorf("managed Secret target is not a regular file: %s", guestPath)
+		}
+		if err := syscall.Mount(source, target, "", syscall.MS_BIND, ""); err != nil {
+			return fmt.Errorf("bind managed Secret %s: %w", guestPath, err)
+		}
+		if err := syscall.Mount(
+			"",
+			target,
+			"",
+			syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV|syscall.MS_NOEXEC,
+			"",
+		); err != nil {
+			return fmt.Errorf("seal managed Secret %s: %w", guestPath, err)
+		}
+		return nil
+	})
 }
 
 func mountManagedProgram(imageRoot string) error {

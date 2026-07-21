@@ -30,6 +30,7 @@ type workspaceOperationRegistry struct {
 	mu              sync.RWMutex
 	entries         map[string]*workspaceMountEntry
 	preparedRuntime *preparedWorkspaceRuntime
+	programActive   bool
 }
 
 type workspaceMountEntry struct {
@@ -170,6 +171,20 @@ func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *work
 	if cleanup != nil {
 		cleanup()
 	}
+}
+
+func (r *workspaceOperationRegistry) claimProgram() (func(), bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.programActive {
+		return func() {}, false
+	}
+	r.programActive = true
+	return func() {
+		r.mu.Lock()
+		r.programActive = false
+		r.mu.Unlock()
+	}, true
 }
 
 func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {

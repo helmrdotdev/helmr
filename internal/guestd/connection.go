@@ -99,6 +99,8 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, handleWorkspaceRuntimePrepareConnection(ctx, conn, logger, workspaceRegistry)
 	case wire.StreamTypeWorkspaceRun:
 		return false, handleWorkspaceRunConnection(ctx, conn, cfg, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
+	case wire.StreamTypeProgramRun:
+		return false, handleProgramRunConnection(ctx, conn, logger, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceOperation:
 		return false, handleWorkspaceOperationConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceEvents:

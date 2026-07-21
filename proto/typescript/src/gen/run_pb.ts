@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file run.proto.
  */
 export const file_run: GenFile = /*@__PURE__*/
-  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSK8AQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEiwKB3NlY3JldHMYBSADKAsyGy5oZWxtci5ydW4udjAuUHJvZ3JhbVNlY3JldBIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJVChVQcm9ncmFtUHJvY2Vzc1N0YXJ0ZWQSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJTChNQcm9ncmFtU3RhcnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkijwEKEkVudHJ5cG9pbnRJZGVudGl0eRITCgtkZWNsYXJlZF9pZBgBIAEoCRIsCgR0YXNrGAIgASgLMhwuaGVsbXIucnVuLnYwLlRhc2tFbnRyeXBvaW50SAASLgoFYWN0b3IYAyABKAsyHS5oZWxtci5ydW4udjAuQWN0b3JFbnRyeXBvaW50SABCBgoEa2luZCIQCg5UYXNrRW50cnlwb2ludCIRCg9BY3RvckVudHJ5cG9pbnQibwoPRW50cnlwb2ludFJlYWR5Eg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJxChFFbnRyeXBvaW50UmVsZWFzZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SNAoKZW50cnlwb2ludBgDIAEoCzIgLmhlbG1yLnJ1bi52MC5FbnRyeXBvaW50SWRlbnRpdHkiewoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIuYCCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlEikKBXRyYWNlGAggASgLMhouaGVsbXIucnVuLnYwLlRyYWNlQ29udGV4dBIWCg5hdHRlbXB0X251bWJlchgJIAEoDRIUCgxydW5fbGVhc2VfaWQYCiABKAkSGAoQc25hcHNob3RfdmVyc2lvbhgLIAEoBBISCgpzZXNzaW9uX2lkGAwgASgJEhQKDHJldHJ5X3JlYXNvbhgNIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpsFCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSAASRgoXcHJvZ3JhbV9wcm9jZXNzX3N0YXJ0ZWQYCyABKAsyIy5oZWxtci5ydW4udjAuUHJvZ3JhbVByb2Nlc3NTdGFydGVkSAASOQoQZW50cnlwb2ludF9yZWFkeRgMIAEoCzIdLmhlbG1yLnJ1bi52MC5FbnRyeXBvaW50UmVhZHlIAEIHCgVldmVudCKuAQoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQESKwoFZXJyb3IYBCABKAsyFy5oZWxtci5ydW4udjAuVGFza0Vycm9ySAKIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uQggKBl9lcnJvciJhCglUYXNrRXJyb3ISDAoEdHlwZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEQoJcmV0cnlhYmxlGAQgASgIEhQKDGRldGFpbHNfanNvbhgFIAEoCSLjAQoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIZCgxpZGxlX3RpbWVvdXQYCSABKA1IAogBAUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dEIPCg1faWRsZV90aW1lb3V0SgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIl8KFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCCJCChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlAKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhMKC3J1bl93YWl0X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJkCg5SZXN1bWVEZWNpc2lvbhITCgtydW5fd2FpdF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhEKCWRhdGFfanNvbhgDIAEoCRIcChRyZXF1aXJlX2NvbnN1bWVkX2FjaxgEIAEoCCIgCglSZXN1bWVBY2sSEwoLcnVuX3dhaXRfaWQYASABKAkiJQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkiaAoUT3V0cHV0U3RyZWFtQXBwZW5kZWQSDgoGc3RyZWFtGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBAUIPCg1fY29udGVudF90eXBlIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIimwUKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAQgcKBWV2ZW50Iq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIuMBChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARIMCgR0YWdzGAYgAygJEhkKDGlkbGVfdGltZW91dBgJIAEoDUgCiAEBQhAKDl9tZXRhZGF0YV9qc29uQgoKCF90aW1lb3V0Qg8KDV9pZGxlX3RpbWVvdXRKBAgHEAhKBAgIEAkisgEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqECChFUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSLKAQoZQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIOCgZzdHJlYW0YAiABKAkSFgoOYWZ0ZXJfc2VxdWVuY2UYAyABKAMSIgoVcmVjb3JkX2NvcnJlbGF0aW9uX2lkGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEg0KBWJsb2NrGAYgASgIQhgKFl9yZWNvcmRfY29ycmVsYXRpb25faWRCCgoIX3RpbWVvdXQirAEKDFN0cmVhbVJlY29yZBIKCgJpZBgBIAEoCRIRCglzdHJlYW1faWQYAiABKAkSEAoIc2VxdWVuY2UYAyABKAMSEQoJZGF0YV9qc29uGAQgASgJEhsKDmNvcnJlbGF0aW9uX2lkGAUgASgJSACIAQESFAoMY29udGVudF90eXBlGAYgASgJEhIKCmNyZWF0ZWRfYXQYByABKAlCEQoPX2NvcnJlbGF0aW9uX2lkIq0BChZBY3RpdmVTdHJlYW1SZWFkUmVzdWx0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi8KBnJlY29yZBgCIAEoCzIaLmhlbG1yLnJ1bi52MC5TdHJlYW1SZWNvcmRIAIgBARIRCgl0aW1lZF9vdXQYAyABKAgSGgoNZXJyb3JfbWVzc2FnZRgEIAEoCUgBiAEBQgkKB19yZWNvcmRCEAoOX2Vycm9yX21lc3NhZ2UiXwoWQ2hlY2twb2ludFBhdXNlUmVxdWVzdBITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhkKEWNhcHR1cmVfd29ya3NwYWNlGAMgASgIIkIKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkiUAoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJImQKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIIiAKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCSIlCg5SZXN1bWVDb25zdW1lZBITCgtydW5fd2FpdF9pZBgBIAEoCSJoChRPdXRwdXRTdHJlYW1BcHBlbmRlZBIOCgZzdHJlYW0YASABKAkSFAoMcGF5bG9hZF9qc29uGAIgASgJEhkKDGNvbnRlbnRfdHlwZRgDIAEoCUgAiAEBQg8KDV9jb250ZW50X3R5cGUirgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 
 /**
  * @generated from message helmr.run.v0.ProgramStart
@@ -334,9 +334,9 @@ export type ProgramRunRequest = Message<"helmr.run.v0.ProgramRunRequest"> & {
   programStartFrame: Uint8Array;
 
   /**
-   * @generated from field: repeated helmr.run.v0.ProgramSecret secrets = 5;
+   * @generated from field: uint32 secret_count = 5;
    */
-  secrets: ProgramSecret[];
+  secretCount: number;
 
   /**
    * @generated from field: int64 start_deadline_unix_ms = 6;
@@ -386,6 +386,79 @@ export const ProgramSecretSchema: GenMessage<ProgramSecret> = /*@__PURE__*/
   messageDesc(file_run, 12);
 
 /**
+ * @generated from message helmr.run.v0.ProgramSecretsComplete
+ */
+export type ProgramSecretsComplete = Message<"helmr.run.v0.ProgramSecretsComplete"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint32 attempt_number = 2;
+   */
+  attemptNumber: number;
+
+  /**
+   * @generated from field: string run_lease_id = 3;
+   */
+  runLeaseId: string;
+
+  /**
+   * @generated from field: uint32 secret_count = 4;
+   */
+  secretCount: number;
+};
+
+/**
+ * Describes the message helmr.run.v0.ProgramSecretsComplete.
+ * Use `create(ProgramSecretsCompleteSchema)` to create a new message.
+ */
+export const ProgramSecretsCompleteSchema: GenMessage<ProgramSecretsComplete> = /*@__PURE__*/
+  messageDesc(file_run, 13);
+
+/**
+ * @generated from message helmr.run.v0.ProgramSupervisorCommand
+ */
+export type ProgramSupervisorCommand = Message<"helmr.run.v0.ProgramSupervisorCommand"> & {
+  /**
+   * @generated from oneof helmr.run.v0.ProgramSupervisorCommand.command
+   */
+  command: {
+    /**
+     * @generated from field: helmr.run.v0.ProgramSecret secret_delivery = 1;
+     */
+    value: ProgramSecret;
+    case: "secretDelivery";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ProgramSecretsComplete secrets_complete = 2;
+     */
+    value: ProgramSecretsComplete;
+    case: "secretsComplete";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ProgramStartRelease start_release = 3;
+     */
+    value: ProgramStartRelease;
+    case: "startRelease";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.EntrypointRelease entrypoint_release = 4;
+     */
+    value: EntrypointRelease;
+    case: "entrypointRelease";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message helmr.run.v0.ProgramSupervisorCommand.
+ * Use `create(ProgramSupervisorCommandSchema)` to create a new message.
+ */
+export const ProgramSupervisorCommandSchema: GenMessage<ProgramSupervisorCommand> = /*@__PURE__*/
+  messageDesc(file_run, 14);
+
+/**
  * @generated from message helmr.run.v0.ProgramProcessStarted
  */
 export type ProgramProcessStarted = Message<"helmr.run.v0.ProgramProcessStarted"> & {
@@ -410,7 +483,7 @@ export type ProgramProcessStarted = Message<"helmr.run.v0.ProgramProcessStarted"
  * Use `create(ProgramProcessStartedSchema)` to create a new message.
  */
 export const ProgramProcessStartedSchema: GenMessage<ProgramProcessStarted> = /*@__PURE__*/
-  messageDesc(file_run, 13);
+  messageDesc(file_run, 15);
 
 /**
  * @generated from message helmr.run.v0.ProgramStartRelease
@@ -437,7 +510,7 @@ export type ProgramStartRelease = Message<"helmr.run.v0.ProgramStartRelease"> & 
  * Use `create(ProgramStartReleaseSchema)` to create a new message.
  */
 export const ProgramStartReleaseSchema: GenMessage<ProgramStartRelease> = /*@__PURE__*/
-  messageDesc(file_run, 14);
+  messageDesc(file_run, 16);
 
 /**
  * @generated from message helmr.run.v0.EntrypointIdentity
@@ -471,7 +544,7 @@ export type EntrypointIdentity = Message<"helmr.run.v0.EntrypointIdentity"> & {
  * Use `create(EntrypointIdentitySchema)` to create a new message.
  */
 export const EntrypointIdentitySchema: GenMessage<EntrypointIdentity> = /*@__PURE__*/
-  messageDesc(file_run, 15);
+  messageDesc(file_run, 17);
 
 /**
  * @generated from message helmr.run.v0.TaskEntrypoint
@@ -484,7 +557,7 @@ export type TaskEntrypoint = Message<"helmr.run.v0.TaskEntrypoint"> & {
  * Use `create(TaskEntrypointSchema)` to create a new message.
  */
 export const TaskEntrypointSchema: GenMessage<TaskEntrypoint> = /*@__PURE__*/
-  messageDesc(file_run, 16);
+  messageDesc(file_run, 18);
 
 /**
  * @generated from message helmr.run.v0.ActorEntrypoint
@@ -497,7 +570,7 @@ export type ActorEntrypoint = Message<"helmr.run.v0.ActorEntrypoint"> & {
  * Use `create(ActorEntrypointSchema)` to create a new message.
  */
 export const ActorEntrypointSchema: GenMessage<ActorEntrypoint> = /*@__PURE__*/
-  messageDesc(file_run, 17);
+  messageDesc(file_run, 19);
 
 /**
  * @generated from message helmr.run.v0.EntrypointReady
@@ -524,7 +597,7 @@ export type EntrypointReady = Message<"helmr.run.v0.EntrypointReady"> & {
  * Use `create(EntrypointReadySchema)` to create a new message.
  */
 export const EntrypointReadySchema: GenMessage<EntrypointReady> = /*@__PURE__*/
-  messageDesc(file_run, 18);
+  messageDesc(file_run, 20);
 
 /**
  * @generated from message helmr.run.v0.EntrypointRelease
@@ -551,7 +624,7 @@ export type EntrypointRelease = Message<"helmr.run.v0.EntrypointRelease"> & {
  * Use `create(EntrypointReleaseSchema)` to create a new message.
  */
 export const EntrypointReleaseSchema: GenMessage<EntrypointRelease> = /*@__PURE__*/
-  messageDesc(file_run, 19);
+  messageDesc(file_run, 21);
 
 /**
  * @generated from message helmr.run.v0.RunTaskWorkspace
@@ -583,7 +656,7 @@ export type RunTaskWorkspace = Message<"helmr.run.v0.RunTaskWorkspace"> & {
  * Use `create(RunTaskWorkspaceSchema)` to create a new message.
  */
 export const RunTaskWorkspaceSchema: GenMessage<RunTaskWorkspace> = /*@__PURE__*/
-  messageDesc(file_run, 20);
+  messageDesc(file_run, 22);
 
 /**
  * @generated from message helmr.run.v0.WorkspaceArtifact
@@ -620,7 +693,7 @@ export type WorkspaceArtifact = Message<"helmr.run.v0.WorkspaceArtifact"> & {
  * Use `create(WorkspaceArtifactSchema)` to create a new message.
  */
 export const WorkspaceArtifactSchema: GenMessage<WorkspaceArtifact> = /*@__PURE__*/
-  messageDesc(file_run, 21);
+  messageDesc(file_run, 23);
 
 /**
  * @generated from message helmr.run.v0.RunTaskRequest
@@ -697,7 +770,7 @@ export type RunTaskRequest = Message<"helmr.run.v0.RunTaskRequest"> & {
  * Use `create(RunTaskRequestSchema)` to create a new message.
  */
 export const RunTaskRequestSchema: GenMessage<RunTaskRequest> = /*@__PURE__*/
-  messageDesc(file_run, 22);
+  messageDesc(file_run, 24);
 
 /**
  * @generated from message helmr.run.v0.TraceContext
@@ -724,7 +797,7 @@ export type TraceContext = Message<"helmr.run.v0.TraceContext"> & {
  * Use `create(TraceContextSchema)` to create a new message.
  */
 export const TraceContextSchema: GenMessage<TraceContext> = /*@__PURE__*/
-  messageDesc(file_run, 23);
+  messageDesc(file_run, 25);
 
 /**
  * @generated from message helmr.run.v0.SecretInject
@@ -751,7 +824,7 @@ export type SecretInject = Message<"helmr.run.v0.SecretInject"> & {
  * Use `create(SecretInjectSchema)` to create a new message.
  */
 export const SecretInjectSchema: GenMessage<SecretInject> = /*@__PURE__*/
-  messageDesc(file_run, 24);
+  messageDesc(file_run, 26);
 
 /**
  * @generated from message helmr.run.v0.Placement
@@ -786,7 +859,7 @@ export type Placement = Message<"helmr.run.v0.Placement"> & {
  * Use `create(PlacementSchema)` to create a new message.
  */
 export const PlacementSchema: GenMessage<Placement> = /*@__PURE__*/
-  messageDesc(file_run, 25);
+  messageDesc(file_run, 27);
 
 /**
  * @generated from message helmr.run.v0.EnvPlacement
@@ -803,7 +876,7 @@ export type EnvPlacement = Message<"helmr.run.v0.EnvPlacement"> & {
  * Use `create(EnvPlacementSchema)` to create a new message.
  */
 export const EnvPlacementSchema: GenMessage<EnvPlacement> = /*@__PURE__*/
-  messageDesc(file_run, 26);
+  messageDesc(file_run, 28);
 
 /**
  * @generated from message helmr.run.v0.FilePlacement
@@ -836,7 +909,7 @@ export type FilePlacement = Message<"helmr.run.v0.FilePlacement"> & {
  * Use `create(FilePlacementSchema)` to create a new message.
  */
 export const FilePlacementSchema: GenMessage<FilePlacement> = /*@__PURE__*/
-  messageDesc(file_run, 27);
+  messageDesc(file_run, 29);
 
 /**
  * @generated from message helmr.run.v0.DirPlacement
@@ -869,7 +942,7 @@ export type DirPlacement = Message<"helmr.run.v0.DirPlacement"> & {
  * Use `create(DirPlacementSchema)` to create a new message.
  */
 export const DirPlacementSchema: GenMessage<DirPlacement> = /*@__PURE__*/
-  messageDesc(file_run, 28);
+  messageDesc(file_run, 30);
 
 /**
  * @generated from message helmr.run.v0.RunEvent
@@ -958,7 +1031,7 @@ export type RunEvent = Message<"helmr.run.v0.RunEvent"> & {
  * Use `create(RunEventSchema)` to create a new message.
  */
 export const RunEventSchema: GenMessage<RunEvent> = /*@__PURE__*/
-  messageDesc(file_run, 29);
+  messageDesc(file_run, 31);
 
 /**
  * @generated from message helmr.run.v0.TaskResult
@@ -990,7 +1063,7 @@ export type TaskResult = Message<"helmr.run.v0.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_run, 30);
+  messageDesc(file_run, 32);
 
 /**
  * @generated from message helmr.run.v0.TaskError
@@ -1027,7 +1100,7 @@ export type TaskError = Message<"helmr.run.v0.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_run, 31);
+  messageDesc(file_run, 33);
 
 /**
  * @generated from message helmr.run.v0.RunWaitRequested
@@ -1074,7 +1147,7 @@ export type RunWaitRequested = Message<"helmr.run.v0.RunWaitRequested"> & {
  * Use `create(RunWaitRequestedSchema)` to create a new message.
  */
 export const RunWaitRequestedSchema: GenMessage<RunWaitRequested> = /*@__PURE__*/
-  messageDesc(file_run, 32);
+  messageDesc(file_run, 34);
 
 /**
  * @generated from message helmr.run.v0.TokenCreateRequested
@@ -1106,7 +1179,7 @@ export type TokenCreateRequested = Message<"helmr.run.v0.TokenCreateRequested"> 
  * Use `create(TokenCreateRequestedSchema)` to create a new message.
  */
 export const TokenCreateRequestedSchema: GenMessage<TokenCreateRequested> = /*@__PURE__*/
-  messageDesc(file_run, 33);
+  messageDesc(file_run, 35);
 
 /**
  * @generated from message helmr.run.v0.TokenCreateResult
@@ -1158,7 +1231,7 @@ export type TokenCreateResult = Message<"helmr.run.v0.TokenCreateResult"> & {
  * Use `create(TokenCreateResultSchema)` to create a new message.
  */
 export const TokenCreateResultSchema: GenMessage<TokenCreateResult> = /*@__PURE__*/
-  messageDesc(file_run, 34);
+  messageDesc(file_run, 36);
 
 /**
  * @generated from message helmr.run.v0.ActiveStreamReadRequested
@@ -1200,7 +1273,7 @@ export type ActiveStreamReadRequested = Message<"helmr.run.v0.ActiveStreamReadRe
  * Use `create(ActiveStreamReadRequestedSchema)` to create a new message.
  */
 export const ActiveStreamReadRequestedSchema: GenMessage<ActiveStreamReadRequested> = /*@__PURE__*/
-  messageDesc(file_run, 35);
+  messageDesc(file_run, 37);
 
 /**
  * @generated from message helmr.run.v0.StreamRecord
@@ -1247,7 +1320,7 @@ export type StreamRecord = Message<"helmr.run.v0.StreamRecord"> & {
  * Use `create(StreamRecordSchema)` to create a new message.
  */
 export const StreamRecordSchema: GenMessage<StreamRecord> = /*@__PURE__*/
-  messageDesc(file_run, 36);
+  messageDesc(file_run, 38);
 
 /**
  * @generated from message helmr.run.v0.ActiveStreamReadResult
@@ -1279,7 +1352,7 @@ export type ActiveStreamReadResult = Message<"helmr.run.v0.ActiveStreamReadResul
  * Use `create(ActiveStreamReadResultSchema)` to create a new message.
  */
 export const ActiveStreamReadResultSchema: GenMessage<ActiveStreamReadResult> = /*@__PURE__*/
-  messageDesc(file_run, 37);
+  messageDesc(file_run, 39);
 
 /**
  * @generated from message helmr.run.v0.CheckpointPauseRequest
@@ -1306,7 +1379,7 @@ export type CheckpointPauseRequest = Message<"helmr.run.v0.CheckpointPauseReques
  * Use `create(CheckpointPauseRequestSchema)` to create a new message.
  */
 export const CheckpointPauseRequestSchema: GenMessage<CheckpointPauseRequest> = /*@__PURE__*/
-  messageDesc(file_run, 38);
+  messageDesc(file_run, 40);
 
 /**
  * @generated from message helmr.run.v0.CheckpointPauseReady
@@ -1328,7 +1401,7 @@ export type CheckpointPauseReady = Message<"helmr.run.v0.CheckpointPauseReady"> 
  * Use `create(CheckpointPauseReadySchema)` to create a new message.
  */
 export const CheckpointPauseReadySchema: GenMessage<CheckpointPauseReady> = /*@__PURE__*/
-  messageDesc(file_run, 39);
+  messageDesc(file_run, 41);
 
 /**
  * @generated from message helmr.run.v0.ResumeAttach
@@ -1355,7 +1428,7 @@ export type ResumeAttach = Message<"helmr.run.v0.ResumeAttach"> & {
  * Use `create(ResumeAttachSchema)` to create a new message.
  */
 export const ResumeAttachSchema: GenMessage<ResumeAttach> = /*@__PURE__*/
-  messageDesc(file_run, 40);
+  messageDesc(file_run, 42);
 
 /**
  * @generated from message helmr.run.v0.ResumeDecision
@@ -1387,7 +1460,7 @@ export type ResumeDecision = Message<"helmr.run.v0.ResumeDecision"> & {
  * Use `create(ResumeDecisionSchema)` to create a new message.
  */
 export const ResumeDecisionSchema: GenMessage<ResumeDecision> = /*@__PURE__*/
-  messageDesc(file_run, 41);
+  messageDesc(file_run, 43);
 
 /**
  * @generated from message helmr.run.v0.ResumeAck
@@ -1404,7 +1477,7 @@ export type ResumeAck = Message<"helmr.run.v0.ResumeAck"> & {
  * Use `create(ResumeAckSchema)` to create a new message.
  */
 export const ResumeAckSchema: GenMessage<ResumeAck> = /*@__PURE__*/
-  messageDesc(file_run, 42);
+  messageDesc(file_run, 44);
 
 /**
  * @generated from message helmr.run.v0.ResumeConsumed
@@ -1421,7 +1494,7 @@ export type ResumeConsumed = Message<"helmr.run.v0.ResumeConsumed"> & {
  * Use `create(ResumeConsumedSchema)` to create a new message.
  */
 export const ResumeConsumedSchema: GenMessage<ResumeConsumed> = /*@__PURE__*/
-  messageDesc(file_run, 43);
+  messageDesc(file_run, 45);
 
 /**
  * @generated from message helmr.run.v0.OutputStreamAppended
@@ -1448,7 +1521,7 @@ export type OutputStreamAppended = Message<"helmr.run.v0.OutputStreamAppended"> 
  * Use `create(OutputStreamAppendedSchema)` to create a new message.
  */
 export const OutputStreamAppendedSchema: GenMessage<OutputStreamAppended> = /*@__PURE__*/
-  messageDesc(file_run, 44);
+  messageDesc(file_run, 46);
 
 /**
  * @generated from message helmr.run.v0.MetadataUpdated
@@ -1485,5 +1558,5 @@ export type MetadataUpdated = Message<"helmr.run.v0.MetadataUpdated"> & {
  * Use `create(MetadataUpdatedSchema)` to create a new message.
  */
 export const MetadataUpdatedSchema: GenMessage<MetadataUpdated> = /*@__PURE__*/
-  messageDesc(file_run, 45);
+  messageDesc(file_run, 47);
 

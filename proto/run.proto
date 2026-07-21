@@ -71,7 +71,7 @@ message ProgramRunRequest {
   uint32 attempt_number = 2;
   string run_lease_id = 3;
   bytes program_start_frame = 4;
-  repeated ProgramSecret secrets = 5;
+  uint32 secret_count = 5;
   int64 start_deadline_unix_ms = 6;
 }
 
@@ -81,6 +81,22 @@ message ProgramSecret {
     string file = 2;
   }
   bytes value = 3;
+}
+
+message ProgramSecretsComplete {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+  uint32 secret_count = 4;
+}
+
+message ProgramSupervisorCommand {
+  oneof command {
+    ProgramSecret secret_delivery = 1;
+    ProgramSecretsComplete secrets_complete = 2;
+    ProgramStartRelease start_release = 3;
+    EntrypointRelease entrypoint_release = 4;
+  }
 }
 
 message ProgramProcessStarted {
