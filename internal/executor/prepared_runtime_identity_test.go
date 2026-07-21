@@ -8,16 +8,16 @@ import (
 	"github.com/helmrdotdev/helmr/internal/runtime"
 )
 
-const goldenPreparedRuntimeKey = `{"runtime_id":"runtime-1","deployment_sandbox_id":"sandbox-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:2bd820891796d3768c8b4b247c46882b9a86fd9be95dd321881985e62894fb73","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
-const goldenPreparedRuntimeKeyZeroNetwork = `{"runtime_id":"runtime-1","deployment_sandbox_id":"sandbox-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:2bd820891796d3768c8b4b247c46882b9a86fd9be95dd321881985e62894fb73","network":{"internet":false}}`
-const goldenPreparedRuntimeKeyInvalidSubstrate = `{"runtime_id":"runtime-1","deployment_sandbox_id":"sandbox-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"","sandbox_artifact_format":"oci-tar","substrate_key":"","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
+const goldenPreparedRuntimeKey = `{"runtime_id":"runtime-1","deployment_sandbox_id":"definition-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:2bd820891796d3768c8b4b247c46882b9a86fd9be95dd321881985e62894fb73","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
+const goldenPreparedRuntimeKeyZeroNetwork = `{"runtime_id":"runtime-1","deployment_sandbox_id":"definition-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"sha256:sandbox","sandbox_artifact_format":"oci-tar","substrate_key":"sha256:2bd820891796d3768c8b4b247c46882b9a86fd9be95dd321881985e62894fb73","network":{"internet":false}}`
+const goldenPreparedRuntimeKeyInvalidSubstrate = `{"runtime_id":"runtime-1","deployment_sandbox_id":"definition-1","image_digest":"sha256:image","image_format":"oci-tar","workspace_mount_path":"/workspace","sandbox_artifact_digest":"","sandbox_artifact_format":"oci-tar","substrate_key":"","network":{"internet":false,"deny":["10.0.0.0/8"]}}`
 
 func TestPreparedRuntimeKeyFromWorkspaceMountMatchesGolden(t *testing.T) {
 	key := preparedRuntimeKeyFromWorkspaceMount(goldenWorkspaceMount(), compute.NetworkPolicy{Internet: false, Deny: []string{"10.0.0.0/8"}})
 	if key != goldenPreparedRuntimeKey {
 		t.Fatalf("key = %s, want %s", key, goldenPreparedRuntimeKey)
 	}
-	if got := runtime.Hash(key); got != "133b7ed15d4038ace194880d86e31aecd530353974869882a289a922b6c4c22e" {
+	if got := runtime.Hash(key); got != "3e35a24c372709d97c3fedcfd5d2928392469df79fbcdec983b60c943aa83a04" {
 		t.Fatalf("hash = %s", got)
 	}
 }
@@ -27,7 +27,7 @@ func TestPreparedRuntimeKeyFromWorkspaceMountMatchesZeroNetworkGolden(t *testing
 	if key != goldenPreparedRuntimeKeyZeroNetwork {
 		t.Fatalf("key = %s, want %s", key, goldenPreparedRuntimeKeyZeroNetwork)
 	}
-	if got := runtime.Hash(key); got != "c13484739f83886eb827250efd1b8482aa9cc3d0ede85396273103cc3296b7b6" {
+	if got := runtime.Hash(key); got != "640060f7cd8f388ca20e888207e7e3eaa8f17da34798bfd748683b609cdbcaf1" {
 		t.Fatalf("hash = %s", got)
 	}
 }
@@ -39,7 +39,7 @@ func TestPreparedRuntimeKeyFromWorkspaceMountSwallowsSubstrateKeyError(t *testin
 	if key != goldenPreparedRuntimeKeyInvalidSubstrate {
 		t.Fatalf("key = %s, want %s", key, goldenPreparedRuntimeKeyInvalidSubstrate)
 	}
-	if got := runtime.Hash(key); got != "7f8e78f6a488c87cb0bbc787b167e5531bdadc1f25897cc92f1a92adc17e36f5" {
+	if got := runtime.Hash(key); got != "2e43a3a198c953b202ec08204c9550d54cd9a2fdae5bb5ac04bb1c54db94ee02" {
 		t.Fatalf("hash = %s", got)
 	}
 }
@@ -67,7 +67,7 @@ func TestPreparedRuntimeSeparatesPhysicalAndWorkspaceImageIdentity(t *testing.T)
 func goldenWorkspaceMount() api.WorkerWorkspaceMount {
 	return api.WorkerWorkspaceMount{
 		RuntimeID:                  "runtime-1",
-		DeploymentSandboxID:        "sandbox-1",
+		DeploymentDefinitionID:     "definition-1",
 		ImageDigest:                "sha256:image",
 		ImageFormat:                "oci-tar",
 		RootfsDigest:               "sha256:rootfs",

@@ -31,48 +31,43 @@ WITH target AS MATERIALIZED (
      WHERE worker_instances.id = target.id
        AND target.state = 'draining'
        AND target.epoch_started_at IS NOT NULL
+       AND target.startup_inventory_epoch = target.current_epoch
+       AND target.startup_inventory_evidence IS NOT NULL
        AND sqlc.arg(observed_at)::timestamptz >= target.epoch_started_at
        AND sqlc.arg(observed_at)::timestamptz <= now() + interval '1 minute'
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.worker_instance_id = target.id
-              AND run_leases.worker_epoch = target.current_epoch
               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases
             WHERE deployment_build_leases.worker_instance_id = target.id
-              AND deployment_build_leases.worker_epoch = target.current_epoch
               AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = target.id
-              AND runtime_instances.worker_epoch = target.current_epoch
               AND runtime_instances.reclaimed_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
             WHERE workspace_mounts.worker_instance_id = target.id
-              AND workspace_mounts.worker_epoch = target.current_epoch
               AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_leases
             WHERE workspace_leases.worker_instance_id = target.id
-              AND workspace_leases.worker_epoch = target.current_epoch
               AND workspace_leases.state IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_processes
             WHERE workspace_processes.worker_instance_id = target.id
-              AND workspace_processes.worker_epoch = target.current_epoch
               AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
        )
        AND NOT EXISTS (
            SELECT 1 FROM worker_network_slots
             WHERE worker_network_slots.worker_instance_id = target.id
-              AND worker_network_slots.worker_epoch = target.current_epoch
               AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
        )
     RETURNING worker_instances.id, worker_instances.worker_group_id, worker_instances.state,

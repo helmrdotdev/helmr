@@ -131,7 +131,7 @@ INSERT INTO runtime_identities (
 		mustDispatchExec(t, f.ctx, f.pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
-			current_epoch, current_service_id, protocol_version, supports_build,
+			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
 			toolchain_catalog_digest,
 			runtime_identity_id, certified_cpu_millis, certified_memory_bytes,
     certified_workload_disk_bytes, certified_scratch_bytes,
@@ -140,7 +140,7 @@ INSERT INTO runtime_identities (
     certification_fingerprint, epoch_started_at, certified_at, activated_at
 ) VALUES (
 			$1, $2, $3, 'sha256:test-attestation', 'active',
-			1, $4, 'helmr.worker.v0', true, $5, $6, 3000, 4294967296, 1, 34359738368,
+			1, $4, 'helmr.worker.v0', 'test-worker', true, $5, $6, 3000, 4294967296, 1, 34359738368,
 			2000, 2147483648, 1, 21474836480, 1, 'build-v0',
 			'sha256:test-certification', now(), now(), now()
 )`, workerID, workerID.String(), f.groupID, serviceID, buildPlacementToolchainCatalogDigest, runtimeID)

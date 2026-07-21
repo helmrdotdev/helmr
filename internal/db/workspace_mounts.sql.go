@@ -40,6 +40,7 @@ WITH candidate AS (
     RETURNING workspace_mounts.id, workspace_mounts.org_id, workspace_mounts.worker_group_id, workspace_mounts.project_id, workspace_mounts.environment_id, workspace_mounts.region_id, workspace_mounts.worker_instance_id, workspace_mounts.worker_epoch, workspace_mounts.workspace_id, workspace_mounts.materialized_version_id, workspace_mounts.runtime_instance_id, workspace_mounts.claim_attempt, workspace_mounts.guest_channel_token_hash, workspace_mounts.guest_channel_token_expires_at, workspace_mounts.state, workspace_mounts.request, workspace_mounts.dirty_generation, workspace_mounts.fencing_generation, workspace_mounts.requested_at, workspace_mounts.mounted_at, workspace_mounts.unmounted_at, workspace_mounts.stopped_at, workspace_mounts.lost_at, workspace_mounts.failed_at, workspace_mounts.terminal_at, workspace_mounts.terminal_reason_code, workspace_mounts.terminal_error, workspace_mounts.created_at, workspace_mounts.updated_at
 )
 SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, claimed.environment_id, claimed.region_id, claimed.worker_instance_id, claimed.worker_epoch, claimed.workspace_id, claimed.materialized_version_id, claimed.runtime_instance_id, claimed.claim_attempt, claimed.guest_channel_token_hash, claimed.guest_channel_token_expires_at, claimed.state, claimed.request, claimed.dirty_generation, claimed.fencing_generation, claimed.requested_at, claimed.mounted_at, claimed.unmounted_at, claimed.stopped_at, claimed.lost_at, claimed.failed_at, claimed.terminal_at, claimed.terminal_reason_code, claimed.terminal_error, claimed.created_at, claimed.updated_at, runtime_instances.runtime_identity_id AS runtime_id,
+       runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        worker_network_slots.id AS network_slot_id,
@@ -114,6 +115,7 @@ type ClaimWorkspaceMountRow struct {
 	CreatedAt                  pgtype.Timestamptz  `json:"created_at"`
 	UpdatedAt                  pgtype.Timestamptz  `json:"updated_at"`
 	RuntimeID                  string              `json:"runtime_id"`
+	DeploymentDefinitionID     pgtype.UUID         `json:"deployment_definition_id"`
 	RootfsDigest               string              `json:"rootfs_digest"`
 	RuntimeABI                 string              `json:"runtime_abi"`
 	NetworkSlotID              pgtype.UUID         `json:"network_slot_id"`
@@ -171,6 +173,7 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.RuntimeID,
+		&i.DeploymentDefinitionID,
 		&i.RootfsDigest,
 		&i.RuntimeABI,
 		&i.NetworkSlotID,

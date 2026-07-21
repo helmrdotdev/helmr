@@ -36,7 +36,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		return
 	}
 	source := api.WorkerPreparedRuntimeSource{
-		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID), RuntimeID: row.RuntimeIdentityID,
+		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), RuntimeID: row.RuntimeIdentityID,
 		SandboxImageArtifact:       api.CASObject{Digest: row.SandboxImageArtifactDigestValue, SizeBytes: row.SandboxImageArtifactSizeBytes, MediaType: row.SandboxImageArtifactMediaType},
 		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat.String, RootfsDigest: row.RootfsDigest,
 		ImageDigest: row.ImageDigest, ImageFormat: row.ImageFormat, WorkspaceMountPath: row.WorkspaceMountPath,
@@ -46,7 +46,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 	}
 	if row.RuntimeSubstrateID.Valid {
 		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-			ID: pgvalue.UUIDString(row.RuntimeSubstrateID), DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
+			ID: pgvalue.UUIDString(row.RuntimeSubstrateID), DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 			Artifact:        api.CASObject{Digest: row.RuntimeSubstrateBlobDigest, SizeBytes: row.RuntimeSubstrateBlobSizeBytes, MediaType: row.RuntimeSubstrateBlobMediaType},
 			SubstrateDigest: row.SubstrateDigest.String, Format: row.SubstrateFormat.String,
 			BuilderABI: row.BuilderAbi.String, LayoutABI: row.LayoutAbi.String, SizeBytes: row.SubstrateSizeBytes.Int64,
@@ -246,7 +246,7 @@ func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 		ID: pgvalue.UUIDString(row.ID), OrgID: pgvalue.UUIDString(row.OrgID), ProjectID: pgvalue.UUIDString(row.ProjectID),
 		EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), WorkerInstanceID: pgvalue.UUIDString(row.WorkerInstanceID),
 		RuntimeEpoch: row.WorkerEpoch, RuntimeKeyHash: row.RuntimeKeyHash, RuntimeKey: json.RawMessage(row.RuntimeKey),
-		RuntimeID: row.RuntimeIdentityID, DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID), State: string(row.ObservedState),
+		RuntimeID: row.RuntimeIdentityID, DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), State: string(row.ObservedState),
 		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 	}

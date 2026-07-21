@@ -2680,6 +2680,9 @@ type WorkerInstance struct {
 	SupportsBuild               bool                `json:"supports_build"`
 	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
+	SubstrateFormat             string              `json:"substrate_format"`
+	SubstrateBuilderAbi         string              `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi          string              `json:"substrate_layout_abi"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
 	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`

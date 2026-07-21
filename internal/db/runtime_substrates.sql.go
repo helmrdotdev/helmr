@@ -112,7 +112,72 @@ func (q *Queries) GetRuntimeSubstrateForWorkspaceDefinition(ctx context.Context,
 	return i, err
 }
 
-const upsertRuntimeSubstrate = `-- name: UpsertRuntimeSubstrate :one
+const getRuntimeSubstrateRegistration = `-- name: GetRuntimeSubstrateRegistration :one
+SELECT id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+  FROM runtime_substrates
+ WHERE org_id = $1
+   AND project_id = $2
+   AND environment_id = $3
+   AND deployment_definition_id = $4
+   AND substrate_format = $5
+   AND builder_abi = $6
+   AND layout_abi = $7
+   AND artifact_id = $8
+   AND substrate_digest = $9
+   AND substrate_size_bytes = $10
+ LIMIT 1
+`
+
+type GetRuntimeSubstrateRegistrationParams struct {
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	SubstrateFormat        string      `json:"substrate_format"`
+	BuilderAbi             string      `json:"builder_abi"`
+	LayoutAbi              string      `json:"layout_abi"`
+	ArtifactID             pgtype.UUID `json:"artifact_id"`
+	SubstrateDigest        string      `json:"substrate_digest"`
+	SubstrateSizeBytes     int64       `json:"substrate_size_bytes"`
+}
+
+func (q *Queries) GetRuntimeSubstrateRegistration(ctx context.Context, arg GetRuntimeSubstrateRegistrationParams) (RuntimeSubstrate, error) {
+	row := q.db.QueryRow(ctx, getRuntimeSubstrateRegistration,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.DeploymentDefinitionID,
+		arg.SubstrateFormat,
+		arg.BuilderAbi,
+		arg.LayoutAbi,
+		arg.ArtifactID,
+		arg.SubstrateDigest,
+		arg.SubstrateSizeBytes,
+	)
+	var i RuntimeSubstrate
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentDefinitionID,
+		&i.ArtifactID,
+		&i.SubstrateDigest,
+		&i.SubstrateFormat,
+		&i.BuilderAbi,
+		&i.LayoutAbi,
+		&i.SubstrateSizeBytes,
+		&i.Source,
+		&i.CreatedByWorkerInstanceID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.RetiredAt,
+		&i.LastReferencedAt,
+	)
+	return i, err
+}
+
+const insertRuntimeSubstrate = `-- name: InsertRuntimeSubstrate :execrows
 INSERT INTO runtime_substrates (
     id,
     org_id,
@@ -144,15 +209,10 @@ INSERT INTO runtime_substrates (
     $13,
     now()
 )
-ON CONFLICT (org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi)
-DO UPDATE
-   SET retired_at = NULL,
-       last_referenced_at = now(),
-       updated_at = now()
-RETURNING id, org_id, project_id, environment_id, deployment_definition_id, artifact_id, substrate_digest, substrate_format, builder_abi, layout_abi, substrate_size_bytes, source, created_by_worker_instance_id, created_at, updated_at, retired_at, last_referenced_at
+ON CONFLICT ON CONSTRAINT runtime_substrates_input_key DO NOTHING
 `
 
-type UpsertRuntimeSubstrateParams struct {
+type InsertRuntimeSubstrateParams struct {
 	ID                        pgtype.UUID `json:"id"`
 	OrgID                     pgtype.UUID `json:"org_id"`
 	ProjectID                 pgtype.UUID `json:"project_id"`
@@ -168,8 +228,8 @@ type UpsertRuntimeSubstrateParams struct {
 	CreatedByWorkerInstanceID pgtype.UUID `json:"created_by_worker_instance_id"`
 }
 
-func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeSubstrateParams) (RuntimeSubstrate, error) {
-	row := q.db.QueryRow(ctx, upsertRuntimeSubstrate,
+func (q *Queries) InsertRuntimeSubstrate(ctx context.Context, arg InsertRuntimeSubstrateParams) (int64, error) {
+	result, err := q.db.Exec(ctx, insertRuntimeSubstrate,
 		arg.ID,
 		arg.OrgID,
 		arg.ProjectID,
@@ -184,25 +244,77 @@ func (q *Queries) UpsertRuntimeSubstrate(ctx context.Context, arg UpsertRuntimeS
 		arg.Source,
 		arg.CreatedByWorkerInstanceID,
 	)
-	var i RuntimeSubstrate
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const lockRuntimeSubstrateAuthority = `-- name: LockRuntimeSubstrateAuthority :one
+SELECT deployments.org_id,
+       deployments.project_id,
+       deployments.environment_id,
+       deployment_definitions.id AS deployment_definition_id
+  FROM runtime_instances
+  JOIN worker_instances
+    ON worker_instances.id = runtime_instances.worker_instance_id
+   AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+   AND worker_instances.current_epoch = runtime_instances.worker_epoch
+  JOIN deployment_definitions
+    ON deployment_definitions.environment_id = runtime_instances.environment_id
+   AND deployment_definitions.id = runtime_instances.deployment_definition_id
+   AND deployment_definitions.kind = 'workspace'
+  JOIN deployments
+    ON deployments.environment_id = deployment_definitions.environment_id
+   AND deployments.id = deployment_definitions.deployment_id
+ WHERE runtime_instances.deployment_definition_id = $1
+   AND runtime_instances.worker_instance_id = $2
+   AND runtime_instances.worker_group_id = $3
+   AND runtime_instances.worker_epoch = $4
+   AND runtime_instances.reclaimed_at IS NULL
+   AND runtime_instances.observed_state IN ('allocated', 'preparing', 'ready')
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.supports_run
+   AND worker_instances.substrate_format = $5
+   AND worker_instances.substrate_builder_abi = $6
+   AND worker_instances.substrate_layout_abi = $7
+ LIMIT 1
+ FOR SHARE OF runtime_instances, worker_instances
+`
+
+type LockRuntimeSubstrateAuthorityParams struct {
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+	WorkerInstanceID       pgtype.UUID `json:"worker_instance_id"`
+	WorkerGroupID          string      `json:"worker_group_id"`
+	WorkerEpoch            int64       `json:"worker_epoch"`
+	SubstrateFormat        string      `json:"substrate_format"`
+	BuilderAbi             string      `json:"builder_abi"`
+	LayoutAbi              string      `json:"layout_abi"`
+}
+
+type LockRuntimeSubstrateAuthorityRow struct {
+	OrgID                  pgtype.UUID `json:"org_id"`
+	ProjectID              pgtype.UUID `json:"project_id"`
+	EnvironmentID          pgtype.UUID `json:"environment_id"`
+	DeploymentDefinitionID pgtype.UUID `json:"deployment_definition_id"`
+}
+
+func (q *Queries) LockRuntimeSubstrateAuthority(ctx context.Context, arg LockRuntimeSubstrateAuthorityParams) (LockRuntimeSubstrateAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, lockRuntimeSubstrateAuthority,
+		arg.DeploymentDefinitionID,
+		arg.WorkerInstanceID,
+		arg.WorkerGroupID,
+		arg.WorkerEpoch,
+		arg.SubstrateFormat,
+		arg.BuilderAbi,
+		arg.LayoutAbi,
+	)
+	var i LockRuntimeSubstrateAuthorityRow
 	err := row.Scan(
-		&i.ID,
 		&i.OrgID,
 		&i.ProjectID,
 		&i.EnvironmentID,
 		&i.DeploymentDefinitionID,
-		&i.ArtifactID,
-		&i.SubstrateDigest,
-		&i.SubstrateFormat,
-		&i.BuilderAbi,
-		&i.LayoutAbi,
-		&i.SubstrateSizeBytes,
-		&i.Source,
-		&i.CreatedByWorkerInstanceID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.RetiredAt,
-		&i.LastReferencedAt,
 	)
 	return i, err
 }

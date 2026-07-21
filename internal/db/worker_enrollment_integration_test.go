@@ -20,6 +20,27 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 	ctx := context.Background()
 	pool := newIntegrationDB(t, ctx)
 	queries := db.New(pool)
+	assertRegistering := func(workerID pgtype.UUID) {
+		t.Helper()
+		var supportsRun bool
+		var supportsBuild bool
+		var runtimeIdentity pgtype.Text
+		var format string
+		var builderABI string
+		var layoutABI string
+		if err := pool.QueryRow(ctx, `
+			SELECT supports_run, supports_build, runtime_identity_id,
+			       substrate_format, substrate_builder_abi, substrate_layout_abi
+			  FROM worker_instances
+			 WHERE id = $1
+		`, workerID).Scan(&supportsRun, &supportsBuild, &runtimeIdentity, &format, &builderABI, &layoutABI); err != nil {
+			t.Fatal(err)
+		}
+		if supportsRun || supportsBuild || runtimeIdentity.Valid || format != "" || builderABI != "" || layoutABI != "" {
+			t.Fatalf("registering worker retained certified capabilities: run=%v build=%v runtime=%v substrate=(%q,%q,%q)",
+				supportsRun, supportsBuild, runtimeIdentity, format, builderABI, layoutABI)
+		}
+	}
 
 	createCredential := func(nonceHash []byte, resourceID string, secretHash []byte) db.EnrollWorkerInstanceRow {
 		t.Helper()
@@ -59,6 +80,7 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRegistering(first.WorkerInstanceID)
 	if _, err := queries.EnrollWorkerInstance(ctx, db.EnrollWorkerInstanceParams{
 		NonceHash: firstNonce, WorkerGroupID: dbtest.DefaultWorkerGroupID,
 		AllowsRun: true, AllowsBuild: true, ProtocolVersion: auth.WorkerProtocolVersion,
@@ -95,6 +117,7 @@ func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
+	assertRegistering(second.WorkerInstanceID)
 	if secondAuth.CurrentEpoch.Int64 != firstAuth.CurrentEpoch.Int64+1 {
 		t.Fatalf("replacement epoch=%d, want %d", secondAuth.CurrentEpoch.Int64, firstAuth.CurrentEpoch.Int64+1)
 	}
@@ -429,6 +452,46 @@ func TestTerminalWorkerCannotReuseItsDurableCredential(t *testing.T) {
 	}
 	if second.State != db.WorkerInstanceStateDraining || second.CurrentEpoch.Int64 <= first.CurrentEpoch.Int64 {
 		t.Fatalf("draining restart state=%s epoch=%d, first epoch=%d", second.State, second.CurrentEpoch.Int64, first.CurrentEpoch.Int64)
+	}
+	var authorityCleared bool
+	if err := pool.QueryRow(ctx, `
+		SELECT supervisor_version = ''
+		       AND NOT supports_run
+		       AND NOT supports_build
+		       AND runtime_identity_id IS NULL
+		       AND toolchain_catalog_digest IS NULL
+		       AND substrate_format = ''
+		       AND substrate_builder_abi = ''
+		       AND substrate_layout_abi = ''
+		       AND certified_cpu_millis = 0
+		       AND certified_memory_bytes = 0
+		       AND certified_workload_disk_bytes = 0
+		       AND certified_scratch_bytes = 0
+		       AND certified_build_cache_bytes = 0
+		       AND certified_artifact_cache_bytes = 0
+		       AND certified_hugepages_bytes = 0
+		       AND certified_checkpoint_bytes = 0
+		       AND per_vm_cpu_millis = 0
+		       AND per_vm_memory_bytes = 0
+		       AND per_vm_workload_disk_bytes = 0
+		       AND per_vm_scratch_bytes = 0
+		       AND max_vm_slots = 0
+		       AND max_run_consumers = 0
+		       AND max_build_executors = 0
+		       AND max_runtime_starts = 0
+		       AND certification_profile = ''
+		       AND certification_fingerprint = ''
+		       AND certified_at IS NULL
+		       AND activated_at IS NULL
+		       AND startup_inventory_epoch IS NULL
+		       AND startup_inventory_evidence IS NULL
+		  FROM worker_instances
+		 WHERE id = $1
+	`, enrollment.WorkerInstanceID).Scan(&authorityCleared); err != nil {
+		t.Fatal(err)
+	}
+	if !authorityCleared {
+		t.Fatal("new worker epoch retained certified authority")
 	}
 	fenced, err := queries.FenceWorkerInstance(ctx, db.FenceWorkerInstanceParams{
 		ID: enrollment.WorkerInstanceID, WorkerGroupID: dbtest.DefaultWorkerGroupID,

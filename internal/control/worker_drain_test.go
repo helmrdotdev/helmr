@@ -32,6 +32,8 @@ type workerDrainStore struct {
 	completionErr  error
 	ambiguousFirst bool
 	completeCalls  int
+	supportsBuild  bool
+	recoveryCalls  int
 }
 
 func newWorkerDrainStore(state db.WorkerInstanceState) *workerDrainStore {
@@ -42,6 +44,7 @@ func newWorkerDrainStore(state db.WorkerInstanceState) *workerDrainStore {
 		workerGroupID:  "run-workers",
 		epochStartedAt: time.Now().UTC().Add(-time.Minute),
 		state:          state,
+		supportsBuild:  true,
 	}
 }
 
@@ -51,19 +54,41 @@ func (s *workerDrainStore) workerAuthRow() db.AuthorizeWorkerInstanceCredentialR
 		WorkerInstanceID: pgvalue.UUID(s.workerID), ClaimVersion: 1,
 		ProtocolVersion: auth.WorkerProtocolVersion, ResourceID: "worker-01",
 		CurrentEpoch: pgtype.Int8{Int64: 7, Valid: true}, WorkerState: s.state,
-		SupportsBuild: true, EpochStartedAt: pgvalue.Timestamptz(s.epochStartedAt),
+		SupportsBuild: s.supportsBuild, EpochStartedAt: pgvalue.Timestamptz(s.epochStartedAt),
 	}
 }
 
 func (s *workerDrainStore) AuthorizeWorkerInstanceCredential(_ context.Context, _ db.AuthorizeWorkerInstanceCredentialParams) (db.AuthorizeWorkerInstanceCredentialRow, error) {
-	if s.state == db.WorkerInstanceStateDisabled {
+	if s.state == db.WorkerInstanceStateDisabled || !s.supportsBuild {
 		return db.AuthorizeWorkerInstanceCredentialRow{}, pgx.ErrNoRows
 	}
 	return s.workerAuthRow(), nil
 }
 
+func (s *workerDrainStore) AuthorizeRegisteringWorkerInstanceCredential(_ context.Context, _ db.AuthorizeRegisteringWorkerInstanceCredentialParams) (db.AuthorizeRegisteringWorkerInstanceCredentialRow, error) {
+	if s.state != db.WorkerInstanceStateRegistering {
+		return db.AuthorizeRegisteringWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+	}
+	return db.AuthorizeRegisteringWorkerInstanceCredentialRow(s.workerAuthRow()), nil
+}
+
+func (s *workerDrainStore) AuthorizeRecoveringWorkerInstanceCredential(_ context.Context, _ db.AuthorizeRecoveringWorkerInstanceCredentialParams) (db.AuthorizeRecoveringWorkerInstanceCredentialRow, error) {
+	if s.state != db.WorkerInstanceStateRegistering && (s.state != db.WorkerInstanceStateDraining || s.supportsBuild) {
+		return db.AuthorizeRecoveringWorkerInstanceCredentialRow{}, pgx.ErrNoRows
+	}
+	return db.AuthorizeRecoveringWorkerInstanceCredentialRow(s.workerAuthRow()), nil
+}
+
 func (s *workerDrainStore) AuthorizeTerminalWorkerInstanceCredential(_ context.Context, _ db.AuthorizeTerminalWorkerInstanceCredentialParams) (db.AuthorizeTerminalWorkerInstanceCredentialRow, error) {
 	return db.AuthorizeTerminalWorkerInstanceCredentialRow(s.workerAuthRow()), nil
+}
+
+func (s *workerDrainStore) RecordWorkerStartupRecovery(_ context.Context, _ db.RecordWorkerStartupRecoveryParams) (db.WorkerInstance, error) {
+	s.recoveryCalls++
+	return db.WorkerInstance{
+		ID: pgvalue.UUID(s.workerID), WorkerGroupID: s.workerGroupID,
+		State: db.WorkerInstanceStateDraining,
+	}, nil
 }
 
 func (s *workerDrainStore) LockWorkerDrainCompletion(_ context.Context, arg db.LockWorkerDrainCompletionParams) (pgtype.UUID, error) {
@@ -195,6 +220,41 @@ func TestWorkerDrainCompletionRejectsIncompleteAuthority(t *testing.T) {
 	}
 }
 
+func TestCleanupOnlyDrainingWorkerCanRecoverButCannotUseCertifiedRoutes(t *testing.T) {
+	secret := []byte("01234567890123456789012345678901")
+	store := newWorkerDrainStore(db.WorkerInstanceStateDraining)
+	store.supportsBuild = false
+	handler := newTestServer(testServerConfig{DB: store, WorkerTokenSecret: secret})
+	token := issueDrainWorkerToken(t, store, secret)
+	body, err := json.Marshal(api.WorkerStartupRecoveryRequest{
+		InventoryComplete: true,
+		InventoryScope:    "worker_runtime_state_roots_v0",
+		ObservedAt:        time.Now().UTC(),
+		Inventory:         []string{},
+		Reclaimed:         []string{},
+		Quarantined:       []string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recovery := serveWorkerRequest(handler, token, http.MethodPost, "/api/worker/startup-recovery", string(body))
+	if recovery.Code != http.StatusNoContent || store.recoveryCalls != 1 {
+		t.Fatalf("recovery status=%d calls=%d body=%s", recovery.Code, store.recoveryCalls, recovery.Body.String())
+	}
+	status := serveWorkerRequest(handler, token, http.MethodGet, "/api/worker/status", "")
+	if status.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", status.Code, status.Body.String())
+	}
+	observe := serveWorkerRequest(handler, token, http.MethodPost, "/api/worker/observe", `{"observation":{}}`)
+	if observe.Code != http.StatusUnauthorized {
+		t.Fatalf("observe status=%d body=%s", observe.Code, observe.Body.String())
+	}
+	activate := serveWorkerRequest(handler, token, http.MethodPost, "/api/worker/activate", `{}`)
+	if activate.Code != http.StatusUnauthorized {
+		t.Fatalf("activate status=%d body=%s", activate.Code, activate.Body.String())
+	}
+}
+
 func TestWorkerDrainCompletionValidatesPhysicalCleanupProof(t *testing.T) {
 	secret := []byte("01234567890123456789012345678901")
 	store := newWorkerDrainStore(db.WorkerInstanceStateDraining)
@@ -244,20 +304,21 @@ func TestCompleteWorkerDrainAtomicallyFencesCurrentEpochAuthority(t *testing.T) 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
 			id, worker_group_id, resource_id, attestation_fingerprint, state,
-			current_epoch, current_service_id, protocol_version, supports_build,
+			current_epoch, current_service_id, protocol_version, supervisor_version, supports_build,
 			toolchain_catalog_digest,
 			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
 			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_build_executors,
 			certification_profile, certification_fingerprint, epoch_started_at,
+			startup_inventory_epoch, startup_inventory_evidence,
 			certified_at, activated_at, draining_at
 		) VALUES (
 			$1, $2, $3, 'sha256:test-attestation', 'draining',
-			2, $4, $5, true, decode(repeat('03', 32), 'hex'),
+			2, $4, $5, 'test-worker', true, decode(repeat('03', 32), 'hex'),
 			1000, 1073741824, 4294967296,
 			1073741824, 1000, 1073741824,
 			4294967296, 1073741824, 1,
-			'drain-test', 'drain-test-cert', $6, $6, $6, $6
+			'drain-test', 'drain-test-cert', $6, 2, '{}'::jsonb, $6, $6, $6
 		)
 	`, workerID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], serviceID, auth.WorkerProtocolVersion, epochStartedAt); err != nil {
 		t.Fatal(err)
@@ -409,6 +470,21 @@ func TestCompleteWorkerDrainAtomicallyFencesCurrentEpochAuthority(t *testing.T) 
 	`, racedRuntimeID); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := server.completeWorkerDrain(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("completion with prior-epoch authority error = %v, want no rows", err)
+	}
+	var oldReclaimedAt time.Time
+	if err := pool.QueryRow(ctx, `
+		UPDATE runtime_instances
+		   SET desired_state = 'closed', desired_version = 2,
+		       observed_state = 'closed', observed_version = 1, observed_desired_version = 2,
+		       closing_at = now(), closed_at = now(), terminal_at = now(),
+		       terminal_reason_code = 'startup_inventory_reclaimed', reclaimed_at = now()
+		 WHERE id = $1
+		 RETURNING reclaimed_at
+	`, oldEpochRuntimeID).Scan(&oldReclaimedAt); err != nil {
+		t.Fatal(err)
+	}
 	completed, err := server.completeWorkerDrain(ctx, params)
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +525,7 @@ func TestCompleteWorkerDrainAtomicallyFencesCurrentEpochAuthority(t *testing.T) 
 	if err := pool.QueryRow(ctx, `SELECT reclaimed_at FROM runtime_instances WHERE id = $1`, oldEpochRuntimeID).Scan(&oldReclaimed); err != nil {
 		t.Fatal(err)
 	}
-	if oldReclaimed.Valid {
-		t.Fatal("old-epoch authority was mutated by current-epoch drain completion")
+	if !oldReclaimed.Valid || !oldReclaimed.Time.Equal(oldReclaimedAt) {
+		t.Fatal("drain completion mutated prior-epoch cleanup evidence")
 	}
 }

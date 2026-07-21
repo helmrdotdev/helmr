@@ -42,7 +42,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 		tempDir:           t.TempDir(),
 		stream:            stream,
 		workspace:         testCheckpointWorkspaceBase(),
-		substrateSource:   &api.WorkerRuntimeSubstrateSource{DeploymentSandboxID: "019f1790-0000-7000-8000-000000000002"},
+		substrateSource:   &api.WorkerRuntimeSubstrateSource{DeploymentDefinitionID: "019f1790-0000-7000-8000-000000000002"},
 		runtimeSubstrates: registrar,
 	}.CreateCheckpoint(context.Background(), CheckpointRequest{
 		RunWaitID:    "run-wait-id-1",
@@ -603,14 +603,14 @@ func (r *checkpointRuntimeSubstrateRegistrar) RegisterRuntimeSubstrate(_ context
 	r.requests = append(r.requests, request)
 	return api.WorkerRuntimeSubstrateRegisterResponse{
 		RuntimeSubstrate: api.WorkerRuntimeSubstrate{
-			ID:                  r.id,
-			DeploymentSandboxID: request.DeploymentSandboxID,
-			Artifact:            request.Artifact,
-			SubstrateDigest:     request.SubstrateDigest,
-			Format:              request.Format,
-			BuilderABI:          request.BuilderABI,
-			LayoutABI:           request.LayoutABI,
-			SizeBytes:           request.SizeBytes,
+			ID:                     r.id,
+			DeploymentDefinitionID: request.DeploymentDefinitionID,
+			Artifact:               request.Artifact,
+			SubstrateDigest:        request.SubstrateDigest,
+			Format:                 request.Format,
+			BuilderABI:             request.BuilderABI,
+			LayoutABI:              request.LayoutABI,
+			SizeBytes:              request.SizeBytes,
 		},
 	}, nil
 }

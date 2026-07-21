@@ -457,16 +457,16 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substra
 	if c.runtimeSubstrates == nil {
 		return nil, errors.New("runtime substrate registrar is required")
 	}
-	if c.substrateSource == nil || strings.TrimSpace(c.substrateSource.DeploymentSandboxID) == "" {
-		return nil, errors.New("runtime substrate source deployment_sandbox_id is required")
+	if c.substrateSource == nil || strings.TrimSpace(c.substrateSource.DeploymentDefinitionID) == "" {
+		return nil, errors.New("runtime substrate source deployment_definition_id is required")
 	}
 	if lookup, ok := c.runtimeSubstrates.(RuntimeSubstrateLookup); ok {
 		response, err := lookup.LookupRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateLookupRequest{
-			DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
-			SubstrateDigest:     strings.TrimSpace(substrate.Digest),
-			Format:              strings.TrimSpace(substrate.Format),
-			BuilderABI:          strings.TrimSpace(substrate.BuilderABI),
-			LayoutABI:           strings.TrimSpace(substrate.LayoutABI),
+			DeploymentDefinitionID: strings.TrimSpace(c.substrateSource.DeploymentDefinitionID),
+			SubstrateDigest:        strings.TrimSpace(substrate.Digest),
+			Format:                 strings.TrimSpace(substrate.Format),
+			BuilderABI:             strings.TrimSpace(substrate.BuilderABI),
+			LayoutABI:              strings.TrimSpace(substrate.LayoutABI),
 		})
 		if err == nil {
 			artifact := response.RuntimeSubstrate
@@ -513,7 +513,7 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substra
 		return nil, err
 	}
 	response, err := c.runtimeSubstrates.RegisterRuntimeSubstrate(ctx, api.WorkerRuntimeSubstrateRegisterRequest{
-		DeploymentSandboxID: strings.TrimSpace(c.substrateSource.DeploymentSandboxID),
+		DeploymentDefinitionID: strings.TrimSpace(c.substrateSource.DeploymentDefinitionID),
 		Artifact: api.CASObject{
 			Digest:    object.Digest,
 			SizeBytes: object.SizeBytes,
@@ -530,6 +530,9 @@ func (c runtimeCheckpointer) ensureRuntimeSubstrate(ctx context.Context, substra
 		return nil, err
 	}
 	artifact := response.RuntimeSubstrate
+	if artifact.Retired {
+		return nil, errors.New("runtime substrate registration is retired")
+	}
 	return &artifact, nil
 }
 

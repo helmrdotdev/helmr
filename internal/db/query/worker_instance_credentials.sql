@@ -38,28 +38,117 @@ WITH credential AS (
                WHEN worker_instances.state = 'active' THEN 'registering'
                ELSE worker_instances.state
            END,
-           supports_run = credential.effective_allows_run,
-           supports_build = credential.effective_allows_build,
+           supervisor_version = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.supervisor_version
+               ELSE ''
+           END,
+           supports_run = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.supports_run
+               ELSE false
+           END,
+           supports_build = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.supports_build
+               ELSE false
+           END,
+           runtime_identity_id = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.runtime_identity_id
+               ELSE NULL
+           END,
+           substrate_format = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.substrate_format
+               ELSE ''
+           END,
+           substrate_builder_abi = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.substrate_builder_abi
+               ELSE ''
+           END,
+           substrate_layout_abi = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.substrate_layout_abi
+               ELSE ''
+           END,
            toolchain_catalog_digest = CASE
-               WHEN credential.effective_allows_build
-                    AND (
-                        worker_instances.current_service_id = sqlc.arg(service_id)
-                        OR worker_instances.state = 'draining'
-                    )
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
                THEN worker_instances.toolchain_catalog_digest
                ELSE NULL
            END,
+           certified_cpu_millis = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_cpu_millis ELSE 0
+           END,
+           certified_memory_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_memory_bytes ELSE 0
+           END,
+           certified_workload_disk_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_workload_disk_bytes ELSE 0
+           END,
+           certified_scratch_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_scratch_bytes ELSE 0
+           END,
+           certified_build_cache_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_build_cache_bytes ELSE 0
+           END,
+           certified_artifact_cache_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_artifact_cache_bytes ELSE 0
+           END,
+           certified_hugepages_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_hugepages_bytes ELSE 0
+           END,
+           certified_checkpoint_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.certified_checkpoint_bytes ELSE 0
+           END,
+           per_vm_cpu_millis = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.per_vm_cpu_millis ELSE 0
+           END,
+           per_vm_memory_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.per_vm_memory_bytes ELSE 0
+           END,
+           per_vm_workload_disk_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.per_vm_workload_disk_bytes ELSE 0
+           END,
+           per_vm_scratch_bytes = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.per_vm_scratch_bytes ELSE 0
+           END,
+           max_vm_slots = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.max_vm_slots ELSE 0
+           END,
+           max_run_consumers = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.max_run_consumers ELSE 0
+           END,
+           max_build_executors = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.max_build_executors ELSE 0
+           END,
+           max_runtime_starts = CASE
+               WHEN worker_instances.current_service_id = sqlc.arg(service_id)
+               THEN worker_instances.max_runtime_starts ELSE 0
+           END,
            certified_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-                                      OR worker_instances.state = 'draining'
                                THEN worker_instances.certified_at ELSE NULL END,
            activated_at = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-                                      OR worker_instances.state = 'draining'
                                THEN worker_instances.activated_at ELSE NULL END,
            certification_profile = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-                                               OR worker_instances.state = 'draining'
                                         THEN worker_instances.certification_profile ELSE '' END,
            certification_fingerprint = CASE WHEN worker_instances.current_service_id = sqlc.arg(service_id)
-                                                   OR worker_instances.state = 'draining'
                                             THEN worker_instances.certification_fingerprint ELSE '' END,
            updated_at = now()
       FROM credential
@@ -94,6 +183,7 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state IN ('active','draining')
+   AND (worker_instances.supports_run OR worker_instances.supports_build)
    AND worker_groups.state IN ('active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -140,6 +230,37 @@ UPDATE worker_instance_credentials
    AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
    AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
    AND worker_instances.state = 'registering'
+   AND worker_groups.state IN ('active','draining')
+RETURNING worker_instance_credentials.*, worker_instances.resource_id,
+          worker_instances.current_epoch, worker_instances.state AS worker_state,
+          worker_instances.supports_run, worker_instances.supports_build,
+          worker_instances.epoch_started_at;
+
+-- name: AuthorizeRecoveringWorkerInstanceCredential :one
+UPDATE worker_instance_credentials
+   SET last_used_at = now()
+  FROM worker_instances, worker_groups
+ WHERE worker_instance_credentials.id = sqlc.arg(credential_id)
+   AND worker_instances.id = worker_instance_credentials.worker_instance_id
+   AND worker_instances.worker_group_id = worker_instance_credentials.worker_group_id
+   AND worker_groups.id = worker_instance_credentials.worker_group_id
+   AND worker_instance_credentials.revoked_at IS NULL
+   AND worker_instance_credentials.claim_version = sqlc.arg(claim_version)
+   AND worker_instance_credentials.claim_version = worker_instances.claim_version
+   AND worker_groups.claim_version = sqlc.arg(group_claim_version)
+   AND worker_instance_credentials.protocol_version = sqlc.arg(protocol_version)
+   AND worker_instance_credentials.protocol_version = worker_instances.protocol_version
+   AND worker_instance_credentials.protocol_version = worker_groups.protocol_version
+   AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
+   AND (
+       worker_instances.state = 'registering'
+       OR (
+           worker_instances.state = 'draining'
+           AND NOT worker_instances.supports_run
+           AND NOT worker_instances.supports_build
+           AND worker_instances.certified_at IS NULL
+       )
+   )
    AND worker_groups.state IN ('active','draining')
 RETURNING worker_instance_credentials.*, worker_instances.resource_id,
           worker_instances.current_epoch, worker_instances.state AS worker_state,
@@ -194,13 +315,24 @@ WITH nonce AS (
     )
     SELECT sqlc.arg(worker_instance_id), nonce.worker_group_id,
            sqlc.arg(resource_id), 'registering', 1, nonce.protocol_version,
-           nonce.allows_run, nonce.allows_build, sqlc.arg(attestation_fingerprint)
+           false, false, sqlc.arg(attestation_fingerprint)
       FROM nonce
     ON CONFLICT (worker_group_id, resource_id) DO UPDATE
        SET claim_version = worker_instances.claim_version + 1,
            state = 'registering', protocol_version = EXCLUDED.protocol_version,
-           supports_run = EXCLUDED.supports_run, supports_build = EXCLUDED.supports_build,
+           supervisor_version = '',
+           supports_run = false, supports_build = false,
            toolchain_catalog_digest = NULL,
+           runtime_identity_id = NULL,
+           substrate_format = '', substrate_builder_abi = '', substrate_layout_abi = '',
+           certified_cpu_millis = 0, certified_memory_bytes = 0,
+           certified_workload_disk_bytes = 0, certified_scratch_bytes = 0,
+           certified_build_cache_bytes = 0, certified_artifact_cache_bytes = 0,
+           certified_hugepages_bytes = 0, certified_checkpoint_bytes = 0,
+           per_vm_cpu_millis = 0, per_vm_memory_bytes = 0,
+           per_vm_workload_disk_bytes = 0, per_vm_scratch_bytes = 0,
+           max_vm_slots = 0, max_run_consumers = 0,
+           max_build_executors = 0, max_runtime_starts = 0,
            attestation_fingerprint = EXCLUDED.attestation_fingerprint,
            current_service_id = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE uuidv7() END,
            epoch_started_at = CASE WHEN worker_instances.current_epoch IS NULL THEN NULL ELSE now() END,
@@ -223,7 +355,7 @@ WITH nonce AS (
     )
     SELECT sqlc.arg(credential_id), worker.worker_group_id, worker.id,
            sqlc.arg(key_prefix), sqlc.arg(secret_hash), worker.claim_version,
-           worker.supports_run, worker.supports_build, worker.protocol_version,
+           sqlc.arg(allows_run), sqlc.arg(allows_build), worker.protocol_version,
            sqlc.narg(credential_expires_at)
       FROM worker WHERE (SELECT count(*) FROM revoked) >= 0
     RETURNING *

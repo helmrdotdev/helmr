@@ -270,7 +270,7 @@ type workerWorkspaceMountFields struct {
 	projectID                  pgtype.UUID
 	environmentID              pgtype.UUID
 	workspaceID                pgtype.UUID
-	deploymentSandboxID        pgtype.UUID
+	deploymentDefinitionID     pgtype.UUID
 	baseVersionID              pgtype.UUID
 	runtimeInstanceID          pgtype.UUID
 	runtimeEpoch               int64
@@ -302,7 +302,7 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 		projectID:              row.ProjectID,
 		environmentID:          row.EnvironmentID,
 		workspaceID:            row.WorkspaceID,
-		deploymentSandboxID:    row.DeploymentSandboxID,
+		deploymentDefinitionID: row.DeploymentDefinitionID,
 		baseVersionID:          row.BaseVersionID,
 		runtimeInstanceID:      row.RuntimeInstanceID,
 		runtimeEpoch:           row.WorkerEpoch,
@@ -345,7 +345,7 @@ func workerWorkspaceMountFromFields(fields workerWorkspaceMountFields) *api.Work
 		ProjectID:                  pgvalue.MustUUIDValue(fields.projectID).String(),
 		EnvironmentID:              pgvalue.MustUUIDValue(fields.environmentID).String(),
 		WorkspaceID:                pgvalue.MustUUIDValue(fields.workspaceID).String(),
-		DeploymentSandboxID:        pgvalue.MustUUIDValue(fields.deploymentSandboxID).String(),
+		DeploymentDefinitionID:     pgvalue.MustUUIDValue(fields.deploymentDefinitionID).String(),
 		RuntimeInstanceID:          pgvalue.UUIDString(fields.runtimeInstanceID),
 		RuntimeEpoch:               fields.runtimeEpoch,
 		NetworkSlotID:              pgvalue.UUIDString(fields.networkSlotID),

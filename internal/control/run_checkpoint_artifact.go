@@ -37,14 +37,14 @@ func checkpointRuntimeSubstrateID(manifest api.WorkerCheckpointManifest) (pgtype
 
 func validateWorkerRuntimeSubstrate(label string, artifact api.WorkerRuntimeSubstrate, substrate api.WorkerCheckpointRuntimeSubstrate) error {
 	required := map[string]string{
-		label + ".id":                    artifact.ID,
-		label + ".deployment_sandbox_id": artifact.DeploymentSandboxID,
-		label + ".artifact.digest":       artifact.Artifact.Digest,
-		label + ".artifact.media_type":   artifact.Artifact.MediaType,
-		label + ".substrate_digest":      artifact.SubstrateDigest,
-		label + ".format":                artifact.Format,
-		label + ".builder_abi":           artifact.BuilderABI,
-		label + ".layout_abi":            artifact.LayoutABI,
+		label + ".id":                       artifact.ID,
+		label + ".deployment_definition_id": artifact.DeploymentDefinitionID,
+		label + ".artifact.digest":          artifact.Artifact.Digest,
+		label + ".artifact.media_type":      artifact.Artifact.MediaType,
+		label + ".substrate_digest":         artifact.SubstrateDigest,
+		label + ".format":                   artifact.Format,
+		label + ".builder_abi":              artifact.BuilderABI,
+		label + ".layout_abi":               artifact.LayoutABI,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {

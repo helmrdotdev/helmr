@@ -580,8 +580,8 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 		LayoutABI:  "helmr.runtime-substrate.layout.v0",
 	}
 	checkpoint.RuntimeState.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-		ID:                  "019f1790-0000-7000-8000-000000000003",
-		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000004",
+		ID:                     "019f1790-0000-7000-8000-000000000003",
+		DeploymentDefinitionID: "019f1790-0000-7000-8000-000000000004",
 		Artifact: api.CASObject{
 			Digest:    substrateObject.digest,
 			SizeBytes: int64(len(substrateObject.body)),
@@ -707,8 +707,8 @@ func TestGuestRunnerRestoresCheckpointSubstrateFromLocalCache(t *testing.T) {
 		LayoutABI:  "helmr.runtime-substrate.layout.v0",
 	}
 	checkpoint.RuntimeState.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-		ID:                  "019f1790-0000-7000-8000-000000000003",
-		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000004",
+		ID:                     "019f1790-0000-7000-8000-000000000003",
+		DeploymentDefinitionID: "019f1790-0000-7000-8000-000000000004",
 		Artifact: api.CASObject{
 			Digest:    substrateObject.digest,
 			SizeBytes: int64(len(substrateObject.body)),
@@ -803,8 +803,8 @@ func TestGuestRunnerRejectsCheckpointSubstrateArtifactDigestMismatch(t *testing.
 		LayoutABI:  "helmr.runtime-substrate.layout.v0",
 	}
 	checkpoint.RuntimeState.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-		ID:                  "019f1790-0000-7000-8000-000000000005",
-		DeploymentSandboxID: "019f1790-0000-7000-8000-000000000006",
+		ID:                     "019f1790-0000-7000-8000-000000000005",
+		DeploymentDefinitionID: "019f1790-0000-7000-8000-000000000006",
 		Artifact: api.CASObject{
 			Digest:    substrateObject.digest,
 			SizeBytes: int64(len(substrateObject.body)),

@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -66,7 +67,9 @@ func TestGetNextRuntimeReconcileTargetWithoutRuntimeSubstrate(t *testing.T) {
 	`, uuid.Must(uuid.NewV7()), groupID, workerID, runtimeID)
 	mustExec(t, ctx, pool, `
 		UPDATE worker_instances
-		   SET state = 'active', supports_run = true, runtime_identity_id = 'test-runtime',
+		   SET state = 'active', supervisor_version = 'test-worker',
+		       supports_run = true, runtime_identity_id = 'test-runtime',
+		       substrate_format = $2, substrate_builder_abi = $3, substrate_layout_abi = $4,
 		       certified_cpu_millis = 4000, certified_memory_bytes = 8589934592,
 		       certified_workload_disk_bytes = 10737418240, certified_scratch_bytes = 10737418240,
 		       per_vm_cpu_millis = 2000, per_vm_memory_bytes = 2147483648,
@@ -75,7 +78,7 @@ func TestGetNextRuntimeReconcileTargetWithoutRuntimeSubstrate(t *testing.T) {
 		       certification_profile = 'test', certification_fingerprint = 'test-fingerprint',
 		       certified_at = now(), activated_at = now()
 		 WHERE id = $1
-	`, workerID)
+	`, workerID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 
 	target, err := queries.GetNextRuntimeReconcileTarget(ctx, db.GetNextRuntimeReconcileTargetParams{
 		WorkerGroupID:    groupID,

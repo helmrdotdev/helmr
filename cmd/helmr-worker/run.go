@@ -418,6 +418,11 @@ func run(log *slog.Logger) error {
 			DenyCIDRs:     true,
 		},
 	}
+	if supportsRun {
+		workerCapabilities.SubstrateFormat = substrate.Format
+		workerCapabilities.SubstrateBuilderABI = substrate.BuilderABI
+		workerCapabilities.SubstrateLayoutABI = substrate.LayoutABI
+	}
 	hostCapacity, err := capacity.New(capacity.Vector{
 		CPUMillis:         workerCapabilities.MaxVCPUs * 1000,
 		MemoryBytes:       workerCapabilities.MaxMemoryMiB * 1024 * 1024,

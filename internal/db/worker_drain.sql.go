@@ -13,7 +13,7 @@ import (
 
 const completeWorkerDrain = `-- name: CompleteWorkerDrain :one
 WITH target AS MATERIALIZED (
-    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
+    SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at
       FROM worker_instances
       JOIN worker_groups ON worker_groups.id = worker_instances.worker_group_id
      WHERE worker_instances.id = $1
@@ -33,48 +33,43 @@ WITH target AS MATERIALIZED (
      WHERE worker_instances.id = target.id
        AND target.state = 'draining'
        AND target.epoch_started_at IS NOT NULL
+       AND target.startup_inventory_epoch = target.current_epoch
+       AND target.startup_inventory_evidence IS NOT NULL
        AND $6::timestamptz >= target.epoch_started_at
        AND $6::timestamptz <= now() + interval '1 minute'
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.worker_instance_id = target.id
-              AND run_leases.worker_epoch = target.current_epoch
               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases
             WHERE deployment_build_leases.worker_instance_id = target.id
-              AND deployment_build_leases.worker_epoch = target.current_epoch
               AND deployment_build_leases.state IN ('assigned', 'starting', 'running')
        )
        AND NOT EXISTS (
            SELECT 1 FROM runtime_instances
             WHERE runtime_instances.worker_instance_id = target.id
-              AND runtime_instances.worker_epoch = target.current_epoch
               AND runtime_instances.reclaimed_at IS NULL
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
             WHERE workspace_mounts.worker_instance_id = target.id
-              AND workspace_mounts.worker_epoch = target.current_epoch
               AND workspace_mounts.state IN ('mounting', 'mounted', 'unmounting')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_leases
             WHERE workspace_leases.worker_instance_id = target.id
-              AND workspace_leases.worker_epoch = target.current_epoch
               AND workspace_leases.state IN ('active', 'releasing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_processes
             WHERE workspace_processes.worker_instance_id = target.id
-              AND workspace_processes.worker_epoch = target.current_epoch
               AND workspace_processes.state IN ('starting', 'running', 'exit_requested')
        )
        AND NOT EXISTS (
            SELECT 1 FROM worker_network_slots
             WHERE worker_network_slots.worker_instance_id = target.id
-              AND worker_network_slots.worker_epoch = target.current_epoch
               AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
        )
     RETURNING worker_instances.id, worker_instances.worker_group_id, worker_instances.state,

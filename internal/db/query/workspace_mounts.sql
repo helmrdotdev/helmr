@@ -160,6 +160,7 @@ WITH candidate AS (
     RETURNING workspace_mounts.*
 )
 SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
+       runtime_instances.deployment_definition_id,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        worker_network_slots.id AS network_slot_id,

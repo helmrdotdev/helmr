@@ -29,7 +29,7 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		writeError(w, errors.New("runtime substrate CAS is not configured"))
 		return
 	}
-	deploymentSandboxID, err := parseWorkspaceUUID("deployment_sandbox_id", request.DeploymentSandboxID)
+	workspaceDefinitionID, err := parseWorkspaceUUID("deployment_definition_id", request.DeploymentDefinitionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -43,16 +43,6 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		}
 	}
 	worker := workerFromContext(r.Context())
-	if _, err := s.db.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
-		ID:            deploymentSandboxID,
-		WorkerGroupID: worker.WorkerGroupID,
-	}); isNoRows(err) {
-		writeError(w, notFound(errors.New("deployment sandbox not found")))
-		return
-	} else if err != nil {
-		writeError(w, errors.New("load deployment sandbox"))
-		return
-	}
 	stat, err := s.cas.Stat(r.Context(), strings.TrimSpace(request.Artifact.Digest))
 	if err != nil {
 		writeError(w, badRequest(fmt.Errorf("runtime substrate is missing from CAS: %w", err)))
@@ -72,18 +62,23 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 	}
 	var row db.RuntimeSubstrate
 	err = s.inTx(r.Context(), func(work *txWork) error {
-		sandbox, err := work.q.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
-			ID:            deploymentSandboxID,
-			WorkerGroupID: worker.WorkerGroupID,
+		authority, err := work.q.LockRuntimeSubstrateAuthority(r.Context(), db.LockRuntimeSubstrateAuthorityParams{
+			DeploymentDefinitionID: workspaceDefinitionID,
+			WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID:          worker.WorkerGroupID,
+			WorkerEpoch:            worker.WorkerEpoch,
+			SubstrateFormat:        strings.TrimSpace(request.Format),
+			BuilderAbi:             strings.TrimSpace(request.BuilderABI),
+			LayoutAbi:              strings.TrimSpace(request.LayoutABI),
 		})
 		if isNoRows(err) {
-			return notFound(errors.New("deployment sandbox not found"))
+			return conflict(errors.New("runtime substrate authority is stale"))
 		}
 		if err != nil {
-			return errors.New("load deployment sandbox")
+			return errors.New("lock runtime substrate authority")
 		}
 		if _, err := work.q.UpsertCasObject(r.Context(), db.UpsertCasObjectParams{
-			OrgID:     sandbox.OrgID,
+			OrgID:     authority.OrgID,
 			Digest:    strings.TrimSpace(request.Artifact.Digest),
 			SizeBytes: request.Artifact.SizeBytes,
 			MediaType: strings.TrimSpace(request.Artifact.MediaType),
@@ -92,9 +87,9 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		}
 		artifact, err := work.q.UpsertRuntimeSubstrateBlob(r.Context(), db.UpsertRuntimeSubstrateBlobParams{
 			ID:                        pgvalue.UUID(uuid.Must(uuid.NewV7())),
-			OrgID:                     sandbox.OrgID,
-			ProjectID:                 sandbox.ProjectID,
-			EnvironmentID:             sandbox.EnvironmentID,
+			OrgID:                     authority.OrgID,
+			ProjectID:                 authority.ProjectID,
+			EnvironmentID:             authority.EnvironmentID,
 			Digest:                    strings.TrimSpace(request.Artifact.Digest),
 			SizeBytes:                 request.Artifact.SizeBytes,
 			MediaType:                 strings.TrimSpace(request.Artifact.MediaType),
@@ -103,12 +98,12 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 		if err != nil {
 			return errors.New("record runtime substrate")
 		}
-		row, err = work.q.UpsertRuntimeSubstrate(r.Context(), db.UpsertRuntimeSubstrateParams{
+		params := db.InsertRuntimeSubstrateParams{
 			ID:                        runtimeSubstrateID,
-			OrgID:                     sandbox.OrgID,
-			ProjectID:                 sandbox.ProjectID,
-			EnvironmentID:             sandbox.EnvironmentID,
-			DeploymentSandboxID:       sandbox.ID,
+			OrgID:                     authority.OrgID,
+			ProjectID:                 authority.ProjectID,
+			EnvironmentID:             authority.EnvironmentID,
+			DeploymentDefinitionID:    authority.DeploymentDefinitionID,
 			ArtifactID:                artifact.ID,
 			SubstrateDigest:           strings.TrimSpace(request.SubstrateDigest),
 			SubstrateFormat:           strings.TrimSpace(request.Format),
@@ -117,12 +112,30 @@ func (s *Server) workerRegisterRuntimeSubstrate(w http.ResponseWriter, r *http.R
 			SubstrateSizeBytes:        request.SizeBytes,
 			Source:                    normalizedJSONRawMessage(request.Source),
 			CreatedByWorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
+		}
+		if _, err = work.q.InsertRuntimeSubstrate(r.Context(), params); err != nil {
+			return err
+		}
+		row, err = work.q.GetRuntimeSubstrateRegistration(r.Context(), db.GetRuntimeSubstrateRegistrationParams{
+			OrgID:                  params.OrgID,
+			ProjectID:              params.ProjectID,
+			EnvironmentID:          params.EnvironmentID,
+			DeploymentDefinitionID: params.DeploymentDefinitionID,
+			ArtifactID:             params.ArtifactID,
+			SubstrateDigest:        params.SubstrateDigest,
+			SubstrateFormat:        params.SubstrateFormat,
+			BuilderAbi:             params.BuilderAbi,
+			LayoutAbi:              params.LayoutAbi,
+			SubstrateSizeBytes:     params.SubstrateSizeBytes,
 		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return conflict(errors.New("runtime substrate output conflicts with the registered build"))
+		}
 		return err
 	})
 	if err != nil {
 		if errorStatus(err) == http.StatusInternalServerError {
-			writeError(w, errors.New("upsert runtime substrate"))
+			writeError(w, errors.New("register runtime substrate"))
 			return
 		}
 		writeError(w, err)
@@ -143,41 +156,51 @@ func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Req
 		writeError(w, badRequest(err))
 		return
 	}
-	deploymentSandboxID, err := parseWorkspaceUUID("deployment_sandbox_id", request.DeploymentSandboxID)
+	workspaceDefinitionID, err := parseWorkspaceUUID("deployment_definition_id", request.DeploymentDefinitionID)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
 	}
 	worker := workerFromContext(r.Context())
-	sandbox, err := s.db.GetDeploymentSandboxForWorkerGroup(r.Context(), db.GetDeploymentSandboxForWorkerGroupParams{
-		ID:            deploymentSandboxID,
-		WorkerGroupID: worker.WorkerGroupID,
-	})
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("deployment sandbox not found")))
-		return
-	}
-	if err != nil {
-		s.log.Error("lookup runtime substrate sandbox failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_sandbox_id", request.DeploymentSandboxID, "error", err)
-		writeError(w, errors.New("lookup runtime substrate sandbox"))
-		return
-	}
-	row, err := s.db.GetRuntimeSubstrateForSandbox(r.Context(), db.GetRuntimeSubstrateForSandboxParams{
-		OrgID:               sandbox.OrgID,
-		ProjectID:           sandbox.ProjectID,
-		EnvironmentID:       sandbox.EnvironmentID,
-		DeploymentSandboxID: sandbox.ID,
-		SubstrateDigest:     strings.TrimSpace(request.SubstrateDigest),
-		SubstrateFormat:     strings.TrimSpace(request.Format),
-		BuilderAbi:          strings.TrimSpace(request.BuilderABI),
-		LayoutAbi:           strings.TrimSpace(request.LayoutABI),
+	var row db.GetRuntimeSubstrateForWorkspaceDefinitionRow
+	err = s.inTx(r.Context(), func(work *txWork) error {
+		authority, err := work.q.LockRuntimeSubstrateAuthority(r.Context(), db.LockRuntimeSubstrateAuthorityParams{
+			DeploymentDefinitionID: workspaceDefinitionID,
+			WorkerInstanceID:       pgvalue.UUID(worker.WorkerInstanceID),
+			WorkerGroupID:          worker.WorkerGroupID,
+			WorkerEpoch:            worker.WorkerEpoch,
+			SubstrateFormat:        strings.TrimSpace(request.Format),
+			BuilderAbi:             strings.TrimSpace(request.BuilderABI),
+			LayoutAbi:              strings.TrimSpace(request.LayoutABI),
+		})
+		if isNoRows(err) {
+			return conflict(errors.New("runtime substrate authority is stale"))
+		}
+		if err != nil {
+			return errors.New("lock runtime substrate authority")
+		}
+		row, err = work.q.GetRuntimeSubstrateForWorkspaceDefinition(r.Context(), db.GetRuntimeSubstrateForWorkspaceDefinitionParams{
+			OrgID:                  authority.OrgID,
+			ProjectID:              authority.ProjectID,
+			EnvironmentID:          authority.EnvironmentID,
+			DeploymentDefinitionID: authority.DeploymentDefinitionID,
+			SubstrateDigest:        strings.TrimSpace(request.SubstrateDigest),
+			SubstrateFormat:        strings.TrimSpace(request.Format),
+			BuilderAbi:             strings.TrimSpace(request.BuilderABI),
+			LayoutAbi:              strings.TrimSpace(request.LayoutABI),
+		})
+		return err
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, notFound(errors.New("runtime substrate not found")))
 		return
 	}
 	if err != nil {
-		s.log.Error("lookup runtime substrate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_sandbox_id", request.DeploymentSandboxID, "error", err)
+		if errorStatus(err) != http.StatusInternalServerError {
+			writeError(w, err)
+			return
+		}
+		s.log.Error("lookup runtime substrate failed", "worker_instance_id", worker.WorkerInstanceID.String(), "deployment_definition_id", request.DeploymentDefinitionID, "error", err)
 		writeError(w, errors.New("lookup runtime substrate"))
 		return
 	}
@@ -188,13 +211,13 @@ func (s *Server) workerLookupRuntimeSubstrate(w http.ResponseWriter, r *http.Req
 
 func validateRuntimeSubstrateRegisterRequest(request api.WorkerRuntimeSubstrateRegisterRequest) error {
 	required := map[string]string{
-		"deployment_sandbox_id": request.DeploymentSandboxID,
-		"artifact.digest":       request.Artifact.Digest,
-		"artifact.media_type":   request.Artifact.MediaType,
-		"substrate_digest":      request.SubstrateDigest,
-		"format":                request.Format,
-		"builder_abi":           request.BuilderABI,
-		"layout_abi":            request.LayoutABI,
+		"deployment_definition_id": request.DeploymentDefinitionID,
+		"artifact.digest":          request.Artifact.Digest,
+		"artifact.media_type":      request.Artifact.MediaType,
+		"substrate_digest":         request.SubstrateDigest,
+		"format":                   request.Format,
+		"builder_abi":              request.BuilderABI,
+		"layout_abi":               request.LayoutABI,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -215,11 +238,11 @@ func validateRuntimeSubstrateRegisterRequest(request api.WorkerRuntimeSubstrateR
 
 func validateRuntimeSubstrateLookupRequest(request api.WorkerRuntimeSubstrateLookupRequest) error {
 	required := map[string]string{
-		"deployment_sandbox_id": request.DeploymentSandboxID,
-		"substrate_digest":      request.SubstrateDigest,
-		"format":                request.Format,
-		"builder_abi":           request.BuilderABI,
-		"layout_abi":            request.LayoutABI,
+		"deployment_definition_id": request.DeploymentDefinitionID,
+		"substrate_digest":         request.SubstrateDigest,
+		"format":                   request.Format,
+		"builder_abi":              request.BuilderABI,
+		"layout_abi":               request.LayoutABI,
 	}
 	for field, value := range required {
 		if strings.TrimSpace(value) == "" {
@@ -231,21 +254,22 @@ func validateRuntimeSubstrateLookupRequest(request api.WorkerRuntimeSubstrateLoo
 
 func runtimeSubstrateResponse(row db.RuntimeSubstrate, artifact api.CASObject) api.WorkerRuntimeSubstrate {
 	return api.WorkerRuntimeSubstrate{
-		ID:                  pgvalue.UUIDString(row.ID),
-		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
-		Artifact:            artifact,
-		SubstrateDigest:     row.SubstrateDigest,
-		Format:              row.SubstrateFormat,
-		BuilderABI:          row.BuilderAbi,
-		LayoutABI:           row.LayoutAbi,
-		SizeBytes:           row.SubstrateSizeBytes,
+		ID:                     pgvalue.UUIDString(row.ID),
+		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
+		Artifact:               artifact,
+		SubstrateDigest:        row.SubstrateDigest,
+		Format:                 row.SubstrateFormat,
+		BuilderABI:             row.BuilderAbi,
+		LayoutABI:              row.LayoutAbi,
+		SizeBytes:              row.SubstrateSizeBytes,
+		Retired:                row.RetiredAt.Valid,
 	}
 }
 
-func runtimeSubstrateResponseFromLookup(row db.GetRuntimeSubstrateForSandboxRow) api.WorkerRuntimeSubstrate {
+func runtimeSubstrateResponseFromLookup(row db.GetRuntimeSubstrateForWorkspaceDefinitionRow) api.WorkerRuntimeSubstrate {
 	return api.WorkerRuntimeSubstrate{
-		ID:                  pgvalue.UUIDString(row.ID),
-		DeploymentSandboxID: pgvalue.UUIDString(row.DeploymentSandboxID),
+		ID:                     pgvalue.UUIDString(row.ID),
+		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
 		Artifact: api.CASObject{
 			Digest:    row.ArtifactDigest,
 			SizeBytes: row.ArtifactSizeBytes,

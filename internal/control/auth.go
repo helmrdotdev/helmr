@@ -225,18 +225,31 @@ func (s *Server) sessionActorFromToken(r *http.Request, rawSession string) (auth
 }
 
 func (s *Server) requireWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(false, false, next)
+	return s.requireWorkerState(workerAuthCertified, next)
 }
 
 func (s *Server) requireRegisteringWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(true, false, next)
+	return s.requireWorkerState(workerAuthRegistering, next)
+}
+
+func (s *Server) requireRecoveringWorker(next http.Handler) http.Handler {
+	return s.requireWorkerState(workerAuthRecovering, next)
 }
 
 func (s *Server) requireTerminalWorker(next http.Handler) http.Handler {
-	return s.requireWorkerState(false, true, next)
+	return s.requireWorkerState(workerAuthTerminal, next)
 }
 
-func (s *Server) requireWorkerState(registering, terminal bool, next http.Handler) http.Handler {
+type workerAuthState uint8
+
+const (
+	workerAuthCertified workerAuthState = iota
+	workerAuthRegistering
+	workerAuthRecovering
+	workerAuthTerminal
+)
+
+func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if s.db == nil || len(s.workerTokenSecret) == 0 {
 			writeError(w, unavailable(errors.New("worker authentication is not configured")))
@@ -271,13 +284,17 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 		}
 		var row db.AuthorizeWorkerInstanceCredentialRow
 		var authorizationErr error
-		if registering {
+		switch state {
+		case workerAuthRegistering:
 			startupRow, startupErr := s.db.AuthorizeRegisteringWorkerInstanceCredential(r.Context(), db.AuthorizeRegisteringWorkerInstanceCredentialParams(params))
 			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(startupRow), startupErr
-		} else if terminal {
+		case workerAuthRecovering:
+			recoveryRow, recoveryErr := s.db.AuthorizeRecoveringWorkerInstanceCredential(r.Context(), db.AuthorizeRecoveringWorkerInstanceCredentialParams(params))
+			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(recoveryRow), recoveryErr
+		case workerAuthTerminal:
 			terminalRow, terminalErr := s.db.AuthorizeTerminalWorkerInstanceCredential(r.Context(), db.AuthorizeTerminalWorkerInstanceCredentialParams(params))
 			row, authorizationErr = db.AuthorizeWorkerInstanceCredentialRow(terminalRow), terminalErr
-		} else {
+		default:
 			row, authorizationErr = s.db.AuthorizeWorkerInstanceCredential(r.Context(), params)
 		}
 		if isNoRows(authorizationErr) {
@@ -308,16 +325,18 @@ func (s *Server) requireWorkerState(registering, terminal bool, next http.Handle
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
 			return
 		}
-		expectedRoles := make([]string, 0, 2)
-		if row.SupportsBuild {
-			expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
-		}
-		if row.SupportsRun {
-			expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
-		}
-		if !slices.Equal(payload.Roles, expectedRoles) {
-			writeError(w, unauthorized(errors.New("worker authentication is required")))
-			return
+		if row.SupportsRun || row.SupportsBuild {
+			expectedRoles := make([]string, 0, 2)
+			if row.SupportsBuild {
+				expectedRoles = append(expectedRoles, auth.WorkerRoleBuild)
+			}
+			if row.SupportsRun {
+				expectedRoles = append(expectedRoles, auth.WorkerRoleRun)
+			}
+			if !slices.Equal(payload.Roles, expectedRoles) {
+				writeError(w, unauthorized(errors.New("worker authentication is required")))
+				return
+			}
 		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), workerContextKey{}, worker)))
 	})

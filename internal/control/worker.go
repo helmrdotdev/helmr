@@ -354,6 +354,11 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("startup inventory observed_at is in the future")))
 		return
 	}
+	worker := workerFromContext(r.Context())
+	if request.ObservedAt.Before(worker.EpochStartedAt) {
+		writeError(w, badRequest(errors.New("startup inventory observed_at predates the current worker epoch")))
+		return
+	}
 	inventory := make(map[uuid.UUID]struct{}, len(request.Inventory))
 	for _, value := range request.Inventory {
 		id, err := uuid.Parse(strings.TrimSpace(value))
@@ -401,7 +406,6 @@ func (s *Server) workerStartupRecovery(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(errors.New("encode startup recovery evidence")))
 		return
 	}
-	worker := workerFromContext(r.Context())
 	if _, err := s.db.RecordWorkerStartupRecovery(r.Context(), db.RecordWorkerStartupRecoveryParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID,
 		WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true}, RecoveryEvidence: evidence,
@@ -471,6 +475,7 @@ func workerCertificationRenewParams(worker workerActor, c api.WorkerCapabilities
 	return db.RenewWorkerCertificationParams{
 		WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerGroupID: worker.WorkerGroupID, WorkerEpoch: pgtype.Int8{Int64: worker.WorkerEpoch, Valid: true},
 		RuntimeIdentityID: c.RuntimeID, ProtocolVersion: c.ProtocolVersion, SupportsRun: c.SupportsRun, SupportsBuild: c.SupportsBuild,
+		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
 		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		CertifiedWorkloadDiskBytes: c.MaxDiskMiB * 1024 * 1024, CertifiedScratchBytes: c.ScratchBytes,
 		CertifiedBuildCacheBytes: c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
@@ -709,6 +714,7 @@ func workerCertificationParams(worker workerActor, request api.WorkerActivateReq
 		KernelDigest: c.KernelDigest, InitramfsDigest: c.InitramfsDigest, RootfsDigest: c.RootfsDigest,
 		CniProfile: c.CNIProfile, ProtocolVersion: c.ProtocolVersion, SupervisorVersion: c.WorkerVersion,
 		SupportsRun: supportsRun, SupportsBuild: c.SupportsBuild,
+		SubstrateFormat: c.SubstrateFormat, SubstrateBuilderAbi: c.SubstrateBuilderABI, SubstrateLayoutAbi: c.SubstrateLayoutABI,
 		CertifiedCpuMillis: c.MaxVCPUs * 1000, CertifiedMemoryBytes: c.MaxMemoryMiB * 1024 * 1024,
 		CertifiedWorkloadDiskBytes: c.MaxDiskMiB * 1024 * 1024, CertifiedScratchBytes: c.ScratchBytes,
 		CertifiedBuildCacheBytes: c.BuildCacheBytes, CertifiedArtifactCacheBytes: c.ArtifactCacheBytes,
@@ -735,6 +741,9 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 		InitramfsDigest:         strings.TrimSpace(input.InitramfsDigest),
 		RootfsDigest:            strings.TrimSpace(input.RootfsDigest),
 		CNIProfile:              strings.TrimSpace(input.CNIProfile),
+		SubstrateFormat:         strings.TrimSpace(input.SubstrateFormat),
+		SubstrateBuilderABI:     strings.TrimSpace(input.SubstrateBuilderABI),
+		SubstrateLayoutABI:      strings.TrimSpace(input.SubstrateLayoutABI),
 		Region:                  strings.TrimSpace(input.Region),
 		MaxVCPUs:                input.MaxVCPUs,
 		MaxMemoryMiB:            input.MaxMemoryMiB,
@@ -862,6 +871,19 @@ func normalizeWorkerCapabilities(input api.WorkerCapabilities) (api.WorkerCapabi
 	}
 	if capabilities.SupportsRun && capabilities.MaxRuntimeStarts <= 0 {
 		return api.WorkerCapabilities{}, errors.New("worker max_runtime_starts must be positive for run role")
+	}
+	if capabilities.SupportsRun {
+		if capabilities.SubstrateFormat == "" {
+			return api.WorkerCapabilities{}, errors.New("worker substrate_format is required for run role")
+		}
+		if capabilities.SubstrateBuilderABI == "" {
+			return api.WorkerCapabilities{}, errors.New("worker substrate_builder_abi is required for run role")
+		}
+		if capabilities.SubstrateLayoutABI == "" {
+			return api.WorkerCapabilities{}, errors.New("worker substrate_layout_abi is required for run role")
+		}
+	} else if capabilities.SubstrateFormat != "" || capabilities.SubstrateBuilderABI != "" || capabilities.SubstrateLayoutABI != "" {
+		return api.WorkerCapabilities{}, errors.New("worker without run role must not report a substrate contract")
 	}
 	if !capabilities.Network.Internet {
 		return api.WorkerCapabilities{}, errors.New("worker network.internet capability is required")

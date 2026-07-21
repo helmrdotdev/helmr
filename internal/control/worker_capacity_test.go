@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 )
 
 func TestWorkerCertificationUsesAggregateDiskCapacity(t *testing.T) {
@@ -34,6 +35,9 @@ func TestNormalizeWorkerCapabilitiesRejectsPerVMShapeBeyondHost(t *testing.T) {
 	capabilities := testWorkerCapabilities()
 	capabilities.SupportsRun = true
 	capabilities.MaxRuntimeStarts = 1
+	capabilities.SubstrateFormat = substrate.Format
+	capabilities.SubstrateBuilderABI = substrate.BuilderABI
+	capabilities.SubstrateLayoutABI = substrate.LayoutABI
 	capabilities.VMMaxDiskMiB = capabilities.MaxDiskMiB + 1
 	if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
 		t.Fatal("per-VM workload disk beyond aggregate host capacity was accepted")
@@ -42,6 +46,33 @@ func TestNormalizeWorkerCapabilitiesRejectsPerVMShapeBeyondHost(t *testing.T) {
 	capabilities.VMMaxScratchBytes = capabilities.ScratchBytes + 1
 	if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
 		t.Fatal("per-VM scratch beyond aggregate host capacity was accepted")
+	}
+}
+
+func TestNormalizeWorkerCapabilitiesRequiresRunSubstrateContract(t *testing.T) {
+	base := testWorkerCapabilities()
+	base.SupportsRun = true
+	base.MaxRuntimeStarts = 1
+	base.SubstrateFormat = substrate.Format
+	base.SubstrateBuilderABI = substrate.BuilderABI
+	base.SubstrateLayoutABI = substrate.LayoutABI
+
+	for _, clear := range []func(*api.WorkerCapabilities){
+		func(c *api.WorkerCapabilities) { c.SubstrateFormat = "" },
+		func(c *api.WorkerCapabilities) { c.SubstrateBuilderABI = "" },
+		func(c *api.WorkerCapabilities) { c.SubstrateLayoutABI = "" },
+	} {
+		capabilities := base
+		clear(&capabilities)
+		if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
+			t.Fatal("run worker without a complete substrate contract was accepted")
+		}
+	}
+
+	withoutRun := testWorkerCapabilities()
+	withoutRun.SubstrateFormat = substrate.Format
+	if _, err := normalizeWorkerCapabilities(withoutRun); err == nil {
+		t.Fatal("worker without run role reported a substrate contract")
 	}
 }
 
@@ -105,6 +136,9 @@ func TestRunOnlyWorkerRejectsToolchainCatalog(t *testing.T) {
 	capabilities := testWorkerCapabilities()
 	capabilities.SupportsRun = true
 	capabilities.MaxRuntimeStarts = 1
+	capabilities.SubstrateFormat = substrate.Format
+	capabilities.SubstrateBuilderABI = substrate.BuilderABI
+	capabilities.SubstrateLayoutABI = substrate.LayoutABI
 	capabilities.ToolchainCatalogDigest = "sha256:" + strings.Repeat("7", 64)
 	if _, err := normalizeWorkerCapabilities(capabilities); err == nil {
 		t.Fatal("normalizeWorkerCapabilities accepted run-only toolchain catalog")

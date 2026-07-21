@@ -246,6 +246,7 @@ WITH runtime AS (
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
        AND worker_instances.state = 'registering'
+       AND btrim(sqlc.arg(supervisor_version)::text) <> ''
        AND (NOT sqlc.arg(supports_run)::boolean OR worker_groups.allows_run)
        AND (NOT sqlc.arg(supports_build)::boolean OR worker_groups.allows_build)
        AND (
@@ -292,6 +293,9 @@ WITH runtime AS (
            supports_run = sqlc.arg(supports_run), supports_build = sqlc.arg(supports_build),
            toolchain_catalog_digest = sqlc.narg(toolchain_catalog_digest),
            runtime_identity_id = runtime.id,
+           substrate_format = sqlc.arg(substrate_format),
+           substrate_builder_abi = sqlc.arg(substrate_builder_abi),
+           substrate_layout_abi = sqlc.arg(substrate_layout_abi),
            certified_cpu_millis = sqlc.arg(certified_cpu_millis),
            certified_memory_bytes = sqlc.arg(certified_memory_bytes),
            certified_workload_disk_bytes = sqlc.arg(certified_workload_disk_bytes),
@@ -393,6 +397,9 @@ UPDATE worker_instances
 	AND worker_instances.protocol_version = sqlc.arg(protocol_version)
 	AND worker_instances.supports_run = sqlc.arg(supports_run)
 	AND worker_instances.supports_build = sqlc.arg(supports_build)
+	AND worker_instances.substrate_format = sqlc.arg(substrate_format)
+	AND worker_instances.substrate_builder_abi = sqlc.arg(substrate_builder_abi)
+	AND worker_instances.substrate_layout_abi = sqlc.arg(substrate_layout_abi)
 	AND worker_instances.toolchain_catalog_digest IS NOT DISTINCT FROM sqlc.narg(toolchain_catalog_digest)::bytea
 	AND worker_instances.certified_cpu_millis = sqlc.arg(certified_cpu_millis)
 	AND worker_instances.certified_memory_bytes = sqlc.arg(certified_memory_bytes)
@@ -407,7 +414,7 @@ UPDATE worker_instances
 	AND worker_instances.per_vm_workload_disk_bytes = sqlc.arg(per_vm_workload_disk_bytes)
 	AND worker_instances.per_vm_scratch_bytes = sqlc.arg(per_vm_scratch_bytes)
 	AND worker_instances.max_vm_slots = sqlc.arg(max_vm_slots)
-	AND worker_instances.max_run_consumers = sqlc.arg(max_vm_slots)
+	AND worker_instances.max_run_consumers = sqlc.arg(max_run_consumers)
 	AND worker_instances.max_build_executors = sqlc.arg(max_build_executors)
 	AND worker_instances.max_runtime_starts = sqlc.arg(max_runtime_starts)
 	AND worker_instances.certified_cpu_millis >= worker_groups.required_cpu_millis
@@ -427,7 +434,15 @@ WITH target AS (
      WHERE worker_instances.id = sqlc.arg(worker_instance_id)
        AND worker_instances.worker_group_id = sqlc.arg(worker_group_id)
        AND worker_instances.current_epoch = sqlc.arg(worker_epoch)
-       AND worker_instances.state = 'registering'
+       AND (
+           worker_instances.state = 'registering'
+           OR (
+               worker_instances.state = 'draining'
+               AND NOT worker_instances.supports_run
+               AND NOT worker_instances.supports_build
+               AND worker_instances.certified_at IS NULL
+           )
+       )
      FOR UPDATE
 ), quarantined AS (
     SELECT value::uuid AS id

@@ -404,8 +404,8 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 	return api.WorkerRuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
 		Source: api.WorkerPreparedRuntimeSource{
-			DeploymentSandboxID: "00000000-0000-0000-0000-000000000703",
-			ReservedCpuMillis:   1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
+			DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703",
+			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
 		},
 	}
@@ -414,7 +414,7 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 func retryableWarmTarget() api.WorkerRuntimeReconcileTarget {
 	return api.WorkerRuntimeReconcileTarget{
 		ID: "00000000-0000-0000-0000-000000000503", WorkerEpoch: 7,
-		Source: api.WorkerPreparedRuntimeSource{DeploymentSandboxID: "00000000-0000-0000-0000-000000000703"},
+		Source: api.WorkerPreparedRuntimeSource{DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703"},
 	}
 }
 

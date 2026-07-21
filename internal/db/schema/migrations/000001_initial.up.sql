@@ -468,6 +468,9 @@ CREATE TABLE worker_instances (
     supports_build BOOLEAN NOT NULL DEFAULT false,
     toolchain_catalog_digest BYTEA,
     runtime_identity_id TEXT REFERENCES runtime_identities(id) ON DELETE RESTRICT,
+    substrate_format TEXT NOT NULL DEFAULT '',
+    substrate_builder_abi TEXT NOT NULL DEFAULT '',
+    substrate_layout_abi TEXT NOT NULL DEFAULT '',
     certified_cpu_millis BIGINT NOT NULL DEFAULT 0 CHECK (certified_cpu_millis >= 0),
     certified_memory_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_memory_bytes >= 0),
     certified_workload_disk_bytes BIGINT NOT NULL DEFAULT 0 CHECK (certified_workload_disk_bytes >= 0),
@@ -514,20 +517,52 @@ CREATE TABLE worker_instances (
     CHECK (drain_cleanup_fingerprint IS NULL OR drain_cleanup_fingerprint ~ '^[0-9a-f]{64}$'),
     CHECK (drain_cleanup_evidence IS NULL OR (jsonb_typeof(drain_cleanup_evidence) = 'object' AND octet_length(drain_cleanup_evidence::text) <= 16384)),
     CHECK (drain_cleanup_evidence IS NULL OR state = 'disabled'),
-    CHECK (
+    CONSTRAINT worker_instances_certification_shape_check CHECK (
         state NOT IN ('active', 'draining')
         OR (
-            certified_at IS NOT NULL
+            btrim(supervisor_version) <> ''
+            AND certified_at IS NOT NULL
             AND activated_at IS NOT NULL
             AND btrim(certification_profile) <> ''
             AND btrim(certification_fingerprint) <> ''
             AND certified_cpu_millis > 0
             AND certified_memory_bytes > 0
-			AND per_vm_cpu_millis > 0
-			AND per_vm_memory_bytes > 0
-			AND per_vm_workload_disk_bytes > 0
-			AND per_vm_scratch_bytes > 0
+            AND per_vm_cpu_millis > 0
+            AND per_vm_memory_bytes > 0
+            AND per_vm_workload_disk_bytes > 0
+            AND per_vm_scratch_bytes > 0
             AND (supports_run OR supports_build)
+        )
+        OR (
+            state = 'draining'
+            AND supervisor_version = ''
+            AND NOT supports_run
+            AND NOT supports_build
+            AND toolchain_catalog_digest IS NULL
+            AND runtime_identity_id IS NULL
+            AND substrate_format = ''
+            AND substrate_builder_abi = ''
+            AND substrate_layout_abi = ''
+            AND certified_cpu_millis = 0
+            AND certified_memory_bytes = 0
+            AND certified_workload_disk_bytes = 0
+            AND certified_scratch_bytes = 0
+            AND certified_build_cache_bytes = 0
+            AND certified_artifact_cache_bytes = 0
+            AND certified_hugepages_bytes = 0
+            AND certified_checkpoint_bytes = 0
+            AND per_vm_cpu_millis = 0
+            AND per_vm_memory_bytes = 0
+            AND per_vm_workload_disk_bytes = 0
+            AND per_vm_scratch_bytes = 0
+            AND max_vm_slots = 0
+            AND max_run_consumers = 0
+            AND max_build_executors = 0
+            AND max_runtime_starts = 0
+            AND certification_profile = ''
+            AND certification_fingerprint = ''
+            AND certified_at IS NULL
+            AND activated_at IS NULL
         )
     ),
     CHECK (
@@ -541,6 +576,17 @@ CREATE TABLE worker_instances (
         )
     ),
     CHECK (state NOT IN ('active', 'draining') OR NOT supports_build OR max_build_executors > 0),
+    CHECK (
+        (supports_run
+         AND btrim(substrate_format) <> ''
+         AND btrim(substrate_builder_abi) <> ''
+         AND btrim(substrate_layout_abi) <> '')
+        OR
+        (NOT supports_run
+         AND substrate_format = ''
+         AND substrate_builder_abi = ''
+         AND substrate_layout_abi = '')
+    ),
     CHECK (toolchain_catalog_digest IS NULL OR octet_length(toolchain_catalog_digest) = 32),
     CHECK (supports_build OR toolchain_catalog_digest IS NULL),
     CHECK (
@@ -1181,7 +1227,8 @@ CREATE TABLE runtime_substrates (
     UNIQUE (environment_id, id),
     UNIQUE (org_id, project_id, environment_id, id),
     UNIQUE (org_id, project_id, environment_id, deployment_definition_id, id),
-    UNIQUE (org_id, project_id, environment_id, deployment_definition_id, substrate_digest, substrate_format, builder_abi, layout_abi),
+    CONSTRAINT runtime_substrates_input_key
+        UNIQUE (org_id, project_id, environment_id, deployment_definition_id, substrate_format, builder_abi, layout_abi),
     FOREIGN KEY (environment_id, deployment_definition_id)
         REFERENCES deployment_definitions(environment_id, id)
         ON DELETE RESTRICT,

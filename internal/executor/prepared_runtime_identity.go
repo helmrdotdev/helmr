@@ -14,7 +14,7 @@ func preparedRuntimeKeyFromWorkspaceMount(mount api.WorkerWorkspaceMount, networ
 func preparedRuntimeIdentityFromWorkspaceMount(mount api.WorkerWorkspaceMount, network compute.NetworkPolicy) runtime.Identity {
 	return runtime.Identity{
 		RuntimeID:                  mount.RuntimeID,
-		DeploymentSandboxID:        mount.DeploymentSandboxID,
+		DeploymentSandboxID:        mount.DeploymentDefinitionID,
 		ImageDigest:                mount.ImageDigest,
 		ImageFormat:                mount.ImageFormat,
 		WorkspaceMountPath:         mount.WorkspaceMountPath,

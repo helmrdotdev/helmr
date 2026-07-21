@@ -9,6 +9,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -39,9 +40,12 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
-			supports_run, runtime_identity_id, certified_at, disabled_at
-		) VALUES ($1, $2, $3, 'sha256:test-attestation', 'disabled', true, 'fleet-runtime', now(), now())
-	`, oldWorkerID, "i-"+oldWorkerID.String(), dbtest.DefaultWorkerGroupID)
+			supports_run, runtime_identity_id, substrate_format, substrate_builder_abi,
+			substrate_layout_abi, certified_at, disabled_at
+		) VALUES ($1, $2, $3, 'sha256:test-attestation', 'disabled', true, 'fleet-runtime',
+		          $4, $5, $6, now(), now())
+	`, oldWorkerID, "i-"+oldWorkerID.String(), dbtest.DefaultWorkerGroupID,
+		substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 	count, err = q.CountUncertifiedRunLaunchAttestations(ctx, dbtest.DefaultWorkerGroupID)
 	if err != nil || count != 0 {
 		t.Fatalf("certified coverage gaps = %d error=%v, want 0", count, err)
@@ -79,9 +83,12 @@ func TestFleetRunAttestationCoverageTracksCurrentLaunchAMI(t *testing.T) {
 	mustExec(t, ctx, pool, `
 		INSERT INTO worker_instances (
 			id, resource_id, worker_group_id, attestation_fingerprint, state,
-			supports_run, runtime_identity_id, certified_at, disabled_at
-		) VALUES ($1, $2, $3, 'sha256:new-ami', 'disabled', true, 'fleet-runtime', now(), now())
-	`, runWorkerID, "i-"+runWorkerID.String(), dbtest.DefaultWorkerGroupID)
+			supports_run, runtime_identity_id, substrate_format, substrate_builder_abi,
+			substrate_layout_abi, certified_at, disabled_at
+		) VALUES ($1, $2, $3, 'sha256:new-ami', 'disabled', true, 'fleet-runtime',
+		          $4, $5, $6, now(), now())
+	`, runWorkerID, "i-"+runWorkerID.String(), dbtest.DefaultWorkerGroupID,
+		substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
 	count, err = q.CountUncertifiedRunLaunchAttestations(ctx, dbtest.DefaultWorkerGroupID)
 	if err != nil || count != 0 {
 		t.Fatalf("launch AMI coverage gaps = %d error=%v, want 0", count, err)

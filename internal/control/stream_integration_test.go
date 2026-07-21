@@ -25,6 +25,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	workergrouppkg "github.com/helmrdotdev/helmr/internal/region"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -1248,7 +1249,8 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO worker_instances (
 			id, worker_group_id, resource_id, attestation_fingerprint, state, current_epoch, current_service_id,
-			protocol_version, supports_run, runtime_identity_id,
+			protocol_version, supervisor_version, supports_run, runtime_identity_id,
+			substrate_format, substrate_builder_abi, substrate_layout_abi,
 			certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes,
 			certified_scratch_bytes, per_vm_cpu_millis, per_vm_memory_bytes,
 			per_vm_workload_disk_bytes, per_vm_scratch_bytes,
@@ -1256,12 +1258,14 @@ func seedControlRunningRunLease(t *testing.T, ctx context.Context, pool *pgxpool
 			certification_profile, certification_fingerprint,
 			epoch_started_at, certified_at, activated_at
 		)
-		VALUES ($1, $2, $3, 'sha256:test-attestation', 'active', 1, $4, $5, true, $6,
+		VALUES ($1, $2, $3, 'sha256:test-attestation', 'active', 1, $4, $5, 'test-worker', true, $6,
+			$7, $8, $9,
 			1000, 1073741824, 4294967296,
 			1073741824, 1000, 1073741824, 4294967296, 1073741824,
 			1, 1, 1,
 			'stream-test', 'stream-test-cert', now(), now(), now())
-	`, workerID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], serviceID, api.CurrentWorkerProtocolVersion, runtimeID); err != nil {
+	`, workerID, dbtest.DefaultWorkerGroupID, "worker-"+workerID.String()[:8], serviceID,
+		api.CurrentWorkerProtocolVersion, runtimeID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(ctx, `

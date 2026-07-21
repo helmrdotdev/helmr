@@ -428,12 +428,12 @@ func (p *PreparedRuntimePool) PrepareRuntimeSubstrateTarget(ctx context.Context,
 		return nil
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
-	if strings.TrimSpace(mount.DeploymentSandboxID) == "" {
+	if strings.TrimSpace(mount.DeploymentDefinitionID) == "" {
 		return errors.New("runtime substrate target source is required")
 	}
 	backgroundCtx, finish, ok := p.beginBackground(ctx)
 	if !ok {
-		p.logInfo("runtime substrate prepare skipped", "deployment_sandbox_id", mount.DeploymentSandboxID, "reason", "foreground_workspace_mount_active")
+		p.logInfo("runtime substrate prepare skipped", "deployment_definition_id", mount.DeploymentDefinitionID, "reason", "foreground_workspace_mount_active")
 		return errPreparedRuntimeBackgroundBusy
 	}
 	defer finish()
@@ -458,7 +458,7 @@ func (p *PreparedRuntimePool) PrepareRuntimeSubstrateTarget(ctx context.Context,
 	_, cleanupSandboxImage, topology, err := p.restoreSandboxImageAndRuntimeSubstrate(backgroundCtx, materializer, tempDir, mount,
 		"runtime substrate prepare sandbox image restored",
 		"runtime substrate prepared",
-		"deployment_sandbox_id", mount.DeploymentSandboxID,
+		"deployment_definition_id", mount.DeploymentDefinitionID,
 	)
 	if err != nil {
 		return err
@@ -471,7 +471,7 @@ func (p *PreparedRuntimePool) PrepareRuntimeSubstrateTarget(ctx context.Context,
 		substrateSource:   runtimeSubstrateSourceFromPreparedSource(target.Source),
 		runtimeSubstrates: p.RuntimeSubstrates,
 	}.ensureRuntimeSubstrate(backgroundCtx, topology.Substrate)
-	p.logInfo("runtime substrate registered", "deployment_sandbox_id", mount.DeploymentSandboxID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
+	p.logInfo("runtime substrate registered", "deployment_definition_id", mount.DeploymentDefinitionID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
 	return err
 }
 
@@ -488,7 +488,7 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 		}
 	}
 	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
-	if strings.TrimSpace(mount.DeploymentSandboxID) == "" {
+	if strings.TrimSpace(mount.DeploymentDefinitionID) == "" {
 		return errors.New("prepared runtime warm command source is required")
 	}
 	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
@@ -1068,7 +1068,7 @@ func preparedRuntimeWorkspaceMountFromSource(source api.WorkerPreparedRuntimeSou
 	return api.WorkerWorkspaceMount{
 		ID:                         uuid.Must(uuid.NewV7()).String(),
 		WorkspaceID:                uuid.Must(uuid.NewV7()).String(),
-		DeploymentSandboxID:        strings.TrimSpace(source.DeploymentSandboxID),
+		DeploymentDefinitionID:     strings.TrimSpace(source.DeploymentDefinitionID),
 		RuntimeID:                  strings.TrimSpace(source.RuntimeID),
 		SandboxImageArtifact:       source.SandboxImageArtifact,
 		SandboxImageArtifactFormat: strings.TrimSpace(source.SandboxImageArtifactFormat),

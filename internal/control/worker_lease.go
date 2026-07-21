@@ -295,7 +295,7 @@ func workerWorkspaceFromLease(row db.ClaimAssignedRunLeaseRow) api.WorkerWorkspa
 		Artifact: &api.WorkerWorkspaceArtifact{Digest: row.WorkspaceArtifactDigest, MediaType: row.WorkspaceArtifactMediaType,
 			Encoding: row.WorkspaceArtifactEncoding, SizeBytes: row.WorkspaceArtifactSizeBytes, EntryCount: row.WorkspaceArtifactEntryCount},
 		SubstrateSource: &api.WorkerRuntimeSubstrateSource{
-			DeploymentSandboxID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentSandboxID).String(),
+			DeploymentDefinitionID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentDefinitionID).String(),
 			WorkspaceImage: api.CASObject{
 				Digest:    row.WorkspaceSandboxImageArtifactDigest,
 				SizeBytes: row.WorkspaceSandboxImageArtifactSizeBytes,
@@ -308,7 +308,7 @@ func workerWorkspaceFromLease(row db.ClaimAssignedRunLeaseRow) api.WorkerWorkspa
 	}
 	if row.WorkspaceRuntimeSubstrateID.Valid {
 		workspace.SubstrateSource.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
-			ID: pgvalue.MustUUIDValue(row.WorkspaceRuntimeSubstrateID).String(), DeploymentSandboxID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentSandboxID).String(),
+			ID: pgvalue.MustUUIDValue(row.WorkspaceRuntimeSubstrateID).String(), DeploymentDefinitionID: pgvalue.MustUUIDValue(row.WorkspaceDeploymentDefinitionID).String(),
 			Artifact:        api.CASObject{Digest: row.WorkspaceRuntimeSubstrateBlobDigest.String, SizeBytes: row.WorkspaceRuntimeSubstrateBlobSizeBytes.Int64, MediaType: row.WorkspaceRuntimeSubstrateBlobMediaType.String},
 			SubstrateDigest: row.WorkspaceRuntimeSubstrateDigest.String, Format: row.WorkspaceRuntimeSubstrateFormat.String,
 			BuilderABI: row.WorkspaceRuntimeSubstrateBuilderAbi.String, LayoutABI: row.WorkspaceRuntimeSubstrateLayoutAbi.String,

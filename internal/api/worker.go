@@ -135,6 +135,9 @@ type WorkerCapabilities struct {
 	InitramfsDigest         string                    `json:"initramfs_digest"`
 	RootfsDigest            string                    `json:"rootfs_digest"`
 	CNIProfile              string                    `json:"cni_profile"`
+	SubstrateFormat         string                    `json:"substrate_format,omitempty"`
+	SubstrateBuilderABI     string                    `json:"substrate_builder_abi,omitempty"`
+	SubstrateLayoutABI      string                    `json:"substrate_layout_abi,omitempty"`
 	Region                  string                    `json:"region,omitempty"`
 	Labels                  map[string]string         `json:"labels,omitempty"`
 	MaxVCPUs                int64                     `json:"max_vcpus"`
@@ -248,7 +251,7 @@ type WorkerRuntimeInstance struct {
 	RuntimeKeyHash         string          `json:"runtime_key_hash"`
 	RuntimeKey             json.RawMessage `json:"runtime_key,omitempty"`
 	RuntimeID              string          `json:"runtime_id"`
-	DeploymentSandboxID    string          `json:"deployment_sandbox_id"`
+	DeploymentDefinitionID string          `json:"deployment_definition_id"`
 	State                  string          `json:"state"`
 	ReservedCpuMillis      int32           `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32           `json:"reserved_memory_mib"`
@@ -259,7 +262,7 @@ type WorkerRuntimeInstance struct {
 }
 
 type WorkerPreparedRuntimeSource struct {
-	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
+	DeploymentDefinitionID     string                  `json:"deployment_definition_id"`
 	RuntimeID                  string                  `json:"runtime_id"`
 	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
 	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
@@ -441,32 +444,33 @@ type WorkerWorkspace struct {
 }
 
 type WorkerRuntimeSubstrateSource struct {
-	DeploymentSandboxID string                  `json:"deployment_sandbox_id"`
-	WorkspaceImage      CASObject               `json:"workspace_image"`
-	RuntimeSubstrate    *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
+	DeploymentDefinitionID string                  `json:"deployment_definition_id"`
+	WorkspaceImage         CASObject               `json:"workspace_image"`
+	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
 type WorkerRuntimeSubstrate struct {
-	ID                  string    `json:"id,omitempty"`
-	DeploymentSandboxID string    `json:"deployment_sandbox_id"`
-	Artifact            CASObject `json:"artifact"`
-	SubstrateDigest     string    `json:"substrate_digest"`
-	Format              string    `json:"format"`
-	BuilderABI          string    `json:"builder_abi"`
-	LayoutABI           string    `json:"layout_abi"`
-	SizeBytes           int64     `json:"size_bytes"`
+	ID                     string    `json:"id,omitempty"`
+	DeploymentDefinitionID string    `json:"deployment_definition_id"`
+	Artifact               CASObject `json:"artifact"`
+	SubstrateDigest        string    `json:"substrate_digest"`
+	Format                 string    `json:"format"`
+	BuilderABI             string    `json:"builder_abi"`
+	LayoutABI              string    `json:"layout_abi"`
+	SizeBytes              int64     `json:"size_bytes"`
+	Retired                bool      `json:"retired"`
 }
 
 type WorkerRuntimeSubstrateRegisterRequest struct {
-	ID                  string          `json:"id,omitempty"`
-	DeploymentSandboxID string          `json:"deployment_sandbox_id"`
-	Artifact            CASObject       `json:"artifact"`
-	SubstrateDigest     string          `json:"substrate_digest"`
-	Format              string          `json:"format"`
-	BuilderABI          string          `json:"builder_abi"`
-	LayoutABI           string          `json:"layout_abi"`
-	SizeBytes           int64           `json:"size_bytes"`
-	Source              json.RawMessage `json:"source,omitempty"`
+	ID                     string          `json:"id,omitempty"`
+	DeploymentDefinitionID string          `json:"deployment_definition_id"`
+	Artifact               CASObject       `json:"artifact"`
+	SubstrateDigest        string          `json:"substrate_digest"`
+	Format                 string          `json:"format"`
+	BuilderABI             string          `json:"builder_abi"`
+	LayoutABI              string          `json:"layout_abi"`
+	SizeBytes              int64           `json:"size_bytes"`
+	Source                 json.RawMessage `json:"source,omitempty"`
 }
 
 type WorkerRuntimeSubstrateRegisterResponse struct {
@@ -474,11 +478,11 @@ type WorkerRuntimeSubstrateRegisterResponse struct {
 }
 
 type WorkerRuntimeSubstrateLookupRequest struct {
-	DeploymentSandboxID string `json:"deployment_sandbox_id"`
-	SubstrateDigest     string `json:"substrate_digest"`
-	Format              string `json:"format"`
-	BuilderABI          string `json:"builder_abi"`
-	LayoutABI           string `json:"layout_abi"`
+	DeploymentDefinitionID string `json:"deployment_definition_id"`
+	SubstrateDigest        string `json:"substrate_digest"`
+	Format                 string `json:"format"`
+	BuilderABI             string `json:"builder_abi"`
+	LayoutABI              string `json:"layout_abi"`
 }
 
 type WorkerRuntimeSubstrateLookupResponse struct {

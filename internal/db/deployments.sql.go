@@ -2234,7 +2234,7 @@ WITH locked_group AS MATERIALIZED (
        AND worker_groups.allows_build
      FOR UPDATE
 )
-SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
+SELECT worker_instances.id, worker_instances.resource_id, worker_instances.worker_group_id, worker_instances.attestation_fingerprint, worker_instances.state, worker_instances.claim_version, worker_instances.current_epoch, worker_instances.current_service_id, worker_instances.protocol_version, worker_instances.supervisor_version, worker_instances.supports_run, worker_instances.supports_build, worker_instances.toolchain_catalog_digest, worker_instances.runtime_identity_id, worker_instances.substrate_format, worker_instances.substrate_builder_abi, worker_instances.substrate_layout_abi, worker_instances.certified_cpu_millis, worker_instances.certified_memory_bytes, worker_instances.certified_workload_disk_bytes, worker_instances.certified_scratch_bytes, worker_instances.certified_build_cache_bytes, worker_instances.certified_artifact_cache_bytes, worker_instances.certified_hugepages_bytes, worker_instances.certified_checkpoint_bytes, worker_instances.per_vm_cpu_millis, worker_instances.per_vm_memory_bytes, worker_instances.per_vm_workload_disk_bytes, worker_instances.per_vm_scratch_bytes, worker_instances.max_vm_slots, worker_instances.max_run_consumers, worker_instances.max_build_executors, worker_instances.max_runtime_starts, worker_instances.certification_profile, worker_instances.certification_fingerprint, worker_instances.epoch_started_at, worker_instances.startup_inventory_epoch, worker_instances.startup_inventory_evidence, worker_instances.drain_cleanup_fingerprint, worker_instances.drain_cleanup_evidence, worker_instances.certified_at, worker_instances.activated_at, worker_instances.draining_at, worker_instances.disabled_at, worker_instances.lost_at, worker_instances.termination_claimed_at, worker_instances.provider_terminated_at, worker_instances.created_at, worker_instances.updated_at,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
        runtime_identities.runtime_arch
@@ -2275,6 +2275,9 @@ type LockDeploymentBuildWorkerCertificationRow struct {
 	SupportsBuild               bool                `json:"supports_build"`
 	ToolchainCatalogDigest      []byte              `json:"toolchain_catalog_digest"`
 	RuntimeIdentityID           pgtype.Text         `json:"runtime_identity_id"`
+	SubstrateFormat             string              `json:"substrate_format"`
+	SubstrateBuilderAbi         string              `json:"substrate_builder_abi"`
+	SubstrateLayoutAbi          string              `json:"substrate_layout_abi"`
 	CertifiedCpuMillis          int64               `json:"certified_cpu_millis"`
 	CertifiedMemoryBytes        int64               `json:"certified_memory_bytes"`
 	CertifiedWorkloadDiskBytes  int64               `json:"certified_workload_disk_bytes"`
@@ -2335,6 +2338,9 @@ func (q *Queries) LockDeploymentBuildWorkerCertification(ctx context.Context, ar
 		&i.SupportsBuild,
 		&i.ToolchainCatalogDigest,
 		&i.RuntimeIdentityID,
+		&i.SubstrateFormat,
+		&i.SubstrateBuilderAbi,
+		&i.SubstrateLayoutAbi,
 		&i.CertifiedCpuMillis,
 		&i.CertifiedMemoryBytes,
 		&i.CertifiedWorkloadDiskBytes,

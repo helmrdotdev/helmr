@@ -55,7 +55,7 @@ type WorkerWorkspaceMount struct {
 	ProjectID                  string                  `json:"project_id"`
 	EnvironmentID              string                  `json:"environment_id"`
 	WorkspaceID                string                  `json:"workspace_id"`
-	DeploymentSandboxID        string                  `json:"deployment_sandbox_id"`
+	DeploymentDefinitionID     string                  `json:"deployment_definition_id"`
 	BaseVersionID              string                  `json:"base_version_id,omitempty"`
 	RuntimeInstanceID          string                  `json:"runtime_instance_id,omitempty"`
 	NetworkSlotID              string                  `json:"network_slot_id"`
