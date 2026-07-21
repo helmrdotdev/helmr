@@ -1,0 +1,96 @@
+package control
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/jackc/pgx/v5/pgtype"
+)
+
+func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	request := validTaskCompletionRequest(t)
+	request.Lease.WorkerInstanceID = workerID.String()
+	request.Lease.WorkerEpoch = 1
+	parsed, err := parseTaskCompletionRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &workerTaskCompletionReplayStore{fingerprint: pgvalue.Text(parsed.fingerprint)}
+	server := &Server{log: taskCompletionTestLogger(), db: store}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/leases/tasks/complete", bytes.NewReader(body))
+	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
+		WorkerInstanceID: workerID,
+		WorkerGroupID:    request.Lease.WorkerGroupID,
+		WorkerEpoch:      2,
+		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
+	}))
+	response := httptest.NewRecorder()
+
+	server.workerCompleteTask(response, httpRequest)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+	if store.replayCalls != 1 {
+		t.Fatalf("replay lookups = %d", store.replayCalls)
+	}
+}
+
+func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	request := validTaskCompletionRequest(t)
+	request.Lease.WorkerInstanceID = workerID.String()
+	store := &workerTaskCompletionReplayStore{fingerprint: pgvalue.Text("sha256:different")}
+	server := &Server{log: taskCompletionTestLogger(), db: store}
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	httpRequest := httptest.NewRequest(http.MethodPost, "/api/worker/leases/tasks/complete", bytes.NewReader(body))
+	httpRequest = httpRequest.WithContext(context.WithValue(httpRequest.Context(), workerContextKey{}, workerActor{
+		WorkerInstanceID: workerID,
+		WorkerGroupID:    request.Lease.WorkerGroupID,
+		WorkerEpoch:      request.Lease.WorkerEpoch,
+		ProtocolVersion:  api.CurrentWorkerProtocolVersion,
+	}))
+	response := httptest.NewRecorder()
+
+	server.workerCompleteTask(response, httpRequest)
+
+	if response.Code != http.StatusConflict {
+		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
+type workerTaskCompletionReplayStore struct {
+	db.Querier
+	fingerprint pgtype.Text
+	replayCalls int
+}
+
+func (store *workerTaskCompletionReplayStore) GetTaskCompletionReplay(
+	_ context.Context,
+	_ db.GetTaskCompletionReplayParams,
+) (pgtype.Text, error) {
+	store.replayCalls++
+	return store.fingerprint, nil
+}
+
+func taskCompletionTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}

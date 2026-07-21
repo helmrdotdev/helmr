@@ -2068,6 +2068,10 @@ CREATE INDEX runs_initial_expiry_idx
       AND first_lease_at IS NULL
       AND queued_expires_at IS NOT NULL;
 
+CREATE INDEX runs_retry_ready_idx
+    ON runs (retry_at, id)
+    WHERE status = 'retry_delayed';
+
 CREATE TABLE workspace_mounts (
     id UUID PRIMARY KEY DEFAULT uuidv7(),
     org_id UUID NOT NULL,

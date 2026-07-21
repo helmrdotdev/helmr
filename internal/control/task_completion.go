@@ -105,9 +105,6 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 		if err != nil {
 			return parsedTaskCompletion{}, err
 		}
-		if baseID != lease.baseWorkspaceVersionID {
-			return parsedTaskCompletion{}, errors.New("workspace rollback does not match the Lease base Workspace version")
-		}
 		parsed.rollbackBaseID = baseID
 	}
 	if proofs != 1 {

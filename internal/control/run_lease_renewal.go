@@ -264,7 +264,7 @@ func lockRunLeaseRenewalAuthority(
 	if err != nil {
 		return authority, staleRunLeaseClaim(err)
 	}
-	if err := validateClaimWorkspaceAuthority(authority, authority.attempt.BaseWorkspaceVersionID); err != nil {
+	if err := validateRunLeaseWorkspaceAuthority(authority); err != nil {
 		return authority, err
 	}
 	if !authority.workspaceLease.ExpiresAt.Time.Equal(authority.runLease.ExpiresAt.Time) {

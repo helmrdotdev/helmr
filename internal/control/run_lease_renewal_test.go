@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -102,6 +103,31 @@ func TestRenewRunLeaseAllowsDrainingOwner(t *testing.T) {
 	server, store, worker, receipt := validRunLeaseRenewalFixture(t)
 	store.authority.workerGroup.State = db.WorkerGroupStateDraining
 	store.authority.worker.State = db.WorkerInstanceStateDraining
+
+	if _, err := server.renewRunLease(
+		context.Background(), worker, store.authority.runLease.ID, receipt,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRenewRunLeaseUsesRestoredPhysicalFrontier(t *testing.T) {
+	server, store, worker, _ := validRunLeaseRenewalFixture(t)
+	restored := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if restored == store.authority.attempt.BaseWorkspaceVersionID {
+		t.Fatal("restored frontier unexpectedly matches the Attempt base")
+	}
+	store.authority.workspaceLease.BaseVersionID = restored
+	store.authority.workspaceMount.MaterializedVersionID = restored
+	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
+		run: store.authority.run, attempt: store.authority.attempt, runtime: store.authority.runtime,
+		networkSlot: store.authority.networkSlot, runLease: store.authority.runLease,
+		workspace: store.authority.workspace, workspaceMount: store.authority.workspaceMount,
+		workspaceLease: store.authority.workspaceLease,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := server.renewRunLease(
 		context.Background(), worker, store.authority.runLease.ID, receipt,

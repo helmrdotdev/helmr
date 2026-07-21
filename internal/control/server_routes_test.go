@@ -265,6 +265,7 @@ POST /api/worker/leases/run-waits/workspace-capture
 POST /api/worker/leases/start
 POST /api/worker/leases/streams/input/read
 POST /api/worker/leases/streams/output
+POST /api/worker/leases/tasks/complete
 POST /api/worker/leases/tokens
 POST /api/worker/observe
 POST /api/worker/runtime-instances/closed

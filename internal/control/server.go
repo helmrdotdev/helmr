@@ -38,6 +38,7 @@ const (
 	readinessTimeout          = 2 * time.Second
 	apiRequestBodyLimit       = int64(128 << 20)
 	workerLogRequestBodyLimit = int64(256 << 10)
+	taskCompletionBodyLimit   = int64(17 << 20)
 	maxControlPageSize        = int32(500)
 )
 
@@ -275,6 +276,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.BackgroundContext != nil {
 		go server.sessionContinuationRequestWorkflow().run(cfg.BackgroundContext)
+		go (runRetryReadyWorkflow{log: server.log, store: server.db}).run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
 	router.Use(server.recoverPanics)
@@ -658,6 +660,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/reject", s.workerRejectRun)
 				r.Post("/leases/renew", s.workerRenew)
 				r.Post("/leases/run-renew", s.workerRenewRunLease)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.Post("/leases/release", s.workerRelease)
 				r.Post("/leases/tokens", s.workerCreateToken)
 				r.Post("/leases/run-waits", s.workerCreateRunWait)

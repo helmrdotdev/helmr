@@ -71,8 +71,12 @@ func TestParseTaskCompletionFailureRequiresRollback(t *testing.T) {
 	}
 
 	request.Workspace.RolledBack.BaseWorkspaceVersionID = uuid.Must(uuid.NewV7()).String()
-	if _, err := parseTaskCompletionRequest(request); err == nil {
-		t.Fatal("rollback to another Workspace version was accepted")
+	changed, err := parseTaskCompletionRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.rollbackBaseID.String() != request.Workspace.RolledBack.BaseWorkspaceVersionID {
+		t.Fatalf("rollback base = %s", changed.rollbackBaseID)
 	}
 }
 

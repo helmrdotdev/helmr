@@ -1316,13 +1316,22 @@ func validateClaimWorkspaceAuthority(
 	authority runLeaseClaimAuthority,
 	expectedBaseVersionID pgtype.UUID,
 ) error {
+	if err := validateRunLeaseWorkspaceAuthority(authority); err != nil {
+		return err
+	}
+	if authority.workspaceLease.BaseVersionID != expectedBaseVersionID {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
+func validateRunLeaseWorkspaceAuthority(authority runLeaseClaimAuthority) error {
 	mount := authority.workspaceMount
 	lease := authority.workspaceLease
 	if mount.State != db.WorkspaceMountStateMounted ||
 		lease.State != db.WorkspaceLeaseStateActive ||
 		lease.OwnerRunLeaseID != authority.runLease.ID ||
 		lease.OwnerProcessID.Valid ||
-		lease.BaseVersionID != expectedBaseVersionID ||
 		lease.BaseVersionID != mount.MaterializedVersionID ||
 		lease.MountFencingGeneration != mount.FencingGeneration ||
 		lease.OwnershipGeneration != authority.workspace.OwnershipGeneration ||

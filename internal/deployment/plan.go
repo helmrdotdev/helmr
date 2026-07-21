@@ -557,6 +557,37 @@ func validateRetryManifest(retry RetryManifest) error {
 	return nil
 }
 
+func ParseRetryManifest(raw []byte) (RetryManifest, error) {
+	canonical, err := jsoncanon.Transform(raw)
+	if err != nil {
+		return RetryManifest{}, fmt.Errorf("canonicalize retry manifest: %w", err)
+	}
+	var manifest RetryManifest
+	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return RetryManifest{}, fmt.Errorf("decode retry manifest: %w", err)
+	}
+	if err := ensureEOF(decoder, "retry manifest"); err != nil {
+		return RetryManifest{}, err
+	}
+	if err := validateRetryManifest(manifest); err != nil {
+		return RetryManifest{}, err
+	}
+	completeRaw, err := json.Marshal(manifest)
+	if err != nil {
+		return RetryManifest{}, fmt.Errorf("encode retry manifest: %w", err)
+	}
+	complete, err := jsoncanon.Transform(completeRaw)
+	if err != nil {
+		return RetryManifest{}, fmt.Errorf("canonicalize complete retry manifest: %w", err)
+	}
+	if !bytes.Equal(canonical, complete) {
+		return RetryManifest{}, errors.New("retry manifest does not match the complete canonical v0 shape")
+	}
+	return manifest, nil
+}
+
 func validateScheduleManifest(manifest ScheduleManifest) error {
 	if manifest.Cron == "" || strings.TrimSpace(manifest.Cron) != manifest.Cron {
 		return errors.New("cron must be a normalized non-empty expression")
