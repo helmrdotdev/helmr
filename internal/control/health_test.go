@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/db/schema"
@@ -60,6 +61,16 @@ func TestReadyzChecksSchemaVersion(t *testing.T) {
 		"future version": {
 			row:  fakeReadinessRow{version: currentVersion + 1, ready: true},
 			want: http.StatusOK,
+		},
+		"unreadable Workspace fencing key": {
+			row: fakeReadinessRow{
+				version: currentVersion,
+				ready:   true,
+				fencingKeyFingerprints: []string{
+					strings.Repeat("f", 64),
+				},
+			},
+			want: http.StatusServiceUnavailable,
 		},
 		"query error": {
 			row:  fakeReadinessRow{err: errors.New("relation does not exist")},
@@ -135,10 +146,11 @@ func (db fakeReadinessDB) Begin(context.Context) (pgx.Tx, error) {
 }
 
 type fakeReadinessRow struct {
-	version int
-	dirty   bool
-	ready   bool
-	err     error
+	version                int
+	dirty                  bool
+	ready                  bool
+	fencingKeyFingerprints []string
+	err                    error
 }
 
 func (row fakeReadinessRow) Scan(dest ...any) error {
@@ -146,11 +158,18 @@ func (row fakeReadinessRow) Scan(dest ...any) error {
 		return row.err
 	}
 	if len(dest) == 1 {
-		ready, ok := dest[0].(*int)
-		if !ok {
-			return errors.New("regional readiness destination is not *int")
+		switch value := dest[0].(type) {
+		case *int:
+			*value = 1
+		case *[]byte:
+			raw, err := json.Marshal(row.fencingKeyFingerprints)
+			if err != nil {
+				return err
+			}
+			*value = raw
+		default:
+			return errors.New("regional readiness destination has an unexpected type")
 		}
-		*ready = 1
 		return nil
 	}
 	if len(dest) != 2 {

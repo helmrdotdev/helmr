@@ -249,6 +249,12 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "workspace_fencing_key_fingerprint" {
+  description = "Active content-addressed Workspace fencing key fingerprint selected by the Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+}
+
 variable "dispatcher_desired_count" {
   description = "Desired ECS task count for helmr-dispatcher."
   type        = number

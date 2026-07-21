@@ -164,7 +164,12 @@ func TestProjectRunLeaseReceiptAndWorkspace(t *testing.T) {
 		t.Fatalf("projectRunLeaseReceipt: %v", err)
 	}
 	if receipt.LeaseSequence != 2 ||
+		receipt.WorkspaceID != pgvalue.UUIDString(authority.workspace.ID) ||
 		receipt.WorkspaceLeaseID != pgvalue.UUIDString(authority.workspaceLease.ID) ||
+		receipt.BaseWorkspaceVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseVersionID) ||
+		receipt.OwnershipGeneration != authority.workspaceLease.OwnershipGeneration ||
+		receipt.WriterGeneration != authority.workspaceLease.WriterGeneration ||
+		receipt.MountFencingGeneration != authority.workspaceLease.MountFencingGeneration ||
 		receipt.MaxActiveDurationMs != authority.run.MaxActiveDurationMs {
 		t.Fatalf("unexpected Run Lease receipt: %#v", receipt)
 	}
@@ -172,21 +177,20 @@ func TestProjectRunLeaseReceiptAndWorkspace(t *testing.T) {
 	if _, err := projectRunLeaseReceipt(authority); err != nil {
 		t.Fatalf("equal Run Lease deadlines: %v", err)
 	}
-	workspace, err := projectWorkspaceLease(authority, "write-capability")
+	workspace, err := projectWorkspaceAttachment(authority, "write-capability")
 	if err != nil {
-		t.Fatalf("projectWorkspaceLease: %v", err)
+		t.Fatalf("projectWorkspaceAttachment: %v", err)
 	}
-	if workspace.BaseVersionID != pgvalue.UUIDString(authority.workspaceLease.BaseVersionID) ||
-		workspace.WriteCapability != "write-capability" {
-		t.Fatalf("unexpected Workspace Lease: %#v", workspace)
+	if workspace.WriteCapability != "write-capability" {
+		t.Fatalf("unexpected Workspace attachment: %#v", workspace)
 	}
 
 	authority.workspaceLease.WriterGeneration++
-	if _, err := projectWorkspaceLease(authority, "write-capability"); err == nil {
+	if _, err := projectWorkspaceAttachment(authority, "write-capability"); err == nil {
 		t.Fatal("mismatched writer generation was accepted")
 	}
 	authority.workspaceLease.RuntimeInstanceID = pgvalue.UUID(uuid.New())
-	if _, err := projectWorkspaceLease(authority, "write-capability"); err == nil {
+	if _, err := projectWorkspaceAttachment(authority, "write-capability"); err == nil {
 		t.Fatal("mismatched Workspace Lease runtime was accepted")
 	}
 }

@@ -1050,6 +1050,9 @@ type runLeaseClaimStore struct {
 	secretLocators *db.GetRunLeaseSecretDeliveryLocatorsRow
 	secretRows     []db.LockAttemptSecretDeliveryRow
 	secretVersion  db.SecretVersion
+	program        db.GetDeploymentProgramAuthorityRow
+	definition     db.DeploymentDefinition
+	projectionErr  error
 	calls          []string
 }
 
@@ -1095,6 +1098,28 @@ func (s *runLeaseClaimStore) GetRunLeaseClaimLocators(
 ) (db.GetRunLeaseClaimLocatorsRow, error) {
 	s.calls = append(s.calls, "locators")
 	return s.locators, nil
+}
+
+func (s *runLeaseClaimStore) GetDeploymentProgramAuthority(
+	context.Context,
+	db.GetDeploymentProgramAuthorityParams,
+) (db.GetDeploymentProgramAuthorityRow, error) {
+	s.calls = append(s.calls, "program")
+	if s.projectionErr != nil {
+		return db.GetDeploymentProgramAuthorityRow{}, s.projectionErr
+	}
+	return s.program, nil
+}
+
+func (s *runLeaseClaimStore) GetDeploymentDefinition(
+	context.Context,
+	db.GetDeploymentDefinitionParams,
+) (db.DeploymentDefinition, error) {
+	s.calls = append(s.calls, "definition")
+	if s.projectionErr != nil {
+		return db.DeploymentDefinition{}, s.projectionErr
+	}
+	return s.definition, nil
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Actor, error) {

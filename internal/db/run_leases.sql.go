@@ -1362,7 +1362,7 @@ func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLea
 }
 
 const lockRunLeaseClaimWorkspaceLease = `-- name: LockRunLeaseClaimWorkspaceLease :one
-SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_id, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_fingerprint, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
   FROM workspace_leases
  WHERE id = $1
    AND org_id = $2
@@ -1428,7 +1428,7 @@ func (q *Queries) LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockR
 		&i.OwnershipGeneration,
 		&i.WriterGeneration,
 		&i.MountFencingGeneration,
-		&i.FencingKeyID,
+		&i.FencingKeyFingerprint,
 		&i.FencingTokenHash,
 		&i.AcquiredAt,
 		&i.RenewedAt,

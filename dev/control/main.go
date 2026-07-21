@@ -27,6 +27,7 @@ import (
 	clickhouseschema "github.com/helmrdotdev/helmr/internal/clickhouse/schema"
 	"github.com/helmrdotdev/helmr/internal/control"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
@@ -35,6 +36,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/token"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -150,6 +152,16 @@ func main() {
 		log.Error("configure dev CAS", "error", err)
 		os.Exit(1)
 	}
+	buildPolicyRaw, err := os.ReadFile(cfg.buildPolicyPath)
+	if err != nil {
+		log.Error("read dev build policy", "error", err)
+		os.Exit(1)
+	}
+	buildPolicy, err := deployment.ParseBuildPolicy(buildPolicyRaw)
+	if err != nil {
+		log.Error("parse dev build policy", "error", err)
+		os.Exit(1)
+	}
 	pool.Close()
 	pool, err = pgxpool.New(ctx, cfg.databaseURL)
 	if err != nil {
@@ -217,30 +229,41 @@ func main() {
 		log.Error("configure secret store", "error", err)
 		os.Exit(1)
 	}
+	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
+		cfg.workspaceFencingKeyFingerprint,
+		cfg.workspaceFencingKeys,
+	)
+	if err != nil {
+		log.Error("configure Workspace fencing keys", "error", err)
+		os.Exit(1)
+	}
 	publicURL, err := url.Parse(cfg.publicURL)
 	if err != nil {
 		log.Error("parse public URL", "error", err)
 		os.Exit(1)
 	}
 	app, err := control.NewServer(control.ServerConfig{
-		Log:               log,
-		DeploymentMode:    cfg.deploymentMode,
-		DB:                queries,
-		TX:                pool,
-		ReadinessDB:       pool,
-		Auth:              auth.NewDBAuthenticator(queries),
-		CAS:               casStore,
-		Secrets:           secretStore,
-		WorkerTokenSecret: []byte(cfg.workerTokenSecret),
-		WorkerEnrollment:  devWorkerEnrollmentVerifier{verifier: workerEnrollment},
-		SetupToken:        cfg.setupToken,
-		AuthSecret:        []byte(cfg.authSecret),
-		PublicURL:         publicURL,
-		WorkerGroupID:     cfg.workerGroupID,
-		RegionID:          cfg.regionID,
-		DefaultRegionID:   cfg.defaultRegionID,
-		EventStream:       eventStream,
-		TelemetryReader:   telemetryReader,
+		Log:                  log,
+		DeploymentMode:       cfg.deploymentMode,
+		DB:                   queries,
+		TX:                   pool,
+		ReadinessDB:          pool,
+		Auth:                 auth.NewDBAuthenticator(queries),
+		CAS:                  casStore,
+		BuildPolicy:          buildPolicy,
+		Secrets:              secretStore,
+		SecretDelivery:       secretStore,
+		WorkspaceFencingKeys: workspaceFencingKeys,
+		WorkerTokenSecret:    []byte(cfg.workerTokenSecret),
+		WorkerEnrollment:     devWorkerEnrollmentVerifier{verifier: workerEnrollment},
+		SetupToken:           cfg.setupToken,
+		AuthSecret:           []byte(cfg.authSecret),
+		PublicURL:            publicURL,
+		WorkerGroupID:        cfg.workerGroupID,
+		RegionID:             cfg.regionID,
+		DefaultRegionID:      cfg.defaultRegionID,
+		EventStream:          eventStream,
+		TelemetryReader:      telemetryReader,
 	})
 	if err != nil {
 		log.Error("configure control server", "error", err)
@@ -275,31 +298,34 @@ func main() {
 }
 
 type devConfig struct {
-	addr                       string
-	deploymentMode             string
-	databaseURL                string
-	regionID                   string
-	defaultRegionID            string
-	provider                   string
-	providerRegion             string
-	regionDisplayName          string
-	workerGroupID              string
-	workerGroups               []enrollment.AWSGroupBoundary
-	clickHouseURL              string
-	clickHouseUser             string
-	clickHousePassword         string
-	redisURL                   string
-	casDir                     string
-	publicURL                  string
-	authSecret                 string
-	setupToken                 string
-	workerTokenSecret          string
-	secretEncryptionKey        string
-	secretEncryptionKeyOld     string
-	lookupHMACKeys             string
-	lookupHMACBootstrapVersion int32
-	resetDatabase              bool
-	seedData                   bool
+	addr                           string
+	deploymentMode                 string
+	databaseURL                    string
+	regionID                       string
+	defaultRegionID                string
+	provider                       string
+	providerRegion                 string
+	regionDisplayName              string
+	workerGroupID                  string
+	workerGroups                   []enrollment.AWSGroupBoundary
+	clickHouseURL                  string
+	clickHouseUser                 string
+	clickHousePassword             string
+	redisURL                       string
+	casDir                         string
+	buildPolicyPath                string
+	publicURL                      string
+	authSecret                     string
+	setupToken                     string
+	workerTokenSecret              string
+	secretEncryptionKey            string
+	secretEncryptionKeyOld         string
+	lookupHMACKeys                 string
+	workspaceFencingKeyFingerprint string
+	workspaceFencingKeys           string
+	lookupHMACBootstrapVersion     int32
+	resetDatabase                  bool
+	seedData                       bool
 }
 
 type devWorkerEnrollmentVerifier struct {
@@ -334,6 +360,7 @@ func loadConfig() (devConfig, error) {
 		clickHousePassword:     os.Getenv("HELMR_CLICKHOUSE_PASSWORD"),
 		redisURL:               env("HELMR_REDIS_URL", defaultRedisURL),
 		casDir:                 env("HELMR_DEV_CAS_DIR", filepath.Join(os.TempDir(), "helmr-dev-cas")),
+		buildPolicyPath:        strings.TrimSpace(os.Getenv("HELMR_BUILD_POLICY_PATH")),
 		publicURL:              env("HELMR_PUBLIC_URL", defaultPublicURL),
 		authSecret:             env("HELMR_AUTH_SECRET", defaultAuthSecret),
 		setupToken:             env("HELMR_SETUP_TOKEN", defaultSetupToken),
@@ -341,8 +368,16 @@ func loadConfig() (devConfig, error) {
 		secretEncryptionKey:    env("HELMR_SECRET_ENCRYPTION_KEY", defaultSecretEncryptionKey),
 		secretEncryptionKeyOld: strings.TrimSpace(os.Getenv("HELMR_SECRET_ENCRYPTION_KEY_OLD")),
 		lookupHMACKeys:         env("HELMR_LOOKUP_HMAC_KEYS", defaultLookupHMACKeys),
-		resetDatabase:          envBool("HELMR_DEV_RESET_DATABASE"),
-		seedData:               envBoolDefault("HELMR_DEV_SEED_DATA", true),
+		workspaceFencingKeyFingerprint: env(
+			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
+			"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
+		),
+		workspaceFencingKeys: env(
+			"HELMR_WORKSPACE_FENCING_KEYS",
+			`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`,
+		),
+		resetDatabase: envBool("HELMR_DEV_RESET_DATABASE"),
+		seedData:      envBoolDefault("HELMR_DEV_SEED_DATA", true),
 	}
 	if value := strings.TrimSpace(os.Getenv("HELMR_DEV_LOOKUP_HMAC_BOOTSTRAP_VERSION")); value != "" {
 		version, err := strconv.ParseInt(value, 10, 32)
@@ -353,6 +388,9 @@ func loadConfig() (devConfig, error) {
 	}
 	if cfg.databaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")
+	}
+	if cfg.buildPolicyPath == "" {
+		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required")
 	}
 	if cfg.regionID == "" {
 		return cfg, errors.New("HELMR_REGION_ID is required")

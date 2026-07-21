@@ -275,6 +275,12 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "workspace_fencing_key_fingerprint" {
+  description = "Active content-addressed Workspace fencing key fingerprint selected by the Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+}
+
 variable "email_provider" {
   description = "Email delivery provider for magic links and run wait notifications."
   type        = string

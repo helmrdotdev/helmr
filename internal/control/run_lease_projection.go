@@ -66,7 +66,7 @@ func projectRunLeaseExecution(
 			authority.runWait.ResumeRequestVersion <= 0 {
 			return api.WorkerRunLeaseExecution{}, errors.New("restore Run Lease authority is incomplete")
 		}
-		waitID, err := requiredUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
@@ -97,15 +97,15 @@ func projectRunLeaseExecution(
 			len(authority.checkpointArtifacts) != 0 {
 			return api.WorkerRunLeaseExecution{}, errors.New("child attach authority is incomplete")
 		}
-		waitID, err := requiredUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
-		checkpointID, err := requiredUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
-		attachID, err := requiredUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
+		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
@@ -138,15 +138,15 @@ func projectRunLeaseExecution(
 			len(authority.checkpointArtifacts) != 0 {
 			return api.WorkerRunLeaseExecution{}, errors.New("parent attach authority is incomplete")
 		}
-		waitID, err := requiredUUIDString("Run Wait ID", authority.runWait.ID)
+		waitID, err := requiredClaimUUIDString("Run Wait ID", authority.runWait.ID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
-		checkpointID, err := requiredUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
-		attachID, err := requiredUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
+		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
@@ -218,31 +218,42 @@ type runLeaseProjectionAuthority struct {
 
 func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRunLeaseReceipt, error) {
 	lease := authority.runLease
-	id, err := requiredUUIDString("Run Lease ID", lease.ID)
+	id, err := requiredClaimUUIDString("Run Lease ID", lease.ID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	runID, err := requiredUUIDString("Run ID", lease.RunID)
+	runID, err := requiredClaimUUIDString("Run ID", lease.RunID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	workerID, err := requiredUUIDString("worker instance ID", lease.WorkerInstanceID)
+	workerID, err := requiredClaimUUIDString("worker instance ID", lease.WorkerInstanceID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	runtimeID, err := requiredUUIDString("runtime instance ID", lease.RuntimeInstanceID)
+	runtimeID, err := requiredClaimUUIDString("runtime instance ID", lease.RuntimeInstanceID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	networkSlotID, err := requiredUUIDString("network slot ID", lease.NetworkSlotID)
+	networkSlotID, err := requiredClaimUUIDString("network slot ID", lease.NetworkSlotID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	mountID, err := requiredUUIDString("Workspace Mount ID", authority.workspaceMount.ID)
+	workspaceID, err := requiredClaimUUIDString("Workspace ID", authority.workspace.ID)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
-	workspaceLeaseID, err := requiredUUIDString("Workspace Lease ID", authority.workspaceLease.ID)
+	mountID, err := requiredClaimUUIDString("Workspace Mount ID", authority.workspaceMount.ID)
+	if err != nil {
+		return api.WorkerRunLeaseReceipt{}, err
+	}
+	workspaceLeaseID, err := requiredClaimUUIDString("Workspace Lease ID", authority.workspaceLease.ID)
+	if err != nil {
+		return api.WorkerRunLeaseReceipt{}, err
+	}
+	baseWorkspaceVersionID, err := requiredClaimUUIDString(
+		"base Workspace version ID",
+		authority.workspaceLease.BaseVersionID,
+	)
 	if err != nil {
 		return api.WorkerRunLeaseReceipt{}, err
 	}
@@ -255,13 +266,17 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		authority.workspaceLease.OwnerRunLeaseID != lease.ID ||
 		authority.workspaceLease.RuntimeInstanceID != lease.RuntimeInstanceID ||
 		authority.workspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
-		authority.workspaceLease.WorkspaceID != lease.WorkspaceID {
+		authority.workspaceLease.WorkspaceID != lease.WorkspaceID ||
+		authority.workspaceLease.BaseVersionID != authority.workspaceMount.MaterializedVersionID {
 		return api.WorkerRunLeaseReceipt{}, errors.New("Run Lease receipt authority is inconsistent")
 	}
 	if lease.AttemptNumber <= 0 ||
 		lease.LeaseSequence <= 0 ||
 		lease.WorkerEpoch <= 0 ||
 		lease.NetworkSlotGeneration <= 0 ||
+		authority.workspaceLease.OwnershipGeneration <= 0 ||
+		authority.workspaceLease.WriterGeneration <= 0 ||
+		authority.workspaceLease.MountFencingGeneration <= 0 ||
 		lease.RequestedCpuMillis <= 0 ||
 		lease.RequestedMemoryBytes <= 0 ||
 		lease.RequestedWorkloadDiskBytes <= 0 ||
@@ -296,8 +311,13 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 		RuntimeIdentityID:          lease.RuntimeIdentityID,
 		NetworkSlotID:              networkSlotID,
 		NetworkSlotGeneration:      lease.NetworkSlotGeneration,
+		WorkspaceID:                workspaceID,
 		WorkspaceMountID:           mountID,
 		WorkspaceLeaseID:           workspaceLeaseID,
+		BaseWorkspaceVersionID:     baseWorkspaceVersionID,
+		OwnershipGeneration:        authority.workspaceLease.OwnershipGeneration,
+		WriterGeneration:           authority.workspaceLease.WriterGeneration,
+		MountFencingGeneration:     authority.workspaceLease.MountFencingGeneration,
 		RequestedCPUMillis:         lease.RequestedCpuMillis,
 		RequestedMemoryBytes:       lease.RequestedMemoryBytes,
 		RequestedWorkloadDiskBytes: lease.RequestedWorkloadDiskBytes,
@@ -315,31 +335,11 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 	}, nil
 }
 
-func projectWorkspaceLease(
+func projectWorkspaceAttachment(
 	authority runLeaseProjectionAuthority,
 	writeCapability string,
-) (api.WorkerWorkspaceLease, error) {
+) (api.WorkerWorkspaceAttachment, error) {
 	lease := authority.workspaceLease
-	id, err := requiredUUIDString("Workspace Lease ID", lease.ID)
-	if err != nil {
-		return api.WorkerWorkspaceLease{}, err
-	}
-	workspaceID, err := requiredUUIDString("Workspace ID", lease.WorkspaceID)
-	if err != nil {
-		return api.WorkerWorkspaceLease{}, err
-	}
-	runtimeID, err := requiredUUIDString("runtime instance ID", lease.RuntimeInstanceID)
-	if err != nil {
-		return api.WorkerWorkspaceLease{}, err
-	}
-	mountID, err := requiredUUIDString("Workspace Mount ID", lease.WorkspaceMountID)
-	if err != nil {
-		return api.WorkerWorkspaceLease{}, err
-	}
-	baseVersionID, err := requiredUUIDString("Workspace base version ID", lease.BaseVersionID)
-	if err != nil {
-		return api.WorkerWorkspaceLease{}, err
-	}
 	if lease.OwnerRunLeaseID != authority.runLease.ID ||
 		lease.WorkspaceID != authority.workspace.ID ||
 		lease.RuntimeInstanceID != authority.runtime.ID ||
@@ -352,19 +352,9 @@ func projectWorkspaceLease(
 		lease.WriterGeneration <= 0 ||
 		lease.MountFencingGeneration <= 0 ||
 		strings.TrimSpace(writeCapability) == "" {
-		return api.WorkerWorkspaceLease{}, errors.New("Workspace Lease projection authority is inconsistent")
+		return api.WorkerWorkspaceAttachment{}, errors.New("Workspace attachment authority is inconsistent")
 	}
-	return api.WorkerWorkspaceLease{
-		ID:                     id,
-		WorkspaceID:            workspaceID,
-		RuntimeInstanceID:      runtimeID,
-		WorkspaceMountID:       mountID,
-		BaseVersionID:          baseVersionID,
-		OwnershipGeneration:    lease.OwnershipGeneration,
-		WriterGeneration:       lease.WriterGeneration,
-		MountFencingGeneration: lease.MountFencingGeneration,
-		WriteCapability:        writeCapability,
-	}, nil
+	return api.WorkerWorkspaceAttachment{WriteCapability: writeCapability}, nil
 }
 
 func projectRunWaitDecision(wait db.RunWait) (api.WorkerRunLeaseDecision, error) {
@@ -438,7 +428,7 @@ func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
 	rows []db.ListRunCheckpointArtifactAuthorityRow,
 ) (api.WorkerRunLeaseCheckpoint, error) {
-	id, err := requiredUUIDString("Run Checkpoint ID", checkpoint.ID)
+	id, err := requiredClaimUUIDString("Run Checkpoint ID", checkpoint.ID)
 	if err != nil {
 		return api.WorkerRunLeaseCheckpoint{}, err
 	}

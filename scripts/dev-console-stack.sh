@@ -16,6 +16,11 @@ for name in go bun; do
   fi
 done
 
+if [ -z "${HELMR_BUILD_POLICY_PATH:-}" ]; then
+  echo "HELMR_BUILD_POLICY_PATH must point to a canonical local build policy" >&2
+  exit 1
+fi
+
 postgres_major_version() {
   postgres --version | awk '{ split($3, version, "."); print version[1] }'
 }

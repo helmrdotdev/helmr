@@ -289,6 +289,12 @@ variable "github_oauth_client_id" {
   type        = string
 }
 
+variable "workspace_fencing_key_fingerprint" {
+  description = "Active content-addressed Workspace fencing key fingerprint selected by the Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+}
+
 variable "database_instance_class" {
   description = "RDS Postgres instance class."
   type        = string

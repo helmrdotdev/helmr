@@ -2166,8 +2166,8 @@ CREATE TABLE workspace_leases (
     ownership_generation BIGINT NOT NULL CHECK (ownership_generation > 0),
     writer_generation BIGINT NOT NULL CHECK (writer_generation > 0),
     mount_fencing_generation BIGINT NOT NULL CHECK (mount_fencing_generation > 0),
-    fencing_key_id TEXT NOT NULL CHECK (
-        fencing_key_id ~ '^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$'
+    fencing_key_fingerprint BYTEA NOT NULL CHECK (
+        octet_length(fencing_key_fingerprint) = 32
     ),
     fencing_token_hash TEXT NOT NULL CHECK (btrim(fencing_token_hash) <> ''),
     acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),

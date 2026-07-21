@@ -16,7 +16,7 @@ func projectDeploymentProgram(
 	row db.GetDeploymentProgramAuthorityRow,
 	policy *deployment.BuildPolicy,
 ) (api.WorkerRuntimeProgram, error) {
-	if _, err := requiredUUIDString("Program environment ID", row.EnvironmentID); err != nil {
+	if _, err := requiredClaimUUIDString("Program environment ID", row.EnvironmentID); err != nil {
 		return api.WorkerRuntimeProgram{}, err
 	}
 	if !row.ProgramArchitecture.Valid {
@@ -58,7 +58,7 @@ func projectRuntimeProgram(
 	expectedArchitecture string,
 	policy *deployment.BuildPolicy,
 ) (api.WorkerRuntimeProgram, error) {
-	deploymentID, err := requiredUUIDString("Program Deployment ID", authority.deploymentID)
+	deploymentID, err := requiredClaimUUIDString("Program Deployment ID", authority.deploymentID)
 	if err != nil {
 		return api.WorkerRuntimeProgram{}, err
 	}

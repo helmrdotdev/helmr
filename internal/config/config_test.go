@@ -82,6 +82,8 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA= ")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY_OLD", " AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE= ")
 	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", ` {"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="} `)
+	t.Setenv("HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT", " sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26 ")
+	t.Setenv("HELMR_WORKSPACE_FENCING_KEYS", ` {"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="} `)
 	t.Setenv("HELMR_PUBLIC_URL", " https://helmr.example.test ")
 	t.Setenv("HELMR_MAGIC_LINK_DEBUG_URLS", " true ")
 	t.Setenv("HELMR_SMTP_ADDR", " smtp.example.test:587 ")
@@ -95,7 +97,7 @@ func TestLoadControlReadsRequiredConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.ManagerStoreURI != "s3://helmr-managers" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
+	if cfg.DatabaseURL != "postgres://example" || cfg.DeploymentMode != "managed-cloud" || cfg.WorkerGroupID != "us-east-1-worker-group-2" || cfg.RegionID != "us-east-1" || cfg.DefaultRegionID != "us-east-1" || cfg.RedisURL != "redis://redis.example.test:6379/0" || cfg.ClickHouseURL != "https://clickhouse.example.test" || cfg.ClickHouseUser != "telemetry" || cfg.ClickHousePassword != "clickhouse-password" || cfg.CASURI != "s3://helmr-cas" || cfg.BuildPolicyPath != "/etc/helmr/build-policy.json" || cfg.RuntimeStoreURI != "s3://helmr-cas/runtimes" || cfg.ManagerStoreURI != "s3://helmr-managers" || cfg.WorkerTokenSigningKey != "01234567890123456789012345678901" || cfg.WorkerGroupsJSON != `[{"id":"run-workers"}]` || cfg.SetupToken != "setup-token" || cfg.AuthSecret != "abcdefghijabcdefghijabcdefghij12" || cfg.SecretEncryptionKey != "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" || cfg.SecretEncryptionKeyOld != "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=" || cfg.WorkspaceFencingKeyFingerprint != "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26" || cfg.WorkspaceFencingKeys != `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}` || cfg.PublicURL != "https://helmr.example.test" || !cfg.MagicLinkDebugURLs || cfg.EmailProvider != EmailProviderSMTP || cfg.SMTPAddr != "smtp.example.test:587" || cfg.SMTPUsername != "smtp-user" || cfg.SMTPPassword != "smtp-password" || cfg.EmailFrom != "Helmr <noreply@example.test>" || cfg.GitHubOAuthClientID != "client-id" || cfg.GitHubOAuthClientSecret != "client-secret" {
 		t.Fatalf("config = %+v", cfg)
 	}
 }
@@ -365,6 +367,8 @@ func setControlWorkerGroupEnv(t *testing.T) {
 	t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-cas/runtimes")
 	t.Setenv("HELMR_MANAGER_STORE_URI", "s3://helmr-managers")
+	t.Setenv("HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT", "sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26")
+	t.Setenv("HELMR_WORKSPACE_FENCING_KEYS", `{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`)
 }
 
 func setWorkerRuntimeEnv(t *testing.T, build bool) {

@@ -39,6 +39,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 )
@@ -220,6 +221,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure secret store: %w", err)
 	}
+	workspaceFencingKeys, err := workspace.FencingKeysFromBase64JSON(
+		cfg.WorkspaceFencingKeyFingerprint,
+		cfg.WorkspaceFencingKeys,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Workspace fencing keys: %w", err)
+	}
 	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer, eventStream)
 	if err != nil {
 		return fmt.Errorf("configure schedule run creator: %w", err)
@@ -259,34 +267,36 @@ func run(ctx context.Context, log *slog.Logger) error {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                log,
-		DeploymentMode:     cfg.DeploymentMode,
-		WorkerGroupID:      cfg.WorkerGroupID,
-		RegionID:           cfg.RegionID,
-		DefaultRegionID:    cfg.DefaultRegionID,
-		DB:                 queries,
-		TX:                 pool,
-		ReadinessDB:        pool,
-		Auth:               auth.NewDBAuthenticator(queries),
-		CAS:                casStore,
-		BuildPolicy:        buildPolicy,
-		RuntimeStore:       runtimeStore,
-		ManagerStore:       managerStore,
-		Secrets:            secretStore,
-		RunEnqueuer:        runEnqueuer,
-		DispatchQueue:      dispatchQueue,
-		ScheduleEngine:     scheduleEngine,
-		EventStream:        eventStream,
-		TelemetryReader:    telemetryReader,
-		Mailer:             mailer,
-		AuthProvider:       authProvider,
-		WorkerTokenSecret:  []byte(cfg.WorkerTokenSigningKey),
-		WorkerEnrollment:   workerEnrollment,
-		SetupToken:         cfg.SetupToken,
-		AuthSecret:         []byte(cfg.AuthSecret),
-		PublicURL:          publicURL,
-		MagicLinkDebugURLs: cfg.MagicLinkDebugURLs,
-		BackgroundContext:  backgroundCtx,
+		Log:                  log,
+		DeploymentMode:       cfg.DeploymentMode,
+		WorkerGroupID:        cfg.WorkerGroupID,
+		RegionID:             cfg.RegionID,
+		DefaultRegionID:      cfg.DefaultRegionID,
+		DB:                   queries,
+		TX:                   pool,
+		ReadinessDB:          pool,
+		Auth:                 auth.NewDBAuthenticator(queries),
+		CAS:                  casStore,
+		BuildPolicy:          buildPolicy,
+		RuntimeStore:         runtimeStore,
+		ManagerStore:         managerStore,
+		Secrets:              secretStore,
+		SecretDelivery:       secretStore,
+		WorkspaceFencingKeys: workspaceFencingKeys,
+		RunEnqueuer:          runEnqueuer,
+		DispatchQueue:        dispatchQueue,
+		ScheduleEngine:       scheduleEngine,
+		EventStream:          eventStream,
+		TelemetryReader:      telemetryReader,
+		Mailer:               mailer,
+		AuthProvider:         authProvider,
+		WorkerTokenSecret:    []byte(cfg.WorkerTokenSigningKey),
+		WorkerEnrollment:     workerEnrollment,
+		SetupToken:           cfg.SetupToken,
+		AuthSecret:           []byte(cfg.AuthSecret),
+		PublicURL:            publicURL,
+		MagicLinkDebugURLs:   cfg.MagicLinkDebugURLs,
+		BackgroundContext:    backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)

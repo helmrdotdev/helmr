@@ -83,17 +83,18 @@ locals {
   )
 
   control_environment_defaults = merge({
-    HELMR_CONTROL_ADDR           = ":${local.control_port}"
-    HELMR_DEPLOYMENT_MODE        = var.deployment_mode
-    HELMR_CAS_URI                = "s3://${aws_s3_bucket.cas.bucket}"
-    HELMR_BUILD_POLICY_PATH      = "/release/build-policy.json"
-    HELMR_RUNTIME_STORE_URI      = var.runtime_store_uri
-    HELMR_MANAGER_STORE_URI      = var.manager_store_uri
-    HELMR_PUBLIC_URL             = local.control_url
-    HELMR_REDIS_URL              = local.redis_url
-    HELMR_SCHEDULE_JITTER        = var.schedule_jitter
-    HELMR_GITHUB_OAUTH_CLIENT_ID = var.github_oauth_client_id
-    HELMR_WORKER_GROUPS          = jsonencode(var.worker_groups)
+    HELMR_CONTROL_ADDR                      = ":${local.control_port}"
+    HELMR_DEPLOYMENT_MODE                   = var.deployment_mode
+    HELMR_CAS_URI                           = "s3://${aws_s3_bucket.cas.bucket}"
+    HELMR_BUILD_POLICY_PATH                 = "/release/build-policy.json"
+    HELMR_RUNTIME_STORE_URI                 = var.runtime_store_uri
+    HELMR_MANAGER_STORE_URI                 = var.manager_store_uri
+    HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT = var.workspace_fencing_key_fingerprint
+    HELMR_PUBLIC_URL                        = local.control_url
+    HELMR_REDIS_URL                         = local.redis_url
+    HELMR_SCHEDULE_JITTER                   = var.schedule_jitter
+    HELMR_GITHUB_OAUTH_CLIENT_ID            = var.github_oauth_client_id
+    HELMR_WORKER_GROUPS                     = jsonencode(var.worker_groups)
   }, local.telemetry_environment, local.email_environment)
 
   control_secret_defaults = merge({
@@ -103,6 +104,7 @@ locals {
     HELMR_AUTH_SECRET                = aws_secretsmanager_secret.auth_secret.arn
     HELMR_SECRET_ENCRYPTION_KEY      = aws_secretsmanager_secret.secret_encryption_key.arn
     HELMR_LOOKUP_HMAC_KEYS           = aws_secretsmanager_secret.lookup_hmac_keys.arn
+    HELMR_WORKSPACE_FENCING_KEYS     = aws_secretsmanager_secret.workspace_fencing_keys.arn
     HELMR_GITHUB_OAUTH_CLIENT_SECRET = aws_secretsmanager_secret.github_oauth_client_secret.arn
     },
     var.secret_encryption_key_old_arn != null ? {
@@ -1492,6 +1494,11 @@ resource "aws_ecs_service" "control" {
       error_message = "certificate_arn is required when create_control_service is true unless allow_insecure_http is explicitly enabled."
     }
 
+    precondition {
+      condition     = var.workspace_fencing_key_fingerprint != ""
+      error_message = "workspace_fencing_key_fingerprint is required when create_control_service is true."
+    }
+
   }
 }
 
@@ -1555,6 +1562,13 @@ resource "aws_secretsmanager_secret" "secret_encryption_key" {
 
 resource "aws_secretsmanager_secret" "lookup_hmac_keys" {
   name                    = "${local.name}/control/lookup-hmac-keys"
+  kms_key_id              = aws_kms_key.helmr.arn
+  recovery_window_in_days = var.secret_recovery_window_in_days
+  tags                    = var.tags
+}
+
+resource "aws_secretsmanager_secret" "workspace_fencing_keys" {
+  name                    = "${local.name}/control/workspace-fencing-keys"
   kms_key_id              = aws_kms_key.helmr.arn
   recovery_window_in_days = var.secret_recovery_window_in_days
   tags                    = var.tags

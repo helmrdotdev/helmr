@@ -28,6 +28,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/region"
 	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
@@ -69,6 +70,8 @@ type Server struct {
 	runtimeStore          cas.Reader
 	managerStore          ManagerResolver
 	secrets               SecretManager
+	secretDelivery        SecretDeliveryOpener
+	workspaceFencingKeys  workspace.FencingKeys
 	runEnqueuer           RunEnqueuer
 	dispatchQueue         dispatch.Queue
 	scheduleEngine        ScheduleRegistrar
@@ -132,19 +135,21 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth            auth.Authenticator
-	CAS             cas.Store
-	BuildPolicy     *deployment.BuildPolicy
-	RuntimeStore    cas.Reader
-	ManagerStore    ManagerResolver
-	Secrets         SecretManager
-	RunEnqueuer     RunEnqueuer
-	DispatchQueue   dispatch.Queue
-	ScheduleEngine  ScheduleRegistrar
-	EventStream     *EventStream
-	TelemetryReader telemetry.Reader
-	Mailer          email.Sender
-	AuthProvider    AuthProvider
+	Auth                 auth.Authenticator
+	CAS                  cas.Store
+	BuildPolicy          *deployment.BuildPolicy
+	RuntimeStore         cas.Reader
+	ManagerStore         ManagerResolver
+	Secrets              SecretManager
+	SecretDelivery       SecretDeliveryOpener
+	WorkspaceFencingKeys workspace.FencingKeys
+	RunEnqueuer          RunEnqueuer
+	DispatchQueue        dispatch.Queue
+	ScheduleEngine       ScheduleRegistrar
+	EventStream          *EventStream
+	TelemetryReader      telemetry.Reader
+	Mailer               email.Sender
+	AuthProvider         AuthProvider
 
 	WorkerTokenSecret []byte
 	WorkerTokenTTL    time.Duration
@@ -176,9 +181,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if cfg.Auth == nil {
 		return nil, errors.New("control authenticator is required")
 	}
-	if cfg.BuildPolicy != nil && cfg.ManagerStore == nil {
-		return nil, errors.New("control manager store is required")
-	}
 	deploymentMode := strings.TrimSpace(cfg.DeploymentMode)
 	if deploymentMode == "" {
 		deploymentMode = deploymentModeSelfHosted
@@ -189,6 +191,14 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	if cfg.WorkerEnrollment == nil {
 		return nil, errors.New("worker enrollment verifier is required")
+	}
+	if cfg.SecretDelivery == nil {
+		return nil, errors.New("Secret delivery opener is required")
+	}
+	if !cfg.WorkspaceFencingKeys.Has(
+		cfg.WorkspaceFencingKeys.ActiveFingerprint(),
+	) {
+		return nil, errors.New("Workspace fencing keys are required")
 	}
 	regionID := cfg.RegionID
 	if err := region.ValidateID(regionID); err != nil {
@@ -234,6 +244,8 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		runtimeStore:          cfg.RuntimeStore,
 		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
+		secretDelivery:        cfg.SecretDelivery,
+		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
 		runEnqueuer:           cfg.RunEnqueuer,
 		dispatchQueue:         cfg.DispatchQueue,
 		scheduleEngine:        cfg.ScheduleEngine,
@@ -632,6 +644,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
 				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
 				r.Post("/leases/discover", s.workerDiscoverRunLeases)
+				r.Post("/leases/claim", s.workerClaimRunLease)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/leases/lease", s.workerLease)
 				r.Post("/leases/start", s.workerStart)
 				r.Post("/leases/reject", s.workerRejectRun)
@@ -714,6 +727,44 @@ func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	if databaseReady != 1 {
 		s.writeReadinessUnavailable(w, errors.New("regional control database is not ready"))
 		return
+	}
+	var rawFencingKeyFingerprints []byte
+	if err := s.readinessDB.QueryRow(ctx, `
+		SELECT COALESCE(
+			json_agg(referenced.fingerprint ORDER BY referenced.fingerprint),
+			'[]'::json
+		)
+		  FROM (
+			SELECT DISTINCT encode(fencing_key_fingerprint, 'hex') AS fingerprint
+			  FROM workspace_leases
+			 WHERE state IN ('active', 'releasing')
+		  ) AS referenced
+	`).Scan(&rawFencingKeyFingerprints); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf(
+			"read Workspace fencing key references: %w",
+			err,
+		))
+		return
+	}
+	var encodedFingerprints []string
+	if err := json.Unmarshal(
+		rawFencingKeyFingerprints,
+		&encodedFingerprints,
+	); err != nil {
+		s.writeReadinessUnavailable(w, fmt.Errorf("decode Workspace fencing key references: %w", err))
+		return
+	}
+	for _, encoded := range encodedFingerprints {
+		fingerprint, err := workspace.ParseFencingKeyFingerprint(
+			"sha256:" + encoded,
+		)
+		if err != nil || !s.workspaceFencingKeys.Has(fingerprint) {
+			s.writeReadinessUnavailable(w, fmt.Errorf(
+				"Workspace fencing key %q is not readable",
+				encoded,
+			))
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }

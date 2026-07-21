@@ -20,37 +20,41 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 )
 
 type testServerConfig struct {
-	Log                *slog.Logger
-	DeploymentMode     string
-	WorkerGroupID      string
-	RegionID           string
-	DefaultRegionID    string
-	DB                 db.Querier
-	DBTX               dbTXBeginner
-	TX                 TxBeginner
-	Auth               auth.Authenticator
-	CAS                cas.Store
-	ManagerStore       ManagerResolver
-	Secrets            SecretManager
-	RunEnqueuer        RunEnqueuer
-	ScheduleEngine     ScheduleRegistrar
-	EventStream        *EventStream
-	TelemetryReader    telemetry.Reader
-	WorkerTokenSecret  []byte
-	WorkerTokenTTL     time.Duration
-	WorkerEnrollment   WorkerEnrollmentVerifier
-	SetupToken         string
-	AuthSecret         []byte
-	PublicURL          *url.URL
-	AuthProvider       AuthProvider
-	Mailer             email.Sender
-	MagicLinkDebugURLs bool
-	SessionTTL         time.Duration
+	Log                  *slog.Logger
+	DeploymentMode       string
+	WorkerGroupID        string
+	RegionID             string
+	DefaultRegionID      string
+	DB                   db.Querier
+	DBTX                 dbTXBeginner
+	TX                   TxBeginner
+	Auth                 auth.Authenticator
+	CAS                  cas.Store
+	ManagerStore         ManagerResolver
+	Secrets              SecretManager
+	SecretDelivery       SecretDeliveryOpener
+	WorkspaceFencingKeys workspace.FencingKeys
+	RunEnqueuer          RunEnqueuer
+	ScheduleEngine       ScheduleRegistrar
+	EventStream          *EventStream
+	TelemetryReader      telemetry.Reader
+	WorkerTokenSecret    []byte
+	WorkerTokenTTL       time.Duration
+	WorkerEnrollment     WorkerEnrollmentVerifier
+	SetupToken           string
+	AuthSecret           []byte
+	PublicURL            *url.URL
+	AuthProvider         AuthProvider
+	Mailer               email.Sender
+	MagicLinkDebugURLs   bool
+	SessionTTL           time.Duration
 }
 
 func newTestServer(testCfg testServerConfig) http.Handler {
@@ -59,11 +63,13 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	cfg := ServerConfig{
-		Log:              log,
-		DB:               testTransactionalStore{Querier: &fakeStore{}},
-		TX:               panicTxBeginner{},
-		Auth:             fakeAuth{},
-		WorkerEnrollment: testWorkerEnrollmentVerifier{},
+		Log:                  log,
+		DB:                   testTransactionalStore{Querier: &fakeStore{}},
+		TX:                   panicTxBeginner{},
+		Auth:                 fakeAuth{},
+		WorkerEnrollment:     testWorkerEnrollmentVerifier{},
+		SecretDelivery:       testSecretDeliveryOpener{},
+		WorkspaceFencingKeys: testWorkspaceFencingKeys(),
 	}
 	if testCfg.DBTX != nil {
 		queries := db.New(testCfg.DBTX)
@@ -125,6 +131,14 @@ func newTestServer(testCfg testServerConfig) http.Handler {
 	if testCfg.Secrets != nil {
 		cfg.Secrets = testCfg.Secrets
 	}
+	if testCfg.SecretDelivery != nil {
+		cfg.SecretDelivery = testCfg.SecretDelivery
+	}
+	if testCfg.WorkspaceFencingKeys.Has(
+		testCfg.WorkspaceFencingKeys.ActiveFingerprint(),
+	) {
+		cfg.WorkspaceFencingKeys = testCfg.WorkspaceFencingKeys
+	}
 	if testCfg.RunEnqueuer != nil {
 		cfg.RunEnqueuer = testCfg.RunEnqueuer
 	}
@@ -178,6 +192,34 @@ type testWorkerEnrollmentVerifier struct{}
 
 func (testWorkerEnrollmentVerifier) VerifyWorkerEnrollment(context.Context, api.WorkerEnrollmentRequest) (VerifiedWorkerEnrollment, error) {
 	return VerifiedWorkerEnrollment{}, errors.New("worker enrollment is not configured for this test")
+}
+
+type testSecretDeliveryOpener struct {
+	materials []secret.DeliveryMaterial
+	err       error
+}
+
+func (opener testSecretDeliveryOpener) OpenDeliveries(
+	uuid.UUID,
+	[]secret.DeliveryEnvelope,
+) ([]secret.DeliveryMaterial, error) {
+	return opener.materials, opener.err
+}
+
+func testWorkspaceFencingKeys() workspace.FencingKeys {
+	keys, err := workspace.NewFencingKeys(
+		"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03",
+		map[string][]byte{
+			"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03": make(
+				[]byte,
+				workspace.FencingKeySize,
+			),
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return keys
 }
 
 type panicTxBeginner struct{}
@@ -340,15 +382,17 @@ func mustParseTestURL(raw string) *url.URL {
 func TestNewServerAllowsEventStreamComponentForDifferentWorkerGroup(t *testing.T) {
 	store := &fakeStore{}
 	_, err := NewServer(ServerConfig{
-		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
-		WorkerGroupID:    dbtest.DefaultWorkerGroupID,
-		RegionID:         "us-east-1",
-		DefaultRegionID:  "us-east-1",
-		DB:               testTransactionalStore{Querier: store},
-		TX:               panicTxBeginner{},
-		Auth:             fakeAuth{},
-		WorkerEnrollment: testWorkerEnrollmentVerifier{},
-		TelemetryReader:  fakeTelemetryReader{store: store},
+		Log:                  slog.New(slog.NewTextHandler(io.Discard, nil)),
+		WorkerGroupID:        dbtest.DefaultWorkerGroupID,
+		RegionID:             "us-east-1",
+		DefaultRegionID:      "us-east-1",
+		DB:                   testTransactionalStore{Querier: store},
+		TX:                   panicTxBeginner{},
+		Auth:                 fakeAuth{},
+		WorkerEnrollment:     testWorkerEnrollmentVerifier{},
+		SecretDelivery:       testSecretDeliveryOpener{},
+		WorkspaceFencingKeys: testWorkspaceFencingKeys(),
+		TelemetryReader:      fakeTelemetryReader{store: store},
 		EventStream: &EventStream{
 			log:             slog.New(slog.NewTextHandler(io.Discard, nil)),
 			telemetryReader: fakeTelemetryReader{store: store},

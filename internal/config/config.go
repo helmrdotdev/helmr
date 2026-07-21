@@ -26,38 +26,40 @@ const (
 )
 
 type Control struct {
-	Addr                    string
-	DeploymentMode          string
-	WorkerGroupID           string
-	RegionID                string
-	DefaultRegionID         string
-	DatabaseURL             string
-	RedisURL                string
-	ClickHouseURL           string
-	ClickHouseUser          string
-	ClickHousePassword      string
-	CASURI                  string
-	BuildPolicyPath         string
-	RuntimeStoreURI         string
-	ManagerStoreURI         string
-	WorkerTokenSigningKey   string
-	WorkerGroupsJSON        string
-	SetupToken              string
-	AuthSecret              string
-	SecretEncryptionKey     string
-	SecretEncryptionKeyOld  string
-	LookupHMACKeys          string
-	PublicURL               string
-	MagicLinkDebugURLs      bool
-	EmailProvider           string
-	ResendAPIKey            string
-	SMTPAddr                string
-	SMTPUsername            string
-	SMTPPassword            string
-	EmailFrom               string
-	GitHubOAuthClientID     string
-	GitHubOAuthClientSecret string
-	ScheduleJitter          time.Duration
+	Addr                           string
+	DeploymentMode                 string
+	WorkerGroupID                  string
+	RegionID                       string
+	DefaultRegionID                string
+	DatabaseURL                    string
+	RedisURL                       string
+	ClickHouseURL                  string
+	ClickHouseUser                 string
+	ClickHousePassword             string
+	CASURI                         string
+	BuildPolicyPath                string
+	RuntimeStoreURI                string
+	ManagerStoreURI                string
+	WorkerTokenSigningKey          string
+	WorkerGroupsJSON               string
+	SetupToken                     string
+	AuthSecret                     string
+	SecretEncryptionKey            string
+	SecretEncryptionKeyOld         string
+	LookupHMACKeys                 string
+	WorkspaceFencingKeyFingerprint string
+	WorkspaceFencingKeys           string
+	PublicURL                      string
+	MagicLinkDebugURLs             bool
+	EmailProvider                  string
+	ResendAPIKey                   string
+	SMTPAddr                       string
+	SMTPUsername                   string
+	SMTPPassword                   string
+	EmailFrom                      string
+	GitHubOAuthClientID            string
+	GitHubOAuthClientSecret        string
+	ScheduleJitter                 time.Duration
 }
 
 type Dispatcher struct {

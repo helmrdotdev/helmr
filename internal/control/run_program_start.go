@@ -24,19 +24,19 @@ func encodeProgramStart(
 	definition db.DeploymentDefinition,
 	deploymentVersion string,
 ) ([]byte, error) {
-	runID, err := requiredUUIDString("Run ID", run.ID)
+	runID, err := requiredClaimUUIDString("Run ID", run.ID)
 	if err != nil {
 		return nil, err
 	}
-	deploymentID, err := requiredUUIDString("Deployment ID", run.DeploymentID)
+	deploymentID, err := requiredClaimUUIDString("Deployment ID", run.DeploymentID)
 	if err != nil {
 		return nil, err
 	}
-	workspaceID, err := requiredUUIDString("Workspace ID", run.WorkspaceID)
+	workspaceID, err := requiredClaimUUIDString("Workspace ID", run.WorkspaceID)
 	if err != nil {
 		return nil, err
 	}
-	baseVersionID, err := requiredUUIDString("base Workspace version ID", attempt.BaseWorkspaceVersionID)
+	baseVersionID, err := requiredClaimUUIDString("base Workspace version ID", attempt.BaseWorkspaceVersionID)
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +174,7 @@ func programStartActor(
 		attempt.ActorStartInputSequence.Int64 > run.ActorStartInputHighWatermark.Int64 {
 		return nil, errors.New("Actor Program-start authority is inconsistent")
 	}
-	actorID, err := requiredUUIDString("Actor ID", actor.ID)
+	actorID, err := requiredClaimUUIDString("Actor ID", actor.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 			!run.ParentOwnsLifecycle.Valid {
 			return nil, errors.New("child Run cause authority is incomplete")
 		}
-		parentID, err := requiredUUIDString("parent Run ID", run.ParentRunID)
+		parentID, err := requiredClaimUUIDString("parent Run ID", run.ParentRunID)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +232,7 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 			strings.TrimSpace(run.ScheduleTimezone.String) == "" {
 			return nil, errors.New("schedule Run cause authority is incomplete")
 		}
-		scheduleID, err := requiredUUIDString("Schedule ID", run.ScheduleID)
+		scheduleID, err := requiredClaimUUIDString("Schedule ID", run.ScheduleID)
 		if err != nil {
 			return nil, err
 		}
@@ -267,7 +267,7 @@ func programStartCause(run db.Run) (*runv0.RunCause, error) {
 	}
 }
 
-func requiredUUIDString(name string, value pgtype.UUID) (string, error) {
+func requiredClaimUUIDString(name string, value pgtype.UUID) (string, error) {
 	id, err := pgvalue.UUIDValue(value)
 	if err != nil || id == uuid.Nil {
 		return "", fmt.Errorf("%s is required", name)

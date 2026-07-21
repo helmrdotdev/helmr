@@ -7,6 +7,7 @@ import (
 
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func LoadControl() (Control, error) {
@@ -16,27 +17,31 @@ func LoadControl() (Control, error) {
 		return Control{}, err
 	}
 	cfg := Control{
-		Addr:                    env("HELMR_CONTROL_ADDR", ":8080"),
-		DeploymentMode:          env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
-		WorkerGroupID:           envString("HELMR_WORKER_GROUP_ID"),
-		RegionID:                envString("HELMR_REGION_ID"),
-		DefaultRegionID:         envString("HELMR_DEFAULT_REGION_ID"),
-		DatabaseURL:             envString("HELMR_DATABASE_URL"),
-		RedisURL:                env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
-		ClickHouseURL:           envString("HELMR_CLICKHOUSE_URL"),
-		ClickHouseUser:          envString("HELMR_CLICKHOUSE_USER"),
-		ClickHousePassword:      envString("HELMR_CLICKHOUSE_PASSWORD"),
-		CASURI:                  envString("HELMR_CAS_URI"),
-		BuildPolicyPath:         envString("HELMR_BUILD_POLICY_PATH"),
-		RuntimeStoreURI:         envString("HELMR_RUNTIME_STORE_URI"),
-		ManagerStoreURI:         envString("HELMR_MANAGER_STORE_URI"),
-		WorkerTokenSigningKey:   envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
-		WorkerGroupsJSON:        envString("HELMR_WORKER_GROUPS"),
-		SetupToken:              envString("HELMR_SETUP_TOKEN"),
-		AuthSecret:              envString("HELMR_AUTH_SECRET"),
-		SecretEncryptionKey:     envString("HELMR_SECRET_ENCRYPTION_KEY"),
-		SecretEncryptionKeyOld:  envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
-		LookupHMACKeys:          envString("HELMR_LOOKUP_HMAC_KEYS"),
+		Addr:                   env("HELMR_CONTROL_ADDR", ":8080"),
+		DeploymentMode:         env("HELMR_DEPLOYMENT_MODE", DeploymentModeSelfHosted),
+		WorkerGroupID:          envString("HELMR_WORKER_GROUP_ID"),
+		RegionID:               envString("HELMR_REGION_ID"),
+		DefaultRegionID:        envString("HELMR_DEFAULT_REGION_ID"),
+		DatabaseURL:            envString("HELMR_DATABASE_URL"),
+		RedisURL:               env("HELMR_REDIS_URL", "redis://127.0.0.1:6379/0"),
+		ClickHouseURL:          envString("HELMR_CLICKHOUSE_URL"),
+		ClickHouseUser:         envString("HELMR_CLICKHOUSE_USER"),
+		ClickHousePassword:     envString("HELMR_CLICKHOUSE_PASSWORD"),
+		CASURI:                 envString("HELMR_CAS_URI"),
+		BuildPolicyPath:        envString("HELMR_BUILD_POLICY_PATH"),
+		RuntimeStoreURI:        envString("HELMR_RUNTIME_STORE_URI"),
+		ManagerStoreURI:        envString("HELMR_MANAGER_STORE_URI"),
+		WorkerTokenSigningKey:  envString("HELMR_WORKER_TOKEN_SIGNING_KEY"),
+		WorkerGroupsJSON:       envString("HELMR_WORKER_GROUPS"),
+		SetupToken:             envString("HELMR_SETUP_TOKEN"),
+		AuthSecret:             envString("HELMR_AUTH_SECRET"),
+		SecretEncryptionKey:    envString("HELMR_SECRET_ENCRYPTION_KEY"),
+		SecretEncryptionKeyOld: envString("HELMR_SECRET_ENCRYPTION_KEY_OLD"),
+		LookupHMACKeys:         envString("HELMR_LOOKUP_HMAC_KEYS"),
+		WorkspaceFencingKeyFingerprint: envString(
+			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
+		),
+		WorkspaceFencingKeys:    envString("HELMR_WORKSPACE_FENCING_KEYS"),
 		PublicURL:               publicURL,
 		MagicLinkDebugURLs:      magicLinkDebugURLs,
 		EmailProvider:           envLower("HELMR_EMAIL_PROVIDER"),
@@ -105,6 +110,20 @@ func LoadControl() (Control, error) {
 	}
 	if _, err := keyedhash.FromBase64JSON(cfg.LookupHMACKeys); err != nil {
 		return cfg, fmt.Errorf("HELMR_LOOKUP_HMAC_KEYS: %w", err)
+	}
+	if cfg.WorkspaceFencingKeyFingerprint == "" {
+		return cfg, errors.New(
+			"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT is required",
+		)
+	}
+	if cfg.WorkspaceFencingKeys == "" {
+		return cfg, errors.New("HELMR_WORKSPACE_FENCING_KEYS is required")
+	}
+	if _, err := workspace.FencingKeysFromBase64JSON(
+		cfg.WorkspaceFencingKeyFingerprint,
+		cfg.WorkspaceFencingKeys,
+	); err != nil {
+		return cfg, fmt.Errorf("HELMR_WORKSPACE_FENCING_KEYS: %w", err)
 	}
 	if err := validatePublicURL(cfg.PublicURL); err != nil {
 		return cfg, err

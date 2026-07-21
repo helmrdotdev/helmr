@@ -423,6 +423,17 @@ variable "control_environment" {
   default     = {}
 }
 
+variable "workspace_fencing_key_fingerprint" {
+  description = "Active content-addressed Workspace fencing key fingerprint selected by this Control release. Required when create_control_service is true."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.workspace_fencing_key_fingerprint == "" || can(regex("^sha256:[0-9a-f]{64}$", var.workspace_fencing_key_fingerprint))
+    error_message = "workspace_fencing_key_fingerprint must be empty during bootstrap or a lowercase sha256:<64 hexadecimal digits> fingerprint."
+  }
+}
+
 variable "dispatcher_environment" {
   description = "Additional non-secret environment variables for helmr-dispatcher. Managed Helmr variables such as HELMR_REDIS_URL are owned by this module."
   type        = map(string)

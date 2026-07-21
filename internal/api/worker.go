@@ -352,11 +352,11 @@ type WorkerRunLeaseClaimRequest struct {
 }
 
 type WorkerRunLeaseClaimResponse struct {
-	Lease     WorkerRunLeaseReceipt   `json:"lease"`
-	Program   WorkerRuntimeProgram    `json:"program"`
-	Workspace WorkerWorkspaceLease    `json:"workspace"`
-	Secrets   []WorkerSecretDelivery  `json:"secrets"`
-	Execution WorkerRunLeaseExecution `json:"execution"`
+	Lease     WorkerRunLeaseReceipt     `json:"lease"`
+	Program   WorkerRuntimeProgram      `json:"program"`
+	Workspace WorkerWorkspaceAttachment `json:"workspace"`
+	Secrets   []WorkerSecretDelivery    `json:"secrets"`
+	Execution WorkerRunLeaseExecution   `json:"execution"`
 }
 
 type WorkerRunLeaseReceipt struct {
@@ -372,8 +372,13 @@ type WorkerRunLeaseReceipt struct {
 	RuntimeIdentityID          string       `json:"runtime_identity_id"`
 	NetworkSlotID              string       `json:"network_slot_id"`
 	NetworkSlotGeneration      int64        `json:"network_slot_generation"`
+	WorkspaceID                string       `json:"workspace_id"`
 	WorkspaceMountID           string       `json:"workspace_mount_id"`
 	WorkspaceLeaseID           string       `json:"workspace_lease_id"`
+	BaseWorkspaceVersionID     string       `json:"base_workspace_version_id"`
+	OwnershipGeneration        int64        `json:"ownership_generation"`
+	WriterGeneration           int64        `json:"writer_generation"`
+	MountFencingGeneration     int64        `json:"mount_fencing_generation"`
 	RequestedCPUMillis         int64        `json:"requested_cpu_millis"`
 	RequestedMemoryBytes       int64        `json:"requested_memory_bytes"`
 	RequestedWorkloadDiskBytes int64        `json:"requested_workload_disk_bytes"`
@@ -386,16 +391,8 @@ type WorkerRunLeaseReceipt struct {
 	ExpiresAt                  time.Time    `json:"expires_at"`
 }
 
-type WorkerWorkspaceLease struct {
-	ID                     string `json:"id"`
-	WorkspaceID            string `json:"workspace_id"`
-	RuntimeInstanceID      string `json:"runtime_instance_id"`
-	WorkspaceMountID       string `json:"workspace_mount_id"`
-	BaseVersionID          string `json:"base_version_id"`
-	OwnershipGeneration    int64  `json:"ownership_generation"`
-	WriterGeneration       int64  `json:"writer_generation"`
-	MountFencingGeneration int64  `json:"mount_fencing_generation"`
-	WriteCapability        string `json:"write_capability"`
+type WorkerWorkspaceAttachment struct {
+	WriteCapability string `json:"write_capability"`
 }
 
 type WorkerSecretDelivery struct {

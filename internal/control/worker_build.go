@@ -35,8 +35,8 @@ func (s *Server) workerLeaseDeploymentBuild(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	leaseExpiresAt := time.Now().Add(deploymentBuildLeaseDuration)
-	if s.buildPolicy == nil {
-		writeError(w, unavailable(errors.New("build policy is not configured")))
+	if s.buildPolicy == nil || s.managerStore == nil {
+		writeError(w, unavailable(errors.New("deployment build authority is not configured")))
 		return
 	}
 	var response api.WorkerDeploymentBuildLeaseResponse

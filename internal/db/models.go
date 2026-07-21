@@ -2827,7 +2827,7 @@ type WorkspaceLease struct {
 	OwnershipGeneration    int64               `json:"ownership_generation"`
 	WriterGeneration       int64               `json:"writer_generation"`
 	MountFencingGeneration int64               `json:"mount_fencing_generation"`
-	FencingKeyID           string              `json:"fencing_key_id"`
+	FencingKeyFingerprint  []byte              `json:"fencing_key_fingerprint"`
 	FencingTokenHash       string              `json:"fencing_token_hash"`
 	AcquiredAt             pgtype.Timestamptz  `json:"acquired_at"`
 	RenewedAt              pgtype.Timestamptz  `json:"renewed_at"`

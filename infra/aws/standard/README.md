@@ -56,10 +56,11 @@ Required secret value formats:
 - `worker_token_signing_key`, `auth_secret`, `setup_token`: high-entropy strings
 - `setup_token`: read it from Secrets Manager for first organization setup
 - `secret_encryption_key`, `checkpoint_encryption_key`: base64-encoded 32-byte keys
+- `workspace_fencing_keys`: JSON object mapping each content fingerprint to its base64-encoded 32-byte key
 - `github_oauth_client_secret`: GitHub OAuth client secret
 
 The helper script generates `worker_token_signing_key`, `auth_secret`, `secret_encryption_key`,
-`checkpoint_encryption_key`, and `setup_token` locally and writes them
+`workspace_fencing_keys`, `checkpoint_encryption_key`, and `setup_token` locally and writes them
 directly to Secrets Manager:
 
 ```sh
@@ -69,6 +70,13 @@ directly to Secrets Manager:
 Set `HELMR_DATABASE_URL` and `HELMR_GITHUB_OAUTH_CLIENT_SECRET` to populate external secrets in the same run. The
 helper uses `tofu` by default; set `TOFU=terraform` when using Terraform. Set
 `OVERWRITE_SECRETS=1` only when intentionally rotating values.
+The helper verifies every key against its domain-separated SHA-256 fingerprint
+and prints the exact `workspace_fencing_key_fingerprint` Terraform input to set
+before enabling the Control service. Set
+`HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT` to choose among multiple readable
+keys. Rotation adds the new fingerprint-key pair, promotes that fingerprint in
+Terraform only after every claim-serving Control can read it, and retains old
+key bytes while a nonterminal Workspace Lease references them.
 
 Run migrations after secrets are populated:
 

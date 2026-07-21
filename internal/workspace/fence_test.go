@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"encoding/base64"
-	"encoding/hex"
 	"strings"
 	"testing"
 
@@ -14,7 +13,8 @@ func TestFencingKeysDeriveExactCapability(t *testing.T) {
 	for index := range key {
 		key[index] = byte(index)
 	}
-	keys, err := NewFencingKeys("write-7", map[string][]byte{"write-7": key})
+	const fingerprint = "sha256:5caaaabfb2d6290166b848f64cba58d352bc67c6007c0656a2395efad5c7eff5"
+	keys, err := NewFencingKeys(fingerprint, map[string][]byte{fingerprint: key})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,24 +29,17 @@ func TestFencingKeysDeriveExactCapability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if capability.KeyID != "write-7" ||
+	if capability.KeyFingerprint.String() != fingerprint ||
 		capability.Token != "PVPhpFfbVfNqF-ACb681yKthwdUcPeXlUq-dnSq6EM4" ||
 		capability.Hash != "sha256:6afbab08c7bdefa85ff618f8793eece21d2968f2cd7aa825020b979d567a354f" {
 		t.Fatalf("capability = %+v", capability)
 	}
-	replayed, err := keys.Derive("write-7", input)
+	replayed, err := keys.Derive(capability.KeyFingerprint, input)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if replayed != capability {
 		t.Fatalf("replayed capability = %+v, want %+v", replayed, capability)
-	}
-	fingerprint, err := keys.Fingerprint("write-7")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := hex.EncodeToString(fingerprint[:]); got != "5caaaabfb2d6290166b848f64cba58d352bc67c6007c0656a2395efad5c7eff5" {
-		t.Fatalf("fingerprint = %s", got)
 	}
 }
 
@@ -54,33 +47,44 @@ func TestFencingKeysFromBase64JSONSelectsActiveReadableKey(t *testing.T) {
 	first := base64.StdEncoding.EncodeToString(bytesOf(1))
 	second := base64.StdEncoding.EncodeToString(bytesOf(2))
 	keys, err := FencingKeysFromBase64JSON(
-		"release.2",
-		`{"release.1":"`+first+`","release.2":"`+second+`"}`,
+		fingerprintOf(2),
+		`{"`+fingerprintOf(1)+`":"`+first+`","`+fingerprintOf(2)+`":"`+second+`"}`,
 	)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if keys.ActiveID() != "release.2" || !keys.Has("release.1") || !keys.Has("release.2") {
-		t.Fatalf("keys active=%q old=%t current=%t", keys.ActiveID(), keys.Has("release.1"), keys.Has("release.2"))
+	firstFingerprint, _ := ParseFencingKeyFingerprint(fingerprintOf(1))
+	secondFingerprint, _ := ParseFencingKeyFingerprint(fingerprintOf(2))
+	if keys.ActiveFingerprint() != secondFingerprint ||
+		!keys.Has(firstFingerprint) ||
+		!keys.Has(secondFingerprint) {
+		t.Fatalf(
+			"keys active=%q old=%t current=%t",
+			keys.ActiveFingerprint(),
+			keys.Has(firstFingerprint),
+			keys.Has(secondFingerprint),
+		)
 	}
 }
 
 func TestFencingKeysRejectInvalidAuthority(t *testing.T) {
 	validKey := base64.StdEncoding.EncodeToString(bytesOf(1))
+	validFingerprint := fingerprintOf(1)
 	for _, test := range []struct {
 		name   string
 		active string
 		raw    string
 		want   string
 	}{
-		{name: "missing active", active: "release.2", raw: `{"release.1":"` + validKey + `"}`, want: "is not configured"},
-		{name: "invalid id", active: "release/1", raw: `{"release/1":"` + validKey + `"}`, want: "ID is invalid"},
-		{name: "non-canonical active id", active: " release.1 ", raw: `{"release.1":"` + validKey + `"}`, want: "ID is invalid"},
-		{name: "short key", active: "release.1", raw: `{"release.1":"AQ=="}`, want: "must be 32 bytes"},
-		{name: "duplicate id", active: "release.1", raw: `{"release.1":"` + validKey + `","release.1":"` + validKey + `"}`, want: "duplicate ID"},
-		{name: "trailing value", active: "release.1", raw: `{"release.1":"` + validKey + `"} true`, want: "trailing value"},
-		{name: "malformed trailing value", active: "release.1", raw: `{"release.1":"` + validKey + `"} garbage`, want: "trailing value"},
-		{name: "empty", active: "release.1", raw: `{}`, want: "at least one"},
+		{name: "missing active", active: fingerprintOf(2), raw: `{"` + validFingerprint + `":"` + validKey + `"}`, want: "is not configured"},
+		{name: "invalid fingerprint", active: "release/1", raw: `{"release/1":"` + validKey + `"}`, want: "fingerprint must"},
+		{name: "non-canonical fingerprint", active: "SHA256:" + strings.Repeat("0", 64), raw: `{"` + validFingerprint + `":"` + validKey + `"}`, want: "fingerprint must"},
+		{name: "mismatched fingerprint", active: fingerprintOf(2), raw: `{"` + fingerprintOf(2) + `":"` + validKey + `"}`, want: "does not match"},
+		{name: "short key", active: validFingerprint, raw: `{"` + validFingerprint + `":"AQ=="}`, want: "must be 32 bytes"},
+		{name: "duplicate fingerprint", active: validFingerprint, raw: `{"` + validFingerprint + `":"` + validKey + `","` + validFingerprint + `":"` + validKey + `"}`, want: "duplicate fingerprint"},
+		{name: "trailing value", active: validFingerprint, raw: `{"` + validFingerprint + `":"` + validKey + `"} true`, want: "trailing value"},
+		{name: "malformed trailing value", active: validFingerprint, raw: `{"` + validFingerprint + `":"` + validKey + `"} garbage`, want: "trailing value"},
+		{name: "empty", active: validFingerprint, raw: `{}`, want: "at least one"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			_, err := FencingKeysFromBase64JSON(test.active, test.raw)
@@ -92,7 +96,10 @@ func TestFencingKeysRejectInvalidAuthority(t *testing.T) {
 }
 
 func TestFencingKeysRejectInvalidDerivationInput(t *testing.T) {
-	keys, err := NewFencingKeys("release.1", map[string][]byte{"release.1": bytesOf(1)})
+	keys, err := NewFencingKeys(
+		fingerprintOf(1),
+		map[string][]byte{fingerprintOf(1): bytesOf(1)},
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,20 +111,24 @@ func TestFencingKeysRejectInvalidDerivationInput(t *testing.T) {
 		MountFencingGeneration: 1,
 	}
 	for _, test := range []struct {
-		name  string
-		keyID string
-		edit  func(*FenceInput)
-		want  string
+		name        string
+		fingerprint string
+		edit        func(*FenceInput)
+		want        string
 	}{
-		{name: "unknown key", keyID: "release.2", edit: func(*FenceInput) {}, want: "is not configured"},
-		{name: "missing lease", keyID: "release.1", edit: func(input *FenceInput) { input.LeaseID = uuid.Nil }, want: "Lease ID"},
-		{name: "missing Workspace", keyID: "release.1", edit: func(input *FenceInput) { input.WorkspaceID = uuid.Nil }, want: "Workspace ID"},
-		{name: "invalid generation", keyID: "release.1", edit: func(input *FenceInput) { input.WriterGeneration = 0 }, want: "must be positive"},
+		{name: "unknown key", fingerprint: fingerprintOf(2), edit: func(*FenceInput) {}, want: "is not configured"},
+		{name: "missing lease", fingerprint: fingerprintOf(1), edit: func(input *FenceInput) { input.LeaseID = uuid.Nil }, want: "Lease ID"},
+		{name: "missing Workspace", fingerprint: fingerprintOf(1), edit: func(input *FenceInput) { input.WorkspaceID = uuid.Nil }, want: "Workspace ID"},
+		{name: "invalid generation", fingerprint: fingerprintOf(1), edit: func(input *FenceInput) { input.WriterGeneration = 0 }, want: "must be positive"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			input := valid
 			test.edit(&input)
-			_, err := keys.Derive(test.keyID, input)
+			fingerprint, parseErr := ParseFencingKeyFingerprint(test.fingerprint)
+			if parseErr != nil {
+				t.Fatal(parseErr)
+			}
+			_, err := keys.Derive(fingerprint, input)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
@@ -127,4 +138,10 @@ func TestFencingKeysRejectInvalidDerivationInput(t *testing.T) {
 
 func bytesOf(value byte) []byte {
 	return []byte(strings.Repeat(string([]byte{value}), FencingKeySize))
+}
+
+func fingerprintOf(value byte) string {
+	var key [FencingKeySize]byte
+	copy(key[:], bytesOf(value))
+	return FencingKeyFingerprintForKey(key).String()
 }

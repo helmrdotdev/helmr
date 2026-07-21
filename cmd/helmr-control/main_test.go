@@ -26,7 +26,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
+	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -50,19 +52,21 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                log,
-		DB:                 store,
-		TX:                 panicTxBeginner{},
-		Auth:               auth.NewDBAuthenticator(store),
-		WorkerEnrollment:   controltestWorkerEnrollmentVerifier{},
-		AuthSecret:         []byte("abcdefghijabcdefghijabcdefghij12"),
-		PublicURL:          publicURL,
-		WorkerGroupID:      "us-east-1-worker-group-1",
-		RegionID:           "us-east-1",
-		DefaultRegionID:    "us-east-1",
-		TelemetryReader:    controltestTelemetryReader{store: store},
-		MagicLinkDebugURLs: true,
-		Mailer:             configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
+		Log:                  log,
+		DB:                   store,
+		TX:                   panicTxBeginner{},
+		Auth:                 auth.NewDBAuthenticator(store),
+		WorkerEnrollment:     controltestWorkerEnrollmentVerifier{},
+		SecretDelivery:       controltestSecretDeliveryOpener{},
+		WorkspaceFencingKeys: controltestWorkspaceFencingKeys(),
+		AuthSecret:           []byte("abcdefghijabcdefghijabcdefghij12"),
+		PublicURL:            publicURL,
+		WorkerGroupID:        "us-east-1-worker-group-1",
+		RegionID:             "us-east-1",
+		DefaultRegionID:      "us-east-1",
+		TelemetryReader:      controltestTelemetryReader{store: store},
+		MagicLinkDebugURLs:   true,
+		Mailer:               configuredEmailSender(log, config.Control{EmailProvider: config.EmailProviderNone}),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +82,31 @@ func TestEmailProviderNoneDisablesDebugLogMailer(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "magic link mailer is not configured") {
 		t.Fatalf("body = %s", rec.Body.String())
 	}
+}
+
+type controltestSecretDeliveryOpener struct{}
+
+func (controltestSecretDeliveryOpener) OpenDeliveries(
+	uuid.UUID,
+	[]secret.DeliveryEnvelope,
+) ([]secret.DeliveryMaterial, error) {
+	return nil, nil
+}
+
+func controltestWorkspaceFencingKeys() workspace.FencingKeys {
+	keys, err := workspace.NewFencingKeys(
+		"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03",
+		map[string][]byte{
+			"sha256:c57461e4ce9af0ed10b8b704cdc10537834475e528e4591d295857177987ee03": make(
+				[]byte,
+				workspace.FencingKeySize,
+			),
+		},
+	)
+	if err != nil {
+		panic(err)
+	}
+	return keys
 }
 
 func TestRunServesReadyzAndDeviceStart(t *testing.T) {
@@ -116,6 +145,14 @@ func TestRunServesReadyzAndDeviceStart(t *testing.T) {
 	t.Setenv("HELMR_AUTH_SECRET", "abcdefghijabcdefghijabcdefghij12")
 	t.Setenv("HELMR_SECRET_ENCRYPTION_KEY", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	t.Setenv("HELMR_LOOKUP_HMAC_KEYS", `{"1":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}`)
+	t.Setenv(
+		"HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT",
+		"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26",
+	)
+	t.Setenv(
+		"HELMR_WORKSPACE_FENCING_KEYS",
+		`{"sha256:29f47c71b2eb74ea02b312a6c045e1497cd81313f1bdc037a5529139ea0a0a26":"AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI="}`,
+	)
 	t.Setenv("HELMR_PUBLIC_URL", "http://"+addr)
 	t.Setenv("HELMR_EMAIL_PROVIDER", "none")
 	t.Setenv("HELMR_GITHUB_OAUTH_CLIENT_ID", "client-id")

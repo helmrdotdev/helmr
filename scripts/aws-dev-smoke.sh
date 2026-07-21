@@ -126,7 +126,7 @@ Control image environment:
   CONTROL_IMAGE_PLATFORM    Docker platform. Defaults to linux/amd64.
   CONTROL_IMAGE_RUNTIME_RELEASE_DIR
                            Verified runtime-release directory required by control-image-build.
-  ROTATE_DEV_SECRETS        Set to 1 to replace generated dev secret values.
+  ROTATE_DEV_SECRETS        Set to 1 to replace generated dev secret values except immutable Workspace fencing authority.
 
 Dev optional environment:
   DEV_TFVARS            Generated tfvars path. Defaults to infra/aws/stacks/dev/full-run-smoke.tfvars.
@@ -1586,6 +1586,77 @@ random_base64() {
   dd if=/dev/urandom bs=32 count=1 2>/dev/null | base64 | tr -d '\n'
 }
 
+workspace_fencing_fingerprint() {
+  {
+    printf 'helmr.workspace-fence-key.v0\0'
+    printf '%s' "$1" | openssl base64 -d -A
+  } | openssl dgst -sha256 -r | awk '{ print "sha256:" $1 }'
+}
+
+validate_workspace_fencing_key() {
+  encoded=$1
+  canonical="$(printf '%s' "${encoded}" | openssl base64 -d -A | openssl base64 -A)"
+  [ "${canonical}" = "${encoded}" ] ||
+    die "Workspace fencing key is not canonical base64"
+  size="$(
+    printf '%s' "${encoded}" |
+      openssl base64 -d -A |
+      wc -c |
+      tr -d '[:space:]'
+  )"
+  [ "${size}" = "32" ] ||
+    die "Workspace fencing key must decode to exactly 32 bytes"
+}
+
+dev_workspace_fencing_authority() {
+  selected="${HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT:-}"
+  keys_arn="$(dev_secret_arn workspace_fencing_keys)"
+  keys_status="$(secret_value_status "${keys_arn}")"
+  if [ "${keys_status}" = "present" ]; then
+    keys="$(
+      aws secretsmanager get-secret-value \
+        --region "${AWS_REGION}" \
+        --secret-id "${keys_arn}" \
+        --query SecretString \
+        --output text
+    )"
+  elif [ "${keys_status}" = "missing" ]; then
+    encoded="$(random_base64)"
+    fingerprint="$(workspace_fencing_fingerprint "${encoded}")"
+    keys="{\"${fingerprint}\":\"${encoded}\"}"
+    put_secret_value "${keys_arn}" "${keys}"
+  else
+    die "unexpected secret status for ${keys_arn}: ${keys_status}"
+  fi
+
+  printf '%s' "${keys}" |
+    jq -e '
+      type == "object" and length > 0 and
+      all(keys[]; test("^sha256:[0-9a-f]{64}$")) and
+      all(.[]; type == "string")
+    ' >/dev/null ||
+    die "Workspace fencing keys must be a non-empty fingerprint-to-base64 JSON object"
+  while IFS= read -r entry_fingerprint; do
+    encoded="$(printf '%s' "${keys}" | jq -er --arg fingerprint "${entry_fingerprint}" '.[$fingerprint]')"
+    validate_workspace_fencing_key "${encoded}"
+    fingerprint="$(workspace_fencing_fingerprint "${encoded}")"
+    [ "${entry_fingerprint}" = "${fingerprint}" ] ||
+      die "Workspace fencing key ${entry_fingerprint} does not match its content fingerprint"
+  done < <(printf '%s' "${keys}" | jq -r 'keys[]')
+
+  if [ -n "${selected}" ]; then
+    printf '%s' "${keys}" | jq -e --arg fingerprint "${selected}" 'has($fingerprint)' >/dev/null ||
+      die "selected Workspace fencing key ${selected} is not readable"
+    fingerprint="${selected}"
+  elif [ "$(printf '%s' "${keys}" | jq 'length')" -eq 1 ]; then
+    fingerprint="$(printf '%s' "${keys}" | jq -er 'keys[0]')"
+  else
+    die "HELMR_WORKSPACE_FENCING_KEY_FINGERPRINT is required when multiple Workspace fencing keys are readable"
+  fi
+  set_tfvar "${DEV_TFVARS}" "workspace_fencing_key_fingerprint" "$(tf_quote "${fingerprint}")"
+  info "selected Workspace fencing key ${fingerprint}"
+}
+
 dev_database_url() {
   database_secret_arn="$(dev_secret_arn database_url)"
   master_secret_arn="$("${TF_BIN}" -chdir="${DEV_STACK}" output -raw database_master_user_secret_arn)"
@@ -1630,6 +1701,7 @@ dev_generated_secrets() {
   put_secret_value_if_missing "$(dev_secret_arn auth_secret)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn secret_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn lookup_hmac_keys)" "{\"1\":\"$(random_base64)\"}"
+  dev_workspace_fencing_authority
   put_secret_value_if_missing "$(dev_secret_arn checkpoint_encryption_key)" "$(random_base64)"
   put_secret_value_if_missing "$(dev_secret_arn setup_token)" "$(random_hex)"
   dev_resend_api_key_secret
