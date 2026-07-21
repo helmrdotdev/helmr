@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -165,6 +166,104 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	}
 }
 
+func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	start := fixture.freshRunStartLocators(t, ctx, work)
+	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("pre-start entrypoint error = %v, want no rows", err)
+	}
+
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queries := New(tx)
+	if _, err := queries.MarkFreshRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, start)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.MarkFreshRunRunning(ctx, MarkFreshRunRunningParams{
+		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
+		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
+		WorkspaceID: start.WorkspaceID, ExpectedStateVersion: 1,
+		AttemptNumber: start.AttemptNumber, RunLeaseID: workUUID(work.leaseID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := queries.TouchFreshRunWorkspace(ctx, TouchFreshRunWorkspaceParams{
+		ID: start.WorkspaceID, OrgID: workUUID(fixture.orgID),
+		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
+		OwnershipGeneration: 1, WriterGeneration: 1, RunID: workUUID(work.runID),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	locators := fixture.runEntrypointLocators(t, ctx, work)
+	attempt, err := fixture.queries.MarkRunEntrypointEntered(ctx, MarkRunEntrypointEnteredParams{
+		RunID:       locators.RunID,
+		Number:      locators.AttemptNumber,
+		WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !attempt.EntrypointEnteredAt.Valid {
+		t.Fatal("entrypoint_entered_at was not set")
+	}
+	enteredAt := attempt.EntrypointEnteredAt.Time
+
+	if _, err := fixture.queries.MarkRunEntrypointEntered(ctx, MarkRunEntrypointEnteredParams{
+		RunID:       locators.RunID,
+		Number:      locators.AttemptNumber,
+		WorkspaceID: locators.WorkspaceID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("replay mutation error = %v, want no rows", err)
+	}
+	state := fixture.freshRunStartState(t, ctx, work)
+	if !state.EntrypointEnteredAt.Valid || !state.EntrypointEnteredAt.Time.Equal(enteredAt) {
+		t.Fatalf("replay changed entrypoint timestamp: got %v want %v", state.EntrypointEnteredAt, enteredAt)
+	}
+	if replay := fixture.runEntrypointLocators(t, ctx, work); replay.RunID != locators.RunID {
+		t.Fatalf("replay Run = %s, want %s", pgvalue.UUIDString(replay.RunID), pgvalue.UUIDString(locators.RunID))
+	}
+
+	waitID := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	if _, err := fixture.pool.Exec(ctx, `
+		INSERT INTO run_waits (
+			id, environment_id, run_id, workspace_id, kind, condition_state,
+			due_at, suspension_state, expected_run_state_version, attempt_number,
+			current_run_lease_id, resume_attach_id
+		) VALUES (
+			$1, $2, $3, $4, 'timer', 'pending',
+			now() + interval '1 minute', 'hot', 2, $5, $6, $7
+		)
+	`, waitID, workUUID(fixture.environmentID), locators.RunID, locators.WorkspaceID,
+		locators.AttemptNumber, workUUID(work.leaseID), pgvalue.UUID(uuid.Must(uuid.NewV7())),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("post-entry Wait error = %v, want no rows", err)
+	}
+	if _, err := fixture.pool.Exec(ctx, `DELETE FROM run_waits WHERE id = $1`, waitID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := fixture.pool.Exec(ctx,
+		`UPDATE run_leases SET expires_at = now() - interval '1 second' WHERE id = $1`,
+		work.leaseID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work)); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("expired entrypoint error = %v, want no rows", err)
+	}
+}
+
 func (fixture runLeaseClaimFixture) freshRunStartLocators(
 	t *testing.T,
 	ctx context.Context,
@@ -180,6 +279,29 @@ func (fixture runLeaseClaimFixture) freshRunStartLocators(
 		t.Fatal(err)
 	}
 	return locators
+}
+
+func (fixture runLeaseClaimFixture) runEntrypointLocators(
+	t *testing.T,
+	ctx context.Context,
+	work runLeaseWork,
+) GetRunEntrypointLocatorsRow {
+	t.Helper()
+	locators, err := fixture.queries.GetRunEntrypointLocators(ctx, fixture.runEntrypointLocatorParams(work))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return locators
+}
+
+func (fixture runLeaseClaimFixture) runEntrypointLocatorParams(
+	work runLeaseWork,
+) GetRunEntrypointLocatorsParams {
+	return GetRunEntrypointLocatorsParams{
+		ID: workUUID(work.leaseID), LeaseSequence: 1,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
+		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
+	}
 }
 
 func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(

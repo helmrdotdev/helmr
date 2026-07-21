@@ -248,6 +248,7 @@ POST /api/worker/leases/checkpoints/failed
 POST /api/worker/leases/checkpoints/ready
 POST /api/worker/leases/claim
 POST /api/worker/leases/discover
+POST /api/worker/leases/entrypoint
 POST /api/worker/leases/lease
 POST /api/worker/leases/log-entries
 POST /api/worker/leases/logs

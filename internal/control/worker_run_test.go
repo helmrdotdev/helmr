@@ -58,6 +58,50 @@ func TestWorkerStartRejectsLeaseFromAnotherWorkerEpoch(t *testing.T) {
 	}
 }
 
+func TestWorkerRunEntrypointRejectsUnknownFields(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	server := &Server{log: discardTestLogger(), db: &workerContractStore{}}
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/worker/leases/entrypoint",
+		strings.NewReader(`{"lease":{},"entrypoint_kind":"task","entrypoint_declared_id":"compile","unknown":true}`),
+	)
+	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, finalWorkerActor(workerID)))
+	rec := httptest.NewRecorder()
+
+	server.workerEnterRunEntrypoint(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestWorkerRunEntrypointRejectsInvalidEntrypoint(t *testing.T) {
+	workerID := uuid.Must(uuid.NewV7())
+	lease := finalWorkerRunLease(workerID)
+	body, err := json.Marshal(api.WorkerRunEntrypointRequest{
+		Lease: api.WorkerRunLeaseReceipt{
+			ID:            lease.ID,
+			LeaseSequence: lease.LeaseSequence,
+		},
+		EntrypointKind:       "workflow",
+		EntrypointDeclaredID: "compile",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &Server{log: discardTestLogger(), db: &workerContractStore{}}
+	req := httptest.NewRequest(http.MethodPost, "/api/worker/leases/entrypoint", bytes.NewReader(body))
+	req = req.WithContext(context.WithValue(req.Context(), workerContextKey{}, finalWorkerActor(workerID)))
+	rec := httptest.NewRecorder()
+
+	server.workerEnterRunEntrypoint(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestWorkerReleaseRejectsUnknownFields(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	lease := finalWorkerRunLease(workerID)

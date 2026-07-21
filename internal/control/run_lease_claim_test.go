@@ -1045,15 +1045,18 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxRejectsDifferentMount(t *test
 
 type runLeaseClaimStore struct {
 	db.Querier
-	authority      runLeaseClaimAuthority
-	locators       db.GetRunLeaseClaimLocatorsRow
-	secretLocators *db.GetRunLeaseSecretDeliveryLocatorsRow
-	secretRows     []db.LockAttemptSecretDeliveryRow
-	secretVersion  db.SecretVersion
-	program        db.GetDeploymentProgramAuthorityRow
-	definition     db.DeploymentDefinition
-	projectionErr  error
-	calls          []string
+	authority       runLeaseClaimAuthority
+	locators        db.GetRunLeaseClaimLocatorsRow
+	secretLocators  *db.GetRunLeaseSecretDeliveryLocatorsRow
+	secretRows      []db.LockAttemptSecretDeliveryRow
+	secretVersion   db.SecretVersion
+	program         db.GetDeploymentProgramAuthorityRow
+	definition      db.DeploymentDefinition
+	projectionErr   error
+	entrypoint      db.GetRunEntrypointLocatorsRow
+	enteredAt       pgtype.Timestamptz
+	entrypointMarks int
+	calls           []string
 }
 
 func (s *runLeaseClaimStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {

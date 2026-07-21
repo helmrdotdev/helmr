@@ -271,6 +271,113 @@ func (q *Queries) GetFreshRunLeaseStartLocators(ctx context.Context, arg GetFres
 	return i, err
 }
 
+const getRunEntrypointLocators = `-- name: GetRunEntrypointLocators :one
+SELECT run_leases.org_id,
+       run_leases.project_id,
+       run_leases.environment_id,
+       run_leases.run_id,
+       run_leases.workspace_id,
+       run_leases.attempt_number,
+       run_leases.region_id,
+       run_leases.runtime_instance_id,
+       run_leases.network_slot_id,
+       run_leases.network_slot_generation,
+       workspace_leases.id AS workspace_lease_id,
+       workspace_leases.workspace_mount_id
+  FROM run_leases
+  JOIN runs
+    ON runs.id = run_leases.run_id
+   AND runs.workspace_id = run_leases.workspace_id
+   AND runs.current_attempt_number = run_leases.attempt_number
+   AND runs.current_run_lease_id = run_leases.id
+   AND runs.status = 'running'
+  JOIN worker_groups
+    ON worker_groups.id = run_leases.worker_group_id
+   AND worker_groups.region_id = run_leases.region_id
+   AND worker_groups.state = 'active'
+   AND worker_groups.allows_run
+   AND worker_groups.protocol_version = run_leases.worker_protocol_version
+  JOIN worker_instances
+    ON worker_instances.id = run_leases.worker_instance_id
+   AND worker_instances.worker_group_id = run_leases.worker_group_id
+   AND worker_instances.current_epoch = run_leases.worker_epoch
+   AND worker_instances.protocol_version = run_leases.worker_protocol_version
+   AND worker_instances.state IN ('active', 'draining')
+   AND worker_instances.supports_run
+  JOIN workspace_leases
+    ON workspace_leases.owner_run_lease_id = run_leases.id
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.state = 'active'
+   AND workspace_leases.expires_at > transaction_timestamp()
+ WHERE run_leases.id = $1
+   AND run_leases.lease_sequence = $2
+   AND run_leases.worker_group_id = $3
+   AND run_leases.worker_instance_id = $4
+   AND run_leases.worker_epoch = $5
+   AND run_leases.worker_protocol_version = $6
+   AND run_leases.state = 'running'
+   AND run_leases.expires_at > transaction_timestamp()
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_waits
+        WHERE run_waits.run_id = run_leases.run_id
+          AND run_waits.attempt_number = run_leases.attempt_number
+          AND run_waits.workspace_id = run_leases.workspace_id
+          AND run_waits.current_run_lease_id = run_leases.id
+   )
+`
+
+type GetRunEntrypointLocatorsParams struct {
+	ID                    pgtype.UUID `json:"id"`
+	LeaseSequence         int64       `json:"lease_sequence"`
+	WorkerGroupID         string      `json:"worker_group_id"`
+	WorkerInstanceID      pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch           int64       `json:"worker_epoch"`
+	WorkerProtocolVersion string      `json:"worker_protocol_version"`
+}
+
+type GetRunEntrypointLocatorsRow struct {
+	OrgID                 pgtype.UUID `json:"org_id"`
+	ProjectID             pgtype.UUID `json:"project_id"`
+	EnvironmentID         pgtype.UUID `json:"environment_id"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	AttemptNumber         int32       `json:"attempt_number"`
+	RegionID              string      `json:"region_id"`
+	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
+	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
+	NetworkSlotGeneration int64       `json:"network_slot_generation"`
+	WorkspaceLeaseID      pgtype.UUID `json:"workspace_lease_id"`
+	WorkspaceMountID      pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) GetRunEntrypointLocators(ctx context.Context, arg GetRunEntrypointLocatorsParams) (GetRunEntrypointLocatorsRow, error) {
+	row := q.db.QueryRow(ctx, getRunEntrypointLocators,
+		arg.ID,
+		arg.LeaseSequence,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkerProtocolVersion,
+	)
+	var i GetRunEntrypointLocatorsRow
+	err := row.Scan(
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.AttemptNumber,
+		&i.RegionID,
+		&i.RuntimeInstanceID,
+		&i.NetworkSlotID,
+		&i.NetworkSlotGeneration,
+		&i.WorkspaceLeaseID,
+		&i.WorkspaceMountID,
+	)
+	return i, err
+}
+
 const getRunLease = `-- name: GetRunLease :one
 SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
   FROM run_leases
@@ -790,6 +897,81 @@ func (q *Queries) LockReadyRunCheckpoint(ctx context.Context, arg LockReadyRunCh
 		&i.ReadyAt,
 		&i.InvalidatedAt,
 		&i.InvalidationReasonCode,
+	)
+	return i, err
+}
+
+const lockRunEntrypointLease = `-- name: LockRunEntrypointLease :one
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+  FROM run_leases
+ WHERE id = $1
+   AND run_id = $2
+   AND workspace_id = $3
+   AND attempt_number = $4
+   AND lease_sequence = $5
+   AND state = 'running'
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE
+`
+
+type LockRunEntrypointLeaseParams struct {
+	ID            pgtype.UUID `json:"id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	LeaseSequence int64       `json:"lease_sequence"`
+}
+
+func (q *Queries) LockRunEntrypointLease(ctx context.Context, arg LockRunEntrypointLeaseParams) (RunLease, error) {
+	row := q.db.QueryRow(ctx, lockRunEntrypointLease,
+		arg.ID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.LeaseSequence,
+	)
+	var i RunLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.RegionID,
+		&i.LeaseSequence,
+		&i.AttemptNumber,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.NetworkSlotID,
+		&i.NetworkSlotGeneration,
+		&i.RuntimeIdentityID,
+		&i.WorkerProtocolVersion,
+		&i.RequestedCpuMillis,
+		&i.RequestedMemoryBytes,
+		&i.RequestedWorkloadDiskBytes,
+		&i.RequestedScratchBytes,
+		&i.RequestedExecutionSlots,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.Traceparent,
+		&i.State,
+		&i.AssignedAt,
+		&i.StartDeadlineAt,
+		&i.ClaimedAt,
+		&i.StartedAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.CheckpointedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.TerminalRequestFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -1925,6 +2107,44 @@ func (q *Queries) MarkFreshRunRunning(ctx context.Context, arg MarkFreshRunRunni
 		&i.FirstLeaseAt,
 		&i.StartedAt,
 		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const markRunEntrypointEntered = `-- name: MarkRunEntrypointEntered :one
+UPDATE run_attempts
+   SET entrypoint_entered_at = transaction_timestamp()
+ WHERE run_id = $1
+   AND number = $2
+   AND workspace_id = $3
+   AND entrypoint_entered_at IS NULL
+   AND terminal_at IS NULL
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, actor_start_input_sequence, base_workspace_version_id, terminal_actor_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+`
+
+type MarkRunEntrypointEnteredParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	Number      int32       `json:"number"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkRunEntrypointEntered(ctx context.Context, arg MarkRunEntrypointEnteredParams) (RunAttempt, error) {
+	row := q.db.QueryRow(ctx, markRunEntrypointEntered, arg.RunID, arg.Number, arg.WorkspaceID)
+	var i RunAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.Number,
+		&i.EntrypointKind,
+		&i.WorkspaceID,
+		&i.EntrypointEnteredAt,
+		&i.ActorStartInputSequence,
+		&i.BaseWorkspaceVersionID,
+		&i.TerminalActorInputSequence,
+		&i.TerminalOutcome,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
 		&i.TerminalAt,
 	)
 	return i, err
