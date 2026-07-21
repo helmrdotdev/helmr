@@ -376,17 +376,15 @@ func (transactions pgxStaleWorkerFenceTransactions) WithinStaleWorkerFenceTransa
 }
 
 type StaleWorkerFenceAdvisoryLock struct {
-	lock *ExpirySweepAdvisoryLock
+	lock *advisoryLock
 }
 
 func NewStaleWorkerFenceAdvisoryLock(pool *pgxpool.Pool) (*StaleWorkerFenceAdvisoryLock, error) {
-	if pool == nil {
-		return nil, errors.New("database pool is required")
+	lock, err := newAdvisoryLock(pool, staleWorkerFenceLockName)
+	if err != nil {
+		return nil, err
 	}
-	return &StaleWorkerFenceAdvisoryLock{lock: &ExpirySweepAdvisoryLock{
-		pool: pool,
-		key:  advisoryLockKey(staleWorkerFenceLockName),
-	}}, nil
+	return &StaleWorkerFenceAdvisoryLock{lock: lock}, nil
 }
 
 func (lock *StaleWorkerFenceAdvisoryLock) TryLock(ctx context.Context) (StaleWorkerFenceLockGuard, bool, error) {

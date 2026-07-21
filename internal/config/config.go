@@ -58,8 +58,6 @@ type Control struct {
 	GitHubOAuthClientID     string
 	GitHubOAuthClientSecret string
 	ScheduleJitter          time.Duration
-	RuntimePrepareTarget    int
-	RuntimePrepareLimit     int
 }
 
 type Dispatcher struct {
@@ -74,9 +72,6 @@ type Dispatcher struct {
 	ScheduleClaimLimit    int
 	ScheduleConcurrency   int
 	ScheduleClaimLease    time.Duration
-	RuntimePrepareTarget  int
-	RuntimePrepareLimit   int
-	RuntimePrepareEvery   time.Duration
 }
 
 type WorkerFleet struct {

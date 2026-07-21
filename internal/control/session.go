@@ -448,7 +448,6 @@ func (s *Server) startSessionFromRequestInScope(ctx context.Context, actor auth.
 			return err
 		}
 		work.AfterCommit(func(postCommitCtx context.Context) {
-			s.reconcilePreparedRuntimeSupplyAsync(postCommitCtx, "session_start")
 			if s.runEnqueuer != nil {
 				if _, err := s.runEnqueuer.EnqueueRun(postCommitCtx, run.OrgID, run.ID); err != nil {
 					s.log.Error("enqueue session run failed", "run_id", pgvalue.MustUUIDValue(run.ID).String(), "error", err)

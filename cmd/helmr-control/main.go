@@ -187,29 +187,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure dispatch enqueuer: %w", err)
 	}
-	wakePublisher, err := dispatchredis.NewWakePublisher(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure worker wake publisher: %w", err)
-	}
-	executionAuthority, err := dispatch.NewAuthority(pool)
-	if err != nil {
-		return fmt.Errorf("configure execution authority: %w", err)
-	}
-	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime supply lock: %w", err)
-	}
-	preparedRuntimeSupply, err := dispatch.NewRuntimePreparer(
-		executionAuthority,
-		dispatch.WithRuntimePrepareLogger(log),
-		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
-		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
-		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
-		dispatch.WithRuntimePrepareWakePublisher(wakePublisher),
-	)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime supply reconciler: %w", err)
-	}
 	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
 	if err != nil {
 		return fmt.Errorf("configure schedule index: %w", err)
@@ -282,35 +259,34 @@ func run(ctx context.Context, log *slog.Logger) error {
 		authProvider = control.NewGitHubOAuthProvider(cfg.GitHubOAuthClientID, cfg.GitHubOAuthClientSecret, publicURL)
 	}
 	handler, err := control.NewServer(control.ServerConfig{
-		Log:                   log,
-		DeploymentMode:        cfg.DeploymentMode,
-		WorkerGroupID:         cfg.WorkerGroupID,
-		RegionID:              cfg.RegionID,
-		DefaultRegionID:       cfg.DefaultRegionID,
-		DB:                    queries,
-		TX:                    pool,
-		ReadinessDB:           pool,
-		Auth:                  auth.NewDBAuthenticator(queries),
-		CAS:                   casStore,
-		BuildPolicy:           buildPolicy,
-		RuntimeStore:          runtimeStore,
-		ManagerStore:          managerStore,
-		Secrets:               secretStore,
-		RunEnqueuer:           runEnqueuer,
-		PreparedRuntimeSupply: preparedRuntimeSupply,
-		DispatchQueue:         dispatchQueue,
-		ScheduleEngine:        scheduleEngine,
-		EventStream:           eventStream,
-		TelemetryReader:       telemetryReader,
-		Mailer:                mailer,
-		AuthProvider:          authProvider,
-		WorkerTokenSecret:     []byte(cfg.WorkerTokenSigningKey),
-		WorkerEnrollment:      workerEnrollment,
-		SetupToken:            cfg.SetupToken,
-		AuthSecret:            []byte(cfg.AuthSecret),
-		PublicURL:             publicURL,
-		MagicLinkDebugURLs:    cfg.MagicLinkDebugURLs,
-		BackgroundContext:     backgroundCtx,
+		Log:                log,
+		DeploymentMode:     cfg.DeploymentMode,
+		WorkerGroupID:      cfg.WorkerGroupID,
+		RegionID:           cfg.RegionID,
+		DefaultRegionID:    cfg.DefaultRegionID,
+		DB:                 queries,
+		TX:                 pool,
+		ReadinessDB:        pool,
+		Auth:               auth.NewDBAuthenticator(queries),
+		CAS:                casStore,
+		BuildPolicy:        buildPolicy,
+		RuntimeStore:       runtimeStore,
+		ManagerStore:       managerStore,
+		Secrets:            secretStore,
+		RunEnqueuer:        runEnqueuer,
+		DispatchQueue:      dispatchQueue,
+		ScheduleEngine:     scheduleEngine,
+		EventStream:        eventStream,
+		TelemetryReader:    telemetryReader,
+		Mailer:             mailer,
+		AuthProvider:       authProvider,
+		WorkerTokenSecret:  []byte(cfg.WorkerTokenSigningKey),
+		WorkerEnrollment:   workerEnrollment,
+		SetupToken:         cfg.SetupToken,
+		AuthSecret:         []byte(cfg.AuthSecret),
+		PublicURL:          publicURL,
+		MagicLinkDebugURLs: cfg.MagicLinkDebugURLs,
+		BackgroundContext:  backgroundCtx,
 	})
 	if err != nil {
 		return fmt.Errorf("configure control server: %w", err)

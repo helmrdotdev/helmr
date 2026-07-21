@@ -125,10 +125,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	queries := db.New(pool)
 	runDispatchQueries := db.New(runDispatchPool)
 	buildDispatchQueries := db.New(buildDispatchPool)
-	executionAuthority, err := dispatch.NewAuthority(pool)
-	if err != nil {
-		return fmt.Errorf("configure execution authority: %w", err)
-	}
 	runDispatchAuthority, err := dispatch.NewAuthority(runDispatchPool)
 	if err != nil {
 		return fmt.Errorf("configure run dispatch authority: %w", err)
@@ -243,22 +239,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure queue reconciler: %w", err)
 	}
-	preparedRuntimeWarmLock, err := dispatch.NewRuntimePrepareAdvisoryLock(pool)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime warm lock: %w", err)
-	}
-	preparedRuntimeWarmer, err := dispatch.NewRuntimePreparer(
-		executionAuthority,
-		dispatch.WithRuntimePrepareLogger(log),
-		dispatch.WithRuntimePrepareLock(preparedRuntimeWarmLock),
-		dispatch.WithRuntimePrepareTarget(int32(cfg.RuntimePrepareTarget)),
-		dispatch.WithRuntimePrepareLimit(int32(cfg.RuntimePrepareLimit)),
-		dispatch.WithRuntimePrepareInterval(cfg.RuntimePrepareEvery),
-		dispatch.WithRuntimePrepareWakePublisher(wakePublisher),
-	)
-	if err != nil {
-		return fmt.Errorf("configure prepared runtime warmer: %w", err)
-	}
 	scheduleAuthority, err := deployment.NewScheduleAuthority(runtimeCatalog)
 	if err != nil {
 		return fmt.Errorf("configure schedule authority: %w", err)
@@ -301,7 +281,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return staleWorkerFencer.Run(runCtx) },
 		func() error { return queueReconciler.Run(runCtx) },
 		func() error { return placementReconciler.Run(runCtx) },
-		func() error { return preparedRuntimeWarmer.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return runAdmissionDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },

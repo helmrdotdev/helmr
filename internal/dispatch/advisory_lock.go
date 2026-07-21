@@ -13,7 +13,6 @@ import (
 const (
 	runQueueReconcileLockName   = "helmr.dispatcher.run_queue_reconciler"
 	buildQueueReconcileLockName = "helmr.dispatcher.build_queue_reconciler"
-	preparedRuntimeWarmName     = "helmr.dispatcher.runtime_preparer"
 )
 
 type advisoryLock struct {
@@ -52,29 +51,6 @@ func newQueueReconcileAdvisoryLock(pool *pgxpool.Pool, name string) (*QueueRecon
 		return nil, err
 	}
 	return &QueueReconcileAdvisoryLock{lock: lock}, nil
-}
-
-type RuntimePrepareAdvisoryLock struct {
-	lock *advisoryLock
-}
-
-func NewRuntimePrepareAdvisoryLock(pool *pgxpool.Pool) (*RuntimePrepareAdvisoryLock, error) {
-	if pool == nil {
-		return nil, fmt.Errorf("database pool is required")
-	}
-	lock, err := newAdvisoryLock(pool, preparedRuntimeWarmName)
-	if err != nil {
-		return nil, err
-	}
-	return &RuntimePrepareAdvisoryLock{lock: lock}, nil
-}
-
-func (l *RuntimePrepareAdvisoryLock) TryLock(ctx context.Context) (RuntimePrepareLockGuard, bool, error) {
-	guard, locked, err := l.lock.tryLock(ctx)
-	if err != nil || !locked {
-		return nil, locked, err
-	}
-	return preparedRuntimeWarmAdvisoryLockGuard{guard: guard}, true, nil
 }
 
 func (l *QueueReconcileAdvisoryLock) TryLock(ctx context.Context) (QueueReconcileLockGuard, bool, error) {
@@ -116,14 +92,6 @@ func (g queueReconcileAdvisoryLockGuard) Store(QueueReconcilerStore) QueueReconc
 }
 
 func (g queueReconcileAdvisoryLockGuard) Unlock(ctx context.Context) error {
-	return g.guard.Unlock(ctx)
-}
-
-type preparedRuntimeWarmAdvisoryLockGuard struct {
-	guard advisoryLockGuard
-}
-
-func (g preparedRuntimeWarmAdvisoryLockGuard) Unlock(ctx context.Context) error {
 	return g.guard.Unlock(ctx)
 }
 

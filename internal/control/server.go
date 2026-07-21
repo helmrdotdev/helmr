@@ -34,11 +34,10 @@ import (
 )
 
 const (
-	readinessTimeout                      = 2 * time.Second
-	preparedRuntimeSupplyReconcileTimeout = 2 * time.Second
-	apiRequestBodyLimit                   = int64(128 << 20)
-	workerLogRequestBodyLimit             = int64(256 << 10)
-	maxControlPageSize                    = int32(500)
+	readinessTimeout          = 2 * time.Second
+	apiRequestBodyLimit       = int64(128 << 20)
+	workerLogRequestBodyLimit = int64(256 << 10)
+	maxControlPageSize        = int32(500)
 )
 
 type SecretManager interface {
@@ -71,7 +70,6 @@ type Server struct {
 	managerStore          ManagerResolver
 	secrets               SecretManager
 	runEnqueuer           RunEnqueuer
-	preparedRuntimeSupply PreparedRuntimeSupplyReconciler
 	dispatchQueue         dispatch.Queue
 	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
@@ -109,10 +107,6 @@ type RunEnqueuer interface {
 	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
 }
 
-type PreparedRuntimeSupplyReconciler interface {
-	Reconcile(context.Context) error
-}
-
 type ScheduleRegistrar interface {
 	RegisterNext(context.Context, schedule.Instance) error
 	DeleteInstance(context.Context, pgtype.UUID) error
@@ -138,20 +132,19 @@ type ServerConfig struct {
 	TX          TxBeginner
 	ReadinessDB db.DBTX
 
-	Auth                  auth.Authenticator
-	CAS                   cas.Store
-	BuildPolicy           *deployment.BuildPolicy
-	RuntimeStore          cas.Reader
-	ManagerStore          ManagerResolver
-	Secrets               SecretManager
-	RunEnqueuer           RunEnqueuer
-	PreparedRuntimeSupply PreparedRuntimeSupplyReconciler
-	DispatchQueue         dispatch.Queue
-	ScheduleEngine        ScheduleRegistrar
-	EventStream           *EventStream
-	TelemetryReader       telemetry.Reader
-	Mailer                email.Sender
-	AuthProvider          AuthProvider
+	Auth            auth.Authenticator
+	CAS             cas.Store
+	BuildPolicy     *deployment.BuildPolicy
+	RuntimeStore    cas.Reader
+	ManagerStore    ManagerResolver
+	Secrets         SecretManager
+	RunEnqueuer     RunEnqueuer
+	DispatchQueue   dispatch.Queue
+	ScheduleEngine  ScheduleRegistrar
+	EventStream     *EventStream
+	TelemetryReader telemetry.Reader
+	Mailer          email.Sender
+	AuthProvider    AuthProvider
 
 	WorkerTokenSecret []byte
 	WorkerTokenTTL    time.Duration
@@ -242,7 +235,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		managerStore:          cfg.ManagerStore,
 		secrets:               cfg.Secrets,
 		runEnqueuer:           cfg.RunEnqueuer,
-		preparedRuntimeSupply: cfg.PreparedRuntimeSupply,
 		dispatchQueue:         cfg.DispatchQueue,
 		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,

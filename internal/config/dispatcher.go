@@ -24,9 +24,6 @@ func LoadDispatcher() (Dispatcher, error) {
 		ScheduleClaimLimit:    100,
 		ScheduleConcurrency:   10,
 		ScheduleClaimLease:    5 * time.Minute,
-		RuntimePrepareTarget:  0,
-		RuntimePrepareLimit:   20,
-		RuntimePrepareEvery:   5 * time.Second,
 	}
 	workerFleetsJSON := envString("HELMR_WORKER_FLEETS")
 	if workerFleetsJSON != "" {
@@ -57,24 +54,6 @@ func LoadDispatcher() (Dispatcher, error) {
 	}
 	if cfg.ScheduleClaimLimit > maxInt32 || cfg.ScheduleConcurrency > maxInt32 {
 		return cfg, errors.New("schedule claim and concurrency settings must not exceed 2147483647")
-	}
-	if cfg.RuntimePrepareTarget, err = envInt("HELMR_PREPARED_RUNTIME_WARM_TARGET", cfg.RuntimePrepareTarget); err != nil {
-		return cfg, err
-	}
-	if cfg.RuntimePrepareTarget < 0 {
-		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_TARGET must be non-negative")
-	}
-	if cfg.RuntimePrepareLimit, err = envInt("HELMR_PREPARED_RUNTIME_WARM_LIMIT", cfg.RuntimePrepareLimit); err != nil {
-		return cfg, err
-	}
-	if cfg.RuntimePrepareLimit <= 0 {
-		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_LIMIT must be positive")
-	}
-	if cfg.RuntimePrepareEvery, err = envDuration("HELMR_PREPARED_RUNTIME_WARM_EVERY", cfg.RuntimePrepareEvery); err != nil {
-		return cfg, err
-	}
-	if cfg.RuntimePrepareEvery <= 0 {
-		return cfg, errors.New("HELMR_PREPARED_RUNTIME_WARM_EVERY must be positive")
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

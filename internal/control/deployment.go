@@ -362,7 +362,6 @@ func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
 		}
 		work.AfterCommit(func(ctx context.Context) {
 			s.registerChangedScheduleInstances(ctx, params.OrgID, params.ProjectID, changedSchedules)
-			s.reconcilePreparedRuntimeSupplyAsync(ctx, "deployment_promotion")
 		})
 		return nil
 	})

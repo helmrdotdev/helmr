@@ -259,14 +259,6 @@ func (r *PlacementReconciler) placeRunCandidate(ctx context.Context, candidate R
 		return err
 	}
 	if !placement.LeaseCreated {
-		if placement.RuntimeCreated {
-			if err := r.wakes.PublishWorkerWake(ctx, WorkerWake{Domain: "runtime",
-				WorkerID: placement.WorkerInstanceID, WorkerEpoch: placement.WorkerEpoch,
-				RuntimeID: placement.RuntimeInstanceID, AuthorityID: placement.RuntimeInstanceID}); err != nil {
-				return fmt.Errorf("publish run runtime wake: %w", err)
-			}
-			return nil
-		}
 		if placement.WorkspaceMountID.Valid {
 			if err := r.wakes.PublishWorkerWake(ctx, WorkerWake{Domain: "workspace",
 				WorkerID: placement.WorkerInstanceID, WorkerEpoch: placement.WorkerEpoch,
