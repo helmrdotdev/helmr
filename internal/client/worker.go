@@ -30,8 +30,21 @@ func (c *Client) EnrollWorker(ctx context.Context, request api.WorkerEnrollmentR
 
 func (c *Client) LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error) {
 	var response api.WorkerRunLeaseResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", api.WorkerRunLeaseRequest{}, &response); err != nil {
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/lease", struct{}{}, &response); err != nil {
 		return api.WorkerRunLeaseResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error) {
+	var response api.WorkerRunLeaseDiscoveryResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/discover",
+		api.WorkerRunLeaseDiscoveryRequest{},
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseDiscoveryResponse{}, err
 	}
 	return response, nil
 }

@@ -58,7 +58,16 @@ type SignedHTTPRequest struct {
 	Body    string              `json:"body"`
 }
 
-type WorkerRunLeaseRequest struct{}
+type WorkerRunLeaseDiscoveryRequest struct{}
+
+type WorkerRunLeaseWork struct {
+	LeaseID       string `json:"lease_id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type WorkerRunLeaseDiscoveryResponse struct {
+	Items []WorkerRunLeaseWork `json:"items"`
+}
 
 type WorkerActivateRequest struct {
 	Capabilities             WorkerCapabilities `json:"capabilities"`

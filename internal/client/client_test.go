@@ -593,6 +593,20 @@ func TestWorkerLifecycleClient(t *testing.T) {
 				Token:            workerToken,
 				ExpiresInSeconds: int64(time.Hour / time.Second),
 			})
+		case "/api/worker/leases/discover":
+			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
+				t.Fatalf("worker auth = %s", got)
+			}
+			var request api.WorkerRunLeaseDiscoveryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			_ = json.NewEncoder(w).Encode(api.WorkerRunLeaseDiscoveryResponse{
+				Items: []api.WorkerRunLeaseWork{{
+					LeaseID:       claim.ID,
+					LeaseSequence: claim.LeaseSequence,
+				}},
+			})
 		case "/api/worker/leases/lease":
 			if got := r.Header.Get("authorization"); got != "Bearer "+workerToken {
 				t.Fatalf("worker auth = %s", got)
@@ -716,6 +730,15 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	discovered, err := client.DiscoverRunLeases(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovered.Items) != 1 ||
+		discovered.Items[0].LeaseID != claim.ID ||
+		discovered.Items[0].LeaseSequence != claim.LeaseSequence {
+		t.Fatalf("discovered = %+v", discovered)
+	}
 	leased, err := client.LeaseRun(context.Background())
 	if err != nil {
 		t.Fatal(err)
@@ -759,7 +782,7 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	if err := client.FenceWorker(context.Background(), "termination_drain_failed"); err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
+	if got := strings.Join(paths, ","); got != "/api/worker/auth/token,/api/worker/leases/discover,/api/worker/leases/lease,/api/worker/activate,/api/worker/drain,/api/worker/status,/api/worker/drain/complete,/api/worker/leases/start,/api/worker/leases/renew,/api/worker/leases/logs,/api/worker/leases/log-entries,/api/worker/leases/release,/api/worker/fence" {
 		t.Fatalf("paths = %s", got)
 	}
 }

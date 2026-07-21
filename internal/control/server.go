@@ -631,6 +631,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/runtime-instances/failed", s.workerMarkRuntimeInstanceFailed)
 				r.Post("/runtime-substrates/register", s.workerRegisterRuntimeSubstrate)
 				r.Post("/runtime-substrates/lookup", s.workerLookupRuntimeSubstrate)
+				r.Post("/leases/discover", s.workerDiscoverRunLeases)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/leases/lease", s.workerLease)
 				r.Post("/leases/start", s.workerStart)
 				r.Post("/leases/reject", s.workerRejectRun)
