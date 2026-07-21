@@ -29,6 +29,7 @@ const (
 	StreamTypeWorkspaceInput          StreamType = "workspace-input"
 	StreamTypeWorkspaceStop           StreamType = "workspace-stop"
 	StreamTypeWorkspaceAuthorityRenew StreamType = "workspace-authority-renew"
+	StreamTypeWorkspaceCapture        StreamType = "workspace-capture"
 )
 
 type StreamHeader struct {

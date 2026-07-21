@@ -124,19 +124,15 @@ func handleProgramRunConnection(
 	if strings.TrimSpace(fence.GetWorkspaceId()) != workspaceID {
 		return errors.New("Program run authority workspace_id does not match header")
 	}
-	entry, releaseMount, ok := registry.acquireExact(
+	entry, releaseMount, ok := registry.acquireAuthorityMount(
 		workspaceMountID,
 		workspaceID,
 		authority.GetChannelToken(),
-		uint64(fence.GetMountFencingGeneration()),
 	)
 	if !ok {
 		return errors.New("Program run authority is not valid for the Workspace Mount")
 	}
 	defer releaseMount()
-	if err := validateWorkspaceRunAuthority(entry, &authority, time.Now()); err != nil {
-		return err
-	}
 	var request runv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(programConn, &request); err != nil {
 		return fmt.Errorf("read Program run request: %w", err)
@@ -165,14 +161,11 @@ func handleProgramRunConnection(
 		return err
 	}
 	defer clearProgramSecretValues(secrets)
-	releaseProgram, ok := registry.claimProgram()
-	if !ok {
-		return errors.New("Workspace already has an active managed Program")
-	}
-	defer releaseProgram()
-	if err := entry.installWorkspaceRunAuthority(&authority, time.Now()); err != nil {
+	releaseProgram, err := registry.admitProgram(entry, &authority, time.Now())
+	if err != nil {
 		return err
 	}
+	defer releaseProgram()
 	if err := programConn.SetReadDeadline(deadline); err != nil {
 		return err
 	}

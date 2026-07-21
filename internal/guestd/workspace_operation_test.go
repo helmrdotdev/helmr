@@ -109,8 +109,16 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 		t.Fatal(err)
 	}
 	registry.mu.RLock()
-	workspaceRoot := registry.entries["mat-1"].workspaceRoot
+	entry := registry.entries["mat-1"]
+	workspaceRoot := entry.workspaceRoot
 	registry.mu.RUnlock()
+	stateRelativeToImage, err := filepath.Rel(entry.imageRoot, entry.finalizationRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stateRelativeToImage != ".." && !strings.HasPrefix(stateRelativeToImage, ".."+string(os.PathSeparator)) {
+		t.Fatalf("Workspace finalization state %q is visible inside image root %q", entry.finalizationRoot, entry.imageRoot)
+	}
 	if tempRoot := os.Getenv("HELMR_GUESTD_TMPDIR"); tempRoot != "" && !strings.HasPrefix(workspaceRoot, tempRoot+string(os.PathSeparator)) {
 		t.Fatalf("workspace root = %q, want under HELMR_GUESTD_TMPDIR %q", workspaceRoot, tempRoot)
 	}

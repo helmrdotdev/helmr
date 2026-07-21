@@ -31,6 +31,8 @@ type workspaceOperationRegistry struct {
 	entries         map[string]*workspaceMountEntry
 	preparedRuntime *preparedWorkspaceRuntime
 	programActive   bool
+	programEntry    *workspaceMountEntry
+	programReleased chan struct{}
 }
 
 type workspaceMountEntry struct {
@@ -38,6 +40,7 @@ type workspaceMountEntry struct {
 	workspaceID       string
 	workspaceMountID  string
 	baseVersionID     string
+	fencingMu         sync.RWMutex
 	fencingGeneration uint64
 	runtimeInstanceID string
 	imageRoot         string
@@ -56,6 +59,10 @@ type workspaceMountEntry struct {
 	authorityMu       sync.Mutex
 	authority         *workspacev0.WorkspaceRunAuthority
 	previousExpiry    int64
+	finalizationMu    sync.Mutex
+	finalizationRoot  string
+	finalizing        bool
+	processAdmissions int
 }
 
 type preparedWorkspaceRuntime struct {
@@ -103,41 +110,103 @@ func (r *workspaceOperationRegistry) takePreparedRuntime(runtimeInstanceID strin
 }
 
 func (r *workspaceOperationRegistry) register(workspaceMountID string, entry *workspaceMountEntry) {
-	r.mu.Lock()
-	entry.workspaceMountID = workspaceMountID
-	previous := r.entries[workspaceMountID]
-	r.entries[workspaceMountID] = entry
-	var cleanup func()
-	if previous != nil {
+	for {
+		r.mu.Lock()
+		previous := r.entries[workspaceMountID]
+		if previous == entry {
+			entry.workspaceMountID = workspaceMountID
+			r.mu.Unlock()
+			return
+		}
+		if previous == nil {
+			entry.workspaceMountID = workspaceMountID
+			r.entries[workspaceMountID] = entry
+			r.mu.Unlock()
+			return
+		}
+		r.mu.Unlock()
+
+		previous.finalizationMu.Lock()
+		r.mu.Lock()
+		if r.entries[workspaceMountID] != previous {
+			r.mu.Unlock()
+			previous.finalizationMu.Unlock()
+			continue
+		}
+		entry.workspaceMountID = workspaceMountID
+		r.entries[workspaceMountID] = entry
 		previous.retired = true
+		var cleanup func()
 		if previous.active == 0 {
 			cleanup = previous.cleanup
+			previous.cleanup = nil
 		}
-	}
-	r.mu.Unlock()
-	if cleanup != nil {
-		cleanup()
+		r.mu.Unlock()
+		previous.finalizationMu.Unlock()
+		if cleanup != nil {
+			cleanup()
+		}
+		return
 	}
 }
 
 func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceID string, token string, fencingGeneration uint64) (*workspaceMountEntry, func(), bool) {
-	r.mu.Lock()
-	entry, ok := r.entries[workspaceMountID]
 	workspaceID = strings.TrimSpace(workspaceID)
 	token = strings.TrimSpace(token)
-	if !(ok &&
-		workspaceID != "" &&
-		token != "" &&
-		fencingGeneration != 0 &&
-		entry.workspaceID == workspaceID &&
-		entry.fencingGeneration <= fencingGeneration &&
-		!entry.retired &&
-		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1) {
-		r.mu.Unlock()
+	if workspaceID == "" || token == "" || fencingGeneration == 0 {
 		return nil, func() {}, false
 	}
-	if fencingGeneration > entry.fencingGeneration {
-		entry.fencingGeneration = fencingGeneration
+	for {
+		r.mu.Lock()
+		entry := r.entries[workspaceMountID]
+		currentGeneration := entry.currentFencingGeneration()
+		if !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) || fencingGeneration < currentGeneration {
+			r.mu.Unlock()
+			return nil, func() {}, false
+		}
+		if fencingGeneration == currentGeneration {
+			entry.active++
+			r.mu.Unlock()
+			return entry, func() { r.release(entry) }, true
+		}
+		r.mu.Unlock()
+
+		entry.finalizationMu.Lock()
+		r.mu.Lock()
+		if r.entries[workspaceMountID] != entry || !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) {
+			r.mu.Unlock()
+			entry.finalizationMu.Unlock()
+			continue
+		}
+		if fencingGeneration < entry.currentFencingGeneration() {
+			r.mu.Unlock()
+			entry.finalizationMu.Unlock()
+			return nil, func() {}, false
+		}
+		entry.processesMu.Lock()
+		finalizing := entry.finalizing
+		entry.processesMu.Unlock()
+		if finalizing || r.programActive && r.programEntry == entry {
+			r.mu.Unlock()
+			entry.finalizationMu.Unlock()
+			return nil, func() {}, false
+		}
+		entry.setFencingGeneration(fencingGeneration)
+		entry.active++
+		r.mu.Unlock()
+		entry.finalizationMu.Unlock()
+		return entry, func() { r.release(entry) }, true
+	}
+}
+
+func (r *workspaceOperationRegistry) acquireAuthorityMount(workspaceMountID string, workspaceID string, token string) (*workspaceMountEntry, func(), bool) {
+	r.mu.Lock()
+	entry := r.entries[workspaceMountID]
+	workspaceID = strings.TrimSpace(workspaceID)
+	token = strings.TrimSpace(token)
+	if workspaceID == "" || token == "" || !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) {
+		r.mu.Unlock()
+		return nil, func() {}, false
 	}
 	entry.active++
 	r.mu.Unlock()
@@ -155,7 +224,7 @@ func (r *workspaceOperationRegistry) acquireExact(workspaceMountID string, works
 		fencingGeneration != 0 &&
 		entry.workspaceMountID == workspaceMountID &&
 		entry.workspaceID == workspaceID &&
-		entry.fencingGeneration == fencingGeneration &&
+		entry.currentFencingGeneration() == fencingGeneration &&
 		!entry.retired &&
 		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1) {
 		r.mu.Unlock()
@@ -164,6 +233,40 @@ func (r *workspaceOperationRegistry) acquireExact(workspaceMountID string, works
 	entry.active++
 	r.mu.Unlock()
 	return entry, func() { r.release(entry) }, true
+}
+
+func workspaceEntryMatches(entry *workspaceMountEntry, workspaceMountID string, workspaceID string, token string) bool {
+	return entry != nil &&
+		entry.workspaceMountID == workspaceMountID &&
+		entry.workspaceID == workspaceID &&
+		!entry.retired &&
+		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1
+}
+
+func (r *workspaceOperationRegistry) currentExactLocked(entry *workspaceMountEntry, workspaceMountID string, workspaceID string, token string, fencingGeneration uint64) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.entries[workspaceMountID] == entry &&
+		workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) &&
+		entry.currentFencingGeneration() == fencingGeneration
+}
+
+func (entry *workspaceMountEntry) currentFencingGeneration() uint64 {
+	entry.fencingMu.RLock()
+	defer entry.fencingMu.RUnlock()
+	return entry.fencingGeneration
+}
+
+func (entry *workspaceMountEntry) setFencingGeneration(generation uint64) {
+	entry.fencingMu.Lock()
+	entry.fencingGeneration = generation
+	entry.fencingMu.Unlock()
+}
+
+func (r *workspaceOperationRegistry) currentMountLocked(entry *workspaceMountEntry, workspaceMountID string, workspaceID string, token string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.entries[workspaceMountID] == entry && workspaceEntryMatches(entry, workspaceMountID, workspaceID, token)
 }
 
 func (r *workspaceOperationRegistry) release(entry *workspaceMountEntry) {
@@ -183,6 +286,8 @@ func (r *workspaceOperationRegistry) release(entry *workspaceMountEntry) {
 }
 
 func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *workspaceMountEntry) {
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
 	r.mu.Lock()
 	current := r.entries[workspaceMountID]
 	if current != entry {
@@ -202,18 +307,57 @@ func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *work
 	}
 }
 
-func (r *workspaceOperationRegistry) claimProgram() (func(), bool) {
+func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, authority *workspacev0.WorkspaceRunAuthority, now time.Time) (func(), error) {
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
+	if authority == nil || authority.GetFence() == nil || !r.currentMountLocked(
+		entry,
+		authority.GetFence().GetWorkspaceMountId(),
+		authority.GetFence().GetWorkspaceId(),
+		authority.GetChannelToken(),
+	) {
+		return func() {}, errors.New("Program authority is not current for the Workspace Mount")
+	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.programActive {
-		return func() {}, false
+		r.mu.Unlock()
+		return func() {}, errors.New("Workspace already has an active managed Program")
 	}
 	r.programActive = true
-	return func() {
+	r.programEntry = entry
+	r.programReleased = make(chan struct{})
+	released := r.programReleased
+	r.mu.Unlock()
+	release := func() {
 		r.mu.Lock()
-		r.programActive = false
+		if r.programActive && r.programEntry == entry && r.programReleased == released {
+			r.programActive = false
+			r.programEntry = nil
+			close(released)
+		}
 		r.mu.Unlock()
-	}, true
+	}
+	if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
+		release()
+		return func() {}, err
+	}
+	return release, nil
+}
+
+func (r *workspaceOperationRegistry) waitForProgramRelease(ctx context.Context, entry *workspaceMountEntry) error {
+	r.mu.Lock()
+	if !r.programActive || r.programEntry != entry {
+		r.mu.Unlock()
+		return nil
+	}
+	released := r.programReleased
+	r.mu.Unlock()
+	select {
+	case <-released:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {
@@ -257,7 +401,7 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	}
 	entry.channelToken = envelope.ChannelToken
 	entry.workspaceID = workspaceID
-	entry.fencingGeneration = envelope.FencingGeneration
+	entry.setFencingGeneration(envelope.FencingGeneration)
 	registerStarted := time.Now()
 	registry.register(envelope.WorkspaceMountId, entry)
 	phases = append(phases, workspaceMountPhase("guest_register", registerStarted, 0, 0, nil))
@@ -484,6 +628,17 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	entry.processes = map[string]*workspaceProcess{}
 	entry.events = make(chan *workspacev0.WorkspaceOperationEvent, 1024)
 	entry.eventsDone = make(chan struct{})
+	finalizationRoot, err := os.MkdirTemp(filepath.Dir(entry.imageRoot), ".helmr-workspace-state-*")
+	if err != nil {
+		entry.cleanup()
+		return nil, phases, fmt.Errorf("create Workspace finalization state: %w", err)
+	}
+	entry.finalizationRoot = finalizationRoot
+	cleanupMount := entry.cleanup
+	entry.cleanup = func() {
+		cleanupMount()
+		_ = os.RemoveAll(finalizationRoot)
+	}
 	if artifact == nil {
 		phaseStarted := time.Now()
 		err := initializeEmptyWorkspaceRoot(entry.workspaceRoot)

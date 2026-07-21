@@ -38,7 +38,7 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 		return nil, fmt.Errorf("write Workspace authority renewal request: %w", err)
 	}
 	var response workspacev0.RenewWorkspaceAuthorityResponse
-	if err := readWorkspaceAuthorityResponse(ctx, stream, &response); err != nil {
+	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
 		return nil, fmt.Errorf("read Workspace authority renewal response: %w", err)
 	}
 	if strings.TrimSpace(response.GetError()) != "" {
@@ -53,18 +53,4 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 		return nil, errors.New("Workspace authority renewal response does not match the requested authority")
 	}
 	return response.GetFence(), nil
-}
-
-func readWorkspaceAuthorityResponse(ctx context.Context, stream vm.Stream, response *workspacev0.RenewWorkspaceAuthorityResponse) error {
-	result := make(chan error, 1)
-	go func() {
-		result <- frameio.ReadProtoFrame(stream, response)
-	}()
-	select {
-	case err := <-result:
-		return err
-	case <-ctx.Done():
-		_ = stream.Close()
-		return ctx.Err()
-	}
 }

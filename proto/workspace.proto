@@ -60,6 +60,24 @@ message RenewWorkspaceAuthorityResponse {
   string error = 2;
 }
 
+message WorkspaceTreeIdentity {
+  string digest = 1;
+  int64 size_bytes = 2;
+  uint32 entry_count = 3;
+}
+
+message WorkspaceFinalizationEnvelope {
+  string operation_id = 1;
+  string request_fingerprint = 2;
+  WorkspaceRunAuthority authority = 3;
+}
+
+message WorkspaceFinalizationReceipt {
+  string operation_id = 1;
+  string request_fingerprint = 2;
+  WorkspaceAuthorityFence fence = 3;
+}
+
 message MaterializeWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   string mount_path = 2;
@@ -108,13 +126,14 @@ message HeartbeatWorkspaceResponse {
 }
 
 message CaptureWorkspaceRequest {
-  WorkspaceOperationEnvelope envelope = 1;
-  string base_version_id = 2;
-  uint64 dirty_generation = 3;
+  WorkspaceFinalizationEnvelope envelope = 1;
 }
 
 message CaptureWorkspaceResponse {
-  WorkspaceArtifact artifact = 1;
+  WorkspaceFinalizationReceipt receipt = 1;
+  WorkspaceTreeIdentity tree = 2;
+  WorkspaceArtifact artifact = 3;
+  string error = 4;
 }
 
 message StopWorkspaceRequest {

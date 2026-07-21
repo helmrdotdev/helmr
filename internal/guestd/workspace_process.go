@@ -67,6 +67,11 @@ type workspacePtyCloseRequest struct {
 }
 
 func (entry *workspaceMountEntry) startWorkspaceExec(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
+	releaseAdmission, err := entry.beginWorkspaceProcessAdmission()
+	if err != nil {
+		return err
+	}
+	defer releaseAdmission()
 	var request workspaceExecStartRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode StartExec request: %w", err)
@@ -149,6 +154,11 @@ func (entry *workspaceMountEntry) startWorkspaceExec(envelope *workspacev0.Works
 }
 
 func (entry *workspaceMountEntry) createWorkspacePty(envelope *workspacev0.WorkspaceOperationEnvelope, requestJSON string) error {
+	releaseAdmission, err := entry.beginWorkspaceProcessAdmission()
+	if err != nil {
+		return err
+	}
+	defer releaseAdmission()
 	var request workspacePtyCreateRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return fmt.Errorf("decode CreatePty request: %w", err)
@@ -491,12 +501,30 @@ func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspacePro
 	if entry.processes == nil {
 		entry.processes = map[string]*workspaceProcess{}
 	}
+	if entry.finalizing {
+		return errors.New("Workspace is finalizing")
+	}
 	key := workspaceProcessKey(process.resourceKind, process.resourceID)
 	if _, exists := entry.processes[key]; exists {
 		return fmt.Errorf("%s %s is already running", process.resourceKind, process.resourceID)
 	}
 	entry.processes[key] = process
 	return nil
+}
+
+func (entry *workspaceMountEntry) beginWorkspaceProcessAdmission() (func(), error) {
+	entry.processesMu.Lock()
+	if entry.finalizing {
+		entry.processesMu.Unlock()
+		return func() {}, errors.New("Workspace is finalizing")
+	}
+	entry.processAdmissions++
+	entry.processesMu.Unlock()
+	return func() {
+		entry.processesMu.Lock()
+		entry.processAdmissions--
+		entry.processesMu.Unlock()
+	}, nil
 }
 
 func (entry *workspaceMountEntry) getWorkspaceProcess(kind string, id string) *workspaceProcess {
