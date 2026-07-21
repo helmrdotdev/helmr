@@ -30,6 +30,7 @@ const (
 	StreamTypeWorkspaceStop           StreamType = "workspace-stop"
 	StreamTypeWorkspaceAuthorityRenew StreamType = "workspace-authority-renew"
 	StreamTypeWorkspaceCapture        StreamType = "workspace-capture"
+	StreamTypeWorkspaceReset          StreamType = "workspace-reset"
 )
 
 type StreamHeader struct {

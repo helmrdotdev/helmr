@@ -61,7 +61,7 @@ func TestWorkspaceFinalizationWaitsForProgramRelease(t *testing.T) {
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+		_, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 		if err == nil {
 			release()
 		}
@@ -92,7 +92,7 @@ func TestWorkspaceFinalizationExcludesNewProgramClaim(t *testing.T) {
 	}
 	finalization := make(chan func(), 1)
 	go func() {
-		_, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+		_, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 		if err != nil {
 			finalization <- nil
 			return
@@ -176,7 +176,7 @@ func TestWorkspaceRunAuthorityAdvancesCapturedFrontier(t *testing.T) {
 func TestWorkspaceFinalizationFreezesAuthorityRenewal(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMount(t)
 	request := testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111")
-	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestWorkspaceFinalizationFreezesAuthorityRenewal(t *testing.T) {
 func TestWorkspaceFinalizationBlocksMountReplacement(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMount(t)
 	request := testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111")
-	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +248,7 @@ func TestWorkspaceProgramAdmissionRejectsRetiredMount(t *testing.T) {
 func TestWorkspaceFinalizationBlocksMountGenerationAdvance(t *testing.T) {
 	entry, registry, authority := testWorkspaceFinalizationMount(t)
 	request := testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111")
-	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+	_, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestWorkspaceFinalizationRejectsStaleMountGeneration(t *testing.T) {
 	}
 	release()
 	request := testWorkspaceCaptureRequest(t, authority, "11111111-1111-4111-8111-111111111111")
-	if _, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind); err == nil {
+	if _, releaseFinalization, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil); err == nil {
 		releaseFinalization()
 		t.Fatal("stale Workspace authority began finalization")
 	}

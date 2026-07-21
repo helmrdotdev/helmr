@@ -501,8 +501,8 @@ func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspacePro
 	if entry.processes == nil {
 		entry.processes = map[string]*workspaceProcess{}
 	}
-	if entry.finalizing {
-		return errors.New("Workspace is finalizing")
+	if entry.finalizing || entry.recoveryRequired {
+		return errors.New("Workspace is unavailable for process admission")
 	}
 	key := workspaceProcessKey(process.resourceKind, process.resourceID)
 	if _, exists := entry.processes[key]; exists {
@@ -514,9 +514,9 @@ func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspacePro
 
 func (entry *workspaceMountEntry) beginWorkspaceProcessAdmission() (func(), error) {
 	entry.processesMu.Lock()
-	if entry.finalizing {
+	if entry.finalizing || entry.recoveryRequired {
 		entry.processesMu.Unlock()
-		return func() {}, errors.New("Workspace is finalizing")
+		return func() {}, errors.New("Workspace is unavailable for process admission")
 	}
 	entry.processAdmissions++
 	entry.processesMu.Unlock()

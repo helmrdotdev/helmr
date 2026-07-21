@@ -36,6 +36,8 @@ type workspaceFinalizationJournal struct {
 	Phase              string                        `json:"phase"`
 	Tree               workspace.TreeIdentity        `json:"tree"`
 	Artifact           workspaceFinalizationArtifact `json:"artifact"`
+	PriorTree          *workspace.TreeIdentity       `json:"prior_tree,omitempty"`
+	ResetTarget        *workspace.ResetTarget        `json:"reset_target,omitempty"`
 }
 
 type workspaceFinalizationArtifact struct {
@@ -51,7 +53,7 @@ func handleWorkspaceCaptureConnection(ctx context.Context, conn io.ReadWriter, r
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read Workspace Capture request: %w", err)
 	}
-	entry, release, err := beginWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationCaptureKind)
+	entry, release, err := beginWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 	if err != nil {
 		return writeWorkspaceCaptureFailure(conn, err)
 	}
@@ -82,7 +84,7 @@ func writeWorkspaceCaptureFailure(conn io.Writer, err error) error {
 	return nil
 }
 
-func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperationRegistry, envelope *workspacev0.WorkspaceFinalizationEnvelope, kind string) (*workspaceMountEntry, func(), error) {
+func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperationRegistry, envelope *workspacev0.WorkspaceFinalizationEnvelope, kind string, target any) (*workspaceMountEntry, func(), error) {
 	if envelope == nil || envelope.GetAuthority() == nil || envelope.GetAuthority().GetFence() == nil {
 		return nil, func() {}, errors.New("Workspace finalization envelope is required")
 	}
@@ -134,6 +136,7 @@ func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperatio
 	projection := workspace.FinalizationRequest{
 		OperationID: operationID,
 		Fence:       workspaceFinalizationFence(fence),
+		Target:      target,
 	}
 	expectedFingerprint, err := workspace.FinalizationFingerprint(kind, projection)
 	if err != nil || envelope.GetRequestFingerprint() != expectedFingerprint {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -128,9 +129,13 @@ func extractTar(body io.Reader, destination string, options ExtractOptions) (Ext
 	reader := tar.NewReader(body)
 	var extractedBytes int64
 	var extractedEntries int
+	directoryModes := map[string]os.FileMode{}
 	for {
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
+			if err := applyDirectoryModes(directoryModes); err != nil {
+				return ExtractStats{}, err
+			}
 			return ExtractStats{EntryCount: extractedEntries, SizeBytes: extractedBytes}, nil
 		}
 		if err != nil {
@@ -156,9 +161,10 @@ func extractTar(body io.Reader, destination string, options ExtractOptions) (Ext
 		}
 		switch header.Typeflag {
 		case tar.TypeDir:
-			if err := mkdirAllSafe(destination, target, fileMode(header.FileInfo().Mode(), 0o755)); err != nil {
+			if err := mkdirAllSafe(destination, target, 0o755); err != nil {
 				return ExtractStats{}, err
 			}
+			directoryModes[target] = permissionBits(header.FileInfo().Mode())
 		case tar.TypeReg:
 			if err := mkdirAllSafe(destination, filepath.Dir(target), 0o755); err != nil {
 				return ExtractStats{}, err
@@ -429,12 +435,17 @@ func mkdirAllSafe(root, dir string, mode os.FileMode) error {
 }
 
 func writeRegularFile(target string, reader io.Reader, mode os.FileMode, size int64) error {
-	mode = fileMode(mode, 0o644)
+	mode = permissionBits(mode)
 	if err := os.RemoveAll(target); err != nil {
 		return err
 	}
 	file, err := os.OpenFile(target, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
+		return err
+	}
+	if err := file.Chmod(mode); err != nil {
+		_ = file.Close()
+		_ = os.Remove(target)
 		return err
 	}
 	_, copyErr := io.Copy(file, io.LimitReader(reader, size))
@@ -450,10 +461,20 @@ func writeRegularFile(target string, reader io.Reader, mode os.FileMode, size in
 	return nil
 }
 
-func fileMode(mode os.FileMode, fallback os.FileMode) os.FileMode {
-	mode &= os.ModePerm
-	if mode == 0 {
-		return fallback
+func applyDirectoryModes(modes map[string]os.FileMode) error {
+	paths := make([]string, 0, len(modes))
+	for path := range modes {
+		paths = append(paths, path)
 	}
-	return mode
+	sort.Slice(paths, func(i, j int) bool { return len(paths[i]) > len(paths[j]) })
+	for _, path := range paths {
+		if err := os.Chmod(path, modes[path]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func permissionBits(mode os.FileMode) os.FileMode {
+	return mode & os.ModePerm
 }

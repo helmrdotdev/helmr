@@ -26,9 +26,9 @@ const (
 )
 
 type TreeIdentity struct {
-	Digest     string
-	SizeBytes  int64
-	EntryCount int
+	Digest     string `json:"digest"`
+	SizeBytes  int64  `json:"size_bytes"`
+	EntryCount int    `json:"entry_count"`
 }
 
 func InspectTree(root string) (TreeIdentity, error) {

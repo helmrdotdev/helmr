@@ -62,6 +62,7 @@ type workspaceMountEntry struct {
 	finalizationMu    sync.Mutex
 	finalizationRoot  string
 	finalizing        bool
+	recoveryRequired  bool
 	processAdmissions int
 }
 
@@ -159,8 +160,15 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 	for {
 		r.mu.Lock()
 		entry := r.entries[workspaceMountID]
+		if !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) {
+			r.mu.Unlock()
+			return nil, func() {}, false
+		}
+		entry.processesMu.Lock()
+		recoveryRequired := entry.recoveryRequired
+		entry.processesMu.Unlock()
 		currentGeneration := entry.currentFencingGeneration()
-		if !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) || fencingGeneration < currentGeneration {
+		if recoveryRequired || fencingGeneration < currentGeneration {
 			r.mu.Unlock()
 			return nil, func() {}, false
 		}
@@ -184,7 +192,7 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 			return nil, func() {}, false
 		}
 		entry.processesMu.Lock()
-		finalizing := entry.finalizing
+		finalizing := entry.finalizing || entry.recoveryRequired
 		entry.processesMu.Unlock()
 		if finalizing || r.programActive && r.programEntry == entry {
 			r.mu.Unlock()
@@ -205,6 +213,13 @@ func (r *workspaceOperationRegistry) acquireAuthorityMount(workspaceMountID stri
 	workspaceID = strings.TrimSpace(workspaceID)
 	token = strings.TrimSpace(token)
 	if workspaceID == "" || token == "" || !workspaceEntryMatches(entry, workspaceMountID, workspaceID, token) {
+		r.mu.Unlock()
+		return nil, func() {}, false
+	}
+	entry.processesMu.Lock()
+	recoveryRequired := entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if recoveryRequired {
 		r.mu.Unlock()
 		return nil, func() {}, false
 	}
@@ -310,6 +325,12 @@ func (r *workspaceOperationRegistry) retire(workspaceMountID string, entry *work
 func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, authority *workspacev0.WorkspaceRunAuthority, now time.Time) (func(), error) {
 	entry.finalizationMu.Lock()
 	defer entry.finalizationMu.Unlock()
+	entry.processesMu.Lock()
+	recoveryRequired := entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if recoveryRequired {
+		return func() {}, errors.New("Workspace Mount requires recovery")
+	}
 	if authority == nil || authority.GetFence() == nil || !r.currentMountLocked(
 		entry,
 		authority.GetFence().GetWorkspaceMountId(),

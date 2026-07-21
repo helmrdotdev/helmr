@@ -11,8 +11,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -100,6 +102,22 @@ func (entry *workspaceMountEntry) installWorkspaceRunAuthorityLocked(authority *
 func (entry *workspaceMountEntry) pruneWorkspaceFinalizationState() error {
 	if entry.finalizationRoot == "" {
 		return nil
+	}
+	journal, found, err := entry.readWorkspaceFinalizationJournal()
+	if err != nil {
+		return fmt.Errorf("read Workspace finalization state for pruning: %w", err)
+	}
+	if found && journal.Kind == workspace.FinalizationResetKind && strings.TrimSpace(journal.OperationID) != "" {
+		operationID, err := uuid.Parse(journal.OperationID)
+		if err != nil || operationID.String() != journal.OperationID {
+			return errors.New("Workspace Reset journal operation ID is invalid")
+		}
+		if err := os.RemoveAll(entry.workspaceResetStagingPath(journal.OperationID)); err != nil {
+			return fmt.Errorf("prune Workspace Reset staging tree: %w", err)
+		}
+		if err := syncDirectory(filepath.Dir(entry.workspaceRoot)); err != nil {
+			return fmt.Errorf("sync pruned Workspace Reset staging tree: %w", err)
+		}
 	}
 	for _, name := range []string{workspaceFinalizationJournalName, workspaceCaptureArtifactName} {
 		if err := os.Remove(filepath.Join(entry.finalizationRoot, name)); err != nil && !errors.Is(err, os.ErrNotExist) {

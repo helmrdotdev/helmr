@@ -136,6 +136,28 @@ message CaptureWorkspaceResponse {
   string error = 4;
 }
 
+message EmptyWorkspaceResetTarget {}
+
+message WorkspaceResetTarget {
+  string base_version_id = 1;
+  WorkspaceTreeIdentity tree = 2;
+  oneof source {
+    EmptyWorkspaceResetTarget empty = 3;
+    WorkspaceArtifact artifact = 4;
+  }
+}
+
+message ResetWorkspaceRequest {
+  WorkspaceFinalizationEnvelope envelope = 1;
+  WorkspaceResetTarget target = 2;
+}
+
+message ResetWorkspaceResponse {
+  WorkspaceFinalizationReceipt receipt = 1;
+  WorkspaceResetTarget target = 2;
+  string error = 3;
+}
+
 message StopWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   bool capture_before_stop = 2;

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -50,6 +51,49 @@ func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	for _, name := range []string{"node_modules/pkg/index.js", ".helmr/cache", ".next/cache"} {
 		if !names[name] {
 			t.Fatalf("committed workspace entry %q was not archived: %+v", name, names)
+		}
+	}
+}
+
+func TestExtractTarRestoresPermissionBitsDespiteUmask(t *testing.T) {
+	var body bytes.Buffer
+	writer := tar.NewWriter(&body)
+	for _, header := range []*tar.Header{
+		{Name: "dir", Typeflag: tar.TypeDir, Mode: 0o777},
+		{Name: "dir/file", Typeflag: tar.TypeReg, Mode: 0o666, Size: 1},
+		{Name: "zero-dir", Typeflag: tar.TypeDir, Mode: 0},
+		{Name: "zero", Typeflag: tar.TypeReg, Mode: 0, Size: 1},
+	} {
+		if err := writer.WriteHeader(header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Typeflag == tar.TypeReg {
+			if _, err := writer.Write([]byte("x")); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	previousUmask := syscall.Umask(0o077)
+	defer syscall.Umask(previousUmask)
+	destination := t.TempDir()
+	if err := ExtractTar(bytes.NewReader(body.Bytes()), destination); err != nil {
+		t.Fatal(err)
+	}
+	for path, expected := range map[string]os.FileMode{
+		"dir":      0o777,
+		"dir/file": 0o666,
+		"zero-dir": 0,
+		"zero":     0,
+	} {
+		info, err := os.Stat(filepath.Join(destination, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != expected {
+			t.Fatalf("%s mode = %o, want %o", path, info.Mode().Perm(), expected)
 		}
 	}
 }
