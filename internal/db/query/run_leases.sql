@@ -76,7 +76,23 @@ SELECT run_leases.org_id,
        run_waits.handoff_resume_checkpoint_id,
        run_waits.resume_attach_id,
        run_waits.resume_request_version,
-       suspend_checkpoints.private_workspace_version_id AS checkpoint_private_workspace_version_id
+       suspend_checkpoints.private_workspace_version_id AS checkpoint_private_workspace_version_id,
+       runs.parent_run_id,
+       runs.parent_owns_lifecycle,
+       parent_runs.actor_id AS parent_actor_id,
+       parent_actors.run_generation AS parent_actor_run_generation,
+       coalesce(parent_runs.current_attempt_number, 0)::integer AS parent_attempt_number,
+       child_handoff_waits.id AS handoff_parent_run_wait_id,
+       child_handoff_waits.suspend_checkpoint_id AS handoff_suspend_checkpoint_id,
+       child_handoff_waits.resume_attach_id AS handoff_resume_attach_id,
+       child_handoff_waits.base_workspace_version_id AS handoff_base_workspace_version_id,
+       child_handoff_waits.handoff_runtime_instance_id,
+       child_handoff_waits.handoff_workspace_mount_id,
+       child_handoff_waits.handoff_mount_generation,
+       child_handoff_waits.ownership_generation AS handoff_ownership_generation,
+       child_handoff_waits.parent_writer_generation AS handoff_parent_writer_generation,
+       child_handoff_waits.child_writer_generation AS handoff_child_writer_generation,
+       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
@@ -121,6 +137,20 @@ SELECT run_leases.org_id,
    AND suspend_checkpoints.state = 'ready'
    AND (suspend_checkpoints.expires_at IS NULL
         OR suspend_checkpoints.expires_at > transaction_timestamp())
+  LEFT JOIN runs AS parent_runs
+    ON parent_runs.id = runs.parent_run_id
+   AND parent_runs.environment_id = runs.environment_id
+   AND parent_runs.workspace_id = runs.workspace_id
+  LEFT JOIN actors AS parent_actors
+    ON parent_actors.id = parent_runs.actor_id
+   AND parent_actors.workspace_id = parent_runs.workspace_id
+  LEFT JOIN run_waits AS child_handoff_waits
+    ON child_handoff_waits.run_id = parent_runs.id
+   AND child_handoff_waits.attempt_number = parent_runs.current_attempt_number
+   AND child_handoff_waits.workspace_id = parent_runs.workspace_id
+   AND child_handoff_waits.child_run_id = runs.id
+   AND child_handoff_waits.child_parent_owned IS TRUE
+   AND child_handoff_waits.suspension_state = 'parked'
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -261,6 +291,19 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
+ FOR UPDATE;
+
+-- name: LockSameWorkspaceChildClaimWait :one
+SELECT *
+  FROM run_waits
+ WHERE id = sqlc.arg(id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(parent_run_id)
+   AND attempt_number = sqlc.arg(parent_attempt_number)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND child_run_id = sqlc.arg(child_run_id)
+   AND child_parent_owned IS TRUE
+   AND suspension_state = 'parked'
  FOR UPDATE;
 
 -- name: MarkRunLeaseStarting :one

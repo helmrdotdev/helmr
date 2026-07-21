@@ -288,6 +288,7 @@ type Querier interface {
 	LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (Workspace, error)
 	LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockRunLeaseClaimWorkspaceLeaseParams) (WorkspaceLease, error)
 	LockRuntimeSubstrateAuthority(ctx context.Context, arg LockRuntimeSubstrateAuthorityParams) (LockRuntimeSubstrateAuthorityRow, error)
+	LockSameWorkspaceChildClaimWait(ctx context.Context, arg LockSameWorkspaceChildClaimWaitParams) (RunWait, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (pgtype.UUID, error)
 	LockWorkerGroupsForReconciliation(ctx context.Context, arg LockWorkerGroupsForReconciliationParams) ([]string, error)
 	LockWorkspaceSecretsForAdmission(ctx context.Context, workspaceID pgtype.UUID) ([]LockWorkspaceSecretsForAdmissionRow, error)

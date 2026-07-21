@@ -100,6 +100,16 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("missing restore Wait error = %v, want no rows", err)
 	}
+	if _, err := fixture.queries.LockSameWorkspaceChildClaimWait(ctx, LockSameWorkspaceChildClaimWaitParams{
+		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID:       locators.EnvironmentID,
+		ParentRunID:         pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		ParentAttemptNumber: 1,
+		WorkspaceID:         locators.WorkspaceID,
+		ChildRunID:          locators.RunID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing handoff Wait error = %v, want no rows", err)
+	}
 	if _, err := fixture.queries.LockRestorableRunCheckpoint(ctx, LockRestorableRunCheckpointParams{
 		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
 		RunID:         locators.RunID,
