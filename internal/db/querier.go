@@ -244,6 +244,7 @@ type Querier interface {
 	ListQueuedRunDispatchCandidatesForScope(ctx context.Context, arg ListQueuedRunDispatchCandidatesForScopeParams) ([]ListQueuedRunDispatchCandidatesForScopeRow, error)
 	ListQueuedRunsForQueue(ctx context.Context, arg ListQueuedRunsForQueueParams) ([]Run, error)
 	ListRegions(ctx context.Context) ([]Region, error)
+	ListRunCheckpointArtifactAuthority(ctx context.Context, runCheckpointID pgtype.UUID) ([]ListRunCheckpointArtifactAuthorityRow, error)
 	ListRunCheckpointArtifacts(ctx context.Context, runCheckpointID pgtype.UUID) ([]RunCheckpointArtifact, error)
 	ListRunStreamRecords(ctx context.Context, arg ListRunStreamRecordsParams) ([]RunStreamRecord, error)
 	ListRunStreams(ctx context.Context, arg ListRunStreamsParams) ([]RunStream, error)

@@ -10,7 +10,304 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file run.proto.
  */
 export const file_run: GenFile = /*@__PURE__*/
-  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIimAQKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIAEIHCgVldmVudCKuAQoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQESKwoFZXJyb3IYBCABKAsyFy5oZWxtci5ydW4udjAuVGFza0Vycm9ySAKIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uQggKBl9lcnJvciJhCglUYXNrRXJyb3ISDAoEdHlwZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEQoJcmV0cnlhYmxlGAQgASgIEhQKDGRldGFpbHNfanNvbhgFIAEoCSLjAQoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIZCgxpZGxlX3RpbWVvdXQYCSABKA1IAogBAUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dEIPCg1faWRsZV90aW1lb3V0SgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIl8KFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCCJCChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlAKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhMKC3J1bl93YWl0X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJkCg5SZXN1bWVEZWNpc2lvbhITCgtydW5fd2FpdF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhEKCWRhdGFfanNvbhgDIAEoCRIcChRyZXF1aXJlX2NvbnN1bWVkX2FjaxgEIAEoCCIgCglSZXN1bWVBY2sSEwoLcnVuX3dhaXRfaWQYASABKAkiJQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkiaAoUT3V0cHV0U3RyZWFtQXBwZW5kZWQSDgoGc3RyZWFtGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBAUIPCg1fY29udGVudF90eXBlIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+  fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIimAQKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIAEIHCgVldmVudCKuAQoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQESKwoFZXJyb3IYBCABKAsyFy5oZWxtci5ydW4udjAuVGFza0Vycm9ySAKIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uQggKBl9lcnJvciJhCglUYXNrRXJyb3ISDAoEdHlwZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEQoJcmV0cnlhYmxlGAQgASgIEhQKDGRldGFpbHNfanNvbhgFIAEoCSLjAQoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIZCgxpZGxlX3RpbWVvdXQYCSABKA1IAogBAUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dEIPCg1faWRsZV90aW1lb3V0SgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIl8KFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCCJCChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlAKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhMKC3J1bl93YWl0X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJkCg5SZXN1bWVEZWNpc2lvbhITCgtydW5fd2FpdF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhEKCWRhdGFfanNvbhgDIAEoCRIcChRyZXF1aXJlX2NvbnN1bWVkX2FjaxgEIAEoCCIgCglSZXN1bWVBY2sSEwoLcnVuX3dhaXRfaWQYASABKAkiJQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkiaAoUT3V0cHV0U3RyZWFtQXBwZW5kZWQSDgoGc3RyZWFtGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBAUIPCg1fY29udGVudF90eXBlIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+
+/**
+ * @generated from message helmr.run.v0.ProgramStart
+ */
+export type ProgramStart = Message<"helmr.run.v0.ProgramStart"> & {
+  /**
+   * @generated from field: string entrypoint_declared_id = 1;
+   */
+  entrypointDeclaredId: string;
+
+  /**
+   * @generated from field: string run_id = 2;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: uint32 attempt_number = 3;
+   */
+  attemptNumber: number;
+
+  /**
+   * @generated from field: helmr.run.v0.RunCause cause = 4;
+   */
+  cause?: RunCause;
+
+  /**
+   * @generated from field: string deployment_id = 5;
+   */
+  deploymentId: string;
+
+  /**
+   * @generated from field: string deployment_version = 6;
+   */
+  deploymentVersion: string;
+
+  /**
+   * @generated from field: string workspace_id = 7;
+   */
+  workspaceId: string;
+
+  /**
+   * @generated from field: string base_workspace_version_id = 8;
+   */
+  baseWorkspaceVersionId: string;
+
+  /**
+   * @generated from oneof helmr.run.v0.ProgramStart.entrypoint
+   */
+  entrypoint: {
+    /**
+     * @generated from field: helmr.run.v0.TaskStart task = 9;
+     */
+    value: TaskStart;
+    case: "task";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ActorStart actor = 10;
+     */
+    value: ActorStart;
+    case: "actor";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message helmr.run.v0.ProgramStart.
+ * Use `create(ProgramStartSchema)` to create a new message.
+ */
+export const ProgramStartSchema: GenMessage<ProgramStart> = /*@__PURE__*/
+  messageDesc(file_run, 0);
+
+/**
+ * @generated from message helmr.run.v0.TaskStart
+ */
+export type TaskStart = Message<"helmr.run.v0.TaskStart"> & {
+  /**
+   * @generated from oneof helmr.run.v0.TaskStart.payload
+   */
+  payload: {
+    /**
+     * @generated from field: helmr.run.v0.NoPayload no_payload = 1;
+     */
+    value: NoPayload;
+    case: "noPayload";
+  } | {
+    /**
+     * @generated from field: bytes payload_json = 2;
+     */
+    value: Uint8Array;
+    case: "payloadJson";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message helmr.run.v0.TaskStart.
+ * Use `create(TaskStartSchema)` to create a new message.
+ */
+export const TaskStartSchema: GenMessage<TaskStart> = /*@__PURE__*/
+  messageDesc(file_run, 1);
+
+/**
+ * @generated from message helmr.run.v0.NoPayload
+ */
+export type NoPayload = Message<"helmr.run.v0.NoPayload"> & {
+};
+
+/**
+ * Describes the message helmr.run.v0.NoPayload.
+ * Use `create(NoPayloadSchema)` to create a new message.
+ */
+export const NoPayloadSchema: GenMessage<NoPayload> = /*@__PURE__*/
+  messageDesc(file_run, 2);
+
+/**
+ * @generated from message helmr.run.v0.ActorStart
+ */
+export type ActorStart = Message<"helmr.run.v0.ActorStart"> & {
+  /**
+   * @generated from field: string actor_id = 1;
+   */
+  actorId: string;
+
+  /**
+   * @generated from field: optional string key = 2;
+   */
+  key?: string;
+
+  /**
+   * @generated from field: int64 start_input_sequence = 3;
+   */
+  startInputSequence: bigint;
+
+  /**
+   * @generated from field: int64 input_high_watermark = 4;
+   */
+  inputHighWatermark: bigint;
+};
+
+/**
+ * Describes the message helmr.run.v0.ActorStart.
+ * Use `create(ActorStartSchema)` to create a new message.
+ */
+export const ActorStartSchema: GenMessage<ActorStart> = /*@__PURE__*/
+  messageDesc(file_run, 3);
+
+/**
+ * @generated from message helmr.run.v0.RunCause
+ */
+export type RunCause = Message<"helmr.run.v0.RunCause"> & {
+  /**
+   * @generated from oneof helmr.run.v0.RunCause.kind
+   */
+  kind: {
+    /**
+     * @generated from field: helmr.run.v0.ApiCause api = 1;
+     */
+    value: ApiCause;
+    case: "api";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ManualCause manual = 2;
+     */
+    value: ManualCause;
+    case: "manual";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ChildCause child = 3;
+     */
+    value: ChildCause;
+    case: "child";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ScheduleCause schedule = 4;
+     */
+    value: ScheduleCause;
+    case: "schedule";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ActorStartCause actor_start = 5;
+     */
+    value: ActorStartCause;
+    case: "actorStart";
+  } | {
+    /**
+     * @generated from field: helmr.run.v0.ContinuationCause continuation = 6;
+     */
+    value: ContinuationCause;
+    case: "continuation";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message helmr.run.v0.RunCause.
+ * Use `create(RunCauseSchema)` to create a new message.
+ */
+export const RunCauseSchema: GenMessage<RunCause> = /*@__PURE__*/
+  messageDesc(file_run, 4);
+
+/**
+ * @generated from message helmr.run.v0.ApiCause
+ */
+export type ApiCause = Message<"helmr.run.v0.ApiCause"> & {
+};
+
+/**
+ * Describes the message helmr.run.v0.ApiCause.
+ * Use `create(ApiCauseSchema)` to create a new message.
+ */
+export const ApiCauseSchema: GenMessage<ApiCause> = /*@__PURE__*/
+  messageDesc(file_run, 5);
+
+/**
+ * @generated from message helmr.run.v0.ManualCause
+ */
+export type ManualCause = Message<"helmr.run.v0.ManualCause"> & {
+};
+
+/**
+ * Describes the message helmr.run.v0.ManualCause.
+ * Use `create(ManualCauseSchema)` to create a new message.
+ */
+export const ManualCauseSchema: GenMessage<ManualCause> = /*@__PURE__*/
+  messageDesc(file_run, 6);
+
+/**
+ * @generated from message helmr.run.v0.ChildCause
+ */
+export type ChildCause = Message<"helmr.run.v0.ChildCause"> & {
+  /**
+   * @generated from field: string parent_run_id = 1;
+   */
+  parentRunId: string;
+};
+
+/**
+ * Describes the message helmr.run.v0.ChildCause.
+ * Use `create(ChildCauseSchema)` to create a new message.
+ */
+export const ChildCauseSchema: GenMessage<ChildCause> = /*@__PURE__*/
+  messageDesc(file_run, 7);
+
+/**
+ * @generated from message helmr.run.v0.ScheduleCause
+ */
+export type ScheduleCause = Message<"helmr.run.v0.ScheduleCause"> & {
+  /**
+   * @generated from field: string schedule_id = 1;
+   */
+  scheduleId: string;
+
+  /**
+   * @generated from field: int64 scheduled_at_unix_ms = 2;
+   */
+  scheduledAtUnixMs: bigint;
+
+  /**
+   * @generated from field: optional int64 previous_scheduled_at_unix_ms = 3;
+   */
+  previousScheduledAtUnixMs?: bigint;
+
+  /**
+   * @generated from field: string timezone = 4;
+   */
+  timezone: string;
+};
+
+/**
+ * Describes the message helmr.run.v0.ScheduleCause.
+ * Use `create(ScheduleCauseSchema)` to create a new message.
+ */
+export const ScheduleCauseSchema: GenMessage<ScheduleCause> = /*@__PURE__*/
+  messageDesc(file_run, 8);
+
+/**
+ * @generated from message helmr.run.v0.ActorStartCause
+ */
+export type ActorStartCause = Message<"helmr.run.v0.ActorStartCause"> & {
+};
+
+/**
+ * Describes the message helmr.run.v0.ActorStartCause.
+ * Use `create(ActorStartCauseSchema)` to create a new message.
+ */
+export const ActorStartCauseSchema: GenMessage<ActorStartCause> = /*@__PURE__*/
+  messageDesc(file_run, 9);
+
+/**
+ * @generated from message helmr.run.v0.ContinuationCause
+ */
+export type ContinuationCause = Message<"helmr.run.v0.ContinuationCause"> & {
+};
+
+/**
+ * Describes the message helmr.run.v0.ContinuationCause.
+ * Use `create(ContinuationCauseSchema)` to create a new message.
+ */
+export const ContinuationCauseSchema: GenMessage<ContinuationCause> = /*@__PURE__*/
+  messageDesc(file_run, 10);
 
 /**
  * @generated from message helmr.run.v0.RunTaskWorkspace
@@ -42,7 +339,7 @@ export type RunTaskWorkspace = Message<"helmr.run.v0.RunTaskWorkspace"> & {
  * Use `create(RunTaskWorkspaceSchema)` to create a new message.
  */
 export const RunTaskWorkspaceSchema: GenMessage<RunTaskWorkspace> = /*@__PURE__*/
-  messageDesc(file_run, 0);
+  messageDesc(file_run, 11);
 
 /**
  * @generated from message helmr.run.v0.WorkspaceArtifact
@@ -79,7 +376,7 @@ export type WorkspaceArtifact = Message<"helmr.run.v0.WorkspaceArtifact"> & {
  * Use `create(WorkspaceArtifactSchema)` to create a new message.
  */
 export const WorkspaceArtifactSchema: GenMessage<WorkspaceArtifact> = /*@__PURE__*/
-  messageDesc(file_run, 1);
+  messageDesc(file_run, 12);
 
 /**
  * @generated from message helmr.run.v0.RunTaskRequest
@@ -156,7 +453,7 @@ export type RunTaskRequest = Message<"helmr.run.v0.RunTaskRequest"> & {
  * Use `create(RunTaskRequestSchema)` to create a new message.
  */
 export const RunTaskRequestSchema: GenMessage<RunTaskRequest> = /*@__PURE__*/
-  messageDesc(file_run, 2);
+  messageDesc(file_run, 13);
 
 /**
  * @generated from message helmr.run.v0.TraceContext
@@ -183,7 +480,7 @@ export type TraceContext = Message<"helmr.run.v0.TraceContext"> & {
  * Use `create(TraceContextSchema)` to create a new message.
  */
 export const TraceContextSchema: GenMessage<TraceContext> = /*@__PURE__*/
-  messageDesc(file_run, 3);
+  messageDesc(file_run, 14);
 
 /**
  * @generated from message helmr.run.v0.SecretInject
@@ -210,7 +507,7 @@ export type SecretInject = Message<"helmr.run.v0.SecretInject"> & {
  * Use `create(SecretInjectSchema)` to create a new message.
  */
 export const SecretInjectSchema: GenMessage<SecretInject> = /*@__PURE__*/
-  messageDesc(file_run, 4);
+  messageDesc(file_run, 15);
 
 /**
  * @generated from message helmr.run.v0.Placement
@@ -245,7 +542,7 @@ export type Placement = Message<"helmr.run.v0.Placement"> & {
  * Use `create(PlacementSchema)` to create a new message.
  */
 export const PlacementSchema: GenMessage<Placement> = /*@__PURE__*/
-  messageDesc(file_run, 5);
+  messageDesc(file_run, 16);
 
 /**
  * @generated from message helmr.run.v0.EnvPlacement
@@ -262,7 +559,7 @@ export type EnvPlacement = Message<"helmr.run.v0.EnvPlacement"> & {
  * Use `create(EnvPlacementSchema)` to create a new message.
  */
 export const EnvPlacementSchema: GenMessage<EnvPlacement> = /*@__PURE__*/
-  messageDesc(file_run, 6);
+  messageDesc(file_run, 17);
 
 /**
  * @generated from message helmr.run.v0.FilePlacement
@@ -295,7 +592,7 @@ export type FilePlacement = Message<"helmr.run.v0.FilePlacement"> & {
  * Use `create(FilePlacementSchema)` to create a new message.
  */
 export const FilePlacementSchema: GenMessage<FilePlacement> = /*@__PURE__*/
-  messageDesc(file_run, 7);
+  messageDesc(file_run, 18);
 
 /**
  * @generated from message helmr.run.v0.DirPlacement
@@ -328,7 +625,7 @@ export type DirPlacement = Message<"helmr.run.v0.DirPlacement"> & {
  * Use `create(DirPlacementSchema)` to create a new message.
  */
 export const DirPlacementSchema: GenMessage<DirPlacement> = /*@__PURE__*/
-  messageDesc(file_run, 8);
+  messageDesc(file_run, 19);
 
 /**
  * @generated from message helmr.run.v0.RunEvent
@@ -405,7 +702,7 @@ export type RunEvent = Message<"helmr.run.v0.RunEvent"> & {
  * Use `create(RunEventSchema)` to create a new message.
  */
 export const RunEventSchema: GenMessage<RunEvent> = /*@__PURE__*/
-  messageDesc(file_run, 9);
+  messageDesc(file_run, 20);
 
 /**
  * @generated from message helmr.run.v0.TaskResult
@@ -437,7 +734,7 @@ export type TaskResult = Message<"helmr.run.v0.TaskResult"> & {
  * Use `create(TaskResultSchema)` to create a new message.
  */
 export const TaskResultSchema: GenMessage<TaskResult> = /*@__PURE__*/
-  messageDesc(file_run, 10);
+  messageDesc(file_run, 21);
 
 /**
  * @generated from message helmr.run.v0.TaskError
@@ -474,7 +771,7 @@ export type TaskError = Message<"helmr.run.v0.TaskError"> & {
  * Use `create(TaskErrorSchema)` to create a new message.
  */
 export const TaskErrorSchema: GenMessage<TaskError> = /*@__PURE__*/
-  messageDesc(file_run, 11);
+  messageDesc(file_run, 22);
 
 /**
  * @generated from message helmr.run.v0.RunWaitRequested
@@ -521,7 +818,7 @@ export type RunWaitRequested = Message<"helmr.run.v0.RunWaitRequested"> & {
  * Use `create(RunWaitRequestedSchema)` to create a new message.
  */
 export const RunWaitRequestedSchema: GenMessage<RunWaitRequested> = /*@__PURE__*/
-  messageDesc(file_run, 12);
+  messageDesc(file_run, 23);
 
 /**
  * @generated from message helmr.run.v0.TokenCreateRequested
@@ -553,7 +850,7 @@ export type TokenCreateRequested = Message<"helmr.run.v0.TokenCreateRequested"> 
  * Use `create(TokenCreateRequestedSchema)` to create a new message.
  */
 export const TokenCreateRequestedSchema: GenMessage<TokenCreateRequested> = /*@__PURE__*/
-  messageDesc(file_run, 13);
+  messageDesc(file_run, 24);
 
 /**
  * @generated from message helmr.run.v0.TokenCreateResult
@@ -605,7 +902,7 @@ export type TokenCreateResult = Message<"helmr.run.v0.TokenCreateResult"> & {
  * Use `create(TokenCreateResultSchema)` to create a new message.
  */
 export const TokenCreateResultSchema: GenMessage<TokenCreateResult> = /*@__PURE__*/
-  messageDesc(file_run, 14);
+  messageDesc(file_run, 25);
 
 /**
  * @generated from message helmr.run.v0.ActiveStreamReadRequested
@@ -647,7 +944,7 @@ export type ActiveStreamReadRequested = Message<"helmr.run.v0.ActiveStreamReadRe
  * Use `create(ActiveStreamReadRequestedSchema)` to create a new message.
  */
 export const ActiveStreamReadRequestedSchema: GenMessage<ActiveStreamReadRequested> = /*@__PURE__*/
-  messageDesc(file_run, 15);
+  messageDesc(file_run, 26);
 
 /**
  * @generated from message helmr.run.v0.StreamRecord
@@ -694,7 +991,7 @@ export type StreamRecord = Message<"helmr.run.v0.StreamRecord"> & {
  * Use `create(StreamRecordSchema)` to create a new message.
  */
 export const StreamRecordSchema: GenMessage<StreamRecord> = /*@__PURE__*/
-  messageDesc(file_run, 16);
+  messageDesc(file_run, 27);
 
 /**
  * @generated from message helmr.run.v0.ActiveStreamReadResult
@@ -726,7 +1023,7 @@ export type ActiveStreamReadResult = Message<"helmr.run.v0.ActiveStreamReadResul
  * Use `create(ActiveStreamReadResultSchema)` to create a new message.
  */
 export const ActiveStreamReadResultSchema: GenMessage<ActiveStreamReadResult> = /*@__PURE__*/
-  messageDesc(file_run, 17);
+  messageDesc(file_run, 28);
 
 /**
  * @generated from message helmr.run.v0.CheckpointPauseRequest
@@ -753,7 +1050,7 @@ export type CheckpointPauseRequest = Message<"helmr.run.v0.CheckpointPauseReques
  * Use `create(CheckpointPauseRequestSchema)` to create a new message.
  */
 export const CheckpointPauseRequestSchema: GenMessage<CheckpointPauseRequest> = /*@__PURE__*/
-  messageDesc(file_run, 18);
+  messageDesc(file_run, 29);
 
 /**
  * @generated from message helmr.run.v0.CheckpointPauseReady
@@ -775,7 +1072,7 @@ export type CheckpointPauseReady = Message<"helmr.run.v0.CheckpointPauseReady"> 
  * Use `create(CheckpointPauseReadySchema)` to create a new message.
  */
 export const CheckpointPauseReadySchema: GenMessage<CheckpointPauseReady> = /*@__PURE__*/
-  messageDesc(file_run, 19);
+  messageDesc(file_run, 30);
 
 /**
  * @generated from message helmr.run.v0.ResumeAttach
@@ -802,7 +1099,7 @@ export type ResumeAttach = Message<"helmr.run.v0.ResumeAttach"> & {
  * Use `create(ResumeAttachSchema)` to create a new message.
  */
 export const ResumeAttachSchema: GenMessage<ResumeAttach> = /*@__PURE__*/
-  messageDesc(file_run, 20);
+  messageDesc(file_run, 31);
 
 /**
  * @generated from message helmr.run.v0.ResumeDecision
@@ -834,7 +1131,7 @@ export type ResumeDecision = Message<"helmr.run.v0.ResumeDecision"> & {
  * Use `create(ResumeDecisionSchema)` to create a new message.
  */
 export const ResumeDecisionSchema: GenMessage<ResumeDecision> = /*@__PURE__*/
-  messageDesc(file_run, 21);
+  messageDesc(file_run, 32);
 
 /**
  * @generated from message helmr.run.v0.ResumeAck
@@ -851,7 +1148,7 @@ export type ResumeAck = Message<"helmr.run.v0.ResumeAck"> & {
  * Use `create(ResumeAckSchema)` to create a new message.
  */
 export const ResumeAckSchema: GenMessage<ResumeAck> = /*@__PURE__*/
-  messageDesc(file_run, 22);
+  messageDesc(file_run, 33);
 
 /**
  * @generated from message helmr.run.v0.ResumeConsumed
@@ -868,7 +1165,7 @@ export type ResumeConsumed = Message<"helmr.run.v0.ResumeConsumed"> & {
  * Use `create(ResumeConsumedSchema)` to create a new message.
  */
 export const ResumeConsumedSchema: GenMessage<ResumeConsumed> = /*@__PURE__*/
-  messageDesc(file_run, 23);
+  messageDesc(file_run, 34);
 
 /**
  * @generated from message helmr.run.v0.OutputStreamAppended
@@ -895,7 +1192,7 @@ export type OutputStreamAppended = Message<"helmr.run.v0.OutputStreamAppended"> 
  * Use `create(OutputStreamAppendedSchema)` to create a new message.
  */
 export const OutputStreamAppendedSchema: GenMessage<OutputStreamAppended> = /*@__PURE__*/
-  messageDesc(file_run, 24);
+  messageDesc(file_run, 35);
 
 /**
  * @generated from message helmr.run.v0.MetadataUpdated
@@ -932,5 +1229,5 @@ export type MetadataUpdated = Message<"helmr.run.v0.MetadataUpdated"> & {
  * Use `create(MetadataUpdatedSchema)` to create a new message.
  */
 export const MetadataUpdatedSchema: GenMessage<MetadataUpdated> = /*@__PURE__*/
-  messageDesc(file_run, 25);
+  messageDesc(file_run, 36);
 

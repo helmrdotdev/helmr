@@ -15,6 +15,7 @@ import (
 var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
 
 type runLeaseClaimAuthority struct {
+	mode                 runLeaseClaimMode
 	actor                db.Actor
 	parentRun            db.Run
 	childRun             db.Run
@@ -127,7 +128,7 @@ func claimFreshTaskRunLeaseInTx(
 	if locators.RunWaitID.Valid {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	var authority runLeaseClaimAuthority
+	authority := runLeaseClaimAuthority{mode: runLeaseClaimFresh}
 	var err error
 	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
 		ID:            locators.RunID,
@@ -199,7 +200,7 @@ func claimActorRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	var authority runLeaseClaimAuthority
+	authority := runLeaseClaimAuthority{mode: runLeaseClaimFresh}
 	var err error
 	authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
 		ID:          locators.ActorID,
@@ -325,7 +326,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	var authority runLeaseClaimAuthority
+	authority := runLeaseClaimAuthority{mode: runLeaseClaimAttachChild}
 	var err error
 	if locators.ParentActorID.Valid {
 		if hasParentEnclosingWait {
@@ -595,7 +596,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	var authority runLeaseClaimAuthority
+	authority := runLeaseClaimAuthority{mode: runLeaseClaimAttachParent}
 	var err error
 	if hasEnclosingWait {
 		if locators.ActorID.Valid ||
@@ -883,7 +884,7 @@ func claimCheckpointRestoreRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	var authority runLeaseClaimAuthority
+	authority := runLeaseClaimAuthority{mode: runLeaseClaimRestore}
 	var err error
 	if hasEnclosingWait {
 		if locators.ActorID.Valid ||

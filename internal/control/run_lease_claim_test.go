@@ -42,6 +42,9 @@ func TestClaimRunLeaseLocksSecretsBeforeExecutionAuthority(t *testing.T) {
 	if claimed.runLease.State != db.RunLeaseStateStarting {
 		t.Fatalf("lease state = %q, want starting", claimed.runLease.State)
 	}
+	if claimed.mode != runLeaseClaimFresh {
+		t.Fatalf("claim mode = %q, want fresh", claimed.mode)
+	}
 	if !slices.Equal(store.calls, []string{
 		"secret_locators", "secrets", "secret_version", "locators",
 		"run", "workspace", "attempt",

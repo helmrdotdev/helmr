@@ -170,6 +170,7 @@ func (q *Queries) GetDeploymentDefinition(ctx context.Context, arg GetDeployment
 const getDeploymentProgramAuthority = `-- name: GetDeploymentProgramAuthority :one
 SELECT deployments.id AS deployment_id,
        deployments.environment_id,
+       deployments.version AS deployment_version,
        deployments.program_code_artifact_id,
        program_code.digest AS program_code_digest,
        program_code.size_bytes AS program_code_size_bytes,
@@ -203,6 +204,7 @@ type GetDeploymentProgramAuthorityParams struct {
 type GetDeploymentProgramAuthorityRow struct {
 	DeploymentID                pgtype.UUID `json:"deployment_id"`
 	EnvironmentID               pgtype.UUID `json:"environment_id"`
+	DeploymentVersion           string      `json:"deployment_version"`
 	ProgramCodeArtifactID       pgtype.UUID `json:"program_code_artifact_id"`
 	ProgramCodeDigest           string      `json:"program_code_digest"`
 	ProgramCodeSizeBytes        int64       `json:"program_code_size_bytes"`
@@ -223,6 +225,7 @@ func (q *Queries) GetDeploymentProgramAuthority(ctx context.Context, arg GetDepl
 	err := row.Scan(
 		&i.DeploymentID,
 		&i.EnvironmentID,
+		&i.DeploymentVersion,
 		&i.ProgramCodeArtifactID,
 		&i.ProgramCodeDigest,
 		&i.ProgramCodeSizeBytes,

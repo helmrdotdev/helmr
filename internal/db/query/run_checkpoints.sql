@@ -121,3 +121,20 @@ SELECT *
   FROM run_checkpoint_artifacts
  WHERE run_checkpoint_id = sqlc.arg(run_checkpoint_id)
  ORDER BY role, ordinal;
+
+-- name: ListRunCheckpointArtifactAuthority :many
+SELECT members.role,
+       members.ordinal,
+       artifacts.digest,
+       artifacts.size_bytes,
+       artifacts.media_type
+  FROM run_checkpoint_artifacts AS members
+  JOIN run_checkpoints
+    ON run_checkpoints.id = members.run_checkpoint_id
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts
+    ON artifacts.environment_id = runs.environment_id
+   AND artifacts.id = members.artifact_id
+ WHERE members.run_checkpoint_id = sqlc.arg(run_checkpoint_id)
+ ORDER BY members.role, members.ordinal;

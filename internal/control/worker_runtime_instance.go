@@ -132,38 +132,26 @@ func populateRuntimePrepareSource(
 		!row.ProgramBuildContractVersion.Valid {
 		return errors.New("runtime reservation Program authority is incomplete")
 	}
-	runtimeDigest, err := deployment.RuntimeDigestString(row.ProgramRuntimeDigest)
+	program, err := projectRuntimeProgram(
+		runtimeProgramAuthorityFromDeployment(
+			row.ProgramDeploymentID,
+			row.ProgramRuntimeDigest,
+			row.ProgramArchitecture.String,
+			row.ProgramCodeDigest,
+			row.ProgramCodeSizeBytes,
+			row.ProgramCodeMediaType,
+			row.ProgramDependencyDigest,
+			row.ProgramDependencySizeBytes,
+			row.ProgramDependencyMediaType,
+			row.ProgramBuildContractVersion.String,
+		),
+		row.WorkspaceArchitecture.String,
+		policy,
+	)
 	if err != nil {
-		return fmt.Errorf("decode runtime reservation Managed Runtime digest: %w", err)
+		return fmt.Errorf("project runtime reservation Program: %w", err)
 	}
-	if policy == nil {
-		return errors.New("runtime catalog policy is not configured")
-	}
-	runtimeDescriptor, err := policy.ResolveRuntime(runtimeDigest)
-	if err != nil {
-		return fmt.Errorf("resolve runtime reservation Managed Runtime: %w", err)
-	}
-	if string(runtimeDescriptor.Architecture) != row.ProgramArchitecture.String {
-		return errors.New("runtime reservation Program architecture does not match Managed Runtime")
-	}
-	if row.ProgramArchitecture.String != row.WorkspaceArchitecture.String {
-		return errors.New("runtime reservation Program architecture does not match Workspace")
-	}
-	runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeDescriptor)
-	if err != nil {
-		return fmt.Errorf("encode runtime reservation Managed Runtime descriptor: %w", err)
-	}
-	source.Program = &api.WorkerRuntimeProgram{
-		DeploymentID: pgvalue.UUIDString(row.ProgramDeploymentID),
-		Runtime:      runtimeWire,
-		Code: api.CASObject{
-			Digest: row.ProgramCodeDigest, SizeBytes: row.ProgramCodeSizeBytes, MediaType: row.ProgramCodeMediaType,
-		},
-		Dependencies: api.CASObject{
-			Digest: row.ProgramDependencyDigest, SizeBytes: row.ProgramDependencySizeBytes, MediaType: row.ProgramDependencyMediaType,
-		},
-		BuildContractVersion: row.ProgramBuildContractVersion.String,
-	}
+	source.Program = &program
 	return nil
 }
 

@@ -4,6 +4,68 @@ package helmr.run.v0;
 
 option go_package = "github.com/helmrdotdev/helmr/internal/proto/run/v0;runv0";
 
+message ProgramStart {
+  string entrypoint_declared_id = 1;
+  string run_id = 2;
+  uint32 attempt_number = 3;
+  RunCause cause = 4;
+  string deployment_id = 5;
+  string deployment_version = 6;
+  string workspace_id = 7;
+  string base_workspace_version_id = 8;
+
+  oneof entrypoint {
+    TaskStart task = 9;
+    ActorStart actor = 10;
+  }
+}
+
+message TaskStart {
+  oneof payload {
+    NoPayload no_payload = 1;
+    bytes payload_json = 2;
+  }
+}
+
+message NoPayload {}
+
+message ActorStart {
+  string actor_id = 1;
+  optional string key = 2;
+  int64 start_input_sequence = 3;
+  int64 input_high_watermark = 4;
+}
+
+message RunCause {
+  oneof kind {
+    ApiCause api = 1;
+    ManualCause manual = 2;
+    ChildCause child = 3;
+    ScheduleCause schedule = 4;
+    ActorStartCause actor_start = 5;
+    ContinuationCause continuation = 6;
+  }
+}
+
+message ApiCause {}
+
+message ManualCause {}
+
+message ChildCause {
+  string parent_run_id = 1;
+}
+
+message ScheduleCause {
+  string schedule_id = 1;
+  int64 scheduled_at_unix_ms = 2;
+  optional int64 previous_scheduled_at_unix_ms = 3;
+  string timezone = 4;
+}
+
+message ActorStartCause {}
+
+message ContinuationCause {}
+
 message RunTaskWorkspace {
   string path = 1;
   string project_path = 2;

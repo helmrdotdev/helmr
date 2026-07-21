@@ -403,6 +403,58 @@ func (q *Queries) InvalidateRunCheckpoint(ctx context.Context, arg InvalidateRun
 	return i, err
 }
 
+const listRunCheckpointArtifactAuthority = `-- name: ListRunCheckpointArtifactAuthority :many
+SELECT members.role,
+       members.ordinal,
+       artifacts.digest,
+       artifacts.size_bytes,
+       artifacts.media_type
+  FROM run_checkpoint_artifacts AS members
+  JOIN run_checkpoints
+    ON run_checkpoints.id = members.run_checkpoint_id
+  JOIN runs
+    ON runs.id = run_checkpoints.run_id
+  JOIN artifacts
+    ON artifacts.environment_id = runs.environment_id
+   AND artifacts.id = members.artifact_id
+ WHERE members.run_checkpoint_id = $1
+ ORDER BY members.role, members.ordinal
+`
+
+type ListRunCheckpointArtifactAuthorityRow struct {
+	Role      RunCheckpointArtifactRole `json:"role"`
+	Ordinal   int32                     `json:"ordinal"`
+	Digest    string                    `json:"digest"`
+	SizeBytes int64                     `json:"size_bytes"`
+	MediaType string                    `json:"media_type"`
+}
+
+func (q *Queries) ListRunCheckpointArtifactAuthority(ctx context.Context, runCheckpointID pgtype.UUID) ([]ListRunCheckpointArtifactAuthorityRow, error) {
+	rows, err := q.db.Query(ctx, listRunCheckpointArtifactAuthority, runCheckpointID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListRunCheckpointArtifactAuthorityRow
+	for rows.Next() {
+		var i ListRunCheckpointArtifactAuthorityRow
+		if err := rows.Scan(
+			&i.Role,
+			&i.Ordinal,
+			&i.Digest,
+			&i.SizeBytes,
+			&i.MediaType,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRunCheckpointArtifacts = `-- name: ListRunCheckpointArtifacts :many
 SELECT run_checkpoint_id, role, ordinal, artifact_id, created_at
   FROM run_checkpoint_artifacts

@@ -67,6 +67,7 @@ SELECT deployment_definitions.*
 -- name: GetDeploymentProgramAuthority :one
 SELECT deployments.id AS deployment_id,
        deployments.environment_id,
+       deployments.version AS deployment_version,
        deployments.program_code_artifact_id,
        program_code.digest AS program_code_digest,
        program_code.size_bytes AS program_code_size_bytes,

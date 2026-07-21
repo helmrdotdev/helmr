@@ -346,6 +346,143 @@ const (
 	WorkerRuntimeReconcileReclaim = "reclaim"
 )
 
+type WorkerRunLeaseClaimRequest struct {
+	LeaseID       string `json:"lease_id"`
+	LeaseSequence int64  `json:"lease_sequence"`
+}
+
+type WorkerRunLeaseClaimResponse struct {
+	Lease     WorkerRunLeaseReceipt   `json:"lease"`
+	Program   WorkerRuntimeProgram    `json:"program"`
+	Workspace WorkerWorkspaceLease    `json:"workspace"`
+	Secrets   []WorkerSecretDelivery  `json:"secrets"`
+	Execution WorkerRunLeaseExecution `json:"execution"`
+}
+
+type WorkerRunLeaseReceipt struct {
+	ID                         string       `json:"id"`
+	RunID                      string       `json:"run_id"`
+	AttemptNumber              int32        `json:"attempt_number"`
+	LeaseSequence              int64        `json:"lease_sequence"`
+	WorkerGroupID              string       `json:"worker_group_id"`
+	WorkerInstanceID           string       `json:"worker_instance_id"`
+	WorkerEpoch                int64        `json:"worker_epoch"`
+	WorkerProtocolVersion      string       `json:"worker_protocol_version"`
+	RuntimeInstanceID          string       `json:"runtime_instance_id"`
+	RuntimeIdentityID          string       `json:"runtime_identity_id"`
+	NetworkSlotID              string       `json:"network_slot_id"`
+	NetworkSlotGeneration      int64        `json:"network_slot_generation"`
+	WorkspaceMountID           string       `json:"workspace_mount_id"`
+	WorkspaceLeaseID           string       `json:"workspace_lease_id"`
+	RequestedCPUMillis         int64        `json:"requested_cpu_millis"`
+	RequestedMemoryBytes       int64        `json:"requested_memory_bytes"`
+	RequestedWorkloadDiskBytes int64        `json:"requested_workload_disk_bytes"`
+	RequestedScratchBytes      int64        `json:"requested_scratch_bytes"`
+	RequestedExecutionSlots    int32        `json:"requested_execution_slots"`
+	MaxActiveDurationMs        int64        `json:"max_active_duration_ms"`
+	ActiveElapsedMs            int64        `json:"active_elapsed_ms"`
+	Trace                      TraceContext `json:"trace"`
+	StartDeadlineAt            time.Time    `json:"start_deadline_at"`
+	ExpiresAt                  time.Time    `json:"expires_at"`
+}
+
+type WorkerWorkspaceLease struct {
+	ID                     string `json:"id"`
+	WorkspaceID            string `json:"workspace_id"`
+	RuntimeInstanceID      string `json:"runtime_instance_id"`
+	WorkspaceMountID       string `json:"workspace_mount_id"`
+	BaseVersionID          string `json:"base_version_id"`
+	OwnershipGeneration    int64  `json:"ownership_generation"`
+	WriterGeneration       int64  `json:"writer_generation"`
+	MountFencingGeneration int64  `json:"mount_fencing_generation"`
+	WriteCapability        string `json:"write_capability"`
+}
+
+type WorkerSecretDelivery struct {
+	Env   *WorkerSecretEnv  `json:"env,omitempty"`
+	File  *WorkerSecretFile `json:"file,omitempty"`
+	Value []byte            `json:"value"`
+}
+
+type WorkerSecretEnv struct {
+	Name string `json:"name"`
+}
+
+type WorkerSecretFile struct {
+	Path string `json:"path"`
+}
+
+type WorkerRunLeaseExecution struct {
+	Fresh   *WorkerRunLeaseFresh   `json:"fresh,omitempty"`
+	Restore *WorkerRunLeaseRestore `json:"restore,omitempty"`
+	Attach  *WorkerRunLeaseAttach  `json:"attach,omitempty"`
+}
+
+type WorkerRunLeaseFresh struct {
+	ProgramStart []byte `json:"program_start"`
+}
+
+type WorkerRunLeaseRestore struct {
+	Checkpoint           WorkerRunLeaseCheckpoint `json:"checkpoint"`
+	RunWaitID            string                   `json:"run_wait_id"`
+	ResumeRequestVersion int64                    `json:"resume_request_version"`
+	Decision             WorkerRunLeaseDecision   `json:"decision"`
+}
+
+type WorkerRunLeaseAttach struct {
+	Child  *WorkerRunLeaseChildAttach  `json:"child,omitempty"`
+	Parent *WorkerRunLeaseParentAttach `json:"parent,omitempty"`
+}
+
+type WorkerRunLeaseChildAttach struct {
+	RunWaitID      string `json:"run_wait_id"`
+	CheckpointID   string `json:"checkpoint_id"`
+	ResumeAttachID string `json:"resume_attach_id"`
+	ProgramStart   []byte `json:"program_start"`
+}
+
+type WorkerRunLeaseParentAttach struct {
+	RunWaitID            string                 `json:"run_wait_id"`
+	CheckpointID         string                 `json:"checkpoint_id"`
+	ResumeAttachID       string                 `json:"resume_attach_id"`
+	ResumeRequestVersion int64                  `json:"resume_request_version"`
+	Decision             WorkerRunLeaseDecision `json:"decision"`
+}
+
+type WorkerRunLeaseCheckpoint struct {
+	ID        string                             `json:"id"`
+	Kind      string                             `json:"kind"`
+	Manifest  json.RawMessage                    `json:"manifest"`
+	Artifacts []WorkerRunLeaseCheckpointArtifact `json:"artifacts"`
+}
+
+type WorkerRunLeaseCheckpointArtifact struct {
+	Role    string    `json:"role"`
+	Ordinal int32     `json:"ordinal"`
+	Object  CASObject `json:"object"`
+}
+
+type WorkerRunLeaseDecision struct {
+	Completed *WorkerRunLeaseCompleted `json:"completed,omitempty"`
+	Failed    *WorkerRunLeaseFailed    `json:"failed,omitempty"`
+	Cancelled *WorkerRunLeaseCancelled `json:"cancelled,omitempty"`
+}
+
+type WorkerRunLeaseCompleted struct {
+	NoResult   *struct{}       `json:"no_result,omitempty"`
+	ResultJSON json.RawMessage `json:"result_json,omitempty"`
+}
+
+type WorkerRunLeaseFailed struct {
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
+type WorkerRunLeaseCancelled struct {
+	ReasonCode string          `json:"reason_code"`
+	Error      json.RawMessage `json:"error,omitempty"`
+}
+
 type WorkerRunLease struct {
 	ID                    string       `json:"id"`
 	OrgID                 string       `json:"org_id"`

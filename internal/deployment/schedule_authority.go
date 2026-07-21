@@ -39,40 +39,9 @@ func (a *ScheduleAuthority) ValidateScheduledTask(
 	expectedDigest []byte,
 	queueConfigRaw []byte,
 ) error {
-	if manifestVersion != BuildPlanFormatVersion {
-		return fmt.Errorf(
-			"task manifest version = %d, want %d",
-			manifestVersion,
-			BuildPlanFormatVersion,
-		)
-	}
-	canonical, digest, err := CanonicalManifestAndDigest(raw)
+	manifest, err := ParseTaskManifest(manifestVersion, raw, expectedDigest)
 	if err != nil {
 		return err
-	}
-	if !bytes.Equal(digest[:], expectedDigest) {
-		return errors.New("task manifest digest does not match its authority")
-	}
-
-	var manifest TaskManifest
-	decoder := json.NewDecoder(bytes.NewReader(canonical))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
-		return fmt.Errorf("decode task manifest: %w", err)
-	}
-	if err := ensureEOF(decoder, "task manifest"); err != nil {
-		return err
-	}
-	completeRaw, err := json.Marshal(manifest)
-	if err != nil {
-		return fmt.Errorf("encode complete task manifest: %w", err)
-	}
-	complete, err := jsoncanon.Transform(completeRaw)
-	if err != nil {
-		return fmt.Errorf("canonicalize complete task manifest: %w", err)
-	}
-	if !bytes.Equal(canonical, complete) {
-		return errors.New("task manifest does not match the complete canonical v0 shape")
 	}
 
 	queueConfig, err := parseQueueConfig(queueConfigRaw)
@@ -94,6 +63,52 @@ func (a *ScheduleAuthority) ValidateScheduledTask(
 		return errors.New("scheduled task payload kind must be standard_schema")
 	}
 	return nil
+}
+
+func ParseTaskManifest(
+	manifestVersion int32,
+	raw []byte,
+	expectedDigest []byte,
+) (TaskManifest, error) {
+	if manifestVersion != BuildPlanFormatVersion {
+		return TaskManifest{}, fmt.Errorf(
+			"task manifest version = %d, want %d",
+			manifestVersion,
+			BuildPlanFormatVersion,
+		)
+	}
+	canonical, digest, err := CanonicalManifestAndDigest(raw)
+	if err != nil {
+		return TaskManifest{}, err
+	}
+	if !bytes.Equal(digest[:], expectedDigest) {
+		return TaskManifest{}, errors.New("task manifest digest does not match its authority")
+	}
+
+	var manifest TaskManifest
+	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		return TaskManifest{}, fmt.Errorf("decode task manifest: %w", err)
+	}
+	if err := ensureEOF(decoder, "task manifest"); err != nil {
+		return TaskManifest{}, err
+	}
+	completeRaw, err := json.Marshal(manifest)
+	if err != nil {
+		return TaskManifest{}, fmt.Errorf("encode complete task manifest: %w", err)
+	}
+	complete, err := jsoncanon.Transform(completeRaw)
+	if err != nil {
+		return TaskManifest{}, fmt.Errorf("canonicalize complete task manifest: %w", err)
+	}
+	if !bytes.Equal(canonical, complete) {
+		return TaskManifest{}, errors.New("task manifest does not match the complete canonical v0 shape")
+	}
+	if manifest.Payload.Kind != SchemaKindNone && manifest.Payload.Kind != SchemaKindStandard {
+		return TaskManifest{}, fmt.Errorf("task payload kind %q is unsupported", manifest.Payload.Kind)
+	}
+	return manifest, nil
 }
 
 func parseQueueConfig(raw []byte) (QueueConfig, error) {
