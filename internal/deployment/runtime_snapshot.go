@@ -61,6 +61,18 @@ func (snapshot *RuntimeArtifactSnapshot) verifier() (*os.File, RuntimeDescriptor
 	return file, snapshot.descriptor, nil
 }
 
+func (snapshot *RuntimeArtifactSnapshot) LinkInto(
+	directory string,
+	name string,
+	uid int,
+	gid int,
+) error {
+	if snapshot == nil || snapshot.content == nil {
+		return errors.New("runtime Artifact snapshot is closed")
+	}
+	return snapshot.content.LinkInto(directory, name, uid, gid)
+}
+
 func (snapshot *RuntimeArtifactSnapshot) Close() error {
 	if snapshot == nil || snapshot.content == nil {
 		return nil

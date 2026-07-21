@@ -56,6 +56,7 @@ func run(log *slog.Logger) error {
 	var buildPolicy *deployment.BuildPolicy
 	var toolchainCatalogDigest string
 	var toolCorpus *deployment.ToolchainCorpus
+	var runtimeStore cas.Reader
 	runtimeCatalog, err := deployment.LoadRuntimeCatalog()
 	if err != nil {
 		return fmt.Errorf("authenticate managed runtime catalog: %w", err)
@@ -210,6 +211,16 @@ func run(log *slog.Logger) error {
 	); err != nil {
 		return fmt.Errorf("verify managed runtime corpus: %w", err)
 	}
+	if supportsRun || supportsBuild {
+		runtimeStore, err = cas.NewImmutableS3(
+			ctx,
+			cfg.RuntimeStoreURI,
+			cas.WithS3TempDir(corpusScratch),
+		)
+		if err != nil {
+			return fmt.Errorf("configure managed runtime store: %w", err)
+		}
+	}
 	if supportsBuild {
 		if err := validateWorkerStores(cfg); err != nil {
 			return err
@@ -250,14 +261,6 @@ func run(log *slog.Logger) error {
 				currentRuntime.Architecture,
 				runtimeArchitecture,
 			)
-		}
-		runtimeStore, err := cas.NewImmutableS3(
-			ctx,
-			cfg.RuntimeStoreURI,
-			cas.WithS3TempDir(corpusScratch),
-		)
-		if err != nil {
-			return fmt.Errorf("configure managed runtime store: %w", err)
 		}
 		runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
 			ctx,
@@ -472,6 +475,10 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.BackgroundGate = backgroundGate
 		preparedRuntimePool.Capacity = hostCapacity
 		preparedRuntimePool.RuntimeScratchBytes = workerCapabilities.VMMaxScratchBytes
+		preparedRuntimePool.RuntimeCatalog = runtimeCatalog
+		preparedRuntimePool.RuntimeStore = runtimeStore
+		preparedRuntimePool.RuntimeArchitecture = runtimeArchitecture
+		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
 	}
 	runner, err := workerdaemon.NewRunner(

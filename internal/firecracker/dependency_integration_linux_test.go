@@ -192,7 +192,7 @@ func runDependencyFirecrackerProbe(
 		Resources:   compute.BuildGuestResources(),
 		PIDsMax:     compute.DependencyGuestPIDsMax,
 		Networkless: true,
-		BuildDrives: []vm.ReadOnlyDrive{
+		ReadOnlyDrives: []vm.ReadOnlyDrive{
 			{ID: vm.ManagerDrive, Source: dependencyFirecrackerDrive{managerTree}},
 			{ID: vm.ManagedRuntimeDrive, Source: dependencyFirecrackerDrive{runtimeTree}},
 			{ID: vm.ToolchainDrive, Source: dependencyFirecrackerDrive{toolchainTree}},

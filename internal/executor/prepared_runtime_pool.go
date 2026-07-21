@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
 	"github.com/helmrdotdev/helmr/internal/compute"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -85,6 +86,10 @@ type PreparedRuntimePool struct {
 	AdmitRuntimeStart     func(context.Context) error
 	Capacity              *capacity.Ledger
 	RuntimeScratchBytes   int64
+	RuntimeCatalog        *deployment.RuntimeCatalog
+	RuntimeStore          cas.Reader
+	RuntimeArchitecture   deployment.RuntimeArchitecture
+	VerifierCgroupRoot    string
 
 	mu           sync.Mutex
 	closeMu      sync.Mutex
@@ -632,7 +637,7 @@ func (p *PreparedRuntimePool) waitForActivity(ctx context.Context) error {
 	}
 }
 
-func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, mount api.WorkerWorkspaceMount, target api.WorkerRuntimeReconcileTarget) error {
+func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, mount api.WorkerWorkspaceMount, target api.WorkerRuntimeReconcileTarget) (retErr error) {
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	runtimeEpoch := target.WorkerEpoch
 	materializeAttempted := false
@@ -678,6 +683,23 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return failInstance(err)
 	}
 	defer cleanupWorkspaceImage()
+	if err := p.verifyReservedWorkspaceVersion(ctx, materializer, tempDir, mount); err != nil {
+		return failInstance(err)
+	}
+	readOnlyDrives, closeProgramArtifacts, err := p.prepareProgramArtifacts(
+		ctx,
+		tempDir,
+		target,
+	)
+	if err != nil {
+		return failInstance(err)
+	}
+	programArtifactsOpen := true
+	defer func() {
+		if programArtifactsOpen {
+			retErr = errors.Join(retErr, closeProgramArtifacts())
+		}
+	}()
 	var runtimeSubstrateIDValue string
 	if topology.Substrate != nil {
 		started := time.Now()
@@ -707,20 +729,25 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return failInstance(err)
 	}
 	materializeAttempted = true
-	session, err := connector.Materialize(ctx, vm.MaterializeRequest{
+	session, materializeErr := connector.Materialize(ctx, vm.MaterializeRequest{
 		ID:                 runtimeInstanceID,
 		OwnerKind:          vm.OwnerRuntime,
 		RootfsDigest:       mount.RootfsDigest,
 		WorkspaceMountPath: mount.WorkspaceMountPath,
+		BaseVersionID:      mount.BaseVersionID,
 		Resources: compute.ResourceVector{
 			MilliCPU:  mount.RequestedMilliCPU,
 			MemoryMiB: mount.RequestedMemoryMiB,
 			DiskMiB:   mount.RequestedDiskMiB,
 			Slots:     mount.RequestedExecutionSlots,
 		},
-		Network:  mount.Network,
-		Topology: topology,
+		Network:        mount.Network,
+		Topology:       topology,
+		ReadOnlyDrives: readOnlyDrives,
 	})
+	closeProgramErr := closeProgramArtifacts()
+	programArtifactsOpen = false
+	err = errors.Join(materializeErr, closeProgramErr)
 	p.logInfo("prepared runtime pool session materialized", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return failInstance(err)
@@ -839,6 +866,175 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	p.logInfo("prepared runtime pool refilled", "runtime_instance_id", runtimeInstanceID, "available", available)
 	return nil
+}
+
+func (p *PreparedRuntimePool) verifyReservedWorkspaceVersion(
+	ctx context.Context,
+	materializer WorkspaceMaterializer,
+	tempDir string,
+	mount api.WorkerWorkspaceMount,
+) error {
+	if strings.TrimSpace(mount.BaseVersionID) == "" {
+		return errors.New("runtime reservation base Workspace version is required")
+	}
+	if err := validateWorkspaceArtifactShape(mount.WorkspaceArtifact); err != nil {
+		return fmt.Errorf("runtime reservation Workspace Artifact: %w", err)
+	}
+	if workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+		return nil
+	}
+	_, cleanup, err := materializer.restoreCASObject(
+		ctx,
+		tempDir,
+		"workspace-version",
+		api.CASObject{
+			Digest:    mount.WorkspaceArtifact.Digest,
+			SizeBytes: mount.WorkspaceArtifact.SizeBytes,
+			MediaType: mount.WorkspaceArtifact.MediaType,
+		},
+	)
+	cleanup()
+	return err
+}
+
+func (p *PreparedRuntimePool) prepareProgramArtifacts(
+	ctx context.Context,
+	tempDir string,
+	target api.WorkerRuntimeReconcileTarget,
+) ([]vm.ReadOnlyDrive, func() error, error) {
+	program := target.Source.Program
+	if string(p.RuntimeArchitecture) != target.Source.WorkspaceArchitecture {
+		return nil, func() error { return nil }, fmt.Errorf(
+			"worker architecture %q does not match Workspace architecture %q",
+			p.RuntimeArchitecture,
+			target.Source.WorkspaceArchitecture,
+		)
+	}
+	if program == nil {
+		return nil, func() error { return nil }, nil
+	}
+	if strings.TrimSpace(program.DeploymentID) == "" {
+		return nil, func() error { return nil }, errors.New("Program deployment id is required")
+	}
+	if p.RuntimeCatalog == nil || p.RuntimeStore == nil {
+		return nil, func() error { return nil }, errors.New("Managed Runtime delivery is not configured")
+	}
+	runtimeDescriptor, err := deployment.RuntimeDescriptorFromWire(program.Runtime)
+	if err != nil {
+		return nil, func() error { return nil }, fmt.Errorf("decode Managed Runtime descriptor: %w", err)
+	}
+	registeredRuntime, err := p.RuntimeCatalog.Resolve(runtimeDescriptor.Digest)
+	if err != nil {
+		return nil, func() error { return nil }, fmt.Errorf("resolve authenticated Managed Runtime: %w", err)
+	}
+	if registeredRuntime != runtimeDescriptor {
+		return nil, func() error { return nil }, errors.New("Managed Runtime descriptor does not match authenticated catalog")
+	}
+	if runtimeDescriptor.Architecture != p.RuntimeArchitecture {
+		return nil, func() error { return nil }, fmt.Errorf(
+			"Managed Runtime architecture %q does not match worker architecture %q",
+			runtimeDescriptor.Architecture,
+			p.RuntimeArchitecture,
+		)
+	}
+	if string(runtimeDescriptor.Architecture) != target.Source.WorkspaceArchitecture {
+		return nil, func() error { return nil }, fmt.Errorf(
+			"Managed Runtime architecture %q does not match Workspace architecture %q",
+			runtimeDescriptor.Architecture,
+			target.Source.WorkspaceArchitecture,
+		)
+	}
+	runtimeSnapshot, err := deployment.SnapshotRuntimeObject(
+		ctx,
+		p.RuntimeStore,
+		tempDir,
+		runtimeDescriptor,
+	)
+	if err != nil {
+		return nil, func() error { return nil }, err
+	}
+	closeSnapshots := func() error { return runtimeSnapshot.Close() }
+	runtimeIndex, err := deployment.VerifyRuntimeArtifact(
+		ctx,
+		p.VerifierCgroupRoot,
+		target.ID,
+		runtimeSnapshot,
+	)
+	if err != nil {
+		return nil, func() error { return nil }, errors.Join(
+			fmt.Errorf("verify Managed Runtime: %w", err),
+			closeSnapshots(),
+		)
+	}
+	expectedRuntimeIndex := deployment.RuntimeIndex{
+		Architecture:      runtimeDescriptor.Architecture,
+		FormatVersion:     deployment.RuntimeIndexFormatVersion,
+		RuntimeAPIVersion: runtimeDescriptor.RuntimeAPIVersion,
+	}
+	if runtimeIndex != expectedRuntimeIndex {
+		return nil, func() error { return nil }, errors.Join(
+			errors.New("Managed Runtime index does not match its descriptor"),
+			closeSnapshots(),
+		)
+	}
+	programSnapshot, err := deployment.SnapshotProgramObjects(
+		ctx,
+		p.CAS,
+		tempDir,
+		deployment.ProgramDescriptor{
+			Digest: program.Code.Digest, SizeBytes: program.Code.SizeBytes, MediaType: program.Code.MediaType,
+		},
+		deployment.ProgramDescriptor{
+			Digest:    program.Dependencies.Digest,
+			SizeBytes: program.Dependencies.SizeBytes,
+			MediaType: program.Dependencies.MediaType,
+		},
+	)
+	if err != nil {
+		return nil, func() error { return nil }, errors.Join(err, closeSnapshots())
+	}
+	closeSnapshots = func() error {
+		return errors.Join(runtimeSnapshot.Close(), programSnapshot.Close())
+	}
+	programIndex, err := deployment.VerifyProgramArtifacts(
+		ctx,
+		p.VerifierCgroupRoot,
+		target.ID,
+		programSnapshot,
+	)
+	if err != nil {
+		return nil, func() error { return nil }, errors.Join(
+			fmt.Errorf("verify Program: %w", err),
+			closeSnapshots(),
+		)
+	}
+	if programIndex.RuntimeDigest != runtimeDescriptor.Digest ||
+		programIndex.RuntimeAPIVersion != runtimeDescriptor.RuntimeAPIVersion ||
+		programIndex.Architecture != runtimeDescriptor.Architecture ||
+		programIndex.BuildContractVersion != program.BuildContractVersion ||
+		programIndex.DependenciesDigest != program.Dependencies.Digest {
+		return nil, func() error { return nil }, errors.Join(
+			errors.New("Program index does not match runtime reservation authority"),
+			closeSnapshots(),
+		)
+	}
+	return []vm.ReadOnlyDrive{
+		{
+			ID: vm.ProgramRuntimeDrive, Digest: runtimeDescriptor.Digest,
+			SizeBytes: runtimeDescriptor.SizeBytes, MediaType: runtimeDescriptor.MediaType,
+			Source: runtimeSnapshot,
+		},
+		{
+			ID: vm.ProgramCodeDrive, Digest: program.Code.Digest,
+			SizeBytes: program.Code.SizeBytes, MediaType: program.Code.MediaType,
+			Source: programSnapshot.Code,
+		},
+		{
+			ID: vm.ProgramDependenciesDrive, Digest: program.Dependencies.Digest,
+			SizeBytes: program.Dependencies.SizeBytes, MediaType: program.Dependencies.MediaType,
+			Source: programSnapshot.Dependencies,
+		},
+	}, closeSnapshots, nil
 }
 
 func (p *PreparedRuntimePool) restoreWorkspaceImageAndRuntimeSubstrate(ctx context.Context, materializer WorkspaceMaterializer, tempDir string, mount api.WorkerWorkspaceMount, imageLogMessage string, substrateLogMessage string, logAttrs ...any) (string, func(), vm.RuntimeTopology, error) {
@@ -1060,10 +1256,12 @@ func (p *PreparedRuntimePool) removeReadyEntryAtLocked(key string, entries []pre
 func preparedRuntimeWorkspaceMountFromSource(source api.WorkerRuntimeSource) api.WorkerWorkspaceMount {
 	return api.WorkerWorkspaceMount{
 		ID:                      uuid.Must(uuid.NewV7()).String(),
-		WorkspaceID:             uuid.Must(uuid.NewV7()).String(),
+		WorkspaceID:             strings.TrimSpace(source.WorkspaceID),
 		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
+		BaseVersionID:           strings.TrimSpace(source.BaseVersionID),
 		RuntimeID:               strings.TrimSpace(source.RuntimeID),
 		WorkspaceImage:          source.WorkspaceImage,
+		WorkspaceArtifact:       source.WorkspaceArtifact,
 		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
 		WorkspaceMountPath:      "/workspace",
 		RequestedMilliCPU:       int64(source.ReservedCpuMillis),

@@ -462,7 +462,7 @@ func runAdapter(ctx context.Context, conn io.ReadWriter, cfg Config, imageRoot s
 		defer cleanupControlSocket()
 		cmdEnv = setEnvValue(cmdEnv, "HELMR_CONTROL_SOCKET", controlSocketPath)
 	}
-	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, adapterCommandOptions{ImageMode: imageMode})
+	cmd, err := adapterCommand(ctx, adapterRuntimePath, cmdArgs, launchCwd, cmdEnv, imageRoot, runtimeUser, adapterCommandOptions{ImageMode: imageMode, ManagedProgram: true})
 	if err != nil {
 		return writeRunSetupFailure(conn, err)
 	}

@@ -234,8 +234,10 @@ func LoadWorker() (Worker, error) {
 	if err := region.ValidateID(cfg.RegionID); err != nil {
 		return cfg, fmt.Errorf("HELMR_REGION_ID: %w", err)
 	}
-	if slices.Contains(cfg.WorkerRoles, "build") && cfg.RuntimeStoreURI == "" {
-		return cfg, errors.New("HELMR_RUNTIME_STORE_URI is required for build workers")
+	if (slices.Contains(cfg.WorkerRoles, "run") ||
+		slices.Contains(cfg.WorkerRoles, "build")) &&
+		cfg.RuntimeStoreURI == "" {
+		return cfg, errors.New("HELMR_RUNTIME_STORE_URI is required for run and build workers")
 	}
 	if slices.Contains(cfg.WorkerRoles, "build") && cfg.BuildPolicyPath == "" {
 		return cfg, errors.New("HELMR_BUILD_POLICY_PATH is required for build workers")

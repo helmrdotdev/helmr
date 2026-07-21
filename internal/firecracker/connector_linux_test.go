@@ -76,6 +76,58 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 	}
 }
 
+func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
+	cfg := (Config{}).WithDefaults()
+	machine := &firecracker.Machine{Cfg: firecracker.Config{
+		KernelArgs: defaultKernelArgs + " helmr.program=1",
+		NetworkInterfaces: firecracker.NetworkInterfaces{{
+			StaticConfiguration: &firecracker.StaticNetworkConfiguration{
+				IPConfiguration: &firecracker.IPConfiguration{IPAddr: net.IPNet{
+					IP: net.IPv4(192, 168, 127, 2), Mask: net.CIDRMask(24, 32),
+				}},
+			},
+		}},
+	}}
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
+		Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel",
+		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
+		CNIProfile: cfg.CNIProfile,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	drives := testProgramDrives(&recordingReadOnlyDriveSource{})
+	_, manifestBytes, err := snapshotRuntimeConfig(
+		cfg, machine, "checkpoint-1", runtimeID, "sha256:kernel",
+		"sha256:initramfs", "sha256:rootfs", vm.RuntimeTopology{}, drives,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest snapshotManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if manifest.RecoveryPoint.Runtime.KernelArgs != machine.Cfg.KernelArgs {
+		t.Fatalf("kernel args = %q", manifest.RecoveryPoint.Runtime.KernelArgs)
+	}
+	program := manifest.RecoveryPoint.Runtime.Program
+	if program == nil ||
+		program.Runtime.Digest != drives[0].Digest ||
+		program.Code.Digest != drives[1].Digest ||
+		program.Dependencies.Digest != drives[2].Digest {
+		t.Fatalf("Program = %+v", program)
+	}
+	if err := validateSnapshotProgram(program, drives); err != nil {
+		t.Fatal(err)
+	}
+	mismatch := append([]vm.ReadOnlyDrive(nil), drives...)
+	mismatch[1].Digest = "sha256:" + strings.Repeat("4", 64)
+	if err := validateSnapshotProgram(program, mismatch); err == nil {
+		t.Fatal("mismatched Program was accepted")
+	}
+}
+
 func TestCleanupRequiresCanonicalExactOwnership(t *testing.T) {
 	stateDir := t.TempDir()
 	jailerDir := t.TempDir()
@@ -499,7 +551,14 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 				tt.editIdentity(&identity)
 			}
 
-			_, _, err := connector.validateRestoreIdentity(checkpointID, manifestBytes, identity, vm.RuntimeTopology{})
+			_, _, err := connector.validateRestoreIdentity(
+				checkpointID,
+				manifestBytes,
+				identity,
+				vm.RuntimeTopology{},
+				defaultKernelArgs,
+				nil,
+			)
 			if tt.want == "" {
 				if err != nil {
 					t.Fatalf("err = %v", err)
@@ -530,7 +589,14 @@ func TestValidateRestoreIdentityUsesManifestRuntimeShape(t *testing.T) {
 	}
 	identity.RuntimeConfigDigest = sha256sum.DigestBytes(manifestBytes)
 
-	_, restoreCfg, err := connector.validateRestoreIdentity("checkpoint-1", manifestBytes, identity, vm.RuntimeTopology{})
+	_, restoreCfg, err := connector.validateRestoreIdentity(
+		"checkpoint-1",
+		manifestBytes,
+		identity,
+		vm.RuntimeTopology{},
+		defaultKernelArgs,
+		nil,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1381,6 +1447,47 @@ func TestRuntimeDrivesUseFixedProgramOrder(t *testing.T) {
 	}
 }
 
+func TestRuntimeKernelArgsDescribeExactDriveTopology(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	program := []vm.ReadOnlyDrive{
+		{ID: vm.ProgramRuntimeDrive, Source: source},
+		{ID: vm.ProgramCodeDrive, Source: source},
+		{ID: vm.ProgramDependenciesDrive, Source: source},
+	}
+	if got := runtimeKernelArgs(vm.RuntimeTopology{}, nil); got != defaultKernelArgs {
+		t.Fatalf("default args = %q", got)
+	}
+	if got := runtimeKernelArgs(
+		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
+		nil,
+	); got != defaultKernelArgs+" helmr.substrate=1" {
+		t.Fatalf("substrate args = %q", got)
+	}
+	if got := runtimeKernelArgs(
+		vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{}},
+		program,
+	); got != defaultKernelArgs+" helmr.substrate=1 helmr.program=1" {
+		t.Fatalf("Program args = %q", got)
+	}
+}
+
+func TestMaterializeAcceptsOnlyCompleteProgramDriveSet(t *testing.T) {
+	source := &recordingReadOnlyDriveSource{}
+	connector := &Connector{}
+	request := vm.MaterializeRequest{
+		OwnerKind:          vm.OwnerRuntime,
+		WorkspaceMountPath: "/workspace",
+		ReadOnlyDrives:     testProgramDrives(source),
+	}
+	if err := connector.validateMaterializeRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	request.ReadOnlyDrives = request.ReadOnlyDrives[:2]
+	if err := connector.validateMaterializeRequest(request); err == nil {
+		t.Fatal("incomplete Program drive set was accepted")
+	}
+}
+
 func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
 	source := &recordingReadOnlyDriveSource{}
 	base := []vm.ReadOnlyDrive{
@@ -1403,11 +1510,11 @@ func TestBuildGuestProfileAcceptsClosedDependencyDriveSets(t *testing.T) {
 	for name, drives := range tests {
 		t.Run(name, func(t *testing.T) {
 			kernelArgs, networkless, err := buildGuestProfile(vm.ConnectRequest{
-				OwnerKind:   vm.OwnerBuild,
-				Resources:   compute.BuildGuestResources(),
-				PIDsMax:     compute.DependencyGuestPIDsMax,
-				Networkless: true,
-				BuildDrives: drives,
+				OwnerKind:      vm.OwnerBuild,
+				Resources:      compute.BuildGuestResources(),
+				PIDsMax:        compute.DependencyGuestPIDsMax,
+				Networkless:    true,
+				ReadOnlyDrives: drives,
 			})
 			if err != nil {
 				t.Fatal(err)
@@ -1424,7 +1531,7 @@ func TestConnectRejectsEagerDependencyResolve(t *testing.T) {
 	connector := &Connector{}
 	_, err := connector.Connect(context.Background(), vm.ConnectRequest{
 		OwnerKind: vm.OwnerBuild,
-		BuildDrives: []vm.ReadOnlyDrive{
+		ReadOnlyDrives: []vm.ReadOnlyDrive{
 			{ID: vm.ManagerDrive, Source: source},
 			{ID: vm.ManagedRuntimeDrive, Source: source},
 			{ID: vm.ToolchainDrive, Source: source},
@@ -1449,32 +1556,32 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 	}
 	tests := map[string]vm.ConnectRequest{
 		"missing component": {
-			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.DependencyGuestPIDsMax,
-			Networkless: true,
-			BuildDrives: required[:2],
+			Resources:      compute.BuildGuestResources(),
+			PIDsMax:        compute.DependencyGuestPIDsMax,
+			Networkless:    true,
+			ReadOnlyDrives: required[:2],
 		},
 		"offline store without project": {
 			Resources:   compute.BuildGuestResources(),
 			PIDsMax:     compute.DependencyGuestPIDsMax,
 			Networkless: true,
-			BuildDrives: append(
+			ReadOnlyDrives: append(
 				append([]vm.ReadOnlyDrive{}, required...),
 				vm.ReadOnlyDrive{ID: vm.OfflineStoreDrive, Source: source},
 			),
 		},
 		"wrong process limit": {
-			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.DependencyGuestPIDsMax - 1,
-			Networkless: true,
-			BuildDrives: required,
+			Resources:      compute.BuildGuestResources(),
+			PIDsMax:        compute.DependencyGuestPIDsMax - 1,
+			Networkless:    true,
+			ReadOnlyDrives: required,
 		},
 		"network policy": {
-			Resources:   compute.BuildGuestResources(),
-			PIDsMax:     compute.DependencyGuestPIDsMax,
-			Networkless: true,
-			Network:     compute.DefaultNetworkPolicy(),
-			BuildDrives: required,
+			Resources:      compute.BuildGuestResources(),
+			PIDsMax:        compute.DependencyGuestPIDsMax,
+			Networkless:    true,
+			Network:        compute.DefaultNetworkPolicy(),
+			ReadOnlyDrives: required,
 		},
 		"workspace substrate": {
 			Resources:   compute.BuildGuestResources(),
@@ -1483,11 +1590,11 @@ func TestBuildGuestProfileRejectsOpenDependencyProfiles(t *testing.T) {
 			Topology: vm.RuntimeTopology{Substrate: &vm.RuntimeSubstrate{
 				Path: "workspace.ext4",
 			}},
-			BuildDrives: required,
+			ReadOnlyDrives: required,
 		},
 		"dependency drives on standard build": {
-			Resources:   compute.BuildGuestResources(),
-			BuildDrives: required,
+			Resources:      compute.BuildGuestResources(),
+			ReadOnlyDrives: required,
 		},
 	}
 	for name, request := range tests {
@@ -1738,6 +1845,26 @@ type recordingReadOnlyDriveSource struct {
 	name      string
 	uid       int
 	gid       int
+}
+
+func testProgramDrives(source vm.ReadOnlyDriveSource) []vm.ReadOnlyDrive {
+	return []vm.ReadOnlyDrive{
+		{
+			ID: vm.ProgramRuntimeDrive, Digest: "sha256:" + strings.Repeat("1", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.runtime.v0+squashfs",
+			Source: source,
+		},
+		{
+			ID: vm.ProgramCodeDrive, Digest: "sha256:" + strings.Repeat("2", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.program-code.v0+squashfs",
+			Source: source,
+		},
+		{
+			ID: vm.ProgramDependenciesDrive, Digest: "sha256:" + strings.Repeat("3", 64),
+			SizeBytes: 4096, MediaType: "application/vnd.helmr.program-dependencies.v0+squashfs",
+			Source: source,
+		},
+	}
 }
 
 func (source *recordingReadOnlyDriveSource) LinkInto(

@@ -370,8 +370,8 @@ func setControlWorkerGroupEnv(t *testing.T) {
 func setWorkerRuntimeEnv(t *testing.T, build bool) {
 	t.Helper()
 	t.Setenv("HELMR_REGION_ID", "us-east-1")
+	t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-runtime")
 	if build {
-		t.Setenv("HELMR_RUNTIME_STORE_URI", "s3://helmr-runtime")
 		t.Setenv("HELMR_BUILD_POLICY_PATH", "/etc/helmr/build-policy.json")
 		t.Setenv("HELMR_WORKER_BUILD_CACHE_DIR", "/var/lib/helmr/cache")
 		t.Setenv("HELMR_WORKER_BUILD_SCRATCH_DIR", "/var/lib/helmr/scratch")
@@ -412,6 +412,15 @@ func TestLoadWorkerRequiresBuildStorageConfig(t *testing.T) {
 				t.Fatalf("error = %v", err)
 			}
 		})
+	}
+}
+
+func TestLoadWorkerRequiresRuntimeStoreForRunWorkers(t *testing.T) {
+	setValidWorkerEnv(t, false)
+	t.Setenv("HELMR_RUNTIME_STORE_URI", "")
+	if _, err := LoadWorker(); err == nil ||
+		!strings.Contains(err.Error(), "HELMR_RUNTIME_STORE_URI") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

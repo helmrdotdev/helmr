@@ -13,7 +13,9 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -45,13 +47,29 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		writeError(w, errors.New("validate runtime network policy"))
 		return
 	}
+	action := api.WorkerRuntimeReconcilePrepare
+	switch {
+	case row.ObservedState == db.RuntimeObservedStateFailed:
+		action = api.WorkerRuntimeReconcileReclaim
+	case row.DesiredState == db.RuntimeDesiredStateClosed:
+		action = api.WorkerRuntimeReconcileClose
+	}
 	source := api.WorkerRuntimeSource{
-		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), RuntimeID: row.RuntimeIdentityID,
-		WorkspaceImage:    api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
-		RootfsDigest:      row.RootfsDigest,
-		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
+		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID),
+		WorkspaceID:            pgvalue.UUIDString(row.WorkspaceID),
+		RuntimeID:              row.RuntimeIdentityID,
+		WorkspaceImage:         api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
+		WorkspaceArchitecture:  row.WorkspaceArchitecture.String,
+		RootfsDigest:           row.RootfsDigest,
+		ReservedCpuMillis:      int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 		RuntimeABI: row.RuntimeABI, Network: network,
+	}
+	if action == api.WorkerRuntimeReconcilePrepare {
+		if err := populateRuntimePrepareSource(&source, row, s.buildPolicy); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	if row.RuntimeSubstrateID.Valid {
 		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
@@ -65,17 +83,88 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch, NetworkSlotID: pgvalue.UUIDString(row.NetworkSlotID),
 		NetworkSlotGeneration: row.NetworkSlotGeneration, DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
 		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
-		Source: source,
-	}
-	switch {
-	case row.ObservedState == db.RuntimeObservedStateFailed:
-		target.Action = api.WorkerRuntimeReconcileReclaim
-	case row.DesiredState == db.RuntimeDesiredStateClosed:
-		target.Action = api.WorkerRuntimeReconcileClose
-	default:
-		target.Action = api.WorkerRuntimeReconcilePrepare
+		Action: action, Source: source,
 	}
 	writeJSON(w, http.StatusOK, api.WorkerRuntimeReconcileResponse{Target: &target})
+}
+
+func populateRuntimePrepareSource(
+	source *api.WorkerRuntimeSource,
+	row db.GetNextRuntimeReconcileTargetRow,
+	policy *deployment.BuildPolicy,
+) error {
+	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
+		return errors.New("runtime reservation has no committed Workspace version")
+	}
+	if !row.WorkspaceArchitecture.Valid {
+		return errors.New("runtime reservation has no Workspace architecture")
+	}
+	source.BaseVersionID = pgvalue.UUIDString(row.BaseWorkspaceVersionID)
+	source.WorkspaceArtifact = api.WorkerWorkspaceArtifact{
+		Digest:     row.WorkspaceArtifactDigest,
+		MediaType:  row.WorkspaceArtifactMediaType,
+		SizeBytes:  row.WorkspaceArtifactSizeBytes,
+		EntryCount: row.WorkspaceEntryCount.Int32,
+	}
+	if source.WorkspaceArtifact.Digest == "" {
+		if source.WorkspaceArtifact.SizeBytes != 0 ||
+			source.WorkspaceArtifact.MediaType != "" ||
+			source.WorkspaceArtifact.EntryCount != 0 {
+			return errors.New("runtime reservation has an invalid empty Workspace root")
+		}
+	} else {
+		if source.WorkspaceArtifact.SizeBytes <= 0 ||
+			source.WorkspaceArtifact.MediaType != workspace.ArtifactMediaType ||
+			source.WorkspaceArtifact.EntryCount < 0 {
+			return errors.New("runtime reservation has an invalid Workspace Artifact")
+		}
+		source.WorkspaceArtifact.Encoding = workspace.ArtifactEncoding
+	}
+	if !row.ProgramDeploymentID.Valid {
+		if row.ReservedRunID.Valid {
+			return errors.New("run runtime reservation has no Program deployment")
+		}
+		return nil
+	}
+	if !row.ProgramDeploymentAuthorityID.Valid ||
+		row.ProgramDeploymentAuthorityID != row.ProgramDeploymentID ||
+		!row.ProgramArchitecture.Valid ||
+		!row.ProgramBuildContractVersion.Valid {
+		return errors.New("runtime reservation Program authority is incomplete")
+	}
+	runtimeDigest, err := deployment.RuntimeDigestString(row.ProgramRuntimeDigest)
+	if err != nil {
+		return fmt.Errorf("decode runtime reservation Managed Runtime digest: %w", err)
+	}
+	if policy == nil {
+		return errors.New("runtime catalog policy is not configured")
+	}
+	runtimeDescriptor, err := policy.ResolveRuntime(runtimeDigest)
+	if err != nil {
+		return fmt.Errorf("resolve runtime reservation Managed Runtime: %w", err)
+	}
+	if string(runtimeDescriptor.Architecture) != row.ProgramArchitecture.String {
+		return errors.New("runtime reservation Program architecture does not match Managed Runtime")
+	}
+	if row.ProgramArchitecture.String != row.WorkspaceArchitecture.String {
+		return errors.New("runtime reservation Program architecture does not match Workspace")
+	}
+	runtimeWire, err := deployment.RuntimeDescriptorWire(runtimeDescriptor)
+	if err != nil {
+		return fmt.Errorf("encode runtime reservation Managed Runtime descriptor: %w", err)
+	}
+	source.Program = &api.WorkerRuntimeProgram{
+		DeploymentID: pgvalue.UUIDString(row.ProgramDeploymentID),
+		Runtime:      runtimeWire,
+		Code: api.CASObject{
+			Digest: row.ProgramCodeDigest, SizeBytes: row.ProgramCodeSizeBytes, MediaType: row.ProgramCodeMediaType,
+		},
+		Dependencies: api.CASObject{
+			Digest: row.ProgramDependencyDigest, SizeBytes: row.ProgramDependencySizeBytes, MediaType: row.ProgramDependencyMediaType,
+		},
+		BuildContractVersion: row.ProgramBuildContractVersion.String,
+	}
+	return nil
 }
 
 func (s *Server) workerMarkRuntimeInstanceReady(w http.ResponseWriter, r *http.Request) {

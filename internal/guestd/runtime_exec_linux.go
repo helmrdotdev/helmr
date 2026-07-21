@@ -55,8 +55,9 @@ func init() {
 }
 
 type adapterCommandOptions struct {
-	ImageMode bool
-	Pty       bool
+	ImageMode      bool
+	ManagedProgram bool
+	Pty            bool
 }
 
 func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {
@@ -76,6 +77,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 		launchCwd,
 		strconv.FormatUint(uint64(user.UID), 10),
 		strconv.FormatUint(uint64(user.GID), 10),
+		strconv.FormatBool(opts.ManagedProgram),
 		runtimePath,
 	}
 	initArgs = append(initArgs, args...)
@@ -90,7 +92,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 }
 
 func runImageAdapterInit(args []string, env []string) error {
-	if len(args) < 6 {
+	if len(args) < 7 {
 		return errors.New("missing image adapter init arguments")
 	}
 	imageRoot := args[0]
@@ -103,9 +105,17 @@ func runImageAdapterInit(args []string, env []string) error {
 	if err != nil {
 		return err
 	}
-	runtimePath := args[4]
-	adapterArgs := args[5:]
-	if err := setupImageAdapterNamespace(imageRoot); err != nil {
+	var managedProgram bool
+	switch args[4] {
+	case "true":
+		managedProgram = true
+	case "false":
+	default:
+		return fmt.Errorf("invalid managed Program flag %q", args[4])
+	}
+	runtimePath := args[5]
+	adapterArgs := args[6:]
+	if err := setupImageAdapterNamespace(imageRoot, managedProgram); err != nil {
 		return err
 	}
 	if err := pivotIntoImageRoot(imageRoot); err != nil {
@@ -154,7 +164,7 @@ func parseInitUint32(name string, raw string) (uint32, error) {
 	return uint32(value), nil
 }
 
-func setupImageAdapterNamespace(imageRoot string) error {
+func setupImageAdapterNamespace(imageRoot string, managedProgram bool) error {
 	if err := syscall.Mount("", "/", "", syscall.MS_REC|syscall.MS_PRIVATE, ""); err != nil {
 		return fmt.Errorf("make mount namespace private: %w", err)
 	}
@@ -192,6 +202,11 @@ func setupImageAdapterNamespace(imageRoot string) error {
 	if err := setupImageRuntimeNetworkFiles(imageRoot); err != nil {
 		return err
 	}
+	if managedProgram {
+		if err := mountManagedProgram(imageRoot); err != nil {
+			return err
+		}
+	}
 	for _, link := range []struct {
 		name   string
 		target string
@@ -207,6 +222,54 @@ func setupImageAdapterNamespace(imageRoot string) error {
 		}
 		if err := os.Symlink(link.target, target); err != nil && !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("create /dev/%s: %w", link.name, err)
+		}
+	}
+	return nil
+}
+
+func mountManagedProgram(imageRoot string) error {
+	mounts := []struct {
+		source string
+		target string
+	}{
+		{source: "/var/lib/helmr/program/runtime", target: "opt/helmr/runtime"},
+		{source: "/var/lib/helmr/program/code", target: "opt/helmr/program"},
+		{source: "/var/lib/helmr/program/dependencies", target: "opt/helmr/program/node_modules"},
+	}
+	for _, mount := range mounts {
+		info, err := os.Stat(mount.source)
+		if err != nil {
+			return fmt.Errorf("inspect managed Program mount: %w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("managed Program source is not a directory: %s", mount.source)
+		}
+	}
+	for _, mount := range mounts {
+		if _, err := os.Stat(mount.source); err != nil {
+			return fmt.Errorf("managed Program drive set is incomplete: %w", err)
+		}
+		target, err := imageRuntimeMountTarget(imageRoot, mount.target)
+		if err != nil {
+			return err
+		}
+		if err := syscall.Mount(
+			mount.source,
+			target,
+			"",
+			syscall.MS_BIND|syscall.MS_REC,
+			"",
+		); err != nil {
+			return fmt.Errorf("bind managed Program %s: %w", mount.target, err)
+		}
+		if err := syscall.Mount(
+			"",
+			target,
+			"",
+			syscall.MS_BIND|syscall.MS_REMOUNT|syscall.MS_RDONLY|syscall.MS_NOSUID|syscall.MS_NODEV,
+			"",
+		); err != nil {
+			return fmt.Errorf("seal managed Program %s: %w", mount.target, err)
 		}
 	}
 	return nil

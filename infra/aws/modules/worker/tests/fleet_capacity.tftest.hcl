@@ -64,13 +64,14 @@ run "controller_owns_protected_capacity" {
   assert {
     condition = (
       strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_REGION_ID=helmr-us-east") &&
-      !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_STORE_URI") &&
+      strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_RUNTIME_STORE_URI=s3://helmr-test-runtime/objects") &&
       !strcontains(base64decode(aws_launch_template.worker.user_data), "HELMR_MANAGER_STORE_URI") &&
-      !strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
+      strcontains(aws_iam_role_policy.worker.policy, "${var.runtime_store_bucket_arn}/objects/sha256/*") &&
+      strcontains(aws_iam_role_policy.worker.policy, var.runtime_store_kms_key_arn) &&
       !strcontains(aws_iam_role_policy.worker.policy, "${var.manager_store_bucket_arn}/v0/") &&
       !strcontains(aws_iam_role_policy.worker.policy, var.manager_store_kms_key_arn)
     )
-    error_message = "run-only workers must receive their region without unused current-runtime storage authority"
+    error_message = "run-only workers must receive exact Managed Runtime read authority without build-only Manager authority"
   }
 
   assert {

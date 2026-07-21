@@ -12,17 +12,17 @@ import (
 )
 
 func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true})
+	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, ManagedProgram: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cmd.Path != "/proc/self/exe" {
 		t.Fatalf("path = %q", cmd.Path)
 	}
-	if len(cmd.Args) < 8 || cmd.Args[1] != imageAdapterInitArg {
+	if len(cmd.Args) < 9 || cmd.Args[1] != imageAdapterInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
-	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "/usr/bin/node" {
+	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "/usr/bin/node" {
 		t.Fatalf("init args = %#v", cmd.Args)
 	}
 	if cmd.SysProcAttr == nil {
@@ -50,6 +50,9 @@ func TestImageAdapterPtyCommandUsesSessionWithoutSetpgid(t *testing.T) {
 	}
 	if cmd.SysProcAttr.Setpgid {
 		t.Fatal("PTY command kept Setpgid")
+	}
+	if cmd.Args[6] != "false" {
+		t.Fatalf("managed Program flag = %q", cmd.Args[6])
 	}
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if cmd.SysProcAttr.Cloneflags&want != want {

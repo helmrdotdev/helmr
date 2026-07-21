@@ -143,14 +143,46 @@ mount_scratch() {
 }
 
 mount_substrate() {
-	if [ ! -b /dev/vdc ]; then
+	if [ "$(kernel_arg helmr.substrate || true)" != 1 ]; then
 		return 0
+	fi
+	if [ ! -b /dev/vdc ]; then
+		echo "missing required Helmr runtime substrate /dev/vdc" >&2
+		exit 1
 	fi
 	mkdir -p /var/lib/helmr/substrate
 	if ! is_mounted /var/lib/helmr/substrate; then
 		mount -t ext4 -o ro /dev/vdc /var/lib/helmr/substrate
 	fi
 	export HELMR_GUESTD_SUBSTRATE_ROOT=/var/lib/helmr/substrate
+}
+
+mount_program() {
+	if [ "$(kernel_arg helmr.program || true)" != 1 ]; then
+		return 0
+	fi
+	if [ "$(kernel_arg helmr.substrate || true)" = 1 ]; then
+		runtime_device=/dev/vdd
+		code_device=/dev/vde
+		dependencies_device=/dev/vdf
+	else
+		runtime_device=/dev/vdc
+		code_device=/dev/vdd
+		dependencies_device=/dev/vde
+	fi
+	for device in "$runtime_device" "$code_device" "$dependencies_device"; do
+		if [ ! -b "$device" ]; then
+			echo "missing required Helmr Program drive $device" >&2
+			exit 1
+		fi
+	done
+	mkdir -p \
+		/var/lib/helmr/program/runtime \
+		/var/lib/helmr/program/code \
+		/var/lib/helmr/program/dependencies
+	mount -t squashfs -o ro,nodev,nosuid "$runtime_device" /var/lib/helmr/program/runtime
+	mount -t squashfs -o ro,nodev,nosuid "$code_device" /var/lib/helmr/program/code
+	mount -t squashfs -o ro,nodev,nosuid "$dependencies_device" /var/lib/helmr/program/dependencies
 }
 
 load_vsock() {
@@ -420,6 +452,7 @@ mount_scratch
 load_vsock
 if [ -z "$profile" ]; then
 	mount_substrate
+	mount_program
 	configure_network
 else
 	configure_isolated_network

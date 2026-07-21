@@ -130,7 +130,7 @@ func (c *Connector) Connect(ctx context.Context, request vm.ConnectRequest) (vm.
 		nil,
 		request.Network,
 		request.Topology,
-		request.BuildDrives,
+		request.ReadOnlyDrives,
 		nil,
 	)
 }
@@ -158,15 +158,15 @@ func (c *Connector) Prepare(
 		nil,
 		request.Network,
 		request.Topology,
-		request.BuildDrives,
+		request.ReadOnlyDrives,
 		nil,
 	)
 }
 
 func isPreparedResolveRequest(request vm.ConnectRequest) bool {
 	return request.OwnerKind == vm.OwnerBuild &&
-		len(request.BuildDrives) == 4 &&
-		isDependencyDriveSet(request.BuildDrives)
+		len(request.ReadOnlyDrives) == 4 &&
+		isDependencyDriveSet(request.ReadOnlyDrives)
 }
 
 func (c *Connector) connectorForRequest(
@@ -176,7 +176,7 @@ func (c *Connector) connectorForRequest(
 	kernelArgs := c.kernelArgsValue()
 	networkless := false
 	if request.OwnerKind == vm.OwnerBuild {
-		if err := validateReadOnlyDrives(request.BuildDrives); err != nil {
+		if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
 			return nil, err
 		}
 		var err error
@@ -189,8 +189,8 @@ func (c *Connector) connectorForRequest(
 			return nil, err
 		}
 	} else {
-		if len(request.BuildDrives) != 0 {
-			return nil, errors.New("runtime attachment cannot add build drives")
+		if len(request.ReadOnlyDrives) != 0 {
+			return nil, errors.New("runtime attachment cannot add read-only drives")
 		}
 		if request.Resources != (compute.ResourceVector{}) {
 			return nil, errors.New("runtime attachment cannot change resources")
@@ -198,6 +198,7 @@ func (c *Connector) connectorForRequest(
 		if request.PIDsMax != 0 || request.Networkless {
 			return nil, errors.New("runtime attachment cannot change physical isolation")
 		}
+		kernelArgs = runtimeKernelArgs(request.Topology, nil)
 	}
 	child := *c
 	child.cfg = cfg
@@ -217,20 +218,20 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 		request.Networkless &&
 		networkDisabled &&
 		noSubstrate &&
-		len(request.BuildDrives) == 0:
+		len(request.ReadOnlyDrives) == 0:
 		return managerAcquireKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == compute.DependencyGuestPIDsMax &&
 		request.Networkless &&
 		networkDisabled &&
 		noSubstrate &&
-		isDependencyDriveSet(request.BuildDrives):
+		isDependencyDriveSet(request.ReadOnlyDrives):
 		return dependencyManagerKernelArgs, true, nil
 	case request.Resources == compute.BuildGuestResources() &&
 		request.PIDsMax == 0 &&
 		!request.Networkless &&
 		noSubstrate &&
-		isProgramDriveSet(request.BuildDrives):
+		len(request.ReadOnlyDrives) == 0:
 		return defaultKernelArgs, false, nil
 	default:
 		return "", false, errors.New("build guest resources do not match the platform profile")
@@ -238,16 +239,23 @@ func buildGuestProfile(request vm.ConnectRequest) (string, bool, error) {
 }
 
 func isProgramDriveSet(drives []vm.ReadOnlyDrive) bool {
+	if len(drives) != 3 {
+		return false
+	}
+	present := make(map[string]bool, len(drives))
 	for _, drive := range drives {
 		switch drive.ID {
 		case vm.ProgramRuntimeDrive,
 			vm.ProgramCodeDrive,
 			vm.ProgramDependenciesDrive:
+			present[drive.ID] = true
 		default:
 			return false
 		}
 	}
-	return true
+	return present[vm.ProgramRuntimeDrive] &&
+		present[vm.ProgramCodeDrive] &&
+		present[vm.ProgramDependenciesDrive]
 }
 
 func isDependencyDriveSet(drives []vm.ReadOnlyDrive) bool {
@@ -282,7 +290,20 @@ func (c *Connector) Materialize(ctx context.Context, request vm.MaterializeReque
 	}
 	child := *c
 	child.cfg = cfg
-	return child.start(ctx, request.ID, request.OwnerKind, "", "", "", nil, request.Network, request.Topology, nil, nil)
+	child.kernelArgs = runtimeKernelArgs(request.Topology, request.ReadOnlyDrives)
+	return child.start(
+		ctx,
+		request.ID,
+		request.OwnerKind,
+		"",
+		"",
+		"",
+		nil,
+		request.Network,
+		request.Topology,
+		request.ReadOnlyDrives,
+		nil,
+	)
 }
 
 func (c *Connector) Cleanup(ctx context.Context, owner vm.Owner) error {
@@ -491,6 +512,20 @@ func stopExactRuntimePID(ctx context.Context, pid int) error {
 }
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
+	if request.OwnerKind != vm.OwnerRuntime {
+		return errors.New("firecracker materialize owner must be runtime")
+	}
+	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
+		return err
+	}
+	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
+		return errors.New("runtime read-only drives must be the complete Program drive set")
+	}
+	if isProgramDriveSet(request.ReadOnlyDrives) {
+		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
+			return err
+		}
+	}
 	rootfsDigest := c.artifacts.Rootfs.Digest
 	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
 		return fmt.Errorf("workspaceMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
@@ -499,6 +534,20 @@ func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) er
 		return fmt.Errorf("firecracker materialize workspace mount path %q is not supported", request.WorkspaceMountPath)
 	}
 	return nil
+}
+
+func runtimeKernelArgs(
+	topology vm.RuntimeTopology,
+	readOnlyDrives []vm.ReadOnlyDrive,
+) string {
+	args := defaultKernelArgs
+	if topology.Substrate != nil {
+		args += " helmr.substrate=1"
+	}
+	if isProgramDriveSet(readOnlyDrives) {
+		args += " helmr.program=1"
+	}
+	return args
 }
 
 func (c *Connector) configForMaterializeRequest(request vm.MaterializeRequest) (Config, error) {
@@ -557,7 +606,26 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	}
 	recordPhase := request.RecordPhase
 	started := time.Now()
-	manifest, restoreCfg, err := c.validateRestoreIdentity(request.ID, request.Manifest, request.Checkpoint, request.Topology)
+	if err := validateReadOnlyDrives(request.ReadOnlyDrives); err != nil {
+		return nil, err
+	}
+	if len(request.ReadOnlyDrives) != 0 && !isProgramDriveSet(request.ReadOnlyDrives) {
+		return nil, errors.New("firecracker restore read-only drives must be the complete Program drive set")
+	}
+	if isProgramDriveSet(request.ReadOnlyDrives) {
+		if err := validateProgramDriveIdentities(request.ReadOnlyDrives); err != nil {
+			return nil, err
+		}
+	}
+	kernelArgs := runtimeKernelArgs(request.Topology, request.ReadOnlyDrives)
+	manifest, restoreCfg, err := c.validateRestoreIdentity(
+		request.ID,
+		request.Manifest,
+		request.Checkpoint,
+		request.Topology,
+		kernelArgs,
+		request.ReadOnlyDrives,
+	)
 	recordRuntimePhase(recordPhase, vm.RuntimePhase{Name: "restore_validate_identity", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 	if err != nil {
 		return nil, err
@@ -601,7 +669,8 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	cleanup := []string{rawScratch, rawMemory}
 	child := *c
 	child.cfg = restoreCfg
-	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, nil, recordPhase)
+	child.kernelArgs = kernelArgs
+	session, err := child.start(ctx, request.RuntimeInstanceID, request.OwnerKind, rawMemory, request.VMState, rawScratch, &manifest.RuntimeState.Network, request.Network, request.Topology, request.ReadOnlyDrives, recordPhase)
 	if err != nil {
 		removeFiles(cleanup)
 		return nil, err
@@ -609,7 +678,14 @@ func (c *Connector) Restore(ctx context.Context, request vm.RestoreRequest) (vm.
 	return restoreCleanupSession{CheckpointableSession: session, paths: cleanup}, nil
 }
 
-func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes []byte, identity vm.CheckpointIdentity, topology vm.RuntimeTopology) (snapshotManifest, Config, error) {
+func (c *Connector) validateRestoreIdentity(
+	checkpointID string,
+	manifestBytes []byte,
+	identity vm.CheckpointIdentity,
+	topology vm.RuntimeTopology,
+	kernelArgs string,
+	readOnlyDrives []vm.ReadOnlyDrive,
+) (snapshotManifest, Config, error) {
 	var manifest snapshotManifest
 	if identity.RuntimeBackend != "firecracker" {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime backend %q is not supported", identity.RuntimeBackend)
@@ -662,7 +738,17 @@ func (c *Connector) validateRestoreIdentity(checkpointID string, manifestBytes [
 	if err != nil {
 		return manifest, Config{}, err
 	}
-	if err := validateRuntimeManifest(restoreCfg, manifest, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, topology.Substrate); err != nil {
+	if err := validateRuntimeManifest(
+		restoreCfg,
+		manifest,
+		runtimeID,
+		kernelDigest,
+		initramfsDigest,
+		rootfsDigest,
+		topology.Substrate,
+		kernelArgs,
+		readOnlyDrives,
+	); err != nil {
 		return manifest, Config{}, err
 	}
 	return manifest, restoreCfg, nil
@@ -938,18 +1024,19 @@ func (c *Connector) prepareSession(ctx context.Context, instanceID string, owner
 	}
 	machine.Logger().Printf("guest health ready")
 	return &guestSession{
-		machine:       machine,
-		machineCancel: machineCancel,
-		machineExit:   machineExit,
-		cfg:           c.cfg,
-		artifacts:     c.artifacts,
-		vsockHostPath: vsockHostPath,
-		instanceDir:   instanceDir,
-		jailRoot:      jailRoot,
-		scratchDisk:   scratchDiskPath,
-		topology:      topology,
-		owner:         owner,
-		cleaner:       c,
+		machine:        machine,
+		machineCancel:  machineCancel,
+		machineExit:    machineExit,
+		cfg:            c.cfg,
+		artifacts:      c.artifacts,
+		vsockHostPath:  vsockHostPath,
+		instanceDir:    instanceDir,
+		jailRoot:       jailRoot,
+		scratchDisk:    scratchDiskPath,
+		topology:       topology,
+		readOnlyDrives: append([]vm.ReadOnlyDrive(nil), readOnlyDrives...),
+		owner:          owner,
+		cleaner:        c,
 	}, nil
 }
 
@@ -1060,6 +1147,24 @@ func validateReadOnlyDrives(drives []vm.ReadOnlyDrive) error {
 			return fmt.Errorf("read-only drive ID %q is duplicated", drive.ID)
 		}
 		ids[drive.ID] = struct{}{}
+	}
+	return nil
+}
+
+func validateProgramDriveIdentities(drives []vm.ReadOnlyDrive) error {
+	if !isProgramDriveSet(drives) {
+		return errors.New("managed Program requires the complete read-only drive set")
+	}
+	for _, drive := range drives {
+		if _, err := cas.ObjectKey("", drive.Digest); err != nil {
+			return fmt.Errorf("managed Program drive %q digest: %w", drive.ID, err)
+		}
+		if drive.SizeBytes <= 0 {
+			return fmt.Errorf("managed Program drive %q size must be positive", drive.ID)
+		}
+		if strings.TrimSpace(drive.MediaType) == "" || drive.MediaType != strings.TrimSpace(drive.MediaType) {
+			return fmt.Errorf("managed Program drive %q media type must be canonical", drive.ID)
+		}
 	}
 	return nil
 }
@@ -1491,26 +1596,27 @@ func healthProbeErrorBucket(err error) string {
 }
 
 type guestSession struct {
-	mu            sync.Mutex
-	stream        vm.Stream
-	opened        bool
-	closed        bool
-	endpoints     map[*hostEndpoint]struct{}
-	machine       *firecracker.Machine
-	machineCancel context.CancelFunc
-	machineExit   *machineExit
-	cfg           Config
-	artifacts     runtimeArtifacts
-	vsockHostPath string
-	instanceDir   string
-	jailRoot      string
-	scratchDisk   string
-	topology      vm.RuntimeTopology
-	owner         vm.Owner
-	cleaner       vm.Cleaner
-	paused        atomic.Bool
-	once          sync.Once
-	err           error
+	mu             sync.Mutex
+	stream         vm.Stream
+	opened         bool
+	closed         bool
+	endpoints      map[*hostEndpoint]struct{}
+	machine        *firecracker.Machine
+	machineCancel  context.CancelFunc
+	machineExit    *machineExit
+	cfg            Config
+	artifacts      runtimeArtifacts
+	vsockHostPath  string
+	instanceDir    string
+	jailRoot       string
+	scratchDisk    string
+	topology       vm.RuntimeTopology
+	readOnlyDrives []vm.ReadOnlyDrive
+	owner          vm.Owner
+	cleaner        vm.Cleaner
+	paused         atomic.Bool
+	once           sync.Once
+	err            error
 }
 
 func (s *guestSession) Stream() vm.Stream {
@@ -1912,7 +2018,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 		return vm.SnapshotArtifact{}, err
 	}
 	started = time.Now()
-	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.topology)
+	configDigest, manifest, err := snapshotRuntimeConfig(s.cfg, s.machine, checkpointID, runtimeID, kernelDigest, initramfsDigest, rootfsDigest, s.topology, s.readOnlyDrives)
 	if err != nil {
 		_ = s.Resume(context.Background())
 		return vm.SnapshotArtifact{}, err
@@ -2168,9 +2274,63 @@ type snapshotRuntimeManifest struct {
 	InitramfsDigest string                          `json:"initramfs_digest"`
 	RootfsDigest    string                          `json:"rootfs_digest"`
 	Substrate       *snapshotRuntimeSubstrate       `json:"substrate,omitempty"`
+	Program         *snapshotProgramManifest        `json:"program,omitempty"`
 	GuestPort       uint32                          `json:"guest_port"`
 	HealthPort      uint32                          `json:"health_port"`
 	Network         snapshotNetworkIdentityManifest `json:"network"`
+}
+
+type snapshotProgramManifest struct {
+	Runtime      snapshotProgramArtifact `json:"runtime"`
+	Code         snapshotProgramArtifact `json:"code"`
+	Dependencies snapshotProgramArtifact `json:"dependencies"`
+}
+
+type snapshotProgramArtifact struct {
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"size_bytes"`
+	MediaType string `json:"media_type"`
+}
+
+func snapshotProgram(drives []vm.ReadOnlyDrive) (*snapshotProgramManifest, error) {
+	if len(drives) == 0 {
+		return nil, nil
+	}
+	if err := validateProgramDriveIdentities(drives); err != nil {
+		return nil, err
+	}
+	byID := make(map[string]vm.ReadOnlyDrive, len(drives))
+	for _, drive := range drives {
+		byID[drive.ID] = drive
+	}
+	artifact := func(id string) snapshotProgramArtifact {
+		drive := byID[id]
+		return snapshotProgramArtifact{
+			Digest: drive.Digest, SizeBytes: drive.SizeBytes, MediaType: drive.MediaType,
+		}
+	}
+	return &snapshotProgramManifest{
+		Runtime:      artifact(vm.ProgramRuntimeDrive),
+		Code:         artifact(vm.ProgramCodeDrive),
+		Dependencies: artifact(vm.ProgramDependenciesDrive),
+	}, nil
+}
+
+func validateSnapshotProgram(manifest *snapshotProgramManifest, drives []vm.ReadOnlyDrive) error {
+	expected, err := snapshotProgram(drives)
+	if err != nil {
+		return err
+	}
+	if manifest == nil && expected == nil {
+		return nil
+	}
+	if manifest == nil || expected == nil {
+		return errors.New("checkpoint managed Program drive identity does not match restore")
+	}
+	if *manifest != *expected {
+		return errors.New("checkpoint managed Program artifacts do not match restore")
+	}
+	return nil
 }
 
 type snapshotRuntimeSubstrate struct {
@@ -2246,7 +2406,7 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 	return nil
 }
 
-func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, topology vm.RuntimeTopology) (string, []byte, error) {
+func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
 	network := snapshotNetworkConfig(cfg, machine)
 	if network.GuestIPCIDR == "" {
 		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
@@ -2254,6 +2414,21 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 	substrate, err := snapshotSubstrateManifest(topology.Substrate)
 	if err != nil {
 		return "", nil, err
+	}
+	var drives []vm.ReadOnlyDrive
+	if len(readOnlyDrives) > 1 {
+		return "", nil, errors.New("snapshot runtime config accepts at most one read-only drive set")
+	}
+	if len(readOnlyDrives) == 1 {
+		drives = readOnlyDrives[0]
+	}
+	program, err := snapshotProgram(drives)
+	if err != nil {
+		return "", nil, err
+	}
+	kernelArgs := defaultKernelArgs
+	if machine != nil && strings.TrimSpace(machine.Cfg.KernelArgs) != "" {
+		kernelArgs = machine.Cfg.KernelArgs
 	}
 	manifest, err := json.Marshal(snapshotManifest{
 		RecoveryPoint: snapshotRecoveryPointManifest{
@@ -2266,11 +2441,12 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
 				ScratchDiskMiB:  cfg.ScratchDiskMiB,
-				KernelArgs:      defaultKernelArgs,
+				KernelArgs:      kernelArgs,
 				KernelDigest:    kernelDigest,
 				InitramfsDigest: initramfsDigest,
 				RootfsDigest:    rootfsDigest,
 				Substrate:       substrate,
+				Program:         program,
 				GuestPort:       cfg.GuestPort,
 				HealthPort:      cfg.HealthPort,
 				Network: snapshotNetworkIdentityManifest{
@@ -2311,7 +2487,17 @@ func snapshotNetworkConfig(cfg Config, machine *firecracker.Machine) snapshotNet
 	return network
 }
 
-func validateRuntimeManifest(cfg Config, manifest snapshotManifest, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, expectedSubstrate *vm.RuntimeSubstrate) error {
+func validateRuntimeManifest(
+	cfg Config,
+	manifest snapshotManifest,
+	runtimeID string,
+	kernelDigest string,
+	initramfsDigest string,
+	rootfsDigest string,
+	expectedSubstrate *vm.RuntimeSubstrate,
+	expectedKernelArgs string,
+	expectedProgram []vm.ReadOnlyDrive,
+) error {
 	runtimeManifest := manifest.RecoveryPoint.Runtime
 	if runtimeManifest.Backend != "firecracker" {
 		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
@@ -2340,13 +2526,18 @@ func validateRuntimeManifest(cfg Config, manifest snapshotManifest, runtimeID st
 	if err := validateRuntimeSubstrateManifest(runtimeManifest.Substrate, expectedSubstrate); err != nil {
 		return err
 	}
+	if err := validateSnapshotProgram(runtimeManifest.Program, expectedProgram); err != nil {
+		return err
+	}
 	if runtimeManifest.VCPUCount != cfg.VCPUCount || runtimeManifest.MemoryMiB != cfg.MemoryMiB {
 		return fmt.Errorf("checkpoint manifest machine shape vcpu=%d memory=%d does not match worker vcpu=%d memory=%d", runtimeManifest.VCPUCount, runtimeManifest.MemoryMiB, cfg.VCPUCount, cfg.MemoryMiB)
 	}
 	if runtimeManifest.ScratchDiskMiB != cfg.ScratchDiskMiB {
 		return fmt.Errorf("checkpoint manifest scratch disk size %d MiB does not match worker scratch disk size %d MiB", runtimeManifest.ScratchDiskMiB, cfg.ScratchDiskMiB)
 	}
-	if runtimeManifest.KernelArgs != defaultKernelArgs || runtimeManifest.GuestPort != cfg.GuestPort || runtimeManifest.HealthPort != cfg.HealthPort {
+	if runtimeManifest.KernelArgs != expectedKernelArgs ||
+		runtimeManifest.GuestPort != cfg.GuestPort ||
+		runtimeManifest.HealthPort != cfg.HealthPort {
 		return errors.New("checkpoint manifest runtime ports or kernel args do not match worker runtime")
 	}
 	networkIdentity := runtimeManifest.Network

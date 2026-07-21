@@ -63,11 +63,11 @@ func (runner ManagerRunner) Run(
 	}
 
 	connectRequest := vm.ConnectRequest{
-		OwnerKind:   vm.OwnerBuild,
-		Resources:   compute.BuildGuestResources(),
-		PIDsMax:     compute.DependencyGuestPIDsMax,
-		Networkless: true,
-		BuildDrives: readOnlyDrives,
+		OwnerKind:      vm.OwnerBuild,
+		Resources:      compute.BuildGuestResources(),
+		PIDsMax:        compute.DependencyGuestPIDsMax,
+		Networkless:    true,
+		ReadOnlyDrives: readOnlyDrives,
 	}
 	session, closeSession, err := runner.openManagerGuest(
 		ctx,

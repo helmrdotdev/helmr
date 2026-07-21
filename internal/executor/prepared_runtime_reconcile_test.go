@@ -11,6 +11,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -325,6 +326,70 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 	}
 	if got := len(pool.Capacity.Snapshot().Reservations); got != 0 {
 		t.Fatalf("reservations after successful checkout cleanup = %d, want 0", got)
+	}
+}
+
+func TestPreparedRuntimeSourcePreservesWorkspaceReservationAuthority(t *testing.T) {
+	source := api.WorkerRuntimeSource{
+		WorkspaceID:            "00000000-0000-0000-0000-000000000701",
+		DeploymentDefinitionID: "00000000-0000-0000-0000-000000000702",
+		BaseVersionID:          "00000000-0000-0000-0000-000000000703",
+		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
+			Digest:    "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			SizeBytes: 512, MediaType: "application/vnd.helmr.workspace.v0+tar",
+			Encoding: "tar", EntryCount: 3,
+		},
+	}
+	mount := preparedRuntimeWorkspaceMountFromSource(source)
+	if mount.WorkspaceID != source.WorkspaceID ||
+		mount.BaseVersionID != source.BaseVersionID ||
+		mount.WorkspaceArtifact != source.WorkspaceArtifact {
+		t.Fatalf("mount = %#v, want exact Workspace reservation source", mount)
+	}
+}
+
+func TestPreparedRuntimeRejectsWorkspaceArchitectureOutsideWorkerCertification(t *testing.T) {
+	pool := NewPreparedRuntimePool(nil, nil, 1, nil)
+	pool.RuntimeArchitecture = deployment.ArchitectureX8664
+	_, closeArtifacts, err := pool.prepareProgramArtifacts(
+		context.Background(),
+		t.TempDir(),
+		api.WorkerRuntimeReconcileTarget{Source: api.WorkerRuntimeSource{
+			WorkspaceArchitecture: string(deployment.ArchitectureAArch64),
+		}},
+	)
+	if closeErr := closeArtifacts(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err == nil || !strings.Contains(err.Error(), "does not match Workspace architecture") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestPreparedRuntimeVerifiesReservedWorkspaceArtifactBeforeReady(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	pool := NewPreparedRuntimePool(nil, store, 1, nil)
+	materializer := WorkspaceMaterializer{CAS: store}
+	if err := pool.verifyReservedWorkspaceVersion(
+		context.Background(),
+		materializer,
+		t.TempDir(),
+		mount,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.getCalls[mount.WorkspaceArtifact.Digest]; got != 1 {
+		t.Fatalf("Workspace Artifact reads = %d, want 1", got)
+	}
+
+	mount.WorkspaceArtifact = api.WorkerWorkspaceArtifact{}
+	if err := pool.verifyReservedWorkspaceVersion(
+		context.Background(),
+		materializer,
+		t.TempDir(),
+		mount,
+	); err != nil {
+		t.Fatal(err)
 	}
 }
 

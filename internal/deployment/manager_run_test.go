@@ -64,11 +64,11 @@ func TestManagerRunnerUsesOneShotDependencyGuest(t *testing.T) {
 		len(connect.Network.Deny) != 0 {
 		t.Fatalf("connect request = %#v", connect)
 	}
-	if len(connect.BuildDrives) != 3 ||
-		connect.BuildDrives[0].ID != vm.ManagerDrive ||
-		connect.BuildDrives[1].ID != vm.ManagedRuntimeDrive ||
-		connect.BuildDrives[2].ID != vm.ToolchainDrive {
-		t.Fatalf("build drives = %#v", connect.BuildDrives)
+	if len(connect.ReadOnlyDrives) != 3 ||
+		connect.ReadOnlyDrives[0].ID != vm.ManagerDrive ||
+		connect.ReadOnlyDrives[1].ID != vm.ManagedRuntimeDrive ||
+		connect.ReadOnlyDrives[2].ID != vm.ToolchainDrive {
+		t.Fatalf("read-only drives = %#v", connect.ReadOnlyDrives)
 	}
 
 	for index, stream := range connector.streams {
@@ -196,7 +196,7 @@ func TestManagerRunnerPreparesResolveTransportBeforeManagerConnection(
 		}
 	}
 	if len(connector.requests) != 1 ||
-		len(connector.requests[0].BuildDrives) != 4 {
+		len(connector.requests[0].ReadOnlyDrives) != 4 {
 		t.Fatalf("prepare requests = %#v", connector.requests)
 	}
 	if managerStream.request.Len() == 0 {

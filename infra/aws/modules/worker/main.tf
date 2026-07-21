@@ -34,6 +34,7 @@ locals {
   worker_environment = merge({
     HELMR_CONTROL_URL                       = var.worker_control_url
     HELMR_CAS_URI                           = var.cas_uri
+    HELMR_RUNTIME_STORE_URI                 = var.runtime_store_uri
     HELMR_REGION_ID                         = var.region_id
     HELMR_WORKER_GROUP_ID                   = var.worker_group_id
     HELMR_WORKER_PROVIDER_REGION            = data.aws_region.current.region
@@ -58,7 +59,6 @@ locals {
     HELMR_VM_SCRATCH_DISK_MIB               = tostring(var.vm_scratch_disk_mib)
     HELMR_VM_HEALTH_TIMEOUT                 = "300s"
     }, contains(var.worker_roles, "build") ? {
-    HELMR_RUNTIME_STORE_URI        = var.runtime_store_uri
     HELMR_MANAGER_STORE_URI        = var.manager_store_uri
     HELMR_BUILD_POLICY_PATH        = "/etc/helmr/build-policy.json"
     HELMR_WORKER_BUILD_CACHE_DIR   = "/var/lib/helmr/cache"
@@ -187,24 +187,25 @@ resource "aws_iam_role_policy" "worker" {
         ]
         Resource = [var.secret_arns.checkpoint_encryption_key]
       },
-      ], [for statement in [
-        {
-          Sid      = "ReadManagedRuntimeObjects"
-          Effect   = "Allow"
-          Action   = ["s3:GetObject"]
-          Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
-        },
-        {
-          Sid      = "DecryptManagedRuntimeObjects"
-          Effect   = "Allow"
-          Action   = ["kms:Decrypt"]
-          Resource = var.runtime_store_kms_key_arn
-          Condition = {
-            StringEquals = {
-              "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
-            }
+      ], [
+      {
+        Sid      = "ReadManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${var.runtime_store_bucket_arn}/objects/sha256/*"
+      },
+      {
+        Sid      = "DecryptManagedRuntimeObjects"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = var.runtime_store_kms_key_arn
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "s3.${data.aws_region.current.region}.amazonaws.com"
           }
-        },
+        }
+      },
+      ], [for statement in [
         {
           Sid    = "ReadAndCreateManagerAuthority"
           Effect = "Allow"

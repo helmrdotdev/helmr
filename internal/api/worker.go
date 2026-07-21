@@ -261,8 +261,12 @@ type WorkerRuntimeInstance struct {
 
 type WorkerRuntimeSource struct {
 	DeploymentDefinitionID string                  `json:"deployment_definition_id"`
+	WorkspaceID            string                  `json:"workspace_id"`
 	RuntimeID              string                  `json:"runtime_id"`
 	WorkspaceImage         CASObject               `json:"workspace_image"`
+	WorkspaceArchitecture  string                  `json:"workspace_architecture"`
+	BaseVersionID          string                  `json:"base_version_id"`
+	WorkspaceArtifact      WorkerWorkspaceArtifact `json:"workspace_artifact"`
 	RootfsDigest           string                  `json:"rootfs_digest"`
 	ReservedCpuMillis      int32                   `json:"reserved_cpu_millis"`
 	ReservedMemoryMiB      int32                   `json:"reserved_memory_mib"`
@@ -271,6 +275,15 @@ type WorkerRuntimeSource struct {
 	RuntimeABI             string                  `json:"runtime_abi"`
 	Network                compute.NetworkPolicy   `json:"network"`
 	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
+	Program                *WorkerRuntimeProgram   `json:"program,omitempty"`
+}
+
+type WorkerRuntimeProgram struct {
+	DeploymentID         string                  `json:"deployment_id"`
+	Runtime              WorkerRuntimeDescriptor `json:"runtime"`
+	Code                 CASObject               `json:"code"`
+	Dependencies         CASObject               `json:"dependencies"`
+	BuildContractVersion string                  `json:"build_contract_version"`
 }
 
 type WorkerRuntimeInstanceStateRequest struct {

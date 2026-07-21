@@ -83,19 +83,22 @@ type CheckpointableSession interface {
 }
 
 type ConnectRequest struct {
-	ID          string
-	OwnerKind   OwnerKind
-	Resources   compute.ResourceVector
-	PIDsMax     int64
-	Networkless bool
-	Network     compute.NetworkPolicy
-	Topology    RuntimeTopology
-	BuildDrives []ReadOnlyDrive
+	ID             string
+	OwnerKind      OwnerKind
+	Resources      compute.ResourceVector
+	PIDsMax        int64
+	Networkless    bool
+	Network        compute.NetworkPolicy
+	Topology       RuntimeTopology
+	ReadOnlyDrives []ReadOnlyDrive
 }
 
 type ReadOnlyDrive struct {
-	ID     string
-	Source ReadOnlyDriveSource
+	ID        string
+	Digest    string
+	SizeBytes int64
+	MediaType string
+	Source    ReadOnlyDriveSource
 }
 
 const (
@@ -166,6 +169,7 @@ type RestoreRequest struct {
 	Checkpoint           CheckpointIdentity
 	Network              compute.NetworkPolicy
 	Topology             RuntimeTopology
+	ReadOnlyDrives       []ReadOnlyDrive
 	RecordPhase          func(RuntimePhase)
 }
 
@@ -178,6 +182,7 @@ type MaterializeRequest struct {
 	Resources          compute.ResourceVector
 	Network            compute.NetworkPolicy
 	Topology           RuntimeTopology
+	ReadOnlyDrives     []ReadOnlyDrive
 }
 
 type OwnerKind string
