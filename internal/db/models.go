@@ -2394,13 +2394,6 @@ type RuntimeInstance struct {
 	DeploymentDefinitionID     pgtype.UUID          `json:"deployment_definition_id"`
 	RuntimeSubstrateID         pgtype.UUID          `json:"runtime_substrate_id"`
 	WorkerEpoch                int64                `json:"worker_epoch"`
-	RuntimeKeyHash             string               `json:"runtime_key_hash"`
-	RuntimeKey                 []byte               `json:"runtime_key"`
-	ImageDigest                string               `json:"image_digest"`
-	ImageFormat                string               `json:"image_format"`
-	SandboxImageArtifactID     pgtype.UUID          `json:"sandbox_image_artifact_id"`
-	SandboxImageArtifactDigest pgtype.Text          `json:"sandbox_image_artifact_digest"`
-	SandboxImageArtifactFormat pgtype.Text          `json:"sandbox_image_artifact_format"`
 	NetworkPolicy              []byte               `json:"network_policy"`
 	ReservedCpuMillis          int64                `json:"reserved_cpu_millis"`
 	ReservedMemoryBytes        int64                `json:"reserved_memory_bytes"`

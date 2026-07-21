@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
@@ -48,7 +49,11 @@ func (s *Server) workerClaimWorkspaceMount(w http.ResponseWriter, r *http.Reques
 		writeError(w, errors.New("claim workspace mount"))
 		return
 	}
-	mount := workerWorkspaceMountFromClaim(row)
+	mount, err := workerWorkspaceMountFromClaim(row)
+	if err != nil {
+		writeError(w, errors.New("decode workspace mount authority"))
+		return
+	}
 	mount.GuestdChannelToken = guestdChannelToken
 	writeJSON(w, http.StatusOK, api.WorkerWorkspaceMountClaimResponse{Mount: mount})
 }
@@ -265,37 +270,42 @@ func failedWorkspaceMountResponse(row db.WorkspaceMount) api.WorkspaceMountRespo
 }
 
 type workerWorkspaceMountFields struct {
-	id                         pgtype.UUID
-	orgID                      pgtype.UUID
-	projectID                  pgtype.UUID
-	environmentID              pgtype.UUID
-	workspaceID                pgtype.UUID
-	deploymentDefinitionID     pgtype.UUID
-	baseVersionID              pgtype.UUID
-	runtimeInstanceID          pgtype.UUID
-	runtimeEpoch               int64
-	networkSlotID              pgtype.UUID
-	networkSlotGeneration      int64
-	guestdChannelTokenHash     string
-	state                      db.WorkspaceMountState
-	runtimeID                  string
-	sandboxImageArtifact       api.CASObject
-	sandboxImageArtifactFormat string
-	rootfsDigest               string
-	imageDigest                string
-	imageFormat                string
-	workspaceArtifact          api.WorkerWorkspaceArtifact
-	workspaceMountPath         string
-	requestedMilliCPU          int64
-	requestedMemoryMiB         int64
-	requestedDiskMiB           int64
-	requestedExecutionSlots    int32
-	runtimeABI                 string
-	fencingGeneration          int64
-	expiresAt                  time.Time
+	id                      pgtype.UUID
+	orgID                   pgtype.UUID
+	projectID               pgtype.UUID
+	environmentID           pgtype.UUID
+	workspaceID             pgtype.UUID
+	deploymentDefinitionID  pgtype.UUID
+	baseVersionID           pgtype.UUID
+	runtimeInstanceID       pgtype.UUID
+	runtimeEpoch            int64
+	networkSlotID           pgtype.UUID
+	networkSlotGeneration   int64
+	guestdChannelTokenHash  string
+	state                   db.WorkspaceMountState
+	runtimeID               string
+	workspaceImage          api.CASObject
+	rootfsDigest            string
+	workspaceArtifact       api.WorkerWorkspaceArtifact
+	workspaceMountPath      string
+	requestedMilliCPU       int64
+	requestedMemoryMiB      int64
+	requestedDiskMiB        int64
+	requestedExecutionSlots int32
+	runtimeABI              string
+	network                 compute.NetworkPolicy
+	fencingGeneration       int64
+	expiresAt               time.Time
 }
 
-func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWorkspaceMount {
+func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) (*api.WorkerWorkspaceMount, error) {
+	var network compute.NetworkPolicy
+	if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
+		return nil, fmt.Errorf("decode network policy: %w", err)
+	}
+	if err := network.Validate(); err != nil {
+		return nil, fmt.Errorf("validate network policy: %w", err)
+	}
 	return workerWorkspaceMountFromFields(workerWorkspaceMountFields{
 		id:                     row.ID,
 		orgID:                  row.OrgID,
@@ -303,7 +313,7 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 		environmentID:          row.EnvironmentID,
 		workspaceID:            row.WorkspaceID,
 		deploymentDefinitionID: row.DeploymentDefinitionID,
-		baseVersionID:          row.BaseVersionID,
+		baseVersionID:          row.MaterializedVersionID,
 		runtimeInstanceID:      row.RuntimeInstanceID,
 		runtimeEpoch:           row.WorkerEpoch,
 		networkSlotID:          row.NetworkSlotID,
@@ -311,62 +321,58 @@ func workerWorkspaceMountFromClaim(row db.ClaimWorkspaceMountRow) *api.WorkerWor
 		guestdChannelTokenHash: row.GuestdChannelTokenHash,
 		state:                  row.State,
 		runtimeID:              row.RuntimeID,
-		sandboxImageArtifact: api.CASObject{
-			Digest:    row.ImageDigest,
+		workspaceImage: api.CASObject{
+			Digest:    row.ImageArtifactDigest,
 			SizeBytes: row.ImageArtifactSizeBytes,
 			MediaType: row.ImageArtifactMediaType,
 		},
-		sandboxImageArtifactFormat: row.ImageArtifactFormat,
-		rootfsDigest:               row.RootfsDigest,
-		imageDigest:                row.ImageDigest,
-		imageFormat:                row.ImageFormat,
+		rootfsDigest: row.RootfsDigest,
 		workspaceArtifact: api.WorkerWorkspaceArtifact{
 			Digest:     row.WorkspaceArtifactDigest,
 			MediaType:  row.WorkspaceArtifactMediaType,
-			Encoding:   row.WorkspaceArtifactEncoding,
+			Encoding:   workspace.ArtifactEncoding,
 			SizeBytes:  row.WorkspaceArtifactSizeBytes,
-			EntryCount: row.WorkspaceArtifactEntryCount,
+			EntryCount: row.WorkspaceEntryCount,
 		},
-		workspaceMountPath:      row.WorkspaceMountPath,
+		workspaceMountPath:      "/workspace",
 		requestedMilliCPU:       row.ReservedCpuMillis,
 		requestedMemoryMiB:      row.ReservedMemoryBytes / (1024 * 1024),
 		requestedDiskMiB:        row.ReservedWorkloadDiskBytes / (1024 * 1024),
 		requestedExecutionSlots: row.ReservedExecutionSlots,
 		runtimeABI:              row.RuntimeABI,
+		network:                 network,
 		fencingGeneration:       row.FencingGeneration,
 		expiresAt:               row.GuestdChannelTokenExpiresAt.Time,
-	})
+	}), nil
 }
 
 func workerWorkspaceMountFromFields(fields workerWorkspaceMountFields) *api.WorkerWorkspaceMount {
 	mount := &api.WorkerWorkspaceMount{
-		ID:                         pgvalue.MustUUIDValue(fields.id).String(),
-		OrgID:                      pgvalue.MustUUIDValue(fields.orgID).String(),
-		ProjectID:                  pgvalue.MustUUIDValue(fields.projectID).String(),
-		EnvironmentID:              pgvalue.MustUUIDValue(fields.environmentID).String(),
-		WorkspaceID:                pgvalue.MustUUIDValue(fields.workspaceID).String(),
-		DeploymentDefinitionID:     pgvalue.MustUUIDValue(fields.deploymentDefinitionID).String(),
-		RuntimeInstanceID:          pgvalue.UUIDString(fields.runtimeInstanceID),
-		RuntimeEpoch:               fields.runtimeEpoch,
-		NetworkSlotID:              pgvalue.UUIDString(fields.networkSlotID),
-		NetworkSlotGeneration:      fields.networkSlotGeneration,
-		GuestdChannelTokenHash:     fields.guestdChannelTokenHash,
-		State:                      string(fields.state),
-		RuntimeID:                  fields.runtimeID,
-		SandboxImageArtifact:       fields.sandboxImageArtifact,
-		SandboxImageArtifactFormat: fields.sandboxImageArtifactFormat,
-		RootfsDigest:               fields.rootfsDigest,
-		ImageDigest:                fields.imageDigest,
-		ImageFormat:                fields.imageFormat,
-		WorkspaceArtifact:          fields.workspaceArtifact,
-		WorkspaceMountPath:         fields.workspaceMountPath,
-		RequestedMilliCPU:          fields.requestedMilliCPU,
-		RequestedMemoryMiB:         fields.requestedMemoryMiB,
-		RequestedDiskMiB:           fields.requestedDiskMiB,
-		RequestedExecutionSlots:    fields.requestedExecutionSlots,
-		RuntimeABI:                 fields.runtimeABI,
-		FencingGeneration:          fields.fencingGeneration,
-		ExpiresAt:                  fields.expiresAt,
+		ID:                      pgvalue.MustUUIDValue(fields.id).String(),
+		OrgID:                   pgvalue.MustUUIDValue(fields.orgID).String(),
+		ProjectID:               pgvalue.MustUUIDValue(fields.projectID).String(),
+		EnvironmentID:           pgvalue.MustUUIDValue(fields.environmentID).String(),
+		WorkspaceID:             pgvalue.MustUUIDValue(fields.workspaceID).String(),
+		DeploymentDefinitionID:  pgvalue.MustUUIDValue(fields.deploymentDefinitionID).String(),
+		RuntimeInstanceID:       pgvalue.UUIDString(fields.runtimeInstanceID),
+		RuntimeEpoch:            fields.runtimeEpoch,
+		NetworkSlotID:           pgvalue.UUIDString(fields.networkSlotID),
+		NetworkSlotGeneration:   fields.networkSlotGeneration,
+		GuestdChannelTokenHash:  fields.guestdChannelTokenHash,
+		State:                   string(fields.state),
+		RuntimeID:               fields.runtimeID,
+		WorkspaceImage:          fields.workspaceImage,
+		RootfsDigest:            fields.rootfsDigest,
+		WorkspaceArtifact:       fields.workspaceArtifact,
+		WorkspaceMountPath:      fields.workspaceMountPath,
+		RequestedMilliCPU:       fields.requestedMilliCPU,
+		RequestedMemoryMiB:      fields.requestedMemoryMiB,
+		RequestedDiskMiB:        fields.requestedDiskMiB,
+		RequestedExecutionSlots: fields.requestedExecutionSlots,
+		RuntimeABI:              fields.runtimeABI,
+		Network:                 fields.network,
+		FencingGeneration:       fields.fencingGeneration,
+		ExpiresAt:               fields.expiresAt,
 	}
 	if fields.baseVersionID.Valid {
 		mount.BaseVersionID = pgvalue.MustUUIDValue(fields.baseVersionID).String()

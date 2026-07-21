@@ -17,6 +17,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/localcache"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -29,7 +30,7 @@ import (
 func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMount) {
 	t.Helper()
 	store := &fakeCAS{objects: map[string][]byte{}}
-	imageObject, err := store.Put(context.Background(), api.SandboxImageArtifactMediaType, strings.NewReader("oci image"))
+	imageObject, err := store.Put(context.Background(), deployment.WorkspaceImageArtifactMediaType, strings.NewReader("oci image"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,17 +52,16 @@ func testWorkspaceMountArtifacts(t *testing.T) (*fakeCAS, api.WorkerWorkspaceMou
 		t.Fatal(closeErr)
 	}
 	return store, api.WorkerWorkspaceMount{
-		BaseVersionID:              "version-1",
-		RuntimeInstanceID:          "runtime-instance-1",
-		RuntimeEpoch:               1,
-		NetworkSlotID:              "network-slot-1",
-		NetworkSlotGeneration:      1,
-		RuntimeID:                  "runtime-1",
-		SandboxImageArtifact:       api.CASObject{Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType},
-		SandboxImageArtifactFormat: "oci-tar",
-		RootfsDigest:               "sha256:runtime-rootfs",
-		ImageDigest:                imageObject.Digest,
-		ImageFormat:                "oci-tar",
+		BaseVersionID:         "version-1",
+		RuntimeInstanceID:     "runtime-instance-1",
+		RuntimeEpoch:          1,
+		NetworkSlotID:         "network-slot-1",
+		NetworkSlotGeneration: 1,
+		RuntimeID:             "runtime-1",
+		WorkspaceImage: api.CASObject{
+			Digest: imageObject.Digest, SizeBytes: imageObject.SizeBytes, MediaType: imageObject.MediaType,
+		},
+		RootfsDigest: "sha256:runtime-rootfs",
 		WorkspaceArtifact: api.WorkerWorkspaceArtifact{
 			Digest:     workspaceObject.Digest,
 			MediaType:  workspaceObject.MediaType,
@@ -82,12 +82,12 @@ func TestWorkspaceMaterializerRestoreCASObjectUsesLocalCache(t *testing.T) {
 		ArtifactCacheDir: cacheDir,
 	}
 
-	_, firstCleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "sandbox-image", workspaceMount.SandboxImageArtifact)
+	_, firstCleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "workspace-image", workspaceMount.WorkspaceImage)
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstCleanup()
-	secondPath, secondCleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "sandbox-image", workspaceMount.SandboxImageArtifact)
+	secondPath, secondCleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "workspace-image", workspaceMount.WorkspaceImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +99,7 @@ func TestWorkspaceMaterializerRestoreCASObjectUsesLocalCache(t *testing.T) {
 	if string(body) != "oci image" {
 		t.Fatalf("cached artifact body = %q", string(body))
 	}
-	if got := store.getCalls[workspaceMount.SandboxImageArtifact.Digest]; got != 1 {
+	if got := store.getCalls[workspaceMount.WorkspaceImage.Digest]; got != 1 {
 		t.Fatalf("CAS Get calls = %d, want 1", got)
 	}
 }
@@ -108,7 +108,7 @@ func TestWorkspaceMaterializerRestoreCASObjectRefreshesInvalidLocalCache(t *test
 	store, workspaceMount := testWorkspaceMountArtifacts(t)
 	cacheDir := t.TempDir()
 	tempDir := t.TempDir()
-	cachePath, err := artifactCachePath(cacheDir, workspaceMount.SandboxImageArtifact.Digest)
+	cachePath, err := artifactCachePath(cacheDir, workspaceMount.WorkspaceImage.Digest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestWorkspaceMaterializerRestoreCASObjectRefreshesInvalidLocalCache(t *test
 		ArtifactCacheDir: cacheDir,
 	}
 
-	path, cleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "sandbox-image", workspaceMount.SandboxImageArtifact)
+	path, cleanup, err := materializer.restoreCASObject(context.Background(), tempDir, "workspace-image", workspaceMount.WorkspaceImage)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +135,7 @@ func TestWorkspaceMaterializerRestoreCASObjectRefreshesInvalidLocalCache(t *test
 	if string(body) != "oci image" {
 		t.Fatalf("refreshed artifact body = %q", string(body))
 	}
-	if got := store.getCalls[workspaceMount.SandboxImageArtifact.Digest]; got != 1 {
+	if got := store.getCalls[workspaceMount.WorkspaceImage.Digest]; got != 1 {
 		t.Fatalf("CAS Get calls = %d, want 1", got)
 	}
 }
@@ -229,7 +229,7 @@ func TestWorkspaceMaterializerColdStartsWhenPreparedRuntimeEntryMissing(t *testi
 		Capacity:    workspaceTestCapacity(t),
 	}
 
-	session, sandboxPath, workspacePath, cleanup, key, usedPreparedRuntime, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
+	session, workspaceImagePath, workspacePath, cleanup, runtimeInstanceID, usedPreparedRuntime, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
 	defer cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -237,11 +237,42 @@ func TestWorkspaceMaterializerColdStartsWhenPreparedRuntimeEntryMissing(t *testi
 	if session != nil {
 		_ = session.Close(context.Background())
 	}
-	if sandboxPath == "" || workspacePath == "" {
-		t.Fatalf("materialized paths sandbox=%q workspace=%q, want both", sandboxPath, workspacePath)
+	if workspaceImagePath == "" || workspacePath == "" {
+		t.Fatalf("materialized paths workspace_image=%q workspace=%q, want both", workspaceImagePath, workspacePath)
 	}
-	if key != "" || usedPreparedRuntime {
-		t.Fatalf("prepared runtime state key=%q used=%v, want cold workspaceMount", key, usedPreparedRuntime)
+	if runtimeInstanceID != workspaceMount.RuntimeInstanceID || usedPreparedRuntime {
+		t.Fatalf("runtime instance id=%q used_prepared=%v, want cold runtime %q", runtimeInstanceID, usedPreparedRuntime, workspaceMount.RuntimeInstanceID)
+	}
+}
+
+func TestWorkspaceMaterializerCanonicalEmptyRootSkipsWorkspaceCAS(t *testing.T) {
+	store, mount := testWorkspaceMountArtifacts(t)
+	mount.WorkspaceArtifact = api.WorkerWorkspaceArtifact{
+		MediaType: workspace.ArtifactMediaType,
+		Encoding:  workspace.ArtifactEncoding,
+	}
+	materializer := WorkspaceMaterializer{
+		Connector: workspaceMaterializerTestConnector{session: &workspaceMaterializerTestSession{}},
+		CAS:       store,
+		Capacity:  workspaceTestCapacity(t),
+	}
+
+	session, workspaceImagePath, workspacePath, cleanup, _, _, _, err := materializer.materializeSession(context.Background(), &mount)
+	defer cleanup()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session != nil {
+		_ = session.Close(context.Background())
+	}
+	if workspaceImagePath == "" {
+		t.Fatal("workspace image path is empty")
+	}
+	if workspacePath != "" {
+		t.Fatalf("empty root workspace path = %q, want empty", workspacePath)
+	}
+	if got := store.getCalls[mount.WorkspaceImage.Digest]; got != 1 {
+		t.Fatalf("workspace image CAS gets = %d, want 1", got)
 	}
 }
 
@@ -259,15 +290,15 @@ func TestWorkspaceMaterializerColdMaterializeStartsIndependentWorkConcurrently(t
 	}
 	done := make(chan error, 1)
 	go func() {
-		session, sandboxImagePath, workspacePath, cleanup, _, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
+		session, workspaceImagePath, workspacePath, cleanup, _, _, _, err := materializer.materializeSession(context.Background(), &workspaceMount)
 		if cleanup != nil {
 			defer cleanup()
 		}
 		if session == nil && err == nil {
 			err = errors.New("session is nil")
 		}
-		if strings.TrimSpace(sandboxImagePath) == "" && err == nil {
-			err = errors.New("sandbox image path is empty")
+		if strings.TrimSpace(workspaceImagePath) == "" && err == nil {
+			err = errors.New("workspace image path is empty")
 		}
 		if strings.TrimSpace(workspacePath) == "" && err == nil {
 			err = errors.New("workspace path is empty")
@@ -275,9 +306,9 @@ func TestWorkspaceMaterializerColdMaterializeStartsIndependentWorkConcurrently(t
 		done <- err
 	}()
 	wantStarted := map[string]bool{
-		"connector":       true,
-		"sandbox-image":   true,
-		"workspace-image": true,
+		"connector":         true,
+		"workspace-image":   true,
+		"workspace-version": true,
 	}
 	seen := map[string]bool{}
 	timeout := time.After(2 * time.Second)
@@ -349,21 +380,21 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 			t.Errorf("channel token = %q", got)
 			return
 		}
-		if request.BaseVersionId != workspaceMount.BaseVersionID || request.MountPath != workspaceMount.WorkspaceMountPath || request.GetBaseArtifact().GetDigest() != workspaceMount.WorkspaceArtifact.Digest || request.GetSandboxArtifact().GetDigest() != workspaceMount.SandboxImageArtifact.Digest {
-			t.Errorf("materialize request base_version_id=%q mount_path=%q base_digest=%q sandbox_digest=%q", request.BaseVersionId, request.MountPath, request.GetBaseArtifact().GetDigest(), request.GetSandboxArtifact().GetDigest())
+		if request.BaseVersionId != workspaceMount.BaseVersionID || request.MountPath != workspaceMount.WorkspaceMountPath || request.GetBaseArtifact().GetDigest() != workspaceMount.WorkspaceArtifact.Digest || request.GetWorkspaceImage().GetDigest() != workspaceMount.WorkspaceImage.Digest {
+			t.Errorf("materialize request base_version_id=%q mount_path=%q base_digest=%q workspace_image_digest=%q", request.BaseVersionId, request.MountPath, request.GetBaseArtifact().GetDigest(), request.GetWorkspaceImage().GetDigest())
 			return
 		}
 		imageHeader, imageSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
-			t.Errorf("read sandbox image header: %v", err)
+			t.Errorf("read workspace image header: %v", err)
 			return
 		}
-		if imageHeader.Type != wire.StreamTypeRunImage || imageHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(imageSize) != workspaceMount.SandboxImageArtifact.SizeBytes {
-			t.Errorf("sandbox image header = %+v size=%d", imageHeader, imageSize)
+		if imageHeader.Type != wire.StreamTypeRunImage || imageHeader.WorkspaceID != workspaceMount.WorkspaceID || int64(imageSize) != workspaceMount.WorkspaceImage.SizeBytes {
+			t.Errorf("workspace image header = %+v size=%d", imageHeader, imageSize)
 			return
 		}
 		if _, err := io.Copy(io.Discard, &io.LimitedReader{R: initialServer, N: int64(imageSize)}); err != nil {
-			t.Errorf("drain sandbox image: %v", err)
+			t.Errorf("drain workspace image: %v", err)
 			return
 		}
 		artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(initialServer)
@@ -1072,7 +1103,7 @@ func TestRunWorkspaceMountPropagatesCloseFailureAndRetainsPreparedRuntimeCheckou
 	if err := pool.reserveRuntimeCapacity(target); err != nil {
 		t.Fatal(err)
 	}
-	key := preparedRuntimeKeyFromWorkspaceMount(workspaceMount, pool.Network)
+	key := runtimeInstanceIDFromWorkspaceMount(workspaceMount)
 	ready := newPreparedRuntimeSignal()
 	ready.finish(nil)
 	pool.entries[key] = []preparedRuntimeEntry{{
@@ -1175,15 +1206,15 @@ func TestWorkspaceMaterializerRetriesCompletionWithGuestResult(t *testing.T) {
 		}
 		imageHeader, imageSize, err := wire.ReadStreamFrameHeader(initialServer)
 		if err != nil {
-			t.Errorf("read sandbox image header: %v", err)
+			t.Errorf("read workspace image header: %v", err)
 			return
 		}
 		if imageHeader.Type != wire.StreamTypeRunImage {
-			t.Errorf("sandbox image header = %+v", imageHeader)
+			t.Errorf("workspace image header = %+v", imageHeader)
 			return
 		}
 		if _, err := io.Copy(io.Discard, &io.LimitedReader{R: initialServer, N: int64(imageSize)}); err != nil {
-			t.Errorf("drain sandbox image: %v", err)
+			t.Errorf("drain workspace image: %v", err)
 			return
 		}
 		artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(initialServer)
@@ -1411,15 +1442,15 @@ func acknowledgeWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, workspac
 	}
 	imageHeader, imageSize, err := wire.ReadStreamFrameHeader(stream)
 	if err != nil {
-		t.Errorf("read sandbox image header: %v", err)
+		t.Errorf("read workspace image header: %v", err)
 		return
 	}
 	if imageHeader.Type != wire.StreamTypeRunImage {
-		t.Errorf("sandbox image header = %+v", imageHeader)
+		t.Errorf("workspace image header = %+v", imageHeader)
 		return
 	}
 	if _, err := io.Copy(io.Discard, &io.LimitedReader{R: stream, N: int64(imageSize)}); err != nil {
-		t.Errorf("drain sandbox image: %v", err)
+		t.Errorf("drain workspace image: %v", err)
 		return
 	}
 	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
@@ -1457,8 +1488,8 @@ func acknowledgePreparedWorkspaceMount(t *testing.T, stream io.ReadWriteCloser, 
 		t.Errorf("read materialize request: %v", err)
 		return
 	}
-	if !request.UsePreparedRuntime || request.RuntimeKey != runtimeKey {
-		t.Errorf("prepared runtime request use=%v key=%q", request.UsePreparedRuntime, request.RuntimeKey)
+	if !request.UsePreparedRuntime || request.RuntimeInstanceId != runtimeKey {
+		t.Errorf("prepared runtime request use=%v runtime_instance_id=%q", request.UsePreparedRuntime, request.RuntimeInstanceId)
 		return
 	}
 	artifactHeader, artifactSize, err := wire.ReadStreamFrameHeader(stream)
@@ -1490,7 +1521,7 @@ func (c workspaceMaterializerTestConnector) Connect(context.Context, vm.ConnectR
 }
 
 func (c workspaceMaterializerTestConnector) Materialize(_ context.Context, request vm.MaterializeRequest) (vm.Session, error) {
-	if request.RootfsDigest == "" || request.ImageDigest == "" || request.ImageFormat != "oci-tar" || request.BaseVersionID == "" {
+	if request.RootfsDigest == "" || request.WorkspaceMountPath != "/workspace" || request.BaseVersionID == "" {
 		return nil, errors.New("materialize request missing runtime authority")
 	}
 	if c.requests != nil {
@@ -1538,10 +1569,10 @@ type parallelStartCAS struct {
 func (c parallelStartCAS) Get(ctx context.Context, digest string) (io.ReadCloser, error) {
 	label := "unknown-artifact"
 	switch strings.TrimSpace(digest) {
-	case strings.TrimSpace(c.workspaceMount.SandboxImageArtifact.Digest):
-		label = "sandbox-image"
-	case strings.TrimSpace(c.workspaceMount.WorkspaceArtifact.Digest):
+	case strings.TrimSpace(c.workspaceMount.WorkspaceImage.Digest):
 		label = "workspace-image"
+	case strings.TrimSpace(c.workspaceMount.WorkspaceArtifact.Digest):
+		label = "workspace-version"
 	}
 	if err := c.gate.wait(ctx, label); err != nil {
 		return nil, err
@@ -1559,7 +1590,7 @@ func (c parallelStartConnector) Connect(context.Context, vm.ConnectRequest) (vm.
 }
 
 func (c parallelStartConnector) Materialize(ctx context.Context, request vm.MaterializeRequest) (vm.Session, error) {
-	if request.RootfsDigest == "" || request.ImageDigest == "" || request.ImageFormat != "oci-tar" || request.BaseVersionID == "" {
+	if request.RootfsDigest == "" || request.WorkspaceMountPath != "/workspace" || request.BaseVersionID == "" {
 		return nil, errors.New("materialize request missing runtime authority")
 	}
 	if err := c.gate.wait(ctx, "connector"); err != nil {

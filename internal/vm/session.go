@@ -173,8 +173,6 @@ type MaterializeRequest struct {
 	ID                 string
 	OwnerKind          OwnerKind
 	RootfsDigest       string
-	ImageDigest        string
-	ImageFormat        string
 	WorkspaceMountPath string
 	BaseVersionID      string
 	Resources          compute.ResourceVector

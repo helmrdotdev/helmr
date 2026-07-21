@@ -49,13 +49,15 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_workload_disk_bytes,
        runtime_instances.reserved_execution_slots,
+       runtime_instances.network_policy,
        image_artifacts.id AS image_artifact_id,
        image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
        image_artifacts.media_type AS image_artifact_media_type,
        workspace_versions.artifact_id AS workspace_artifact_id,
-       workspace_versions.content_digest AS workspace_content_digest,
-       workspace_versions.size_bytes AS workspace_size_bytes,
+       COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
+       COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
+       COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        workspace_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
@@ -68,6 +70,9 @@ SELECT claimed.id, claimed.org_id, claimed.worker_group_id, claimed.project_id, 
   JOIN workspace_versions
     ON workspace_versions.workspace_id = claimed.workspace_id
    AND workspace_versions.id = claimed.materialized_version_id
+  LEFT JOIN artifacts AS workspace_artifacts
+    ON workspace_artifacts.environment_id = workspace_versions.environment_id
+   AND workspace_artifacts.id = workspace_versions.artifact_id
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
@@ -124,13 +129,15 @@ type ClaimWorkspaceMountRow struct {
 	ReservedMemoryBytes        int64               `json:"reserved_memory_bytes"`
 	ReservedWorkloadDiskBytes  int64               `json:"reserved_workload_disk_bytes"`
 	ReservedExecutionSlots     int32               `json:"reserved_execution_slots"`
+	NetworkPolicy              []byte              `json:"network_policy"`
 	ImageArtifactID            pgtype.UUID         `json:"image_artifact_id"`
 	ImageArtifactDigest        string              `json:"image_artifact_digest"`
 	ImageArtifactSizeBytes     int64               `json:"image_artifact_size_bytes"`
 	ImageArtifactMediaType     string              `json:"image_artifact_media_type"`
 	WorkspaceArtifactID        pgtype.UUID         `json:"workspace_artifact_id"`
-	WorkspaceContentDigest     string              `json:"workspace_content_digest"`
-	WorkspaceSizeBytes         int64               `json:"workspace_size_bytes"`
+	WorkspaceArtifactDigest    string              `json:"workspace_artifact_digest"`
+	WorkspaceArtifactSizeBytes int64               `json:"workspace_artifact_size_bytes"`
+	WorkspaceArtifactMediaType string              `json:"workspace_artifact_media_type"`
 	WorkspaceEntryCount        int32               `json:"workspace_entry_count"`
 }
 
@@ -182,13 +189,15 @@ func (q *Queries) ClaimWorkspaceMount(ctx context.Context, arg ClaimWorkspaceMou
 		&i.ReservedMemoryBytes,
 		&i.ReservedWorkloadDiskBytes,
 		&i.ReservedExecutionSlots,
+		&i.NetworkPolicy,
 		&i.ImageArtifactID,
 		&i.ImageArtifactDigest,
 		&i.ImageArtifactSizeBytes,
 		&i.ImageArtifactMediaType,
 		&i.WorkspaceArtifactID,
-		&i.WorkspaceContentDigest,
-		&i.WorkspaceSizeBytes,
+		&i.WorkspaceArtifactDigest,
+		&i.WorkspaceArtifactSizeBytes,
+		&i.WorkspaceArtifactMediaType,
 		&i.WorkspaceEntryCount,
 	)
 	return i, err
@@ -528,7 +537,7 @@ WITH target AS (
        AND runtime_instances.id = target.runtime_instance_id
        AND runtime_instances.worker_instance_id = target.worker_instance_id
        AND runtime_instances.worker_epoch = target.worker_epoch
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), quarantined_slot AS (
     UPDATE worker_network_slots
        SET state = 'quarantined', reclaiming_at = COALESCE(reclaiming_at, now()),
@@ -1405,7 +1414,7 @@ WITH stopped AS (
        AND runtime_instances.worker_instance_id = stopped.worker_instance_id
        AND runtime_instances.worker_epoch = stopped.worker_epoch
        AND runtime_instances.observed_state IN ('allocated','preparing','ready','closing')
-    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.runtime_key_hash, runtime_instances.runtime_key, runtime_instances.image_digest, runtime_instances.image_format, runtime_instances.sandbox_image_artifact_id, runtime_instances.sandbox_image_artifact_digest, runtime_instances.sandbox_image_artifact_format, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
+    RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 ), reclaimed_slot AS (
     UPDATE worker_network_slots
        SET state = 'available', generation = worker_network_slots.generation + 1,

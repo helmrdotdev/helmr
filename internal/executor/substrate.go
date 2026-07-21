@@ -27,14 +27,14 @@ type RuntimeSubstrateLookup interface {
 func runtimeSubstrateTopology(ctx context.Context, resolver RuntimeSubstrateResolver, imagePath string, mount api.WorkerWorkspaceMount) (vm.RuntimeTopology, error) {
 	return runtimeSubstrateTopologyFromSource(ctx, resolver, imagePath, api.WorkerRuntimeSubstrateSource{
 		DeploymentDefinitionID: mount.DeploymentDefinitionID,
-		WorkspaceImage:         mount.SandboxImageArtifact,
+		WorkspaceImage:         mount.WorkspaceImage,
 	})
 }
 
-func runtimeSubstrateSourceFromPreparedSource(source api.WorkerPreparedRuntimeSource) *api.WorkerRuntimeSubstrateSource {
+func runtimeSubstrateSourceFromRuntimeSource(source api.WorkerRuntimeSource) *api.WorkerRuntimeSubstrateSource {
 	return &api.WorkerRuntimeSubstrateSource{
 		DeploymentDefinitionID: source.DeploymentDefinitionID,
-		WorkspaceImage:         source.SandboxImageArtifact,
+		WorkspaceImage:         source.WorkspaceImage,
 		RuntimeSubstrate:       source.RuntimeSubstrate,
 	}
 }
@@ -42,7 +42,7 @@ func runtimeSubstrateSourceFromPreparedSource(source api.WorkerPreparedRuntimeSo
 func runtimeSubstrateSourceFromWorkspaceMount(mount api.WorkerWorkspaceMount) *api.WorkerRuntimeSubstrateSource {
 	return &api.WorkerRuntimeSubstrateSource{
 		DeploymentDefinitionID: mount.DeploymentDefinitionID,
-		WorkspaceImage:         mount.SandboxImageArtifact,
+		WorkspaceImage:         mount.WorkspaceImage,
 	}
 }
 

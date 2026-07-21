@@ -3574,13 +3574,6 @@ CREATE TABLE runtime_instances (
     deployment_definition_id UUID NOT NULL,
     runtime_substrate_id UUID,
     worker_epoch BIGINT NOT NULL CHECK (worker_epoch > 0),
-    runtime_key_hash TEXT NOT NULL CHECK (btrim(runtime_key_hash) <> ''),
-    runtime_key JSONB NOT NULL,
-    image_digest TEXT NOT NULL CHECK (btrim(image_digest) <> ''),
-    image_format TEXT NOT NULL CHECK (btrim(image_format) <> ''),
-    sandbox_image_artifact_id UUID,
-    sandbox_image_artifact_digest TEXT,
-    sandbox_image_artifact_format TEXT,
     network_policy JSONB NOT NULL,
     reserved_cpu_millis BIGINT NOT NULL CHECK (reserved_cpu_millis > 0),
     reserved_memory_bytes BIGINT NOT NULL CHECK (reserved_memory_bytes > 0),
@@ -3648,12 +3641,6 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (reserved_process_id, workspace_id)
         REFERENCES workspace_processes(id, workspace_id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, sandbox_image_artifact_id, sandbox_image_artifact_digest)
-        REFERENCES artifacts(org_id, project_id, environment_id, id, digest)
-        ON DELETE RESTRICT,
     FOREIGN KEY (org_id, project_id, environment_id, deployment_definition_id, runtime_substrate_id)
         REFERENCES runtime_substrates(org_id, project_id, environment_id, deployment_definition_id, id)
         ON DELETE RESTRICT,
@@ -3677,11 +3664,6 @@ CREATE TABLE runtime_instances (
          AND reserved_workspace_version_id IS NOT NULL
          AND reservation_expires_at IS NOT NULL)
     ),
-    CHECK ((sandbox_image_artifact_id IS NULL) = (sandbox_image_artifact_digest IS NULL)),
-    CHECK ((sandbox_image_artifact_id IS NULL) = (sandbox_image_artifact_format IS NULL)),
-    CHECK (sandbox_image_artifact_digest IS NULL OR btrim(sandbox_image_artifact_digest) <> ''),
-    CHECK (sandbox_image_artifact_format IS NULL OR btrim(sandbox_image_artifact_format) <> ''),
-    CHECK (jsonb_typeof(runtime_key) = 'object' AND octet_length(runtime_key::text) <= 16384),
     CHECK (jsonb_typeof(network_policy) = 'object' AND octet_length(network_policy::text) <= 16384),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
     CHECK (desired_state <> 'closed' OR desired_version > 1),

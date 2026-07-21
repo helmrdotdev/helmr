@@ -491,15 +491,12 @@ func stopExactRuntimePID(ctx context.Context, pid int) error {
 }
 
 func (c *Connector) validateMaterializeRequest(request vm.MaterializeRequest) error {
-	if strings.TrimSpace(request.ImageFormat) != "oci-tar" {
-		return fmt.Errorf("firecracker materialize image format %q is not supported", request.ImageFormat)
-	}
 	rootfsDigest := c.artifacts.Rootfs.Digest
 	if rootfsDigest != strings.TrimSpace(request.RootfsDigest) {
 		return fmt.Errorf("workspaceMount rootfs digest %s does not match declared digest %s", rootfsDigest, request.RootfsDigest)
 	}
-	if strings.TrimSpace(request.ImageDigest) == "" {
-		return errors.New("firecracker materialize image digest is required")
+	if strings.TrimSpace(request.WorkspaceMountPath) != "/workspace" {
+		return fmt.Errorf("firecracker materialize workspace mount path %q is not supported", request.WorkspaceMountPath)
 	}
 	return nil
 }

@@ -2,9 +2,9 @@
 SELECT runtime_instances.*,
        worker_network_slots.id AS network_slot_id,
        worker_network_slots.generation AS network_slot_generation,
-       artifacts.digest AS sandbox_image_artifact_digest_value,
-       artifacts.size_bytes AS sandbox_image_artifact_size_bytes,
-       artifacts.media_type AS sandbox_image_artifact_media_type,
+       artifacts.digest AS workspace_image_digest,
+       artifacts.size_bytes AS workspace_image_size_bytes,
+       artifacts.media_type AS workspace_image_media_type,
        '/workspace'::text AS workspace_mount_path,
        runtime_identities.rootfs_digest,
        runtime_identities.runtime_abi,
@@ -24,14 +24,12 @@ SELECT runtime_instances.*,
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
                     AND worker_network_slots.state IN ('assigned', 'bound', 'reclaiming', 'quarantined')
-  JOIN artifacts ON artifacts.org_id = runtime_instances.org_id
-                AND artifacts.project_id = runtime_instances.project_id
-                AND artifacts.environment_id = runtime_instances.environment_id
-                AND artifacts.id = runtime_instances.sandbox_image_artifact_id
   JOIN deployment_definitions
     ON deployment_definitions.environment_id = runtime_instances.environment_id
    AND deployment_definitions.id = runtime_instances.deployment_definition_id
    AND deployment_definitions.kind = 'workspace'
+  JOIN artifacts ON artifacts.environment_id = deployment_definitions.environment_id
+                AND artifacts.id = deployment_definitions.artifact_id
   LEFT JOIN runtime_substrates ON runtime_substrates.org_id = runtime_instances.org_id
                               AND runtime_substrates.project_id = runtime_instances.project_id
                               AND runtime_substrates.environment_id = runtime_instances.environment_id

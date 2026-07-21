@@ -242,40 +242,35 @@ type WorkerFenceRequest struct {
 }
 
 type WorkerRuntimeInstance struct {
-	ID                     string          `json:"id"`
-	OrgID                  string          `json:"org_id"`
-	ProjectID              string          `json:"project_id"`
-	EnvironmentID          string          `json:"environment_id"`
-	WorkerInstanceID       string          `json:"worker_instance_id"`
-	RuntimeEpoch           int64           `json:"runtime_epoch"`
-	RuntimeKeyHash         string          `json:"runtime_key_hash"`
-	RuntimeKey             json.RawMessage `json:"runtime_key,omitempty"`
-	RuntimeID              string          `json:"runtime_id"`
-	DeploymentDefinitionID string          `json:"deployment_definition_id"`
-	State                  string          `json:"state"`
-	ReservedCpuMillis      int32           `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB      int32           `json:"reserved_memory_mib"`
-	ReservedDiskMiB        int64           `json:"reserved_disk_mib"`
-	ReservedExecutionSlots int32           `json:"reserved_execution_slots"`
-	WorkspaceMountID       string          `json:"workspace_mount_id,omitempty"`
-	ExpiresAt              *time.Time      `json:"expires_at,omitempty"`
+	ID                     string     `json:"id"`
+	OrgID                  string     `json:"org_id"`
+	ProjectID              string     `json:"project_id"`
+	EnvironmentID          string     `json:"environment_id"`
+	WorkerInstanceID       string     `json:"worker_instance_id"`
+	RuntimeEpoch           int64      `json:"runtime_epoch"`
+	RuntimeID              string     `json:"runtime_id"`
+	DeploymentDefinitionID string     `json:"deployment_definition_id"`
+	State                  string     `json:"state"`
+	ReservedCpuMillis      int32      `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32      `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64      `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32      `json:"reserved_execution_slots"`
+	WorkspaceMountID       string     `json:"workspace_mount_id,omitempty"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
 }
 
-type WorkerPreparedRuntimeSource struct {
-	DeploymentDefinitionID     string                  `json:"deployment_definition_id"`
-	RuntimeID                  string                  `json:"runtime_id"`
-	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
-	RootfsDigest               string                  `json:"rootfs_digest"`
-	ImageDigest                string                  `json:"image_digest"`
-	ImageFormat                string                  `json:"image_format"`
-	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
-	ReservedCpuMillis          int32                   `json:"reserved_cpu_millis"`
-	ReservedMemoryMiB          int32                   `json:"reserved_memory_mib"`
-	ReservedDiskMiB            int64                   `json:"reserved_disk_mib"`
-	ReservedExecutionSlots     int32                   `json:"reserved_execution_slots"`
-	RuntimeABI                 string                  `json:"runtime_abi"`
-	RuntimeSubstrate           *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
+type WorkerRuntimeSource struct {
+	DeploymentDefinitionID string                  `json:"deployment_definition_id"`
+	RuntimeID              string                  `json:"runtime_id"`
+	WorkspaceImage         CASObject               `json:"workspace_image"`
+	RootfsDigest           string                  `json:"rootfs_digest"`
+	ReservedCpuMillis      int32                   `json:"reserved_cpu_millis"`
+	ReservedMemoryMiB      int32                   `json:"reserved_memory_mib"`
+	ReservedDiskMiB        int64                   `json:"reserved_disk_mib"`
+	ReservedExecutionSlots int32                   `json:"reserved_execution_slots"`
+	RuntimeABI             string                  `json:"runtime_abi"`
+	Network                compute.NetworkPolicy   `json:"network"`
+	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 }
 
 type WorkerRuntimeInstanceStateRequest struct {
@@ -310,19 +305,17 @@ type WorkerRuntimeReconcileResponse struct {
 }
 
 type WorkerRuntimeReconcileTarget struct {
-	ID                     string                      `json:"id"`
-	WorkerEpoch            int64                       `json:"worker_epoch"`
-	NetworkSlotID          string                      `json:"network_slot_id"`
-	NetworkSlotGeneration  int64                       `json:"network_slot_generation"`
-	DesiredState           string                      `json:"desired_state"`
-	DesiredVersion         int64                       `json:"desired_version"`
-	ObservedState          string                      `json:"observed_state"`
-	ObservedVersion        int64                       `json:"observed_version"`
-	ObservedDesiredVersion int64                       `json:"observed_desired_version"`
-	Action                 string                      `json:"action"`
-	RuntimeKeyHash         string                      `json:"runtime_key_hash"`
-	RuntimeKey             json.RawMessage             `json:"runtime_key"`
-	Source                 WorkerPreparedRuntimeSource `json:"source"`
+	ID                     string              `json:"id"`
+	WorkerEpoch            int64               `json:"worker_epoch"`
+	NetworkSlotID          string              `json:"network_slot_id"`
+	NetworkSlotGeneration  int64               `json:"network_slot_generation"`
+	DesiredState           string              `json:"desired_state"`
+	DesiredVersion         int64               `json:"desired_version"`
+	ObservedState          string              `json:"observed_state"`
+	ObservedVersion        int64               `json:"observed_version"`
+	ObservedDesiredVersion int64               `json:"observed_desired_version"`
+	Action                 string              `json:"action"`
+	Source                 WorkerRuntimeSource `json:"source"`
 }
 
 const (

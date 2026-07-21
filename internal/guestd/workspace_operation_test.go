@@ -1,6 +1,7 @@
 package guestd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -43,7 +43,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}
 	defer cleanup()
 	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
-	imagePath := filepath.Join(tempRoot, "sandbox.oci.tar")
+	imagePath := filepath.Join(tempRoot, "workspace-image.oci.tar")
 	if err := os.WriteFile(imagePath, image, 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -73,10 +73,10 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 			SizeBytes:  uint64(artifact.SizeBytes),
 			EntryCount: uint32(artifact.EntryCount),
 		},
-		SandboxArtifact: &workspacev0.WorkspaceArtifact{
+		WorkspaceImage: &workspacev0.WorkspaceArtifact{
 			Digest:    imageDigest,
-			MediaType: api.SandboxImageArtifactMediaType,
-			Encoding:  "oci-tar",
+			MediaType: workspaceImageMediaType,
+			Encoding:  workspaceImageEncoding,
 			SizeBytes: uint64(len(image)),
 		},
 	}); err != nil {
@@ -101,7 +101,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	if response.State != "running" || response.GuestdChannelTokenHash != sha256sum.HexBytes([]byte("channel-token")) {
 		t.Fatalf("response state=%q guestd_channel_token_hash=%q", response.State, response.GuestdChannelTokenHash)
 	}
-	if !workspaceMountPhaseNames(response.Phases, "guest_sandbox_image_restore", "guest_workspace_artifact_restore", "guest_register") {
+	if !workspaceMountPhaseNames(response.Phases, "guest_workspace_image_restore", "guest_workspace_artifact_restore", "guest_register") {
 		t.Fatalf("response phases = %+v", response.Phases)
 	}
 	if err := <-errCh; err != nil {
@@ -250,6 +250,189 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	}
 	if err := <-errCh; err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWorkspaceRuntimePrepareUsesWorkspaceImageAndRuntimeInstanceID(t *testing.T) {
+	tempRoot := t.TempDir()
+	image := ociTar(t, []ociTestLayer{{mediaType: "application/vnd.oci.image.layer.v1.tar", body: tarBytes(t, nil)}}, []byte(`{"Config":{}}`))
+	imagePath := filepath.Join(tempRoot, "workspace-image.oci.tar")
+	if err := os.WriteFile(imagePath, image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	imageDigest := sha256sum.DigestBytes(image)
+	registry := newWorkspaceOperationRegistry()
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- handleWorkspaceRuntimePrepareConnection(context.Background(), server, slogDiscard(), registry)
+	}()
+	const runtimeInstanceID = " runtime-instance-1 "
+	if err := frameio.WriteProtoFrame(client, &workspacev0.PrepareWorkspaceRuntimeRequest{
+		RuntimeInstanceId: runtimeInstanceID,
+		MountPath:         "/workspace",
+		WorkspaceImage: &workspacev0.WorkspaceArtifact{
+			Digest:    imageDigest,
+			MediaType: workspaceImageMediaType,
+			Encoding:  workspaceImageEncoding,
+			SizeBytes: uint64(len(image)),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.WriteFileFrame(client, wire.StreamHeader{Type: wire.StreamTypeRunImage}, imagePath); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.PrepareWorkspaceRuntimeResponse
+	if err := frameio.ReadProtoFrame(client, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetState() != "prepared" || response.GetRuntimeInstanceId() != runtimeInstanceID {
+		t.Fatalf("response state=%q runtime_instance_id=%q", response.GetState(), response.GetRuntimeInstanceId())
+	}
+	if !workspaceMountPhaseNames(response.GetPhases(), "guest_workspace_image_restore", "guest_runtime_user_resolve", "guest_workspace_root_resolve") {
+		t.Fatalf("response phases = %+v", response.GetPhases())
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := registry.takePreparedRuntime("runtime-instance-other", imageDigest, "/workspace"); ok {
+		t.Fatal("prepared runtime accepted a different runtime_instance_id")
+	}
+	if _, ok := registry.takePreparedRuntime(strings.TrimSpace(runtimeInstanceID), imageDigest, "/workspace"); ok {
+		t.Fatal("prepared runtime normalized an opaque runtime_instance_id")
+	}
+	prepared, ok := registry.takePreparedRuntime(runtimeInstanceID, imageDigest, "/workspace")
+	if !ok {
+		t.Fatal("prepared runtime did not accept the matching runtime_instance_id")
+	}
+	prepared.cleanup()
+}
+
+func TestWorkspaceImageContractIsExact(t *testing.T) {
+	tests := []struct {
+		name      string
+		mediaType string
+		encoding  string
+		want      string
+	}{
+		{name: "old media type", mediaType: "application/vnd.helmr.sandbox-image.v0.oci-tar", encoding: workspaceImageEncoding, want: "media_type"},
+		{name: "padded media type", mediaType: " " + workspaceImageMediaType, encoding: workspaceImageEncoding, want: "media_type"},
+		{name: "wrong encoding", mediaType: workspaceImageMediaType, encoding: "tar", want: "encoding"},
+		{name: "padded encoding", mediaType: workspaceImageMediaType, encoding: workspaceImageEncoding + " ", want: "encoding"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			workspaceImage := &workspacev0.WorkspaceArtifact{
+				Digest:    "sha256:image",
+				MediaType: tt.mediaType,
+				Encoding:  tt.encoding,
+				SizeBytes: 1,
+			}
+			_, _, err := restorePreparedWorkspaceRuntime(bytes.NewReader(nil), &workspacev0.PrepareWorkspaceRuntimeRequest{
+				RuntimeInstanceId: "runtime-instance-1",
+				MountPath:         "/workspace",
+				WorkspaceImage:    workspaceImage,
+			}, slogDiscard())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("prepare error = %v, want %s rejection", err, tt.want)
+			}
+			_, _, err = restoreWorkspaceMount(bytes.NewReader(nil), &workspacev0.MaterializeWorkspaceRequest{
+				Envelope:      &workspacev0.WorkspaceOperationEnvelope{},
+				MountPath:     "/workspace",
+				BaseVersionId: "version-1",
+				BaseArtifact: &workspacev0.WorkspaceArtifact{
+					Digest:     "sha256:base",
+					MediaType:  workspace.ArtifactMediaType,
+					Encoding:   workspace.ArtifactEncoding,
+					SizeBytes:  1,
+					EntryCount: 0,
+				},
+				WorkspaceImage: workspaceImage,
+			}, slogDiscard(), newWorkspaceOperationRegistry())
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("materialize error = %v, want %s rejection", err, tt.want)
+			}
+		})
+	}
+	_, _, err := restorePreparedWorkspaceRuntime(bytes.NewReader(nil), &workspacev0.PrepareWorkspaceRuntimeRequest{
+		RuntimeInstanceId: "   ",
+		MountPath:         "/workspace",
+	}, slogDiscard())
+	if err == nil || !strings.Contains(err.Error(), "runtime_instance_id is required") {
+		t.Fatalf("whitespace runtime_instance_id error = %v", err)
+	}
+}
+
+func TestWorkspaceMaterializeWithoutBaseArtifactInitializesEmptyRoot(t *testing.T) {
+	tempRoot := t.TempDir()
+	image := ociTar(t, []ociTestLayer{{
+		mediaType: "application/vnd.oci.image.layer.v1.tar",
+		body:      tarBytes(t, map[string]string{"workspace/from-image.txt": "remove me"}),
+	}}, []byte(`{"Config":{}}`))
+	imagePath := filepath.Join(tempRoot, "workspace-image.oci.tar")
+	if err := os.WriteFile(imagePath, image, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	registry := newWorkspaceOperationRegistry()
+	client, server := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), server, slogDiscard(), registry)
+	}()
+	if err := frameio.WriteProtoFrame(client, &workspacev0.MaterializeWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			WorkspaceMountId:  "mat-empty",
+			WorkspaceId:       "workspace-empty",
+			ChannelToken:      "channel-token",
+			FencingGeneration: 1,
+		},
+		MountPath:     "/workspace",
+		BaseVersionId: "version-zero",
+		WorkspaceImage: &workspacev0.WorkspaceArtifact{
+			Digest:    sha256sum.DigestBytes(image),
+			MediaType: workspaceImageMediaType,
+			Encoding:  workspaceImageEncoding,
+			SizeBytes: uint64(len(image)),
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := wire.WriteFileFrame(client, wire.StreamHeader{
+		Type:        wire.StreamTypeRunImage,
+		WorkspaceID: "workspace-empty",
+	}, imagePath); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.MaterializeWorkspaceResponse
+	if err := frameio.ReadProtoFrame(client, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetState() != "running" {
+		t.Fatalf("response state = %q", response.GetState())
+	}
+	if !workspaceMountPhaseNames(response.GetPhases(), "guest_workspace_image_restore", "guest_workspace_empty_root_init", "guest_register") {
+		t.Fatalf("response phases = %+v", response.GetPhases())
+	}
+	if workspaceMountPhaseNames(response.GetPhases(), "guest_workspace_artifact_restore") {
+		t.Fatalf("base-artifact-free response unexpectedly restored an artifact: %+v", response.GetPhases())
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+	registry.mu.RLock()
+	workspaceRoot := registry.entries["mat-empty"].workspaceRoot
+	registry.mu.RUnlock()
+	entries, err := os.ReadDir(workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("empty workspace root entries = %v", entries)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/jackc/pgx/v5"
@@ -35,14 +36,22 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		writeError(w, errors.New("get runtime reconcile target"))
 		return
 	}
-	source := api.WorkerPreparedRuntimeSource{
+	var network compute.NetworkPolicy
+	if err := json.Unmarshal(row.NetworkPolicy, &network); err != nil {
+		writeError(w, errors.New("decode runtime network policy"))
+		return
+	}
+	if err := network.Validate(); err != nil {
+		writeError(w, errors.New("validate runtime network policy"))
+		return
+	}
+	source := api.WorkerRuntimeSource{
 		DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), RuntimeID: row.RuntimeIdentityID,
-		SandboxImageArtifact:       api.CASObject{Digest: row.SandboxImageArtifactDigestValue, SizeBytes: row.SandboxImageArtifactSizeBytes, MediaType: row.SandboxImageArtifactMediaType},
-		SandboxImageArtifactFormat: row.SandboxImageArtifactFormat.String, RootfsDigest: row.RootfsDigest,
-		ImageDigest: row.ImageDigest, ImageFormat: row.ImageFormat, WorkspaceMountPath: row.WorkspaceMountPath,
+		WorkspaceImage:    api.CASObject{Digest: row.WorkspaceImageDigest, SizeBytes: row.WorkspaceImageSizeBytes, MediaType: row.WorkspaceImageMediaType},
+		RootfsDigest:      row.RootfsDigest,
 		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
-		RuntimeABI: row.RuntimeABI,
+		RuntimeABI: row.RuntimeABI, Network: network,
 	}
 	if row.RuntimeSubstrateID.Valid {
 		source.RuntimeSubstrate = &api.WorkerRuntimeSubstrate{
@@ -56,7 +65,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		ID: pgvalue.UUIDString(row.ID), WorkerEpoch: row.WorkerEpoch, NetworkSlotID: pgvalue.UUIDString(row.NetworkSlotID),
 		NetworkSlotGeneration: row.NetworkSlotGeneration, DesiredState: string(row.DesiredState), DesiredVersion: row.DesiredVersion,
 		ObservedState: string(row.ObservedState), ObservedVersion: row.ObservedVersion, ObservedDesiredVersion: row.ObservedDesiredVersion,
-		RuntimeKeyHash: row.RuntimeKeyHash, RuntimeKey: json.RawMessage(row.RuntimeKey), Source: source,
+		Source: source,
 	}
 	switch {
 	case row.ObservedState == db.RuntimeObservedStateFailed:
@@ -245,8 +254,8 @@ func runtimeInstanceResponse(row db.RuntimeInstance) api.WorkerRuntimeInstance {
 	return api.WorkerRuntimeInstance{
 		ID: pgvalue.UUIDString(row.ID), OrgID: pgvalue.UUIDString(row.OrgID), ProjectID: pgvalue.UUIDString(row.ProjectID),
 		EnvironmentID: pgvalue.UUIDString(row.EnvironmentID), WorkerInstanceID: pgvalue.UUIDString(row.WorkerInstanceID),
-		RuntimeEpoch: row.WorkerEpoch, RuntimeKeyHash: row.RuntimeKeyHash, RuntimeKey: json.RawMessage(row.RuntimeKey),
-		RuntimeID: row.RuntimeIdentityID, DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), State: string(row.ObservedState),
+		RuntimeEpoch: row.WorkerEpoch,
+		RuntimeID:    row.RuntimeIdentityID, DeploymentDefinitionID: pgvalue.UUIDString(row.DeploymentDefinitionID), State: string(row.ObservedState),
 		ReservedCpuMillis: int32(row.ReservedCpuMillis), ReservedMemoryMiB: int32(row.ReservedMemoryBytes / 1048576),
 		ReservedDiskMiB: row.ReservedWorkloadDiskBytes / 1048576, ReservedExecutionSlots: row.ReservedExecutionSlots,
 	}

@@ -20,7 +20,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
-	"github.com/helmrdotdev/helmr/internal/runtime"
 	"github.com/helmrdotdev/helmr/internal/vm"
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
@@ -192,15 +191,14 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
-	keyID := runtime.ID(key)
+	key := runtimeInstanceIDFromWorkspaceMount(mount)
 	runtimeInstanceID := strings.TrimSpace(mount.RuntimeInstanceID)
 	if runtimeInstanceID == "" {
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "reason", "runtime_instance_missing")
+		p.logInfo("prepared runtime pool miss", "reason", "runtime_instance_missing")
 		return nil, key, false
 	}
 	if mount.RuntimeEpoch <= 0 {
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "runtime_epoch_missing")
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "runtime_epoch_missing")
 		return nil, key, false
 	}
 	p.mu.Lock()
@@ -218,19 +216,19 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	}
 	if index < 0 {
 		p.mu.Unlock()
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_missing")
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_missing")
 		return nil, key, false
 	}
 	entry := entries[index]
 	if err, exited := entry.exit.finished(); exited {
 		p.mu.Unlock()
 		p.removeReadyEntryAndFail(key, entry, preparedRuntimeExitCause(err), true)
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited")
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited")
 		return nil, key, false
 	}
 	if entry.networkSlotID != mount.NetworkSlotID || entry.networkGeneration != mount.NetworkSlotGeneration {
 		p.mu.Unlock()
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "network_slot_generation_mismatch")
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "network_slot_generation_mismatch")
 		return nil, key, false
 	}
 	p.mu.Unlock()
@@ -243,14 +241,14 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		} else {
 			reason = "runtime_ready_wait_canceled"
 		}
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", reason, "error", err.Error())
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", reason, "error", err.Error())
 		return nil, key, false
 	}
 	if err, exited := entry.exit.finished(); exited {
 		if p.forgetReadyEntry(key, entry) {
 			p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
 		}
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
 		return nil, key, false
 	}
 	p.mu.Lock()
@@ -264,7 +262,7 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	}
 	if index < 0 {
 		p.mu.Unlock()
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_claimed")
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "runtime_epoch", mount.RuntimeEpoch, "reason", "reserved_session_claimed")
 		return nil, key, false
 	}
 	entry = entries[index]
@@ -272,14 +270,14 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 		p.removeReadyEntryAtLocked(key, entries, index)
 		p.mu.Unlock()
 		p.cleanupClaimedEntryAsync(key, entry, preparedRuntimeExitCause(err))
-		p.logInfo("prepared runtime pool miss", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
+		p.logInfo("prepared runtime pool miss", "runtime_instance_id", runtimeInstanceID, "reason", "reserved_session_exited", "error", errorString(err))
 		return nil, key, false
 	}
 	p.removeReadyEntryAtLocked(key, entries, index)
 	p.markRuntimeCheckedOutLocked(runtimeInstanceID, mount.RuntimeEpoch)
 	available := p.readyCountLocked()
 	p.mu.Unlock()
-	p.logInfo("prepared runtime pool hit", "runtime_key_id", keyID, "available", available)
+	p.logInfo("prepared runtime pool hit", "runtime_instance_id", runtimeInstanceID, "available", available)
 	return entry.session, key, true
 }
 
@@ -369,7 +367,7 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 	if target.WorkerEpoch <= 0 {
 		return errors.New("runtime stop target worker_epoch is required")
 	}
-	stoppedKey, stoppedEntry, ok := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
+	_, stoppedEntry, ok := p.claimReadyEntry(runtimeInstanceID, target.WorkerEpoch)
 	proofMethod := ""
 	if !ok {
 		if p.runtimeCheckedOut(runtimeInstanceID, target.WorkerEpoch) {
@@ -419,7 +417,7 @@ func (p *PreparedRuntimePool) StopRuntimeTarget(ctx context.Context, client Prep
 	if err != nil {
 		return err
 	}
-	p.logInfo("runtime desired close reconciled", "runtime_key_id", runtime.ID(stoppedKey), "runtime_instance_id", runtimeInstanceID)
+	p.logInfo("runtime desired close reconciled", "runtime_instance_id", runtimeInstanceID)
 	return nil
 }
 
@@ -455,20 +453,20 @@ func (p *PreparedRuntimePool) PrepareRuntimeSubstrateTarget(ctx context.Context,
 		ArtifactCacheDir:      p.ArtifactCacheDir,
 		ArtifactCacheMaxBytes: p.ArtifactCacheMaxBytes,
 	}
-	_, cleanupSandboxImage, topology, err := p.restoreSandboxImageAndRuntimeSubstrate(backgroundCtx, materializer, tempDir, mount,
-		"runtime substrate prepare sandbox image restored",
+	_, cleanupWorkspaceImage, topology, err := p.restoreWorkspaceImageAndRuntimeSubstrate(backgroundCtx, materializer, tempDir, mount,
+		"runtime substrate prepare workspace image restored",
 		"runtime substrate prepared",
 		"deployment_definition_id", mount.DeploymentDefinitionID,
 	)
 	if err != nil {
 		return err
 	}
-	defer cleanupSandboxImage()
+	defer cleanupWorkspaceImage()
 	started := time.Now()
 	registered, err := runtimeCheckpointer{
 		cas:               p.CAS,
 		encryptor:         p.CheckpointEncryptor,
-		substrateSource:   runtimeSubstrateSourceFromPreparedSource(target.Source),
+		substrateSource:   runtimeSubstrateSourceFromRuntimeSource(target.Source),
 		runtimeSubstrates: p.RuntimeSubstrates,
 	}.ensureRuntimeSubstrate(backgroundCtx, topology.Substrate)
 	p.logInfo("runtime substrate registered", "deployment_definition_id", mount.DeploymentDefinitionID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
@@ -491,8 +489,8 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 	if strings.TrimSpace(mount.DeploymentDefinitionID) == "" {
 		return errors.New("prepared runtime warm command source is required")
 	}
-	key := preparedRuntimeKeyFromWorkspaceMount(mount, p.Network)
-	keyID := runtime.ID(key)
+	mount.RuntimeInstanceID = strings.TrimSpace(target.ID)
+	key := runtimeInstanceIDFromWorkspaceMount(mount)
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	runtimeEpoch := target.WorkerEpoch
 	if runtimeInstanceID == "" || runtimeEpoch <= 0 {
@@ -500,14 +498,14 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 	}
 	if p.Size <= 0 || p.Connector == nil || p.CAS == nil {
 		reason := errors.New("prepared runtime pool is not configured")
-		p.logInfo("prepared runtime warm skipped", "runtime_key_id", keyID, "reason", reason.Error())
+		p.logInfo("prepared runtime warm skipped", "runtime_instance_id", key, "reason", reason.Error())
 		stateCtx, cancelState := preparedRuntimeControlContext(ctx)
 		defer cancelState()
 		return p.markRuntimeTargetFailedWithProof(stateCtx, client, target, reason, api.WorkerRuntimeCleanupNotMaterialized)
 	}
 	backgroundCtx, finish, ok := p.beginBackground(ctx)
 	if !ok {
-		p.logInfo("prepared runtime warm deferred", "runtime_key_id", keyID, "reason", errPreparedRuntimeBackgroundBusy.Error())
+		p.logInfo("prepared runtime warm deferred", "runtime_instance_id", key, "reason", errPreparedRuntimeBackgroundBusy.Error())
 		return errPreparedRuntimeBackgroundBusy
 	}
 	defer finish()
@@ -517,14 +515,14 @@ func (p *PreparedRuntimePool) WarmRuntimeTarget(ctx context.Context, client Prep
 	if p.closed {
 		p.mu.Unlock()
 		reason := errors.New("prepared runtime pool closed")
-		p.logInfo("prepared runtime warm skipped", "runtime_key_id", keyID, "reason", reason.Error())
+		p.logInfo("prepared runtime warm skipped", "runtime_instance_id", key, "reason", reason.Error())
 		stateCtx, cancelState := preparedRuntimeControlContext(ctx)
 		defer cancelState()
 		return p.markRuntimeTargetFailedWithProof(stateCtx, client, target, reason, api.WorkerRuntimeCleanupNotMaterialized)
 	}
 	if p.reservedCountLocked() >= p.Size {
 		p.mu.Unlock()
-		p.logInfo("prepared runtime warm deferred", "runtime_key_id", keyID, "reason", errPreparedRuntimeCapacityBusy.Error())
+		p.logInfo("prepared runtime warm deferred", "runtime_instance_id", key, "reason", errPreparedRuntimeCapacityBusy.Error())
 		return errPreparedRuntimeCapacityBusy
 	}
 	p.filling[key]++
@@ -635,7 +633,6 @@ func (p *PreparedRuntimePool) waitForActivity(ctx context.Context) error {
 }
 
 func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, mount api.WorkerWorkspaceMount, target api.WorkerRuntimeReconcileTarget) error {
-	keyID := runtime.ID(key)
 	runtimeInstanceID := strings.TrimSpace(target.ID)
 	runtimeEpoch := target.WorkerEpoch
 	materializeAttempted := false
@@ -650,7 +647,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			proofMethod = api.WorkerRuntimeCleanupNotMaterialized
 		}
 		if markErr := p.markRuntimeTargetFailedWithProof(stateCtx, p.RuntimeInstances, target, err, proofMethod); markErr != nil {
-			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", markErr.Error())
+			p.logInfo("prepared runtime pool instance fail transition failed", "runtime_instance_id", runtimeInstanceID, "error", markErr.Error())
 			return errors.Join(err, markErr)
 		}
 		return nil
@@ -672,15 +669,15 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
 		return failInstance(err)
 	}
-	sandboxImagePath, cleanupSandboxImage, topology, err := p.restoreSandboxImageAndRuntimeSubstrate(ctx, materializer, tempDir, mount,
-		"prepared runtime pool sandbox image restored",
+	workspaceImagePath, cleanupWorkspaceImage, topology, err := p.restoreWorkspaceImageAndRuntimeSubstrate(ctx, materializer, tempDir, mount,
+		"prepared runtime pool workspace image restored",
 		"prepared runtime pool substrate resolved",
-		"runtime_key_id", keyID,
+		"runtime_instance_id", runtimeInstanceID,
 	)
 	if err != nil {
 		return failInstance(err)
 	}
-	defer cleanupSandboxImage()
+	defer cleanupWorkspaceImage()
 	var runtimeSubstrateIDValue string
 	if topology.Substrate != nil {
 		started := time.Now()
@@ -690,7 +687,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			substrateSource:   runtimeSubstrateSourceFromWorkspaceMount(mount),
 			runtimeSubstrates: p.RuntimeSubstrates,
 		}.ensureRuntimeSubstrate(ctx, topology.Substrate)
-		p.logInfo("prepared runtime pool substrate resolved", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
+		p.logInfo("prepared runtime pool substrate resolved", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "substrate_digest", runtimeSubstrateDigest(topology), "runtime_substrate_id", runtimeSubstrateID(registered), "error", errorString(err))
 		if err != nil {
 			return failInstance(err)
 		}
@@ -704,7 +701,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	started := time.Now()
 	if err := p.reserveRuntimeCapacity(target); err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
-			p.logInfo("prepared runtime warm deferred", "runtime_key_id", keyID, "reason", err.Error())
+			p.logInfo("prepared runtime warm deferred", "runtime_instance_id", runtimeInstanceID, "reason", err.Error())
 			return err
 		}
 		return failInstance(err)
@@ -714,8 +711,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		ID:                 runtimeInstanceID,
 		OwnerKind:          vm.OwnerRuntime,
 		RootfsDigest:       mount.RootfsDigest,
-		ImageDigest:        mount.ImageDigest,
-		ImageFormat:        mount.ImageFormat,
 		WorkspaceMountPath: mount.WorkspaceMountPath,
 		Resources: compute.ResourceVector{
 			MilliCPU:  mount.RequestedMilliCPU,
@@ -723,10 +718,10 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			DiskMiB:   mount.RequestedDiskMiB,
 			Slots:     mount.RequestedExecutionSlots,
 		},
-		Network:  p.Network,
+		Network:  mount.Network,
 		Topology: topology,
 	})
-	p.logInfo("prepared runtime pool session materialized", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
+	p.logInfo("prepared runtime pool session materialized", "runtime_instance_id", runtimeInstanceID, "duration_ms", time.Since(started).Milliseconds(), "error", errorString(err))
 	if err != nil {
 		return failInstance(err)
 	}
@@ -738,8 +733,8 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			}
 		}
 	}()
-	if err := p.prepareGuestRuntime(ctx, session, key, mount, sandboxImagePath); err != nil {
-		p.logInfo("prepared runtime pool guest prepare failed", "runtime_key_id", keyID, "error", err.Error())
+	if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath); err != nil {
+		p.logInfo("prepared runtime pool guest prepare failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 		return failInstance(err)
 	}
 	entry := preparedRuntimeEntry{
@@ -769,13 +764,13 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 				return failInstance(err)
 			}
 			keepSession = true
-			p.logInfo("prepared runtime warm deferred", "runtime_key_id", keyID, "reason", errPreparedRuntimeCapacityBusy.Error())
+			p.logInfo("prepared runtime warm deferred", "runtime_instance_id", runtimeInstanceID, "reason", errPreparedRuntimeCapacityBusy.Error())
 			return errPreparedRuntimeCapacityBusy
 		}
 		stateCtx, cancelState := preparedRuntimeControlContext(ctx)
 		defer cancelState()
 		if err := p.markRuntimeTargetFailed(stateCtx, p.RuntimeInstances, target, errors.New("runtime pool capacity changed")); err != nil {
-			p.logInfo("prepared runtime pool instance close transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", err.Error())
+			p.logInfo("prepared runtime pool instance close transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 			return err
 		}
 		return nil
@@ -821,7 +816,7 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	}
 	if _, err := p.RuntimeInstances.MarkRuntimeInstanceReady(ctx, readyRequest); err != nil {
 		entry.ready.finish(err)
-		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "error", err.Error())
+		p.logInfo("prepared runtime pool instance ready transition failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
 		if failErr := p.removeReadyEntryAndFail(key, entry, err, true); failErr != nil {
 			return errors.Join(err, failErr)
 		}
@@ -842,34 +837,34 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 	if !stillReady {
 		return nil
 	}
-	p.logInfo("prepared runtime pool refilled", "runtime_key_id", keyID, "runtime_instance_id", runtimeInstanceID, "available", available)
+	p.logInfo("prepared runtime pool refilled", "runtime_instance_id", runtimeInstanceID, "available", available)
 	return nil
 }
 
-func (p *PreparedRuntimePool) restoreSandboxImageAndRuntimeSubstrate(ctx context.Context, materializer WorkspaceMaterializer, tempDir string, mount api.WorkerWorkspaceMount, sandboxLogMessage string, substrateLogMessage string, logAttrs ...any) (string, func(), vm.RuntimeTopology, error) {
+func (p *PreparedRuntimePool) restoreWorkspaceImageAndRuntimeSubstrate(ctx context.Context, materializer WorkspaceMaterializer, tempDir string, mount api.WorkerWorkspaceMount, imageLogMessage string, substrateLogMessage string, logAttrs ...any) (string, func(), vm.RuntimeTopology, error) {
 	started := time.Now()
-	sandboxImagePath, cleanupSandboxImage, err := materializer.restoreCASObject(ctx, tempDir, "sandbox-image", mount.SandboxImageArtifact)
-	p.logInfo(sandboxLogMessage, append(append([]any{}, logAttrs...),
+	workspaceImagePath, cleanupWorkspaceImage, err := materializer.restoreCASObject(ctx, tempDir, "workspace-image", mount.WorkspaceImage)
+	p.logInfo(imageLogMessage, append(append([]any{}, logAttrs...),
 		"duration_ms", time.Since(started).Milliseconds(),
-		"size_bytes", mount.SandboxImageArtifact.SizeBytes,
+		"size_bytes", mount.WorkspaceImage.SizeBytes,
 		"error", errorString(err),
 	)...)
 	if err != nil {
-		cleanupSandboxImage()
+		cleanupWorkspaceImage()
 		return "", func() {}, vm.RuntimeTopology{}, err
 	}
 	started = time.Now()
-	topology, err := runtimeSubstrateTopology(ctx, p.Substrates, sandboxImagePath, mount)
+	topology, err := runtimeSubstrateTopology(ctx, p.Substrates, workspaceImagePath, mount)
 	p.logInfo(substrateLogMessage, append(append([]any{}, logAttrs...),
 		"duration_ms", time.Since(started).Milliseconds(),
 		"substrate_digest", runtimeSubstrateDigest(topology),
 		"error", errorString(err),
 	)...)
 	if err != nil {
-		cleanupSandboxImage()
+		cleanupWorkspaceImage()
 		return "", func() {}, vm.RuntimeTopology{}, err
 	}
-	return sandboxImagePath, cleanupSandboxImage, topology, nil
+	return workspaceImagePath, cleanupWorkspaceImage, topology, nil
 }
 
 func (p *PreparedRuntimePool) monitorReadyEntryLocked(key string, entry preparedRuntimeEntry) {
@@ -965,7 +960,6 @@ func (p *PreparedRuntimePool) ReleaseCheckout(runtimeInstanceID string, runtimeE
 }
 
 func (p *PreparedRuntimePool) removeReadyEntryAndFail(key string, entry preparedRuntimeEntry, cause error, closeSession bool) error {
-	keyID := runtime.ID(key)
 	if !p.forgetReadyEntry(key, entry) {
 		return nil
 	}
@@ -981,10 +975,10 @@ func (p *PreparedRuntimePool) removeReadyEntryAndFail(key string, entry prepared
 	stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
 	defer cancelState()
 	if err := p.markRuntimeTargetFailed(stateCtx, p.RuntimeInstances, entry.target, cause); err != nil {
-		p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", err.Error())
+		p.logInfo("prepared runtime pool instance fail transition failed", "runtime_instance_id", entry.runtimeInstanceID, "error", err.Error())
 		return err
 	}
-	p.logInfo("prepared runtime pool entry failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
+	p.logInfo("prepared runtime pool entry failed", "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
 	return nil
 }
 
@@ -1006,7 +1000,6 @@ func (p *PreparedRuntimePool) cleanupClaimedEntryAsync(key string, entry prepare
 }
 
 func (p *PreparedRuntimePool) cleanupClaimedEntry(key string, entry preparedRuntimeEntry, cause error) {
-	keyID := runtime.ID(key)
 	if entry.session != nil {
 		if closeErr := p.closeSession(context.Background(), entry.session); closeErr == nil {
 			if releaseErr := p.releaseRuntimeCapacity(entry.runtimeInstanceID, entry.runtimeEpoch); releaseErr != nil {
@@ -1019,10 +1012,10 @@ func (p *PreparedRuntimePool) cleanupClaimedEntry(key string, entry preparedRunt
 	stateCtx, cancelState := preparedRuntimeControlContext(context.Background())
 	defer cancelState()
 	if err := p.markRuntimeTargetFailed(stateCtx, p.RuntimeInstances, entry.target, cause); err != nil {
-		p.logInfo("prepared runtime pool instance fail transition failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", err.Error())
+		p.logInfo("prepared runtime pool instance fail transition failed", "runtime_instance_id", entry.runtimeInstanceID, "error", err.Error())
 		return
 	}
-	p.logInfo("prepared runtime pool claimed entry failed", "runtime_key_id", keyID, "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
+	p.logInfo("prepared runtime pool claimed entry failed", "runtime_instance_id", entry.runtimeInstanceID, "error", errorString(cause))
 }
 
 func (p *PreparedRuntimePool) forgetReadyEntry(key string, entry preparedRuntimeEntry) bool {
@@ -1064,28 +1057,25 @@ func (p *PreparedRuntimePool) removeReadyEntryAtLocked(key string, entries []pre
 	p.entries[key] = entries
 }
 
-func preparedRuntimeWorkspaceMountFromSource(source api.WorkerPreparedRuntimeSource) api.WorkerWorkspaceMount {
+func preparedRuntimeWorkspaceMountFromSource(source api.WorkerRuntimeSource) api.WorkerWorkspaceMount {
 	return api.WorkerWorkspaceMount{
-		ID:                         uuid.Must(uuid.NewV7()).String(),
-		WorkspaceID:                uuid.Must(uuid.NewV7()).String(),
-		DeploymentDefinitionID:     strings.TrimSpace(source.DeploymentDefinitionID),
-		RuntimeID:                  strings.TrimSpace(source.RuntimeID),
-		SandboxImageArtifact:       source.SandboxImageArtifact,
-		SandboxImageArtifactFormat: strings.TrimSpace(source.SandboxImageArtifactFormat),
-		RootfsDigest:               strings.TrimSpace(source.RootfsDigest),
-		ImageDigest:                strings.TrimSpace(source.ImageDigest),
-		ImageFormat:                strings.TrimSpace(source.ImageFormat),
-		WorkspaceMountPath:         strings.TrimSpace(source.WorkspaceMountPath),
-		RequestedMilliCPU:          int64(source.ReservedCpuMillis),
-		RequestedMemoryMiB:         int64(source.ReservedMemoryMiB),
-		RequestedDiskMiB:           source.ReservedDiskMiB,
-		RequestedExecutionSlots:    source.ReservedExecutionSlots,
-		RuntimeABI:                 strings.TrimSpace(source.RuntimeABI),
+		ID:                      uuid.Must(uuid.NewV7()).String(),
+		WorkspaceID:             uuid.Must(uuid.NewV7()).String(),
+		DeploymentDefinitionID:  strings.TrimSpace(source.DeploymentDefinitionID),
+		RuntimeID:               strings.TrimSpace(source.RuntimeID),
+		WorkspaceImage:          source.WorkspaceImage,
+		RootfsDigest:            strings.TrimSpace(source.RootfsDigest),
+		WorkspaceMountPath:      "/workspace",
+		RequestedMilliCPU:       int64(source.ReservedCpuMillis),
+		RequestedMemoryMiB:      int64(source.ReservedMemoryMiB),
+		RequestedDiskMiB:        source.ReservedDiskMiB,
+		RequestedExecutionSlots: source.ReservedExecutionSlots,
+		RuntimeABI:              strings.TrimSpace(source.RuntimeABI),
+		Network:                 source.Network,
 	}
 }
 
-func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session vm.Session, key string, mount api.WorkerWorkspaceMount, sandboxImagePath string) error {
-	keyID := runtime.ID(key)
+func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session vm.Session, key string, mount api.WorkerWorkspaceMount, workspaceImagePath string) error {
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
 		return fmt.Errorf("open prepared runtime stream: %w", err)
@@ -1098,13 +1088,13 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		return fmt.Errorf("write prepared runtime header: %w", err)
 	}
 	request := &workspacev0.PrepareWorkspaceRuntimeRequest{
-		RuntimeKey: key,
-		MountPath:  strings.TrimSpace(mount.WorkspaceMountPath),
-		SandboxArtifact: &workspacev0.WorkspaceArtifact{
-			Digest:    strings.TrimSpace(mount.SandboxImageArtifact.Digest),
-			MediaType: strings.TrimSpace(mount.SandboxImageArtifact.MediaType),
-			Encoding:  strings.TrimSpace(mount.SandboxImageArtifactFormat),
-			SizeBytes: uint64(mount.SandboxImageArtifact.SizeBytes),
+		RuntimeInstanceId: key,
+		MountPath:         strings.TrimSpace(mount.WorkspaceMountPath),
+		WorkspaceImage: &workspacev0.WorkspaceArtifact{
+			Digest:    strings.TrimSpace(mount.WorkspaceImage.Digest),
+			MediaType: strings.TrimSpace(mount.WorkspaceImage.MediaType),
+			Encoding:  "oci-tar",
+			SizeBytes: uint64(mount.WorkspaceImage.SizeBytes),
 		},
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
@@ -1114,7 +1104,7 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 	if err := writeFileFrameWithMetadataContext(ctx, session, stream, wire.StreamHeader{
 		Type:        wire.StreamTypeRunImage,
 		WorkspaceID: mount.WorkspaceID,
-	}, sandboxImagePath, strings.TrimSpace(mount.SandboxImageArtifact.Digest), mount.SandboxImageArtifact.SizeBytes); err != nil {
+	}, workspaceImagePath, strings.TrimSpace(mount.WorkspaceImage.Digest), mount.WorkspaceImage.SizeBytes); err != nil {
 		// The guest can reject the request while the host is still streaming a
 		// large image. Preserve the guest's structured failure instead of
 		// reporting only the resulting broken pipe.
@@ -1123,25 +1113,25 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		var response workspacev0.PrepareWorkspaceRuntimeResponse
 		if responseErr := readProtoFrameFromReaderContext(responseCtx, session, stream, &response); responseErr == nil {
 			if phaseError := workspaceMountPhaseError(response.GetPhases()); phaseError != "" {
-				return fmt.Errorf("prepared runtime rejected sandbox image: %s: %w", phaseError, err)
+				return fmt.Errorf("prepared runtime rejected workspace image: %s: %w", phaseError, err)
 			}
-			return fmt.Errorf("prepared runtime returned state %q while writing sandbox image: %w", response.GetState(), err)
+			return fmt.Errorf("prepared runtime returned state %q while writing workspace image: %w", response.GetState(), err)
 		}
-		return fmt.Errorf("write prepared runtime sandbox image: %w", err)
+		return fmt.Errorf("write prepared runtime workspace image: %w", err)
 	}
-	p.logInfo("prepared runtime pool sandbox image sent", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "size_bytes", mount.SandboxImageArtifact.SizeBytes)
+	p.logInfo("prepared runtime pool workspace image sent", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes)
 	var response workspacev0.PrepareWorkspaceRuntimeResponse
 	started = time.Now()
 	if err := readProtoFrameFromReaderContext(ctx, session, stream, &response); err != nil {
 		return fmt.Errorf("read prepared runtime response: %w", err)
 	}
-	p.logInfo("prepared runtime pool response read", "runtime_key_id", keyID, "duration_ms", time.Since(started).Milliseconds(), "state", strings.TrimSpace(response.State))
+	p.logInfo("prepared runtime pool response read", "runtime_instance_id", key, "duration_ms", time.Since(started).Milliseconds(), "state", strings.TrimSpace(response.State))
 	for _, guestPhase := range response.GetPhases() {
 		if guestPhase == nil {
 			continue
 		}
 		p.logInfo("prepared runtime pool guest phase",
-			"runtime_key_id", keyID,
+			"runtime_instance_id", key,
 			"guest_phase", strings.TrimSpace(guestPhase.GetName()),
 			"duration_ms", guestPhase.GetDurationMs(),
 			"size_bytes", guestPhase.GetSizeBytes(),
@@ -1155,8 +1145,8 @@ func (p *PreparedRuntimePool) prepareGuestRuntime(ctx context.Context, session v
 		}
 		return fmt.Errorf("prepared runtime returned state %q", response.State)
 	}
-	if strings.TrimSpace(response.RuntimeKey) != key {
-		return errors.New("prepared runtime key mismatch")
+	if strings.TrimSpace(response.RuntimeInstanceId) != key {
+		return errors.New("prepared runtime instance id mismatch")
 	}
 	return nil
 }

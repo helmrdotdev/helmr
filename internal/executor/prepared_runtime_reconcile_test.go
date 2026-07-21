@@ -305,7 +305,7 @@ func TestPreparedRuntimeCapacityReservationLivesThroughCheckout(t *testing.T) {
 	mount := preparedRuntimeWorkspaceMountFromSource(target.Source)
 	mount.RuntimeInstanceID = target.ID
 	mount.RuntimeEpoch = target.WorkerEpoch
-	key := preparedRuntimeKeyFromWorkspaceMount(mount, pool.Network)
+	key := runtimeInstanceIDFromWorkspaceMount(mount)
 	ready := newPreparedRuntimeSignal()
 	ready.finish(nil)
 	pool.entries[key] = []preparedRuntimeEntry{{
@@ -403,7 +403,7 @@ func newPreparedRuntimeCapacity(t *testing.T, vmSlots int64) *capacity.Ledger {
 func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTarget {
 	return api.WorkerRuntimeReconcileTarget{
 		ID: id, WorkerEpoch: epoch,
-		Source: api.WorkerPreparedRuntimeSource{
+		Source: api.WorkerRuntimeSource{
 			DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703",
 			ReservedCpuMillis:      1000, ReservedMemoryMiB: 512, ReservedDiskMiB: 1024,
 			ReservedExecutionSlots: 5,
@@ -414,7 +414,7 @@ func runtimeCapacityTarget(id string, epoch int64) api.WorkerRuntimeReconcileTar
 func retryableWarmTarget() api.WorkerRuntimeReconcileTarget {
 	return api.WorkerRuntimeReconcileTarget{
 		ID: "00000000-0000-0000-0000-000000000503", WorkerEpoch: 7,
-		Source: api.WorkerPreparedRuntimeSource{DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703"},
+		Source: api.WorkerRuntimeSource{DeploymentDefinitionID: "00000000-0000-0000-0000-000000000703"},
 	}
 }
 

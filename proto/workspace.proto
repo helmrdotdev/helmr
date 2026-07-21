@@ -30,9 +30,9 @@ message MaterializeWorkspaceRequest {
   string mount_path = 2;
   string base_version_id = 3;
   WorkspaceArtifact base_artifact = 4;
-  WorkspaceArtifact sandbox_artifact = 5;
+  WorkspaceArtifact workspace_image = 5;
   bool use_prepared_runtime = 6;
-  string runtime_key = 7;
+  string runtime_instance_id = 7;
 }
 
 message WorkspaceMountPhase {
@@ -50,14 +50,14 @@ message MaterializeWorkspaceResponse {
 }
 
 message PrepareWorkspaceRuntimeRequest {
-  string runtime_key = 1;
+  string runtime_instance_id = 1;
   string mount_path = 2;
-  WorkspaceArtifact sandbox_artifact = 3;
+  WorkspaceArtifact workspace_image = 3;
 }
 
 message PrepareWorkspaceRuntimeResponse {
   string state = 1;
-  string runtime_key = 2;
+  string runtime_instance_id = 2;
   repeated WorkspaceMountPhase phases = 3;
 }
 

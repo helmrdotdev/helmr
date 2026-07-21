@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"time"
+
+	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 type WorkspaceMaterializeRequest struct {
@@ -50,35 +52,33 @@ type WorkerWorkspaceMountClaimResponse struct {
 }
 
 type WorkerWorkspaceMount struct {
-	ID                         string                  `json:"id"`
-	OrgID                      string                  `json:"org_id"`
-	ProjectID                  string                  `json:"project_id"`
-	EnvironmentID              string                  `json:"environment_id"`
-	WorkspaceID                string                  `json:"workspace_id"`
-	DeploymentDefinitionID     string                  `json:"deployment_definition_id"`
-	BaseVersionID              string                  `json:"base_version_id,omitempty"`
-	RuntimeInstanceID          string                  `json:"runtime_instance_id,omitempty"`
-	NetworkSlotID              string                  `json:"network_slot_id"`
-	NetworkSlotGeneration      int64                   `json:"network_slot_generation"`
-	RuntimeEpoch               int64                   `json:"runtime_epoch"`
-	GuestdChannelToken         string                  `json:"guestd_channel_token"`
-	GuestdChannelTokenHash     string                  `json:"guestd_channel_token_hash"`
-	State                      string                  `json:"state"`
-	RuntimeID                  string                  `json:"runtime_id"`
-	SandboxImageArtifact       CASObject               `json:"sandbox_image_artifact"`
-	SandboxImageArtifactFormat string                  `json:"sandbox_image_artifact_format"`
-	RootfsDigest               string                  `json:"rootfs_digest"`
-	ImageDigest                string                  `json:"image_digest"`
-	ImageFormat                string                  `json:"image_format"`
-	WorkspaceArtifact          WorkerWorkspaceArtifact `json:"workspace_artifact"`
-	WorkspaceMountPath         string                  `json:"workspace_mount_path"`
-	RequestedMilliCPU          int64                   `json:"requested_milli_cpu"`
-	RequestedMemoryMiB         int64                   `json:"requested_memory_mib"`
-	RequestedDiskMiB           int64                   `json:"requested_disk_mib"`
-	RequestedExecutionSlots    int32                   `json:"requested_execution_slots"`
-	RuntimeABI                 string                  `json:"runtime_abi"`
-	FencingGeneration          int64                   `json:"fencing_generation"`
-	ExpiresAt                  time.Time               `json:"expires_at"`
+	ID                      string                  `json:"id"`
+	OrgID                   string                  `json:"org_id"`
+	ProjectID               string                  `json:"project_id"`
+	EnvironmentID           string                  `json:"environment_id"`
+	WorkspaceID             string                  `json:"workspace_id"`
+	DeploymentDefinitionID  string                  `json:"deployment_definition_id"`
+	BaseVersionID           string                  `json:"base_version_id,omitempty"`
+	RuntimeInstanceID       string                  `json:"runtime_instance_id,omitempty"`
+	NetworkSlotID           string                  `json:"network_slot_id"`
+	NetworkSlotGeneration   int64                   `json:"network_slot_generation"`
+	RuntimeEpoch            int64                   `json:"runtime_epoch"`
+	GuestdChannelToken      string                  `json:"guestd_channel_token"`
+	GuestdChannelTokenHash  string                  `json:"guestd_channel_token_hash"`
+	State                   string                  `json:"state"`
+	RuntimeID               string                  `json:"runtime_id"`
+	WorkspaceImage          CASObject               `json:"workspace_image"`
+	RootfsDigest            string                  `json:"rootfs_digest"`
+	WorkspaceArtifact       WorkerWorkspaceArtifact `json:"workspace_artifact"`
+	WorkspaceMountPath      string                  `json:"workspace_mount_path"`
+	RequestedMilliCPU       int64                   `json:"requested_milli_cpu"`
+	RequestedMemoryMiB      int64                   `json:"requested_memory_mib"`
+	RequestedDiskMiB        int64                   `json:"requested_disk_mib"`
+	RequestedExecutionSlots int32                   `json:"requested_execution_slots"`
+	RuntimeABI              string                  `json:"runtime_abi"`
+	Network                 compute.NetworkPolicy   `json:"network"`
+	FencingGeneration       int64                   `json:"fencing_generation"`
+	ExpiresAt               time.Time               `json:"expires_at"`
 }
 
 type WorkerWorkspaceMountRenewRequest struct {

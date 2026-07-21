@@ -219,9 +219,9 @@ type MaterializeWorkspaceRequest struct {
 	MountPath          string                      `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
 	BaseVersionId      string                      `protobuf:"bytes,3,opt,name=base_version_id,json=baseVersionId,proto3" json:"base_version_id,omitempty"`
 	BaseArtifact       *WorkspaceArtifact          `protobuf:"bytes,4,opt,name=base_artifact,json=baseArtifact,proto3" json:"base_artifact,omitempty"`
-	SandboxArtifact    *WorkspaceArtifact          `protobuf:"bytes,5,opt,name=sandbox_artifact,json=sandboxArtifact,proto3" json:"sandbox_artifact,omitempty"`
+	WorkspaceImage     *WorkspaceArtifact          `protobuf:"bytes,5,opt,name=workspace_image,json=workspaceImage,proto3" json:"workspace_image,omitempty"`
 	UsePreparedRuntime bool                        `protobuf:"varint,6,opt,name=use_prepared_runtime,json=usePreparedRuntime,proto3" json:"use_prepared_runtime,omitempty"`
-	RuntimeKey         string                      `protobuf:"bytes,7,opt,name=runtime_key,json=runtimeKey,proto3" json:"runtime_key,omitempty"`
+	RuntimeInstanceId  string                      `protobuf:"bytes,7,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -284,9 +284,9 @@ func (x *MaterializeWorkspaceRequest) GetBaseArtifact() *WorkspaceArtifact {
 	return nil
 }
 
-func (x *MaterializeWorkspaceRequest) GetSandboxArtifact() *WorkspaceArtifact {
+func (x *MaterializeWorkspaceRequest) GetWorkspaceImage() *WorkspaceArtifact {
 	if x != nil {
-		return x.SandboxArtifact
+		return x.WorkspaceImage
 	}
 	return nil
 }
@@ -298,9 +298,9 @@ func (x *MaterializeWorkspaceRequest) GetUsePreparedRuntime() bool {
 	return false
 }
 
-func (x *MaterializeWorkspaceRequest) GetRuntimeKey() string {
+func (x *MaterializeWorkspaceRequest) GetRuntimeInstanceId() string {
 	if x != nil {
-		return x.RuntimeKey
+		return x.RuntimeInstanceId
 	}
 	return ""
 }
@@ -442,12 +442,12 @@ func (x *MaterializeWorkspaceResponse) GetPhases() []*WorkspaceMountPhase {
 }
 
 type PrepareWorkspaceRuntimeRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	RuntimeKey      string                 `protobuf:"bytes,1,opt,name=runtime_key,json=runtimeKey,proto3" json:"runtime_key,omitempty"`
-	MountPath       string                 `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
-	SandboxArtifact *WorkspaceArtifact     `protobuf:"bytes,3,opt,name=sandbox_artifact,json=sandboxArtifact,proto3" json:"sandbox_artifact,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	RuntimeInstanceId string                 `protobuf:"bytes,1,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
+	MountPath         string                 `protobuf:"bytes,2,opt,name=mount_path,json=mountPath,proto3" json:"mount_path,omitempty"`
+	WorkspaceImage    *WorkspaceArtifact     `protobuf:"bytes,3,opt,name=workspace_image,json=workspaceImage,proto3" json:"workspace_image,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *PrepareWorkspaceRuntimeRequest) Reset() {
@@ -480,9 +480,9 @@ func (*PrepareWorkspaceRuntimeRequest) Descriptor() ([]byte, []int) {
 	return file_workspace_proto_rawDescGZIP(), []int{5}
 }
 
-func (x *PrepareWorkspaceRuntimeRequest) GetRuntimeKey() string {
+func (x *PrepareWorkspaceRuntimeRequest) GetRuntimeInstanceId() string {
 	if x != nil {
-		return x.RuntimeKey
+		return x.RuntimeInstanceId
 	}
 	return ""
 }
@@ -494,20 +494,20 @@ func (x *PrepareWorkspaceRuntimeRequest) GetMountPath() string {
 	return ""
 }
 
-func (x *PrepareWorkspaceRuntimeRequest) GetSandboxArtifact() *WorkspaceArtifact {
+func (x *PrepareWorkspaceRuntimeRequest) GetWorkspaceImage() *WorkspaceArtifact {
 	if x != nil {
-		return x.SandboxArtifact
+		return x.WorkspaceImage
 	}
 	return nil
 }
 
 type PrepareWorkspaceRuntimeResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	State         string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
-	RuntimeKey    string                 `protobuf:"bytes,2,opt,name=runtime_key,json=runtimeKey,proto3" json:"runtime_key,omitempty"`
-	Phases        []*WorkspaceMountPhase `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	State             string                 `protobuf:"bytes,1,opt,name=state,proto3" json:"state,omitempty"`
+	RuntimeInstanceId string                 `protobuf:"bytes,2,opt,name=runtime_instance_id,json=runtimeInstanceId,proto3" json:"runtime_instance_id,omitempty"`
+	Phases            []*WorkspaceMountPhase `protobuf:"bytes,3,rep,name=phases,proto3" json:"phases,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *PrepareWorkspaceRuntimeResponse) Reset() {
@@ -547,9 +547,9 @@ func (x *PrepareWorkspaceRuntimeResponse) GetState() string {
 	return ""
 }
 
-func (x *PrepareWorkspaceRuntimeResponse) GetRuntimeKey() string {
+func (x *PrepareWorkspaceRuntimeResponse) GetRuntimeInstanceId() string {
 	if x != nil {
-		return x.RuntimeKey
+		return x.RuntimeInstanceId
 	}
 	return ""
 }
@@ -2086,17 +2086,16 @@ const file_workspace_proto_rawDesc = "" +
 	"\n" +
 	"size_bytes\x18\x04 \x01(\x04R\tsizeBytes\x12\x1f\n" +
 	"\ventry_count\x18\x05 \x01(\rR\n" +
-	"entryCount\"\xa1\x03\n" +
+	"entryCount\"\xae\x03\n" +
 	"\x1bMaterializeWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12\x1d\n" +
 	"\n" +
 	"mount_path\x18\x02 \x01(\tR\tmountPath\x12&\n" +
 	"\x0fbase_version_id\x18\x03 \x01(\tR\rbaseVersionId\x12J\n" +
-	"\rbase_artifact\x18\x04 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\fbaseArtifact\x12P\n" +
-	"\x10sandbox_artifact\x18\x05 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0fsandboxArtifact\x120\n" +
-	"\x14use_prepared_runtime\x18\x06 \x01(\bR\x12usePreparedRuntime\x12\x1f\n" +
-	"\vruntime_key\x18\a \x01(\tR\n" +
-	"runtimeKey\"\xa0\x01\n" +
+	"\rbase_artifact\x18\x04 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\fbaseArtifact\x12N\n" +
+	"\x0fworkspace_image\x18\x05 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0eworkspaceImage\x120\n" +
+	"\x14use_prepared_runtime\x18\x06 \x01(\bR\x12usePreparedRuntime\x12.\n" +
+	"\x13runtime_instance_id\x18\a \x01(\tR\x11runtimeInstanceId\"\xa0\x01\n" +
 	"\x13WorkspaceMountPhase\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vduration_ms\x18\x02 \x01(\x04R\n" +
@@ -2109,17 +2108,15 @@ const file_workspace_proto_rawDesc = "" +
 	"\x1cMaterializeWorkspaceResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x129\n" +
 	"\x19guestd_channel_token_hash\x18\x02 \x01(\tR\x16guestdChannelTokenHash\x12?\n" +
-	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xb2\x01\n" +
-	"\x1ePrepareWorkspaceRuntimeRequest\x12\x1f\n" +
-	"\vruntime_key\x18\x01 \x01(\tR\n" +
-	"runtimeKey\x12\x1d\n" +
+	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xbf\x01\n" +
+	"\x1ePrepareWorkspaceRuntimeRequest\x12.\n" +
+	"\x13runtime_instance_id\x18\x01 \x01(\tR\x11runtimeInstanceId\x12\x1d\n" +
 	"\n" +
-	"mount_path\x18\x02 \x01(\tR\tmountPath\x12P\n" +
-	"\x10sandbox_artifact\x18\x03 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0fsandboxArtifact\"\x99\x01\n" +
+	"mount_path\x18\x02 \x01(\tR\tmountPath\x12N\n" +
+	"\x0fworkspace_image\x18\x03 \x01(\v2%.helmr.workspace.v0.WorkspaceArtifactR\x0eworkspaceImage\"\xa8\x01\n" +
 	"\x1fPrepareWorkspaceRuntimeResponse\x12\x14\n" +
-	"\x05state\x18\x01 \x01(\tR\x05state\x12\x1f\n" +
-	"\vruntime_key\x18\x02 \x01(\tR\n" +
-	"runtimeKey\x12?\n" +
+	"\x05state\x18\x01 \x01(\tR\x05state\x12.\n" +
+	"\x13runtime_instance_id\x18\x02 \x01(\tR\x11runtimeInstanceId\x12?\n" +
 	"\x06phases\x18\x03 \x03(\v2'.helmr.workspace.v0.WorkspaceMountPhaseR\x06phases\"\xa8\x01\n" +
 	"\x19HeartbeatWorkspaceRequest\x12J\n" +
 	"\benvelope\x18\x01 \x01(\v2..helmr.workspace.v0.WorkspaceOperationEnvelopeR\benvelope\x12\x14\n" +
@@ -2283,9 +2280,9 @@ var file_workspace_proto_goTypes = []any{
 var file_workspace_proto_depIdxs = []int32{
 	0,  // 0: helmr.workspace.v0.MaterializeWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
 	1,  // 1: helmr.workspace.v0.MaterializeWorkspaceRequest.base_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
-	1,  // 2: helmr.workspace.v0.MaterializeWorkspaceRequest.sandbox_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	1,  // 2: helmr.workspace.v0.MaterializeWorkspaceRequest.workspace_image:type_name -> helmr.workspace.v0.WorkspaceArtifact
 	3,  // 3: helmr.workspace.v0.MaterializeWorkspaceResponse.phases:type_name -> helmr.workspace.v0.WorkspaceMountPhase
-	1,  // 4: helmr.workspace.v0.PrepareWorkspaceRuntimeRequest.sandbox_artifact:type_name -> helmr.workspace.v0.WorkspaceArtifact
+	1,  // 4: helmr.workspace.v0.PrepareWorkspaceRuntimeRequest.workspace_image:type_name -> helmr.workspace.v0.WorkspaceArtifact
 	3,  // 5: helmr.workspace.v0.PrepareWorkspaceRuntimeResponse.phases:type_name -> helmr.workspace.v0.WorkspaceMountPhase
 	0,  // 6: helmr.workspace.v0.HeartbeatWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope
 	0,  // 7: helmr.workspace.v0.CaptureWorkspaceRequest.envelope:type_name -> helmr.workspace.v0.WorkspaceOperationEnvelope

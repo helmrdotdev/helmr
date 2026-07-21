@@ -169,13 +169,15 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
        runtime_instances.reserved_memory_bytes,
        runtime_instances.reserved_workload_disk_bytes,
        runtime_instances.reserved_execution_slots,
+       runtime_instances.network_policy,
        image_artifacts.id AS image_artifact_id,
        image_artifacts.digest AS image_artifact_digest,
        image_artifacts.size_bytes AS image_artifact_size_bytes,
        image_artifacts.media_type AS image_artifact_media_type,
        workspace_versions.artifact_id AS workspace_artifact_id,
-       workspace_versions.content_digest AS workspace_content_digest,
-       workspace_versions.size_bytes AS workspace_size_bytes,
+       COALESCE(workspace_artifacts.digest, '') AS workspace_artifact_digest,
+       COALESCE(workspace_artifacts.size_bytes, 0) AS workspace_artifact_size_bytes,
+       COALESCE(workspace_artifacts.media_type, '') AS workspace_artifact_media_type,
        workspace_versions.entry_count AS workspace_entry_count
   FROM claimed
   JOIN runtime_instances ON runtime_instances.org_id = claimed.org_id
@@ -188,6 +190,9 @@ SELECT claimed.*, runtime_instances.runtime_identity_id AS runtime_id,
   JOIN workspace_versions
     ON workspace_versions.workspace_id = claimed.workspace_id
    AND workspace_versions.id = claimed.materialized_version_id
+  LEFT JOIN artifacts AS workspace_artifacts
+    ON workspace_artifacts.environment_id = workspace_versions.environment_id
+   AND workspace_artifacts.id = workspace_versions.artifact_id
   JOIN worker_network_slots ON worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
                     AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch
                     AND worker_network_slots.runtime_instance_id = runtime_instances.id
