@@ -1711,7 +1711,6 @@ CREATE TABLE runs (
     actor_start_input_sequence BIGINT,
     actor_start_input_high_watermark BIGINT,
     payload JSONB,
-    payload_artifact_id UUID,
     output JSONB,
     terminal_reason_code TEXT,
     error JSONB,
@@ -1803,23 +1802,18 @@ CREATE TABLE runs (
     FOREIGN KEY (environment_id, claim_id)
         REFERENCES idempotency_claims(environment_id, id)
         ON DELETE RESTRICT,
-    FOREIGN KEY (org_id, project_id, environment_id, payload_artifact_id)
-        REFERENCES artifacts(org_id, project_id, environment_id, id)
-        ON DELETE RESTRICT,
     CHECK (
         (entrypoint_kind = 'task'
          AND actor_id IS NULL
          AND actor_start_input_sequence IS NULL
-         AND actor_start_input_high_watermark IS NULL
-         AND NOT (payload IS NOT NULL AND payload_artifact_id IS NOT NULL))
+         AND actor_start_input_high_watermark IS NULL)
         OR
         (entrypoint_kind = 'actor'
          AND actor_id IS NOT NULL
          AND actor_start_input_sequence IS NOT NULL
          AND actor_start_input_high_watermark IS NOT NULL
          AND actor_start_input_high_watermark >= actor_start_input_sequence
-         AND payload IS NULL
-         AND payload_artifact_id IS NULL)
+         AND payload IS NULL)
     ),
     CHECK (
         (cause_kind = 'child'

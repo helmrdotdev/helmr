@@ -2160,7 +2160,6 @@ type Run struct {
 	ActorStartInputSequence      pgtype.Int8        `json:"actor_start_input_sequence"`
 	ActorStartInputHighWatermark pgtype.Int8        `json:"actor_start_input_high_watermark"`
 	Payload                      []byte             `json:"payload"`
-	PayloadArtifactID            pgtype.UUID        `json:"payload_artifact_id"`
 	Output                       []byte             `json:"output"`
 	TerminalReasonCode           pgtype.Text        `json:"terminal_reason_code"`
 	Error                        []byte             `json:"error"`
