@@ -14,6 +14,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/publicid"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -39,9 +40,11 @@ func (s *Server) completeTask(
 		return errStaleTaskCompletion
 	}
 	if completion.capture != nil {
-		if err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture); err != nil {
+		verified, err := s.verifyTaskWorkspaceCapture(ctx, *completion.capture)
+		if err != nil {
 			return taskCompletionReplayAfterError(ctx, s.db, worker, request, completion, err)
 		}
+		completion.capture = &verified
 	}
 
 	err = s.inTx(ctx, func(work *txWork) error {
@@ -88,6 +91,11 @@ func (s *Server) completeTask(
 		}
 		if err := validateTaskCompletionAuthority(ctx, work.q, request, completion, authority); err != nil {
 			return err
+		}
+		if completion.rollback != nil {
+			if err := validateTaskWorkspaceRollback(ctx, work.q, authority, *completion.rollback); err != nil {
+				return err
+			}
 		}
 
 		completedAt, err := work.q.GetTaskCompletionTime(ctx)
@@ -223,7 +231,7 @@ func validateTaskCompletionAuthority(
 		return errStaleTaskCompletion
 	}
 	if completion.kind != taskCompletionSucceeded &&
-		pgvalue.UUID(completion.rollbackBaseID) != authority.run.BaseWorkspaceVersionID {
+		(completion.rollback == nil || pgvalue.UUID(completion.rollback.baseID) != authority.run.BaseWorkspaceVersionID) {
 		return errStaleTaskCompletion
 	}
 	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
@@ -248,6 +256,67 @@ func validateTaskCompletionAuthority(
 		return errStaleTaskCompletion
 	}
 	return nil
+}
+
+func validateTaskWorkspaceRollback(
+	ctx context.Context,
+	store taskWorkspaceRollbackStore,
+	authority runLeaseClaimAuthority,
+	rollback parsedTaskWorkspaceRollback,
+) error {
+	version, err := store.GetWorkspaceVersion(ctx, db.GetWorkspaceVersionParams{
+		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+		ID: authority.run.BaseWorkspaceVersionID,
+	})
+	if err != nil {
+		return staleTaskCompletion(err)
+	}
+	if version.ID != authority.run.BaseWorkspaceVersionID ||
+		rollback.target.BaseVersionID != pgvalue.UUIDString(version.ID) ||
+		rollback.target.Tree.Digest != version.ContentDigest ||
+		rollback.target.Tree.SizeBytes != version.SizeBytes ||
+		rollback.target.Tree.EntryCount != int(version.EntryCount) {
+		return errStaleTaskCompletion
+	}
+	switch rollback.target.Kind {
+	case workspace.ResetTargetEmpty:
+		if version.ParentVersionID.Valid || version.ArtifactID.Valid || version.ArtifactKind.Valid ||
+			version.Kind != db.WorkspaceVersionKindSystem || version.SourceWorkspaceLeaseID.Valid ||
+			version.OwnershipGeneration != 0 || version.WriterGeneration != 0 ||
+			version.ContentDigest != workspace.CanonicalEmptyTreeDigest || version.SizeBytes != 0 || version.EntryCount != 0 {
+			return errStaleTaskCompletion
+		}
+	case workspace.ResetTargetArtifact:
+		if rollback.target.Artifact == nil || !version.ParentVersionID.Valid || !version.ArtifactID.Valid ||
+			!version.ArtifactKind.Valid || version.ArtifactKind.ArtifactKind != db.ArtifactKindWorkspaceVersion ||
+			!version.SourceWorkspaceLeaseID.Valid || version.Kind != db.WorkspaceVersionKindUser {
+			return errStaleTaskCompletion
+		}
+		artifact, err := store.GetArtifact(ctx, db.GetArtifactParams{
+			OrgID: version.OrgID, ProjectID: version.ProjectID,
+			EnvironmentID: version.EnvironmentID, ID: version.ArtifactID,
+		})
+		if err != nil {
+			return staleTaskCompletion(err)
+		}
+		if artifact.Kind != db.ArtifactKindWorkspaceVersion ||
+			artifact.Digest != rollback.target.Artifact.Digest ||
+			artifact.SizeBytes != rollback.target.Artifact.SizeBytes ||
+			artifact.MediaType != rollback.target.Artifact.MediaType ||
+			rollback.target.Artifact.Encoding != workspace.ArtifactEncoding ||
+			rollback.target.Artifact.EntryCount != int(version.EntryCount) {
+			return errStaleTaskCompletion
+		}
+	default:
+		return errStaleTaskCompletion
+	}
+	return nil
+}
+
+type taskWorkspaceRollbackStore interface {
+	GetWorkspaceVersion(context.Context, db.GetWorkspaceVersionParams) (db.WorkspaceVersion, error)
+	GetArtifact(context.Context, db.GetArtifactParams) (db.Artifact, error)
 }
 
 func validateTaskCompletionDeadline(authority runLeaseClaimAuthority, completedAt time.Time) error {
@@ -288,12 +357,13 @@ func taskCompletionRetryAt(
 
 func recordTaskWorkspaceVersion(
 	ctx context.Context,
-	store db.Querier,
+	store taskWorkspaceVersionStore,
 	worker workerActor,
 	authority runLeaseClaimAuthority,
-	artifact api.WorkerWorkspaceArtifact,
+	capture parsedTaskWorkspaceCapture,
 	completedAt pgtype.Timestamptz,
 ) (pgtype.UUID, error) {
+	artifact := capture.artifact
 	if _, err := store.UpsertCasObject(ctx, db.UpsertCasObjectParams{
 		OrgID: authority.run.OrgID, Digest: artifact.Digest,
 		SizeBytes: artifact.SizeBytes, MediaType: artifact.MediaType,
@@ -319,7 +389,7 @@ func recordTaskWorkspaceVersion(
 		OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 		EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
 		ParentVersionID: authority.workspaceLease.BaseVersionID, ArtifactID: artifactRow.ID,
-		ContentDigest: artifact.Digest, SizeBytes: artifact.SizeBytes, EntryCount: artifact.EntryCount,
+		ContentDigest: capture.tree.Digest, SizeBytes: capture.tree.SizeBytes, EntryCount: int32(capture.tree.EntryCount),
 		SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 		OwnershipGeneration:    authority.workspace.OwnershipGeneration,
 		WriterGeneration:       authority.workspace.WriterGeneration, PublishedAt: completedAt,
@@ -331,6 +401,13 @@ func recordTaskWorkspaceVersion(
 		return pgtype.UUID{}, err
 	}
 	return version.ID, nil
+}
+
+type taskWorkspaceVersionStore interface {
+	UpsertCasObject(context.Context, db.UpsertCasObjectParams) (db.CasObject, error)
+	CreateArtifact(context.Context, db.CreateArtifactParams) (db.Artifact, error)
+	PublishTaskWorkspaceVersion(context.Context, db.PublishTaskWorkspaceVersionParams) (db.WorkspaceVersion, error)
+	UpdateTaskWorkspaceMountFrontier(context.Context, db.UpdateTaskWorkspaceMountFrontierParams) (db.WorkspaceMount, error)
 }
 
 func updateTaskWorkspaceMountFrontier(
@@ -495,19 +572,31 @@ func finishTask(
 	return nil
 }
 
-func (s *Server) verifyTaskWorkspaceCapture(ctx context.Context, artifact api.WorkerWorkspaceArtifact) error {
+func (s *Server) verifyTaskWorkspaceCapture(ctx context.Context, capture parsedTaskWorkspaceCapture) (parsedTaskWorkspaceCapture, error) {
 	if s.cas == nil {
-		return errors.New("Workspace CAS is not configured")
+		return parsedTaskWorkspaceCapture{}, errors.New("Workspace CAS is not configured")
 	}
+	artifact := capture.artifact
 	object, err := s.cas.Stat(ctx, artifact.Digest)
 	if err != nil {
-		return fmt.Errorf("Task Workspace Artifact is missing from CAS: %w", err)
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("Task Workspace Artifact is missing from CAS: %w", err)
 	}
 	if object.Digest != artifact.Digest || object.SizeBytes != artifact.SizeBytes ||
 		object.MediaType != artifact.MediaType {
-		return errors.New("Task Workspace Artifact does not match CAS authority")
+		return parsedTaskWorkspaceCapture{}, errors.New("Task Workspace Artifact does not match CAS authority")
 	}
-	return nil
+	body, err := s.cas.Get(ctx, artifact.Digest)
+	if err != nil {
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("open Task Workspace Artifact: %w", err)
+	}
+	defer body.Close()
+	if err := workspace.VerifyArtifact(body, workspace.WorkspaceArtifact{
+		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
+		SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
+	}, capture.tree); err != nil {
+		return parsedTaskWorkspaceCapture{}, fmt.Errorf("verify Task Workspace Artifact: %w", err)
+	}
+	return capture, nil
 }
 
 func staleTaskCompletion(err error) error {

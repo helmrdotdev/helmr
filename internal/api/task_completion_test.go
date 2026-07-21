@@ -86,3 +86,28 @@ func TestWorkerTaskWorkspaceProofRejectsAmbiguousWireShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerWorkspaceResetTargetRequiresOneSource(t *testing.T) {
+	valid := []string{
+		`{"base_workspace_version_id":"base","tree":{},"empty":{}}`,
+		`{"base_workspace_version_id":"base","tree":{},"artifact":{}}`,
+	}
+	for _, raw := range valid {
+		var target WorkerWorkspaceResetTarget
+		if err := json.Unmarshal([]byte(raw), &target); err != nil {
+			t.Fatalf("valid target %s was rejected: %v", raw, err)
+		}
+	}
+	invalid := []string{
+		`{"base_workspace_version_id":"base","tree":{}}`,
+		`{"base_workspace_version_id":"base","tree":{},"empty":{},"artifact":{}}`,
+		`{"base_workspace_version_id":"base","tree":{},"empty":null}`,
+		`{"base_workspace_version_id":"base","tree":{},"empty":{},"unknown":true}`,
+	}
+	for _, raw := range invalid {
+		var target WorkerWorkspaceResetTarget
+		if err := json.Unmarshal([]byte(raw), &target); err == nil {
+			t.Fatalf("ambiguous target %s was accepted", raw)
+		}
+	}
+}

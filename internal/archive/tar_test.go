@@ -55,6 +55,20 @@ func TestCreateTarIsDeterministicAndKeepsCallerContent(t *testing.T) {
 	}
 }
 
+func TestNormalizeHeaderKeepsOnlyDurablePermissionBits(t *testing.T) {
+	header := &tar.Header{Typeflag: tar.TypeReg, Mode: 0o6755}
+	normalizeHeader(header, "tool")
+	if header.Mode != 0o755 {
+		t.Fatalf("regular file mode = %o, want 755", header.Mode)
+	}
+
+	header = &tar.Header{Typeflag: tar.TypeSymlink, Mode: 0}
+	normalizeHeader(header, "link")
+	if header.Mode != 0o777 {
+		t.Fatalf("symlink mode = %o, want 777", header.Mode)
+	}
+}
+
 func TestExtractTarRestoresPermissionBitsDespiteUmask(t *testing.T) {
 	var body bytes.Buffer
 	writer := tar.NewWriter(&body)

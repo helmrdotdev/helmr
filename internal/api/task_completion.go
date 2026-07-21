@@ -108,6 +108,26 @@ func (value *WorkerTaskWorkspaceProof) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
+func (value *WorkerWorkspaceResetTarget) UnmarshalJSON(raw []byte) error {
+	type target WorkerWorkspaceResetTarget
+	var decoded target
+	if err := decodeClosedTaskCompletionJSON(raw, &decoded); err != nil {
+		return fmt.Errorf("decode Workspace Reset target: %w", err)
+	}
+	variants := 0
+	if decoded.Empty != nil {
+		variants++
+	}
+	if decoded.Artifact != nil {
+		variants++
+	}
+	if variants != 1 {
+		return errors.New("Workspace Reset target must contain exactly one source")
+	}
+	*value = WorkerWorkspaceResetTarget(decoded)
+	return nil
+}
+
 func (value *WorkerTaskFailure) UnmarshalJSON(raw []byte) error {
 	var envelope struct {
 		Message json.RawMessage `json:"message"`

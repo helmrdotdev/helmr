@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -29,13 +31,25 @@ const (
 )
 
 type parsedTaskCompletion struct {
-	lease          parsedRunLeaseReceipt
-	kind           taskCompletionKind
-	output         json.RawMessage
-	errorObject    json.RawMessage
-	capture        *api.WorkerWorkspaceArtifact
-	rollbackBaseID uuid.UUID
-	fingerprint    string
+	lease       parsedRunLeaseReceipt
+	kind        taskCompletionKind
+	output      json.RawMessage
+	errorObject json.RawMessage
+	capture     *parsedTaskWorkspaceCapture
+	rollback    *parsedTaskWorkspaceRollback
+	fingerprint string
+}
+
+type parsedTaskWorkspaceCapture struct {
+	receipt  workspace.FinalizationRequest
+	tree     workspace.TreeIdentity
+	artifact api.WorkerWorkspaceArtifact
+}
+
+type parsedTaskWorkspaceRollback struct {
+	receipt workspace.FinalizationRequest
+	target  workspace.ResetTarget
+	baseID  uuid.UUID
 }
 
 func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTaskCompletion, error) {
@@ -90,22 +104,21 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 	proofs := 0
 	if request.Workspace.Captured != nil {
 		proofs++
-		artifact := request.Workspace.Captured.Artifact
-		if err := validateTaskWorkspaceArtifact(artifact); err != nil {
-			return parsedTaskCompletion{}, err
-		}
-		parsed.capture = &artifact
-	}
-	if request.Workspace.RolledBack != nil {
-		proofs++
-		baseID, err := parseCanonicalUUID(
-			"workspace.rolled_back.base_workspace_version_id",
-			request.Workspace.RolledBack.BaseWorkspaceVersionID,
-		)
+		capture, normalizedCapture, err := parseTaskWorkspaceCapture(request.Lease, *request.Workspace.Captured)
 		if err != nil {
 			return parsedTaskCompletion{}, err
 		}
-		parsed.rollbackBaseID = baseID
+		parsed.capture = &capture
+		normalized.Workspace.Captured = &normalizedCapture
+	}
+	if request.Workspace.RolledBack != nil {
+		proofs++
+		rollback, normalizedRollback, err := parseTaskWorkspaceRollback(request.Lease, *request.Workspace.RolledBack)
+		if err != nil {
+			return parsedTaskCompletion{}, err
+		}
+		parsed.rollback = &rollback
+		normalized.Workspace.RolledBack = &normalizedRollback
 	}
 	if proofs != 1 {
 		return parsedTaskCompletion{}, errors.New("workspace must contain exactly one proof")
@@ -113,7 +126,7 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 	if parsed.kind == taskCompletionSucceeded && parsed.capture == nil {
 		return parsedTaskCompletion{}, errors.New("a successful Task requires a captured Workspace")
 	}
-	if parsed.kind != taskCompletionSucceeded && parsed.rollbackBaseID == uuid.Nil {
+	if parsed.kind != taskCompletionSucceeded && parsed.rollback == nil {
 		return parsedTaskCompletion{}, errors.New("a failed Task requires a Workspace rollback")
 	}
 
@@ -122,6 +135,183 @@ func parseTaskCompletionRequest(request api.WorkerCompleteTaskRequest) (parsedTa
 		return parsedTaskCompletion{}, fmt.Errorf("fingerprint Task completion: %w", err)
 	}
 	return parsed, nil
+}
+
+func parseTaskWorkspaceCapture(
+	lease api.WorkerRunLeaseReceipt,
+	capture api.WorkerTaskWorkspaceCapture,
+) (parsedTaskWorkspaceCapture, api.WorkerTaskWorkspaceCapture, error) {
+	tree, err := parseTaskWorkspaceTree("workspace.captured.tree", capture.Tree)
+	if err != nil {
+		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, err
+	}
+	if err := validateTaskWorkspaceArtifact("workspace.captured.artifact", capture.Artifact); err != nil {
+		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, err
+	}
+	if int64(capture.Artifact.EntryCount) != int64(tree.EntryCount) {
+		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, errors.New("workspace.captured artifact and tree entry counts differ")
+	}
+	receipt, normalizedReceipt, err := parseWorkspaceFinalizationReceipt(
+		"workspace.captured.receipt",
+		workspace.FinalizationCaptureKind,
+		capture.Receipt,
+		nil,
+	)
+	if err != nil {
+		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, err
+	}
+	if !finalizationFenceMatchesLease(receipt.Fence, lease) {
+		return parsedTaskWorkspaceCapture{}, api.WorkerTaskWorkspaceCapture{}, errors.New("workspace.captured receipt does not match the Run Lease")
+	}
+	capture.Receipt = normalizedReceipt
+	return parsedTaskWorkspaceCapture{receipt: receipt, tree: tree, artifact: capture.Artifact}, capture, nil
+}
+
+func parseTaskWorkspaceRollback(
+	lease api.WorkerRunLeaseReceipt,
+	rollback api.WorkerTaskWorkspaceRollback,
+) (parsedTaskWorkspaceRollback, api.WorkerTaskWorkspaceRollback, error) {
+	tree, err := parseTaskWorkspaceTree("workspace.rolled_back.target.tree", rollback.Target.Tree)
+	if err != nil {
+		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, err
+	}
+	baseID, err := parseCanonicalUUID(
+		"workspace.rolled_back.target.base_workspace_version_id",
+		rollback.Target.BaseWorkspaceVersionID,
+	)
+	if err != nil {
+		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, err
+	}
+	var target workspace.ResetTarget
+	switch {
+	case rollback.Target.Empty != nil && rollback.Target.Artifact == nil:
+		target, err = workspace.EmptyResetTarget(baseID.String(), tree)
+	case rollback.Target.Empty == nil && rollback.Target.Artifact != nil:
+		if err = validateTaskWorkspaceArtifact("workspace.rolled_back.target.artifact", *rollback.Target.Artifact); err == nil {
+			artifact := rollback.Target.Artifact
+			if int64(artifact.EntryCount) != int64(tree.EntryCount) {
+				err = errors.New("workspace.rolled_back target Artifact and tree entry counts differ")
+			} else {
+				target, err = workspace.ArtifactResetTarget(baseID.String(), tree, workspace.ArtifactIdentity{
+					Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
+					SizeBytes: artifact.SizeBytes, EntryCount: int(artifact.EntryCount),
+				})
+			}
+		}
+	default:
+		err = errors.New("workspace.rolled_back target must contain exactly one source")
+	}
+	if err != nil {
+		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, err
+	}
+	receipt, normalizedReceipt, err := parseWorkspaceFinalizationReceipt(
+		"workspace.rolled_back.receipt",
+		workspace.FinalizationResetKind,
+		rollback.Receipt,
+		target,
+	)
+	if err != nil {
+		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, err
+	}
+	if !finalizationFenceMatchesLease(receipt.Fence, lease) || target.BaseVersionID != lease.BaseWorkspaceVersionID {
+		return parsedTaskWorkspaceRollback{}, api.WorkerTaskWorkspaceRollback{}, errors.New("workspace.rolled_back proof does not match the Run Lease")
+	}
+	rollback.Receipt = normalizedReceipt
+	return parsedTaskWorkspaceRollback{receipt: receipt, target: target, baseID: baseID}, rollback, nil
+}
+
+func parseWorkspaceFinalizationReceipt(
+	label string,
+	kind string,
+	receipt api.WorkerWorkspaceFinalizationReceipt,
+	target any,
+) (workspace.FinalizationRequest, api.WorkerWorkspaceFinalizationReceipt, error) {
+	operationID, err := parseCanonicalUUID(label+".operation_id", receipt.OperationID)
+	if err != nil {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, err
+	}
+	if !taskWorkspaceDigestPattern.MatchString(receipt.RequestFingerprint) {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s.request_fingerprint must be a SHA-256 digest", label)
+	}
+	if receipt.Fence.AttemptNumber <= 0 || receipt.Fence.ExpiresAt.IsZero() {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s fence is invalid", label)
+	}
+	expiresAtUnixNano := receipt.Fence.ExpiresAt.UnixNano()
+	if !time.Unix(0, expiresAtUnixNano).Equal(receipt.Fence.ExpiresAt) {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s.fence.expires_at is outside the finalization protocol range", label)
+	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "worker_instance_id", value: receipt.Fence.WorkerInstanceID},
+		{name: "runtime_instance_id", value: receipt.Fence.RuntimeInstanceID},
+		{name: "workspace_id", value: receipt.Fence.WorkspaceID},
+		{name: "workspace_mount_id", value: receipt.Fence.WorkspaceMountID},
+		{name: "run_id", value: receipt.Fence.RunID},
+		{name: "run_lease_id", value: receipt.Fence.RunLeaseID},
+		{name: "workspace_lease_id", value: receipt.Fence.WorkspaceLeaseID},
+		{name: "base_workspace_version_id", value: receipt.Fence.BaseWorkspaceVersionID},
+	} {
+		if _, err := parseCanonicalUUID(label+".fence."+field.name, field.value); err != nil {
+			return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, err
+		}
+	}
+	if strings.TrimSpace(receipt.Fence.RuntimeIdentityID) == "" ||
+		strings.TrimSpace(receipt.Fence.RuntimeIdentityID) != receipt.Fence.RuntimeIdentityID {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s.fence.runtime_identity_id is invalid", label)
+	}
+	if receipt.Fence.WorkerEpoch <= 0 || receipt.Fence.LeaseSequence <= 0 ||
+		receipt.Fence.OwnershipGeneration < 0 || receipt.Fence.WriterGeneration <= 0 ||
+		receipt.Fence.MountFencingGeneration <= 0 {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s fence generations are invalid", label)
+	}
+	fence := workspace.FinalizationFence{
+		WorkerInstanceID: receipt.Fence.WorkerInstanceID, WorkerEpoch: receipt.Fence.WorkerEpoch,
+		RuntimeInstanceID: receipt.Fence.RuntimeInstanceID, RuntimeIdentityID: receipt.Fence.RuntimeIdentityID,
+		WorkspaceID: receipt.Fence.WorkspaceID, WorkspaceMountID: receipt.Fence.WorkspaceMountID,
+		RunID: receipt.Fence.RunID, AttemptNumber: uint32(receipt.Fence.AttemptNumber),
+		RunLeaseID: receipt.Fence.RunLeaseID, LeaseSequence: receipt.Fence.LeaseSequence,
+		WorkspaceLeaseID:    receipt.Fence.WorkspaceLeaseID,
+		OwnershipGeneration: receipt.Fence.OwnershipGeneration, WriterGeneration: receipt.Fence.WriterGeneration,
+		MountFencingGeneration: receipt.Fence.MountFencingGeneration,
+		ExpiresAtUnixNano:      expiresAtUnixNano, BaseWorkspaceVersionID: receipt.Fence.BaseWorkspaceVersionID,
+	}
+	request := workspace.FinalizationRequest{OperationID: operationID.String(), Fence: fence, Target: target}
+	expected, err := workspace.FinalizationFingerprint(kind, request)
+	if err != nil || expected != receipt.RequestFingerprint {
+		return workspace.FinalizationRequest{}, api.WorkerWorkspaceFinalizationReceipt{}, fmt.Errorf("%s request fingerprint is invalid", label)
+	}
+	receipt.Fence.ExpiresAt = receipt.Fence.ExpiresAt.UTC()
+	return request, receipt, nil
+}
+
+func finalizationFenceMatchesLease(fence workspace.FinalizationFence, lease api.WorkerRunLeaseReceipt) bool {
+	return fence.WorkerInstanceID == lease.WorkerInstanceID &&
+		fence.WorkerEpoch == lease.WorkerEpoch &&
+		fence.RuntimeInstanceID == lease.RuntimeInstanceID &&
+		fence.RuntimeIdentityID == lease.RuntimeIdentityID &&
+		fence.WorkspaceID == lease.WorkspaceID &&
+		fence.WorkspaceMountID == lease.WorkspaceMountID &&
+		fence.RunID == lease.RunID &&
+		fence.AttemptNumber == uint32(lease.AttemptNumber) &&
+		fence.RunLeaseID == lease.ID &&
+		fence.LeaseSequence == lease.LeaseSequence &&
+		fence.WorkspaceLeaseID == lease.WorkspaceLeaseID &&
+		fence.OwnershipGeneration == lease.OwnershipGeneration &&
+		fence.WriterGeneration == lease.WriterGeneration &&
+		fence.MountFencingGeneration == lease.MountFencingGeneration &&
+		fence.ExpiresAtUnixNano == lease.ExpiresAt.UnixNano() &&
+		fence.BaseWorkspaceVersionID == lease.BaseWorkspaceVersionID
+}
+
+func parseTaskWorkspaceTree(label string, tree api.WorkerWorkspaceTreeIdentity) (workspace.TreeIdentity, error) {
+	if !taskWorkspaceDigestPattern.MatchString(tree.Digest) || tree.SizeBytes < 0 ||
+		tree.SizeBytes > workspace.MaxArtifactExtractedBytes || tree.EntryCount < 0 ||
+		int64(tree.EntryCount) > int64(workspace.MaxArtifactEntries) {
+		return workspace.TreeIdentity{}, fmt.Errorf("%s is invalid", label)
+	}
+	return workspace.TreeIdentity{Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int(tree.EntryCount)}, nil
 }
 
 func normalizeTaskFailure(label string, failure *api.WorkerTaskFailure) (json.RawMessage, *api.WorkerTaskFailure, error) {
@@ -156,21 +346,21 @@ func normalizeTaskFailure(label string, failure *api.WorkerTaskFailure) (json.Ra
 	return errorObject, &api.WorkerTaskFailure{Message: failure.Message, Details: details}, nil
 }
 
-func validateTaskWorkspaceArtifact(artifact api.WorkerWorkspaceArtifact) error {
+func validateTaskWorkspaceArtifact(label string, artifact api.WorkerWorkspaceArtifact) error {
 	if !taskWorkspaceDigestPattern.MatchString(artifact.Digest) {
-		return errors.New("workspace.captured.artifact.digest must be a SHA-256 digest")
+		return fmt.Errorf("%s.digest must be a SHA-256 digest", label)
 	}
 	if artifact.MediaType != workspace.ArtifactMediaType {
-		return errors.New("workspace.captured.artifact.media_type is unsupported")
+		return fmt.Errorf("%s.media_type is unsupported", label)
 	}
 	if artifact.Encoding != workspace.ArtifactEncoding {
-		return errors.New("workspace.captured.artifact.encoding is unsupported")
+		return fmt.Errorf("%s.encoding is unsupported", label)
 	}
 	if artifact.SizeBytes <= 0 || artifact.SizeBytes > workspace.MaxArtifactArchiveBytes {
-		return fmt.Errorf("workspace.captured.artifact.size_bytes must be between 1 and %d", workspace.MaxArtifactArchiveBytes)
+		return fmt.Errorf("%s.size_bytes must be between 1 and %d", label, workspace.MaxArtifactArchiveBytes)
 	}
 	if artifact.EntryCount < 0 || artifact.EntryCount > workspace.MaxArtifactEntries {
-		return fmt.Errorf("workspace.captured.artifact.entry_count must be between 0 and %d", workspace.MaxArtifactEntries)
+		return fmt.Errorf("%s.entry_count must be between 0 and %d", label, workspace.MaxArtifactEntries)
 	}
 	return nil
 }

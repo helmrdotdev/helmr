@@ -408,11 +408,55 @@ type WorkerTaskWorkspaceProof struct {
 }
 
 type WorkerTaskWorkspaceCapture struct {
-	Artifact WorkerWorkspaceArtifact `json:"artifact"`
+	Receipt  WorkerWorkspaceFinalizationReceipt `json:"receipt"`
+	Tree     WorkerWorkspaceTreeIdentity        `json:"tree"`
+	Artifact WorkerWorkspaceArtifact            `json:"artifact"`
 }
 
 type WorkerTaskWorkspaceRollback struct {
-	BaseWorkspaceVersionID string `json:"base_workspace_version_id"`
+	Receipt WorkerWorkspaceFinalizationReceipt `json:"receipt"`
+	Target  WorkerWorkspaceResetTarget         `json:"target"`
+}
+
+type WorkerWorkspaceFinalizationReceipt struct {
+	OperationID        string                           `json:"operation_id"`
+	RequestFingerprint string                           `json:"request_fingerprint"`
+	Fence              WorkerWorkspaceFinalizationFence `json:"fence"`
+}
+
+type WorkerWorkspaceFinalizationFence struct {
+	WorkerInstanceID       string    `json:"worker_instance_id"`
+	WorkerEpoch            int64     `json:"worker_epoch"`
+	RuntimeInstanceID      string    `json:"runtime_instance_id"`
+	RuntimeIdentityID      string    `json:"runtime_identity_id"`
+	WorkspaceID            string    `json:"workspace_id"`
+	WorkspaceMountID       string    `json:"workspace_mount_id"`
+	RunID                  string    `json:"run_id"`
+	AttemptNumber          int32     `json:"attempt_number"`
+	RunLeaseID             string    `json:"run_lease_id"`
+	LeaseSequence          int64     `json:"lease_sequence"`
+	WorkspaceLeaseID       string    `json:"workspace_lease_id"`
+	OwnershipGeneration    int64     `json:"ownership_generation"`
+	WriterGeneration       int64     `json:"writer_generation"`
+	MountFencingGeneration int64     `json:"mount_fencing_generation"`
+	ExpiresAt              time.Time `json:"expires_at"`
+	BaseWorkspaceVersionID string    `json:"base_workspace_version_id"`
+}
+
+type WorkerWorkspaceTreeIdentity struct {
+	Digest     string `json:"digest"`
+	SizeBytes  int64  `json:"size_bytes"`
+	EntryCount int32  `json:"entry_count"`
+}
+
+type WorkerWorkspaceResetTarget struct {
+	BaseWorkspaceVersionID string                      `json:"base_workspace_version_id"`
+	Tree                   WorkerWorkspaceTreeIdentity `json:"tree"`
+	Empty                  *WorkerEmptyWorkspace       `json:"empty,omitempty"`
+	Artifact               *WorkerWorkspaceArtifact    `json:"artifact,omitempty"`
+}
+
+type WorkerEmptyWorkspace struct {
 }
 
 type WorkerRunLeaseReceipt struct {

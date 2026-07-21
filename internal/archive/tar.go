@@ -330,6 +330,10 @@ func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats
 
 func normalizeHeader(header *tar.Header, name string) {
 	header.Name = name
+	header.Mode &= 0o777
+	if header.Typeflag == tar.TypeSymlink {
+		header.Mode = 0o777
+	}
 	header.ModTime = time.Unix(0, 0)
 	header.AccessTime = time.Time{}
 	header.ChangeTime = time.Time{}
