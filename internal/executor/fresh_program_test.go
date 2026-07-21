@@ -399,18 +399,30 @@ func readFreshProgramAdmission(
 		bodyLength != 0 {
 		return fmt.Errorf("Program header = %+v body=%d", header, bodyLength)
 	}
-	var envelope workspacev0.WorkspaceOperationEnvelope
-	if err := frameio.ReadProtoFrame(conn, &envelope); err != nil {
+	var authority workspacev0.WorkspaceRunAuthority
+	if err := frameio.ReadProtoFrame(conn, &authority); err != nil {
 		return err
 	}
-	if envelope.GetChannelToken() != "channel-1" ||
-		envelope.GetWorkspaceMountId() != lease.WorkspaceMountID ||
-		envelope.GetWorkspaceId() != lease.WorkspaceID ||
-		envelope.GetFencingGeneration() !=
-			uint64(lease.MountFencingGeneration) ||
-		envelope.GetWriteLeaseId() != lease.WorkspaceLeaseID ||
-		envelope.GetFencingToken() != "write-capability" {
-		return fmt.Errorf("Program envelope = %+v", &envelope)
+	fence := authority.GetFence()
+	if authority.GetChannelToken() != "channel-1" ||
+		authority.GetWriteCapability() != "write-capability" ||
+		fence.GetWorkerInstanceId() != lease.WorkerInstanceID ||
+		fence.GetWorkerEpoch() != lease.WorkerEpoch ||
+		fence.GetRuntimeInstanceId() != lease.RuntimeInstanceID ||
+		fence.GetRuntimeIdentityId() != lease.RuntimeIdentityID ||
+		fence.GetWorkspaceMountId() != lease.WorkspaceMountID ||
+		fence.GetWorkspaceId() != lease.WorkspaceID ||
+		fence.GetRunId() != lease.RunID ||
+		fence.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
+		fence.GetRunLeaseId() != lease.ID ||
+		fence.GetLeaseSequence() != lease.LeaseSequence ||
+		fence.GetWorkspaceLeaseId() != lease.WorkspaceLeaseID ||
+		fence.GetOwnershipGeneration() != lease.OwnershipGeneration ||
+		fence.GetWriterGeneration() != lease.WriterGeneration ||
+		fence.GetMountFencingGeneration() != lease.MountFencingGeneration ||
+		fence.GetExpiresAtUnixNano() != lease.ExpiresAt.UnixNano() ||
+		fence.GetBaseWorkspaceVersionId() != lease.BaseWorkspaceVersionID {
+		return fmt.Errorf("Program authority = %+v", &authority)
 	}
 	var request runv0.ProgramRunRequest
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
@@ -484,9 +496,16 @@ func testFreshProgramClaim(
 			RunID:                  "run-1",
 			AttemptNumber:          2,
 			LeaseSequence:          3,
+			WorkerInstanceID:       "worker-1",
+			WorkerEpoch:            7,
+			RuntimeInstanceID:      "runtime-1",
+			RuntimeIdentityID:      "runtime-identity-1",
 			WorkspaceID:            "workspace-1",
 			WorkspaceMountID:       "mount-1",
 			WorkspaceLeaseID:       "workspace-lease-1",
+			BaseWorkspaceVersionID: "version-1",
+			OwnershipGeneration:    2,
+			WriterGeneration:       3,
 			MountFencingGeneration: 4,
 			StartDeadlineAt:        time.Now().Add(time.Minute).UTC(),
 			ExpiresAt:              time.Now().Add(5 * time.Minute).UTC(),

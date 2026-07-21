@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
@@ -22,11 +23,13 @@ type CheckpointSourceReleaser interface {
 type WorkspaceMountSessionRegistry interface {
 	RegisterWorkspaceMountSession(mount api.WorkerWorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
+	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 }
 
 type WorkspaceMountSession struct {
 	Session      vm.Session
 	ChannelToken string
+	Mount        api.WorkerWorkspaceMount
 }
 
 type WorkspaceMountSessions struct {
@@ -38,6 +41,7 @@ type WorkspaceMountSessions struct {
 type workspaceMountSessionEntry struct {
 	session      vm.Session
 	channelToken string
+	mount        api.WorkerWorkspaceMount
 }
 
 func NewWorkspaceMountSessions() *WorkspaceMountSessions {
@@ -53,7 +57,7 @@ func (s *WorkspaceMountSessions) RegisterWorkspaceMountSession(mount api.WorkerW
 	if s.sessions == nil {
 		s.sessions = map[string]workspaceMountSessionEntry{}
 	}
-	s.sessions[id] = workspaceMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken)}
+	s.sessions[id] = workspaceMountSessionEntry{session: session, channelToken: strings.TrimSpace(channelToken), mount: mount}
 	s.mu.Unlock()
 	return func() {
 		s.mu.Lock()
@@ -86,7 +90,33 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 	return WorkspaceMountSession{
 		Session:      newBorrowedRunSession(entry.session, stream, endForeground),
 		ChannelToken: entry.channelToken,
+		Mount:        entry.mount,
 	}, nil
+}
+
+func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
+	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
+		return nil, errors.New("previous Workspace authority is required")
+	}
+	fence := request.GetPrevious().GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
+		return nil, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return nil, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {

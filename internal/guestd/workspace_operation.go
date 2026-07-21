@@ -36,7 +36,10 @@ type workspaceOperationRegistry struct {
 type workspaceMountEntry struct {
 	channelToken      string
 	workspaceID       string
+	workspaceMountID  string
+	baseVersionID     string
 	fencingGeneration uint64
+	runtimeInstanceID string
 	imageRoot         string
 	imageConfig       ociRuntimeConfig
 	runtimeUser       *resolvedRuntimeUser
@@ -50,6 +53,9 @@ type workspaceMountEntry struct {
 	processes         map[string]*workspaceProcess
 	active            int
 	retired           bool
+	authorityMu       sync.Mutex
+	authority         *workspacev0.WorkspaceRunAuthority
+	previousExpiry    int64
 }
 
 type preparedWorkspaceRuntime struct {
@@ -98,6 +104,7 @@ func (r *workspaceOperationRegistry) takePreparedRuntime(runtimeInstanceID strin
 
 func (r *workspaceOperationRegistry) register(workspaceMountID string, entry *workspaceMountEntry) {
 	r.mu.Lock()
+	entry.workspaceMountID = workspaceMountID
 	previous := r.entries[workspaceMountID]
 	r.entries[workspaceMountID] = entry
 	var cleanup func()
@@ -131,6 +138,28 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 	}
 	if fencingGeneration > entry.fencingGeneration {
 		entry.fencingGeneration = fencingGeneration
+	}
+	entry.active++
+	r.mu.Unlock()
+	return entry, func() { r.release(entry) }, true
+}
+
+func (r *workspaceOperationRegistry) acquireExact(workspaceMountID string, workspaceID string, token string, fencingGeneration uint64) (*workspaceMountEntry, func(), bool) {
+	r.mu.Lock()
+	entry, ok := r.entries[workspaceMountID]
+	workspaceID = strings.TrimSpace(workspaceID)
+	token = strings.TrimSpace(token)
+	if !(ok &&
+		workspaceID != "" &&
+		token != "" &&
+		fencingGeneration != 0 &&
+		entry.workspaceMountID == workspaceMountID &&
+		entry.workspaceID == workspaceID &&
+		entry.fencingGeneration == fencingGeneration &&
+		!entry.retired &&
+		subtle.ConstantTimeCompare([]byte(entry.channelToken), []byte(token)) == 1) {
+		r.mu.Unlock()
+		return nil, func() {}, false
 	}
 	entry.active++
 	r.mu.Unlock()
@@ -345,6 +374,12 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	envelope := request.GetEnvelope()
 	workspaceMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
 	workspaceID := strings.TrimSpace(envelope.GetWorkspaceId())
+	runtimeInstanceID := strings.TrimSpace(request.GetRuntimeInstanceId())
+	if runtimeInstanceID == "" {
+		return nil, phases, errors.New("workspace materialize runtime_instance_id is required")
+	}
+	entry.runtimeInstanceID = runtimeInstanceID
+	entry.workspaceMountID = workspaceMountID
 	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
 	if mountPath == "" || mountPath == "." || mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
 		return nil, phases, fmt.Errorf("workspace materialize mount_path %q is invalid", request.GetMountPath())
@@ -352,6 +387,7 @@ func restoreWorkspaceMount(conn io.Reader, request *workspacev0.MaterializeWorks
 	if strings.TrimSpace(request.GetBaseVersionId()) == "" {
 		return nil, phases, errors.New("workspace materialize base_version_id is required")
 	}
+	entry.baseVersionID = strings.TrimSpace(request.GetBaseVersionId())
 	artifact := request.GetBaseArtifact()
 	if artifact != nil {
 		if strings.TrimSpace(artifact.GetDigest()) == "" {

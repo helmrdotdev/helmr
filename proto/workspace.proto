@@ -25,6 +25,41 @@ message WorkspaceArtifact {
   uint32 entry_count = 5;
 }
 
+message WorkspaceAuthorityFence {
+  string worker_instance_id = 1;
+  int64 worker_epoch = 2;
+  string runtime_instance_id = 3;
+  string runtime_identity_id = 4;
+  string workspace_id = 5;
+  string workspace_mount_id = 6;
+  string run_id = 7;
+  uint32 attempt_number = 8;
+  string run_lease_id = 9;
+  int64 lease_sequence = 10;
+  string workspace_lease_id = 11;
+  int64 ownership_generation = 12;
+  int64 writer_generation = 13;
+  int64 mount_fencing_generation = 14;
+  int64 expires_at_unix_nano = 15;
+  string base_workspace_version_id = 16;
+}
+
+message WorkspaceRunAuthority {
+  WorkspaceAuthorityFence fence = 1;
+  string channel_token = 2;
+  string write_capability = 3;
+}
+
+message RenewWorkspaceAuthorityRequest {
+  WorkspaceRunAuthority previous = 1;
+  int64 new_expires_at_unix_nano = 2;
+}
+
+message RenewWorkspaceAuthorityResponse {
+  WorkspaceAuthorityFence fence = 1;
+  string error = 2;
+}
+
 message MaterializeWorkspaceRequest {
   WorkspaceOperationEnvelope envelope = 1;
   string mount_path = 2;

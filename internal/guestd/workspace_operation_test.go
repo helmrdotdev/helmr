@@ -79,6 +79,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 			Encoding:  workspaceImageEncoding,
 			SizeBytes: uint64(len(image)),
 		},
+		RuntimeInstanceId: "runtime-instance-1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -340,9 +341,10 @@ func TestWorkspaceImageContractIsExact(t *testing.T) {
 				t.Fatalf("prepare error = %v, want %s rejection", err, tt.want)
 			}
 			_, _, err = restoreWorkspaceMount(bytes.NewReader(nil), &workspacev0.MaterializeWorkspaceRequest{
-				Envelope:      &workspacev0.WorkspaceOperationEnvelope{},
-				MountPath:     "/workspace",
-				BaseVersionId: "version-1",
+				Envelope:          &workspacev0.WorkspaceOperationEnvelope{},
+				MountPath:         "/workspace",
+				BaseVersionId:     "version-1",
+				RuntimeInstanceId: "runtime-instance-1",
 				BaseArtifact: &workspacev0.WorkspaceArtifact{
 					Digest:     "sha256:base",
 					MediaType:  workspace.ArtifactMediaType,
@@ -399,6 +401,7 @@ func TestWorkspaceMaterializeWithoutBaseArtifactInitializesEmptyRoot(t *testing.
 			Encoding:  workspaceImageEncoding,
 			SizeBytes: uint64(len(image)),
 		},
+		RuntimeInstanceId: "runtime-instance-empty",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -452,8 +455,9 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 			ChannelToken:      "channel-token",
 			FencingGeneration: 1,
 		},
-		MountPath:     "relative",
-		BaseVersionId: "version-1",
+		MountPath:         "relative",
+		BaseVersionId:     "version-1",
+		RuntimeInstanceId: "runtime-instance-1",
 	}); err != nil {
 		t.Fatal(err)
 	}

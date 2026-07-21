@@ -450,12 +450,22 @@ func validateFreshProgramClaim(
 	if strings.TrimSpace(lease.ID) == "" ||
 		strings.TrimSpace(lease.RunID) == "" ||
 		lease.AttemptNumber <= 0 ||
+		lease.LeaseSequence <= 0 ||
+		strings.TrimSpace(lease.WorkerInstanceID) == "" ||
+		lease.WorkerEpoch <= 0 ||
+		strings.TrimSpace(lease.RuntimeInstanceID) == "" ||
+		strings.TrimSpace(lease.RuntimeIdentityID) == "" ||
 		strings.TrimSpace(lease.WorkspaceID) == "" ||
 		strings.TrimSpace(lease.WorkspaceMountID) == "" ||
 		strings.TrimSpace(lease.WorkspaceLeaseID) == "" ||
+		strings.TrimSpace(lease.BaseWorkspaceVersionID) == "" ||
+		lease.OwnershipGeneration <= 0 ||
+		lease.WriterGeneration <= 0 ||
 		lease.MountFencingGeneration <= 0 ||
 		lease.StartDeadlineAt.IsZero() ||
-		!lease.StartDeadlineAt.After(time.Now()) {
+		!lease.StartDeadlineAt.After(time.Now()) ||
+		lease.ExpiresAt.IsZero() ||
+		!lease.ExpiresAt.After(time.Now()) {
 		return nil, errors.New("fresh Program Run Lease receipt is incomplete")
 	}
 	if strings.TrimSpace(claim.Workspace.WriteCapability) == "" {
@@ -517,16 +527,30 @@ func writeFreshProgramAdmission(
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
-		&workspacev0.WorkspaceOperationEnvelope{
-			WorkspaceMountId:  lease.WorkspaceMountID,
-			WorkspaceId:       lease.WorkspaceID,
-			ChannelToken:      channelToken,
-			FencingGeneration: uint64(lease.MountFencingGeneration),
-			WriteLeaseId:      lease.WorkspaceLeaseID,
-			FencingToken:      claim.Workspace.WriteCapability,
+		&workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkerInstanceId:       lease.WorkerInstanceID,
+				WorkerEpoch:            lease.WorkerEpoch,
+				RuntimeInstanceId:      lease.RuntimeInstanceID,
+				RuntimeIdentityId:      lease.RuntimeIdentityID,
+				WorkspaceId:            lease.WorkspaceID,
+				WorkspaceMountId:       lease.WorkspaceMountID,
+				RunId:                  lease.RunID,
+				AttemptNumber:          uint32(lease.AttemptNumber),
+				RunLeaseId:             lease.ID,
+				LeaseSequence:          lease.LeaseSequence,
+				WorkspaceLeaseId:       lease.WorkspaceLeaseID,
+				OwnershipGeneration:    lease.OwnershipGeneration,
+				WriterGeneration:       lease.WriterGeneration,
+				MountFencingGeneration: lease.MountFencingGeneration,
+				ExpiresAtUnixNano:      lease.ExpiresAt.UnixNano(),
+				BaseWorkspaceVersionId: lease.BaseWorkspaceVersionID,
+			},
+			ChannelToken:    channelToken,
+			WriteCapability: claim.Workspace.WriteCapability,
 		},
 	); err != nil {
-		return fmt.Errorf("write Program Workspace envelope: %w", err)
+		return fmt.Errorf("write Program Workspace authority: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,

@@ -452,8 +452,10 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 	registry := newWorkspaceOperationRegistry()
 	registry.register("mount-1", &workspaceMountEntry{
 		workspaceID:       "workspace-1",
+		baseVersionID:     "version-1",
 		channelToken:      "channel-1",
 		fencingGeneration: 1,
+		runtimeInstanceID: "runtime-1",
 	})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -478,13 +480,27 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 	}()
 	if err := frameio.WriteProtoFrame(
 		host,
-		&workspacev0.WorkspaceOperationEnvelope{
-			WorkspaceMountId:  "mount-1",
-			WorkspaceId:       "workspace-1",
-			ChannelToken:      "channel-1",
-			FencingGeneration: 1,
-			WriteLeaseId:      "write-lease-1",
-			FencingToken:      "fence-1",
+		&workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkerInstanceId:       "worker-1",
+				WorkerEpoch:            1,
+				RuntimeInstanceId:      "runtime-1",
+				RuntimeIdentityId:      "runtime-identity-1",
+				WorkspaceId:            "workspace-1",
+				WorkspaceMountId:       "mount-1",
+				RunId:                  "run-1",
+				AttemptNumber:          2,
+				RunLeaseId:             "lease-1",
+				LeaseSequence:          1,
+				WorkspaceLeaseId:       "workspace-lease-1",
+				OwnershipGeneration:    1,
+				WriterGeneration:       1,
+				MountFencingGeneration: 1,
+				ExpiresAtUnixNano:      time.Now().Add(time.Minute).UnixNano(),
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken:    "channel-1",
+			WriteCapability: "write-capability",
 		},
 	); err != nil {
 		t.Fatal(err)
