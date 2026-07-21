@@ -263,6 +263,7 @@ type Querier interface {
 	ListWorkspaces(ctx context.Context, arg ListWorkspacesParams) ([]Workspace, error)
 	LockAbsentWorkerGroups(ctx context.Context, arg LockAbsentWorkerGroupsParams) ([]string, error)
 	LockActiveLookupHMACVersions(ctx context.Context) ([]LookupHmacVersion, error)
+	LockAttemptSecretDelivery(ctx context.Context, arg LockAttemptSecretDeliveryParams) ([]LockAttemptSecretDeliveryRow, error)
 	LockClaimedSchedule(ctx context.Context, arg LockClaimedScheduleParams) (Schedule, error)
 	LockDeploymentBuildReuseKey(ctx context.Context, reuseKey string) error
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
