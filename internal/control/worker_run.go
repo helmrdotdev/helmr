@@ -2,8 +2,6 @@ package control
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -212,22 +210,6 @@ func (s *Server) workerRelease(w http.ResponseWriter, r *http.Request) {
 		s.sessionContinuationRequestWorkflow().reconcileAccepted(r.Context(), run.OrgID, run.ProjectID, run.EnvironmentID, run.SessionID)
 	}
 	writeJSON(w, http.StatusOK, api.WorkerReleaseResponse{RunID: request.Lease.RunID, Status: string(run.Status)})
-}
-
-func terminalRequestFingerprint(scope string, payload any) (string, error) {
-	body, err := json.Marshal(struct {
-		Scope   string `json:"scope"`
-		Payload any    `json:"payload"`
-	}{Scope: scope, Payload: payload})
-	if err != nil {
-		return "", err
-	}
-	canonical, err := canonicalJSON(body)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
 }
 
 func (s *Server) verifyWorkerWorkspaceCommit(ctx context.Context, workspace *api.WorkerWorkspace) error {

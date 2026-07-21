@@ -381,6 +381,40 @@ type WorkerRunEntrypointRequest struct {
 	EntrypointDeclaredID string                `json:"entrypoint_declared_id"`
 }
 
+type WorkerCompleteTaskRequest struct {
+	Lease     WorkerRunLeaseReceipt    `json:"lease"`
+	Outcome   WorkerTaskOutcome        `json:"outcome"`
+	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
+}
+
+type WorkerTaskOutcome struct {
+	Succeeded      *WorkerTaskSucceeded `json:"succeeded,omitempty"`
+	Failed         *WorkerTaskFailure   `json:"failed,omitempty"`
+	PayloadInvalid *WorkerTaskFailure   `json:"payload_invalid,omitempty"`
+}
+
+type WorkerTaskSucceeded struct {
+	Output json.RawMessage `json:"output"`
+}
+
+type WorkerTaskFailure struct {
+	Message string          `json:"message"`
+	Details json.RawMessage `json:"details,omitempty"`
+}
+
+type WorkerTaskWorkspaceProof struct {
+	Captured   *WorkerTaskWorkspaceCapture  `json:"captured,omitempty"`
+	RolledBack *WorkerTaskWorkspaceRollback `json:"rolled_back,omitempty"`
+}
+
+type WorkerTaskWorkspaceCapture struct {
+	Artifact WorkerWorkspaceArtifact `json:"artifact"`
+}
+
+type WorkerTaskWorkspaceRollback struct {
+	BaseWorkspaceVersionID string `json:"base_workspace_version_id"`
+}
+
 type WorkerRunLeaseReceipt struct {
 	ID                         string       `json:"id"`
 	RunID                      string       `json:"run_id"`
