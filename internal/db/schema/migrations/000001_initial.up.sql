@@ -3015,6 +3015,7 @@ CREATE TABLE run_leases (
     UNIQUE (workspace_id, id),
     UNIQUE (run_id, workspace_id, id),
     UNIQUE (run_id, attempt_number, workspace_id, id),
+    UNIQUE (workspace_id, runtime_instance_id, id),
     UNIQUE (org_id, run_id, id, worker_instance_id, worker_epoch, runtime_instance_id),
     UNIQUE (org_id, project_id, environment_id, run_id, id, attempt_number),
     FOREIGN KEY (runtime_identity_id)
@@ -3069,8 +3070,16 @@ CREATE TABLE run_leases (
 
 ALTER TABLE workspace_leases
     ADD CONSTRAINT workspace_leases_owner_run_lease_fk
-    FOREIGN KEY (workspace_id, owner_run_lease_id)
-    REFERENCES run_leases(workspace_id, id)
+    FOREIGN KEY (
+        workspace_id,
+        runtime_instance_id,
+        owner_run_lease_id
+    )
+    REFERENCES run_leases(
+        workspace_id,
+        runtime_instance_id,
+        id
+    )
     ON DELETE RESTRICT;
 
 CREATE UNIQUE INDEX run_leases_run_active_uidx

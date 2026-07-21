@@ -87,6 +87,7 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
+	assertExecutionAttachmentConstraints(t, dbctx, pool)
 	if !verifyDown {
 		return
 	}
@@ -111,6 +112,28 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 	assertDeploymentDefinitionAuthority(t, dbctx, pool)
 	assertWorkspaceVersionAuthority(t, dbctx, pool)
 	assertIdempotencyClaimCollectionIndexes(t, dbctx, pool)
+	assertExecutionAttachmentConstraints(t, dbctx, pool)
+}
+
+func assertExecutionAttachmentConstraints(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
+	t.Helper()
+	constraints := map[string]string{
+		"run_leases_network_slot_id_fkey": "FOREIGN KEY (network_slot_id) REFERENCES worker_network_slots(id)",
+		"workspace_leases_owner_run_lease_fk": "FOREIGN KEY (workspace_id, runtime_instance_id, owner_run_lease_id) REFERENCES run_leases(workspace_id, runtime_instance_id, id)",
+	}
+	for name, want := range constraints {
+		var got string
+		if err := pool.QueryRow(ctx, `
+SELECT pg_get_constraintdef(oid)
+  FROM pg_constraint
+ WHERE conname = $1
+`, name).Scan(&got); err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !strings.Contains(got, want) {
+			t.Fatalf("%s = %q, want to contain %q", name, got, want)
+		}
+	}
 }
 
 func assertIdempotencyClaimCollectionIndexes(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
