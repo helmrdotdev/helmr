@@ -57,10 +57,11 @@ func init() {
 }
 
 type adapterCommandOptions struct {
-	ImageMode      bool
-	ManagedProgram bool
-	StartProof     bool
-	Pty            bool
+	ImageMode       bool
+	ManagedProgram  bool
+	CgroupNamespace bool
+	StartProof      bool
+	Pty             bool
 }
 
 func adapterCommand(ctx context.Context, runtimePath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {
@@ -74,6 +75,9 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 	if user == nil {
 		return nil, errors.New("image runtime user is required")
 	}
+	if opts.CgroupNamespace && !opts.ManagedProgram {
+		return nil, errors.New("Program cgroup namespace requires managed Program mounts")
+	}
 	initArgs := []string{
 		imageAdapterInitArg,
 		imageRoot,
@@ -81,6 +85,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 		strconv.FormatUint(uint64(user.UID), 10),
 		strconv.FormatUint(uint64(user.GID), 10),
 		strconv.FormatBool(opts.ManagedProgram),
+		strconv.FormatBool(opts.CgroupNamespace),
 		strconv.FormatBool(opts.StartProof),
 		runtimePath,
 	}
@@ -96,7 +101,7 @@ func adapterCommand(ctx context.Context, runtimePath string, args []string, laun
 }
 
 func runImageAdapterInit(args []string, env []string) error {
-	if len(args) < 8 {
+	if len(args) < 9 {
 		return errors.New("missing image adapter init arguments")
 	}
 	imageRoot := args[0]
@@ -118,15 +123,31 @@ func runImageAdapterInit(args []string, env []string) error {
 		return fmt.Errorf("invalid managed Program flag %q", args[4])
 	}
 	var startProof bool
+	var cgroupNamespace bool
 	switch args[5] {
+	case "true":
+		cgroupNamespace = true
+	case "false":
+	default:
+		return fmt.Errorf("invalid cgroup namespace flag %q", args[5])
+	}
+	if cgroupNamespace && !managedProgram {
+		return errors.New("Program cgroup namespace requires managed Program mounts")
+	}
+	switch args[6] {
 	case "true":
 		startProof = true
 	case "false":
 	default:
-		return fmt.Errorf("invalid start proof flag %q", args[5])
+		return fmt.Errorf("invalid start proof flag %q", args[6])
 	}
-	runtimePath := args[6]
-	adapterArgs := args[7:]
+	runtimePath := args[7]
+	adapterArgs := args[8:]
+	if cgroupNamespace {
+		if err := enterProgramCgroupNamespace(); err != nil {
+			return err
+		}
+	}
 	if err := setupImageAdapterNamespace(imageRoot, managedProgram); err != nil {
 		return err
 	}

@@ -16,6 +16,9 @@ import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 const MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024
+const MAX_TASK_ERROR_BYTES = 16 * 1024
+const MAX_TASK_ERROR_MESSAGE_BYTES = 1024
 
 type InputChunk = Uint8Array | string
 
@@ -314,6 +317,7 @@ async function runTask(
 ): Promise<void> {
   let payload: unknown
   if (definition.hasPayload) {
+    let failureDetails: JsonValue | undefined
     try {
       if (start.entrypoint.case !== "task" ||
           start.entrypoint.value.payload.case !== "payloadJson") {
@@ -328,49 +332,56 @@ async function runTask(
         payload,
       )
       if ("issues" in parsed && parsed.issues !== undefined) {
-        await writeTaskFailure(
-          io,
-          "task_payload_invalid",
-          "task payload failed validation",
-          false,
-          validationDetails(parsed.issues),
-        )
-        return
+        failureDetails = validationDetails(parsed.issues)
+      } else {
+        payload = parsed.value
       }
-      payload = parsed.value
     } catch (error) {
+      failureDetails = {
+        message: boundedUtf8(errorMessage(error), 2_048),
+      }
+    }
+    if (failureDetails !== undefined) {
       await writeTaskFailure(
         io,
-        "task_payload_invalid",
+        "payload_invalid",
         "task payload failed validation",
-        false,
-        JSON.stringify({
-          message: boundedText(errorMessage(error), 2_048),
-        }),
+        failureDetails,
       )
       return
     }
   }
 
+  const context = taskContext(start)
+  let normalized: Uint8Array
   try {
-    const context = taskContext(start)
     let output: unknown
     if (definition.hasPayload) {
       output = await definition.handler(payload, context)
     } else {
       output = await definition.handler(context)
     }
-    const normalized = canonicalizeJsonValue(output as JsonValue)
-    await writeRunEvent(io, {
-      case: "taskResult",
-      value: create(runProto.TaskResultSchema, {
-        exitCode: 0,
-        outputJson: new TextDecoder().decode(normalized),
-      }),
-    })
+    normalized = canonicalizeJsonValue(output as JsonValue)
+    if (normalized.byteLength > MAX_TASK_OUTPUT_BYTES) {
+      throw new Error(
+        `task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`,
+      )
+    }
   } catch (error) {
-    await writeTaskFailure(io, "task_failed", errorMessage(error), true)
+    await writeTaskFailure(io, "failed", errorMessage(error))
+    return
   }
+  await writeRunEvent(io, {
+    case: "taskOutcome",
+    value: create(runProto.TaskOutcomeSchema, {
+      outcome: {
+        case: "succeeded",
+        value: create(runProto.TaskSucceededSchema, {
+          outputJson: new TextDecoder().decode(normalized),
+        }),
+      },
+    }),
+  })
 }
 
 async function runActor(
@@ -437,23 +448,41 @@ function runCause(cause: runProto.RunCause): RunCause {
 
 async function writeTaskFailure(
   io: ProgramIO,
-  code: string,
+  kind: "failed" | "payload_invalid",
   message: string,
-  retryable: boolean,
-  detailsJson = "",
+  details?: JsonValue,
 ): Promise<void> {
+  const normalizedMessage = boundedUtf8(
+    message === "" ? "task failed" : message,
+    MAX_TASK_ERROR_MESSAGE_BYTES,
+  )
+  let detailsJson: string | undefined
+  if (details !== undefined) {
+    detailsJson = new TextDecoder().decode(canonicalizeJsonValue(details))
+    const errorBytes = canonicalizeJsonValue({
+      message: normalizedMessage,
+      details,
+    }).byteLength
+    if (errorBytes > MAX_TASK_ERROR_BYTES) detailsJson = undefined
+  }
   await writeRunEvent(io, {
-    case: "taskResult",
-    value: create(runProto.TaskResultSchema, {
-      exitCode: 1,
-      errorMessage: message,
-      error: create(runProto.TaskErrorSchema, {
-        type: "TaskError",
-        code,
-        message,
-        retryable,
-        detailsJson,
-      }),
+    case: "taskOutcome",
+    value: create(runProto.TaskOutcomeSchema, {
+      outcome: kind === "failed"
+        ? {
+            case: "failed",
+            value: create(runProto.TaskFailedSchema, {
+              message: normalizedMessage,
+              ...(detailsJson === undefined ? {} : { detailsJson }),
+            }),
+          }
+        : {
+            case: "payloadInvalid",
+            value: create(runProto.TaskPayloadInvalidSchema, {
+              message: normalizedMessage,
+              ...(detailsJson === undefined ? {} : { detailsJson }),
+            }),
+          },
     }),
   })
 }
@@ -463,15 +492,15 @@ function validationDetails(
     readonly message: string
     readonly path?: readonly (PropertyKey | { readonly key: PropertyKey })[]
   }[],
-): string {
-  return JSON.stringify({
+): JsonValue {
+  return {
     issues: issues.slice(0, 5).map((issue) => ({
-      message: boundedText(issue.message, 1_024),
+      message: boundedUtf8(issue.message, 1_024),
       ...(issue.path === undefined
         ? {}
         : {
             path: issue.path.slice(0, 16).map((part) =>
-              boundedText(
+              boundedUtf8(
                 String(
                   typeof part === "object" && part !== null && "key" in part
                     ? part.key
@@ -483,13 +512,23 @@ function validationDetails(
           }),
     })),
     truncated: issues.length > 5,
-  })
+  }
 }
 
-function boundedText(value: string, maxLength: number): string {
-  return value.length <= maxLength
-    ? value
-    : `${value.slice(0, maxLength - 1)}…`
+function boundedUtf8(value: string, maxBytes: number): string {
+  const encoder = new TextEncoder()
+  if (encoder.encode(value).byteLength <= maxBytes) return value
+  const suffix = "…"
+  const suffixBytes = encoder.encode(suffix).byteLength
+  let result = ""
+  let size = 0
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).byteLength
+    if (size + characterBytes + suffixBytes > maxBytes) break
+    result += character
+    size += characterBytes
+  }
+  return result + suffix
 }
 
 async function writeRunEvent(

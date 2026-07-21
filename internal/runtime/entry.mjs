@@ -3265,8 +3265,12 @@ __export(exports_run_pb, {
   TraceContextSchema: () => TraceContextSchema,
   TokenCreateResultSchema: () => TokenCreateResultSchema,
   TokenCreateRequestedSchema: () => TokenCreateRequestedSchema,
+  TaskSucceededSchema: () => TaskSucceededSchema,
   TaskStartSchema: () => TaskStartSchema,
   TaskResultSchema: () => TaskResultSchema,
+  TaskPayloadInvalidSchema: () => TaskPayloadInvalidSchema,
+  TaskOutcomeSchema: () => TaskOutcomeSchema,
+  TaskFailedSchema: () => TaskFailedSchema,
   TaskErrorSchema: () => TaskErrorSchema,
   TaskEntrypointSchema: () => TaskEntrypointSchema,
   StreamRecordSchema: () => StreamRecordSchema,
@@ -3281,10 +3285,13 @@ __export(exports_run_pb, {
   ResumeConsumedSchema: () => ResumeConsumedSchema,
   ResumeAttachSchema: () => ResumeAttachSchema,
   ResumeAckSchema: () => ResumeAckSchema,
+  ProgramSupervisorCommandSchema: () => ProgramSupervisorCommandSchema,
   ProgramStartSchema: () => ProgramStartSchema,
   ProgramStartReleaseSchema: () => ProgramStartReleaseSchema,
+  ProgramSecretsCompleteSchema: () => ProgramSecretsCompleteSchema,
   ProgramSecretSchema: () => ProgramSecretSchema,
   ProgramRunRequestSchema: () => ProgramRunRequestSchema,
+  ProgramQuiescedSchema: () => ProgramQuiescedSchema,
   ProgramProcessStartedSchema: () => ProgramProcessStartedSchema,
   PlacementSchema: () => PlacementSchema,
   OutputStreamAppendedSchema: () => OutputStreamAppendedSchema,
@@ -3308,7 +3315,7 @@ __export(exports_run_pb, {
   ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
   ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSK8AQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEiwKB3NlY3JldHMYBSADKAsyGy5oZWxtci5ydW4udjAuUHJvZ3JhbVNlY3JldBIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJVChVQcm9ncmFtUHJvY2Vzc1N0YXJ0ZWQSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJTChNQcm9ncmFtU3RhcnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkijwEKEkVudHJ5cG9pbnRJZGVudGl0eRITCgtkZWNsYXJlZF9pZBgBIAEoCRIsCgR0YXNrGAIgASgLMhwuaGVsbXIucnVuLnYwLlRhc2tFbnRyeXBvaW50SAASLgoFYWN0b3IYAyABKAsyHS5oZWxtci5ydW4udjAuQWN0b3JFbnRyeXBvaW50SABCBgoEa2luZCIQCg5UYXNrRW50cnlwb2ludCIRCg9BY3RvckVudHJ5cG9pbnQibwoPRW50cnlwb2ludFJlYWR5Eg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJxChFFbnRyeXBvaW50UmVsZWFzZRIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SNAoKZW50cnlwb2ludBgDIAEoCzIgLmhlbG1yLnJ1bi52MC5FbnRyeXBvaW50SWRlbnRpdHkiewoQUnVuVGFza1dvcmtzcGFjZRIMCgRwYXRoGAEgASgJEhQKDHByb2plY3RfcGF0aBgCIAEoCRIxCghhcnRpZmFjdBgDIAEoCzIfLmhlbG1yLnJ1bi52MC5Xb3Jrc3BhY2VBcnRpZmFjdBIQCgh3cml0YWJsZRgFIAEoCCJyChFXb3Jrc3BhY2VBcnRpZmFjdBIOCgZkaWdlc3QYASABKAkSEgoKbWVkaWFfdHlwZRgCIAEoCRIQCghlbmNvZGluZxgDIAEoCRISCgpzaXplX2J5dGVzGAQgASgEEhMKC2VudHJ5X2NvdW50GAUgASgNIuYCCg5SdW5UYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgJEhMKC21vZHVsZV9wYXRoGAIgASgJEgsKA2N3ZBgDIAEoCRIrCgdzZWNyZXRzGAQgAygLMhouaGVsbXIucnVuLnYwLlNlY3JldEluamVjdBIOCgZydW5faWQYBSABKAkSFAoMcGF5bG9hZF9qc29uGAYgASgJEjEKCXdvcmtzcGFjZRgHIAEoCzIeLmhlbG1yLnJ1bi52MC5SdW5UYXNrV29ya3NwYWNlEikKBXRyYWNlGAggASgLMhouaGVsbXIucnVuLnYwLlRyYWNlQ29udGV4dBIWCg5hdHRlbXB0X251bWJlchgJIAEoDRIUCgxydW5fbGVhc2VfaWQYCiABKAkSGAoQc25hcHNob3RfdmVyc2lvbhgLIAEoBBISCgpzZXNzaW9uX2lkGAwgASgJEhQKDHJldHJ5X3JlYXNvbhgNIAEoCSJGCgxUcmFjZUNvbnRleHQSEAoIdHJhY2VfaWQYASABKAkSDwoHc3Bhbl9pZBgCIAEoCRITCgt0cmFjZXBhcmVudBgDIAEoCSJdCgxTZWNyZXRJbmplY3QSDAoEbmFtZRgBIAEoCRIqCglwbGFjZW1lbnQYAiABKAsyFy5oZWxtci5ydW4udjAuUGxhY2VtZW50EhMKC3ZhbHVlX2J5dGVzGAMgASgMIpYBCglQbGFjZW1lbnQSKQoDZW52GAEgASgLMhouaGVsbXIucnVuLnYwLkVudlBsYWNlbWVudEgAEisKBGZpbGUYAiABKAsyGy5oZWxtci5ydW4udjAuRmlsZVBsYWNlbWVudEgAEikKA2RpchgDIAEoCzIaLmhlbG1yLnJ1bi52MC5EaXJQbGFjZW1lbnRIAEIGCgRraW5kIhwKDEVudlBsYWNlbWVudBIMCgRuYW1lGAEgASgJIlcKDUZpbGVQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiVgoMRGlyUGxhY2VtZW50EgwKBHBhdGgYASABKAkSEQoEbW9kZRgCIAEoCUgAiAEBEhIKBW93bmVyGAMgASgJSAGIAQFCBwoFX21vZGVCCAoGX293bmVyIpsFCghSdW5FdmVudBIWCgxzdGRvdXRfY2h1bmsYASABKAxIABIWCgxzdGRlcnJfY2h1bmsYAiABKAxIABITCglsb2dfZW50cnkYAyABKAlIABIvCgt0YXNrX3Jlc3VsdBgEIAEoCzIYLmhlbG1yLnJ1bi52MC5UYXNrUmVzdWx0SAASPAoScnVuX3dhaXRfcmVxdWVzdGVkGAUgASgLMh4uaGVsbXIucnVuLnYwLlJ1bldhaXRSZXF1ZXN0ZWRIABI5ChBtZXRhZGF0YV91cGRhdGVkGAcgASgLMh0uaGVsbXIucnVuLnYwLk1ldGFkYXRhVXBkYXRlZEgAEkQKFnRva2VuX2NyZWF0ZV9yZXF1ZXN0ZWQYCCABKAsyIi5oZWxtci5ydW4udjAuVG9rZW5DcmVhdGVSZXF1ZXN0ZWRIABJEChZvdXRwdXRfc3RyZWFtX2FwcGVuZGVkGAkgASgLMiIuaGVsbXIucnVuLnYwLk91dHB1dFN0cmVhbUFwcGVuZGVkSAASTwocYWN0aXZlX3N0cmVhbV9yZWFkX3JlcXVlc3RlZBgKIAEoCzInLmhlbG1yLnJ1bi52MC5BY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkSAASNwoPcmVzdW1lX2NvbnN1bWVkGAYgASgLMhwuaGVsbXIucnVuLnYwLlJlc3VtZUNvbnN1bWVkSAASRgoXcHJvZ3JhbV9wcm9jZXNzX3N0YXJ0ZWQYCyABKAsyIy5oZWxtci5ydW4udjAuUHJvZ3JhbVByb2Nlc3NTdGFydGVkSAASOQoQZW50cnlwb2ludF9yZWFkeRgMIAEoCzIdLmhlbG1yLnJ1bi52MC5FbnRyeXBvaW50UmVhZHlIAEIHCgVldmVudCKuAQoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQESKwoFZXJyb3IYBCABKAsyFy5oZWxtci5ydW4udjAuVGFza0Vycm9ySAKIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uQggKBl9lcnJvciJhCglUYXNrRXJyb3ISDAoEdHlwZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEQoJcmV0cnlhYmxlGAQgASgIEhQKDGRldGFpbHNfanNvbhgFIAEoCSLjAQoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIZCgxpZGxlX3RpbWVvdXQYCSABKA1IAogBAUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dEIPCg1faWRsZV90aW1lb3V0SgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIl8KFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCCJCChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJIlAKDFJlc3VtZUF0dGFjaBIVCg1jaGVja3BvaW50X2lkGAEgASgJEhMKC3J1bl93YWl0X2lkGAIgASgJEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSJkCg5SZXN1bWVEZWNpc2lvbhITCgtydW5fd2FpdF9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhEKCWRhdGFfanNvbhgDIAEoCRIcChRyZXF1aXJlX2NvbnN1bWVkX2FjaxgEIAEoCCIgCglSZXN1bWVBY2sSEwoLcnVuX3dhaXRfaWQYASABKAkiJQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkiaAoUT3V0cHV0U3RyZWFtQXBwZW5kZWQSDgoGc3RyZWFtGAEgASgJEhQKDHBheWxvYWRfanNvbhgCIAEoCRIZCgxjb250ZW50X3R5cGUYAyABKAlIAIgBAUIPCg1fY29udGVudF90eXBlIq4BCg9NZXRhZGF0YVVwZGF0ZWQSEQoJb3BlcmF0aW9uGAEgASgJEhAKA2tleRgCIAEoCUgAiAEBEhcKCnZhbHVlX2pzb24YAyABKAlIAYgBARIXCgpwYXRjaF9qc29uGAQgASgJSAKIAQESEwoGYW1vdW50GAUgASgBSAOIAQFCBgoEX2tleUINCgtfdmFsdWVfanNvbkINCgtfcGF0Y2hfanNvbkIJCgdfYW1vdW50QjpaOGdpdGh1Yi5jb20vaGVsbXJkb3RkZXYvaGVsbXIvaW50ZXJuYWwvcHJvdG8vcnVuL3YwO3J1bnYwYgZwcm90bzM");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIiiQYKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSABCBwoFZXZlbnQiswEKC1Rhc2tPdXRjb21lEjAKCXN1Y2NlZWRlZBgBIAEoCzIbLmhlbG1yLnJ1bi52MC5UYXNrU3VjY2VlZGVkSAASKgoGZmFpbGVkGAIgASgLMhguaGVsbXIucnVuLnYwLlRhc2tGYWlsZWRIABI7Cg9wYXlsb2FkX2ludmFsaWQYAyABKAsyIC5oZWxtci5ydW4udjAuVGFza1BheWxvYWRJbnZhbGlkSABCCQoHb3V0Y29tZSIkCg1UYXNrU3VjY2VlZGVkEhMKC291dHB1dF9qc29uGAEgASgJIkkKClRhc2tGYWlsZWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIlEKElRhc2tQYXlsb2FkSW52YWxpZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iTwoPUHJvZ3JhbVF1aWVzY2VkEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkirgEKClRhc2tSZXN1bHQSEQoJZXhpdF9jb2RlGAEgASgFEhoKDWVycm9yX21lc3NhZ2UYAiABKAlIAIgBARIYCgtvdXRwdXRfanNvbhgDIAEoCUgBiAEBEisKBWVycm9yGAQgASgLMhcuaGVsbXIucnVuLnYwLlRhc2tFcnJvckgCiAEBQhAKDl9lcnJvcl9tZXNzYWdlQg4KDF9vdXRwdXRfanNvbkIICgZfZXJyb3IiYQoJVGFza0Vycm9yEgwKBHR5cGUYASABKAkSDAoEY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIUCgxkZXRhaWxzX2pzb24YBSABKAki4wEKEFJ1bldhaXRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDAoEa2luZBgCIAEoCRITCgtwYXJhbXNfanNvbhgDIAEoCRIaCg1tZXRhZGF0YV9qc29uGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEgwKBHRhZ3MYBiADKAkSGQoMaWRsZV90aW1lb3V0GAkgASgNSAKIAQFCEAoOX21ldGFkYXRhX2pzb25CCgoIX3RpbWVvdXRCDwoNX2lkbGVfdGltZW91dEoECAcQCEoECAgQCSKyAQoUVG9rZW5DcmVhdGVSZXF1ZXN0ZWQSFwoKdGltZW91dF9hdBgBIAEoCUgAiAEBEh8KEnRpbWVvdXRfaW5fc2Vjb25kcxgCIAEoDUgBiAEBEgwKBHRhZ3MYBCADKAkSGgoNbWV0YWRhdGFfanNvbhgFIAEoCUgCiAEBQg0KC190aW1lb3V0X2F0QhUKE190aW1lb3V0X2luX3NlY29uZHNCEAoOX21ldGFkYXRhX2pzb24ioQIKEVRva2VuQ3JlYXRlUmVzdWx0EgoKAmlkGAEgASgJEhQKDGNhbGxiYWNrX3VybBgCIAEoCRIgChNwdWJsaWNfYWNjZXNzX3Rva2VuGAMgASgJSACIAQESFwoKdGltZW91dF9hdBgEIAEoCUgBiAEBEhMKBnN0YXR1cxgFIAEoCUgCiAEBEgwKBHRhZ3MYBiADKAkSGgoNbWV0YWRhdGFfanNvbhgHIAEoCUgDiAEBEhoKDWVycm9yX21lc3NhZ2UYCSABKAlIBIgBAUIWChRfcHVibGljX2FjY2Vzc190b2tlbkINCgtfdGltZW91dF9hdEIJCgdfc3RhdHVzQhAKDl9tZXRhZGF0YV9qc29uQhAKDl9lcnJvcl9tZXNzYWdlIsoBChlBY3RpdmVTdHJlYW1SZWFkUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEg4KBnN0cmVhbRgCIAEoCRIWCg5hZnRlcl9zZXF1ZW5jZRgDIAEoAxIiChVyZWNvcmRfY29ycmVsYXRpb25faWQYBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDQoFYmxvY2sYBiABKAhCGAoWX3JlY29yZF9jb3JyZWxhdGlvbl9pZEIKCghfdGltZW91dCKsAQoMU3RyZWFtUmVjb3JkEgoKAmlkGAEgASgJEhEKCXN0cmVhbV9pZBgCIAEoCRIQCghzZXF1ZW5jZRgDIAEoAxIRCglkYXRhX2pzb24YBCABKAkSGwoOY29ycmVsYXRpb25faWQYBSABKAlIAIgBARIUCgxjb250ZW50X3R5cGUYBiABKAkSEgoKY3JlYXRlZF9hdBgHIAEoCUIRCg9fY29ycmVsYXRpb25faWQirQEKFkFjdGl2ZVN0cmVhbVJlYWRSZXN1bHQSFgoOY29ycmVsYXRpb25faWQYASABKAkSLwoGcmVjb3JkGAIgASgLMhouaGVsbXIucnVuLnYwLlN0cmVhbVJlY29yZEgAiAEBEhEKCXRpbWVkX291dBgDIAEoCBIaCg1lcnJvcl9tZXNzYWdlGAQgASgJSAGIAQFCCQoHX3JlY29yZEIQCg5fZXJyb3JfbWVzc2FnZSJfChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgiQgoUQ2hlY2twb2ludFBhdXNlUmVhZHkSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCSJQCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkiZAoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgiIAoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJIiUKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
 var ProgramStartSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var TaskStartSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var NoPayloadSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3322,39 +3329,46 @@ var ActorStartCauseSchema = /* @__PURE__ */ messageDesc(file_run, 9);
 var ContinuationCauseSchema = /* @__PURE__ */ messageDesc(file_run, 10);
 var ProgramRunRequestSchema = /* @__PURE__ */ messageDesc(file_run, 11);
 var ProgramSecretSchema = /* @__PURE__ */ messageDesc(file_run, 12);
-var ProgramProcessStartedSchema = /* @__PURE__ */ messageDesc(file_run, 13);
-var ProgramStartReleaseSchema = /* @__PURE__ */ messageDesc(file_run, 14);
-var EntrypointIdentitySchema = /* @__PURE__ */ messageDesc(file_run, 15);
-var TaskEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 16);
-var ActorEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 17);
-var EntrypointReadySchema = /* @__PURE__ */ messageDesc(file_run, 18);
-var EntrypointReleaseSchema = /* @__PURE__ */ messageDesc(file_run, 19);
-var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 20);
-var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 21);
-var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 22);
-var TraceContextSchema = /* @__PURE__ */ messageDesc(file_run, 23);
-var SecretInjectSchema = /* @__PURE__ */ messageDesc(file_run, 24);
-var PlacementSchema = /* @__PURE__ */ messageDesc(file_run, 25);
-var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 26);
-var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_run, 27);
-var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 28);
-var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 29);
-var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 30);
-var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 31);
-var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 32);
-var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 33);
-var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 34);
-var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 35);
-var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 36);
-var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 37);
-var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 38);
-var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 39);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 40);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 41);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 42);
-var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 43);
-var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 44);
-var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 45);
+var ProgramSecretsCompleteSchema = /* @__PURE__ */ messageDesc(file_run, 13);
+var ProgramSupervisorCommandSchema = /* @__PURE__ */ messageDesc(file_run, 14);
+var ProgramProcessStartedSchema = /* @__PURE__ */ messageDesc(file_run, 15);
+var ProgramStartReleaseSchema = /* @__PURE__ */ messageDesc(file_run, 16);
+var EntrypointIdentitySchema = /* @__PURE__ */ messageDesc(file_run, 17);
+var TaskEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 18);
+var ActorEntrypointSchema = /* @__PURE__ */ messageDesc(file_run, 19);
+var EntrypointReadySchema = /* @__PURE__ */ messageDesc(file_run, 20);
+var EntrypointReleaseSchema = /* @__PURE__ */ messageDesc(file_run, 21);
+var RunTaskWorkspaceSchema = /* @__PURE__ */ messageDesc(file_run, 22);
+var WorkspaceArtifactSchema = /* @__PURE__ */ messageDesc(file_run, 23);
+var RunTaskRequestSchema = /* @__PURE__ */ messageDesc(file_run, 24);
+var TraceContextSchema = /* @__PURE__ */ messageDesc(file_run, 25);
+var SecretInjectSchema = /* @__PURE__ */ messageDesc(file_run, 26);
+var PlacementSchema = /* @__PURE__ */ messageDesc(file_run, 27);
+var EnvPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 28);
+var FilePlacementSchema = /* @__PURE__ */ messageDesc(file_run, 29);
+var DirPlacementSchema = /* @__PURE__ */ messageDesc(file_run, 30);
+var RunEventSchema = /* @__PURE__ */ messageDesc(file_run, 31);
+var TaskOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 32);
+var TaskSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 33);
+var TaskFailedSchema = /* @__PURE__ */ messageDesc(file_run, 34);
+var TaskPayloadInvalidSchema = /* @__PURE__ */ messageDesc(file_run, 35);
+var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 36);
+var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 37);
+var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 38);
+var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 39);
+var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 40);
+var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 41);
+var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 42);
+var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 43);
+var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 44);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 45);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 46);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 47);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 48);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 49);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 50);
+var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 51);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 52);
 // sdk/typescript/src/config.ts
 var configBrand = Symbol.for("helmr.sdk.v0.config");
 // sdk/typescript/src/schema/payload.ts
@@ -3606,6 +3620,9 @@ import { createWriteStream, promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 var MAX_PROGRAM_FRAME_BYTES = 256 * 1024 * 1024;
+var MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
+var MAX_TASK_ERROR_BYTES = 16 * 1024;
+var MAX_TASK_ERROR_MESSAGE_BYTES = 1024;
 
 class FrameReader {
   #iterator;
@@ -3758,6 +3775,7 @@ function validateEntrypointRelease(release, start, kind) {
 async function runTask(start, definition, io) {
   let payload;
   if (definition.hasPayload) {
+    let failureDetails;
     try {
       if (start.entrypoint.case !== "task" || start.entrypoint.value.payload.case !== "payloadJson") {
         throw new Error("task payload is missing");
@@ -3765,36 +3783,48 @@ async function runTask(start, definition, io) {
       payload = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(start.entrypoint.value.payload.value));
       const parsed = await definition.payloadSchema["~standard"].validate(payload);
       if ("issues" in parsed && parsed.issues !== undefined) {
-        await writeTaskFailure(io, "task_payload_invalid", "task payload failed validation", false, validationDetails(parsed.issues));
-        return;
+        failureDetails = validationDetails(parsed.issues);
+      } else {
+        payload = parsed.value;
       }
-      payload = parsed.value;
     } catch (error) {
-      await writeTaskFailure(io, "task_payload_invalid", "task payload failed validation", false, JSON.stringify({
-        message: boundedText(errorMessage(error), 2048)
-      }));
+      failureDetails = {
+        message: boundedUtf8(errorMessage(error), 2048)
+      };
+    }
+    if (failureDetails !== undefined) {
+      await writeTaskFailure(io, "payload_invalid", "task payload failed validation", failureDetails);
       return;
     }
   }
+  const context = taskContext(start);
+  let normalized;
   try {
-    const context = taskContext(start);
     let output;
     if (definition.hasPayload) {
       output = await definition.handler(payload, context);
     } else {
       output = await definition.handler(context);
     }
-    const normalized = canonicalizeJsonValue(output);
-    await writeRunEvent(io, {
-      case: "taskResult",
-      value: create(exports_run_pb.TaskResultSchema, {
-        exitCode: 0,
-        outputJson: new TextDecoder().decode(normalized)
-      })
-    });
+    normalized = canonicalizeJsonValue(output);
+    if (normalized.byteLength > MAX_TASK_OUTPUT_BYTES) {
+      throw new Error(`task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`);
+    }
   } catch (error) {
-    await writeTaskFailure(io, "task_failed", errorMessage(error), true);
+    await writeTaskFailure(io, "failed", errorMessage(error));
+    return;
   }
+  await writeRunEvent(io, {
+    case: "taskOutcome",
+    value: create(exports_run_pb.TaskOutcomeSchema, {
+      outcome: {
+        case: "succeeded",
+        value: create(exports_run_pb.TaskSucceededSchema, {
+          outputJson: new TextDecoder().decode(normalized)
+        })
+      }
+    })
+  });
 }
 async function runActor(_start, _definition) {
   throw new Error("Actor execution transport is not available");
@@ -3846,35 +3876,64 @@ function runCause(cause) {
       throw new Error("Program-start cause is required");
   }
 }
-async function writeTaskFailure(io, code, message, retryable, detailsJson = "") {
+async function writeTaskFailure(io, kind, message, details) {
+  const normalizedMessage = boundedUtf8(message === "" ? "task failed" : message, MAX_TASK_ERROR_MESSAGE_BYTES);
+  let detailsJson;
+  if (details !== undefined) {
+    detailsJson = new TextDecoder().decode(canonicalizeJsonValue(details));
+    const errorBytes = canonicalizeJsonValue({
+      message: normalizedMessage,
+      details
+    }).byteLength;
+    if (errorBytes > MAX_TASK_ERROR_BYTES)
+      detailsJson = undefined;
+  }
   await writeRunEvent(io, {
-    case: "taskResult",
-    value: create(exports_run_pb.TaskResultSchema, {
-      exitCode: 1,
-      errorMessage: message,
-      error: create(exports_run_pb.TaskErrorSchema, {
-        type: "TaskError",
-        code,
-        message,
-        retryable,
-        detailsJson
-      })
+    case: "taskOutcome",
+    value: create(exports_run_pb.TaskOutcomeSchema, {
+      outcome: kind === "failed" ? {
+        case: "failed",
+        value: create(exports_run_pb.TaskFailedSchema, {
+          message: normalizedMessage,
+          ...detailsJson === undefined ? {} : { detailsJson }
+        })
+      } : {
+        case: "payloadInvalid",
+        value: create(exports_run_pb.TaskPayloadInvalidSchema, {
+          message: normalizedMessage,
+          ...detailsJson === undefined ? {} : { detailsJson }
+        })
+      }
     })
   });
 }
 function validationDetails(issues) {
-  return JSON.stringify({
+  return {
     issues: issues.slice(0, 5).map((issue) => ({
-      message: boundedText(issue.message, 1024),
+      message: boundedUtf8(issue.message, 1024),
       ...issue.path === undefined ? {} : {
-        path: issue.path.slice(0, 16).map((part) => boundedText(String(typeof part === "object" && part !== null && "key" in part ? part.key : part), 256))
+        path: issue.path.slice(0, 16).map((part) => boundedUtf8(String(typeof part === "object" && part !== null && "key" in part ? part.key : part), 256))
       }
     })),
     truncated: issues.length > 5
-  });
+  };
 }
-function boundedText(value, maxLength) {
-  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
+function boundedUtf8(value, maxBytes) {
+  const encoder = new TextEncoder;
+  if (encoder.encode(value).byteLength <= maxBytes)
+    return value;
+  const suffix = "…";
+  const suffixBytes = encoder.encode(suffix).byteLength;
+  let result = "";
+  let size = 0;
+  for (const character of value) {
+    const characterBytes = encoder.encode(character).byteLength;
+    if (size + characterBytes + suffixBytes > maxBytes)
+      break;
+    result += character;
+    size += characterBytes;
+  }
+  return result + suffix;
 }
 async function writeRunEvent(io, event) {
   const body = toBinary(exports_run_pb.RunEventSchema, create(exports_run_pb.RunEventSchema, { event }));

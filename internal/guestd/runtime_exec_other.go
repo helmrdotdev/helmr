@@ -10,10 +10,11 @@ import (
 )
 
 type adapterCommandOptions struct {
-	ImageMode      bool
-	ManagedProgram bool
-	StartProof     bool
-	Pty            bool
+	ImageMode       bool
+	ManagedProgram  bool
+	CgroupNamespace bool
+	StartProof      bool
+	Pty             bool
 }
 
 func adapterCommand(ctx context.Context, bunPath string, args []string, launchCwd string, env []string, imageRoot string, user *resolvedRuntimeUser, opts adapterCommandOptions) (*exec.Cmd, error) {

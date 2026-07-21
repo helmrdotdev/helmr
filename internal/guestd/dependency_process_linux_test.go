@@ -180,12 +180,12 @@ func TestParseDependencyCgroupPopulated(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := parseDependencyCgroupPopulated([]byte(test.raw))
+			got, err := parseCgroupPopulated([]byte(test.raw))
 			if (err != nil) != test.wantErr {
-				t.Fatalf("parseDependencyCgroupPopulated() error = %v", err)
+				t.Fatalf("parseCgroupPopulated() error = %v", err)
 			}
 			if got != test.want {
-				t.Fatalf("parseDependencyCgroupPopulated() = %v, want %v", got, test.want)
+				t.Fatalf("parseCgroupPopulated() = %v, want %v", got, test.want)
 			}
 		})
 	}

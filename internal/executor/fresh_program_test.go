@@ -19,7 +19,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/wire"
 )
 
-func TestStartFreshProgramOrdersAdmissionAndEntrypointGates(t *testing.T) {
+func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	control := &testFreshProgramControl{lease: claim.Lease}
 	events := &testFreshProgramEventSink{}
@@ -51,12 +51,21 @@ func TestStartFreshProgramOrdersAdmissionAndEntrypointGates(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer program.session.Close(context.Background())
 	if program.lease != control.lease ||
 		program.entrypoint.GetDeclaredId() != "deploy" ||
 		program.entrypoint.GetTask() == nil ||
 		program.observedEventSeq != 4 {
 		t.Fatalf("fresh Program = %+v", program)
+	}
+	outcome, err := program.awaitTaskCompletion(context.Background(), events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.GetSucceeded().GetOutputJson() != `{"ok":true}` {
+		t.Fatalf("Task outcome = %+v", outcome)
+	}
+	if program.observedEventSeq != 7 {
+		t.Fatalf("observed event sequence = %d", program.observedEventSeq)
 	}
 	if err := <-guestResult; err != nil {
 		t.Fatal(err)
@@ -67,8 +76,9 @@ func TestStartFreshProgramOrdersAdmissionAndEntrypointGates(t *testing.T) {
 	if !slices.Equal(events.snapshot(), []testFreshProgramLog{
 		{stream: api.WorkerLogStreamStdout, observedSeq: 2, content: "loading"},
 		{stream: api.WorkerLogStreamStderr, observedSeq: 3, content: "notice"},
+		{stream: api.WorkerLogStreamStdout, observedSeq: 6, content: "done"},
 	}) {
-		t.Fatalf("pre-entrypoint logs = %+v", events.snapshot())
+		t.Fatalf("Run logs = %+v", events.snapshot())
 	}
 	if claim.Execution.Fresh.ProgramStart != nil ||
 		claim.Workspace.WriteCapability != "" {
@@ -179,11 +189,94 @@ func TestValidateFreshProgramClaimRejectsSecretAggregateAboveBound(t *testing.T)
 	}
 }
 
+func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
+	tests := []struct {
+		name   string
+		events []*runv0.RunEvent
+		want   string
+	}{
+		{
+			name: "missing proof",
+			events: []*runv0.RunEvent{
+				testTaskSucceededEvent(`null`),
+			},
+			want: "EOF",
+		},
+		{
+			name: "proof before outcome",
+			events: []*runv0.RunEvent{
+				testProgramQuiescedEvent(api.WorkerRunLeaseReceipt{
+					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
+				}),
+			},
+			want: "before emitting",
+		},
+		{
+			name: "mismatched proof",
+			events: []*runv0.RunEvent{
+				testTaskSucceededEvent(`null`),
+				testProgramQuiescedEvent(api.WorkerRunLeaseReceipt{
+					ID: "other", RunID: "run-1", AttemptNumber: 2,
+				}),
+			},
+			want: "does not match",
+		},
+		{
+			name: "duplicate outcome",
+			events: []*runv0.RunEvent{
+				testTaskSucceededEvent(`null`),
+				testTaskSucceededEvent(`null`),
+			},
+			want: "more than one",
+		},
+		{
+			name: "malformed output",
+			events: []*runv0.RunEvent{
+				testTaskSucceededEvent(`{`),
+			},
+			want: "not unambiguous JSON",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			guest, host := net.Pipe()
+			go func() {
+				defer guest.Close()
+				for _, event := range test.events {
+					if err := frameio.WriteProtoFrame(guest, event); err != nil {
+						return
+					}
+				}
+			}()
+			program := freshProgram{
+				session: fakeGuestSession{stream: host},
+				lease: api.WorkerRunLeaseReceipt{
+					ID: "lease-1", RunID: "run-1", AttemptNumber: 2,
+				},
+				entrypoint: &runv0.EntrypointIdentity{
+					DeclaredId: "deploy",
+					Kind: &runv0.EntrypointIdentity_Task{
+						Task: &runv0.TaskEntrypoint{},
+					},
+				},
+			}
+			_, err := program.awaitTaskCompletion(
+				context.Background(),
+				&testFreshProgramEventSink{},
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("awaitTaskCompletion() error = %v", err)
+			}
+		})
+	}
+}
+
 func serveFreshProgramProtocol(
 	conn net.Conn,
 	lease api.WorkerRunLeaseReceipt,
 	control *testFreshProgramControl,
 ) error {
+	defer conn.Close()
 	if err := readFreshProgramAdmission(conn, lease); err != nil {
 		return err
 	}
@@ -256,7 +349,39 @@ func serveFreshProgramProtocol(
 		) {
 		return errors.New("entrypoint release preceded entrypoint ACK")
 	}
-	return nil
+	if err := frameio.WriteProtoFrame(conn, testTaskSucceededEvent(`{"ok":true}`)); err != nil {
+		return err
+	}
+	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
+		Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: []byte("done")},
+	}); err != nil {
+		return err
+	}
+	return frameio.WriteProtoFrame(conn, testProgramQuiescedEvent(lease))
+}
+
+func testTaskSucceededEvent(output string) *runv0.RunEvent {
+	return &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskOutcome{
+			TaskOutcome: &runv0.TaskOutcome{
+				Outcome: &runv0.TaskOutcome_Succeeded{
+					Succeeded: &runv0.TaskSucceeded{OutputJson: output},
+				},
+			},
+		},
+	}
+}
+
+func testProgramQuiescedEvent(lease api.WorkerRunLeaseReceipt) *runv0.RunEvent {
+	return &runv0.RunEvent{
+		Event: &runv0.RunEvent_ProgramQuiesced{
+			ProgramQuiesced: &runv0.ProgramQuiesced{
+				RunId:         lease.RunID,
+				AttemptNumber: uint32(lease.AttemptNumber),
+				RunLeaseId:    lease.ID,
+			},
+		},
+	}
 }
 
 func readFreshProgramAdmission(

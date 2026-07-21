@@ -39,10 +39,12 @@ describe("runProgram", () => {
     await running
     expect(invoked).toBe(true)
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskResult")
-    if (result.case === "taskResult") {
-      expect(result.value.exitCode).toBe(0)
-      expect(result.value.outputJson).toBe('{"runId":"run-1"}')
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome") {
+      expect(result.value.outcome.case).toBe("succeeded")
+      if (result.value.outcome.case === "succeeded") {
+        expect(result.value.outcome.value.outputJson).toBe('{"runId":"run-1"}')
+      }
     }
   })
 
@@ -88,6 +90,14 @@ describe("runProgram", () => {
     await running
     expect(validated).toBe(true)
     expect(received).toBeNull()
+    const result = readEvent(output[1]!).event
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome") {
+      expect(result.value.outcome.case).toBe("succeeded")
+      if (result.value.outcome.case === "succeeded") {
+        expect(result.value.outcome.value.outputJson).toBe("null")
+      }
+    }
   })
 
   test("classifies a throwing payload schema as a bounded non-retryable validation failure", async () => {
@@ -122,14 +132,118 @@ describe("runProgram", () => {
 
     expect(invoked).toBe(false)
     const result = readEvent(output[1]!).event
-    expect(result.case).toBe("taskResult")
-    if (result.case === "taskResult") {
-      expect(result.value.exitCode).toBe(1)
-      expect(result.value.error?.code).toBe("task_payload_invalid")
-      expect(result.value.error?.retryable).toBe(false)
-      expect(result.value.error?.detailsJson.length).toBeLessThan(2_100)
-      expect(JSON.parse(result.value.error!.detailsJson).message).toEndWith("…")
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome") {
+      expect(result.value.outcome.case).toBe("payloadInvalid")
+      if (result.value.outcome.case === "payloadInvalid") {
+        expect(result.value.outcome.value.message).toBe("task payload failed validation")
+        const details = JSON.parse(result.value.outcome.value.detailsJson!)
+        expect(details.message).toEndWith("…")
+        expect(new TextEncoder().encode(details.message).byteLength).toBeLessThanOrEqual(2_048)
+      }
     }
+  })
+
+  test("does not translate a payload outcome transport failure", async () => {
+    const definition = task({
+      id: "deploy",
+      payload: {
+        "~standard": {
+          version: 1,
+          vendor: "test",
+          validate: () => ({ issues: [{ message: "invalid" }] }),
+        },
+      },
+      run: () => null,
+    })
+    const start = taskStart("payloadJson", new TextEncoder().encode("{}"))
+    const output: Uint8Array[] = []
+
+    await expect(runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+      failWriteAt: 2,
+    }))).rejects.toThrow("closed control stream")
+    expect(output).toHaveLength(1)
+  })
+
+  test("reports handler failures without granting retry authority", async () => {
+    const definition = task({
+      id: "deploy",
+      run() {
+        throw new Error("猫".repeat(1_000))
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))
+
+    const result = readEvent(output[1]!).event
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome") {
+      expect(result.value.outcome.case).toBe("failed")
+      if (result.value.outcome.case === "failed") {
+        expect(result.value.outcome.value.message).toEndWith("…")
+        expect(
+          new TextEncoder().encode(result.value.outcome.value.message).byteLength,
+        ).toBeLessThanOrEqual(1_024)
+        expect(result.value.outcome.value.detailsJson).toBeUndefined()
+      }
+    }
+  })
+
+  test("reports non-JSON and oversized handler outputs as Task failures", async () => {
+    for (const value of [undefined, "x".repeat(16 * 1024 * 1024)]) {
+      const definition = task({
+        id: "deploy",
+        run: (() => value) as () => never,
+      })
+      const start = taskStart("noPayload")
+      const output: Uint8Array[] = []
+
+      await runProgram(locatorURL, programIO({
+        input: frames(
+          frameMessage(runProto.ProgramStartSchema, start),
+          frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+        ),
+        definition,
+        output,
+      }))
+      const result = readEvent(output[1]!).event
+      expect(result.case).toBe("taskOutcome")
+      if (result.case === "taskOutcome") {
+        expect(result.value.outcome.case).toBe("failed")
+      }
+    }
+  })
+
+  test("does not translate an outcome transport failure into another outcome", async () => {
+    const definition = task({ id: "deploy", run: () => null })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+
+    await expect(runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+      failWriteAt: 2,
+    }))).rejects.toThrow("closed control stream")
+    expect(output).toHaveLength(1)
   })
 
   test("reads frames split into single-byte chunks", async () => {
@@ -237,7 +351,9 @@ function programIO(options: {
   readonly definition: unknown
   readonly output: Uint8Array[]
   readonly onWrite?: () => void
+  readonly failWriteAt?: number
 }): ProgramIO {
+  let writeCount = 0
   return {
     input: options.input,
     readLocator: async () =>
@@ -260,6 +376,10 @@ function programIO(options: {
       }),
     importModule: async () => ({ definition: options.definition }),
     write: async (value) => {
+      writeCount++
+      if (writeCount === options.failWriteAt) {
+        throw new Error("closed control stream")
+      }
       options.output.push(value)
       options.onWrite?.()
     },

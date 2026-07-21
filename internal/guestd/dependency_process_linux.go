@@ -414,7 +414,7 @@ func runDependencyCommandInCgroup(
 		)
 	}
 	if pidFD < 0 {
-		_ = killDependencyCgroup(cgroupPath)
+		_ = killCgroup(cgroupPath)
 		_ = command.Wait()
 		return dependencyCommandResult{}, false, errors.New(
 			"dependency process did not return a pidfd",
@@ -426,7 +426,7 @@ func runDependencyCommandInCgroup(
 		stdoutWriter.Close(),
 		stderrWriter.Close(),
 	); err != nil {
-		_ = killDependencyCgroup(cgroupPath)
+		_ = killCgroup(cgroupPath)
 		_ = command.Wait()
 		return dependencyCommandResult{}, false, fmt.Errorf(
 			"close dependency process parent descriptors: %w",
@@ -483,7 +483,7 @@ func runDependencyCommandInCgroup(
 			readinessErr = outcome.err
 			if readinessErr != nil && !exitObserved {
 				cancelled = true
-				if err := killDependencyCgroup(cgroupPath); err != nil {
+				if err := killCgroup(cgroupPath); err != nil {
 					return dependencyCommandResult{}, false, errors.Join(
 						fmt.Errorf("dependency process bootstrap: %w", readinessErr),
 						err,
@@ -508,16 +508,16 @@ func runDependencyCommandInCgroup(
 			}
 			cancelled = true
 			cancelChannel = nil
-			if err := killDependencyCgroup(cgroupPath); err != nil {
+			if err := killCgroup(cgroupPath); err != nil {
 				return dependencyCommandResult{}, false, err
 			}
 		}
 	}
 	waitErr := <-waited
-	if err := killDependencyCgroup(cgroupPath); err != nil {
+	if err := killCgroup(cgroupPath); err != nil {
 		return dependencyCommandResult{}, false, err
 	}
-	if err := waitDependencyCgroupEmpty(cgroupPath); err != nil {
+	if err := waitCgroupEmpty(cgroupPath); err != nil {
 		return dependencyCommandResult{}, false, err
 	}
 	outputReaders.Wait()
@@ -793,14 +793,14 @@ func configureDependencyCgroup(cgroupFD int, limits deployment.PlanLimits) error
 	return nil
 }
 
-func killDependencyCgroup(path string) error {
+func killCgroup(path string) error {
 	if err := os.WriteFile(filepath.Join(path, "cgroup.kill"), []byte("1"), 0o644); err != nil {
-		return fmt.Errorf("kill dependency cgroup: %w", err)
+		return fmt.Errorf("kill cgroup: %w", err)
 	}
 	return nil
 }
 
-func waitDependencyCgroupEmpty(path string) error {
+func waitCgroupEmpty(path string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), dependencyCleanupTimeout)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -808,9 +808,9 @@ func waitDependencyCgroupEmpty(path string) error {
 	for {
 		raw, err := os.ReadFile(filepath.Join(path, "cgroup.events"))
 		if err != nil {
-			return fmt.Errorf("read dependency cgroup events: %w", err)
+			return fmt.Errorf("read cgroup events: %w", err)
 		}
-		populated, err := parseDependencyCgroupPopulated(raw)
+		populated, err := parseCgroupPopulated(raw)
 		if err != nil {
 			return err
 		}
@@ -819,13 +819,13 @@ func waitDependencyCgroupEmpty(path string) error {
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("wait for dependency cgroup to empty: %w", ctx.Err())
+			return fmt.Errorf("wait for cgroup to empty: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-func parseDependencyCgroupPopulated(raw []byte) (bool, error) {
+func parseCgroupPopulated(raw []byte) (bool, error) {
 	found := false
 	populated := false
 	for _, line := range bytes.Split(bytes.TrimSpace(raw), []byte{'\n'}) {
@@ -834,7 +834,7 @@ func parseDependencyCgroupPopulated(raw []byte) (bool, error) {
 			continue
 		}
 		if found {
-			return false, errors.New("dependency cgroup events repeats populated")
+			return false, errors.New("cgroup events repeats populated")
 		}
 		found = true
 		switch string(fields[1]) {
@@ -844,13 +844,13 @@ func parseDependencyCgroupPopulated(raw []byte) (bool, error) {
 			populated = true
 		default:
 			return false, fmt.Errorf(
-				"dependency cgroup populated = %q",
+				"cgroup populated = %q",
 				fields[1],
 			)
 		}
 	}
 	if !found {
-		return false, errors.New("dependency cgroup events omits populated")
+		return false, errors.New("cgroup events omits populated")
 	}
 	return populated, nil
 }
@@ -858,9 +858,9 @@ func parseDependencyCgroupPopulated(raw []byte) (bool, error) {
 func cleanupDependencyCgroup(path string, cgroup *os.File, kill bool) error {
 	var cleanupErr error
 	if kill {
-		cleanupErr = errors.Join(cleanupErr, killDependencyCgroup(path))
+		cleanupErr = errors.Join(cleanupErr, killCgroup(path))
 	}
-	cleanupErr = errors.Join(cleanupErr, waitDependencyCgroupEmpty(path))
+	cleanupErr = errors.Join(cleanupErr, waitCgroupEmpty(path))
 	if cgroup != nil {
 		if err := cgroup.Close(); err != nil && !errors.Is(err, os.ErrInvalid) {
 			cleanupErr = errors.Join(cleanupErr, err)

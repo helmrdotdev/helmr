@@ -12,17 +12,17 @@ import (
 )
 
 func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
-	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, ManagedProgram: true, StartProof: true})
+	cmd, err := adapterCommand(context.Background(), "/usr/bin/node", []string{"/opt/helmr/adapter/main.js"}, "/workspace", []string{"A=B"}, "/image", &resolvedRuntimeUser{UID: 1001, GID: 1002}, adapterCommandOptions{ImageMode: true, ManagedProgram: true, CgroupNamespace: true, StartProof: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if cmd.Path != "/proc/self/exe" {
 		t.Fatalf("path = %q", cmd.Path)
 	}
-	if len(cmd.Args) < 10 || cmd.Args[1] != imageAdapterInitArg {
+	if len(cmd.Args) < 11 || cmd.Args[1] != imageAdapterInitArg {
 		t.Fatalf("args = %#v", cmd.Args)
 	}
-	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != "/usr/bin/node" {
+	if cmd.Args[2] != "/image" || cmd.Args[3] != "/workspace" || cmd.Args[4] != "1001" || cmd.Args[5] != "1002" || cmd.Args[6] != "true" || cmd.Args[7] != "true" || cmd.Args[8] != "true" || cmd.Args[9] != "/usr/bin/node" {
 		t.Fatalf("init args = %#v", cmd.Args)
 	}
 	if cmd.SysProcAttr == nil {
@@ -37,6 +37,9 @@ func TestImageAdapterCommandUsesNamespaceInit(t *testing.T) {
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if cmd.SysProcAttr.Cloneflags&want != want {
 		t.Fatalf("clone flags = %#x, want %#x", cmd.SysProcAttr.Cloneflags, want)
+	}
+	if cmd.SysProcAttr.Cloneflags&syscall.CLONE_NEWCGROUP != 0 {
+		t.Fatal("Program cgroup namespace was created before cgroup placement")
 	}
 }
 
@@ -55,11 +58,17 @@ func TestImageAdapterPtyCommandUsesSessionWithoutSetpgid(t *testing.T) {
 		t.Fatalf("managed Program flag = %q", cmd.Args[6])
 	}
 	if cmd.Args[7] != "false" {
-		t.Fatalf("start proof flag = %q", cmd.Args[7])
+		t.Fatalf("cgroup namespace flag = %q", cmd.Args[7])
+	}
+	if cmd.Args[8] != "false" {
+		t.Fatalf("start proof flag = %q", cmd.Args[8])
 	}
 	want := uintptr(syscall.CLONE_NEWNS | syscall.CLONE_NEWPID)
 	if cmd.SysProcAttr.Cloneflags&want != want {
 		t.Fatalf("clone flags = %#x, want %#x", cmd.SysProcAttr.Cloneflags, want)
+	}
+	if cmd.SysProcAttr.Cloneflags&syscall.CLONE_NEWCGROUP != 0 {
+		t.Fatalf("direct PTY received a managed Program cgroup namespace")
 	}
 }
 

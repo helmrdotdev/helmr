@@ -3,6 +3,7 @@ package guestd
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,8 +18,10 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -34,8 +37,12 @@ const (
 	maxProgramSecretPlaintextBytes = 128 << 20
 	maxProgramSecretFrameBytes     = maxProgramSecretPlaintextBytes + 64<<10
 	maxProgramControlFrameBytes    = 64 << 10
+	maxProgramOutcomeFrameBytes    = maxTaskOutputBytes + 64<<10
 	programAdmissionTimeout        = 30 * time.Second
 	programOutputDrainTimeout      = 5 * time.Second
+	maxTaskOutputBytes             = 16 << 20
+	maxTaskErrorBytes              = 16 << 10
+	maxTaskErrorMessageBytes       = 1024
 )
 
 type programProcess struct {
@@ -47,6 +54,7 @@ type programProcess struct {
 	controlWriter *os.File
 	proofReader   *os.File
 	proofWriter   *os.File
+	cgroup        programCgroup
 	waitOnce      sync.Once
 	waitDone      chan struct{}
 	waitErr       error
@@ -456,9 +464,10 @@ func newProgramProcess(
 		entry.imageRoot,
 		entry.runtimeUser,
 		adapterCommandOptions{
-			ImageMode:      true,
-			ManagedProgram: true,
-			StartProof:     true,
+			ImageMode:       true,
+			ManagedProgram:  true,
+			CgroupNamespace: true,
+			StartProof:      true,
 		},
 	)
 	if err != nil {
@@ -494,14 +503,28 @@ func newProgramProcess(
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		closeProgramFiles(controlReader, controlWriter, proofReader, proofWriter)
+		closeProgramFiles(stdout, controlReader, controlWriter, proofReader, proofWriter)
 		cleanupRuntime()
 		secretCleanup()
 		return nil, func() {}, err
 	}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		closeProgramFiles(controlReader, controlWriter, proofReader, proofWriter)
+		closeProgramFiles(stdout, stderr, controlReader, controlWriter, proofReader, proofWriter)
+		cleanupRuntime()
+		secretCleanup()
+		return nil, func() {}, err
+	}
+	cgroup, err := createProgramCgroup()
+	if err != nil {
+		closeProgramFiles(stdin, stdout, stderr, controlReader, controlWriter, proofReader, proofWriter)
+		cleanupRuntime()
+		secretCleanup()
+		return nil, func() {}, err
+	}
+	if err := cgroup.attach(cmd); err != nil {
+		_ = cgroup.close()
+		closeProgramFiles(stdin, stdout, stderr, controlReader, controlWriter, proofReader, proofWriter)
 		cleanupRuntime()
 		secretCleanup()
 		return nil, func() {}, err
@@ -521,6 +544,7 @@ func newProgramProcess(
 		controlWriter: controlWriter,
 		proofReader:   proofReader,
 		proofWriter:   proofWriter,
+		cgroup:        cgroup,
 		waitDone:      make(chan struct{}),
 	}
 	cleanup := func() {
@@ -811,7 +835,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err := relayProgram(ctx, conn, process, stream, outputErrors, &outputDone)
+	err := relayProgram(ctx, conn, request, process, stream, outputErrors, &outputDone)
 	completed = err == nil
 	return err
 }
@@ -819,6 +843,7 @@ func superviseProgram(
 func relayProgram(
 	ctx context.Context,
 	conn programConnection,
+	request *runv0.ProgramRunRequest,
 	process *programProcess,
 	stream *programEventStream,
 	outputErrors <-chan error,
@@ -826,15 +851,25 @@ func relayProgram(
 ) error {
 	events := make(chan *runv0.RunEvent)
 	controlErrors := make(chan error, 1)
+	readerDone := make(chan struct{})
+	defer close(readerDone)
 	go func() {
 		defer close(events)
 		for {
 			var event runv0.RunEvent
-			if err := frameio.ReadProtoFrame(process.control, &event); err != nil {
+			if err := frameio.ReadProtoFrameBounded(
+				process.control,
+				maxProgramOutcomeFrameBytes,
+				&event,
+			); err != nil {
 				controlErrors <- err
 				return
 			}
-			events <- &event
+			select {
+			case events <- &event:
+			case <-readerDone:
+				return
+			}
 		}
 	}()
 	connectionErrors := make(chan error, 1)
@@ -852,6 +887,8 @@ func relayProgram(
 	var processErr error
 	processExited := false
 	controlClosed := false
+	outcomeSeen := false
+	quiesced := false
 	for !processExited || !controlClosed {
 		select {
 		case event, ok := <-events:
@@ -864,6 +901,20 @@ func relayProgram(
 				}
 				continue
 			}
+			outcome := event.GetTaskOutcome()
+			if outcome == nil {
+				if outcomeSeen {
+					return errors.New("Program emitted a control event after Task outcome")
+				}
+				return errors.New("Program emitted an unsupported post-entrypoint event")
+			}
+			if outcomeSeen {
+				return errors.New("Program emitted more than one Task outcome")
+			}
+			if err := validateTaskOutcome(outcome); err != nil {
+				return err
+			}
+			outcomeSeen = true
 			if err := stream.write(event); err != nil {
 				return err
 			}
@@ -879,6 +930,18 @@ func relayProgram(
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		if processExited && !quiesced {
+			if err := process.quiesce(); err != nil {
+				return err
+			}
+			quiesced = true
+		}
+	}
+	if !outcomeSeen {
+		return errors.New("Program exited without a Task outcome")
+	}
+	if !quiesced {
+		return errors.New("Program process tree did not quiesce")
 	}
 	if err := conn.SetWriteDeadline(
 		time.Now().Add(programOutputDrainTimeout),
@@ -908,6 +971,90 @@ func relayProgram(
 	}
 	if processErr != nil {
 		return fmt.Errorf("Program process exited: %w", processErr)
+	}
+	return stream.write(&runv0.RunEvent{
+		Event: &runv0.RunEvent_ProgramQuiesced{
+			ProgramQuiesced: &runv0.ProgramQuiesced{
+				RunId:         request.GetRunId(),
+				AttemptNumber: request.GetAttemptNumber(),
+				RunLeaseId:    request.GetRunLeaseId(),
+			},
+		},
+	})
+}
+
+func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
+	if outcome == nil {
+		return errors.New("Task outcome is required")
+	}
+	switch value := outcome.GetOutcome().(type) {
+	case *runv0.TaskOutcome_Succeeded:
+		if value.Succeeded == nil {
+			return errors.New("Task succeeded outcome is empty")
+		}
+		raw := []byte(value.Succeeded.GetOutputJson())
+		if len(raw) == 0 || len(raw) > maxTaskOutputBytes || !utf8.Valid(raw) {
+			return errors.New("Task succeeded output is not bounded UTF-8 JSON")
+		}
+		if _, err := jsoncanon.Transform(raw); err != nil {
+			return errors.New("Task succeeded output is not unambiguous JSON")
+		}
+	case *runv0.TaskOutcome_Failed:
+		if value.Failed == nil {
+			return errors.New("Task failed outcome is empty")
+		}
+		if err := validateTaskFailure(
+			value.Failed.GetMessage(),
+			value.Failed.DetailsJson,
+		); err != nil {
+			return fmt.Errorf("invalid Task failure: %w", err)
+		}
+	case *runv0.TaskOutcome_PayloadInvalid:
+		if value.PayloadInvalid == nil {
+			return errors.New("Task payload-invalid outcome is empty")
+		}
+		if err := validateTaskFailure(
+			value.PayloadInvalid.GetMessage(),
+			value.PayloadInvalid.DetailsJson,
+		); err != nil {
+			return fmt.Errorf("invalid Task payload failure: %w", err)
+		}
+	default:
+		return errors.New("Task outcome variant is required")
+	}
+	return nil
+}
+
+func validateTaskFailure(message string, details *string) error {
+	if message == "" || !utf8.ValidString(message) || len(message) > maxTaskErrorMessageBytes {
+		return errors.New("message is not bounded UTF-8")
+	}
+	value := map[string]any{"message": message}
+	if details != nil {
+		raw := []byte(*details)
+		if len(raw) == 0 || !utf8.Valid(raw) {
+			return errors.New("details_json is not valid UTF-8 JSON")
+		}
+		canonical, err := jsoncanon.Transform(raw)
+		if err != nil {
+			return errors.New("details_json is not unambiguous JSON")
+		}
+		var parsed any
+		if err := json.Unmarshal(canonical, &parsed); err != nil {
+			return errors.New("details_json is not valid JSON")
+		}
+		value["details"] = parsed
+	}
+	normalizedJSON, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal normalized error: %w", err)
+	}
+	normalized, err := jsoncanon.Transform(normalizedJSON)
+	if err != nil {
+		return fmt.Errorf("canonicalize normalized error: %w", err)
+	}
+	if len(normalized) > maxTaskErrorBytes {
+		return errors.New("normalized error exceeds its bound")
 	}
 	return nil
 }
@@ -989,7 +1136,11 @@ func readProgramReady(
 ) error {
 	result := make(chan error, 1)
 	go func() {
-		result <- frameio.ReadProtoFrame(reader, event)
+		result <- frameio.ReadProtoFrameBounded(
+			reader,
+			maxProgramControlFrameBytes,
+			event,
+		)
 	}()
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
@@ -1005,9 +1156,25 @@ func readProgramReady(
 
 func (process *programProcess) terminate() {
 	_ = process.stdin.Close()
+	if process.cgroup != nil {
+		_ = process.cgroup.kill()
+	}
 	if process.cmd.Process != nil && !process.exited.Load() {
 		_ = signalAdapterProcessGroup(process.cmd.Process.Pid, syscall.SIGKILL)
 	}
+}
+
+func (process *programProcess) quiesce() error {
+	if process.cgroup == nil {
+		return errors.New("Program cgroup is required")
+	}
+	if err := process.cgroup.kill(); err != nil {
+		return fmt.Errorf("kill Program cgroup: %w", err)
+	}
+	if err := process.cgroup.waitEmpty(); err != nil {
+		return fmt.Errorf("wait for Program cgroup: %w", err)
+	}
+	return nil
 }
 
 func (process *programProcess) close() {
@@ -1023,6 +1190,11 @@ func (process *programProcess) close() {
 		process.proofReader,
 		process.proofWriter,
 	)
+	if process.cgroup != nil {
+		_ = process.cgroup.waitEmpty()
+		_ = process.cgroup.close()
+		process.cgroup = nil
+	}
 }
 
 func (process *programProcess) wait() error {

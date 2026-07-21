@@ -50,7 +50,15 @@ func WriteProtoFrame(w io.Writer, message proto.Message) error {
 }
 
 func ReadProtoFrame(r io.Reader, message proto.Message) error {
-	body, err := ReadMessageFrame(r)
+	return ReadProtoFrameBounded(r, MaxFrameBytes, message)
+}
+
+func ReadProtoFrameBounded(
+	r io.Reader,
+	maxBytes uint32,
+	message proto.Message,
+) error {
+	body, err := ReadMessageFrameBounded(r, maxBytes)
 	if err != nil {
 		return err
 	}

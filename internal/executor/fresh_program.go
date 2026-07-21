@@ -2,13 +2,16 @@ package executor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
@@ -18,6 +21,11 @@ import (
 const (
 	maxFreshProgramSecrets     = 64
 	maxFreshProgramSecretBytes = 128 << 20
+	maxFreshTaskOutputBytes    = 16 << 20
+	maxFreshTaskErrorBytes     = 16 << 10
+	maxFreshTaskMessageBytes   = 1024
+	maxFreshProofFrameBytes    = 64 << 10
+	maxFreshOutcomeFrameBytes  = maxFreshTaskOutputBytes + 64<<10
 )
 
 type FreshProgramControl interface {
@@ -46,6 +54,157 @@ type freshProgram struct {
 	lease            api.WorkerRunLeaseReceipt
 	entrypoint       *runv0.EntrypointIdentity
 	observedEventSeq uint64
+}
+
+func (program *freshProgram) awaitTaskCompletion(
+	ctx context.Context,
+	events freshProgramEventSink,
+) (*runv0.TaskOutcome, error) {
+	if program == nil || program.session == nil {
+		return nil, errors.New("fresh Program session is required")
+	}
+	defer program.session.Close(context.Background())
+	if events == nil {
+		return nil, errors.New("fresh Program event sink is required")
+	}
+	if program.entrypoint == nil || program.entrypoint.GetTask() == nil {
+		return nil, errors.New("fresh Program entrypoint is not a Task")
+	}
+	var outcome *runv0.TaskOutcome
+	for {
+		var event runv0.RunEvent
+		err := readProtoFrameBoundedContext(
+			ctx,
+			program.session,
+			maxFreshOutcomeFrameBytes,
+			&event,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("read Task completion event: %w", err)
+		}
+		program.observedEventSeq++
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			if err := events.AppendRunLog(
+				ctx,
+				program.lease,
+				api.WorkerLogStreamStdout,
+				program.observedEventSeq,
+				value.StdoutChunk,
+			); err != nil {
+				return nil, fmt.Errorf("append Task stdout: %w", err)
+			}
+		case *runv0.RunEvent_StderrChunk:
+			if err := events.AppendRunLog(
+				ctx,
+				program.lease,
+				api.WorkerLogStreamStderr,
+				program.observedEventSeq,
+				value.StderrChunk,
+			); err != nil {
+				return nil, fmt.Errorf("append Task stderr: %w", err)
+			}
+		case *runv0.RunEvent_TaskOutcome:
+			if outcome != nil {
+				return nil, errors.New("Program emitted more than one Task outcome")
+			}
+			if err := validateFreshTaskOutcome(value.TaskOutcome); err != nil {
+				return nil, err
+			}
+			outcome = value.TaskOutcome
+		case *runv0.RunEvent_ProgramQuiesced:
+			if outcome == nil {
+				return nil, errors.New("Program quiesced before emitting a Task outcome")
+			}
+			proof := value.ProgramQuiesced
+			if proof == nil ||
+				proof.GetRunId() != program.lease.RunID ||
+				proof.GetAttemptNumber() != uint32(program.lease.AttemptNumber) ||
+				proof.GetRunLeaseId() != program.lease.ID {
+				return nil, errors.New("Program quiescence proof does not match Run Lease")
+			}
+			return outcome, nil
+		default:
+			return nil, errors.New("Program emitted an unsupported Task completion event")
+		}
+	}
+}
+
+func validateFreshTaskOutcome(outcome *runv0.TaskOutcome) error {
+	if outcome == nil {
+		return errors.New("Task outcome is required")
+	}
+	switch value := outcome.GetOutcome().(type) {
+	case *runv0.TaskOutcome_Succeeded:
+		if value.Succeeded == nil {
+			return errors.New("Task succeeded outcome is empty")
+		}
+		raw := []byte(value.Succeeded.GetOutputJson())
+		if len(raw) == 0 || len(raw) > maxFreshTaskOutputBytes || !utf8.Valid(raw) {
+			return errors.New("Task succeeded output is not bounded UTF-8 JSON")
+		}
+		if _, err := jsoncanon.Transform(raw); err != nil {
+			return errors.New("Task succeeded output is not unambiguous JSON")
+		}
+	case *runv0.TaskOutcome_Failed:
+		if value.Failed == nil {
+			return errors.New("Task failed outcome is empty")
+		}
+		if err := validateFreshTaskFailure(
+			value.Failed.GetMessage(),
+			value.Failed.DetailsJson,
+		); err != nil {
+			return fmt.Errorf("invalid Task failure: %w", err)
+		}
+	case *runv0.TaskOutcome_PayloadInvalid:
+		if value.PayloadInvalid == nil {
+			return errors.New("Task payload-invalid outcome is empty")
+		}
+		if err := validateFreshTaskFailure(
+			value.PayloadInvalid.GetMessage(),
+			value.PayloadInvalid.DetailsJson,
+		); err != nil {
+			return fmt.Errorf("invalid Task payload failure: %w", err)
+		}
+	default:
+		return errors.New("Task outcome variant is required")
+	}
+	return nil
+}
+
+func validateFreshTaskFailure(message string, details *string) error {
+	if message == "" || !utf8.ValidString(message) ||
+		len(message) > maxFreshTaskMessageBytes {
+		return errors.New("message is not bounded UTF-8")
+	}
+	value := map[string]any{"message": message}
+	if details != nil {
+		raw := []byte(*details)
+		if len(raw) == 0 || !utf8.Valid(raw) {
+			return errors.New("details_json is not valid UTF-8 JSON")
+		}
+		canonical, err := jsoncanon.Transform(raw)
+		if err != nil {
+			return errors.New("details_json is not unambiguous JSON")
+		}
+		var parsed any
+		if err := json.Unmarshal(canonical, &parsed); err != nil {
+			return errors.New("details_json is not valid JSON")
+		}
+		value["details"] = parsed
+	}
+	normalizedJSON, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal normalized Task error: %w", err)
+	}
+	normalized, err := jsoncanon.Transform(normalizedJSON)
+	if err != nil {
+		return fmt.Errorf("canonicalize normalized Task error: %w", err)
+	}
+	if len(normalized) > maxFreshTaskErrorBytes {
+		return errors.New("normalized error exceeds its bound")
+	}
+	return nil
 }
 
 func (r GuestRunner) startFreshProgram(
@@ -109,7 +268,12 @@ func (r GuestRunner) startFreshProgram(
 		return freshProgram{}, err
 	}
 	var event runv0.RunEvent
-	if err := readProtoFrameContext(admissionCtx, opened.Session, &event); err != nil {
+	if err := readProtoFrameBoundedContext(
+		admissionCtx,
+		opened.Session,
+		maxFreshProofFrameBytes,
+		&event,
+	); err != nil {
 		return freshProgram{}, fmt.Errorf(
 			"read Program process-started proof: %w",
 			err,
@@ -239,7 +403,12 @@ func readFreshEntrypointReady(
 ) (*runv0.EntrypointReady, error) {
 	for {
 		var event runv0.RunEvent
-		if err := readProtoFrameContext(ctx, session, &event); err != nil {
+		if err := readProtoFrameBoundedContext(
+			ctx,
+			session,
+			maxFreshProofFrameBytes,
+			&event,
+		); err != nil {
 			return nil, fmt.Errorf("read entrypoint-ready event: %w", err)
 		}
 		*observedEventSeq = *observedEventSeq + 1

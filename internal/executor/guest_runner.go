@@ -609,6 +609,29 @@ func readProtoFrameContext(ctx context.Context, session vm.Session, message prot
 	return readProtoFrameFromReaderContext(ctx, session, session.Stream(), message)
 }
 
+func readProtoFrameBoundedContext(
+	ctx context.Context,
+	session vm.Session,
+	maxBytes uint32,
+	message proto.Message,
+) error {
+	result := make(chan error, 1)
+	go func() {
+		result <- frameio.ReadProtoFrameBounded(
+			session.Stream(),
+			maxBytes,
+			message,
+		)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		_ = session.Close(context.Background())
+		return ctx.Err()
+	}
+}
+
 func readProtoFrameFromReaderContext(ctx context.Context, session vm.Session, reader io.Reader, message proto.Message) error {
 	result := make(chan error, 1)
 	go func() {

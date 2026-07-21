@@ -69,10 +69,13 @@ func TestProgramRuntimeHelper(t *testing.T) {
 		os.Exit(8)
 	}
 	if err := frameio.WriteProtoFrame(control, &runv0.RunEvent{
-		Event: &runv0.RunEvent_TaskResult{
-			TaskResult: &runv0.TaskResult{
-				ExitCode:   0,
-				OutputJson: stringPointer(`{"ok":true}`),
+		Event: &runv0.RunEvent_TaskOutcome{
+			TaskOutcome: &runv0.TaskOutcome{
+				Outcome: &runv0.TaskOutcome_Succeeded{
+					Succeeded: &runv0.TaskSucceeded{
+						OutputJson: `{"ok":true}`,
+					},
+				},
 			},
 		},
 	}); err != nil {
@@ -132,11 +135,23 @@ func TestSuperviseProgramOrdersFreshEntrypointGates(t *testing.T) {
 	if err := frameio.ReadProtoFrame(host, &event); err != nil {
 		t.Fatal(err)
 	}
-	taskResult := event.GetTaskResult()
-	if taskResult == nil ||
-		taskResult.GetExitCode() != 0 ||
-		taskResult.GetOutputJson() != `{"ok":true}` {
-		t.Fatalf("Task result = %#v", event.GetEvent())
+	outcome := event.GetTaskOutcome().GetSucceeded()
+	if outcome == nil || outcome.GetOutputJson() != `{"ok":true}` {
+		t.Fatalf("Task outcome = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	quiesced := event.GetProgramQuiesced()
+	if quiesced == nil ||
+		quiesced.GetRunId() != request.GetRunId() ||
+		quiesced.GetAttemptNumber() != request.GetAttemptNumber() ||
+		quiesced.GetRunLeaseId() != request.GetRunLeaseId() {
+		t.Fatalf("Program quiescence proof = %#v", event.GetEvent())
+	}
+	cgroup := process.cgroup.(*testProgramCgroup)
+	if cgroup.killCount() == 0 || cgroup.waitCount() == 0 {
+		t.Fatalf("quiescence proof preceded cgroup cleanup: %+v", cgroup)
 	}
 	select {
 	case err := <-result:
@@ -253,8 +268,10 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		cmd:      cmd,
 		stdin:    nopWriteCloser{Writer: io.Discard},
 		control:  io.NopCloser(&control),
+		cgroup:   &testProgramCgroup{},
 		waitDone: make(chan struct{}),
 	}
+	defer process.close()
 	guest, host := net.Pipe()
 	defer guest.Close()
 	defer host.Close()
@@ -262,6 +279,7 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 	err := relayProgram(
 		context.Background(),
 		guest,
+		testProgramRunRequest(testProgramStartFrame(t)),
 		process,
 		&programEventStream{conn: guest},
 		make(chan error, 2),
@@ -269,6 +287,131 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 	)
 	if err == nil || !strings.Contains(err.Error(), "control event") {
 		t.Fatalf("relayProgram() error = %v", err)
+	}
+}
+
+func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
+	cmd := exec.Command("true")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	controlReader, controlWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteProtoFrame(controlWriter, &runv0.RunEvent{
+		Event: &runv0.RunEvent_TaskOutcome{
+			TaskOutcome: &runv0.TaskOutcome{
+				Outcome: &runv0.TaskOutcome_Succeeded{
+					Succeeded: &runv0.TaskSucceeded{OutputJson: "null"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cgroup := &testProgramCgroup{onKill: controlWriter.Close}
+	process := &programProcess{
+		cmd:      cmd,
+		stdin:    nopWriteCloser{Writer: io.Discard},
+		control:  controlReader,
+		cgroup:   cgroup,
+		waitDone: make(chan struct{}),
+	}
+	defer process.close()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	request := testProgramRunRequest(testProgramStartFrame(t))
+	result := make(chan error, 1)
+	go func() {
+		var outputDone sync.WaitGroup
+		result <- relayProgram(
+			context.Background(),
+			guest,
+			request,
+			process,
+			&programEventStream{conn: guest},
+			make(chan error, 2),
+			&outputDone,
+		)
+	}()
+	var event runv0.RunEvent
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetTaskOutcome() == nil {
+		t.Fatalf("first completion event = %#v", event.GetEvent())
+	}
+	if err := frameio.ReadProtoFrame(host, &event); err != nil {
+		t.Fatal(err)
+	}
+	if event.GetProgramQuiesced() == nil {
+		t.Fatalf("final completion event = %#v", event.GetEvent())
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+	if cgroup.killCount() == 0 || cgroup.waitCount() == 0 {
+		t.Fatal("Program proof preceded cgroup quiescence")
+	}
+}
+
+func TestValidateTaskOutcomeRejectsMalformedClosedShapes(t *testing.T) {
+	oversizedMessage := strings.Repeat("x", maxTaskErrorMessageBytes+1)
+	invalidDetails := "{"
+	tests := []struct {
+		name    string
+		outcome *runv0.TaskOutcome
+	}{
+		{name: "missing", outcome: &runv0.TaskOutcome{}},
+		{
+			name: "missing output",
+			outcome: &runv0.TaskOutcome{Outcome: &runv0.TaskOutcome_Succeeded{
+				Succeeded: &runv0.TaskSucceeded{},
+			}},
+		},
+		{
+			name: "invalid output",
+			outcome: &runv0.TaskOutcome{Outcome: &runv0.TaskOutcome_Succeeded{
+				Succeeded: &runv0.TaskSucceeded{OutputJson: "{"},
+			}},
+		},
+		{
+			name: "ambiguous output",
+			outcome: &runv0.TaskOutcome{Outcome: &runv0.TaskOutcome_Succeeded{
+				Succeeded: &runv0.TaskSucceeded{OutputJson: `{"a":1,"a":2}`},
+			}},
+		},
+		{
+			name: "oversized message",
+			outcome: &runv0.TaskOutcome{Outcome: &runv0.TaskOutcome_Failed{
+				Failed: &runv0.TaskFailed{Message: oversizedMessage},
+			}},
+		},
+		{
+			name: "invalid details",
+			outcome: &runv0.TaskOutcome{Outcome: &runv0.TaskOutcome_PayloadInvalid{
+				PayloadInvalid: &runv0.TaskPayloadInvalid{
+					Message:     "invalid",
+					DetailsJson: &invalidDetails,
+				},
+			}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateTaskOutcome(test.outcome); err == nil {
+				t.Fatal("validateTaskOutcome() error = nil")
+			}
+		})
+	}
+	if err := validateTaskOutcome(&runv0.TaskOutcome{
+		Outcome: &runv0.TaskOutcome_Succeeded{
+			Succeeded: &runv0.TaskSucceeded{OutputJson: "null"},
+		},
+	}); err != nil {
+		t.Fatalf("valid JSON null rejected: %v", err)
 	}
 }
 
@@ -703,8 +846,48 @@ func testProgramProcess(t *testing.T, frame []byte) *programProcess {
 		stderr:        stderr,
 		control:       controlReader,
 		controlWriter: controlWriter,
+		cgroup:        &testProgramCgroup{},
 		waitDone:      make(chan struct{}),
 	}
+}
+
+type testProgramCgroup struct {
+	mu     sync.Mutex
+	kills  int
+	waits  int
+	onKill func() error
+}
+
+func (*testProgramCgroup) attach(*exec.Cmd) error { return nil }
+func (c *testProgramCgroup) kill() error {
+	c.mu.Lock()
+	c.kills++
+	onKill := c.onKill
+	c.onKill = nil
+	c.mu.Unlock()
+	if onKill != nil {
+		return onKill()
+	}
+	return nil
+}
+func (c *testProgramCgroup) waitEmpty() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.waits++
+	return nil
+}
+func (*testProgramCgroup) close() error { return nil }
+
+func (c *testProgramCgroup) killCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.kills
+}
+
+func (c *testProgramCgroup) waitCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.waits
 }
 
 type nopWriteCloser struct {
@@ -748,8 +931,4 @@ func frameHeader(size uint32) []byte {
 	frame := make([]byte, 4)
 	binary.BigEndian.PutUint32(frame, size)
 	return frame
-}
-
-func stringPointer(value string) *string {
-	return &value
 }
