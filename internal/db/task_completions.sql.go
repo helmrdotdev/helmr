@@ -78,10 +78,14 @@ UPDATE run_leases
    AND workspace_id = $8
    AND attempt_number = $9
    AND lease_sequence = $10
-   AND state = 'running'
+   AND state = 'finalizing'
+   AND finalization_operation_id IS NOT NULL
+   AND finalization_kind IS NOT NULL
+   AND finalization_started_at IS NOT NULL
+   AND finalization_request_fingerprint IS NOT NULL
    AND terminal_request_fingerprint IS NULL
    AND expires_at > $2
-RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+RETURNING id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, previous_expires_at, finalization_operation_id, finalization_kind, finalization_started_at, finalization_request_fingerprint, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
 `
 
 type CompleteTaskRunLeaseParams struct {
@@ -146,6 +150,10 @@ func (q *Queries) CompleteTaskRunLease(ctx context.Context, arg CompleteTaskRunL
 		&i.RenewedAt,
 		&i.ExpiresAt,
 		&i.PreviousExpiresAt,
+		&i.FinalizationOperationID,
+		&i.FinalizationKind,
+		&i.FinalizationStartedAt,
+		&i.FinalizationRequestFingerprint,
 		&i.CheckpointedAt,
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
@@ -223,11 +231,8 @@ UPDATE runs
        state_version = state_version + 1,
        current_attempt_number = $1,
        current_run_lease_id = NULL,
-       active_elapsed_ms = active_elapsed_ms
-           + floor(extract(epoch FROM ($2::timestamptz - active_started_at)) * 1000)::bigint,
-       active_started_at = NULL,
-       retry_at = $3,
-       updated_at = $2
+       retry_at = $2,
+       updated_at = $3
  WHERE id = $4
    AND workspace_id = $5
    AND entrypoint_kind = 'task'
@@ -236,17 +241,14 @@ UPDATE runs
    AND status = 'running'
    AND current_attempt_number = $6
    AND current_run_lease_id = $7
-   AND active_started_at IS NOT NULL
-   AND $2::timestamptz >= active_started_at
-   AND $2::timestamptz < active_started_at
-       + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+   AND active_started_at IS NULL
 RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
 type DelayTaskRunRetryParams struct {
 	NextAttemptNumber     int32              `json:"next_attempt_number"`
-	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 	RetryAt               pgtype.Timestamptz `json:"retry_at"`
+	CompletedAt           pgtype.Timestamptz `json:"completed_at"`
 	ID                    pgtype.UUID        `json:"id"`
 	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
 	PreviousAttemptNumber int32              `json:"previous_attempt_number"`
@@ -256,8 +258,8 @@ type DelayTaskRunRetryParams struct {
 func (q *Queries) DelayTaskRunRetry(ctx context.Context, arg DelayTaskRunRetryParams) (Run, error) {
 	row := q.db.QueryRow(ctx, delayTaskRunRetry,
 		arg.NextAttemptNumber,
-		arg.CompletedAt,
 		arg.RetryAt,
+		arg.CompletedAt,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.PreviousAttemptNumber,
@@ -329,9 +331,6 @@ UPDATE runs
        error = $4,
        state_version = state_version + 1,
        current_run_lease_id = NULL,
-       active_elapsed_ms = active_elapsed_ms
-           + floor(extract(epoch FROM ($5::timestamptz - active_started_at)) * 1000)::bigint,
-       active_started_at = NULL,
        retry_at = NULL,
        terminal_at = $5,
        updated_at = $5
@@ -343,10 +342,7 @@ UPDATE runs
    AND status = 'running'
    AND current_attempt_number = $8
    AND current_run_lease_id = $9
-   AND active_started_at IS NOT NULL
-   AND $5::timestamptz >= active_started_at
-   AND $5::timestamptz < active_started_at
-       + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+   AND active_started_at IS NULL
 RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
 `
 
@@ -627,7 +623,7 @@ WITH candidates AS (
               FROM run_leases
              WHERE run_leases.run_id = runs.id
                AND run_leases.attempt_number = runs.current_attempt_number
-               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runs.retry_at, runs.id
      LIMIT $1
@@ -890,36 +886,6 @@ func (q *Queries) ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTask
 		&i.DeletedAt,
 	)
 	return i, err
-}
-
-const taskCompletionScopeIsClear = `-- name: TaskCompletionScopeIsClear :one
-SELECT NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = $1
-              AND run_waits.attempt_number = $2
-              AND run_waits.workspace_id = $3
-              AND run_waits.suspension_state NOT IN ('released', 'cancelled', 'failed')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = $3
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS clear
-`
-
-type TaskCompletionScopeIsClearParams struct {
-	RunID         pgtype.UUID `json:"run_id"`
-	AttemptNumber int32       `json:"attempt_number"`
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) TaskCompletionScopeIsClear(ctx context.Context, arg TaskCompletionScopeIsClearParams) (pgtype.Bool, error) {
-	row := q.db.QueryRow(ctx, taskCompletionScopeIsClear, arg.RunID, arg.AttemptNumber, arg.WorkspaceID)
-	var clear pgtype.Bool
-	err := row.Scan(&clear)
-	return clear, err
 }
 
 const updateTaskWorkspaceMountFrontier = `-- name: UpdateTaskWorkspaceMountFrontier :one

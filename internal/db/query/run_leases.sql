@@ -335,13 +335,16 @@ SELECT run_leases.org_id,
           AND run_waits.current_run_lease_id = run_leases.id
    );
 
--- name: GetRunLeaseRenewalLocators :one
+-- name: GetLiveRunLeaseLocators :one
 SELECT run_leases.org_id,
        run_leases.project_id,
        run_leases.environment_id,
        run_leases.run_id,
        run_leases.workspace_id,
        run_leases.attempt_number,
+       runs.actor_id,
+       runs.parent_run_id,
+       runs.parent_owns_lifecycle,
        run_leases.region_id,
        run_leases.runtime_instance_id,
        run_leases.network_slot_id,
@@ -379,7 +382,7 @@ SELECT run_leases.org_id,
    AND run_leases.worker_instance_id = sqlc.arg(worker_instance_id)
    AND run_leases.worker_epoch = sqlc.arg(worker_epoch)
    AND run_leases.worker_protocol_version = sqlc.arg(worker_protocol_version)
-   AND run_leases.state IN ('running', 'checkpointing')
+   AND run_leases.state IN ('running', 'checkpointing', 'finalizing')
    AND run_leases.expires_at > transaction_timestamp();
 
 -- name: LockRunLeaseClaimRun :one
@@ -390,6 +393,15 @@ SELECT *
    AND project_id = sqlc.arg(project_id)
    AND environment_id = sqlc.arg(environment_id)
    AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunFinalizationParentRun :one
+SELECT *
+  FROM runs
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
  FOR UPDATE;
 
 -- name: LockRunLeaseClaimActor :one
@@ -494,7 +506,7 @@ SELECT *
    AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
--- name: LockRunLeaseRenewalLease :one
+-- name: LockLiveRunLease :one
 SELECT *
   FROM run_leases
  WHERE id = sqlc.arg(id)
@@ -502,7 +514,7 @@ SELECT *
    AND workspace_id = sqlc.arg(workspace_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
-   AND state IN ('running', 'checkpointing')
+   AND state IN ('running', 'checkpointing', 'finalizing')
    AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
@@ -626,6 +638,87 @@ UPDATE run_leases
    AND state = 'assigned'
    AND start_deadline_at > transaction_timestamp()
    AND expires_at > transaction_timestamp()
+RETURNING *;
+
+-- name: GetRunFinalizationTime :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: RunFinalizationScopeIsClear :one
+SELECT NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = sqlc.arg(run_id)
+              AND run_waits.attempt_number = sqlc.arg(attempt_number)
+              AND run_waits.workspace_id = sqlc.arg(workspace_id)
+              AND run_waits.suspension_state NOT IN ('released', 'cancelled', 'failed')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = sqlc.arg(workspace_id)
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       ) AS clear;
+
+-- name: BeginRunLeaseFinalization :one
+UPDATE run_leases
+   SET state = 'finalizing',
+       expires_at = sqlc.arg(expires_at),
+       finalization_operation_id = sqlc.arg(finalization_operation_id),
+       finalization_kind = sqlc.arg(finalization_kind),
+       finalization_started_at = sqlc.arg(finalization_started_at),
+       finalization_request_fingerprint = sqlc.arg(finalization_request_fingerprint),
+       updated_at = sqlc.arg(finalization_started_at)
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND lease_sequence = sqlc.arg(lease_sequence)
+   AND state = 'running'
+   AND expires_at = sqlc.arg(previous_expires_at)
+   AND sqlc.arg(expires_at)::timestamptz > expires_at
+   AND finalization_operation_id IS NULL
+   AND finalization_kind IS NULL
+   AND finalization_started_at IS NULL
+   AND finalization_request_fingerprint IS NULL
+RETURNING *;
+
+-- name: BeginRunWorkspaceLeaseFinalization :one
+UPDATE workspace_leases
+   SET expires_at = sqlc.arg(expires_at),
+       updated_at = sqlc.arg(finalization_started_at)
+ WHERE id = sqlc.arg(id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND owner_run_lease_id = sqlc.arg(owner_run_lease_id)
+   AND ownership_generation = sqlc.arg(ownership_generation)
+   AND writer_generation = sqlc.arg(writer_generation)
+   AND mount_fencing_generation = sqlc.arg(mount_fencing_generation)
+   AND expires_at = sqlc.arg(previous_expires_at)
+   AND sqlc.arg(expires_at)::timestamptz > expires_at
+   AND state = 'active'
+RETURNING *;
+
+-- name: CloseRunActiveIntervalForFinalization :one
+UPDATE runs
+   SET active_elapsed_ms = active_elapsed_ms
+           + floor(extract(epoch FROM (sqlc.arg(finalization_started_at)::timestamptz - active_started_at)) * 1000)::bigint,
+       active_started_at = NULL,
+       state_version = state_version + 1,
+       updated_at = sqlc.arg(finalization_started_at)
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND status = 'running'
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND state_version = sqlc.arg(expected_state_version)
+   AND active_started_at IS NOT NULL
+   AND sqlc.arg(finalization_started_at)::timestamptz >= active_started_at
+   AND sqlc.arg(finalization_started_at)::timestamptz < active_started_at
+       + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
 RETURNING *;
 
 -- name: MarkFreshRunLeaseRunning :one

@@ -375,6 +375,33 @@ type WorkerRunLeaseRenewResponse struct {
 	Lease WorkerRunLeaseReceipt `json:"lease"`
 }
 
+type WorkerRunFinalizationKind string
+
+const (
+	WorkerRunFinalizationCapture WorkerRunFinalizationKind = "capture"
+	WorkerRunFinalizationReset   WorkerRunFinalizationKind = "reset"
+)
+
+type WorkerRunQuiescenceProof struct {
+	RunID         string `json:"run_id"`
+	AttemptNumber int32  `json:"attempt_number"`
+	RunLeaseID    string `json:"run_lease_id"`
+}
+
+type WorkerBeginRunFinalizationRequest struct {
+	Lease           WorkerRunLeaseReceipt     `json:"lease"`
+	ProgramQuiesced WorkerRunQuiescenceProof  `json:"program_quiesced"`
+	OperationID     string                    `json:"operation_id"`
+	Kind            WorkerRunFinalizationKind `json:"kind"`
+}
+
+type WorkerBeginRunFinalizationResponse struct {
+	Lease       WorkerRunLeaseReceipt     `json:"lease"`
+	OperationID string                    `json:"operation_id"`
+	Kind        WorkerRunFinalizationKind `json:"kind"`
+	StartedAt   time.Time                 `json:"started_at"`
+}
+
 type WorkerRunEntrypointRequest struct {
 	Lease                WorkerRunLeaseReceipt `json:"lease"`
 	EntrypointKind       string                `json:"entrypoint_kind"`

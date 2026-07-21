@@ -87,15 +87,14 @@ func TestTaskCompletionReplayAfterAmbiguousError(t *testing.T) {
 	}
 }
 
-func TestTaskCompletionDeadlineUsesLeaseAndActiveTime(t *testing.T) {
+func TestTaskCompletionDeadlineUsesFrozenFinalizationExpiry(t *testing.T) {
 	now := time.Date(2026, time.July, 21, 3, 4, 5, 0, time.UTC)
 	authority := runLeaseClaimAuthority{
-		run: db.Run{
-			MaxActiveDurationMs: 5_000,
-			ActiveElapsedMs:     1_000,
-			ActiveStartedAt:     pgvalue.Timestamptz(now.Add(-time.Second)),
+		run: db.Run{},
+		runLease: db.RunLease{
+			State: db.RunLeaseStateFinalizing, ExpiresAt: pgvalue.Timestamptz(now.Add(time.Second)),
+			FinalizationStartedAt: pgvalue.Timestamptz(now.Add(-time.Second)),
 		},
-		runLease: db.RunLease{ExpiresAt: pgvalue.Timestamptz(now.Add(time.Second))},
 		workspaceLease: db.WorkspaceLease{
 			ExpiresAt: pgvalue.Timestamptz(now.Add(time.Second)),
 		},
@@ -106,11 +105,14 @@ func TestTaskCompletionDeadlineUsesLeaseAndActiveTime(t *testing.T) {
 	if err := validateTaskCompletionDeadline(authority, now.Add(time.Second)); !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("expiry boundary error = %v", err)
 	}
-	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(10 * time.Second))
+	authority.runLease.ExpiresAt = pgvalue.Timestamptz(now.Add(2 * time.Second))
+	if err := validateTaskCompletionDeadline(authority, now); !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("mismatched expiry error = %v", err)
+	}
 	authority.workspaceLease.ExpiresAt = authority.runLease.ExpiresAt
-	hardDeadline := authority.run.ActiveStartedAt.Time.Add(4 * time.Second)
-	if err := validateTaskCompletionDeadline(authority, hardDeadline); !errors.Is(err, errStaleTaskCompletion) {
-		t.Fatalf("active deadline boundary error = %v", err)
+	authority.run.ActiveStartedAt = pgvalue.Timestamptz(now.Add(-time.Second))
+	if err := validateTaskCompletionDeadline(authority, now); !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("open active interval error = %v", err)
 	}
 }
 
@@ -122,7 +124,7 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 			EntrypointEnteredAt:    pgvalue.Timestamptz(time.Now()),
 			BaseWorkspaceVersionID: runBase,
 		},
-		runLease: db.RunLease{State: db.RunLeaseStateRunning},
+		runLease: db.RunLease{State: db.RunLeaseStateFinalizing},
 		workspace: db.Workspace{
 			HeadVersionID: runBase,
 		},
@@ -139,6 +141,52 @@ func TestTaskCompletionRejectsRollbackOutsideRunBase(t *testing.T) {
 		api.WorkerCompleteTaskRequest{},
 		completion,
 		authority,
+	); !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("error = %v, want stale completion", err)
+	}
+}
+
+func TestTaskCompletionRejectsRunningLease(t *testing.T) {
+	if err := validateTaskCompletionAuthority(
+		context.Background(),
+		nil,
+		api.WorkerCompleteTaskRequest{},
+		parsedTaskCompletion{},
+		runLeaseClaimAuthority{
+			run:      db.Run{EntrypointKind: "task"},
+			runLease: db.RunLease{State: db.RunLeaseStateRunning},
+		},
+	); !errors.Is(err, errStaleTaskCompletion) {
+		t.Fatalf("error = %v, want stale completion", err)
+	}
+}
+
+func TestTaskCompletionRejectsFinalizationKindMismatch(t *testing.T) {
+	request := validTaskCompletionRequest(t)
+	completion, err := parseTaskCompletionRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseID := pgvalue.UUID(uuid.MustParse(request.Lease.BaseWorkspaceVersionID))
+	operationID := pgvalue.UUID(uuid.MustParse(completion.capture.receipt.OperationID))
+	authority := runLeaseClaimAuthority{
+		run: db.Run{
+			EntrypointKind: "task", BaseWorkspaceVersionID: baseID,
+		},
+		attempt: db.RunAttempt{
+			EntrypointKind: "task", EntrypointEnteredAt: pgvalue.Timestamptz(time.Now()),
+			BaseWorkspaceVersionID: baseID,
+		},
+		runLease: db.RunLease{
+			State: db.RunLeaseStateFinalizing, FinalizationOperationID: operationID,
+			FinalizationKind:               pgvalue.Text(string(api.WorkerRunFinalizationReset)),
+			FinalizationStartedAt:          pgvalue.Timestamptz(time.Now()),
+			FinalizationRequestFingerprint: pgvalue.Text("sha256:frozen"),
+		},
+		workspace: db.Workspace{HeadVersionID: baseID},
+	}
+	if err := validateTaskCompletionAuthority(
+		context.Background(), nil, request, completion, authority,
 	); !errors.Is(err, errStaleTaskCompletion) {
 		t.Fatalf("error = %v, want stale completion", err)
 	}

@@ -19,7 +19,7 @@ func (s *Server) renewRunLease(
 ) (api.WorkerRunLeaseReceipt, error) {
 	var renewed api.WorkerRunLeaseReceipt
 	err := s.inTx(ctx, func(work *txWork) error {
-		locators, err := work.q.GetRunLeaseRenewalLocators(ctx, db.GetRunLeaseRenewalLocatorsParams{
+		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:                    leaseID,
 			LeaseSequence:         request.LeaseSequence,
 			WorkerGroupID:         worker.WorkerGroupID,
@@ -30,11 +30,16 @@ func (s *Server) renewRunLease(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		authority, err := lockRunLeaseRenewalAuthority(
+		authority, err := lockLiveRunLeaseAuthority(
 			ctx, work.q, worker, leaseID, request.LeaseSequence, locators,
 		)
 		if err != nil {
 			return err
+		}
+		if (authority.runLease.State != db.RunLeaseStateRunning &&
+			authority.runLease.State != db.RunLeaseStateCheckpointing) ||
+			!authority.run.ActiveStartedAt.Valid {
+			return errStaleRunLeaseClaim
 		}
 		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
 			run:            authority.run,
@@ -139,13 +144,13 @@ func (s *Server) renewRunLease(
 	return renewed, err
 }
 
-func lockRunLeaseRenewalAuthority(
+func lockLiveRunLeaseAuthority(
 	ctx context.Context,
 	q db.Querier,
 	worker workerActor,
 	leaseID pgtype.UUID,
 	leaseSequence int64,
-	locators db.GetRunLeaseRenewalLocatorsRow,
+	locators db.GetLiveRunLeaseLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
 	var authority runLeaseClaimAuthority
 	var err error
@@ -230,14 +235,14 @@ func lockRunLeaseRenewalAuthority(
 		return authority, staleRunLeaseClaim(err)
 	}
 
-	authority.runLease, err = q.LockRunLeaseRenewalLease(ctx, db.LockRunLeaseRenewalLeaseParams{
+	authority.runLease, err = q.LockLiveRunLease(ctx, db.LockLiveRunLeaseParams{
 		ID: leaseID, RunID: locators.RunID, WorkspaceID: locators.WorkspaceID,
 		AttemptNumber: locators.AttemptNumber, LeaseSequence: leaseSequence,
 	})
 	if err != nil {
 		return authority, staleRunLeaseClaim(err)
 	}
-	if !authority.runLease.StartedAt.Valid || !authority.run.StartedAt.Valid || !authority.run.ActiveStartedAt.Valid {
+	if !authority.runLease.StartedAt.Valid || !authority.run.StartedAt.Valid {
 		return authority, errStaleRunLeaseClaim
 	}
 	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {

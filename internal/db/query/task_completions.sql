@@ -27,22 +27,6 @@ SELECT run_leases.terminal_request_fingerprint
         AND run_attempts.terminal_reason_code = run_leases.terminal_reason_code)
    );
 
--- name: TaskCompletionScopeIsClear :one
-SELECT NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = sqlc.arg(run_id)
-              AND run_waits.attempt_number = sqlc.arg(attempt_number)
-              AND run_waits.workspace_id = sqlc.arg(workspace_id)
-              AND run_waits.suspension_state NOT IN ('released', 'cancelled', 'failed')
-       )
-       AND NOT EXISTS (
-           SELECT 1
-             FROM workspace_processes
-            WHERE workspace_processes.workspace_id = sqlc.arg(workspace_id)
-              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
-       ) AS clear;
-
 -- name: GetTaskCompletionTime :one
 SELECT clock_timestamp()::timestamptz;
 
@@ -138,7 +122,11 @@ UPDATE run_leases
    AND workspace_id = sqlc.arg(workspace_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND lease_sequence = sqlc.arg(lease_sequence)
-   AND state = 'running'
+   AND state = 'finalizing'
+   AND finalization_operation_id IS NOT NULL
+   AND finalization_kind IS NOT NULL
+   AND finalization_started_at IS NOT NULL
+   AND finalization_request_fingerprint IS NOT NULL
    AND terminal_request_fingerprint IS NULL
    AND expires_at > sqlc.arg(completed_at)
 RETURNING *;
@@ -165,9 +153,6 @@ UPDATE runs
        error = sqlc.narg(error),
        state_version = state_version + 1,
        current_run_lease_id = NULL,
-       active_elapsed_ms = active_elapsed_ms
-           + floor(extract(epoch FROM (sqlc.arg(completed_at)::timestamptz - active_started_at)) * 1000)::bigint,
-       active_started_at = NULL,
        retry_at = NULL,
        terminal_at = sqlc.arg(completed_at),
        updated_at = sqlc.arg(completed_at)
@@ -179,10 +164,7 @@ UPDATE runs
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND active_started_at IS NOT NULL
-   AND sqlc.arg(completed_at)::timestamptz >= active_started_at
-   AND sqlc.arg(completed_at)::timestamptz < active_started_at
-       + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+   AND active_started_at IS NULL
 RETURNING *;
 
 -- name: CreateTaskRetryAttempt :one
@@ -215,9 +197,6 @@ UPDATE runs
        state_version = state_version + 1,
        current_attempt_number = sqlc.arg(next_attempt_number),
        current_run_lease_id = NULL,
-       active_elapsed_ms = active_elapsed_ms
-           + floor(extract(epoch FROM (sqlc.arg(completed_at)::timestamptz - active_started_at)) * 1000)::bigint,
-       active_started_at = NULL,
        retry_at = sqlc.arg(retry_at),
        updated_at = sqlc.arg(completed_at)
  WHERE id = sqlc.arg(id)
@@ -228,10 +207,7 @@ UPDATE runs
    AND status = 'running'
    AND current_attempt_number = sqlc.arg(previous_attempt_number)
    AND current_run_lease_id = sqlc.arg(run_lease_id)
-   AND active_started_at IS NOT NULL
-   AND sqlc.arg(completed_at)::timestamptz >= active_started_at
-   AND sqlc.arg(completed_at)::timestamptz < active_started_at
-       + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+   AND active_started_at IS NULL
 RETURNING *;
 
 -- name: ReleaseTaskWorkspaceOwner :one
@@ -291,7 +267,7 @@ WITH candidates AS (
               FROM run_leases
              WHERE run_leases.run_id = runs.id
                AND run_leases.attempt_number = runs.current_attempt_number
-               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
      ORDER BY runs.retry_at, runs.id
      LIMIT sqlc.arg(row_limit)

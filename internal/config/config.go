@@ -61,6 +61,7 @@ type Control struct {
 	GitHubOAuthClientSecret        string
 	ScheduleJitter                 time.Duration
 	RunLeaseTTL                    time.Duration
+	RunFinalizationTTL             time.Duration
 }
 
 type Dispatcher struct {

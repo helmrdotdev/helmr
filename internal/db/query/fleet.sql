@@ -43,7 +43,7 @@ WITH target_group AS (
            count(*)::bigint
       FROM run_leases
       JOIN target_group ON target_group.id = run_leases.worker_group_id
-     WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+     WHERE run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
      GROUP BY target_group.id, run_leases.requested_cpu_millis,
               run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes,
               run_leases.requested_scratch_bytes, run_leases.requested_execution_slots
@@ -200,7 +200,7 @@ WITH target AS (
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
@@ -220,7 +220,7 @@ SELECT worker_instances.id, worker_instances.resource_id, worker_instances.state
            (SELECT count(*) FROM run_leases
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
-               AND state IN ('assigned', 'starting', 'running', 'checkpointing'))
+               AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))
          + (SELECT count(*) FROM deployment_build_leases
              WHERE worker_instance_id = worker_instances.id
                AND worker_epoch = worker_instances.current_epoch
@@ -279,7 +279,7 @@ WITH target AS MATERIALIZED (
                (SELECT count(*) FROM run_leases
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch
-                   AND state IN ('assigned', 'starting', 'running', 'checkpointing'))
+                   AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing'))
              + (SELECT count(*) FROM deployment_build_leases
                  WHERE worker_instance_id = target.id
                    AND worker_epoch = target.current_epoch

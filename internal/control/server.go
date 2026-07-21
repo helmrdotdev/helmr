@@ -81,6 +81,7 @@ type Server struct {
 	workerTokenSecret     []byte
 	workerTokenTTL        time.Duration
 	runLeaseTTL           time.Duration
+	runFinalizationTTL    time.Duration
 	workerEnrollment      WorkerEnrollmentVerifier
 	workerEnrollmentGuard *workerEnrollmentGuard
 	setupToken            string
@@ -153,13 +154,14 @@ type ServerConfig struct {
 	Mailer               email.Sender
 	AuthProvider         AuthProvider
 
-	WorkerTokenSecret []byte
-	WorkerTokenTTL    time.Duration
-	RunLeaseTTL       time.Duration
-	WorkerEnrollment  WorkerEnrollmentVerifier
-	SetupToken        string
-	AuthSecret        []byte
-	PublicURL         *url.URL
+	WorkerTokenSecret  []byte
+	WorkerTokenTTL     time.Duration
+	RunLeaseTTL        time.Duration
+	RunFinalizationTTL time.Duration
+	WorkerEnrollment   WorkerEnrollmentVerifier
+	SetupToken         string
+	AuthSecret         []byte
+	PublicURL          *url.URL
 
 	MagicLinkDebugURLs bool
 	SessionTTL         time.Duration
@@ -236,6 +238,10 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if runLeaseTTL <= 0 {
 		runLeaseTTL = workerLeaseDuration
 	}
+	runFinalizationTTL := cfg.RunFinalizationTTL
+	if runFinalizationTTL <= 0 {
+		runFinalizationTTL = 30 * time.Minute
+	}
 	server := &Server{
 		log:                   log,
 		deploymentMode:        deploymentMode,
@@ -261,6 +267,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		workerTokenSecret:     cfg.WorkerTokenSecret,
 		workerTokenTTL:        workerTokenTTL,
 		runLeaseTTL:           runLeaseTTL,
+		runFinalizationTTL:    runFinalizationTTL,
 		workerEnrollment:      cfg.WorkerEnrollment,
 		workerEnrollmentGuard: newWorkerEnrollmentGuard(),
 		setupToken:            strings.TrimSpace(cfg.SetupToken),
@@ -660,6 +667,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/reject", s.workerRejectRun)
 				r.Post("/leases/renew", s.workerRenew)
 				r.Post("/leases/run-renew", s.workerRenewRunLease)
+				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.Post("/leases/release", s.workerRelease)
 				r.Post("/leases/tokens", s.workerCreateToken)

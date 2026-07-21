@@ -67,7 +67,7 @@ func (s *Server) completeTask(
 		if err != nil {
 			return fmt.Errorf("lock Task completion Secret authority: %w", err)
 		}
-		locators, err := work.q.GetRunLeaseRenewalLocators(ctx, db.GetRunLeaseRenewalLocatorsParams{
+		locators, err := work.q.GetLiveRunLeaseLocators(ctx, db.GetLiveRunLeaseLocatorsParams{
 			ID:                    pgvalue.UUID(completion.lease.leaseID),
 			LeaseSequence:         request.Lease.LeaseSequence,
 			WorkerGroupID:         worker.WorkerGroupID,
@@ -78,7 +78,7 @@ func (s *Server) completeTask(
 		if err != nil {
 			return staleTaskCompletion(err)
 		}
-		authority, err := lockRunLeaseRenewalAuthority(
+		authority, err := lockLiveRunLeaseAuthority(
 			ctx,
 			work.q,
 			worker,
@@ -223,8 +223,13 @@ func validateTaskCompletionAuthority(
 ) error {
 	if authority.run.EntrypointKind != "task" || authority.run.ActorID.Valid ||
 		authority.run.ParentRunID.Valid || authority.run.ParentOwnsLifecycle.Valid ||
-		authority.runLease.State != db.RunLeaseStateRunning ||
+		authority.runLease.State != db.RunLeaseStateFinalizing ||
 		!authority.attempt.EntrypointEnteredAt.Valid ||
+		authority.run.ActiveStartedAt.Valid ||
+		!authority.runLease.FinalizationOperationID.Valid ||
+		!authority.runLease.FinalizationKind.Valid ||
+		!authority.runLease.FinalizationStartedAt.Valid ||
+		!authority.runLease.FinalizationRequestFingerprint.Valid ||
 		authority.attempt.BaseWorkspaceVersionID != authority.run.BaseWorkspaceVersionID ||
 		!authority.workspace.HeadVersionID.Valid ||
 		authority.workspace.HeadVersionID != authority.run.BaseWorkspaceVersionID {
@@ -232,6 +237,20 @@ func validateTaskCompletionAuthority(
 	}
 	if completion.kind != taskCompletionSucceeded &&
 		(completion.rollback == nil || pgvalue.UUID(completion.rollback.baseID) != authority.run.BaseWorkspaceVersionID) {
+		return errStaleTaskCompletion
+	}
+	var finalization workspace.FinalizationRequest
+	wantKind := string(api.WorkerRunFinalizationReset)
+	if completion.capture != nil {
+		finalization = completion.capture.receipt
+		wantKind = string(api.WorkerRunFinalizationCapture)
+	} else {
+		finalization = completion.rollback.receipt
+	}
+	operationID, err := uuid.Parse(finalization.OperationID)
+	if err != nil ||
+		authority.runLease.FinalizationOperationID != pgvalue.UUID(operationID) ||
+		authority.runLease.FinalizationKind.String != wantKind {
 		return errStaleTaskCompletion
 	}
 	receipt, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
@@ -246,7 +265,7 @@ func validateTaskCompletionAuthority(
 	if !equalRunLeaseReceipt(receipt, request.Lease) {
 		return errStaleTaskCompletion
 	}
-	clear, err := store.TaskCompletionScopeIsClear(ctx, db.TaskCompletionScopeIsClearParams{
+	clear, err := store.RunFinalizationScopeIsClear(ctx, db.RunFinalizationScopeIsClearParams{
 		RunID: authority.run.ID, AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 	})
 	if err != nil {
@@ -323,13 +342,10 @@ func validateTaskCompletionDeadline(authority runLeaseClaimAuthority, completedA
 	if !completedAt.Before(authority.runLease.ExpiresAt.Time) ||
 		!completedAt.Before(authority.workspaceLease.ExpiresAt.Time) ||
 		!authority.runLease.ExpiresAt.Time.Equal(authority.workspaceLease.ExpiresAt.Time) ||
-		!authority.run.ActiveStartedAt.Valid || authority.run.MaxActiveDurationMs <= 0 ||
-		authority.run.ActiveElapsedMs < 0 ||
-		authority.run.ActiveElapsedMs >= authority.run.MaxActiveDurationMs {
-		return errStaleTaskCompletion
-	}
-	remaining := authority.run.MaxActiveDurationMs - authority.run.ActiveElapsedMs
-	if !completedAt.Before(authority.run.ActiveStartedAt.Time.Add(time.Duration(remaining) * time.Millisecond)) {
+		authority.runLease.State != db.RunLeaseStateFinalizing ||
+		authority.run.ActiveStartedAt.Valid ||
+		!authority.runLease.FinalizationStartedAt.Valid ||
+		authority.runLease.FinalizationStartedAt.Time.After(completedAt) {
 		return errStaleTaskCompletion
 	}
 	return nil

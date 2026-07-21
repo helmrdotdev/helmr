@@ -98,7 +98,7 @@ SELECT runtime_instances.*,
             SELECT 1
               FROM run_leases
              WHERE run_leases.runtime_instance_id = runtime_instances.id
-               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+               AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
         )
         AND worker_network_slots.state IN ('reclaiming', 'quarantined'))
    )

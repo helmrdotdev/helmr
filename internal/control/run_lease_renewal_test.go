@@ -223,7 +223,7 @@ func validRunLeaseRenewalFixture(
 
 	store := &runLeaseClaimStore{
 		authority: authority,
-		renewal: db.GetRunLeaseRenewalLocatorsRow{
+		renewal: db.GetLiveRunLeaseLocatorsRow{
 			OrgID: claimLocators.OrgID, ProjectID: claimLocators.ProjectID,
 			EnvironmentID: claimLocators.EnvironmentID, RunID: claimLocators.RunID,
 			WorkspaceID: claimLocators.WorkspaceID, AttemptNumber: claimLocators.AttemptNumber,
@@ -247,10 +247,10 @@ func validRunLeaseRenewalFixture(
 	return &Server{db: store, runLeaseTTL: 5 * time.Minute}, store, worker, receipt
 }
 
-func (s *runLeaseClaimStore) GetRunLeaseRenewalLocators(
+func (s *runLeaseClaimStore) GetLiveRunLeaseLocators(
 	_ context.Context,
-	params db.GetRunLeaseRenewalLocatorsParams,
-) (db.GetRunLeaseRenewalLocatorsRow, error) {
+	params db.GetLiveRunLeaseLocatorsParams,
+) (db.GetLiveRunLeaseLocatorsRow, error) {
 	s.calls = append(s.calls, "renewal_locators")
 	lease := s.authority.runLease
 	if params.ID != lease.ID ||
@@ -259,14 +259,14 @@ func (s *runLeaseClaimStore) GetRunLeaseRenewalLocators(
 		params.WorkerInstanceID != lease.WorkerInstanceID ||
 		params.WorkerEpoch != lease.WorkerEpoch ||
 		params.WorkerProtocolVersion != lease.WorkerProtocolVersion {
-		return db.GetRunLeaseRenewalLocatorsRow{}, pgx.ErrNoRows
+		return db.GetLiveRunLeaseLocatorsRow{}, pgx.ErrNoRows
 	}
 	return s.renewal, nil
 }
 
-func (s *runLeaseClaimStore) LockRunLeaseRenewalLease(
+func (s *runLeaseClaimStore) LockLiveRunLease(
 	context.Context,
-	db.LockRunLeaseRenewalLeaseParams,
+	db.LockLiveRunLeaseParams,
 ) (db.RunLease, error) {
 	s.calls = append(s.calls, "renewal_lease")
 	return s.authority.runLease, nil

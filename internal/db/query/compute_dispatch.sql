@@ -75,7 +75,7 @@ WITH target AS (
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.runtime_instance_id = runtime_instances.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM workspace_mounts
@@ -160,7 +160,7 @@ SELECT worker_instances.*,
        ((SELECT count(*) FROM run_leases
          WHERE run_leases.worker_instance_id = worker_instances.id
            AND run_leases.worker_epoch = worker_instances.current_epoch
-           AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')) +
+           AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')) +
         (SELECT count(*) FROM deployment_build_leases
          WHERE deployment_build_leases.worker_instance_id = worker_instances.id
            AND deployment_build_leases.worker_epoch = worker_instances.current_epoch
@@ -233,7 +233,7 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
         COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
@@ -293,7 +293,7 @@ SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bi
         COALESCE((SELECT sum(requested_execution_slots) FROM run_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch
-                     AND state IN ('assigned','starting','running','checkpointing')), 0)::int AS run_consumers,
+                     AND state IN ('assigned','starting','running','checkpointing','finalizing')), 0)::int AS run_consumers,
         COALESCE((SELECT sum(requested_build_executors) FROM deployment_build_leases
                    WHERE worker_instance_id = worker_instances.id
                      AND worker_epoch = worker_instances.current_epoch

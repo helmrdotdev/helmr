@@ -276,7 +276,7 @@ SELECT count(*),
  WHERE active_runs.environment_id = $1
    AND active_runs.queue_name = $2
    AND active_runs.concurrency_key IS NOT DISTINCT FROM $3::text
-   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')`,
+   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')`,
 		authority.environmentID,
 		authority.queueName,
 		authority.concurrencyKey,
@@ -307,7 +307,7 @@ SELECT coalesce(sum(run_leases.requested_execution_slots), 0) + $3
   LEFT JOIN run_leases
     ON run_leases.worker_instance_id = worker_instances.id
    AND run_leases.worker_epoch = worker_instances.current_epoch
-   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+   AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
  WHERE worker_instances.id = $1
    AND worker_instances.current_epoch = $2
  GROUP BY worker_instances.max_run_consumers`,

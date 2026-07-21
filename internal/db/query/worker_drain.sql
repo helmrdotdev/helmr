@@ -38,7 +38,7 @@ WITH target AS MATERIALIZED (
        AND NOT EXISTS (
            SELECT 1 FROM run_leases
             WHERE run_leases.worker_instance_id = target.id
-              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing')
+              AND run_leases.state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing')
        )
        AND NOT EXISTS (
            SELECT 1 FROM deployment_build_leases

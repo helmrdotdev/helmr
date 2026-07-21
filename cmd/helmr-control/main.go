@@ -292,6 +292,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AuthProvider:         authProvider,
 		WorkerTokenSecret:    []byte(cfg.WorkerTokenSigningKey),
 		RunLeaseTTL:          cfg.RunLeaseTTL,
+		RunFinalizationTTL:   cfg.RunFinalizationTTL,
 		WorkerEnrollment:     workerEnrollment,
 		SetupToken:           cfg.SetupToken,
 		AuthSecret:           []byte(cfg.AuthSecret),

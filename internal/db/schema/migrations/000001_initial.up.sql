@@ -810,6 +810,7 @@ CREATE TYPE run_lease_state AS ENUM (
     'starting',
     'running',
     'checkpointing',
+    'finalizing',
     'checkpointed',
     'completed',
     'failed',
@@ -3002,6 +3003,10 @@ CREATE TABLE run_leases (
     renewed_at TIMESTAMPTZ,
     expires_at TIMESTAMPTZ NOT NULL,
     previous_expires_at TIMESTAMPTZ,
+    finalization_operation_id UUID,
+    finalization_kind TEXT,
+    finalization_started_at TIMESTAMPTZ,
+    finalization_request_fingerprint TEXT,
     checkpointed_at TIMESTAMPTZ,
     terminal_at TIMESTAMPTZ,
     terminal_reason_code TEXT,
@@ -3052,13 +3057,36 @@ CREATE TABLE run_leases (
     CHECK (
         (state = 'assigned' AND claimed_at IS NULL AND started_at IS NULL)
         OR (state = 'starting' AND claimed_at IS NOT NULL AND started_at IS NULL)
-        OR (state IN ('running', 'checkpointing', 'checkpointed', 'completed', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
-        OR (state IN ('cancelled', 'lost'))
-        OR (state IN ('rejected', 'expired') AND started_at IS NULL)
+        OR (state IN ('running', 'checkpointing', 'finalizing', 'checkpointed', 'completed', 'failed') AND claimed_at IS NOT NULL AND started_at IS NOT NULL)
+        OR (state IN ('cancelled', 'lost', 'expired'))
+        OR (state = 'rejected' AND started_at IS NULL)
     ),
+    CHECK (num_nonnulls(
+        finalization_operation_id,
+        finalization_kind,
+        finalization_started_at,
+        finalization_request_fingerprint
+    ) IN (0, 4)),
+    CHECK (
+        (state IN ('assigned', 'starting', 'running', 'checkpointing', 'checkpointed', 'rejected')
+         AND finalization_operation_id IS NULL)
+        OR (state = 'finalizing' AND finalization_operation_id IS NOT NULL)
+        OR state IN ('completed', 'failed', 'cancelled', 'lost', 'expired')
+    ),
+    CHECK (finalization_kind IS NULL OR finalization_kind IN ('capture', 'reset')),
+    CHECK (finalization_request_fingerprint IS NULL OR (
+        btrim(finalization_request_fingerprint) <> ''
+        AND octet_length(finalization_request_fingerprint) <= 128
+    )),
+    CHECK (finalization_started_at IS NULL OR (
+        started_at IS NOT NULL
+        AND started_at <= finalization_started_at
+        AND finalization_started_at < expires_at
+        AND (terminal_at IS NULL OR finalization_started_at <= terminal_at)
+    )),
     CHECK ((state = 'checkpointed') = (checkpointed_at IS NOT NULL)),
     CHECK (
-        (state IN ('assigned', 'starting', 'running', 'checkpointing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
+        (state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing') AND terminal_at IS NULL AND terminal_reason_code IS NULL AND terminal_error IS NULL)
         OR (
             state IN ('checkpointed', 'completed', 'failed', 'cancelled', 'lost', 'rejected', 'expired')
             AND terminal_at IS NOT NULL
@@ -3089,20 +3117,20 @@ ALTER TABLE workspace_leases
 
 CREATE UNIQUE INDEX run_leases_run_active_uidx
     ON run_leases (run_id)
-    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing');
+    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
 CREATE UNIQUE INDEX run_leases_runtime_active_uidx
     ON run_leases (runtime_instance_id)
     WHERE runtime_instance_id IS NOT NULL
-      AND state IN ('assigned', 'starting', 'running', 'checkpointing');
+      AND state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
 CREATE INDEX run_leases_worker_replay_idx
     ON run_leases (worker_instance_id, worker_epoch, state, expires_at, id)
-    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing');
+    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
 CREATE INDEX run_leases_expiry_idx
     ON run_leases (expires_at, id)
-    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing');
+    WHERE state IN ('assigned', 'starting', 'running', 'checkpointing', 'finalizing');
 
 CREATE INDEX run_leases_history_idx
     ON run_leases (run_id, attempt_number, lease_sequence DESC);
