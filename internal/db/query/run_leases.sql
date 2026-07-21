@@ -82,17 +82,20 @@ SELECT run_leases.org_id,
        parent_runs.actor_id AS parent_actor_id,
        parent_actors.run_generation AS parent_actor_run_generation,
        coalesce(parent_runs.current_attempt_number, 0)::integer AS parent_attempt_number,
-       child_handoff_waits.id AS handoff_parent_run_wait_id,
-       child_handoff_waits.suspend_checkpoint_id AS handoff_suspend_checkpoint_id,
-       child_handoff_waits.resume_attach_id AS handoff_resume_attach_id,
-       child_handoff_waits.base_workspace_version_id AS handoff_base_workspace_version_id,
-       child_handoff_waits.handoff_runtime_instance_id,
-       child_handoff_waits.handoff_workspace_mount_id,
-       child_handoff_waits.handoff_mount_generation,
-       child_handoff_waits.ownership_generation AS handoff_ownership_generation,
-       child_handoff_waits.parent_writer_generation AS handoff_parent_writer_generation,
-       child_handoff_waits.child_writer_generation AS handoff_child_writer_generation,
-       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation,
+       enclosing_waits.id AS enclosing_wait_id,
+       enclosing_waits.suspend_checkpoint_id AS enclosing_suspend_checkpoint_id,
+       enclosing_waits.resume_attach_id AS enclosing_resume_attach_id,
+       enclosing_waits.base_workspace_version_id AS enclosing_base_workspace_version_id,
+       enclosing_waits.handoff_runtime_instance_id AS enclosing_runtime_instance_id,
+       enclosing_waits.handoff_workspace_mount_id AS enclosing_workspace_mount_id,
+       enclosing_waits.handoff_mount_generation AS enclosing_mount_generation,
+       enclosing_waits.ownership_generation AS enclosing_ownership_generation,
+       enclosing_waits.parent_writer_generation AS enclosing_parent_writer_generation,
+       enclosing_waits.child_writer_generation AS enclosing_child_writer_generation,
+       enclosing_waits.resume_writer_generation AS enclosing_resume_writer_generation,
+       parent_enclosing_waits.id AS parent_enclosing_wait_id,
+       parent_enclosing_waits.run_id AS parent_enclosing_run_id,
+       coalesce(parent_enclosing_waits.attempt_number, 0)::integer AS parent_enclosing_attempt_number,
        run_waits.child_run_id AS resume_child_run_id,
        coalesce(resume_child_runs.current_attempt_number, 0)::integer AS resume_child_attempt_number,
        run_waits.resume_workspace_version_id AS handoff_resume_workspace_version_id,
@@ -158,13 +161,20 @@ SELECT run_leases.org_id,
   LEFT JOIN actors AS parent_actors
     ON parent_actors.id = parent_runs.actor_id
    AND parent_actors.workspace_id = parent_runs.workspace_id
-  LEFT JOIN run_waits AS child_handoff_waits
-    ON child_handoff_waits.run_id = parent_runs.id
-   AND child_handoff_waits.attempt_number = parent_runs.current_attempt_number
-   AND child_handoff_waits.workspace_id = parent_runs.workspace_id
-   AND child_handoff_waits.child_run_id = runs.id
-   AND child_handoff_waits.child_parent_owned IS TRUE
-   AND child_handoff_waits.suspension_state = 'parked'
+  LEFT JOIN run_waits AS enclosing_waits
+    ON enclosing_waits.run_id = parent_runs.id
+   AND enclosing_waits.attempt_number = parent_runs.current_attempt_number
+   AND enclosing_waits.workspace_id = parent_runs.workspace_id
+   AND enclosing_waits.child_run_id = runs.id
+   AND enclosing_waits.child_parent_owned IS TRUE
+   AND enclosing_waits.condition_state = 'pending'
+   AND enclosing_waits.suspension_state = 'parked'
+  LEFT JOIN run_waits AS parent_enclosing_waits
+    ON parent_enclosing_waits.workspace_id = parent_runs.workspace_id
+   AND parent_enclosing_waits.child_run_id = parent_runs.id
+   AND parent_enclosing_waits.child_parent_owned IS TRUE
+   AND parent_enclosing_waits.condition_state = 'pending'
+   AND parent_enclosing_waits.suspension_state = 'parked'
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -307,7 +317,7 @@ SELECT *
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
  FOR UPDATE;
 
--- name: LockSameWorkspaceChildClaimWait :one
+-- name: LockSameWorkspaceHandoffWait :one
 SELECT *
   FROM run_waits
  WHERE id = sqlc.arg(id)
@@ -317,6 +327,7 @@ SELECT *
    AND workspace_id = sqlc.arg(workspace_id)
    AND child_run_id = sqlc.arg(child_run_id)
    AND child_parent_owned IS TRUE
+   AND condition_state = 'pending'
    AND suspension_state = 'parked'
  FOR UPDATE;
 

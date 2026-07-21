@@ -250,17 +250,20 @@ SELECT run_leases.org_id,
        parent_runs.actor_id AS parent_actor_id,
        parent_actors.run_generation AS parent_actor_run_generation,
        coalesce(parent_runs.current_attempt_number, 0)::integer AS parent_attempt_number,
-       child_handoff_waits.id AS handoff_parent_run_wait_id,
-       child_handoff_waits.suspend_checkpoint_id AS handoff_suspend_checkpoint_id,
-       child_handoff_waits.resume_attach_id AS handoff_resume_attach_id,
-       child_handoff_waits.base_workspace_version_id AS handoff_base_workspace_version_id,
-       child_handoff_waits.handoff_runtime_instance_id,
-       child_handoff_waits.handoff_workspace_mount_id,
-       child_handoff_waits.handoff_mount_generation,
-       child_handoff_waits.ownership_generation AS handoff_ownership_generation,
-       child_handoff_waits.parent_writer_generation AS handoff_parent_writer_generation,
-       child_handoff_waits.child_writer_generation AS handoff_child_writer_generation,
-       child_handoff_waits.resume_writer_generation AS handoff_resume_writer_generation,
+       enclosing_waits.id AS enclosing_wait_id,
+       enclosing_waits.suspend_checkpoint_id AS enclosing_suspend_checkpoint_id,
+       enclosing_waits.resume_attach_id AS enclosing_resume_attach_id,
+       enclosing_waits.base_workspace_version_id AS enclosing_base_workspace_version_id,
+       enclosing_waits.handoff_runtime_instance_id AS enclosing_runtime_instance_id,
+       enclosing_waits.handoff_workspace_mount_id AS enclosing_workspace_mount_id,
+       enclosing_waits.handoff_mount_generation AS enclosing_mount_generation,
+       enclosing_waits.ownership_generation AS enclosing_ownership_generation,
+       enclosing_waits.parent_writer_generation AS enclosing_parent_writer_generation,
+       enclosing_waits.child_writer_generation AS enclosing_child_writer_generation,
+       enclosing_waits.resume_writer_generation AS enclosing_resume_writer_generation,
+       parent_enclosing_waits.id AS parent_enclosing_wait_id,
+       parent_enclosing_waits.run_id AS parent_enclosing_run_id,
+       coalesce(parent_enclosing_waits.attempt_number, 0)::integer AS parent_enclosing_attempt_number,
        run_waits.child_run_id AS resume_child_run_id,
        coalesce(resume_child_runs.current_attempt_number, 0)::integer AS resume_child_attempt_number,
        run_waits.resume_workspace_version_id AS handoff_resume_workspace_version_id,
@@ -326,13 +329,20 @@ SELECT run_leases.org_id,
   LEFT JOIN actors AS parent_actors
     ON parent_actors.id = parent_runs.actor_id
    AND parent_actors.workspace_id = parent_runs.workspace_id
-  LEFT JOIN run_waits AS child_handoff_waits
-    ON child_handoff_waits.run_id = parent_runs.id
-   AND child_handoff_waits.attempt_number = parent_runs.current_attempt_number
-   AND child_handoff_waits.workspace_id = parent_runs.workspace_id
-   AND child_handoff_waits.child_run_id = runs.id
-   AND child_handoff_waits.child_parent_owned IS TRUE
-   AND child_handoff_waits.suspension_state = 'parked'
+  LEFT JOIN run_waits AS enclosing_waits
+    ON enclosing_waits.run_id = parent_runs.id
+   AND enclosing_waits.attempt_number = parent_runs.current_attempt_number
+   AND enclosing_waits.workspace_id = parent_runs.workspace_id
+   AND enclosing_waits.child_run_id = runs.id
+   AND enclosing_waits.child_parent_owned IS TRUE
+   AND enclosing_waits.condition_state = 'pending'
+   AND enclosing_waits.suspension_state = 'parked'
+  LEFT JOIN run_waits AS parent_enclosing_waits
+    ON parent_enclosing_waits.workspace_id = parent_runs.workspace_id
+   AND parent_enclosing_waits.child_run_id = parent_runs.id
+   AND parent_enclosing_waits.child_parent_owned IS TRUE
+   AND parent_enclosing_waits.condition_state = 'pending'
+   AND parent_enclosing_waits.suspension_state = 'parked'
  WHERE run_leases.id = $1
    AND run_leases.lease_sequence = $2
    AND run_leases.worker_group_id = $3
@@ -380,17 +390,20 @@ type GetRunLeaseClaimLocatorsRow struct {
 	ParentActorID                       pgtype.UUID `json:"parent_actor_id"`
 	ParentActorRunGeneration            pgtype.Int8 `json:"parent_actor_run_generation"`
 	ParentAttemptNumber                 int32       `json:"parent_attempt_number"`
-	HandoffParentRunWaitID              pgtype.UUID `json:"handoff_parent_run_wait_id"`
-	HandoffSuspendCheckpointID          pgtype.UUID `json:"handoff_suspend_checkpoint_id"`
-	HandoffResumeAttachID               pgtype.UUID `json:"handoff_resume_attach_id"`
-	HandoffBaseWorkspaceVersionID       pgtype.UUID `json:"handoff_base_workspace_version_id"`
-	HandoffRuntimeInstanceID            pgtype.UUID `json:"handoff_runtime_instance_id"`
-	HandoffWorkspaceMountID             pgtype.UUID `json:"handoff_workspace_mount_id"`
-	HandoffMountGeneration              pgtype.Int8 `json:"handoff_mount_generation"`
-	HandoffOwnershipGeneration          pgtype.Int8 `json:"handoff_ownership_generation"`
-	HandoffParentWriterGeneration       pgtype.Int8 `json:"handoff_parent_writer_generation"`
-	HandoffChildWriterGeneration        pgtype.Int8 `json:"handoff_child_writer_generation"`
-	HandoffResumeWriterGeneration       pgtype.Int8 `json:"handoff_resume_writer_generation"`
+	EnclosingWaitID                     pgtype.UUID `json:"enclosing_wait_id"`
+	EnclosingSuspendCheckpointID        pgtype.UUID `json:"enclosing_suspend_checkpoint_id"`
+	EnclosingResumeAttachID             pgtype.UUID `json:"enclosing_resume_attach_id"`
+	EnclosingBaseWorkspaceVersionID     pgtype.UUID `json:"enclosing_base_workspace_version_id"`
+	EnclosingRuntimeInstanceID          pgtype.UUID `json:"enclosing_runtime_instance_id"`
+	EnclosingWorkspaceMountID           pgtype.UUID `json:"enclosing_workspace_mount_id"`
+	EnclosingMountGeneration            pgtype.Int8 `json:"enclosing_mount_generation"`
+	EnclosingOwnershipGeneration        pgtype.Int8 `json:"enclosing_ownership_generation"`
+	EnclosingParentWriterGeneration     pgtype.Int8 `json:"enclosing_parent_writer_generation"`
+	EnclosingChildWriterGeneration      pgtype.Int8 `json:"enclosing_child_writer_generation"`
+	EnclosingResumeWriterGeneration     pgtype.Int8 `json:"enclosing_resume_writer_generation"`
+	ParentEnclosingWaitID               pgtype.UUID `json:"parent_enclosing_wait_id"`
+	ParentEnclosingRunID                pgtype.UUID `json:"parent_enclosing_run_id"`
+	ParentEnclosingAttemptNumber        int32       `json:"parent_enclosing_attempt_number"`
 	ResumeChildRunID                    pgtype.UUID `json:"resume_child_run_id"`
 	ResumeChildAttemptNumber            int32       `json:"resume_child_attempt_number"`
 	HandoffResumeWorkspaceVersionID     pgtype.UUID `json:"handoff_resume_workspace_version_id"`
@@ -439,17 +452,20 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 		&i.ParentActorID,
 		&i.ParentActorRunGeneration,
 		&i.ParentAttemptNumber,
-		&i.HandoffParentRunWaitID,
-		&i.HandoffSuspendCheckpointID,
-		&i.HandoffResumeAttachID,
-		&i.HandoffBaseWorkspaceVersionID,
-		&i.HandoffRuntimeInstanceID,
-		&i.HandoffWorkspaceMountID,
-		&i.HandoffMountGeneration,
-		&i.HandoffOwnershipGeneration,
-		&i.HandoffParentWriterGeneration,
-		&i.HandoffChildWriterGeneration,
-		&i.HandoffResumeWriterGeneration,
+		&i.EnclosingWaitID,
+		&i.EnclosingSuspendCheckpointID,
+		&i.EnclosingResumeAttachID,
+		&i.EnclosingBaseWorkspaceVersionID,
+		&i.EnclosingRuntimeInstanceID,
+		&i.EnclosingWorkspaceMountID,
+		&i.EnclosingMountGeneration,
+		&i.EnclosingOwnershipGeneration,
+		&i.EnclosingParentWriterGeneration,
+		&i.EnclosingChildWriterGeneration,
+		&i.EnclosingResumeWriterGeneration,
+		&i.ParentEnclosingWaitID,
+		&i.ParentEnclosingRunID,
+		&i.ParentEnclosingAttemptNumber,
 		&i.ResumeChildRunID,
 		&i.ResumeChildAttemptNumber,
 		&i.HandoffResumeWorkspaceVersionID,
@@ -1362,7 +1378,7 @@ func (q *Queries) LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockR
 	return i, err
 }
 
-const lockSameWorkspaceChildClaimWait = `-- name: LockSameWorkspaceChildClaimWait :one
+const lockSameWorkspaceHandoffWait = `-- name: LockSameWorkspaceHandoffWait :one
 SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, expected_run_state_version, attempt_number, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
   FROM run_waits
  WHERE id = $1
@@ -1372,11 +1388,12 @@ SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, 
    AND workspace_id = $5
    AND child_run_id = $6
    AND child_parent_owned IS TRUE
+   AND condition_state = 'pending'
    AND suspension_state = 'parked'
  FOR UPDATE
 `
 
-type LockSameWorkspaceChildClaimWaitParams struct {
+type LockSameWorkspaceHandoffWaitParams struct {
 	ID                  pgtype.UUID `json:"id"`
 	EnvironmentID       pgtype.UUID `json:"environment_id"`
 	ParentRunID         pgtype.UUID `json:"parent_run_id"`
@@ -1385,8 +1402,8 @@ type LockSameWorkspaceChildClaimWaitParams struct {
 	ChildRunID          pgtype.UUID `json:"child_run_id"`
 }
 
-func (q *Queries) LockSameWorkspaceChildClaimWait(ctx context.Context, arg LockSameWorkspaceChildClaimWaitParams) (RunWait, error) {
-	row := q.db.QueryRow(ctx, lockSameWorkspaceChildClaimWait,
+func (q *Queries) LockSameWorkspaceHandoffWait(ctx context.Context, arg LockSameWorkspaceHandoffWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, lockSameWorkspaceHandoffWait,
 		arg.ID,
 		arg.EnvironmentID,
 		arg.ParentRunID,

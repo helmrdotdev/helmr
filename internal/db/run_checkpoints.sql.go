@@ -190,42 +190,50 @@ func (q *Queries) GetReadyRunCheckpoint(ctx context.Context, arg GetReadyRunChec
 	return i, err
 }
 
-const getRunCheckpointSourceRuntime = `-- name: GetRunCheckpointSourceRuntime :one
+const getRunCheckpointSource = `-- name: GetRunCheckpointSource :one
 SELECT run_leases.id, run_leases.org_id, run_leases.project_id, run_leases.environment_id, run_leases.run_id, run_leases.workspace_id, run_leases.region_id, run_leases.lease_sequence, run_leases.attempt_number, run_leases.worker_group_id, run_leases.worker_instance_id, run_leases.worker_epoch, run_leases.runtime_instance_id, run_leases.network_slot_id, run_leases.network_slot_generation, run_leases.runtime_identity_id, run_leases.worker_protocol_version, run_leases.requested_cpu_millis, run_leases.requested_memory_bytes, run_leases.requested_workload_disk_bytes, run_leases.requested_scratch_bytes, run_leases.requested_execution_slots, run_leases.trace_id, run_leases.span_id, run_leases.parent_span_id, run_leases.traceparent, run_leases.state, run_leases.assigned_at, run_leases.start_deadline_at, run_leases.claimed_at, run_leases.started_at, run_leases.renewed_at, run_leases.expires_at, run_leases.checkpointed_at, run_leases.terminal_at, run_leases.terminal_reason_code, run_leases.terminal_error, run_leases.terminal_request_fingerprint, run_leases.created_at, run_leases.updated_at,
+       workspace_leases.id, workspace_leases.org_id, workspace_leases.worker_group_id, workspace_leases.project_id, workspace_leases.environment_id, workspace_leases.region_id, workspace_leases.worker_instance_id, workspace_leases.worker_epoch, workspace_leases.runtime_instance_id, workspace_leases.workspace_id, workspace_leases.workspace_mount_id, workspace_leases.state, workspace_leases.owner_run_lease_id, workspace_leases.owner_process_id, workspace_leases.base_version_id, workspace_leases.ownership_generation, workspace_leases.writer_generation, workspace_leases.mount_fencing_generation, workspace_leases.fencing_key_id, workspace_leases.fencing_token_hash, workspace_leases.acquired_at, workspace_leases.renewed_at, workspace_leases.expires_at, workspace_leases.released_at, workspace_leases.lost_at, workspace_leases.updated_at, workspace_leases.terminal_at, workspace_leases.terminal_reason_code, workspace_leases.terminal_error,
        runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
   FROM run_leases
+  JOIN workspace_leases
+    ON workspace_leases.id = $1
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.owner_run_lease_id = run_leases.id
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.org_id = run_leases.org_id
    AND runtime_instances.project_id = run_leases.project_id
    AND runtime_instances.environment_id = run_leases.environment_id
    AND runtime_instances.workspace_id = run_leases.workspace_id
- WHERE run_leases.id = $1
-   AND run_leases.run_id = $2
-   AND run_leases.attempt_number = $3
-   AND run_leases.workspace_id = $4
+ WHERE run_leases.id = $2
+   AND run_leases.run_id = $3
+   AND run_leases.attempt_number = $4
+   AND run_leases.workspace_id = $5
 `
 
-type GetRunCheckpointSourceRuntimeParams struct {
-	SourceRunLeaseID pgtype.UUID `json:"source_run_lease_id"`
-	RunID            pgtype.UUID `json:"run_id"`
-	AttemptNumber    int32       `json:"attempt_number"`
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+type GetRunCheckpointSourceParams struct {
+	SourceWorkspaceLeaseID pgtype.UUID `json:"source_workspace_lease_id"`
+	SourceRunLeaseID       pgtype.UUID `json:"source_run_lease_id"`
+	RunID                  pgtype.UUID `json:"run_id"`
+	AttemptNumber          int32       `json:"attempt_number"`
+	WorkspaceID            pgtype.UUID `json:"workspace_id"`
 }
 
-type GetRunCheckpointSourceRuntimeRow struct {
+type GetRunCheckpointSourceRow struct {
 	RunLease        RunLease        `json:"run_lease"`
+	WorkspaceLease  WorkspaceLease  `json:"workspace_lease"`
 	RuntimeInstance RuntimeInstance `json:"runtime_instance"`
 }
 
-func (q *Queries) GetRunCheckpointSourceRuntime(ctx context.Context, arg GetRunCheckpointSourceRuntimeParams) (GetRunCheckpointSourceRuntimeRow, error) {
-	row := q.db.QueryRow(ctx, getRunCheckpointSourceRuntime,
+func (q *Queries) GetRunCheckpointSource(ctx context.Context, arg GetRunCheckpointSourceParams) (GetRunCheckpointSourceRow, error) {
+	row := q.db.QueryRow(ctx, getRunCheckpointSource,
+		arg.SourceWorkspaceLeaseID,
 		arg.SourceRunLeaseID,
 		arg.RunID,
 		arg.AttemptNumber,
 		arg.WorkspaceID,
 	)
-	var i GetRunCheckpointSourceRuntimeRow
+	var i GetRunCheckpointSourceRow
 	err := row.Scan(
 		&i.RunLease.ID,
 		&i.RunLease.OrgID,
@@ -267,6 +275,35 @@ func (q *Queries) GetRunCheckpointSourceRuntime(ctx context.Context, arg GetRunC
 		&i.RunLease.TerminalRequestFingerprint,
 		&i.RunLease.CreatedAt,
 		&i.RunLease.UpdatedAt,
+		&i.WorkspaceLease.ID,
+		&i.WorkspaceLease.OrgID,
+		&i.WorkspaceLease.WorkerGroupID,
+		&i.WorkspaceLease.ProjectID,
+		&i.WorkspaceLease.EnvironmentID,
+		&i.WorkspaceLease.RegionID,
+		&i.WorkspaceLease.WorkerInstanceID,
+		&i.WorkspaceLease.WorkerEpoch,
+		&i.WorkspaceLease.RuntimeInstanceID,
+		&i.WorkspaceLease.WorkspaceID,
+		&i.WorkspaceLease.WorkspaceMountID,
+		&i.WorkspaceLease.State,
+		&i.WorkspaceLease.OwnerRunLeaseID,
+		&i.WorkspaceLease.OwnerProcessID,
+		&i.WorkspaceLease.BaseVersionID,
+		&i.WorkspaceLease.OwnershipGeneration,
+		&i.WorkspaceLease.WriterGeneration,
+		&i.WorkspaceLease.MountFencingGeneration,
+		&i.WorkspaceLease.FencingKeyID,
+		&i.WorkspaceLease.FencingTokenHash,
+		&i.WorkspaceLease.AcquiredAt,
+		&i.WorkspaceLease.RenewedAt,
+		&i.WorkspaceLease.ExpiresAt,
+		&i.WorkspaceLease.ReleasedAt,
+		&i.WorkspaceLease.LostAt,
+		&i.WorkspaceLease.UpdatedAt,
+		&i.WorkspaceLease.TerminalAt,
+		&i.WorkspaceLease.TerminalReasonCode,
+		&i.WorkspaceLease.TerminalError,
 		&i.RuntimeInstance.ID,
 		&i.RuntimeInstance.OrgID,
 		&i.RuntimeInstance.WorkerGroupID,

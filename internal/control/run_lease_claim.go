@@ -14,25 +14,27 @@ import (
 var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
 
 type runLeaseClaimAuthority struct {
-	actor          db.Actor
-	parentRun      db.Run
-	childRun       db.Run
-	run            db.Run
-	workspace      db.Workspace
-	parentAttempt  db.RunAttempt
-	childAttempt   db.RunAttempt
-	attempt        db.RunAttempt
-	workerGroup    db.WorkerGroup
-	worker         db.WorkerInstance
-	networkSlot    db.WorkerNetworkSlot
-	runtime        db.RuntimeInstance
-	runLease       db.RunLease
-	workspaceMount db.WorkspaceMount
-	workspaceLease db.WorkspaceLease
-	runWait        db.RunWait
-	checkpoint     db.RunCheckpoint
-	sourceRunLease db.RunLease
-	sourceRuntime  db.RuntimeInstance
+	actor                db.Actor
+	parentRun            db.Run
+	childRun             db.Run
+	run                  db.Run
+	workspace            db.Workspace
+	parentAttempt        db.RunAttempt
+	childAttempt         db.RunAttempt
+	attempt              db.RunAttempt
+	workerGroup          db.WorkerGroup
+	worker               db.WorkerInstance
+	networkSlot          db.WorkerNetworkSlot
+	runtime              db.RuntimeInstance
+	runLease             db.RunLease
+	workspaceMount       db.WorkspaceMount
+	workspaceLease       db.WorkspaceLease
+	enclosingWait        db.RunWait
+	runWait              db.RunWait
+	checkpoint           db.RunCheckpoint
+	sourceRunLease       db.RunLease
+	sourceWorkspaceLease db.WorkspaceLease
+	sourceRuntime        db.RuntimeInstance
 }
 
 func (s *Server) claimFreshTaskRunLease(
@@ -347,29 +349,39 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	leaseSequence int64,
 	locators db.GetRunLeaseClaimLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
+	hasParentEnclosingWait := locators.ParentEnclosingWaitID.Valid ||
+		locators.ParentEnclosingRunID.Valid ||
+		locators.ParentEnclosingAttemptNumber != 0
 	if locators.RunWaitID.Valid ||
 		locators.HandoffResumeCheckpointID.Valid ||
 		!locators.ParentRunID.Valid ||
 		!locators.ParentOwnsLifecycle.Valid ||
 		!locators.ParentOwnsLifecycle.Bool ||
 		locators.ParentAttemptNumber <= 0 ||
-		!locators.HandoffParentRunWaitID.Valid ||
-		!locators.HandoffSuspendCheckpointID.Valid ||
-		!locators.HandoffResumeAttachID.Valid ||
-		!locators.HandoffBaseWorkspaceVersionID.Valid ||
-		!locators.HandoffRuntimeInstanceID.Valid ||
-		!locators.HandoffWorkspaceMountID.Valid ||
-		!locators.HandoffMountGeneration.Valid ||
-		!locators.HandoffOwnershipGeneration.Valid ||
-		!locators.HandoffParentWriterGeneration.Valid ||
-		!locators.HandoffChildWriterGeneration.Valid ||
-		!locators.HandoffResumeWriterGeneration.Valid {
+		!locators.EnclosingWaitID.Valid ||
+		!locators.EnclosingSuspendCheckpointID.Valid ||
+		!locators.EnclosingResumeAttachID.Valid ||
+		!locators.EnclosingBaseWorkspaceVersionID.Valid ||
+		!locators.EnclosingRuntimeInstanceID.Valid ||
+		!locators.EnclosingWorkspaceMountID.Valid ||
+		!locators.EnclosingMountGeneration.Valid ||
+		!locators.EnclosingOwnershipGeneration.Valid ||
+		!locators.EnclosingParentWriterGeneration.Valid ||
+		!locators.EnclosingChildWriterGeneration.Valid ||
+		locators.EnclosingResumeWriterGeneration.Valid ||
+		(hasParentEnclosingWait &&
+			(!locators.ParentEnclosingWaitID.Valid ||
+				!locators.ParentEnclosingRunID.Valid ||
+				locators.ParentEnclosingAttemptNumber <= 0)) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
 	var authority runLeaseClaimAuthority
 	var err error
 	if locators.ParentActorID.Valid {
+		if hasParentEnclosingWait {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
 			ID:          locators.ParentActorID,
 			WorkspaceID: locators.WorkspaceID,
@@ -433,7 +445,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		!authority.run.ParentOwnsLifecycle.Bool ||
 		authority.run.DeploymentID != authority.parentRun.DeploymentID ||
 		authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
-		authority.run.BaseWorkspaceVersionID != locators.HandoffBaseWorkspaceVersionID {
+		authority.run.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -449,8 +461,8 @@ func claimSameWorkspaceChildRunLeaseInTx(
 	}
 	if authority.workspace.State != db.WorkspaceStateActive ||
 		authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
-		authority.workspace.OwnershipGeneration != locators.HandoffOwnershipGeneration.Int64 ||
-		authority.workspace.WriterGeneration != locators.HandoffChildWriterGeneration.Int64 {
+		authority.workspace.OwnershipGeneration != locators.EnclosingOwnershipGeneration.Int64 ||
+		authority.workspace.WriterGeneration != locators.EnclosingChildWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if locators.ParentActorID.Valid {
@@ -458,9 +470,17 @@ func claimSameWorkspaceChildRunLeaseInTx(
 			authority.workspace.OwnerRunID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 		}
-	} else if authority.workspace.OwnerRunID != authority.parentRun.ID ||
-		authority.workspace.OwnerActorID.Valid {
-		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	} else if hasParentEnclosingWait {
+		if authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+			authority.workspace.OwnerRunID == authority.parentRun.ID ||
+			authority.workspace.OwnerRunID == authority.run.ID {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	} else {
+		if authority.workspace.OwnerRunID != authority.parentRun.ID ||
+			authority.workspace.OwnerActorID.Valid {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
 	}
 
 	authority.parentAttempt, err = q.LockRunLeaseClaimAttempt(ctx, db.LockRunLeaseClaimAttemptParams{
@@ -502,7 +522,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.attempt.EntrypointEnteredAt.Valid ||
 		authority.attempt.EntrypointKind != "task" ||
 		authority.attempt.ActorStartInputSequence.Valid ||
-		authority.attempt.BaseWorkspaceVersionID != locators.HandoffBaseWorkspaceVersionID {
+		authority.attempt.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
@@ -513,15 +533,37 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		leaseID,
 		leaseSequence,
 		locators,
-		locators.HandoffBaseWorkspaceVersionID,
+		locators.EnclosingBaseWorkspaceVersionID,
 		authority,
 	)
 	if err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
 
-	authority.runWait, err = q.LockSameWorkspaceChildClaimWait(ctx, db.LockSameWorkspaceChildClaimWaitParams{
-		ID:                  locators.HandoffParentRunWaitID,
+	if hasParentEnclosingWait {
+		authority.enclosingWait, err = q.LockSameWorkspaceHandoffWait(ctx, db.LockSameWorkspaceHandoffWaitParams{
+			ID:                  locators.ParentEnclosingWaitID,
+			EnvironmentID:       locators.EnvironmentID,
+			ParentRunID:         locators.ParentEnclosingRunID,
+			ParentAttemptNumber: locators.ParentEnclosingAttemptNumber,
+			WorkspaceID:         locators.WorkspaceID,
+			ChildRunID:          authority.parentRun.ID,
+		})
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if err := validateActiveEnclosingWait(
+			authority.enclosingWait,
+			authority.parentRun,
+			locators.EnclosingParentWriterGeneration.Int64,
+			authority,
+		); err != nil {
+			return runLeaseClaimAuthority{}, err
+		}
+	}
+
+	authority.runWait, err = q.LockSameWorkspaceHandoffWait(ctx, db.LockSameWorkspaceHandoffWaitParams{
+		ID:                  locators.EnclosingWaitID,
 		EnvironmentID:       locators.EnvironmentID,
 		ParentRunID:         authority.parentRun.ID,
 		ParentAttemptNumber: authority.parentAttempt.Number,
@@ -549,22 +591,29 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	source, err := q.GetRunCheckpointSourceRuntime(ctx, db.GetRunCheckpointSourceRuntimeParams{
-		SourceRunLeaseID: authority.checkpoint.SourceRunLeaseID,
-		RunID:            authority.parentRun.ID,
-		AttemptNumber:    authority.parentAttempt.Number,
-		WorkspaceID:      locators.WorkspaceID,
+	source, err := q.GetRunCheckpointSource(ctx, db.GetRunCheckpointSourceParams{
+		SourceWorkspaceLeaseID: authority.checkpoint.SourceWorkspaceLeaseID,
+		SourceRunLeaseID:       authority.checkpoint.SourceRunLeaseID,
+		RunID:                  authority.parentRun.ID,
+		AttemptNumber:          authority.parentAttempt.Number,
+		WorkspaceID:            locators.WorkspaceID,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 	authority.sourceRunLease = source.RunLease
+	authority.sourceWorkspaceLease = source.WorkspaceLease
 	authority.sourceRuntime = source.RuntimeInstance
 	if authority.sourceRuntime.ID != authority.runtime.ID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if err := validateCheckpointSourceRuntime(authority); err != nil {
+	if err := validateCheckpointSource(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
+	}
+	if authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
+		authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
+		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	return authority, nil
 }
@@ -613,6 +662,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 	leaseSequence int64,
 	locators db.GetRunLeaseClaimLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
+	hasEnclosingWait := hasEnclosingHandoffLocator(locators)
 	if !locators.RunWaitID.Valid ||
 		!locators.SuspendCheckpointID.Valid ||
 		!locators.ResumeAttachID.Valid ||
@@ -627,12 +677,37 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		!locators.ResumeHandoffOwnershipGeneration.Valid ||
 		!locators.ResumeHandoffParentWriterGeneration.Valid ||
 		!locators.ResumeHandoffChildWriterGeneration.Valid ||
-		!locators.ResumeHandoffResumeWriterGeneration.Valid {
+		!locators.ResumeHandoffResumeWriterGeneration.Valid ||
+		(hasEnclosingWait && !hasCompleteEnclosingHandoffLocator(locators)) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
 	var authority runLeaseClaimAuthority
 	var err error
+	if hasEnclosingWait {
+		if locators.ActorID.Valid ||
+			!locators.ParentRunID.Valid ||
+			!locators.ParentOwnsLifecycle.Valid ||
+			!locators.ParentOwnsLifecycle.Bool ||
+			locators.ParentAttemptNumber <= 0 {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+		authority.parentRun, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
+			ID:            locators.ParentRunID,
+			OrgID:         locators.OrgID,
+			ProjectID:     locators.ProjectID,
+			EnvironmentID: locators.EnvironmentID,
+			WorkspaceID:   locators.WorkspaceID,
+		})
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if authority.parentRun.Status != db.RunStatusWaiting ||
+			authority.parentRun.CurrentAttemptNumber != locators.ParentAttemptNumber ||
+			authority.parentRun.CurrentRunLeaseID.Valid {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	}
 	if locators.ActorID.Valid {
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
 			ID:          locators.ActorID,
@@ -664,6 +739,14 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 	if authority.run.Status != db.RunStatusQueued ||
 		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
 		authority.run.CurrentRunLeaseID != leaseID {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	if hasEnclosingWait &&
+		(authority.run.ParentRunID != authority.parentRun.ID ||
+			!authority.run.ParentOwnsLifecycle.Valid ||
+			!authority.run.ParentOwnsLifecycle.Bool ||
+			authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
+			authority.run.DeploymentID != authority.parentRun.DeploymentID) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if locators.ActorID.Valid {
@@ -715,7 +798,14 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		authority.workspace.WriterGeneration != locators.ResumeHandoffResumeWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if locators.ActorID.Valid {
+	if hasEnclosingWait {
+		if authority.workspace.OwnershipGeneration != locators.EnclosingOwnershipGeneration.Int64 ||
+			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+			authority.workspace.OwnerRunID == authority.run.ID ||
+			authority.workspace.OwnerRunID == authority.childRun.ID {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	} else if locators.ActorID.Valid {
 		if authority.workspace.OwnerActorID != authority.actor.ID ||
 			authority.workspace.OwnerRunID.Valid {
 			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
@@ -780,6 +870,28 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
+	if hasEnclosingWait {
+		authority.enclosingWait, err = q.LockSameWorkspaceHandoffWait(ctx, db.LockSameWorkspaceHandoffWaitParams{
+			ID:                  locators.EnclosingWaitID,
+			EnvironmentID:       locators.EnvironmentID,
+			ParentRunID:         authority.parentRun.ID,
+			ParentAttemptNumber: authority.parentRun.CurrentAttemptNumber,
+			WorkspaceID:         locators.WorkspaceID,
+			ChildRunID:          authority.run.ID,
+		})
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if err := validateActiveEnclosingWait(
+			authority.enclosingWait,
+			authority.run,
+			locators.ResumeHandoffResumeWriterGeneration.Int64,
+			authority,
+		); err != nil {
+			return runLeaseClaimAuthority{}, err
+		}
+	}
+
 	authority.runWait, err = q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
 		ID:                locators.RunWaitID,
 		EnvironmentID:     locators.EnvironmentID,
@@ -811,22 +923,29 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	source, err := q.GetRunCheckpointSourceRuntime(ctx, db.GetRunCheckpointSourceRuntimeParams{
-		SourceRunLeaseID: authority.checkpoint.SourceRunLeaseID,
-		RunID:            authority.run.ID,
-		AttemptNumber:    authority.attempt.Number,
-		WorkspaceID:      locators.WorkspaceID,
+	source, err := q.GetRunCheckpointSource(ctx, db.GetRunCheckpointSourceParams{
+		SourceWorkspaceLeaseID: authority.checkpoint.SourceWorkspaceLeaseID,
+		SourceRunLeaseID:       authority.checkpoint.SourceRunLeaseID,
+		RunID:                  authority.run.ID,
+		AttemptNumber:          authority.attempt.Number,
+		WorkspaceID:            locators.WorkspaceID,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 	authority.sourceRunLease = source.RunLease
+	authority.sourceWorkspaceLease = source.WorkspaceLease
 	authority.sourceRuntime = source.RuntimeInstance
 	if authority.sourceRuntime.ID != authority.runtime.ID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	if err := validateCheckpointSourceRuntime(authority); err != nil {
+	if err := validateCheckpointSource(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
+	}
+	if authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
+		authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration ||
+		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	return authority, nil
 }
@@ -839,18 +958,44 @@ func claimCheckpointRestoreRunLeaseInTx(
 	leaseSequence int64,
 	locators db.GetRunLeaseClaimLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
+	hasEnclosingWait := hasEnclosingHandoffLocator(locators)
 	if !locators.RunWaitID.Valid ||
 		!locators.SuspendCheckpointID.Valid ||
 		locators.HandoffResumeCheckpointID.Valid ||
 		!locators.ResumeAttachID.Valid ||
 		!locators.ResumeRequestVersion.Valid ||
 		locators.ResumeRequestVersion.Int64 <= 0 ||
-		!locators.CheckpointPrivateWorkspaceVersionID.Valid {
+		!locators.CheckpointPrivateWorkspaceVersionID.Valid ||
+		(hasEnclosingWait && !hasCompleteEnclosingHandoffLocator(locators)) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
 	var authority runLeaseClaimAuthority
 	var err error
+	if hasEnclosingWait {
+		if locators.ActorID.Valid ||
+			!locators.ParentRunID.Valid ||
+			!locators.ParentOwnsLifecycle.Valid ||
+			!locators.ParentOwnsLifecycle.Bool ||
+			locators.ParentAttemptNumber <= 0 {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+		authority.parentRun, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
+			ID:            locators.ParentRunID,
+			OrgID:         locators.OrgID,
+			ProjectID:     locators.ProjectID,
+			EnvironmentID: locators.EnvironmentID,
+			WorkspaceID:   locators.WorkspaceID,
+		})
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if authority.parentRun.Status != db.RunStatusWaiting ||
+			authority.parentRun.CurrentAttemptNumber != locators.ParentAttemptNumber ||
+			authority.parentRun.CurrentRunLeaseID.Valid {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	}
 	if locators.ActorID.Valid {
 		authority.actor, err = q.LockRunLeaseClaimActor(ctx, db.LockRunLeaseClaimActorParams{
 			ID:          locators.ActorID,
@@ -884,6 +1029,14 @@ func claimCheckpointRestoreRunLeaseInTx(
 		authority.run.CurrentRunLeaseID != leaseID {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
+	if hasEnclosingWait &&
+		(authority.run.ParentRunID != authority.parentRun.ID ||
+			!authority.run.ParentOwnsLifecycle.Valid ||
+			!authority.run.ParentOwnsLifecycle.Bool ||
+			authority.run.WorkspaceID != authority.parentRun.WorkspaceID ||
+			authority.run.DeploymentID != authority.parentRun.DeploymentID) {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
 	if locators.ActorID.Valid {
 		if authority.run.EntrypointKind != "actor" ||
 			authority.run.ActorID != authority.actor.ID ||
@@ -905,7 +1058,16 @@ func claimCheckpointRestoreRunLeaseInTx(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if locators.ActorID.Valid {
+	if hasEnclosingWait {
+		if authority.workspace.State != db.WorkspaceStateActive ||
+			authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
+			authority.workspace.OwnershipGeneration != locators.EnclosingOwnershipGeneration.Int64 ||
+			authority.workspace.WriterGeneration != locators.EnclosingChildWriterGeneration.Int64 ||
+			authority.workspace.OwnerRunID.Valid == authority.workspace.OwnerActorID.Valid ||
+			authority.workspace.OwnerRunID == authority.run.ID {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+	} else if locators.ActorID.Valid {
 		if authority.workspace.State != db.WorkspaceStateActive ||
 			authority.workspace.DesiredState != db.WorkspaceDesiredStateActive ||
 			authority.workspace.OwnerActorID != authority.actor.ID ||
@@ -958,6 +1120,28 @@ func claimCheckpointRestoreRunLeaseInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
+	if hasEnclosingWait {
+		authority.enclosingWait, err = q.LockSameWorkspaceHandoffWait(ctx, db.LockSameWorkspaceHandoffWaitParams{
+			ID:                  locators.EnclosingWaitID,
+			EnvironmentID:       locators.EnvironmentID,
+			ParentRunID:         authority.parentRun.ID,
+			ParentAttemptNumber: authority.parentRun.CurrentAttemptNumber,
+			WorkspaceID:         locators.WorkspaceID,
+			ChildRunID:          authority.run.ID,
+		})
+		if err != nil {
+			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+		}
+		if err := validateActiveEnclosingWait(
+			authority.enclosingWait,
+			authority.run,
+			authority.workspace.WriterGeneration,
+			authority,
+		); err != nil {
+			return runLeaseClaimAuthority{}, err
+		}
+	}
+
 	authority.runWait, err = q.LockRunLeaseClaimWait(ctx, db.LockRunLeaseClaimWaitParams{
 		ID:                locators.RunWaitID,
 		EnvironmentID:     locators.EnvironmentID,
@@ -986,19 +1170,27 @@ func claimCheckpointRestoreRunLeaseInTx(
 	if err := validateCheckpointRestore(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
 	}
-	source, err := q.GetRunCheckpointSourceRuntime(ctx, db.GetRunCheckpointSourceRuntimeParams{
-		SourceRunLeaseID: authority.checkpoint.SourceRunLeaseID,
-		RunID:            locators.RunID,
-		AttemptNumber:    locators.AttemptNumber,
-		WorkspaceID:      locators.WorkspaceID,
+	source, err := q.GetRunCheckpointSource(ctx, db.GetRunCheckpointSourceParams{
+		SourceWorkspaceLeaseID: authority.checkpoint.SourceWorkspaceLeaseID,
+		SourceRunLeaseID:       authority.checkpoint.SourceRunLeaseID,
+		RunID:                  locators.RunID,
+		AttemptNumber:          locators.AttemptNumber,
+		WorkspaceID:            locators.WorkspaceID,
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
 	authority.sourceRunLease = source.RunLease
+	authority.sourceWorkspaceLease = source.WorkspaceLease
 	authority.sourceRuntime = source.RuntimeInstance
-	if err := validateCheckpointSourceRuntime(authority); err != nil {
+	if err := validateCheckpointSource(authority); err != nil {
 		return runLeaseClaimAuthority{}, err
+	}
+	if hasEnclosingWait &&
+		(authority.sourceRuntime.ID != authority.runtime.ID ||
+			authority.sourceWorkspaceLease.WorkspaceMountID != authority.workspaceMount.ID ||
+			authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration) {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	return authority, nil
 }
@@ -1282,13 +1474,23 @@ func validateCheckpointRestore(authority runLeaseClaimAuthority) error {
 	return nil
 }
 
-func validateCheckpointSourceRuntime(authority runLeaseClaimAuthority) error {
+func validateCheckpointSource(authority runLeaseClaimAuthority) error {
 	sourceLease := authority.sourceRunLease
+	sourceWorkspaceLease := authority.sourceWorkspaceLease
 	sourceRuntime := authority.sourceRuntime
 	currentLease := authority.runLease
 	currentRuntime := authority.runtime
 	if sourceLease.ID != authority.checkpoint.SourceRunLeaseID ||
 		sourceLease.State != db.RunLeaseStateCheckpointed ||
+		sourceWorkspaceLease.ID != authority.checkpoint.SourceWorkspaceLeaseID ||
+		sourceWorkspaceLease.OwnerRunLeaseID != sourceLease.ID ||
+		sourceWorkspaceLease.OwnerProcessID.Valid ||
+		(sourceWorkspaceLease.State != db.WorkspaceLeaseStateReleased &&
+			sourceWorkspaceLease.State != db.WorkspaceLeaseStateFenced) ||
+		sourceWorkspaceLease.WorkspaceID != authority.checkpoint.WorkspaceID ||
+		sourceWorkspaceLease.BaseVersionID != authority.checkpoint.BaseWorkspaceVersionID ||
+		sourceWorkspaceLease.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
+		sourceWorkspaceLease.WriterGeneration >= authority.workspace.WriterGeneration ||
 		sourceLease.RuntimeInstanceID != sourceRuntime.ID ||
 		sourceLease.RuntimeIdentityID != sourceRuntime.RuntimeIdentityID ||
 		sourceLease.RuntimeIdentityID != currentLease.RuntimeIdentityID ||
@@ -1313,6 +1515,78 @@ func validateCheckpointSourceRuntime(authority runLeaseClaimAuthority) error {
 	return nil
 }
 
+func hasEnclosingHandoffLocator(locators db.GetRunLeaseClaimLocatorsRow) bool {
+	return locators.EnclosingWaitID.Valid ||
+		locators.EnclosingSuspendCheckpointID.Valid ||
+		locators.EnclosingResumeAttachID.Valid ||
+		locators.EnclosingBaseWorkspaceVersionID.Valid ||
+		locators.EnclosingRuntimeInstanceID.Valid ||
+		locators.EnclosingWorkspaceMountID.Valid ||
+		locators.EnclosingMountGeneration.Valid ||
+		locators.EnclosingOwnershipGeneration.Valid ||
+		locators.EnclosingParentWriterGeneration.Valid ||
+		locators.EnclosingChildWriterGeneration.Valid ||
+		locators.EnclosingResumeWriterGeneration.Valid
+}
+
+func hasCompleteEnclosingHandoffLocator(locators db.GetRunLeaseClaimLocatorsRow) bool {
+	return locators.EnclosingWaitID.Valid &&
+		locators.EnclosingSuspendCheckpointID.Valid &&
+		locators.EnclosingResumeAttachID.Valid &&
+		locators.EnclosingBaseWorkspaceVersionID.Valid &&
+		locators.EnclosingRuntimeInstanceID.Valid &&
+		locators.EnclosingWorkspaceMountID.Valid &&
+		locators.EnclosingMountGeneration.Valid &&
+		locators.EnclosingOwnershipGeneration.Valid &&
+		locators.EnclosingParentWriterGeneration.Valid &&
+		locators.EnclosingChildWriterGeneration.Valid &&
+		!locators.EnclosingResumeWriterGeneration.Valid
+}
+
+func validateActiveEnclosingWait(
+	wait db.RunWait,
+	child db.Run,
+	expectedWriterGeneration int64,
+	authority runLeaseClaimAuthority,
+) error {
+	if wait.Kind != db.WaitKindChild ||
+		wait.ConditionState != db.WaitStatePending ||
+		wait.SuspensionState != db.RunWaitStateParked ||
+		wait.CurrentRunLeaseID.Valid ||
+		!wait.PriorRunLeaseID.Valid ||
+		!wait.ChildRunID.Valid ||
+		wait.ChildRunID != child.ID ||
+		!wait.ChildParentOwned.Valid ||
+		!wait.ChildParentOwned.Bool ||
+		!wait.ChildTargetDeclaredID.Valid ||
+		wait.ChildTargetDeclaredID.String != child.EntrypointDeclaredID ||
+		!wait.SuspendCheckpointID.Valid ||
+		wait.HandoffResumeCheckpointID.Valid ||
+		!wait.ResumeAttachID.Valid ||
+		wait.CheckpointRequestVersion <= 0 ||
+		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
+		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
+		!wait.BaseWorkspaceVersionID.Valid ||
+		wait.BaseWorkspaceVersionID != child.BaseWorkspaceVersionID ||
+		!wait.BaseWorkspaceContentDigest.Valid ||
+		wait.ChildResultVersionID.Valid ||
+		wait.ResumeWorkspaceVersionID.Valid ||
+		wait.HandoffRuntimeInstanceID != authority.runtime.ID ||
+		wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
+		!wait.HandoffMountGeneration.Valid ||
+		wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
+		!wait.OwnershipGeneration.Valid ||
+		wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
+		!wait.ParentWriterGeneration.Valid ||
+		!wait.ChildWriterGeneration.Valid ||
+		wait.ResumeWriterGeneration.Valid ||
+		wait.ParentWriterGeneration.Int64 >= wait.ChildWriterGeneration.Int64 ||
+		wait.ChildWriterGeneration.Int64 != expectedWriterGeneration {
+		return errStaleRunLeaseClaim
+	}
+	return nil
+}
+
 func validateSameWorkspaceChildWait(
 	locators db.GetRunLeaseClaimLocatorsRow,
 	authority runLeaseClaimAuthority,
@@ -1329,13 +1603,13 @@ func validateSameWorkspaceChildWait(
 		!wait.ChildParentOwned.Bool ||
 		!wait.ChildTargetDeclaredID.Valid ||
 		wait.ChildTargetDeclaredID.String != authority.run.EntrypointDeclaredID ||
-		wait.SuspendCheckpointID != locators.HandoffSuspendCheckpointID ||
+		wait.SuspendCheckpointID != locators.EnclosingSuspendCheckpointID ||
 		wait.HandoffResumeCheckpointID.Valid ||
-		wait.ResumeAttachID != locators.HandoffResumeAttachID ||
+		wait.ResumeAttachID != locators.EnclosingResumeAttachID ||
 		wait.CheckpointRequestVersion <= 0 ||
 		wait.CheckpointRequestVersion != wait.CheckpointAckVersion ||
 		wait.ResumeRequestVersion != wait.ResumeAckVersion ||
-		wait.BaseWorkspaceVersionID != locators.HandoffBaseWorkspaceVersionID ||
+		wait.BaseWorkspaceVersionID != locators.EnclosingBaseWorkspaceVersionID ||
 		!wait.BaseWorkspaceContentDigest.Valid ||
 		wait.ChildResultVersionID.Valid ||
 		wait.ResumeWorkspaceVersionID.Valid ||
@@ -1343,8 +1617,10 @@ func validateSameWorkspaceChildWait(
 		wait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
 		wait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration ||
 		wait.OwnershipGeneration.Int64 != authority.workspace.OwnershipGeneration ||
+		!wait.ParentWriterGeneration.Valid ||
+		!wait.ChildWriterGeneration.Valid ||
+		wait.ResumeWriterGeneration.Valid ||
 		wait.ParentWriterGeneration.Int64 >= wait.ChildWriterGeneration.Int64 ||
-		wait.ChildWriterGeneration.Int64 >= wait.ResumeWriterGeneration.Int64 ||
 		wait.ChildWriterGeneration.Int64 != authority.workspace.WriterGeneration ||
 		wait.ChildWriterGeneration.Int64 != authority.workspaceLease.WriterGeneration {
 		return errStaleRunLeaseClaim

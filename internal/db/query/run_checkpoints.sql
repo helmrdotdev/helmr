@@ -96,10 +96,15 @@ SELECT *
    AND (expires_at IS NULL OR expires_at > transaction_timestamp())
  FOR UPDATE;
 
--- name: GetRunCheckpointSourceRuntime :one
+-- name: GetRunCheckpointSource :one
 SELECT sqlc.embed(run_leases),
+       sqlc.embed(workspace_leases),
        sqlc.embed(runtime_instances)
   FROM run_leases
+  JOIN workspace_leases
+    ON workspace_leases.id = sqlc.arg(source_workspace_lease_id)
+   AND workspace_leases.workspace_id = run_leases.workspace_id
+   AND workspace_leases.owner_run_lease_id = run_leases.id
   JOIN runtime_instances
     ON runtime_instances.id = run_leases.runtime_instance_id
    AND runtime_instances.org_id = run_leases.org_id
