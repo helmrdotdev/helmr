@@ -70,7 +70,13 @@ SELECT run_leases.org_id,
        runs.actor_id,
        actors.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
-       workspace_leases.workspace_mount_id
+       workspace_leases.workspace_mount_id,
+       run_waits.id AS run_wait_id,
+       run_waits.suspend_checkpoint_id,
+       run_waits.handoff_resume_checkpoint_id,
+       run_waits.resume_attach_id,
+       run_waits.resume_request_version,
+       suspend_checkpoints.private_workspace_version_id AS checkpoint_private_workspace_version_id
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
@@ -99,6 +105,22 @@ SELECT run_leases.org_id,
    AND workspace_leases.workspace_id = run_leases.workspace_id
    AND workspace_leases.state = 'active'
    AND workspace_leases.expires_at > transaction_timestamp()
+  LEFT JOIN run_waits
+    ON run_waits.run_id = run_leases.run_id
+   AND run_waits.attempt_number = run_leases.attempt_number
+   AND run_waits.workspace_id = run_leases.workspace_id
+   AND run_waits.current_run_lease_id = run_leases.id
+   AND run_waits.suspension_state = 'resuming'
+  LEFT JOIN run_checkpoints AS suspend_checkpoints
+    ON suspend_checkpoints.run_id = run_waits.run_id
+   AND suspend_checkpoints.attempt_number = run_waits.attempt_number
+   AND suspend_checkpoints.workspace_id = run_waits.workspace_id
+   AND suspend_checkpoints.run_wait_id = run_waits.id
+   AND suspend_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND suspend_checkpoints.kind = 'suspend'
+   AND suspend_checkpoints.state = 'ready'
+   AND (suspend_checkpoints.expires_at IS NULL
+        OR suspend_checkpoints.expires_at > transaction_timestamp())
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -228,6 +250,17 @@ SELECT *
    AND workspace_mount_id = sqlc.arg(workspace_mount_id)
    AND state = 'active'
    AND expires_at > transaction_timestamp()
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimWait :one
+SELECT *
+  FROM run_waits
+ WHERE id = sqlc.arg(id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
  FOR UPDATE;
 
 -- name: MarkRunLeaseStarting :one

@@ -174,6 +174,7 @@ type Querier interface {
 	GetReusableDeploymentBuild(ctx context.Context, arg GetReusableDeploymentBuildParams) (Deployment, error)
 	GetRevocableInvitation(ctx context.Context, arg GetRevocableInvitationParams) (GetRevocableInvitationRow, error)
 	GetRun(ctx context.Context, arg GetRunParams) (Run, error)
+	GetRunCheckpointSourceRuntime(ctx context.Context, arg GetRunCheckpointSourceRuntimeParams) (GetRunCheckpointSourceRuntimeRow, error)
 	GetRunLease(ctx context.Context, arg GetRunLeaseParams) (RunLease, error)
 	GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error)
 	GetRunOwnedWorkspaceLease(ctx context.Context, arg GetRunOwnedWorkspaceLeaseParams) (WorkspaceLease, error)
@@ -273,6 +274,7 @@ type Querier interface {
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
+	LockRestorableRunCheckpoint(ctx context.Context, arg LockRestorableRunCheckpointParams) (RunCheckpoint, error)
 	LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseClaimActorParams) (Actor, error)
 	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)
 	LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseClaimLeaseParams) (RunLease, error)
@@ -280,6 +282,7 @@ type Querier interface {
 	LockRunLeaseClaimNetworkSlot(ctx context.Context, arg LockRunLeaseClaimNetworkSlotParams) (WorkerNetworkSlot, error)
 	LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClaimRunParams) (Run, error)
 	LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLeaseClaimRuntimeParams) (RuntimeInstance, error)
+	LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseClaimWaitParams) (RunWait, error)
 	LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseClaimWorkerParams) (WorkerInstance, error)
 	LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunLeaseClaimWorkerGroupParams) (WorkerGroup, error)
 	LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (Workspace, error)

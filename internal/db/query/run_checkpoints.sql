@@ -83,6 +83,34 @@ SELECT run_checkpoints.*
    AND run_checkpoints.id = sqlc.arg(id)
    AND run_checkpoints.state = 'ready';
 
+-- name: LockRestorableRunCheckpoint :one
+SELECT *
+  FROM run_checkpoints
+ WHERE id = sqlc.arg(id)
+   AND kind = 'suspend'
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND run_wait_id = sqlc.arg(run_wait_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND state = 'ready'
+   AND (expires_at IS NULL OR expires_at > transaction_timestamp())
+ FOR UPDATE;
+
+-- name: GetRunCheckpointSourceRuntime :one
+SELECT sqlc.embed(run_leases),
+       sqlc.embed(runtime_instances)
+  FROM run_leases
+  JOIN runtime_instances
+    ON runtime_instances.id = run_leases.runtime_instance_id
+   AND runtime_instances.org_id = run_leases.org_id
+   AND runtime_instances.project_id = run_leases.project_id
+   AND runtime_instances.environment_id = run_leases.environment_id
+   AND runtime_instances.workspace_id = run_leases.workspace_id
+ WHERE run_leases.id = sqlc.arg(source_run_lease_id)
+   AND run_leases.run_id = sqlc.arg(run_id)
+   AND run_leases.attempt_number = sqlc.arg(attempt_number)
+   AND run_leases.workspace_id = sqlc.arg(workspace_id);
+
 -- name: ListRunCheckpointArtifacts :many
 SELECT *
   FROM run_checkpoint_artifacts

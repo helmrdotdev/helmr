@@ -238,7 +238,13 @@ SELECT run_leases.org_id,
        runs.actor_id,
        actors.run_generation AS actor_run_generation,
        workspace_leases.id AS workspace_lease_id,
-       workspace_leases.workspace_mount_id
+       workspace_leases.workspace_mount_id,
+       run_waits.id AS run_wait_id,
+       run_waits.suspend_checkpoint_id,
+       run_waits.handoff_resume_checkpoint_id,
+       run_waits.resume_attach_id,
+       run_waits.resume_request_version,
+       suspend_checkpoints.private_workspace_version_id AS checkpoint_private_workspace_version_id
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
@@ -267,6 +273,22 @@ SELECT run_leases.org_id,
    AND workspace_leases.workspace_id = run_leases.workspace_id
    AND workspace_leases.state = 'active'
    AND workspace_leases.expires_at > transaction_timestamp()
+  LEFT JOIN run_waits
+    ON run_waits.run_id = run_leases.run_id
+   AND run_waits.attempt_number = run_leases.attempt_number
+   AND run_waits.workspace_id = run_leases.workspace_id
+   AND run_waits.current_run_lease_id = run_leases.id
+   AND run_waits.suspension_state = 'resuming'
+  LEFT JOIN run_checkpoints AS suspend_checkpoints
+    ON suspend_checkpoints.run_id = run_waits.run_id
+   AND suspend_checkpoints.attempt_number = run_waits.attempt_number
+   AND suspend_checkpoints.workspace_id = run_waits.workspace_id
+   AND suspend_checkpoints.run_wait_id = run_waits.id
+   AND suspend_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND suspend_checkpoints.kind = 'suspend'
+   AND suspend_checkpoints.state = 'ready'
+   AND (suspend_checkpoints.expires_at IS NULL
+        OR suspend_checkpoints.expires_at > transaction_timestamp())
  WHERE run_leases.id = $1
    AND run_leases.lease_sequence = $2
    AND run_leases.worker_group_id = $3
@@ -289,20 +311,26 @@ type GetRunLeaseClaimLocatorsParams struct {
 }
 
 type GetRunLeaseClaimLocatorsRow struct {
-	OrgID                 pgtype.UUID `json:"org_id"`
-	ProjectID             pgtype.UUID `json:"project_id"`
-	EnvironmentID         pgtype.UUID `json:"environment_id"`
-	RunID                 pgtype.UUID `json:"run_id"`
-	WorkspaceID           pgtype.UUID `json:"workspace_id"`
-	AttemptNumber         int32       `json:"attempt_number"`
-	RegionID              string      `json:"region_id"`
-	RuntimeInstanceID     pgtype.UUID `json:"runtime_instance_id"`
-	NetworkSlotID         pgtype.UUID `json:"network_slot_id"`
-	NetworkSlotGeneration int64       `json:"network_slot_generation"`
-	ActorID               pgtype.UUID `json:"actor_id"`
-	ActorRunGeneration    pgtype.Int8 `json:"actor_run_generation"`
-	WorkspaceLeaseID      pgtype.UUID `json:"workspace_lease_id"`
-	WorkspaceMountID      pgtype.UUID `json:"workspace_mount_id"`
+	OrgID                               pgtype.UUID `json:"org_id"`
+	ProjectID                           pgtype.UUID `json:"project_id"`
+	EnvironmentID                       pgtype.UUID `json:"environment_id"`
+	RunID                               pgtype.UUID `json:"run_id"`
+	WorkspaceID                         pgtype.UUID `json:"workspace_id"`
+	AttemptNumber                       int32       `json:"attempt_number"`
+	RegionID                            string      `json:"region_id"`
+	RuntimeInstanceID                   pgtype.UUID `json:"runtime_instance_id"`
+	NetworkSlotID                       pgtype.UUID `json:"network_slot_id"`
+	NetworkSlotGeneration               int64       `json:"network_slot_generation"`
+	ActorID                             pgtype.UUID `json:"actor_id"`
+	ActorRunGeneration                  pgtype.Int8 `json:"actor_run_generation"`
+	WorkspaceLeaseID                    pgtype.UUID `json:"workspace_lease_id"`
+	WorkspaceMountID                    pgtype.UUID `json:"workspace_mount_id"`
+	RunWaitID                           pgtype.UUID `json:"run_wait_id"`
+	SuspendCheckpointID                 pgtype.UUID `json:"suspend_checkpoint_id"`
+	HandoffResumeCheckpointID           pgtype.UUID `json:"handoff_resume_checkpoint_id"`
+	ResumeAttachID                      pgtype.UUID `json:"resume_attach_id"`
+	ResumeRequestVersion                pgtype.Int8 `json:"resume_request_version"`
+	CheckpointPrivateWorkspaceVersionID pgtype.UUID `json:"checkpoint_private_workspace_version_id"`
 }
 
 func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseClaimLocatorsParams) (GetRunLeaseClaimLocatorsRow, error) {
@@ -330,6 +358,12 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 		&i.ActorRunGeneration,
 		&i.WorkspaceLeaseID,
 		&i.WorkspaceMountID,
+		&i.RunWaitID,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.CheckpointPrivateWorkspaceVersionID,
 	)
 	return i, err
 }
@@ -820,6 +854,96 @@ func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLease
 		&i.TerminalAt,
 		&i.TerminalReasonCode,
 		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimWait = `-- name: LockRunLeaseClaimWait :one
+SELECT id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, expected_run_state_version, attempt_number, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+  FROM run_waits
+ WHERE id = $1
+   AND environment_id = $2
+   AND run_id = $3
+   AND attempt_number = $4
+   AND workspace_id = $5
+   AND current_run_lease_id = $6
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimWaitParams struct {
+	ID                pgtype.UUID `json:"id"`
+	EnvironmentID     pgtype.UUID `json:"environment_id"`
+	RunID             pgtype.UUID `json:"run_id"`
+	AttemptNumber     int32       `json:"attempt_number"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	CurrentRunLeaseID pgtype.UUID `json:"current_run_lease_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimWait(ctx context.Context, arg LockRunLeaseClaimWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimWait,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.WorkspaceID,
+		arg.CurrentRunLeaseID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

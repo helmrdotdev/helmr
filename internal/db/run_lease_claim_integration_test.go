@@ -85,6 +85,38 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 	if pgvalue.MustUUIDValue(locators.RunID) != assigned.runID {
 		t.Fatalf("locator run = %s, want %s", pgvalue.UUIDString(locators.RunID), assigned.runID)
 	}
+	if locators.RunWaitID.Valid ||
+		locators.SuspendCheckpointID.Valid ||
+		locators.CheckpointPrivateWorkspaceVersionID.Valid {
+		t.Fatalf("fresh locator exposed restore authority: %+v", locators)
+	}
+	if _, err := fixture.queries.LockRunLeaseClaimWait(ctx, LockRunLeaseClaimWaitParams{
+		ID:                pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		EnvironmentID:     locators.EnvironmentID,
+		RunID:             locators.RunID,
+		AttemptNumber:     locators.AttemptNumber,
+		WorkspaceID:       locators.WorkspaceID,
+		CurrentRunLeaseID: pgvalue.UUID(assigned.leaseID),
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing restore Wait error = %v, want no rows", err)
+	}
+	if _, err := fixture.queries.LockRestorableRunCheckpoint(ctx, LockRestorableRunCheckpointParams{
+		ID:            pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RunID:         locators.RunID,
+		AttemptNumber: locators.AttemptNumber,
+		RunWaitID:     pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		WorkspaceID:   locators.WorkspaceID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing restore Checkpoint error = %v, want no rows", err)
+	}
+	if _, err := fixture.queries.GetRunCheckpointSourceRuntime(ctx, GetRunCheckpointSourceRuntimeParams{
+		SourceRunLeaseID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
+		RunID:            locators.RunID,
+		AttemptNumber:    locators.AttemptNumber,
+		WorkspaceID:      locators.WorkspaceID,
+	}); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("missing source Runtime error = %v, want no rows", err)
+	}
 	if _, err := fixture.queries.GetRunLeaseClaimLocators(ctx, GetRunLeaseClaimLocatorsParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 2,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
