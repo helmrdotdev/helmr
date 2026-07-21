@@ -273,6 +273,16 @@ type Querier interface {
 	LockMagicLinkRecipient(ctx context.Context, lockKey int64) error
 	LockOrganizationsForSelfHostedSetup(ctx context.Context) error
 	LockPublicAccessTokenByHash(ctx context.Context, tokenHash []byte) (PublicAccessToken, error)
+	LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error)
+	LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseClaimLeaseParams) (RunLease, error)
+	LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseClaimMountParams) (WorkspaceMount, error)
+	LockRunLeaseClaimNetworkSlot(ctx context.Context, arg LockRunLeaseClaimNetworkSlotParams) (WorkerNetworkSlot, error)
+	LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClaimRunParams) (Run, error)
+	LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLeaseClaimRuntimeParams) (RuntimeInstance, error)
+	LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseClaimWorkerParams) (WorkerInstance, error)
+	LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunLeaseClaimWorkerGroupParams) (WorkerGroup, error)
+	LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (Workspace, error)
+	LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockRunLeaseClaimWorkspaceLeaseParams) (WorkspaceLease, error)
 	LockRuntimeSubstrateAuthority(ctx context.Context, arg LockRuntimeSubstrateAuthorityParams) (LockRuntimeSubstrateAuthorityRow, error)
 	LockWorkerDrainCompletion(ctx context.Context, arg LockWorkerDrainCompletionParams) (pgtype.UUID, error)
 	LockWorkerGroupsForReconciliation(ctx context.Context, arg LockWorkerGroupsForReconciliationParams) ([]string, error)

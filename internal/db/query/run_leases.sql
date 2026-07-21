@@ -99,6 +99,119 @@ SELECT run_leases.org_id,
    AND run_leases.expires_at > transaction_timestamp()
    AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
 
+-- name: LockRunLeaseClaimRun :one
+SELECT *
+  FROM runs
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimWorkspace :one
+SELECT *
+  FROM workspaces
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND region_id = sqlc.arg(region_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimAttempt :one
+SELECT *
+  FROM run_attempts
+ WHERE run_id = sqlc.arg(run_id)
+   AND number = sqlc.arg(number)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimWorkerGroup :one
+SELECT *
+  FROM worker_groups
+ WHERE id = sqlc.arg(id)
+   AND region_id = sqlc.arg(region_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimWorker :one
+SELECT *
+  FROM worker_instances
+ WHERE id = sqlc.arg(id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimNetworkSlot :one
+SELECT *
+  FROM worker_network_slots
+ WHERE id = sqlc.arg(id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND generation = sqlc.arg(generation)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimRuntime :one
+SELECT *
+  FROM runtime_instances
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND region_id = sqlc.arg(region_id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimLease :one
+SELECT *
+  FROM run_leases
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND lease_sequence = sqlc.arg(lease_sequence)
+   AND state IN ('assigned', 'starting')
+   AND start_deadline_at > transaction_timestamp()
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimMount :one
+SELECT *
+  FROM workspace_mounts
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND region_id = sqlc.arg(region_id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+ FOR UPDATE;
+
+-- name: LockRunLeaseClaimWorkspaceLease :one
+SELECT *
+  FROM workspace_leases
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND region_id = sqlc.arg(region_id)
+   AND worker_group_id = sqlc.arg(worker_group_id)
+   AND worker_instance_id = sqlc.arg(worker_instance_id)
+   AND worker_epoch = sqlc.arg(worker_epoch)
+   AND runtime_instance_id = sqlc.arg(runtime_instance_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND workspace_mount_id = sqlc.arg(workspace_mount_id)
+   AND state = 'active'
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE;
+
 -- name: MarkRunLeaseStarting :one
 UPDATE run_leases
    SET state = 'starting',

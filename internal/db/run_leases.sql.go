@@ -319,6 +319,692 @@ func (q *Queries) GetRunLeaseClaimLocators(ctx context.Context, arg GetRunLeaseC
 	return i, err
 }
 
+const lockRunLeaseClaimAttempt = `-- name: LockRunLeaseClaimAttempt :one
+SELECT run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, actor_start_input_sequence, base_workspace_version_id, terminal_actor_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+  FROM run_attempts
+ WHERE run_id = $1
+   AND number = $2
+   AND workspace_id = $3
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimAttemptParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	Number      int32       `json:"number"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimAttempt(ctx context.Context, arg LockRunLeaseClaimAttemptParams) (RunAttempt, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimAttempt, arg.RunID, arg.Number, arg.WorkspaceID)
+	var i RunAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.Number,
+		&i.EntrypointKind,
+		&i.WorkspaceID,
+		&i.EntrypointEnteredAt,
+		&i.ActorStartInputSequence,
+		&i.BaseWorkspaceVersionID,
+		&i.TerminalActorInputSequence,
+		&i.TerminalOutcome,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimLease = `-- name: LockRunLeaseClaimLease :one
+SELECT id, org_id, project_id, environment_id, run_id, workspace_id, region_id, lease_sequence, attempt_number, worker_group_id, worker_instance_id, worker_epoch, runtime_instance_id, network_slot_id, network_slot_generation, runtime_identity_id, worker_protocol_version, requested_cpu_millis, requested_memory_bytes, requested_workload_disk_bytes, requested_scratch_bytes, requested_execution_slots, trace_id, span_id, parent_span_id, traceparent, state, assigned_at, start_deadline_at, claimed_at, started_at, renewed_at, expires_at, checkpointed_at, terminal_at, terminal_reason_code, terminal_error, terminal_request_fingerprint, created_at, updated_at
+  FROM run_leases
+ WHERE id = $1
+   AND run_id = $2
+   AND workspace_id = $3
+   AND attempt_number = $4
+   AND lease_sequence = $5
+   AND state IN ('assigned', 'starting')
+   AND start_deadline_at > transaction_timestamp()
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimLeaseParams struct {
+	ID            pgtype.UUID `json:"id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	LeaseSequence int64       `json:"lease_sequence"`
+}
+
+func (q *Queries) LockRunLeaseClaimLease(ctx context.Context, arg LockRunLeaseClaimLeaseParams) (RunLease, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimLease,
+		arg.ID,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.LeaseSequence,
+	)
+	var i RunLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.RegionID,
+		&i.LeaseSequence,
+		&i.AttemptNumber,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.NetworkSlotID,
+		&i.NetworkSlotGeneration,
+		&i.RuntimeIdentityID,
+		&i.WorkerProtocolVersion,
+		&i.RequestedCpuMillis,
+		&i.RequestedMemoryBytes,
+		&i.RequestedWorkloadDiskBytes,
+		&i.RequestedScratchBytes,
+		&i.RequestedExecutionSlots,
+		&i.TraceID,
+		&i.SpanID,
+		&i.ParentSpanID,
+		&i.Traceparent,
+		&i.State,
+		&i.AssignedAt,
+		&i.StartDeadlineAt,
+		&i.ClaimedAt,
+		&i.StartedAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.CheckpointedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.TerminalRequestFingerprint,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimMount = `-- name: LockRunLeaseClaimMount :one
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, workspace_id, materialized_version_id, runtime_instance_id, claim_attempt, guest_channel_token_hash, guest_channel_token_expires_at, state, request, dirty_generation, fencing_generation, requested_at, mounted_at, unmounted_at, stopped_at, lost_at, failed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+  FROM workspace_mounts
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND region_id = $5
+   AND worker_group_id = $6
+   AND worker_instance_id = $7
+   AND worker_epoch = $8
+   AND runtime_instance_id = $9
+   AND workspace_id = $10
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimMountParams struct {
+	ID                pgtype.UUID `json:"id"`
+	OrgID             pgtype.UUID `json:"org_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	EnvironmentID     pgtype.UUID `json:"environment_id"`
+	RegionID          string      `json:"region_id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       int64       `json:"worker_epoch"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimMount(ctx context.Context, arg LockRunLeaseClaimMountParams) (WorkspaceMount, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimMount,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
+		arg.WorkspaceID,
+	)
+	var i WorkspaceMount
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.WorkspaceID,
+		&i.MaterializedVersionID,
+		&i.RuntimeInstanceID,
+		&i.ClaimAttempt,
+		&i.GuestChannelTokenHash,
+		&i.GuestChannelTokenExpiresAt,
+		&i.State,
+		&i.Request,
+		&i.DirtyGeneration,
+		&i.FencingGeneration,
+		&i.RequestedAt,
+		&i.MountedAt,
+		&i.UnmountedAt,
+		&i.StoppedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimNetworkSlot = `-- name: LockRunLeaseClaimNetworkSlot :one
+SELECT id, worker_group_id, worker_instance_id, worker_epoch, slot_name, generation, state, runtime_instance_id, host_interface_name, guest_address, gateway_address, subnet, tap_name, netns_name, guest_mac, assigned_at, reclaiming_at, quarantined_at, lost_at, reclaimed_at, reclaim_evidence, state_reason_code, state_error, created_at, updated_at
+  FROM worker_network_slots
+ WHERE id = $1
+   AND worker_group_id = $2
+   AND worker_instance_id = $3
+   AND worker_epoch = $4
+   AND generation = $5
+   AND runtime_instance_id = $6
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimNetworkSlotParams struct {
+	ID                pgtype.UUID `json:"id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       int64       `json:"worker_epoch"`
+	Generation        int64       `json:"generation"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimNetworkSlot(ctx context.Context, arg LockRunLeaseClaimNetworkSlotParams) (WorkerNetworkSlot, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimNetworkSlot,
+		arg.ID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.Generation,
+		arg.RuntimeInstanceID,
+	)
+	var i WorkerNetworkSlot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkerGroupID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.SlotName,
+		&i.Generation,
+		&i.State,
+		&i.RuntimeInstanceID,
+		&i.HostInterfaceName,
+		&i.GuestAddress,
+		&i.GatewayAddress,
+		&i.Subnet,
+		&i.TapName,
+		&i.NetnsName,
+		&i.GuestMac,
+		&i.AssignedAt,
+		&i.ReclaimingAt,
+		&i.QuarantinedAt,
+		&i.LostAt,
+		&i.ReclaimedAt,
+		&i.ReclaimEvidence,
+		&i.StateReasonCode,
+		&i.StateError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimRun = `-- name: LockRunLeaseClaimRun :one
+SELECT id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, payload_artifact_id, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+  FROM runs
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND workspace_id = $5
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimRunParams struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimRun(ctx context.Context, arg LockRunLeaseClaimRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimRun,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.PayloadArtifactID,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimRuntime = `-- name: LockRunLeaseClaimRuntime :one
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, runtime_identity_id, deployment_definition_id, runtime_substrate_id, worker_epoch, network_policy, reserved_cpu_millis, reserved_memory_bytes, reserved_workload_disk_bytes, reserved_scratch_bytes, reserved_execution_slots, workspace_id, program_deployment_id, reserved_run_id, reserved_attempt_number, reserved_process_id, reserved_workspace_version_id, reservation_expires_at, desired_state, desired_version, desired_at, desired_reason, observed_state, observed_version, observed_desired_version, observed_at, allocated_at, preparing_at, ready_at, closing_at, closed_at, lost_at, failed_at, reclaimed_at, terminal_at, terminal_reason_code, terminal_error, created_at, updated_at
+  FROM runtime_instances
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND region_id = $5
+   AND worker_group_id = $6
+   AND worker_instance_id = $7
+   AND worker_epoch = $8
+   AND workspace_id = $9
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimRuntimeParams struct {
+	ID               pgtype.UUID `json:"id"`
+	OrgID            pgtype.UUID `json:"org_id"`
+	ProjectID        pgtype.UUID `json:"project_id"`
+	EnvironmentID    pgtype.UUID `json:"environment_id"`
+	RegionID         string      `json:"region_id"`
+	WorkerGroupID    string      `json:"worker_group_id"`
+	WorkerInstanceID pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch      int64       `json:"worker_epoch"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimRuntime(ctx context.Context, arg LockRunLeaseClaimRuntimeParams) (RuntimeInstance, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimRuntime,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.WorkspaceID,
+	)
+	var i RuntimeInstance
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.RuntimeIdentityID,
+		&i.DeploymentDefinitionID,
+		&i.RuntimeSubstrateID,
+		&i.WorkerEpoch,
+		&i.NetworkPolicy,
+		&i.ReservedCpuMillis,
+		&i.ReservedMemoryBytes,
+		&i.ReservedWorkloadDiskBytes,
+		&i.ReservedScratchBytes,
+		&i.ReservedExecutionSlots,
+		&i.WorkspaceID,
+		&i.ProgramDeploymentID,
+		&i.ReservedRunID,
+		&i.ReservedAttemptNumber,
+		&i.ReservedProcessID,
+		&i.ReservedWorkspaceVersionID,
+		&i.ReservationExpiresAt,
+		&i.DesiredState,
+		&i.DesiredVersion,
+		&i.DesiredAt,
+		&i.DesiredReason,
+		&i.ObservedState,
+		&i.ObservedVersion,
+		&i.ObservedDesiredVersion,
+		&i.ObservedAt,
+		&i.AllocatedAt,
+		&i.PreparingAt,
+		&i.ReadyAt,
+		&i.ClosingAt,
+		&i.ClosedAt,
+		&i.LostAt,
+		&i.FailedAt,
+		&i.ReclaimedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimWorker = `-- name: LockRunLeaseClaimWorker :one
+SELECT id, resource_id, worker_group_id, attestation_fingerprint, state, claim_version, current_epoch, current_service_id, protocol_version, supervisor_version, supports_run, supports_build, toolchain_catalog_digest, runtime_identity_id, substrate_format, substrate_builder_abi, substrate_layout_abi, certified_cpu_millis, certified_memory_bytes, certified_workload_disk_bytes, certified_scratch_bytes, certified_build_cache_bytes, certified_artifact_cache_bytes, certified_hugepages_bytes, certified_checkpoint_bytes, per_vm_cpu_millis, per_vm_memory_bytes, per_vm_workload_disk_bytes, per_vm_scratch_bytes, max_vm_slots, max_run_consumers, max_build_executors, max_runtime_starts, certification_profile, certification_fingerprint, epoch_started_at, startup_inventory_epoch, startup_inventory_evidence, drain_cleanup_fingerprint, drain_cleanup_evidence, certified_at, activated_at, draining_at, disabled_at, lost_at, termination_claimed_at, provider_terminated_at, created_at, updated_at
+  FROM worker_instances
+ WHERE id = $1
+   AND worker_group_id = $2
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimWorkerParams struct {
+	ID            pgtype.UUID `json:"id"`
+	WorkerGroupID string      `json:"worker_group_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimWorker(ctx context.Context, arg LockRunLeaseClaimWorkerParams) (WorkerInstance, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimWorker, arg.ID, arg.WorkerGroupID)
+	var i WorkerInstance
+	err := row.Scan(
+		&i.ID,
+		&i.ResourceID,
+		&i.WorkerGroupID,
+		&i.AttestationFingerprint,
+		&i.State,
+		&i.ClaimVersion,
+		&i.CurrentEpoch,
+		&i.CurrentServiceID,
+		&i.ProtocolVersion,
+		&i.SupervisorVersion,
+		&i.SupportsRun,
+		&i.SupportsBuild,
+		&i.ToolchainCatalogDigest,
+		&i.RuntimeIdentityID,
+		&i.SubstrateFormat,
+		&i.SubstrateBuilderAbi,
+		&i.SubstrateLayoutAbi,
+		&i.CertifiedCpuMillis,
+		&i.CertifiedMemoryBytes,
+		&i.CertifiedWorkloadDiskBytes,
+		&i.CertifiedScratchBytes,
+		&i.CertifiedBuildCacheBytes,
+		&i.CertifiedArtifactCacheBytes,
+		&i.CertifiedHugepagesBytes,
+		&i.CertifiedCheckpointBytes,
+		&i.PerVmCpuMillis,
+		&i.PerVmMemoryBytes,
+		&i.PerVmWorkloadDiskBytes,
+		&i.PerVmScratchBytes,
+		&i.MaxVmSlots,
+		&i.MaxRunConsumers,
+		&i.MaxBuildExecutors,
+		&i.MaxRuntimeStarts,
+		&i.CertificationProfile,
+		&i.CertificationFingerprint,
+		&i.EpochStartedAt,
+		&i.StartupInventoryEpoch,
+		&i.StartupInventoryEvidence,
+		&i.DrainCleanupFingerprint,
+		&i.DrainCleanupEvidence,
+		&i.CertifiedAt,
+		&i.ActivatedAt,
+		&i.DrainingAt,
+		&i.DisabledAt,
+		&i.LostAt,
+		&i.TerminationClaimedAt,
+		&i.ProviderTerminatedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimWorkerGroup = `-- name: LockRunLeaseClaimWorkerGroup :one
+SELECT id, region_id, name, description, state, enrollment_policy_fingerprint, allowed_attestation_fingerprints, launch_attestation_fingerprint, claim_version, allows_run, allows_build, required_cpu_millis, required_memory_bytes, required_workload_disk_bytes, required_scratch_bytes, required_build_cache_bytes, required_artifact_cache_bytes, required_vm_slots, required_build_executors, last_scale_out_at, last_scale_in_at, protocol_version, created_at, updated_at
+  FROM worker_groups
+ WHERE id = $1
+   AND region_id = $2
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimWorkerGroupParams struct {
+	ID       string `json:"id"`
+	RegionID string `json:"region_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimWorkerGroup(ctx context.Context, arg LockRunLeaseClaimWorkerGroupParams) (WorkerGroup, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimWorkerGroup, arg.ID, arg.RegionID)
+	var i WorkerGroup
+	err := row.Scan(
+		&i.ID,
+		&i.RegionID,
+		&i.Name,
+		&i.Description,
+		&i.State,
+		&i.EnrollmentPolicyFingerprint,
+		&i.AllowedAttestationFingerprints,
+		&i.LaunchAttestationFingerprint,
+		&i.ClaimVersion,
+		&i.AllowsRun,
+		&i.AllowsBuild,
+		&i.RequiredCpuMillis,
+		&i.RequiredMemoryBytes,
+		&i.RequiredWorkloadDiskBytes,
+		&i.RequiredScratchBytes,
+		&i.RequiredBuildCacheBytes,
+		&i.RequiredArtifactCacheBytes,
+		&i.RequiredVmSlots,
+		&i.RequiredBuildExecutors,
+		&i.LastScaleOutAt,
+		&i.LastScaleInAt,
+		&i.ProtocolVersion,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimWorkspace = `-- name: LockRunLeaseClaimWorkspace :one
+SELECT id, public_id, org_id, project_id, environment_id, region_id, declaration_kind, workspace_declared_id, deployment_definition_id, key, create_idempotency_key, create_idempotency_expires_at, create_request_fingerprint, state_version, stop_generation, owner_actor_id, owner_run_id, ownership_generation, writer_generation, head_version_id, state, desired_state, dirty_state, metadata, tags, retention_policy, last_activity_at, created_at, updated_at, deleted_at
+  FROM workspaces
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND region_id = $5
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimWorkspaceParams struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RegionID      string      `json:"region_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimWorkspace(ctx context.Context, arg LockRunLeaseClaimWorkspaceParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimWorkspace,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+	)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.DeclarationKind,
+		&i.WorkspaceDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.Key,
+		&i.CreateIdempotencyKey,
+		&i.CreateIdempotencyExpiresAt,
+		&i.CreateRequestFingerprint,
+		&i.StateVersion,
+		&i.StopGeneration,
+		&i.OwnerActorID,
+		&i.OwnerRunID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.HeadVersionID,
+		&i.State,
+		&i.DesiredState,
+		&i.DirtyState,
+		&i.Metadata,
+		&i.Tags,
+		&i.RetentionPolicy,
+		&i.LastActivityAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const lockRunLeaseClaimWorkspaceLease = `-- name: LockRunLeaseClaimWorkspaceLease :one
+SELECT id, org_id, worker_group_id, project_id, environment_id, region_id, worker_instance_id, worker_epoch, runtime_instance_id, workspace_id, workspace_mount_id, state, owner_run_lease_id, owner_process_id, base_version_id, ownership_generation, writer_generation, mount_fencing_generation, fencing_key_id, fencing_token_hash, acquired_at, renewed_at, expires_at, released_at, lost_at, updated_at, terminal_at, terminal_reason_code, terminal_error
+  FROM workspace_leases
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND region_id = $5
+   AND worker_group_id = $6
+   AND worker_instance_id = $7
+   AND worker_epoch = $8
+   AND runtime_instance_id = $9
+   AND workspace_id = $10
+   AND workspace_mount_id = $11
+   AND state = 'active'
+   AND expires_at > transaction_timestamp()
+ FOR UPDATE
+`
+
+type LockRunLeaseClaimWorkspaceLeaseParams struct {
+	ID                pgtype.UUID `json:"id"`
+	OrgID             pgtype.UUID `json:"org_id"`
+	ProjectID         pgtype.UUID `json:"project_id"`
+	EnvironmentID     pgtype.UUID `json:"environment_id"`
+	RegionID          string      `json:"region_id"`
+	WorkerGroupID     string      `json:"worker_group_id"`
+	WorkerInstanceID  pgtype.UUID `json:"worker_instance_id"`
+	WorkerEpoch       int64       `json:"worker_epoch"`
+	RuntimeInstanceID pgtype.UUID `json:"runtime_instance_id"`
+	WorkspaceID       pgtype.UUID `json:"workspace_id"`
+	WorkspaceMountID  pgtype.UUID `json:"workspace_mount_id"`
+}
+
+func (q *Queries) LockRunLeaseClaimWorkspaceLease(ctx context.Context, arg LockRunLeaseClaimWorkspaceLeaseParams) (WorkspaceLease, error) {
+	row := q.db.QueryRow(ctx, lockRunLeaseClaimWorkspaceLease,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.RegionID,
+		arg.WorkerGroupID,
+		arg.WorkerInstanceID,
+		arg.WorkerEpoch,
+		arg.RuntimeInstanceID,
+		arg.WorkspaceID,
+		arg.WorkspaceMountID,
+	)
+	var i WorkspaceLease
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.WorkerGroupID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.RegionID,
+		&i.WorkerInstanceID,
+		&i.WorkerEpoch,
+		&i.RuntimeInstanceID,
+		&i.WorkspaceID,
+		&i.WorkspaceMountID,
+		&i.State,
+		&i.OwnerRunLeaseID,
+		&i.OwnerProcessID,
+		&i.BaseVersionID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.MountFencingGeneration,
+		&i.FencingKeyID,
+		&i.FencingTokenHash,
+		&i.AcquiredAt,
+		&i.RenewedAt,
+		&i.ExpiresAt,
+		&i.ReleasedAt,
+		&i.LostAt,
+		&i.UpdatedAt,
+		&i.TerminalAt,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+	)
+	return i, err
+}
+
 const markRunLeaseStarting = `-- name: MarkRunLeaseStarting :one
 UPDATE run_leases
    SET state = 'starting',

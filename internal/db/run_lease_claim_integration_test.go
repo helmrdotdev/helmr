@@ -100,6 +100,92 @@ func TestRunLeaseDiscoveryAndClaimFoundation(t *testing.T) {
 		t.Fatalf("cross-worker locator error = %v, want no rows", err)
 	}
 
+	tx, err := fixture.pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked := New(tx)
+	run, err := locked.LockRunLeaseClaimRun(ctx, LockRunLeaseClaimRunParams{
+		ID: locators.RunID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace, err := locked.LockRunLeaseClaimWorkspace(ctx, LockRunLeaseClaimWorkspaceParams{
+		ID: locators.WorkspaceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimAttempt(ctx, LockRunLeaseClaimAttemptParams{
+		RunID: locators.RunID, Number: locators.AttemptNumber, WorkspaceID: locators.WorkspaceID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimWorkerGroup(ctx, LockRunLeaseClaimWorkerGroupParams{
+		ID: runLeaseTestWorkerGroup, RegionID: locators.RegionID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimWorker(ctx, LockRunLeaseClaimWorkerParams{
+		ID: pgvalue.UUID(fixture.workerID), WorkerGroupID: runLeaseTestWorkerGroup,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimNetworkSlot(ctx, LockRunLeaseClaimNetworkSlotParams{
+		ID: locators.NetworkSlotID, WorkerGroupID: runLeaseTestWorkerGroup,
+		WorkerInstanceID: pgvalue.UUID(fixture.workerID), WorkerEpoch: 1,
+		Generation: locators.NetworkSlotGeneration, RuntimeInstanceID: locators.RuntimeInstanceID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimRuntime(ctx, LockRunLeaseClaimRuntimeParams{
+		ID: locators.RuntimeInstanceID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, WorkspaceID: locators.WorkspaceID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := locked.LockRunLeaseClaimLease(ctx, LockRunLeaseClaimLeaseParams{
+		ID: pgvalue.UUID(assigned.leaseID), RunID: locators.RunID,
+		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
+		LeaseSequence: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	mount, err := locked.LockRunLeaseClaimMount(ctx, LockRunLeaseClaimMountParams{
+		ID: locators.WorkspaceMountID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspaceLease, err := locked.LockRunLeaseClaimWorkspaceLease(ctx, LockRunLeaseClaimWorkspaceLeaseParams{
+		ID: locators.WorkspaceLeaseID, OrgID: locators.OrgID, ProjectID: locators.ProjectID,
+		EnvironmentID: locators.EnvironmentID, RegionID: locators.RegionID,
+		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),
+		WorkerEpoch: 1, RuntimeInstanceID: locators.RuntimeInstanceID, WorkspaceID: locators.WorkspaceID,
+		WorkspaceMountID: locators.WorkspaceMountID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.CurrentRunLeaseID != pgvalue.UUID(assigned.leaseID) ||
+		workspaceLease.OwnerRunLeaseID != pgvalue.UUID(assigned.leaseID) ||
+		workspaceLease.MountFencingGeneration != mount.FencingGeneration ||
+		workspaceLease.OwnershipGeneration != workspace.OwnershipGeneration ||
+		workspaceLease.WriterGeneration != workspace.WriterGeneration {
+		t.Fatal("locked claim authority is not one exact attachment")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
 	claimed, err := fixture.queries.MarkRunLeaseStarting(ctx, MarkRunLeaseStartingParams{
 		ID: pgvalue.UUID(assigned.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: pgvalue.UUID(fixture.workerID),

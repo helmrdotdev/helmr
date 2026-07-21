@@ -21,15 +21,16 @@ type actorContextKey struct{}
 type workerContextKey struct{}
 
 type workerActor struct {
-	WorkerInstanceID uuid.UUID
-	WorkerGroupID    string
-	WorkerEpoch      int64
-	ClaimVersion     int64
-	ProtocolVersion  string
-	Roles            []string
-	ResourceID       string
-	State            db.WorkerInstanceState
-	EpochStartedAt   time.Time
+	WorkerInstanceID  uuid.UUID
+	WorkerGroupID     string
+	WorkerEpoch       int64
+	ClaimVersion      int64
+	GroupClaimVersion int64
+	ProtocolVersion   string
+	Roles             []string
+	ResourceID        string
+	State             db.WorkerInstanceState
+	EpochStartedAt    time.Time
 }
 
 func (s *Server) requireActor(next http.Handler) http.Handler {
@@ -307,15 +308,16 @@ func (s *Server) requireWorkerState(state workerAuthState, next http.Handler) ht
 			return
 		}
 		worker := workerActor{
-			WorkerInstanceID: workerInstanceID,
-			WorkerGroupID:    strings.TrimSpace(row.WorkerGroupID),
-			ClaimVersion:     row.ClaimVersion,
-			ResourceID:       strings.TrimSpace(row.ResourceID),
-			WorkerEpoch:      payload.WorkerEpoch,
-			ProtocolVersion:  payload.ProtocolVersion,
-			Roles:            append([]string(nil), payload.Roles...),
-			State:            row.WorkerState,
-			EpochStartedAt:   pgvalue.Time(row.EpochStartedAt),
+			WorkerInstanceID:  workerInstanceID,
+			WorkerGroupID:     strings.TrimSpace(row.WorkerGroupID),
+			ClaimVersion:      row.ClaimVersion,
+			GroupClaimVersion: payload.GroupClaimVersion,
+			ResourceID:        strings.TrimSpace(row.ResourceID),
+			WorkerEpoch:       payload.WorkerEpoch,
+			ProtocolVersion:   payload.ProtocolVersion,
+			Roles:             append([]string(nil), payload.Roles...),
+			State:             row.WorkerState,
+			EpochStartedAt:    pgvalue.Time(row.EpochStartedAt),
 		}
 		if pgvalue.MustUUIDValue(row.WorkerInstanceID) != workerInstanceID || worker.WorkerGroupID != payload.WorkerGroupID {
 			writeError(w, unauthorized(errors.New("worker authentication is required")))
