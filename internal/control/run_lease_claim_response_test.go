@@ -94,7 +94,8 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInReceipt(t *testing.T) {
 			t.Fatalf("lease does not contain %q: %s", field, raw)
 		}
 	}
-	if len(decoded.Workspace) != 1 || decoded.Workspace["write_capability"] == nil {
+	if len(decoded.Workspace) != 2 || decoded.Workspace["write_capability"] == nil ||
+		decoded.Workspace["reset_target"] == nil {
 		t.Fatalf("workspace attachment = %s", raw)
 	}
 }
@@ -157,7 +158,8 @@ func validRunLeaseClaimResponse(
 			ProgramDependencyMediaType: "application/vnd.helmr.program-dependencies.v0+erofs",
 			BuildContractVersion:       deployment.ProgramBuildContractVersion,
 		},
-		definition: definition,
+		definition:  definition,
+		resetTarget: validWorkspaceResetTargetAuthority(physical),
 	}
 	return runLeaseClaimResponseAuthority{
 		mode:           runLeaseClaimFresh,

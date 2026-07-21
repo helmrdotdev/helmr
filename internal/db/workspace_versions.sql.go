@@ -11,6 +11,90 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const getWorkspaceResetTargetAuthority = `-- name: GetWorkspaceResetTargetAuthority :one
+SELECT workspace_versions.id AS version_id,
+       workspace_versions.parent_version_id,
+       workspace_versions.artifact_id,
+       workspace_versions.artifact_kind,
+       workspace_versions.kind AS version_kind,
+       workspace_versions.content_digest,
+       workspace_versions.size_bytes AS logical_size_bytes,
+       workspace_versions.entry_count,
+       workspace_versions.source_workspace_lease_id,
+       workspace_versions.ownership_generation,
+       workspace_versions.writer_generation,
+       artifacts.kind AS artifact_row_kind,
+       artifacts.digest AS artifact_digest,
+       artifacts.size_bytes AS artifact_size_bytes,
+       artifacts.media_type AS artifact_media_type
+  FROM workspace_versions
+  LEFT JOIN artifacts ON artifacts.org_id = workspace_versions.org_id
+                     AND artifacts.project_id = workspace_versions.project_id
+                     AND artifacts.environment_id = workspace_versions.environment_id
+                     AND artifacts.id = workspace_versions.artifact_id
+ WHERE workspace_versions.org_id = $1
+   AND workspace_versions.project_id = $2
+   AND workspace_versions.environment_id = $3
+   AND workspace_versions.workspace_id = $4
+   AND workspace_versions.id = $5
+   AND workspace_versions.state = 'committed'
+`
+
+type GetWorkspaceResetTargetAuthorityParams struct {
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	VersionID     pgtype.UUID `json:"version_id"`
+}
+
+type GetWorkspaceResetTargetAuthorityRow struct {
+	VersionID              pgtype.UUID          `json:"version_id"`
+	ParentVersionID        pgtype.UUID          `json:"parent_version_id"`
+	ArtifactID             pgtype.UUID          `json:"artifact_id"`
+	ArtifactKind           NullArtifactKind     `json:"artifact_kind"`
+	VersionKind            WorkspaceVersionKind `json:"version_kind"`
+	ContentDigest          string               `json:"content_digest"`
+	LogicalSizeBytes       int64                `json:"logical_size_bytes"`
+	EntryCount             int32                `json:"entry_count"`
+	SourceWorkspaceLeaseID pgtype.UUID          `json:"source_workspace_lease_id"`
+	OwnershipGeneration    int64                `json:"ownership_generation"`
+	WriterGeneration       int64                `json:"writer_generation"`
+	ArtifactRowKind        NullArtifactKind     `json:"artifact_row_kind"`
+	ArtifactDigest         pgtype.Text          `json:"artifact_digest"`
+	ArtifactSizeBytes      pgtype.Int8          `json:"artifact_size_bytes"`
+	ArtifactMediaType      pgtype.Text          `json:"artifact_media_type"`
+}
+
+func (q *Queries) GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getWorkspaceResetTargetAuthority,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.VersionID,
+	)
+	var i GetWorkspaceResetTargetAuthorityRow
+	err := row.Scan(
+		&i.VersionID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.VersionKind,
+		&i.ContentDigest,
+		&i.LogicalSizeBytes,
+		&i.EntryCount,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.ArtifactRowKind,
+		&i.ArtifactDigest,
+		&i.ArtifactSizeBytes,
+		&i.ArtifactMediaType,
+	)
+	return i, err
+}
+
 const getWorkspaceVersion = `-- name: GetWorkspaceVersion :one
 SELECT id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id, artifact_id, artifact_kind, kind, content_digest, size_bytes, entry_count, state, source_workspace_lease_id, ownership_generation, writer_generation, created_at, published_at, discarded_at
   FROM workspace_versions

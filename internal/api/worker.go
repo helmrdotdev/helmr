@@ -492,7 +492,8 @@ type WorkerRunLeaseReceipt struct {
 }
 
 type WorkerWorkspaceAttachment struct {
-	WriteCapability string `json:"write_capability"`
+	WriteCapability string                     `json:"write_capability"`
+	ResetTarget     WorkerWorkspaceResetTarget `json:"reset_target"`
 }
 
 type WorkerSecretDelivery struct {

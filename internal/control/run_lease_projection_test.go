@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -177,21 +178,63 @@ func TestProjectRunLeaseReceiptAndWorkspace(t *testing.T) {
 	if _, err := projectRunLeaseReceipt(authority); err != nil {
 		t.Fatalf("equal Run Lease deadlines: %v", err)
 	}
-	workspace, err := projectWorkspaceAttachment(authority, "write-capability")
+	resetAuthority := validWorkspaceResetTargetAuthority(authority)
+	workspace, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority)
 	if err != nil {
 		t.Fatalf("projectWorkspaceAttachment: %v", err)
 	}
-	if workspace.WriteCapability != "write-capability" {
+	if workspace.WriteCapability != "write-capability" || workspace.ResetTarget.Empty == nil ||
+		workspace.ResetTarget.BaseWorkspaceVersionID != receipt.BaseWorkspaceVersionID {
 		t.Fatalf("unexpected Workspace attachment: %#v", workspace)
 	}
 
 	authority.workspaceLease.WriterGeneration++
-	if _, err := projectWorkspaceAttachment(authority, "write-capability"); err == nil {
+	if _, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority); err == nil {
 		t.Fatal("mismatched writer generation was accepted")
 	}
 	authority.workspaceLease.RuntimeInstanceID = pgvalue.UUID(uuid.New())
-	if _, err := projectWorkspaceAttachment(authority, "write-capability"); err == nil {
+	if _, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority); err == nil {
 		t.Fatal("mismatched Workspace Lease runtime was accepted")
+	}
+}
+
+func validWorkspaceResetTargetAuthority(
+	authority runLeaseProjectionAuthority,
+) db.GetWorkspaceResetTargetAuthorityRow {
+	return db.GetWorkspaceResetTargetAuthorityRow{
+		VersionID:     authority.workspaceLease.BaseVersionID,
+		VersionKind:   db.WorkspaceVersionKindSystem,
+		ContentDigest: workspace.CanonicalEmptyTreeDigest,
+	}
+}
+
+func TestProjectWorkspaceAttachmentProjectsArtifactResetTarget(t *testing.T) {
+	authority := validRunLeaseProjectionAuthority()
+	resetAuthority := db.GetWorkspaceResetTargetAuthorityRow{
+		VersionID:       authority.workspaceLease.BaseVersionID,
+		ParentVersionID: pgvalue.UUID(uuid.New()), ArtifactID: pgvalue.UUID(uuid.New()),
+		ArtifactKind: db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
+		VersionKind:  db.WorkspaceVersionKindUser, ContentDigest: validDigest('c'),
+		LogicalSizeBytes: 3, EntryCount: 1,
+		SourceWorkspaceLeaseID: pgvalue.UUID(uuid.New()), OwnershipGeneration: 5, WriterGeneration: 6,
+		ArtifactRowKind:   db.NullArtifactKind{ArtifactKind: db.ArtifactKindWorkspaceVersion, Valid: true},
+		ArtifactDigest:    pgvalue.Text(validDigest('d')),
+		ArtifactSizeBytes: pgtype.Int8{Int64: 1024, Valid: true},
+		ArtifactMediaType: pgvalue.Text(workspace.ArtifactMediaType),
+	}
+	attachment, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attachment.ResetTarget.Artifact == nil || attachment.ResetTarget.Empty != nil ||
+		attachment.ResetTarget.Artifact.Digest != validDigest('d') ||
+		attachment.ResetTarget.Tree.Digest != validDigest('c') {
+		t.Fatalf("attachment = %#v", attachment)
+	}
+
+	resetAuthority.ArtifactRowKind = db.NullArtifactKind{}
+	if _, err := projectWorkspaceAttachment(authority, "write-capability", resetAuthority); err == nil {
+		t.Fatal("partial Workspace Artifact relation was accepted")
 	}
 }
 

@@ -168,6 +168,9 @@ func newWorkerRunLeaseClaimHTTPFixture(
 			BuildContractVersion:       deployment.ProgramBuildContractVersion,
 		},
 		definition: definition,
+		resetTarget: validWorkspaceResetTargetAuthority(runLeaseProjectionAuthority{
+			workspaceLease: authority.workspaceLease,
+		}),
 	}
 	server := &Server{
 		log:                  discardTestLogger(),

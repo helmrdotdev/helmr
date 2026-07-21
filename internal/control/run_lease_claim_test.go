@@ -1052,6 +1052,7 @@ type runLeaseClaimStore struct {
 	secretVersion   db.SecretVersion
 	program         db.GetDeploymentProgramAuthorityRow
 	definition      db.DeploymentDefinition
+	resetTarget     db.GetWorkspaceResetTargetAuthorityRow
 	projectionErr   error
 	entrypoint      db.GetRunEntrypointLocatorsRow
 	enteredAt       pgtype.Timestamptz
@@ -1126,6 +1127,17 @@ func (s *runLeaseClaimStore) GetDeploymentDefinition(
 		return db.DeploymentDefinition{}, s.projectionErr
 	}
 	return s.definition, nil
+}
+
+func (s *runLeaseClaimStore) GetWorkspaceResetTargetAuthority(
+	context.Context,
+	db.GetWorkspaceResetTargetAuthorityParams,
+) (db.GetWorkspaceResetTargetAuthorityRow, error) {
+	s.calls = append(s.calls, "reset_target")
+	if s.projectionErr != nil {
+		return db.GetWorkspaceResetTargetAuthorityRow{}, s.projectionErr
+	}
+	return s.resetTarget, nil
 }
 
 func (s *runLeaseClaimStore) LockRunLeaseClaimActor(context.Context, db.LockRunLeaseClaimActorParams) (db.Actor, error) {

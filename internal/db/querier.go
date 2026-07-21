@@ -225,6 +225,7 @@ type Querier interface {
 	GetWorkspaceMountForWorkerTransition(ctx context.Context, arg GetWorkspaceMountForWorkerTransitionParams) (WorkspaceMount, error)
 	GetWorkspaceMountPrerequisites(ctx context.Context, arg GetWorkspaceMountPrerequisitesParams) (GetWorkspaceMountPrerequisitesRow, error)
 	GetWorkspaceProcessRecord(ctx context.Context, arg GetWorkspaceProcessRecordParams) (WorkspaceProcessRecord, error)
+	GetWorkspaceResetTargetAuthority(ctx context.Context, arg GetWorkspaceResetTargetAuthorityParams) (GetWorkspaceResetTargetAuthorityRow, error)
 	GetWorkspaceVersion(ctx context.Context, arg GetWorkspaceVersionParams) (WorkspaceVersion, error)
 	HasUnpublishedLiveTelemetryOutbox(ctx context.Context, arg HasUnpublishedLiveTelemetryOutboxParams) (bool, error)
 	InsertAssignedRunLease(ctx context.Context, arg InsertAssignedRunLeaseParams) (RunLease, error)

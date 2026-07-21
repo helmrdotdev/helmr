@@ -20,6 +20,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 func TestClientErrorUsesServerMessage(t *testing.T) {
@@ -789,10 +790,11 @@ func TestWorkerLifecycleClient(t *testing.T) {
 
 func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	receipt := api.WorkerRunLeaseReceipt{
-		ID:            "00000000-0000-0000-0000-000000000001",
-		RunID:         "00000000-0000-0000-0000-000000000002",
-		AttemptNumber: 1,
-		LeaseSequence: 3,
+		ID:                     "00000000-0000-0000-0000-000000000001",
+		RunID:                  "00000000-0000-0000-0000-000000000002",
+		AttemptNumber:          1,
+		LeaseSequence:          3,
+		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000003",
 	}
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(
@@ -816,6 +818,13 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(
 					api.WorkerRunLeaseClaimResponse{
 						Lease: receipt,
+						Workspace: api.WorkerWorkspaceAttachment{ResetTarget: api.WorkerWorkspaceResetTarget{
+							BaseWorkspaceVersionID: receipt.BaseWorkspaceVersionID,
+							Tree: api.WorkerWorkspaceTreeIdentity{
+								Digest: workspace.CanonicalEmptyTreeDigest,
+							},
+							Empty: &api.WorkerEmptyWorkspace{},
+						}},
 						Execution: api.WorkerRunLeaseExecution{
 							Fresh: &api.WorkerRunLeaseFresh{
 								ProgramStart: []byte("frame"),

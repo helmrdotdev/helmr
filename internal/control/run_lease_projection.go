@@ -10,6 +10,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/secret"
+	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type runLeaseClaimMode string
@@ -338,6 +339,7 @@ func projectRunLeaseReceipt(authority runLeaseProjectionAuthority) (api.WorkerRu
 func projectWorkspaceAttachment(
 	authority runLeaseProjectionAuthority,
 	writeCapability string,
+	resetAuthority db.GetWorkspaceResetTargetAuthorityRow,
 ) (api.WorkerWorkspaceAttachment, error) {
 	lease := authority.workspaceLease
 	if lease.OwnerRunLeaseID != authority.runLease.ID ||
@@ -354,7 +356,71 @@ func projectWorkspaceAttachment(
 		strings.TrimSpace(writeCapability) == "" {
 		return api.WorkerWorkspaceAttachment{}, errors.New("Workspace attachment authority is inconsistent")
 	}
-	return api.WorkerWorkspaceAttachment{WriteCapability: writeCapability}, nil
+	resetTarget, err := projectWorkspaceResetTarget(lease, resetAuthority)
+	if err != nil {
+		return api.WorkerWorkspaceAttachment{}, err
+	}
+	return api.WorkerWorkspaceAttachment{WriteCapability: writeCapability, ResetTarget: resetTarget}, nil
+}
+
+func projectWorkspaceResetTarget(
+	lease db.WorkspaceLease,
+	authority db.GetWorkspaceResetTargetAuthorityRow,
+) (api.WorkerWorkspaceResetTarget, error) {
+	if authority.VersionID != lease.BaseVersionID {
+		return api.WorkerWorkspaceResetTarget{}, errors.New("Workspace Reset target does not match the Workspace Lease base")
+	}
+	baseVersionID, err := requiredClaimUUIDString("Workspace Reset base version ID", authority.VersionID)
+	if err != nil {
+		return api.WorkerWorkspaceResetTarget{}, err
+	}
+	tree := workspace.TreeIdentity{
+		Digest: authority.ContentDigest, SizeBytes: authority.LogicalSizeBytes,
+		EntryCount: int(authority.EntryCount),
+	}
+	projectedTree := api.WorkerWorkspaceTreeIdentity{
+		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: authority.EntryCount,
+	}
+	emptyShape := !authority.ParentVersionID.Valid && !authority.ArtifactID.Valid &&
+		!authority.ArtifactKind.Valid && authority.VersionKind == db.WorkspaceVersionKindSystem &&
+		!authority.SourceWorkspaceLeaseID.Valid && authority.OwnershipGeneration == 0 &&
+		authority.WriterGeneration == 0 && !authority.ArtifactRowKind.Valid &&
+		!authority.ArtifactDigest.Valid && !authority.ArtifactSizeBytes.Valid &&
+		!authority.ArtifactMediaType.Valid
+	if emptyShape {
+		if _, err := workspace.EmptyResetTarget(baseVersionID, tree); err != nil {
+			return api.WorkerWorkspaceResetTarget{}, fmt.Errorf("invalid empty Workspace Reset target authority: %w", err)
+		}
+		return api.WorkerWorkspaceResetTarget{
+			BaseWorkspaceVersionID: baseVersionID, Tree: projectedTree,
+			Empty: &api.WorkerEmptyWorkspace{},
+		}, nil
+	}
+	artifactShape := authority.ParentVersionID.Valid && authority.ArtifactID.Valid &&
+		authority.ArtifactKind.Valid && authority.ArtifactKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
+		authority.VersionKind == db.WorkspaceVersionKindUser && authority.SourceWorkspaceLeaseID.Valid &&
+		authority.OwnershipGeneration > 0 && authority.WriterGeneration > 0 &&
+		authority.ArtifactRowKind.Valid && authority.ArtifactRowKind.ArtifactKind == db.ArtifactKindWorkspaceVersion &&
+		authority.ArtifactDigest.Valid && authority.ArtifactSizeBytes.Valid && authority.ArtifactMediaType.Valid
+	if !artifactShape {
+		return api.WorkerWorkspaceResetTarget{}, errors.New("Workspace Reset target authority has an invalid version/Artifact relation")
+	}
+	artifact := workspace.ArtifactIdentity{
+		Digest: authority.ArtifactDigest.String, MediaType: authority.ArtifactMediaType.String,
+		Encoding: workspace.ArtifactEncoding, SizeBytes: authority.ArtifactSizeBytes.Int64,
+		EntryCount: int(authority.EntryCount),
+	}
+	if _, err := workspace.ArtifactResetTarget(baseVersionID, tree, artifact); err != nil {
+		return api.WorkerWorkspaceResetTarget{}, fmt.Errorf("invalid Artifact Workspace Reset target authority: %w", err)
+	}
+	return api.WorkerWorkspaceResetTarget{
+		BaseWorkspaceVersionID: baseVersionID,
+		Tree:                   projectedTree,
+		Artifact: &api.WorkerWorkspaceArtifact{
+			Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
+			SizeBytes: artifact.SizeBytes, EntryCount: authority.EntryCount,
+		},
+	}, nil
 }
 
 func projectRunWaitDecision(wait db.RunWait) (api.WorkerRunLeaseDecision, error) {

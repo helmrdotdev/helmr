@@ -18,6 +18,7 @@ import (
 type runLeaseClaimProjection struct {
 	program             db.GetDeploymentProgramAuthorityRow
 	definition          db.DeploymentDefinition
+	resetTarget         db.GetWorkspaceResetTargetAuthorityRow
 	checkpointArtifacts []db.ListRunCheckpointArtifactAuthorityRow
 }
 
@@ -65,6 +66,17 @@ func loadRunLeaseClaimProjection(
 	projection := runLeaseClaimProjection{
 		program:    program,
 		definition: definition,
+	}
+	projection.resetTarget, err = store.GetWorkspaceResetTargetAuthority(
+		ctx,
+		db.GetWorkspaceResetTargetAuthorityParams{
+			OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
+			EnvironmentID: authority.run.EnvironmentID, WorkspaceID: authority.workspace.ID,
+			VersionID: authority.workspaceLease.BaseVersionID,
+		},
+	)
+	if err != nil {
+		return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease Workspace Reset target authority: %w", err)
 	}
 	if authority.mode == runLeaseClaimRestore {
 		projection.checkpointArtifacts, err = store.ListRunCheckpointArtifactAuthority(
@@ -134,7 +146,7 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
-	attachment, err := projectWorkspaceAttachment(physical, capability.Token)
+	attachment, err := projectWorkspaceAttachment(physical, capability.Token, projection.resetTarget)
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
