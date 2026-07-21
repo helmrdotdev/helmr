@@ -159,6 +159,7 @@ type Querier interface {
 	GetFleetOldestBuildQueueTime(ctx context.Context, workerGroupID string) (pgtype.Timestamptz, error)
 	GetFleetOldestRunQueueTime(ctx context.Context, workerGroupID string) (pgtype.Timestamptz, error)
 	GetFleetTerminationProof(ctx context.Context, arg GetFleetTerminationProofParams) (GetFleetTerminationProofRow, error)
+	GetFreshRunLeaseStartLocators(ctx context.Context, arg GetFreshRunLeaseStartLocatorsParams) (GetFreshRunLeaseStartLocatorsRow, error)
 	GetIdempotencyClaim(ctx context.Context, arg GetIdempotencyClaimParams) (IdempotencyClaim, error)
 	GetLatestIdempotencyClaimGeneration(ctx context.Context, arg GetLatestIdempotencyClaimGenerationParams) (int64, error)
 	GetMagicLinkLoginUser(ctx context.Context, email pgtype.Text) (User, error)
@@ -277,6 +278,7 @@ type Querier interface {
 	LockDeploymentBuildTerminalFence(ctx context.Context, arg LockDeploymentBuildTerminalFenceParams) (LockDeploymentBuildTerminalFenceRow, error)
 	LockDeploymentBuildWorkerCertification(ctx context.Context, arg LockDeploymentBuildWorkerCertificationParams) (LockDeploymentBuildWorkerCertificationRow, error)
 	LockEnvironmentForScheduleAdmission(ctx context.Context, environmentID pgtype.UUID) (pgtype.UUID, error)
+	LockFreshRunStartLease(ctx context.Context, arg LockFreshRunStartLeaseParams) (RunLease, error)
 	LockIdempotencySlot(ctx context.Context, lockKey int64) error
 	LockLookupHMACMaintenance(ctx context.Context) error
 	LockLookupHMACVersionsForMaintenance(ctx context.Context) ([]LookupHmacVersion, error)
@@ -305,6 +307,8 @@ type Querier interface {
 	MarkDeletionJobRunning(ctx context.Context, arg MarkDeletionJobRunningParams) (DeletionJob, error)
 	MarkDeploymentFailed(ctx context.Context, arg MarkDeploymentFailedParams) (Deployment, error)
 	MarkFleetWorkerDraining(ctx context.Context, arg MarkFleetWorkerDrainingParams) (pgtype.UUID, error)
+	MarkFreshRunLeaseRunning(ctx context.Context, arg MarkFreshRunLeaseRunningParams) (RunLease, error)
+	MarkFreshRunRunning(ctx context.Context, arg MarkFreshRunRunningParams) (Run, error)
 	MarkLiveTelemetryOutboxFailed(ctx context.Context, arg MarkLiveTelemetryOutboxFailedParams) error
 	MarkLiveTelemetryOutboxPublished(ctx context.Context, id int64) error
 	MarkMagicLinkDeliveryFailed(ctx context.Context, id pgtype.UUID) (int64, error)
@@ -373,6 +377,7 @@ type Querier interface {
 	StartDeploymentBuildLease(ctx context.Context, arg StartDeploymentBuildLeaseParams) (DeploymentBuildLease, error)
 	StopWorkspaceMount(ctx context.Context, arg StopWorkspaceMountParams) (StopWorkspaceMountRow, error)
 	TouchActiveAPIKeyByTokenHash(ctx context.Context, tokenHash []byte) (TouchActiveAPIKeyByTokenHashRow, error)
+	TouchFreshRunWorkspace(ctx context.Context, arg TouchFreshRunWorkspaceParams) (Workspace, error)
 	UpdateEnvironmentDetails(ctx context.Context, arg UpdateEnvironmentDetailsParams) (Environment, error)
 	UpdateOrgMemberRole(ctx context.Context, arg UpdateOrgMemberRoleParams) (OrgMember, error)
 	UpdateProjectDetails(ctx context.Context, arg UpdateProjectDetailsParams) (Project, error)
