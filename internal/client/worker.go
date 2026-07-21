@@ -49,6 +49,53 @@ func (c *Client) DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDisco
 	return response, nil
 }
 
+func (c *Client) ClaimRunLease(
+	ctx context.Context,
+	work api.WorkerRunLeaseWork,
+) (api.WorkerRunLeaseClaimResponse, error) {
+	var response api.WorkerRunLeaseClaimResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/claim",
+		api.WorkerRunLeaseClaimRequest{
+			LeaseID:       work.LeaseID,
+			LeaseSequence: work.LeaseSequence,
+		},
+		&response,
+	); err != nil {
+		return api.WorkerRunLeaseClaimResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunStart(
+	ctx context.Context,
+	lease api.WorkerRunLeaseReceipt,
+) (api.WorkerRunStartResponse, error) {
+	var response api.WorkerRunStartResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/start",
+		api.WorkerRunStartRequest{Lease: lease},
+		&response,
+	); err != nil {
+		return api.WorkerRunStartResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) AcknowledgeRunEntrypoint(
+	ctx context.Context,
+	request api.WorkerRunEntrypointRequest,
+) error {
+	return c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/entrypoint",
+		request,
+		nil,
+	)
+}
+
 func (c *Client) RejectRun(ctx context.Context, request api.WorkerRejectRunRequest) error {
 	return c.postWorkerJSON(ctx, "/api/worker/leases/reject", request, nil)
 }

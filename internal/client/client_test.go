@@ -787,6 +787,129 @@ func TestWorkerLifecycleClient(t *testing.T) {
 	}
 }
 
+func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
+	receipt := api.WorkerRunLeaseReceipt{
+		ID:            "00000000-0000-0000-0000-000000000001",
+		RunID:         "00000000-0000-0000-0000-000000000002",
+		AttemptNumber: 1,
+		LeaseSequence: 3,
+	}
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			paths = append(paths, r.URL.Path)
+			switch r.URL.Path {
+			case "/api/worker/auth/token":
+				_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{
+					Token:            "worker-token",
+					ExpiresInSeconds: 3600,
+				})
+			case "/api/worker/leases/claim":
+				var request api.WorkerRunLeaseClaimRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.LeaseID != receipt.ID ||
+					request.LeaseSequence != receipt.LeaseSequence {
+					t.Fatalf("claim request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(
+					api.WorkerRunLeaseClaimResponse{
+						Lease: receipt,
+						Execution: api.WorkerRunLeaseExecution{
+							Fresh: &api.WorkerRunLeaseFresh{
+								ProgramStart: []byte("frame"),
+							},
+						},
+					},
+				)
+			case "/api/worker/leases/start":
+				var request api.WorkerRunStartRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt {
+					t.Fatalf("start request = %+v", request)
+				}
+				_ = json.NewEncoder(w).Encode(
+					api.WorkerRunStartResponse{Lease: receipt},
+				)
+			case "/api/worker/leases/entrypoint":
+				var request api.WorkerRunEntrypointRequest
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Fatal(err)
+				}
+				if request.Lease != receipt ||
+					request.EntrypointKind != "task" ||
+					request.EntrypointDeclaredID != "deploy" {
+					t.Fatalf("entrypoint request = %+v", request)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			default:
+				t.Fatalf("unexpected path %s", r.URL.Path)
+			}
+		},
+	))
+	defer server.Close()
+	client, err := New(
+		server.URL,
+		WithHTTPClient(server.Client()),
+		WithWorkerAuth(
+			"00000000-0000-0000-0000-000000000401",
+			"worker-secret",
+		),
+		WithWorkerService(
+			"00000000-0000-0000-0000-000000000901",
+			api.CurrentWorkerProtocolVersion,
+			true,
+			false,
+		),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := client.ClaimRunLease(
+		context.Background(),
+		api.WorkerRunLeaseWork{
+			LeaseID:       receipt.ID,
+			LeaseSequence: receipt.LeaseSequence,
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Lease != receipt ||
+		claim.Execution.Fresh == nil ||
+		string(claim.Execution.Fresh.ProgramStart) != "frame" {
+		t.Fatalf("claim response = %+v", claim)
+	}
+	started, err := client.AcknowledgeRunStart(
+		context.Background(),
+		receipt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started.Lease != receipt {
+		t.Fatalf("start response = %+v", started)
+	}
+	if err := client.AcknowledgeRunEntrypoint(
+		context.Background(),
+		api.WorkerRunEntrypointRequest{
+			Lease:                receipt,
+			EntrypointKind:       "task",
+			EntrypointDeclaredID: "deploy",
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(paths, ","); got !=
+		"/api/worker/auth/token,/api/worker/leases/claim,"+
+			"/api/worker/leases/start,/api/worker/leases/entrypoint" {
+		t.Fatalf("paths = %s", got)
+	}
+}
+
 func TestCompleteWorkerDrainRetriesTheIdenticalProofAfterAmbiguousResponse(t *testing.T) {
 	attempts := 0
 	var bodies [][]byte
