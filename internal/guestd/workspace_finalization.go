@@ -53,7 +53,7 @@ func handleWorkspaceCaptureConnection(ctx context.Context, conn io.ReadWriter, r
 	if err := frameio.ReadProtoFrame(conn, &request); err != nil {
 		return fmt.Errorf("read Workspace Capture request: %w", err)
 	}
-	entry, release, err := beginWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
+	entry, release, err := acquireWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationCaptureKind, nil)
 	if err != nil {
 		return writeWorkspaceCaptureFailure(conn, err)
 	}
@@ -84,13 +84,14 @@ func writeWorkspaceCaptureFailure(conn io.Writer, err error) error {
 	return nil
 }
 
-func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperationRegistry, envelope *workspacev0.WorkspaceFinalizationEnvelope, kind string, target any) (*workspaceMountEntry, func(), error) {
+func acquireWorkspaceFinalization(ctx context.Context, registry *workspaceOperationRegistry, envelope *workspacev0.WorkspaceFinalizationEnvelope, kind string, target any) (*workspaceMountEntry, func(), error) {
 	if envelope == nil || envelope.GetAuthority() == nil || envelope.GetAuthority().GetFence() == nil {
 		return nil, func() {}, errors.New("Workspace finalization envelope is required")
 	}
-	operationID := strings.TrimSpace(envelope.GetOperationId())
+	rawOperationID := envelope.GetOperationId()
+	operationID := strings.TrimSpace(rawOperationID)
 	parsedOperationID, err := uuid.Parse(operationID)
-	if err != nil || parsedOperationID.String() != operationID {
+	if err != nil || rawOperationID != operationID || parsedOperationID.String() != operationID {
 		return nil, func() {}, errors.New("Workspace finalization operation_id must be a canonical UUID")
 	}
 	authority := envelope.GetAuthority()
@@ -116,14 +117,13 @@ func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperatio
 		releaseEntry()
 		return nil, func() {}, errors.New("Workspace finalization authority is not current for the Workspace Mount")
 	}
-	if err := registry.waitForProgramRelease(ctx, entry); err != nil {
-		entry.finalizationMu.Unlock()
-		releaseEntry()
-		return nil, func() {}, fmt.Errorf("wait for Program release: %w", err)
-	}
 	release := func() {
 		entry.finalizationMu.Unlock()
 		releaseEntry()
+	}
+	if err := registry.waitForProgramRelease(ctx, entry); err != nil {
+		release()
+		return nil, func() {}, fmt.Errorf("wait for Program release: %w", err)
 	}
 	entry.authorityMu.Lock()
 	authorityMatches := workspaceRunAuthoritiesEqual(entry.authority, authority)
@@ -144,13 +144,30 @@ func beginWorkspaceFinalization(ctx context.Context, registry *workspaceOperatio
 		return nil, func() {}, errors.New("Workspace finalization request fingerprint is invalid")
 	}
 	entry.processesMu.Lock()
+	if entry.authorityState != workspaceAuthorityFinalizing ||
+		entry.finalizationID != operationID ||
+		entry.finalizationKind != kind {
+		entry.processesMu.Unlock()
+		release()
+		return nil, func() {}, errors.New("Workspace finalization does not match the begun operation")
+	}
 	if entry.processAdmissions != 0 || len(entry.processes) != 0 {
 		entry.processesMu.Unlock()
 		release()
 		return nil, func() {}, errors.New("Workspace finalization requires no active exec or PTY")
 	}
-	entry.finalizing = true
 	entry.processesMu.Unlock()
+	journal, found, err := entry.readWorkspaceFinalizationJournal()
+	if err != nil {
+		release()
+		return nil, func() {}, err
+	}
+	if !found || validateWorkspaceFinalizationBeginJournal(
+		journal, operationID, kind, workspaceFinalizationFence(fence),
+	) != nil {
+		release()
+		return nil, func() {}, errors.New("Workspace finalization Begin state is unavailable or conflicting")
+	}
 	return entry, release, nil
 }
 
@@ -159,7 +176,10 @@ func (entry *workspaceMountEntry) captureWorkspace(envelope *workspacev0.Workspa
 	if err != nil {
 		return nil, "", err
 	}
-	if found {
+	if !found {
+		return nil, "", errors.New("Workspace Capture requires a retained Begin receipt")
+	}
+	if journal.Phase != "begun" {
 		return entry.replayWorkspaceCapture(envelope, journal)
 	}
 	if entry.finalizationRoot == "" {
@@ -169,20 +189,26 @@ func (entry *workspaceMountEntry) captureWorkspace(envelope *workspacev0.Workspa
 	if err != nil {
 		return nil, "", fmt.Errorf("inspect captured Workspace tree: %w", err)
 	}
-	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRoot(entry.workspaceRoot, entry.finalizationRoot, filepath.Dir(entry.workspaceRoot))
-	if err != nil {
-		return nil, "", err
-	}
-	defer cleanup()
-	if err := syncFile(artifact.Path); err != nil {
-		return nil, "", fmt.Errorf("sync Workspace Capture Artifact: %w", err)
-	}
 	capturePath := filepath.Join(entry.finalizationRoot, workspaceCaptureArtifactName)
-	if err := os.Rename(artifact.Path, capturePath); err != nil {
-		return nil, "", fmt.Errorf("place Workspace Capture Artifact: %w", err)
-	}
-	if err := syncDirectory(entry.finalizationRoot); err != nil {
-		return nil, "", fmt.Errorf("sync Workspace Capture Artifact directory: %w", err)
+	artifact, err := recoverWorkspaceCaptureArtifact(capturePath, tree)
+	if errors.Is(err, os.ErrNotExist) {
+		created, cleanup, createErr := workspace.CreateWorkspaceArtifactFromRoot(entry.workspaceRoot, entry.finalizationRoot, filepath.Dir(entry.workspaceRoot))
+		if createErr != nil {
+			return nil, "", createErr
+		}
+		defer cleanup()
+		if err := syncFile(created.Path); err != nil {
+			return nil, "", fmt.Errorf("sync Workspace Capture Artifact: %w", err)
+		}
+		if err := os.Rename(created.Path, capturePath); err != nil {
+			return nil, "", fmt.Errorf("place Workspace Capture Artifact: %w", err)
+		}
+		if err := syncDirectory(entry.finalizationRoot); err != nil {
+			return nil, "", fmt.Errorf("sync Workspace Capture Artifact directory: %w", err)
+		}
+		artifact = created
+	} else if err != nil {
+		return nil, "", err
 	}
 	journal = workspaceFinalizationJournal{
 		Version:            workspaceFinalizationJournalVersion,
@@ -204,6 +230,38 @@ func (entry *workspaceMountEntry) captureWorkspace(envelope *workspacev0.Workspa
 		return nil, "", err
 	}
 	return workspaceCaptureResponse(journal), capturePath, nil
+}
+
+func validateWorkspaceFinalizationBeginJournal(
+	journal workspaceFinalizationJournal,
+	operationID string,
+	kind string,
+	fence workspace.FinalizationFence,
+) error {
+	if journal.Version != workspaceFinalizationJournalVersion ||
+		journal.Kind != kind ||
+		journal.OperationID != operationID ||
+		journal.Fence != fence {
+		return errors.New("Workspace finalization conflicts with retained Begin state")
+	}
+	if journal.Phase == "begun" && (journal.RequestFingerprint != "" ||
+		journal.Tree != (workspace.TreeIdentity{}) ||
+		journal.Artifact != (workspaceFinalizationArtifact{}) ||
+		journal.PriorTree != nil || journal.ResetTarget != nil) {
+		return errors.New("Workspace finalization Begin journal contains operation output")
+	}
+	switch kind {
+	case workspace.FinalizationCaptureKind:
+		if journal.Phase == "begun" || journal.Phase == "committed" {
+			return nil
+		}
+	case workspace.FinalizationResetKind:
+		switch journal.Phase {
+		case "begun", "prepared", "exchanged", "committed":
+			return nil
+		}
+	}
+	return errors.New("Workspace finalization Begin journal phase is invalid")
 }
 
 func (entry *workspaceMountEntry) replayWorkspaceCapture(envelope *workspacev0.WorkspaceFinalizationEnvelope, journal workspaceFinalizationJournal) (*workspacev0.CaptureWorkspaceResponse, string, error) {
@@ -324,6 +382,40 @@ func verifyWorkspaceCaptureArtifact(path string, artifact workspaceFinalizationA
 		return errors.New("retained Workspace Capture Artifact digest does not match its receipt")
 	}
 	return nil
+}
+
+func recoverWorkspaceCaptureArtifact(path string, tree workspace.TreeIdentity) (workspace.WorkspaceArtifact, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return workspace.WorkspaceArtifact{}, err
+	}
+	if info.Size() <= 0 || info.Size() > workspace.MaxArtifactArchiveBytes {
+		return workspace.WorkspaceArtifact{}, errors.New("retained Workspace Capture Artifact size is invalid")
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return workspace.WorkspaceArtifact{}, err
+	}
+	artifact := workspace.WorkspaceArtifact{
+		Path:       path,
+		Digest:     "sha256:" + hex.EncodeToString(hash.Sum(nil)),
+		MediaType:  workspace.ArtifactMediaType,
+		Encoding:   workspace.ArtifactEncoding,
+		SizeBytes:  info.Size(),
+		EntryCount: tree.EntryCount,
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return workspace.WorkspaceArtifact{}, err
+	}
+	if err := workspace.VerifyArtifact(file, artifact, tree); err != nil {
+		return workspace.WorkspaceArtifact{}, fmt.Errorf("verify retained Workspace Capture Artifact: %w", err)
+	}
+	return artifact, nil
 }
 
 func syncFile(path string) error {

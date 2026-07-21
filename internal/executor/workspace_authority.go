@@ -54,3 +54,52 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 	}
 	return response.GetFence(), nil
 }
+
+func beginWorkspaceFinalizationOnSession(
+	ctx context.Context,
+	session vm.Session,
+	request *workspacev0.BeginWorkspaceFinalizationRequest,
+) (*workspacev0.BeginWorkspaceFinalizationResponse, error) {
+	if session == nil {
+		return nil, errors.New("Workspace mount session is required")
+	}
+	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
+		return nil, errors.New("previous Workspace authority is required")
+	}
+	fence := request.GetPrevious().GetFence()
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("open Workspace finalization stream: %w", err)
+	}
+	defer stream.Close()
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type:             wire.StreamTypeWorkspaceFinalizationBegin,
+		RunID:            fence.GetRunId(),
+		WorkspaceID:      fence.GetWorkspaceId(),
+		WorkspaceMountID: fence.GetWorkspaceMountId(),
+		OperationID:      request.GetOperationId(),
+	}, 0); err != nil {
+		return nil, fmt.Errorf("write Workspace finalization header: %w", err)
+	}
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
+		return nil, fmt.Errorf("write Workspace finalization request: %w", err)
+	}
+	var response workspacev0.BeginWorkspaceFinalizationResponse
+	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
+		return nil, fmt.Errorf("read Workspace finalization response: %w", err)
+	}
+	if strings.TrimSpace(response.GetError()) != "" {
+		return nil, fmt.Errorf("Workspace finalization failed: %s", response.GetError())
+	}
+	if response.GetFence() == nil {
+		return nil, errors.New("Workspace finalization response fence is required")
+	}
+	expected := proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence)
+	expected.ExpiresAtUnixNano = request.GetFinalizationExpiresAtUnixNano()
+	if !proto.Equal(response.GetFence(), expected) ||
+		response.GetOperationId() != request.GetOperationId() ||
+		response.GetKind() != request.GetKind() {
+		return nil, errors.New("Workspace finalization response does not match the requested authority")
+	}
+	return &response, nil
+}

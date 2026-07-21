@@ -60,6 +60,20 @@ message RenewWorkspaceAuthorityResponse {
   string error = 2;
 }
 
+message BeginWorkspaceFinalizationRequest {
+  WorkspaceRunAuthority previous = 1;
+  int64 finalization_expires_at_unix_nano = 2;
+  string operation_id = 3;
+  string kind = 4;
+}
+
+message BeginWorkspaceFinalizationResponse {
+  WorkspaceAuthorityFence fence = 1;
+  string operation_id = 2;
+  string kind = 3;
+  string error = 4;
+}
+
 message WorkspaceTreeIdentity {
   string digest = 1;
   int64 size_bytes = 2;

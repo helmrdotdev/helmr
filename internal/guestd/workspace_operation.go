@@ -35,6 +35,13 @@ type workspaceOperationRegistry struct {
 	programReleased chan struct{}
 }
 
+type workspaceAuthorityState uint8
+
+const (
+	workspaceAuthorityLive workspaceAuthorityState = iota
+	workspaceAuthorityFinalizing
+)
+
 type workspaceMountEntry struct {
 	channelToken      string
 	workspaceID       string
@@ -61,7 +68,9 @@ type workspaceMountEntry struct {
 	previousExpiry    int64
 	finalizationMu    sync.Mutex
 	finalizationRoot  string
-	finalizing        bool
+	authorityState    workspaceAuthorityState
+	finalizationID    string
+	finalizationKind  string
 	recoveryRequired  bool
 	processAdmissions int
 }
@@ -192,7 +201,7 @@ func (r *workspaceOperationRegistry) acquire(workspaceMountID string, workspaceI
 			return nil, func() {}, false
 		}
 		entry.processesMu.Lock()
-		finalizing := entry.finalizing || entry.recoveryRequired
+		finalizing := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
 		entry.processesMu.Unlock()
 		if finalizing || r.programActive && r.programEntry == entry {
 			r.mu.Unlock()
@@ -339,6 +348,36 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 	) {
 		return func() {}, errors.New("Program authority is not current for the Workspace Mount")
 	}
+	release, err := r.claimProgramLocked(entry)
+	if err != nil {
+		return func() {}, err
+	}
+	if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
+		release()
+		return func() {}, err
+	}
+	return release, nil
+}
+
+func (r *workspaceOperationRegistry) admitMountedProgram(entry *workspaceMountEntry) (func(), error) {
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
+	entry.processesMu.Lock()
+	unavailable := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if unavailable || !r.currentExactLocked(
+		entry,
+		entry.workspaceMountID,
+		entry.workspaceID,
+		entry.channelToken,
+		entry.currentFencingGeneration(),
+	) {
+		return func() {}, errors.New("Workspace is unavailable for Program admission")
+	}
+	return r.claimProgramLocked(entry)
+}
+
+func (r *workspaceOperationRegistry) claimProgramLocked(entry *workspaceMountEntry) (func(), error) {
 	r.mu.Lock()
 	if r.programActive {
 		r.mu.Unlock()
@@ -349,7 +388,7 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 	r.programReleased = make(chan struct{})
 	released := r.programReleased
 	r.mu.Unlock()
-	release := func() {
+	return func() {
 		r.mu.Lock()
 		if r.programActive && r.programEntry == entry && r.programReleased == released {
 			r.programActive = false
@@ -357,12 +396,7 @@ func (r *workspaceOperationRegistry) admitProgram(entry *workspaceMountEntry, au
 			close(released)
 		}
 		r.mu.Unlock()
-	}
-	if err := entry.installWorkspaceRunAuthorityLocked(authority, now); err != nil {
-		release()
-		return func() {}, err
-	}
-	return release, nil
+	}, nil
 }
 
 func (r *workspaceOperationRegistry) waitForProgramRelease(ctx context.Context, entry *workspaceMountEntry) error {

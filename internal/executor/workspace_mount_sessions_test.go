@@ -229,6 +229,66 @@ func TestRenewWorkspaceAuthorityUsesMountedSession(t *testing.T) {
 	}
 }
 
+func TestBeginWorkspaceFinalizationUsesMountedSession(t *testing.T) {
+	host, guest := net.Pipe()
+	defer host.Close()
+	defer guest.Close()
+	parent := &borrowedParentSession{stream: discardReadWriteCloser{}, openStream: host}
+	registry := NewWorkspaceMountSessions()
+	registry.RegisterWorkspaceMountSession(api.WorkerWorkspaceMount{
+		ID: "mount-1", WorkspaceID: "workspace-1", RuntimeInstanceID: "runtime-1",
+		FencingGeneration: 4, BaseVersionID: "version-1",
+	}, parent, "channel-1")
+	request := &workspacev0.BeginWorkspaceFinalizationRequest{
+		Previous: &workspacev0.WorkspaceRunAuthority{
+			Fence: &workspacev0.WorkspaceAuthorityFence{
+				WorkspaceMountId: "mount-1", WorkspaceId: "workspace-1", RuntimeInstanceId: "runtime-1",
+				MountFencingGeneration: 4, RunId: "run-1", ExpiresAtUnixNano: 100,
+				BaseWorkspaceVersionId: "version-1",
+			},
+			ChannelToken: "channel-1",
+		},
+		FinalizationExpiresAtUnixNano: 200,
+		OperationId:                   "11111111-1111-4111-8111-111111111111",
+		Kind:                          "capture",
+	}
+	serverResult := make(chan error, 1)
+	go func() {
+		header, bodyLength, err := wire.ReadStreamFrameHeader(guest)
+		if err != nil {
+			serverResult <- err
+			return
+		}
+		if header.Type != wire.StreamTypeWorkspaceFinalizationBegin ||
+			header.RunID != "run-1" || header.WorkspaceID != "workspace-1" ||
+			header.WorkspaceMountID != "mount-1" || header.OperationID != request.GetOperationId() || bodyLength != 0 {
+			serverResult <- errors.New("unexpected Workspace finalization header")
+			return
+		}
+		var received workspacev0.BeginWorkspaceFinalizationRequest
+		if err := frameio.ReadProtoFrame(guest, &received); err != nil {
+			serverResult <- err
+			return
+		}
+		frozen := proto.Clone(received.GetPrevious().GetFence()).(*workspacev0.WorkspaceAuthorityFence)
+		frozen.ExpiresAtUnixNano = received.GetFinalizationExpiresAtUnixNano()
+		serverResult <- frameio.WriteProtoFrame(guest, &workspacev0.BeginWorkspaceFinalizationResponse{
+			Fence: frozen, OperationId: received.GetOperationId(), Kind: received.GetKind(),
+		})
+	}()
+	response, err := registry.BeginWorkspaceFinalization(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.GetFence().GetExpiresAtUnixNano() != 200 ||
+		response.GetOperationId() != request.GetOperationId() || response.GetKind() != request.GetKind() {
+		t.Fatalf("finalization response = %+v", response)
+	}
+	if err := <-serverResult; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRenewWorkspaceAuthorityCancellationPreservesMountedSession(t *testing.T) {
 	host, guest := net.Pipe()
 	defer guest.Close()

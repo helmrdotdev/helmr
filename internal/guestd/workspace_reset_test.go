@@ -139,7 +139,7 @@ func TestWorkspaceResetInstallsArtifactTarget(t *testing.T) {
 	}, artifact.Path, artifact.Digest, artifact.SizeBytes); err != nil {
 		t.Fatal(err)
 	}
-	finalizingEntry, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
+	finalizingEntry, release, err := beginTestWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -232,19 +232,19 @@ func testWorkspaceResetRequest(t *testing.T, authority *workspacev0.WorkspaceRun
 
 func runWorkspaceReset(t *testing.T, registry *workspaceOperationRegistry, request *workspacev0.ResetWorkspaceRequest, exchange workspaceRootExchange) *workspacev0.ResetWorkspaceResponse {
 	t.Helper()
-	var stream bytes.Buffer
-	if err := frameio.WriteProtoFrame(&stream, request); err != nil {
-		t.Fatal(err)
-	}
 	target, err := workspace.ResetTargetFromProto(request.GetTarget())
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry, release, err := beginWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
+	entry, release, err := beginTestWorkspaceFinalization(context.Background(), registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer release()
+	var stream bytes.Buffer
+	if err := frameio.WriteProtoFrame(&stream, request); err != nil {
+		t.Fatal(err)
+	}
 	var decoded workspacev0.ResetWorkspaceRequest
 	if err := frameio.ReadProtoFrame(&stream, &decoded); err != nil {
 		t.Fatal(err)

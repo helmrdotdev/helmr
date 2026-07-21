@@ -24,6 +24,7 @@ type WorkspaceMountSessionRegistry interface {
 	RegisterWorkspaceMountSession(mount api.WorkerWorkspaceMount, session vm.Session, channelToken string) func()
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
+	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
 }
 
 type WorkspaceMountSession struct {
@@ -117,6 +118,34 @@ func (s *WorkspaceMountSessions) RenewWorkspaceAuthority(ctx context.Context, re
 		return nil, errors.New("Workspace authority fence does not match the mount session")
 	}
 	return renewWorkspaceAuthorityOnSession(ctx, entry.session, request)
+}
+
+func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
+	ctx context.Context,
+	request *workspacev0.BeginWorkspaceFinalizationRequest,
+) (*workspacev0.BeginWorkspaceFinalizationResponse, error) {
+	if request == nil || request.GetPrevious() == nil || request.GetPrevious().GetFence() == nil {
+		return nil, errors.New("previous Workspace authority is required")
+	}
+	fence := request.GetPrevious().GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return nil, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || request.GetPrevious().GetChannelToken() != entry.channelToken {
+		return nil, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return nil, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {

@@ -31,7 +31,7 @@ func handleWorkspaceResetConnection(ctx context.Context, conn io.ReadWriter, reg
 	if request.GetEnvelope() == nil || request.GetEnvelope().GetAuthority() == nil || request.GetEnvelope().GetAuthority().GetFence() == nil || target.BaseVersionID != request.GetEnvelope().GetAuthority().GetFence().GetBaseWorkspaceVersionId() {
 		return writeWorkspaceResetFailure(conn, errors.New("Workspace Reset target does not match the admitted base version"))
 	}
-	entry, release, err := beginWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
+	entry, release, err := acquireWorkspaceFinalization(ctx, registry, request.GetEnvelope(), workspace.FinalizationResetKind, target)
 	if err != nil {
 		return writeWorkspaceResetFailure(conn, err)
 	}
@@ -58,7 +58,10 @@ func (entry *workspaceMountEntry) resetWorkspace(conn io.Reader, envelope *works
 	if err != nil {
 		return nil, err
 	}
-	if found {
+	if !found {
+		return nil, errors.New("Workspace Reset requires a retained Begin receipt")
+	}
+	if journal.Phase != "begun" {
 		if err := validateWorkspaceResetJournal(journal, envelope, target); err != nil {
 			return nil, err
 		}

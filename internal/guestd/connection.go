@@ -111,6 +111,8 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, handleWorkspaceStopConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceAuthorityRenew:
 		return false, handleWorkspaceAuthorityRenewConnection(ctx, conn, workspaceRegistry)
+	case wire.StreamTypeWorkspaceFinalizationBegin:
+		return false, handleWorkspaceFinalizationBeginConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceCapture:
 		return false, handleWorkspaceCaptureConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceReset:
@@ -397,6 +399,11 @@ func handleWorkspaceRunStream(ctx context.Context, conn io.ReadWriter, cfg Confi
 		return errors.New("workspace run channel token or fencing generation is invalid")
 	}
 	defer release()
+	releaseProgram, err := workspaceRegistry.admitMountedProgram(entry)
+	if err != nil {
+		return err
+	}
+	defer releaseProgram()
 	runRoot, err := mkdirGuestdTemp("helmr-run-*")
 	if err != nil {
 		return fmt.Errorf("create run temp dir: %w", err)
