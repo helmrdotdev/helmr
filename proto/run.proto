@@ -66,6 +66,59 @@ message ActorStartCause {}
 
 message ContinuationCause {}
 
+message ProgramRunRequest {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+  bytes program_start_frame = 4;
+  repeated ProgramSecret secrets = 5;
+  int64 start_deadline_unix_ms = 6;
+}
+
+message ProgramSecret {
+  oneof placement {
+    string env = 1;
+    string file = 2;
+  }
+  bytes value = 3;
+}
+
+message ProgramProcessStarted {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+}
+
+message ProgramStartRelease {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_lease_id = 3;
+}
+
+message EntrypointIdentity {
+  string declared_id = 1;
+  oneof kind {
+    TaskEntrypoint task = 2;
+    ActorEntrypoint actor = 3;
+  }
+}
+
+message TaskEntrypoint {}
+
+message ActorEntrypoint {}
+
+message EntrypointReady {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  EntrypointIdentity entrypoint = 3;
+}
+
+message EntrypointRelease {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  EntrypointIdentity entrypoint = 3;
+}
+
 message RunTaskWorkspace {
   string path = 1;
   string project_path = 2;
@@ -153,6 +206,8 @@ message RunEvent {
     OutputStreamAppended output_stream_appended = 9;
     ActiveStreamReadRequested active_stream_read_requested = 10;
     ResumeConsumed resume_consumed = 6;
+    ProgramProcessStarted program_process_started = 11;
+    EntrypointReady entrypoint_ready = 12;
   }
 }
 
