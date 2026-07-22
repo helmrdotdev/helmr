@@ -83,6 +83,17 @@ func TestLoadDispatcherRejectsInvalidRunLeasePolicy(t *testing.T) {
 	}
 }
 
+func TestLoadDispatcherRejectsRunLeaseTTLBelowWorkerContract(t *testing.T) {
+	setDispatcherFencing(t)
+	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
+	t.Setenv("HELMR_CLICKHOUSE_URL", "https://clickhouse.example.test")
+	t.Setenv("HELMR_RUN_LEASE_START_DEADLINE", "10s")
+	t.Setenv("HELMR_RUN_LEASE_TTL", "29s")
+	if _, err := LoadDispatcher(); err == nil {
+		t.Fatal("LoadDispatcher() accepted a Run Lease TTL below the worker contract")
+	}
+}
+
 func TestLoadDispatcherRejectsMismatchedWorkspaceFencingKey(t *testing.T) {
 	setDispatcherFencing(t)
 	t.Setenv("HELMR_DATABASE_URL", "postgres://example")
@@ -191,8 +202,22 @@ func TestLoadControlRejectsNonPositiveRunLeaseTTL(t *testing.T) {
 	}
 }
 
+func TestLoadControlRejectsRunLeaseTTLBelowWorkerContract(t *testing.T) {
+	t.Setenv("HELMR_RUN_LEASE_TTL", "29s")
+	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_RUN_LEASE_TTL") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestLoadControlRejectsNonPositiveRunFinalizationTTL(t *testing.T) {
 	t.Setenv("HELMR_RUN_FINALIZATION_TTL", "0")
+	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_RUN_FINALIZATION_TTL") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestLoadControlRejectsFinalizationTTLBelowWorkerContract(t *testing.T) {
+	t.Setenv("HELMR_RUN_FINALIZATION_TTL", "19m")
 	if _, err := LoadControl(); err == nil || !strings.Contains(err.Error(), "HELMR_RUN_FINALIZATION_TTL") {
 		t.Fatalf("error = %v", err)
 	}

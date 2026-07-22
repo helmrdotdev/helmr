@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -80,7 +81,7 @@ func LoadDispatcher() (Dispatcher, error) {
 	if cfg.RunPreparationLimit <= 0 ||
 		cfg.RunReservationTTL <= 0 ||
 		cfg.RunLeaseStartDeadline <= 0 ||
-		cfg.RunLeaseTTL <= 0 ||
+		cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL ||
 		cfg.RunLeaseStartDeadline > cfg.RunLeaseTTL {
 		return cfg, errors.New("run preparation and lease settings are invalid")
 	}

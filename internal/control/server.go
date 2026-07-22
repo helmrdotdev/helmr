@@ -238,9 +238,18 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	if runLeaseTTL <= 0 {
 		runLeaseTTL = workerLeaseDuration
 	}
+	if runLeaseTTL < api.WorkerRunLeaseMinTTL {
+		return nil, fmt.Errorf("Run Lease TTL must be at least %s", api.WorkerRunLeaseMinTTL)
+	}
 	runFinalizationTTL := cfg.RunFinalizationTTL
 	if runFinalizationTTL <= 0 {
 		runFinalizationTTL = 30 * time.Minute
+	}
+	if runFinalizationTTL < api.WorkerRunFinalizationMinTTL {
+		return nil, fmt.Errorf(
+			"Run finalization TTL must be at least %s",
+			api.WorkerRunFinalizationMinTTL,
+		)
 	}
 	server := &Server{
 		log:                   log,

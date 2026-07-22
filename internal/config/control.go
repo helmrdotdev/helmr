@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/workspace"
@@ -65,11 +66,18 @@ func LoadControl() (Control, error) {
 	if cfg.RunFinalizationTTL, err = envDuration("HELMR_RUN_FINALIZATION_TTL", cfg.RunFinalizationTTL); err != nil {
 		return cfg, err
 	}
-	if cfg.RunLeaseTTL <= 0 {
-		return cfg, errors.New("HELMR_RUN_LEASE_TTL must be positive")
+	if cfg.RunLeaseTTL < api.WorkerRunLeaseMinTTL {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_LEASE_TTL must be at least %s",
+			api.WorkerRunLeaseMinTTL,
+		)
 	}
-	if cfg.RunFinalizationTTL <= 0 || cfg.RunFinalizationTTL > 24*time.Hour {
-		return cfg, errors.New("HELMR_RUN_FINALIZATION_TTL must be between 1ns and 24h")
+	if cfg.RunFinalizationTTL < api.WorkerRunFinalizationMinTTL ||
+		cfg.RunFinalizationTTL > 24*time.Hour {
+		return cfg, fmt.Errorf(
+			"HELMR_RUN_FINALIZATION_TTL must be between %s and 24h",
+			api.WorkerRunFinalizationMinTTL,
+		)
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, errors.New("HELMR_DATABASE_URL is required")

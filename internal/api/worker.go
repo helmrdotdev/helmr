@@ -60,6 +60,13 @@ type SignedHTTPRequest struct {
 
 type WorkerRunLeaseDiscoveryRequest struct{}
 
+const (
+	WorkerRunLeaseMinTTL              = 30 * time.Second
+	WorkerRunFinalizationMinTTL       = 20 * time.Minute
+	WorkerRunFinalizationTerminalTail = 10 * time.Minute
+	WorkerRunFinalizationReplayTail   = 30 * time.Second
+)
+
 type WorkerRunLeaseWork struct {
 	LeaseID       string `json:"lease_id"`
 	LeaseSequence int64  `json:"lease_sequence"`

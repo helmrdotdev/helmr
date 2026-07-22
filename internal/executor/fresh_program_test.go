@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"slices"
 	"strings"
 	"sync"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/client"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
@@ -21,7 +23,12 @@ import (
 
 func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	claim := testFreshProgramClaim(t)
-	control := &testFreshProgramControl{lease: claim.Lease}
+	claim.Lease.ExpiresAt = time.Now().Add(5 * time.Second).UTC()
+	control := &testFreshProgramControl{
+		lease:              claim.Lease,
+		startFailures:      1,
+		entrypointFailures: 1,
+	}
 	events := &testFreshProgramEventSink{}
 	guest, host := net.Pipe()
 	defer guest.Close()
@@ -57,12 +64,15 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		program.observedEventSeq != 4 {
 		t.Fatalf("fresh Program = %+v", program)
 	}
-	outcome, err := program.awaitTaskCompletion(context.Background(), events)
+	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if outcome.GetSucceeded().GetOutputJson() != `{"ok":true}` {
 		t.Fatalf("Task outcome = %+v", outcome)
+	}
+	if quiesced.GetRunLeaseId() != claim.Lease.ID {
+		t.Fatalf("Program quiescence proof = %+v", quiesced)
 	}
 	if program.observedEventSeq != 7 {
 		t.Fatalf("observed event sequence = %d", program.observedEventSeq)
@@ -70,8 +80,13 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 	if err := <-guestResult; err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Equal(control.snapshot(), []string{"start", "entrypoint"}) {
+	if !slices.Equal(control.snapshot(), []string{
+		"start", "start", "entrypoint", "entrypoint",
+	}) {
 		t.Fatalf("control calls = %v", control.snapshot())
+	}
+	if control.renewalCount() != 1 {
+		t.Fatalf("Run Lease renewals = %d", control.renewalCount())
 	}
 	if !slices.Equal(events.snapshot(), []testFreshProgramLog{
 		{stream: api.WorkerLogStreamStdout, observedSeq: 2, content: "loading"},
@@ -94,8 +109,12 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 func TestStartFreshProgramDoesNotReleaseAfterStartRejection(t *testing.T) {
 	claim := testFreshProgramClaim(t)
 	control := &testFreshProgramControl{
-		lease:    claim.Lease,
-		startErr: errors.New("stale start"),
+		lease: claim.Lease,
+		startErr: &client.HTTPError{
+			StatusCode: http.StatusConflict,
+			Status:     "Conflict",
+			Message:    "stale start",
+		},
 	}
 	guest, host := net.Pipe()
 	defer guest.Close()
@@ -260,7 +279,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 					},
 				},
 			}
-			_, err := program.awaitTaskCompletion(
+			_, _, err := program.awaitTaskCompletion(
 				context.Background(),
 				&testFreshProgramEventSink{},
 			)
@@ -303,7 +322,7 @@ func serveFreshProgramProtocol(
 		release.GetRunId() != lease.RunID ||
 		release.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		release.GetRunLeaseId() != lease.ID ||
-		!slices.Equal(control.snapshot(), []string{"start"}) {
+		!onlyControlCalls(control.snapshot(), "start") {
 		return errors.New("Program-start release preceded start ACK")
 	}
 	if err := frameio.WriteProtoFrame(conn, &runv0.RunEvent{
@@ -343,10 +362,7 @@ func serveFreshProgramProtocol(
 		entrypointRelease.GetAttemptNumber() != uint32(lease.AttemptNumber) ||
 		entrypointRelease.GetEntrypoint().GetDeclaredId() != "deploy" ||
 		entrypointRelease.GetEntrypoint().GetTask() == nil ||
-		!slices.Equal(
-			control.snapshot(),
-			[]string{"start", "entrypoint"},
-		) {
+		!onlyControlCalls(control.snapshot(), "start", "entrypoint") {
 		return errors.New("entrypoint release preceded entrypoint ACK")
 	}
 	if err := frameio.WriteProtoFrame(conn, testTaskSucceededEvent(`{"ok":true}`)); err != nil {
@@ -358,6 +374,23 @@ func serveFreshProgramProtocol(
 		return err
 	}
 	return frameio.WriteProtoFrame(conn, testProgramQuiescedEvent(lease))
+}
+
+func onlyControlCalls(calls []string, allowed ...string) bool {
+	if len(calls) == 0 || calls[len(calls)-1] != allowed[len(allowed)-1] {
+		return false
+	}
+	for _, call := range calls {
+		if !slices.Contains(allowed, call) {
+			return false
+		}
+	}
+	for _, expected := range allowed {
+		if !slices.Contains(calls, expected) {
+			return false
+		}
+	}
+	return true
 }
 
 func testTaskSucceededEvent(output string) *runv0.RunEvent {
@@ -534,11 +567,14 @@ func testFreshProgramClaim(
 }
 
 type testFreshProgramControl struct {
-	mu            sync.Mutex
-	lease         api.WorkerRunLeaseReceipt
-	calls         []string
-	startErr      error
-	entrypointErr error
+	mu                 sync.Mutex
+	lease              api.WorkerRunLeaseReceipt
+	calls              []string
+	startErr           error
+	entrypointErr      error
+	startFailures      int
+	entrypointFailures int
+	renewals           int
 }
 
 type testFreshProgramLog struct {
@@ -590,6 +626,10 @@ func (c *testFreshProgramControl) AcknowledgeRunStart(
 	if c.startErr != nil {
 		return api.WorkerRunStartResponse{}, c.startErr
 	}
+	if c.startFailures > 0 {
+		c.startFailures--
+		return api.WorkerRunStartResponse{}, errors.New("transient start acknowledgement failure")
+	}
 	return api.WorkerRunStartResponse{Lease: c.lease}, nil
 }
 
@@ -605,7 +645,33 @@ func (c *testFreshProgramControl) AcknowledgeRunEntrypoint(
 		request.EntrypointDeclaredID != "deploy" {
 		return errors.New("unexpected entrypoint acknowledgement")
 	}
-	return c.entrypointErr
+	if c.entrypointErr != nil {
+		return c.entrypointErr
+	}
+	if c.entrypointFailures > 0 {
+		c.entrypointFailures--
+		return errors.New("transient entrypoint acknowledgement failure")
+	}
+	return nil
+}
+
+func (c *testFreshProgramControl) RenewRunLease(
+	_ context.Context,
+	lease api.WorkerRunLeaseReceipt,
+) (api.WorkerRunLeaseRenewResponse, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.renewals++
+	if !equalRunLeaseReceipt(lease, c.lease) {
+		return api.WorkerRunLeaseRenewResponse{}, errors.New("unexpected renewal receipt")
+	}
+	return api.WorkerRunLeaseRenewResponse{Lease: c.lease}, nil
+}
+
+func (c *testFreshProgramControl) renewalCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.renewals
 }
 
 func (c *testFreshProgramControl) snapshot() []string {

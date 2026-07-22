@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+var errWorkspaceControlTransport = errors.New("Workspace control transport")
+
 func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, request *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error) {
 	if session == nil {
 		return nil, errors.New("Workspace mount session is required")
@@ -23,7 +25,7 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 	fence := request.GetPrevious().GetFence()
 	stream, err := session.OpenStream(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("open Workspace authority renewal stream: %w", err)
+		return nil, fmt.Errorf("%w: open Workspace authority renewal stream: %w", errWorkspaceControlTransport, err)
 	}
 	defer stream.Close()
 	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
@@ -32,14 +34,14 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 		WorkspaceID:      fence.GetWorkspaceId(),
 		WorkspaceMountID: fence.GetWorkspaceMountId(),
 	}, 0); err != nil {
-		return nil, fmt.Errorf("write Workspace authority renewal header: %w", err)
+		return nil, fmt.Errorf("%w: write Workspace authority renewal header: %w", errWorkspaceControlTransport, err)
 	}
 	if err := frameio.WriteProtoFrame(stream, request); err != nil {
-		return nil, fmt.Errorf("write Workspace authority renewal request: %w", err)
+		return nil, fmt.Errorf("%w: write Workspace authority renewal request: %w", errWorkspaceControlTransport, err)
 	}
 	var response workspacev0.RenewWorkspaceAuthorityResponse
 	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
-		return nil, fmt.Errorf("read Workspace authority renewal response: %w", err)
+		return nil, fmt.Errorf("%w: read Workspace authority renewal response: %w", errWorkspaceControlTransport, err)
 	}
 	if strings.TrimSpace(response.GetError()) != "" {
 		return nil, fmt.Errorf("Workspace authority renewal failed: %s", response.GetError())

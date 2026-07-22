@@ -117,6 +117,11 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 		return err
 	}
 	m.logWorkspaceMountPhase(mount, "workspace mount guest registered", "duration_ms", time.Since(phaseStarted).Milliseconds())
+	unregisterSession := func() {}
+	if m.Sessions != nil {
+		unregisterSession = m.Sessions.RegisterWorkspaceMountSession(mount, session, m.channelToken(mount))
+	}
+	defer func() { unregisterSession() }()
 	phaseStarted = time.Now()
 	mounted, err := client.MarkWorkspaceMountMounted(renewal.ctx, api.WorkerWorkspaceMountMountedRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
@@ -131,17 +136,14 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 	}
 	switch strings.TrimSpace(mounted.State) {
 	case "unmounting":
+		unregisterSession()
+		unregisterSession = func() {}
 		if err := m.stopControlledWorkspaceMount(renewal.ctx, session, mount, mounted, client); err != nil {
 			return err
 		}
 		_ = renewal.stopAndWait()
 		return nil
 	}
-	unregisterSession := func() {}
-	if m.Sessions != nil {
-		unregisterSession = m.Sessions.RegisterWorkspaceMountSession(mount, session, m.channelToken(mount))
-	}
-	defer unregisterSession()
 	endForeground()
 	foregroundActive = false
 	m.logWorkspaceMountPhase(mount, "workspace mount ready", "duration_ms", time.Since(totalStarted).Milliseconds())

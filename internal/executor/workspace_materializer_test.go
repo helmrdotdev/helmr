@@ -457,8 +457,15 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 		}
 		_ = frameio.WriteProtoFrame(operationServer, &workspacev0.WorkspaceOperationResult{ResultJson: `{"ok":true}`})
 	}()
+	sessions := NewWorkspaceMountSessions()
+	registeredBeforeMounted := false
 	client := &workspaceMaterializerTestClient{
-		cancel:      cancel,
+		cancel: cancel,
+		onMounted: func() {
+			sessions.mu.RLock()
+			registeredBeforeMounted = sessions.sessions[workspaceMount.ID].session != nil
+			sessions.mu.RUnlock()
+		},
 		startErrors: []error{errors.New("temporary start error")},
 		operation: &api.WorkerWorkspaceOperation{
 			WorkspaceOperationResponse: api.WorkspaceOperationResponse{
@@ -487,6 +494,7 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 		PollEvery:            time.Millisecond,
 		CompleteErrorBackoff: time.Millisecond,
 		Capacity:             workspaceTestCapacity(t),
+		Sessions:             sessions,
 	}
 	err := materializer.RunWorkspaceMount(ctx, workspaceMount, client)
 	if !errors.Is(err, context.Canceled) {
@@ -503,6 +511,9 @@ func TestWorkspaceMaterializerDispatchesStartExecOperationToGuest(t *testing.T) 
 	}
 	if len(client.mounted) != 1 || client.mounted[0].OrgID != "org-1" || client.mounted[0].WorkspaceMountID != "mat-1" {
 		t.Fatalf("mounted request = %+v", client.mounted)
+	}
+	if !registeredBeforeMounted {
+		t.Fatal("Workspace mount session was not registered before mounted publication")
 	}
 	if client.stops != 0 {
 		t.Fatalf("stops = %d", client.stops)
@@ -1665,6 +1676,7 @@ type workspaceMaterializerTestClient struct {
 	renewErrors      []error
 	renews           []api.WorkerWorkspaceMountRenewRequest
 	mounted          []api.WorkerWorkspaceMountMountedRequest
+	onMounted        func()
 	claims           []api.WorkerWorkspaceOperationClaimRequest
 	starts           []api.WorkerWorkspaceOperationStartRequest
 	startErrors      []error
@@ -1698,6 +1710,9 @@ func (c *workspaceMaterializerTestClient) RenewWorkspaceMount(_ context.Context,
 
 func (c *workspaceMaterializerTestClient) MarkWorkspaceMountMounted(_ context.Context, request api.WorkerWorkspaceMountMountedRequest) (api.WorkspaceMountResponse, error) {
 	c.mounted = append(c.mounted, request)
+	if c.onMounted != nil {
+		c.onMounted()
+	}
 	return api.WorkspaceMountResponse{State: "mounted"}, nil
 }
 

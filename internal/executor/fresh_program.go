@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -37,6 +38,10 @@ type FreshProgramControl interface {
 		context.Context,
 		api.WorkerRunEntrypointRequest,
 	) error
+	RenewRunLease(
+		context.Context,
+		api.WorkerRunLeaseReceipt,
+	) (api.WorkerRunLeaseRenewResponse, error)
 }
 
 type freshProgramEventSink interface {
@@ -52,23 +57,82 @@ type freshProgramEventSink interface {
 type freshProgram struct {
 	session          vm.Session
 	lease            api.WorkerRunLeaseReceipt
+	authority        *workspacev0.WorkspaceRunAuthority
 	entrypoint       *runv0.EntrypointIdentity
 	observedEventSeq uint64
+}
+
+type freshAdmissionState struct {
+	mu        sync.Mutex
+	lease     api.WorkerRunLeaseReceipt
+	authority *workspacev0.WorkspaceRunAuthority
+	mounts    WorkspaceMountSessionRegistry
+	control   FreshProgramControl
+	events    freshProgramEventSink
+}
+
+func (state *freshAdmissionState) AppendRunLog(
+	ctx context.Context,
+	_ api.WorkerRunLeaseReceipt,
+	stream api.WorkerLogStream,
+	sequence uint64,
+	content []byte,
+) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	logCtx, cancel, err := runLeaseLogContext(ctx, state.lease.ExpiresAt)
+	if err != nil {
+		return err
+	}
+	defer cancel()
+	return state.events.AppendRunLog(
+		logCtx,
+		state.lease,
+		stream,
+		sequence,
+		content,
+	)
+}
+
+func (state *freshAdmissionState) expiresAt() time.Time {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return state.lease.ExpiresAt
+}
+
+func (state *freshAdmissionState) renew(ctx context.Context) error {
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	renewed, fence, err := renewRunLeaseAuthority(
+		ctx,
+		state.control,
+		state.mounts,
+		state.lease,
+		state.authority,
+	)
+	if err != nil {
+		return err
+	}
+	state.lease = renewed
+	if fence != nil {
+		state.authority.Fence = fence
+	}
+	return nil
 }
 
 func (program *freshProgram) awaitTaskCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
-) (*runv0.TaskOutcome, error) {
+) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
-		return nil, errors.New("fresh Program session is required")
+		return nil, nil, errors.New("fresh Program session is required")
 	}
 	defer program.session.Close(context.Background())
 	if events == nil {
-		return nil, errors.New("fresh Program event sink is required")
+		return nil, nil, errors.New("fresh Program event sink is required")
 	}
 	if program.entrypoint == nil || program.entrypoint.GetTask() == nil {
-		return nil, errors.New("fresh Program entrypoint is not a Task")
+		return nil, nil, errors.New("fresh Program entrypoint is not a Task")
 	}
 	var outcome *runv0.TaskOutcome
 	for {
@@ -80,7 +144,7 @@ func (program *freshProgram) awaitTaskCompletion(
 			&event,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("read Task completion event: %w", err)
+			return nil, nil, fmt.Errorf("read Task completion event: %w", err)
 		}
 		program.observedEventSeq++
 		switch value := event.Event.(type) {
@@ -92,7 +156,7 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.observedEventSeq,
 				value.StdoutChunk,
 			); err != nil {
-				return nil, fmt.Errorf("append Task stdout: %w", err)
+				return nil, nil, fmt.Errorf("append Task stdout: %w", err)
 			}
 		case *runv0.RunEvent_StderrChunk:
 			if err := events.AppendRunLog(
@@ -102,30 +166,30 @@ func (program *freshProgram) awaitTaskCompletion(
 				program.observedEventSeq,
 				value.StderrChunk,
 			); err != nil {
-				return nil, fmt.Errorf("append Task stderr: %w", err)
+				return nil, nil, fmt.Errorf("append Task stderr: %w", err)
 			}
 		case *runv0.RunEvent_TaskOutcome:
 			if outcome != nil {
-				return nil, errors.New("Program emitted more than one Task outcome")
+				return nil, nil, errors.New("Program emitted more than one Task outcome")
 			}
 			if err := validateFreshTaskOutcome(value.TaskOutcome); err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			outcome = value.TaskOutcome
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
-				return nil, errors.New("Program quiesced before emitting a Task outcome")
+				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
 			}
 			proof := value.ProgramQuiesced
 			if proof == nil ||
 				proof.GetRunId() != program.lease.RunID ||
 				proof.GetAttemptNumber() != uint32(program.lease.AttemptNumber) ||
 				proof.GetRunLeaseId() != program.lease.ID {
-				return nil, errors.New("Program quiescence proof does not match Run Lease")
+				return nil, nil, errors.New("Program quiescence proof does not match Run Lease")
 			}
-			return outcome, nil
+			return outcome, proof, nil
 		default:
-			return nil, errors.New("Program emitted an unsupported Task completion event")
+			return nil, nil, errors.New("Program emitted an unsupported Task completion event")
 		}
 	}
 }
@@ -289,11 +353,17 @@ func (r GuestRunner) startFreshProgram(
 		)
 	}
 	observedEventSeq := uint64(1)
-	startResponse, err := control.AcknowledgeRunStart(
-		admissionCtx,
-		claim.Lease,
-	)
-	if err != nil {
+	ackCtx, cancelAck := context.WithDeadline(ctx, claim.Lease.ExpiresAt)
+	defer cancelAck()
+	var startResponse api.WorkerRunStartResponse
+	if err := retryRunLeaseRequest(ackCtx, func(requestCtx context.Context) error {
+		var requestErr error
+		startResponse, requestErr = control.AcknowledgeRunStart(
+			requestCtx,
+			claim.Lease,
+		)
+		return requestErr
+	}); err != nil {
 		return freshProgram{}, fmt.Errorf("acknowledge fresh Run start: %w", err)
 	}
 	if !equalRunLeaseReceipt(startResponse.Lease, claim.Lease) {
@@ -301,13 +371,43 @@ func (r GuestRunner) startFreshProgram(
 			"Run start acknowledgement changed the Run Lease receipt",
 		)
 	}
+	state := &freshAdmissionState{
+		lease:     startResponse.Lease,
+		authority: freshWorkspaceAuthority(claim, opened.ChannelToken),
+		mounts:    r.WorkspaceMounts,
+		control:   control,
+		events:    events,
+	}
+	retainAuthority := false
+	defer func() {
+		if !retainAuthority {
+			state.authority.ChannelToken = ""
+			state.authority.WriteCapability = ""
+		}
+	}()
+	if err := state.renew(ctx); err != nil {
+		return freshProgram{}, fmt.Errorf(
+			"renew Run Lease before Program-start release: %w",
+			err,
+		)
+	}
+	if !state.expiresAt().After(time.Now()) {
+		return freshProgram{}, errors.New(
+			"Run Lease expired before Program-start release",
+		)
+	}
+	startReleaseCtx, cancelStartRelease := context.WithDeadline(
+		ctx,
+		state.expiresAt(),
+	)
+	defer cancelStartRelease()
 	if err := writeFreshProgramContext(
-		admissionCtx,
+		startReleaseCtx,
 		opened.Session,
 		func(stream vm.Stream) error {
 			return frameio.WriteProtoFrame(
 				stream,
-				programStartRelease(startResponse.Lease),
+				programStartRelease(state.lease),
 			)
 		},
 	); err != nil {
@@ -316,32 +416,66 @@ func (r GuestRunner) startFreshProgram(
 			err,
 		)
 	}
-	ready, err := readFreshEntrypointReady(
-		admissionCtx,
-		opened.Session,
-		startResponse.Lease,
-		events,
-		&observedEventSeq,
-	)
+	entrypointCtx, cancelEntrypoint := context.WithCancel(ctx)
+	defer cancelEntrypoint()
+	type entrypointResult struct {
+		ready *runv0.EntrypointReady
+		err   error
+	}
+	entrypointDone := make(chan entrypointResult, 1)
+	go func() {
+		ready, readErr := readFreshEntrypointReady(
+			entrypointCtx,
+			opened.Session,
+			startResponse.Lease,
+			state,
+			&observedEventSeq,
+		)
+		entrypointDone <- entrypointResult{ready: ready, err: readErr}
+	}()
+	renewTimer := time.NewTimer(runLeaseRenewDelay(state.expiresAt()))
+	defer renewTimer.Stop()
+	var ready *runv0.EntrypointReady
+	for ready == nil {
+		select {
+		case result := <-entrypointDone:
+			if result.err != nil {
+				return freshProgram{}, result.err
+			}
+			ready = result.ready
+		case <-renewTimer.C:
+			if err := state.renew(ctx); err != nil {
+				cancelEntrypoint()
+				<-entrypointDone
+				return freshProgram{}, fmt.Errorf("renew pre-entrypoint Run Lease: %w", err)
+			}
+			renewTimer.Reset(runLeaseRenewDelay(state.expiresAt()))
+		case <-ctx.Done():
+			cancelEntrypoint()
+			<-entrypointDone
+			return freshProgram{}, ctx.Err()
+		}
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	kind, err := validateFreshEntrypoint(ready, state.lease)
 	if err != nil {
 		return freshProgram{}, err
 	}
-	kind, err := validateFreshEntrypoint(ready, startResponse.Lease)
-	if err != nil {
-		return freshProgram{}, err
+	entrypointAckCtx, cancelEntrypointAck := context.WithDeadline(ctx, state.lease.ExpiresAt)
+	defer cancelEntrypointAck()
+	entrypointRequest := api.WorkerRunEntrypointRequest{
+		Lease:                state.lease,
+		EntrypointKind:       kind,
+		EntrypointDeclaredID: ready.GetEntrypoint().GetDeclaredId(),
 	}
-	if err := control.AcknowledgeRunEntrypoint(
-		admissionCtx,
-		api.WorkerRunEntrypointRequest{
-			Lease:                startResponse.Lease,
-			EntrypointKind:       kind,
-			EntrypointDeclaredID: ready.GetEntrypoint().GetDeclaredId(),
-		},
-	); err != nil {
+	if err := retryRunLeaseRequest(entrypointAckCtx, func(requestCtx context.Context) error {
+		return control.AcknowledgeRunEntrypoint(requestCtx, entrypointRequest)
+	}); err != nil {
 		return freshProgram{}, fmt.Errorf("acknowledge Run entrypoint: %w", err)
 	}
 	if err := writeFreshProgramContext(
-		admissionCtx,
+		entrypointAckCtx,
 		opened.Session,
 		func(stream vm.Stream) error {
 			return frameio.WriteProtoFrame(
@@ -349,9 +483,9 @@ func (r GuestRunner) startFreshProgram(
 				&runv0.ProgramSupervisorCommand{
 					Command: &runv0.ProgramSupervisorCommand_EntrypointRelease{
 						EntrypointRelease: &runv0.EntrypointRelease{
-							RunId: startResponse.Lease.RunID,
+							RunId: state.lease.RunID,
 							AttemptNumber: uint32(
-								startResponse.Lease.AttemptNumber,
+								state.lease.AttemptNumber,
 							),
 							Entrypoint: ready.GetEntrypoint(),
 						},
@@ -363,9 +497,11 @@ func (r GuestRunner) startFreshProgram(
 		return freshProgram{}, fmt.Errorf("write entrypoint release: %w", err)
 	}
 	keepSession = true
+	retainAuthority = true
 	return freshProgram{
 		session:          opened.Session,
-		lease:            startResponse.Lease,
+		lease:            state.lease,
+		authority:        state.authority,
 		entrypoint:       ready.GetEntrypoint(),
 		observedEventSeq: observedEventSeq,
 	}, nil
@@ -527,28 +663,7 @@ func writeFreshProgramAdmission(
 	}
 	if err := frameio.WriteProtoFrame(
 		stream,
-		&workspacev0.WorkspaceRunAuthority{
-			Fence: &workspacev0.WorkspaceAuthorityFence{
-				WorkerInstanceId:       lease.WorkerInstanceID,
-				WorkerEpoch:            lease.WorkerEpoch,
-				RuntimeInstanceId:      lease.RuntimeInstanceID,
-				RuntimeIdentityId:      lease.RuntimeIdentityID,
-				WorkspaceId:            lease.WorkspaceID,
-				WorkspaceMountId:       lease.WorkspaceMountID,
-				RunId:                  lease.RunID,
-				AttemptNumber:          uint32(lease.AttemptNumber),
-				RunLeaseId:             lease.ID,
-				LeaseSequence:          lease.LeaseSequence,
-				WorkspaceLeaseId:       lease.WorkspaceLeaseID,
-				OwnershipGeneration:    lease.OwnershipGeneration,
-				WriterGeneration:       lease.WriterGeneration,
-				MountFencingGeneration: lease.MountFencingGeneration,
-				ExpiresAtUnixNano:      lease.ExpiresAt.UnixNano(),
-				BaseWorkspaceVersionId: lease.BaseWorkspaceVersionID,
-			},
-			ChannelToken:    channelToken,
-			WriteCapability: claim.Workspace.WriteCapability,
-		},
+		freshWorkspaceAuthority(claim, channelToken),
 	); err != nil {
 		return fmt.Errorf("write Program Workspace authority: %w", err)
 	}
@@ -602,6 +717,35 @@ func writeFreshProgramAdmission(
 		return fmt.Errorf("write Program Secret completion: %w", err)
 	}
 	return nil
+}
+
+func freshWorkspaceAuthority(
+	claim *api.WorkerRunLeaseClaimResponse,
+	channelToken string,
+) *workspacev0.WorkspaceRunAuthority {
+	lease := claim.Lease
+	return &workspacev0.WorkspaceRunAuthority{
+		Fence: &workspacev0.WorkspaceAuthorityFence{
+			WorkerInstanceId:       lease.WorkerInstanceID,
+			WorkerEpoch:            lease.WorkerEpoch,
+			RuntimeInstanceId:      lease.RuntimeInstanceID,
+			RuntimeIdentityId:      lease.RuntimeIdentityID,
+			WorkspaceId:            lease.WorkspaceID,
+			WorkspaceMountId:       lease.WorkspaceMountID,
+			RunId:                  lease.RunID,
+			AttemptNumber:          uint32(lease.AttemptNumber),
+			RunLeaseId:             lease.ID,
+			LeaseSequence:          lease.LeaseSequence,
+			WorkspaceLeaseId:       lease.WorkspaceLeaseID,
+			OwnershipGeneration:    lease.OwnershipGeneration,
+			WriterGeneration:       lease.WriterGeneration,
+			MountFencingGeneration: lease.MountFencingGeneration,
+			ExpiresAtUnixNano:      lease.ExpiresAt.UnixNano(),
+			BaseWorkspaceVersionId: lease.BaseWorkspaceVersionID,
+		},
+		ChannelToken:    channelToken,
+		WriteCapability: claim.Workspace.WriteCapability,
+	}
 }
 
 func freshProgramSecret(

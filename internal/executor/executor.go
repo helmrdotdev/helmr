@@ -31,12 +31,14 @@ func DefaultWorkDir() string {
 }
 
 type Executor struct {
-	WorkDir  string
-	GitPath  string
-	CAS      cas.Store
-	Builder  builder.Engine
-	Runner   Runner
-	RunWaits WaitHandler
+	WorkDir       string
+	GitPath       string
+	CAS           cas.Store
+	Builder       builder.Engine
+	Runner        Runner
+	RunWaits      WaitHandler
+	RunLeases     RunLeaseControl
+	RunLeaseTasks RunLeaseTaskRunner
 }
 
 type Runner interface {

@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/cas"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
@@ -25,6 +26,8 @@ type WorkspaceMountSessionRegistry interface {
 	OpenWorkspaceMountSession(context.Context, string) (WorkspaceMountSession, error)
 	RenewWorkspaceAuthority(context.Context, *workspacev0.RenewWorkspaceAuthorityRequest) (*workspacev0.WorkspaceAuthorityFence, error)
 	BeginWorkspaceFinalization(context.Context, *workspacev0.BeginWorkspaceFinalizationRequest) (*workspacev0.BeginWorkspaceFinalizationResponse, error)
+	CaptureWorkspace(context.Context, *workspacev0.CaptureWorkspaceRequest, cas.Store) (WorkspaceCapture, error)
+	ResetWorkspace(context.Context, *workspacev0.ResetWorkspaceRequest, cas.Reader) (WorkspaceReset, error)
 }
 
 type WorkspaceMountSession struct {
@@ -146,6 +149,58 @@ func (s *WorkspaceMountSessions) BeginWorkspaceFinalization(
 		return nil, errors.New("Workspace authority fence does not match the mount session")
 	}
 	return beginWorkspaceFinalizationOnSession(ctx, entry.session, request)
+}
+
+func (s *WorkspaceMountSessions) CaptureWorkspace(
+	ctx context.Context,
+	request *workspacev0.CaptureWorkspaceRequest,
+	store cas.Store,
+) (WorkspaceCapture, error) {
+	entry, err := s.finalizationSession(request.GetEnvelope())
+	if err != nil {
+		return WorkspaceCapture{}, err
+	}
+	return captureWorkspaceOnSession(ctx, entry.session, store, request)
+}
+
+func (s *WorkspaceMountSessions) ResetWorkspace(
+	ctx context.Context,
+	request *workspacev0.ResetWorkspaceRequest,
+	store cas.Reader,
+) (WorkspaceReset, error) {
+	entry, err := s.finalizationSession(request.GetEnvelope())
+	if err != nil {
+		return WorkspaceReset{}, err
+	}
+	return resetWorkspaceOnSession(ctx, entry.session, store, request)
+}
+
+func (s *WorkspaceMountSessions) finalizationSession(
+	envelope *workspacev0.WorkspaceFinalizationEnvelope,
+) (workspaceMountSessionEntry, error) {
+	if envelope == nil || envelope.GetAuthority() == nil || envelope.GetAuthority().GetFence() == nil {
+		return workspaceMountSessionEntry{}, errors.New("Workspace finalization envelope is required")
+	}
+	authority := envelope.GetAuthority()
+	fence := authority.GetFence()
+	id := strings.TrimSpace(fence.GetWorkspaceMountId())
+	s.mu.RLock()
+	entry := s.sessions[id]
+	s.mu.RUnlock()
+	if entry.session == nil {
+		return workspaceMountSessionEntry{}, fmt.Errorf("%w: %s", ErrWorkspaceMountSessionNotFound, id)
+	}
+	if entry.channelToken == "" || authority.GetChannelToken() != entry.channelToken {
+		return workspaceMountSessionEntry{}, errors.New("Workspace authority channel token does not match the mount session")
+	}
+	if fence.GetWorkspaceMountId() != entry.mount.ID ||
+		fence.GetWorkspaceId() != entry.mount.WorkspaceID ||
+		fence.GetRuntimeInstanceId() != entry.mount.RuntimeInstanceID ||
+		fence.GetMountFencingGeneration() != entry.mount.FencingGeneration ||
+		fence.GetBaseWorkspaceVersionId() != entry.mount.BaseVersionID {
+		return workspaceMountSessionEntry{}, errors.New("Workspace authority fence does not match the mount session")
+	}
+	return entry, nil
 }
 
 func (s *WorkspaceMountSessions) beginForegroundRun() func() {
