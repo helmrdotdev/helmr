@@ -22,6 +22,7 @@ func TestWorkerCompleteTaskReplaysPreviousEpochWithoutCAS(t *testing.T) {
 	request := validTaskCompletionRequest(t)
 	request.Lease.WorkerInstanceID = workerID.String()
 	request.Lease.WorkerEpoch = 1
+	request.Workspace.Captured = validTaskWorkspaceCapture(t, request.Lease)
 	parsed, err := parseTaskCompletionRequest(request)
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestWorkerCompleteTaskRejectsChangedTerminalRequest(t *testing.T) {
 	workerID := uuid.Must(uuid.NewV7())
 	request := validTaskCompletionRequest(t)
 	request.Lease.WorkerInstanceID = workerID.String()
+	request.Workspace.Captured = validTaskWorkspaceCapture(t, request.Lease)
 	store := &workerTaskCompletionReplayStore{fingerprint: pgvalue.Text("sha256:different")}
 	server := &Server{log: taskCompletionTestLogger(), db: store}
 	body, err := json.Marshal(request)

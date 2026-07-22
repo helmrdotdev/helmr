@@ -29,13 +29,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	dbschema "github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
-	dispatchredis "github.com/helmrdotdev/helmr/internal/dispatch/redis"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/enrollment"
 	"github.com/helmrdotdev/helmr/internal/keyedhash"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workergroup"
@@ -180,18 +177,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	redisClient := redis.NewClient(redisOptions)
 	defer redisClient.Close()
-	dispatchQueue, err := dispatchredis.New(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure run queue: %w", err)
-	}
-	runEnqueuer, err := dispatch.NewEnqueuer(queries, dispatchQueue)
-	if err != nil {
-		return fmt.Errorf("configure dispatch enqueuer: %w", err)
-	}
-	scheduleIndex, err := schedule.NewRedisIndex(redisClient)
-	if err != nil {
-		return fmt.Errorf("configure schedule index: %w", err)
-	}
 	publicURL, err := url.Parse(cfg.PublicURL)
 	if err != nil {
 		return fmt.Errorf("parse public URL: %w", err)
@@ -227,16 +212,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 	)
 	if err != nil {
 		return fmt.Errorf("configure Workspace fencing keys: %w", err)
-	}
-	scheduleRunCreator, err := control.NewScheduleRunCreator(log, pool, secretStore, runEnqueuer, eventStream)
-	if err != nil {
-		return fmt.Errorf("configure schedule run creator: %w", err)
-	}
-	scheduleEngine, err := schedule.NewEngine(log, pool, scheduleIndex, scheduleRunCreator, schedule.EngineConfig{
-		Jitter: cfg.ScheduleJitter,
-	})
-	if err != nil {
-		return fmt.Errorf("configure schedule engine: %w", err)
 	}
 	casStore, err := cas.NewS3(ctx, cfg.CASURI)
 	if err != nil {
@@ -283,9 +258,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		Secrets:              secretStore,
 		SecretDelivery:       secretStore,
 		WorkspaceFencingKeys: workspaceFencingKeys,
-		RunEnqueuer:          runEnqueuer,
-		DispatchQueue:        dispatchQueue,
-		ScheduleEngine:       scheduleEngine,
 		EventStream:          eventStream,
 		TelemetryReader:      telemetryReader,
 		Mailer:               mailer,

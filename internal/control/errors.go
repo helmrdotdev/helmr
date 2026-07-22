@@ -24,7 +24,11 @@ const (
 	errTooManyRequests
 )
 
-var errRecordNotFound = errors.New("record not found")
+var (
+	errRecordNotFound                 = errors.New("record not found")
+	errPermissionRequired             = errors.New("permission is required")
+	errAPIKeyEnvironmentScopeRequired = errors.New("API key is not bound to an environment")
+)
 
 type errorCoder interface {
 	ErrorCode() string

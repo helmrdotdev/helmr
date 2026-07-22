@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -17,6 +19,10 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func discardTestLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
 
 func TestWorkerRunLeaseClaimAuthorizesTransitionsAndReplays(t *testing.T) {
 	server, store, worker, requestBody := newWorkerRunLeaseClaimHTTPFixture(t)

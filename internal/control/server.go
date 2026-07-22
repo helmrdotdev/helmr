@@ -23,10 +23,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/schema"
 	"github.com/helmrdotdev/helmr/internal/deployment"
-	"github.com/helmrdotdev/helmr/internal/dispatch"
 	"github.com/helmrdotdev/helmr/internal/email"
 	"github.com/helmrdotdev/helmr/internal/region"
-	"github.com/helmrdotdev/helmr/internal/schedule"
 	"github.com/helmrdotdev/helmr/internal/telemetry"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"github.com/jackc/pgx/v5"
@@ -40,6 +38,7 @@ const (
 	workerLogRequestBodyLimit = int64(256 << 10)
 	taskCompletionBodyLimit   = int64(17 << 20)
 	maxControlPageSize        = int32(500)
+	defaultRunLeaseTTL        = 5 * time.Minute
 )
 
 type SecretManager interface {
@@ -73,9 +72,6 @@ type Server struct {
 	secrets               SecretManager
 	secretDelivery        SecretDeliveryOpener
 	workspaceFencingKeys  workspace.FencingKeys
-	runEnqueuer           RunEnqueuer
-	dispatchQueue         dispatch.Queue
-	scheduleEngine        ScheduleRegistrar
 	eventStream           *EventStream
 	telemetryReader       telemetry.Reader
 	workerTokenSecret     []byte
@@ -109,15 +105,6 @@ const (
 	deploymentModeManagedCloud = "managed-cloud"
 )
 
-type RunEnqueuer interface {
-	EnqueueRun(context.Context, pgtype.UUID, pgtype.UUID) (dispatch.EnqueueResult, error)
-}
-
-type ScheduleRegistrar interface {
-	RegisterNext(context.Context, schedule.Instance) error
-	DeleteInstance(context.Context, pgtype.UUID) error
-}
-
 type TxBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
@@ -146,9 +133,6 @@ type ServerConfig struct {
 	Secrets              SecretManager
 	SecretDelivery       SecretDeliveryOpener
 	WorkspaceFencingKeys workspace.FencingKeys
-	RunEnqueuer          RunEnqueuer
-	DispatchQueue        dispatch.Queue
-	ScheduleEngine       ScheduleRegistrar
 	EventStream          *EventStream
 	TelemetryReader      telemetry.Reader
 	Mailer               email.Sender
@@ -236,7 +220,7 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 	}
 	runLeaseTTL := cfg.RunLeaseTTL
 	if runLeaseTTL <= 0 {
-		runLeaseTTL = workerLeaseDuration
+		runLeaseTTL = defaultRunLeaseTTL
 	}
 	if runLeaseTTL < api.WorkerRunLeaseMinTTL {
 		return nil, fmt.Errorf("Run Lease TTL must be at least %s", api.WorkerRunLeaseMinTTL)
@@ -268,9 +252,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		secrets:               cfg.Secrets,
 		secretDelivery:        cfg.SecretDelivery,
 		workspaceFencingKeys:  cfg.WorkspaceFencingKeys,
-		runEnqueuer:           cfg.RunEnqueuer,
-		dispatchQueue:         cfg.DispatchQueue,
-		scheduleEngine:        cfg.ScheduleEngine,
 		eventStream:           cfg.EventStream,
 		telemetryReader:       telemetryReader,
 		workerTokenSecret:     cfg.WorkerTokenSecret,
@@ -291,7 +272,6 @@ func NewServer(cfg ServerConfig) (http.Handler, error) {
 		devicePollEvery:       cfg.DevicePollEvery,
 	}
 	if cfg.BackgroundContext != nil {
-		go server.sessionContinuationRequestWorkflow().run(cfg.BackgroundContext)
 		go (runRetryReadyWorkflow{log: server.log, store: server.db}).run(cfg.BackgroundContext)
 	}
 	router := chi.NewRouter()
@@ -349,21 +329,8 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 func (s *Server) mountAPIRoutes(r chi.Router) {
 	r.Use(limitRequestBody(apiRequestBodyLimit))
 	r.Use(s.requireRequestVersions)
-	r.Options("/v1/tokens/{tokenID}/complete", s.completeTokenPublicAccessTokenPreflight)
-	r.Post("/v1/tokens/{tokenID}/complete", s.completeTokenWithPublicAccessToken)
-	r.Post("/v1/tokens/{tokenID}/callback/{callbackSecret}", s.completeTokenWithCallbackSecret)
-	r.Options("/v1/sessions/by-external-id/inputs/{stream}", s.publicSessionInputStreamPreflight)
-	r.Post("/v1/sessions/by-external-id/inputs/{stream}", s.appendSessionInputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/by-external-id/outputs/{stream}/read", s.publicSessionOutputStreamReadPreflight)
-	r.Get("/v1/sessions/by-external-id/outputs/{stream}/read", s.readSessionOutputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/{sessionID}/inputs/{stream}", s.publicSessionInputStreamPreflight)
-	r.Post("/v1/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStreamWithPublicAccessToken)
-	r.Options("/v1/sessions/{sessionID}/outputs/{stream}/read", s.publicSessionOutputStreamReadPreflight)
-	r.Get("/v1/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamWithPublicAccessToken)
 	s.mountAuthRoutes(r)
 	s.mountOwnerRoutes(r)
-	s.mountRunRoutes(r)
-	s.mountScheduleRoutes(r)
 	s.mountWorkerRoutes(r)
 }
 
@@ -475,55 +442,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/current", s.getCurrentDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/projects/{projectID}/environments/{environmentID}/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/projects/{projectID}/environments/{environmentID}/deployments/{deployment}/promote", s.promoteDeployment)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes", s.listSandboxes)
-		r.Get("/projects/{projectID}/environments/{environmentID}/sandboxes/{sandboxID}", s.getSandbox)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs", s.listRuns)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/counts", s.countRuns)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}", s.getRun)
-		r.Post("/projects/{projectID}/environments/{environmentID}/runs/{id}/cancel", s.cancelRun)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/events", s.getRunEvents)
-		r.Get("/projects/{projectID}/environments/{environmentID}/runs/{id}/logs", s.getRunLogs)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens", s.createToken)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens", s.listTokens)
-		r.Get("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}", s.getToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/complete", s.completeToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/tokens/{tokenID}/cancel", s.cancelToken)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces", s.createWorkspace)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces", s.listWorkspaces)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.getWorkspace)
-		r.Patch("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.patchWorkspace)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/connect", s.connectWorkspace)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/stop", s.stopWorkspace)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/content", s.readWorkspaceFile)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/files/stat", s.statWorkspaceFile)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions", s.listWorkspaceVersions)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/versions/{versionID}", s.getWorkspaceVersion)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.createWorkspacePty)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
-		r.Get("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
-		r.Post("/projects/{projectID}/environments/{environmentID}/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
-		s.mountSessionRoutes(r, "/projects/{projectID}/environments/{environmentID}")
-		r.Get("/projects/{projectID}/environments/{environmentID}/schedules", s.listSchedules)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules", s.createSchedule)
-		r.Get("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.getSchedule)
-		r.Put("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.updateSchedule)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules/{id}/activate", s.activateSchedule)
-		r.Post("/projects/{projectID}/environments/{environmentID}/schedules/{id}/deactivate", s.deactivateSchedule)
-		r.Delete("/projects/{projectID}/environments/{environmentID}/schedules/{id}", s.deleteSchedule)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets", s.listSecrets)
 		r.Get("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.getSecret)
 		r.Put("/projects/{projectID}/environments/{environmentID}/secrets/{name}", s.setSecret)
@@ -546,7 +464,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Get("/deployments/current", s.getCurrentDeployment)
 		r.Get("/deployments/{deploymentID}", s.getDeployment)
 		r.Get("/deployments/{deploymentID}/events", s.getDeploymentEvents)
-		r.Post("/deployments/{deployment}/promote", s.promoteDeployment)
 		r.Post("/deployments", s.createDeployment)
 	})
 	r.Group(func(r chi.Router) {
@@ -556,84 +473,6 @@ func (s *Server) mountOwnerRoutes(r chi.Router) {
 		r.Put("/secrets/{name}", s.setSecret)
 		r.Post("/secrets/{name}/revoke", s.revokeSecret)
 	})
-}
-
-func (s *Server) mountRunRoutes(r chi.Router) {
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		s.mountSessionRoutes(r, "")
-		r.Get("/runs", s.listRuns)
-		r.Get("/runs/counts", s.countRuns)
-		r.Get("/runs/{id}", s.getRun)
-		r.Post("/runs/{id}/cancel", s.cancelRun)
-		r.Get("/runs/{id}/events", s.getRunEvents)
-		r.Get("/runs/{id}/logs", s.getRunLogs)
-		r.Post("/tokens", s.createToken)
-		r.Get("/tokens", s.listTokens)
-		r.Get("/tokens/{tokenID}", s.getToken)
-		r.Post("/tokens/{tokenID}/complete", s.completeToken)
-		r.Post("/tokens/{tokenID}/cancel", s.cancelToken)
-		r.Post("/public-access-tokens", s.createPublicAccessToken)
-		r.Post("/workspaces", s.createWorkspace)
-		r.Get("/workspaces", s.listWorkspaces)
-		r.Get("/workspaces/{workspaceID}", s.getWorkspace)
-		r.Patch("/workspaces/{workspaceID}", s.patchWorkspace)
-		r.Delete("/workspaces/{workspaceID}", s.deleteWorkspace)
-		r.Post("/workspaces/{workspaceID}/materialize", s.requestWorkspaceMount)
-		r.Post("/workspaces/{workspaceID}/connect", s.connectWorkspace)
-		r.Post("/workspaces/{workspaceID}/stop", s.stopWorkspace)
-		r.Get("/workspaces/{workspaceID}/files", s.listWorkspaceFiles)
-		r.Get("/workspaces/{workspaceID}/files/content", s.readWorkspaceFile)
-		r.Get("/workspaces/{workspaceID}/files/stat", s.statWorkspaceFile)
-		r.Get("/workspaces/{workspaceID}/versions", s.listWorkspaceVersions)
-		r.Get("/workspaces/{workspaceID}/versions/{versionID}", s.getWorkspaceVersion)
-		r.Post("/workspaces/{workspaceID}/execs", s.createWorkspaceExec)
-		r.Get("/workspaces/{workspaceID}/execs", s.listWorkspaceExecs)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}", s.getWorkspaceExec)
-		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin", s.writeWorkspaceExecStdin)
-		r.Post("/workspaces/{workspaceID}/execs/{execID}/stdin/close", s.closeWorkspaceExecStdin)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}/stdout", s.listWorkspaceExecStdout)
-		r.Get("/workspaces/{workspaceID}/execs/{execID}/stderr", s.listWorkspaceExecStderr)
-		r.Post("/workspaces/{workspaceID}/pty", s.createWorkspacePty)
-		r.Get("/workspaces/{workspaceID}/pty", s.listWorkspacePtys)
-		r.Get("/workspaces/{workspaceID}/pty/{ptyID}", s.getWorkspacePty)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/input", s.writeWorkspacePtyInput)
-		r.Get("/workspaces/{workspaceID}/pty/{ptyID}/output", s.listWorkspacePtyOutput)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/resize", s.resizeWorkspacePty)
-		r.Post("/workspaces/{workspaceID}/pty/{ptyID}/close", s.closeWorkspacePty)
-		r.Get("/sandboxes", s.listSandboxes)
-		r.Get("/sandboxes/{sandboxID}", s.getSandbox)
-	})
-}
-
-func (s *Server) mountSessionRoutes(r chi.Router, prefix string) {
-	r.Get(prefix+"/tasks", s.listTasks)
-	r.Get(prefix+"/tasks/{taskID}", s.getTask)
-	r.Post(prefix+"/sessions", s.startSession)
-	r.Post(prefix+"/sessions/start-and-wait", s.startSessionAndWait)
-	r.Get(prefix+"/sessions", s.listSessions)
-	r.Get(prefix+"/sessions/by-external-id", s.getSession)
-	r.Patch(prefix+"/sessions/by-external-id", s.patchSession)
-	r.Post(prefix+"/sessions/by-external-id/close", s.closeSession)
-	r.Post(prefix+"/sessions/by-external-id/cancel", s.cancelSession)
-	r.Get(prefix+"/sessions/by-external-id/runs", s.listSessionRuns)
-	r.Get(prefix+"/sessions/by-external-id/streams", s.listSessionStreams)
-	r.Post(prefix+"/sessions/by-external-id/inputs/{stream}", s.appendSessionInputStream)
-	r.Get(prefix+"/sessions/by-external-id/inputs/{stream}", s.listSessionInputStreamRecords)
-	r.Post(prefix+"/sessions/by-external-id/outputs/{stream}", s.appendSessionOutputStream)
-	r.Get(prefix+"/sessions/by-external-id/outputs/{stream}", s.listSessionOutputStreamRecords)
-	r.Get(prefix+"/sessions/by-external-id/outputs/{stream}/read", s.readSessionOutputStreamRecord)
-	r.Get(prefix+"/sessions/{sessionID}", s.getSession)
-	r.Patch(prefix+"/sessions/{sessionID}", s.patchSession)
-	r.Post(prefix+"/sessions/{sessionID}/close", s.closeSession)
-	r.Post(prefix+"/sessions/{sessionID}/cancel", s.cancelSession)
-	r.Get(prefix+"/sessions/{sessionID}/runs", s.listSessionRuns)
-	r.Get(prefix+"/sessions/{sessionID}/streams", s.listSessionStreams)
-	r.Post(prefix+"/sessions/{sessionID}/inputs/{stream}", s.appendSessionInputStream)
-	r.Get(prefix+"/sessions/{sessionID}/inputs/{stream}", s.listSessionInputStreamRecords)
-	r.Post(prefix+"/sessions/{sessionID}/outputs/{stream}", s.appendSessionOutputStream)
-	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}", s.listSessionOutputStreamRecords)
-	r.Get(prefix+"/sessions/{sessionID}/outputs/{stream}/read", s.readSessionOutputStreamRecord)
 }
 
 func (s *Server) mountWorkerRoutes(r chi.Router) {
@@ -678,40 +517,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actor-turns/commit", s.workerCommitActorTurn)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
-				r.Post("/leases/tokens", s.workerCreateToken)
-				r.Post("/leases/run-waits", s.workerCreateRunWait)
-				r.Post("/leases/run-waits/poll", s.workerPollRunWait)
-				r.Post("/leases/run-waits/resume-ack", s.workerAcknowledgeRunWaitResume)
-				r.Post("/leases/run-waits/workspace-capture", s.workerCaptureRunWaitWorkspace)
-				r.Post("/leases/streams/input/read", s.workerReadInputStream)
-				r.Post("/leases/streams/output", s.workerAppendOutputStream)
-				r.Post("/leases/metadata", s.workerUpdateRunMetadata)
-				r.Post("/leases/checkpoints/ready", s.workerMarkCheckpointReady)
-				r.Post("/leases/checkpoints/failed", s.workerMarkCheckpointFailed)
-				r.Post("/leases/restores/ack", s.workerAcknowledgeRestore)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/logs", s.workerAppendLogs)
 				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/leases/run-logs", s.workerAppendRunLogs)
-				r.Post("/leases/log-entries", s.workerRecordLogEntry)
-				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/workspaces/mounts/claim", s.workerClaimWorkspaceMount)
-				r.Post("/workspaces/mounts/renew", s.workerRenewWorkspaceMount)
-				r.Post("/workspaces/mounts/mounted", s.workerMarkWorkspaceMountMounted)
-				r.Post("/workspaces/mounts/capture", s.workerCaptureWorkspaceMount)
-				r.Post("/workspaces/mounts/fail", s.workerFailWorkspaceMount)
-				r.Post("/workspaces/mounts/stop", s.workerStopWorkspaceMount)
-				r.Post("/workspaces/mounts/operations/claim", s.workerClaimWorkspaceOperation)
-				r.Post("/workspaces/mounts/operations/start", s.workerStartWorkspaceOperation)
-				r.Post("/workspaces/mounts/operations/complete", s.workerCompleteWorkspaceOperation)
-				r.Post("/workspaces/execs/started", s.workerMarkWorkspaceExecStarted)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/execs/output", s.workerAppendWorkspaceExecOutput)
-				r.Post("/workspaces/execs/input", s.workerListWorkspaceExecInput)
-				r.Post("/workspaces/execs/input-delivered", s.workerAdvanceWorkspaceExecInputDelivered)
-				r.Post("/workspaces/execs/exited", s.workerMarkWorkspaceExecExited)
-				r.Post("/workspaces/ptys/opened", s.workerMarkWorkspacePtyOpened)
-				r.With(limitRequestBody(workerLogRequestBodyLimit)).Post("/workspaces/ptys/output", s.workerAppendWorkspacePtyOutput)
-				r.Post("/workspaces/ptys/input", s.workerListWorkspacePtyInput)
-				r.Post("/workspaces/ptys/input-delivered", s.workerAdvanceWorkspacePtyInputDelivered)
-				r.Post("/workspaces/ptys/resize-applied", s.workerMarkWorkspacePtyResizeApplied)
-				r.Post("/workspaces/ptys/closed", s.workerMarkWorkspacePtyClosed)
 			})
 		})
 	})
@@ -924,17 +730,4 @@ func parseUUIDParam(r *http.Request, name string) (uuid.UUID, error) {
 		return uuid.Nil, fmt.Errorf("%s must be a UUID", name)
 	}
 	return id, nil
-}
-
-func (s *Server) mountScheduleRoutes(r chi.Router) {
-	r.Group(func(r chi.Router) {
-		r.Use(s.requireActor)
-		r.Get("/schedules", s.listSchedules)
-		r.Post("/schedules", s.createSchedule)
-		r.Get("/schedules/{id}", s.getSchedule)
-		r.Put("/schedules/{id}", s.updateSchedule)
-		r.Post("/schedules/{id}/activate", s.activateSchedule)
-		r.Post("/schedules/{id}/deactivate", s.deactivateSchedule)
-		r.Delete("/schedules/{id}", s.deleteSchedule)
-	})
 }

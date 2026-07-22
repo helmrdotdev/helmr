@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/auth"
@@ -41,20 +40,9 @@ type currentDeploymentStore interface {
 type deploymentStatusStore interface {
 	GetDeployment(context.Context, db.GetDeploymentParams) (db.Deployment, error)
 	GetDeploymentForOrg(context.Context, db.GetDeploymentForOrgParams) (db.Deployment, error)
-	GetDeploymentByVersion(context.Context, db.GetDeploymentByVersionParams) (db.Deployment, error)
 	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
 	ListScopedDeployments(context.Context, db.ListScopedDeploymentsParams) ([]db.Deployment, error)
-	ListDeploymentsByVersionForOrg(context.Context, db.ListDeploymentsByVersionForOrgParams) ([]db.Deployment, error)
 	ListDeploymentDefinitionsForDeployment(context.Context, db.ListDeploymentDefinitionsForDeploymentParams) ([]db.DeploymentDefinition, error)
-	PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-}
-
-type currentDeploymentReadStore interface {
-	ListArtifactsByIDs(context.Context, db.ListArtifactsByIDsParams) ([]db.Artifact, error)
-	ListCurrentDeploymentTasks(context.Context, db.ListCurrentDeploymentTasksParams) ([]db.DeploymentTask, error)
-	GetCurrentDeploymentTask(context.Context, db.GetCurrentDeploymentTaskParams) (db.GetCurrentDeploymentTaskRow, error)
-	ListCurrentDeploymentSandboxes(context.Context, db.ListCurrentDeploymentSandboxesParams) ([]db.DeploymentSandbox, error)
-	GetCurrentDeploymentSandbox(context.Context, db.GetCurrentDeploymentSandboxParams) (db.DeploymentSandbox, error)
 }
 
 func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
@@ -118,30 +106,6 @@ func (s *Server) listDeployments(w http.ResponseWriter, r *http.Request) {
 		response = append(response, item)
 	}
 	writeJSON(w, http.StatusOK, api.ListDeploymentsResponse{Deployments: response})
-}
-
-func (s *Server) loadCurrentDeploymentReadScope(w http.ResponseWriter, r *http.Request) (currentDeploymentReadStore, auth.Scope, pgtype.UUID, pgtype.UUID, bool) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
-	}
-	store, ok := s.db.(currentDeploymentReadStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
-	}
-	actor := actorFromContext(r.Context())
-	scope, err := s.requestedRunListScope(r, actor)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
-	}
-	projectID, environmentID, err := runScopeIDs(scope)
-	if err != nil {
-		writeError(w, errors.New("resolve current deployment read scope"))
-		return nil, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, false
-	}
-	return store, scope, projectID, environmentID, true
 }
 
 func (s *Server) getDeployment(w http.ResponseWriter, r *http.Request) {
@@ -258,118 +222,6 @@ func (s *Server) getCurrentDeployment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, api.GetCurrentDeploymentResponse{Deployment: &response})
-}
-
-func (s *Server) promoteDeployment(w http.ResponseWriter, r *http.Request) {
-	if s.db == nil {
-		writeError(w, unavailable(errors.New("project storage is not configured")))
-		return
-	}
-	store, ok := s.db.(deploymentStatusStore)
-	if !ok {
-		writeError(w, unavailable(errors.New("deployment storage is not configured")))
-		return
-	}
-	var request api.PromoteDeploymentRequest
-	if err := decodeOptionalJSON(r.Body, &request); err != nil {
-		writeError(w, badRequest(fmt.Errorf("invalid promotion request JSON: %w", err)))
-		return
-	}
-	actor := actorFromContext(r.Context())
-	deploymentRef := strings.TrimSpace(chi.URLParam(r, "deployment"))
-	if deploymentRef == "" {
-		writeError(w, badRequest(errors.New("deployment is required")))
-		return
-	}
-	projectRef, environmentRef, err := environmentScopeRefsFromRequest(r, actor, request.ProjectID, request.EnvironmentID)
-	if err != nil {
-		writeError(w, badRequest(err))
-		return
-	}
-	if projectRef == "" && environmentRef == "" && actor.Kind == auth.ActorKindAPIKey {
-		scope, ok := actor.EnvironmentScope()
-		if !ok {
-			writeError(w, badRequest(errors.New("API key is not bound to an environment")))
-			return
-		}
-		projectRef = scope.ProjectID
-		environmentRef = scope.EnvironmentID
-	}
-	request.ProjectID = projectRef
-	request.EnvironmentID = environmentRef
-	deployment, scope, projectID, environmentID, err := s.resolvePromotionTarget(r.Context(), store, actor.OrgID, deploymentRef, request)
-	if isNoRows(err) {
-		writeError(w, notFound(errors.New("deployment not found")))
-		return
-	}
-	if errors.Is(err, errAmbiguousDeploymentVersion) {
-		writeError(w, badRequest(err))
-		return
-	}
-	if err != nil {
-		s.log.Error("get deployment for promotion failed", "deployment", deploymentRef, "error", err)
-		writeError(w, errors.New("get deployment"))
-		return
-	}
-	if !actor.HasPermission(auth.PermissionTasksDeploy, scope) {
-		writeError(w, forbidden(errors.New("permission is required")))
-		return
-	}
-	principal, err := auth.ActorPrincipal(actor)
-	if err != nil {
-		writeError(w, forbidden(err))
-		return
-	}
-	params := db.PromoteDeploymentParams{
-		ID:                  pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		OrgID:               pgvalue.UUID(actor.OrgID),
-		ProjectID:           projectID,
-		EnvironmentID:       environmentID,
-		DeploymentID:        deployment.ID,
-		PromotedByPrincipal: principal,
-		Reason:              strings.TrimSpace(request.Reason),
-	}
-	response, err := deploymentResponseWithArtifacts(r.Context(), store, deployment)
-	if err != nil {
-		s.log.Error("get promotion deployment artifacts failed", "deployment", deploymentRef, "error", err)
-		writeError(w, errors.New("promote deployment"))
-		return
-	}
-	if err := populateDeploymentDeclarations(r.Context(), store, deployment, &response); err != nil {
-		s.log.Error("list promotion deployment declarations failed", "deployment", deploymentRef, "error", err)
-		writeError(w, errors.New("promote deployment"))
-		return
-	}
-	promoteStore := interface {
-		PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-	}(store)
-	err = s.inTx(r.Context(), func(work *txWork) error {
-		txPromoteStore, ok := work.q.(interface {
-			PromoteDeployment(context.Context, db.PromoteDeploymentParams) (db.PromoteDeploymentRow, error)
-		})
-		if !ok {
-			return unavailable(errors.New("deployment storage is not configured"))
-		}
-		promoteStore = txPromoteStore
-		changedSchedules, err := promoteDeploymentAndSyncSchedules(r.Context(), promoteStore, params)
-		if isNoRows(err) {
-			return badRequest(errors.New("deployment is not deployable"))
-		} else if errors.Is(err, errPermissionRequired) {
-			return forbidden(err)
-		} else if err != nil {
-			s.log.Error("promote deployment failed", "deployment", deploymentRef, "error", err)
-			return errors.New("promote deployment")
-		}
-		work.AfterCommit(func(ctx context.Context) {
-			s.registerChangedScheduleInstances(ctx, params.OrgID, params.ProjectID, changedSchedules)
-		})
-		return nil
-	})
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
 }
 
 func validateDeploymentContentHash(archivePath string, contentHash string) error {
@@ -539,71 +391,6 @@ func firstPresentString(values ...string) string {
 		}
 	}
 	return ""
-}
-
-var errAmbiguousDeploymentVersion = errors.New("deployment version is ambiguous; provide project_id and environment_id")
-
-func (s *Server) resolvePromotionTarget(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string, request api.PromoteDeploymentRequest) (db.Deployment, auth.Scope, pgtype.UUID, pgtype.UUID, error) {
-	projectRef := strings.TrimSpace(request.ProjectID)
-	environmentRef := strings.TrimSpace(request.EnvironmentID)
-	if projectRef != "" || environmentRef != "" {
-		scope, projectID, environmentID, err := s.secretRequestScope(ctx, orgID, projectRef, environmentRef)
-		if err != nil {
-			return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-		}
-		deployment, err := deploymentByIDOrVersion(ctx, store, orgID, projectID, environmentID, deploymentRef)
-		return deployment, scope, projectID, environmentID, err
-	}
-	deployment, err := deploymentByIDOrVersionForOrg(ctx, store, orgID, deploymentRef)
-	if err != nil {
-		return db.Deployment{}, auth.Scope{}, pgtype.UUID{}, pgtype.UUID{}, err
-	}
-	return deployment, auth.Scope{
-		OrgID:         orgID,
-		ProjectID:     pgvalue.MustUUIDValue(deployment.ProjectID).String(),
-		EnvironmentID: pgvalue.MustUUIDValue(deployment.EnvironmentID).String(),
-	}, deployment.ProjectID, deployment.EnvironmentID, nil
-}
-
-func deploymentByIDOrVersionForOrg(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, deploymentRef string) (db.Deployment, error) {
-	if deploymentID, err := uuid.Parse(deploymentRef); err == nil {
-		return store.GetDeploymentForOrg(ctx, db.GetDeploymentForOrgParams{
-			OrgID: pgvalue.UUID(orgID),
-			ID:    pgvalue.UUID(deploymentID),
-		})
-	}
-	deployments, err := store.ListDeploymentsByVersionForOrg(ctx, db.ListDeploymentsByVersionForOrgParams{
-		OrgID:   pgvalue.UUID(orgID),
-		Version: strings.TrimSpace(deploymentRef),
-	})
-	if err != nil {
-		return db.Deployment{}, err
-	}
-	switch len(deployments) {
-	case 0:
-		return db.Deployment{}, errRecordNotFound
-	case 1:
-		return deployments[0], nil
-	default:
-		return db.Deployment{}, errAmbiguousDeploymentVersion
-	}
-}
-
-func deploymentByIDOrVersion(ctx context.Context, store deploymentStatusStore, orgID uuid.UUID, projectID pgtype.UUID, environmentID pgtype.UUID, deploymentRef string) (db.Deployment, error) {
-	if deploymentID, err := uuid.Parse(deploymentRef); err == nil {
-		return store.GetDeployment(ctx, db.GetDeploymentParams{
-			OrgID:         pgvalue.UUID(orgID),
-			ProjectID:     projectID,
-			EnvironmentID: environmentID,
-			ID:            pgvalue.UUID(deploymentID),
-		})
-	}
-	return store.GetDeploymentByVersion(ctx, db.GetDeploymentByVersionParams{
-		OrgID:         pgvalue.UUID(orgID),
-		ProjectID:     projectID,
-		EnvironmentID: environmentID,
-		Version:       strings.TrimSpace(deploymentRef),
-	})
 }
 
 func deploymentResponse(deployment db.Deployment, artifact api.DeploymentSourceArtifact) api.DeploymentResponse {

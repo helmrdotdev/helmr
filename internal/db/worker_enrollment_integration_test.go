@@ -12,9 +12,29 @@ import (
 	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/db/dbtest"
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
+	"github.com/helmrdotdev/helmr/internal/substrate"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func activateWorkspaceWorker(t *testing.T, ctx context.Context, pool *pgxpool.Pool, workerID uuid.UUID) {
+	t.Helper()
+	mustExec(t, ctx, pool, `
+		UPDATE worker_instances
+		   SET state = 'active', supervisor_version = 'test-worker',
+		       supports_run = true, runtime_identity_id = 'test-runtime',
+		       substrate_format = $2, substrate_builder_abi = $3, substrate_layout_abi = $4,
+		       certified_cpu_millis = 4000, certified_memory_bytes = 8589934592,
+		       certified_workload_disk_bytes = 10737418240, certified_scratch_bytes = 10737418240,
+		       per_vm_cpu_millis = 2000, per_vm_memory_bytes = 2147483648,
+		       per_vm_workload_disk_bytes = 4294967296, per_vm_scratch_bytes = 4294967296,
+		       max_vm_slots = 2, max_run_consumers = 2, max_runtime_starts = 2,
+		       certification_profile = 'test', certification_fingerprint = 'test-fingerprint',
+		       certified_at = now(), activated_at = now()
+		 WHERE id = $1
+	`, workerID, substrate.Format, substrate.BuilderABI, substrate.LayoutABI)
+}
 
 func TestWorkerEnrollmentConsumesNonceAndRotatesCredentialAtomically(t *testing.T) {
 	ctx := context.Background()

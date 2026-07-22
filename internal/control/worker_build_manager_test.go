@@ -184,7 +184,7 @@ func TestValidateManagerAuthorityRejectsFixedAuthorityDivergence(t *testing.T) {
 		{
 			name: "build contract",
 			mutate: func(provenance *deployment.BuildProvenance) {
-				provenance.BuildContractVersion++
+				provenance.BuildContractVersion = "helmr.program-build.v1"
 			},
 		},
 		{
