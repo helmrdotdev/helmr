@@ -981,6 +981,15 @@ WITH target AS (
      WHERE worker_instances.id = $2
        AND worker_instances.worker_group_id = $3
        AND worker_instances.current_epoch = $4
+       AND NOT EXISTS (
+           SELECT 1
+             FROM runtime_instances
+             JOIN run_leases
+               ON run_leases.runtime_instance_id = runtime_instances.id
+              AND run_leases.state IN ('assigned', 'starting', 'running')
+            WHERE runtime_instances.worker_instance_id = worker_instances.id
+              AND runtime_instances.worker_epoch < worker_instances.current_epoch
+       )
        AND (
            worker_instances.state = 'registering'
            OR (
@@ -1011,6 +1020,12 @@ WITH target AS (
        AND runtime_instances.worker_epoch < target.current_epoch
        AND runtime_instances.reclaimed_at IS NULL
        AND runtime_instances.id NOT IN (SELECT id FROM quarantined)
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_leases
+            WHERE run_leases.runtime_instance_id = runtime_instances.id
+              AND run_leases.state IN ('assigned', 'starting', 'running')
+       )
     RETURNING runtime_instances.id
 ), reclaimed_slots AS (
     UPDATE worker_network_slots
@@ -1027,6 +1042,13 @@ WITH target AS (
        AND NOT EXISTS (
            SELECT 1 FROM quarantined
             WHERE quarantined.id = worker_network_slots.runtime_instance_id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM run_leases
+            WHERE (run_leases.network_slot_id = worker_network_slots.id
+                   OR run_leases.runtime_instance_id = worker_network_slots.runtime_instance_id)
+              AND run_leases.state IN ('assigned', 'starting', 'running')
        )
        AND (worker_network_slots.state <> 'lost' OR worker_network_slots.reclaimed_at IS NULL)
     RETURNING worker_network_slots.id

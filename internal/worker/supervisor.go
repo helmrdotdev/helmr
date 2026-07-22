@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -190,7 +191,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	inventory := append(append(make([]string, 0, len(evidence.Reclaimed)+len(evidence.Quarantined)), evidence.Reclaimed...), evidence.Quarantined...)
-	if err := s.cfg.Control.ReportWorkerStartupRecovery(ctx, api.WorkerStartupRecoveryRequest{
+	if err := s.reportStartupRecovery(ctx, api.WorkerStartupRecoveryRequest{
 		InventoryComplete: true,
 		InventoryScope:    "worker_runtime_state_roots_v0",
 		ObservedAt:        evidence.ObservedAt,
@@ -313,6 +314,41 @@ func (s *Supervisor) Run(ctx context.Context) error {
 		}
 	}
 	return s.completeServerDirectedDrain(ctx, cancelActiveClaims, cancelDrainClaims, cancelActiveBackground, cancelDrainBackground, cancelObserve, cancelWork, &consumerWG, &backgroundWG, &observeWG, evidence, fatalWork)
+}
+
+func (s *Supervisor) reportStartupRecovery(
+	ctx context.Context,
+	request api.WorkerStartupRecoveryRequest,
+) error {
+	const maxAttempts = 10
+	delay := s.cfg.PollEvery
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		err := s.cfg.Control.ReportWorkerStartupRecovery(ctx, request)
+		if err == nil {
+			return nil
+		}
+		var statusErr interface{ HTTPStatusCode() int }
+		if !errors.As(err, &statusErr) || statusErr.HTTPStatusCode() != http.StatusConflict {
+			return err
+		}
+		if attempt == maxAttempts {
+			return fmt.Errorf("startup recovery conflict did not clear after %d attempts: %w", maxAttempts, err)
+		}
+		s.cfg.Log.Info("worker startup recovery is waiting for prior-epoch Leases to be fenced")
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ctx.Err()
+		case <-timer.C:
+		}
+		if delay < 30*time.Second {
+			delay = min(delay*2, 30*time.Second)
+		}
+	}
+	return errors.New("startup recovery retry exhausted")
 }
 
 func (s *Supervisor) shutdownProcess(

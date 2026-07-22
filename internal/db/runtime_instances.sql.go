@@ -67,7 +67,10 @@ SELECT runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_
    AND reserved_workspace_versions.environment_id = runtime_instances.environment_id
    AND reserved_workspace_versions.workspace_id = runtime_instances.workspace_id
    AND reserved_workspace_versions.id = runtime_instances.reserved_workspace_version_id
-   AND reserved_workspace_versions.state = 'committed'
+   AND reserved_workspace_versions.state = CASE
+           WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'::workspace_version_state
+           ELSE 'private'::workspace_version_state
+       END
   LEFT JOIN artifacts AS reserved_workspace_artifacts
     ON reserved_workspace_artifacts.org_id = reserved_workspace_versions.org_id
    AND reserved_workspace_artifacts.project_id = reserved_workspace_versions.project_id
@@ -708,48 +711,236 @@ func (q *Queries) MarkRuntimeInstanceFailed(ctx context.Context, arg MarkRuntime
 }
 
 const markRuntimeInstanceReady = `-- name: MarkRuntimeInstanceReady :one
-WITH bound AS (
-    UPDATE worker_network_slots
-       SET state = 'bound', host_interface_name = $6,
-           guest_address = $7, gateway_address = $8,
-           subnet = $9, tap_name = $10,
-           netns_name = $11, guest_mac = $12,
-           updated_at = now()
+WITH restore_secret_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           workspace_secrets.placement_kind,
+           workspace_secrets.placement_target
       FROM runtime_instances
-     WHERE worker_network_slots.id = $13
-       AND worker_network_slots.worker_instance_id = $3
-       AND worker_network_slots.worker_epoch = $4
-       AND worker_network_slots.generation = $14
-       AND worker_network_slots.runtime_instance_id = $2
+      JOIN workspace_secrets
+        ON workspace_secrets.workspace_id = runtime_instances.workspace_id
+      JOIN secrets
+        ON secrets.id = workspace_secrets.secret_id
+       AND secrets.state = 'active'
+      JOIN secret_resolutions
+        ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+       AND secret_resolutions.run_id = runtime_instances.reserved_run_id
+       AND secret_resolutions.attempt_number = runtime_instances.reserved_attempt_number
+       AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
+       AND secret_resolutions.placement_target = workspace_secrets.placement_target
+       AND secret_resolutions.secret_id = workspace_secrets.secret_id
+       AND secret_resolutions.revocation_generation = secrets.revocation_generation
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+     ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+     FOR UPDATE OF secrets
+), restore_run_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_instances
+      JOIN runs
+        ON runs.id = runtime_instances.reserved_run_id
+       AND runs.org_id = runtime_instances.org_id
+       AND runs.project_id = runtime_instances.project_id
+       AND runs.environment_id = runtime_instances.environment_id
+       AND runs.workspace_id = runtime_instances.workspace_id
+       AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
+       AND runs.status = 'queued'
+       AND runs.current_run_lease_id IS NULL
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+     FOR UPDATE OF runs
+), restore_workspace_authority AS MATERIALIZED (
+    SELECT restore_run_authority.runtime_instance_id
+      FROM restore_run_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_run_authority.runtime_instance_id
+      JOIN workspaces
+        ON workspaces.id = runtime_instances.workspace_id
+       AND workspaces.org_id = runtime_instances.org_id
+       AND workspaces.project_id = runtime_instances.project_id
+       AND workspaces.environment_id = runtime_instances.environment_id
+       AND workspaces.owner_run_id = runtime_instances.reserved_run_id
+       AND workspaces.owner_actor_id IS NULL
+       AND workspaces.state = 'active'
+       AND workspaces.desired_state = 'active'
+       AND workspaces.dirty_state = 'clean'
+     FOR UPDATE OF workspaces
+), restore_attempt_authority AS MATERIALIZED (
+    SELECT restore_workspace_authority.runtime_instance_id
+      FROM restore_workspace_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_workspace_authority.runtime_instance_id
+      JOIN run_attempts
+        ON run_attempts.run_id = runtime_instances.reserved_run_id
+       AND run_attempts.number = runtime_instances.reserved_attempt_number
+       AND run_attempts.workspace_id = runtime_instances.workspace_id
+       AND run_attempts.terminal_at IS NULL
+     FOR UPDATE OF run_attempts
+), substrate_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_instances
+      JOIN worker_instances
+        ON worker_instances.id = runtime_instances.worker_instance_id
+       AND worker_instances.worker_group_id = runtime_instances.worker_group_id
+       AND worker_instances.current_epoch = runtime_instances.worker_epoch
+       AND worker_instances.state IN ('active', 'draining')
+       AND worker_instances.supports_run
+       AND worker_instances.certified_at IS NOT NULL
+      JOIN runtime_substrates
+        ON runtime_substrates.id = $1
+       AND runtime_substrates.org_id = runtime_instances.org_id
+       AND runtime_substrates.project_id = runtime_instances.project_id
+       AND runtime_substrates.environment_id = runtime_instances.environment_id
+       AND runtime_substrates.deployment_definition_id = runtime_instances.deployment_definition_id
+       AND runtime_substrates.retired_at IS NULL
+       AND runtime_substrates.substrate_format = worker_instances.substrate_format
+       AND runtime_substrates.builder_abi = worker_instances.substrate_builder_abi
+       AND runtime_substrates.layout_abi = worker_instances.substrate_layout_abi
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+       AND (runtime_instances.restore_checkpoint_id IS NULL
+            OR EXISTS (
+                SELECT 1
+                  FROM restore_attempt_authority
+                 WHERE restore_attempt_authority.runtime_instance_id = runtime_instances.id
+            ))
+     ORDER BY worker_instances.id, runtime_substrates.id
+     FOR UPDATE OF worker_instances, runtime_substrates
+), slot_authority AS MATERIALIZED (
+    SELECT substrate_authority.runtime_instance_id
+      FROM substrate_authority
+      JOIN worker_network_slots
+        ON worker_network_slots.id = $7
+       AND worker_network_slots.worker_instance_id = $4
+       AND worker_network_slots.worker_epoch = $5
+       AND worker_network_slots.generation = $8
+       AND worker_network_slots.runtime_instance_id = substrate_authority.runtime_instance_id
        AND worker_network_slots.state = 'assigned'
-       AND runtime_instances.id = worker_network_slots.runtime_instance_id
+     FOR UPDATE OF worker_network_slots
+), runtime_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM slot_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = slot_authority.runtime_instance_id
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND runtime_instances.desired_version = $2
+       AND runtime_instances.observed_version = $6
+       AND runtime_instances.observed_state IN ('allocated', 'preparing')
+       AND (runtime_instances.runtime_substrate_id IS NULL
+            OR runtime_instances.runtime_substrate_id = $1)
+     FOR UPDATE OF runtime_instances
+), restore_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id
+      FROM runtime_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = runtime_authority.runtime_instance_id
+      JOIN run_waits
+        ON run_waits.run_id = runtime_instances.reserved_run_id
+       AND run_waits.attempt_number = runtime_instances.reserved_attempt_number
+       AND run_waits.workspace_id = runtime_instances.workspace_id
+       AND run_waits.suspension_state = 'resume_pending'
+       AND run_waits.handoff_runtime_instance_id IS NULL
+       AND run_waits.handoff_workspace_mount_id IS NULL
+       AND run_waits.handoff_resume_checkpoint_id IS NULL
+      JOIN run_checkpoints
+        ON run_checkpoints.id = runtime_instances.restore_checkpoint_id
+       AND run_checkpoints.id = run_waits.suspend_checkpoint_id
+       AND run_checkpoints.kind = 'suspend'
+       AND run_checkpoints.run_id = runtime_instances.reserved_run_id
+       AND run_checkpoints.attempt_number = runtime_instances.reserved_attempt_number
+       AND run_checkpoints.run_wait_id = run_waits.id
+       AND run_checkpoints.workspace_id = runtime_instances.workspace_id
+       AND run_checkpoints.private_workspace_version_id = runtime_instances.reserved_workspace_version_id
+       AND run_checkpoints.state = 'ready'
+       AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
+      JOIN run_leases AS source_lease
+        ON source_lease.id = run_checkpoints.source_run_lease_id
+       AND source_lease.run_id = run_checkpoints.run_id
+       AND source_lease.attempt_number = run_checkpoints.attempt_number
+       AND source_lease.workspace_id = run_checkpoints.workspace_id
+       AND source_lease.state = 'checkpointed'
+      JOIN runtime_instances AS source_runtime
+        ON source_runtime.id = source_lease.runtime_instance_id
+       AND source_runtime.runtime_identity_id = runtime_instances.runtime_identity_id
+       AND source_runtime.runtime_substrate_id = $1
+      JOIN workspace_versions
+        ON workspace_versions.workspace_id = runtime_instances.workspace_id
+       AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
+       AND workspace_versions.state = 'private'
+     WHERE runtime_instances.id = $3
+       AND runtime_instances.worker_instance_id = $4
+       AND runtime_instances.worker_epoch = $5
+       AND (SELECT count(*) FROM workspace_secrets
+             WHERE workspace_secrets.workspace_id = runtime_instances.workspace_id)
+           = (SELECT count(*) FROM restore_secret_authority
+               WHERE restore_secret_authority.runtime_instance_id = runtime_instances.id)
+     FOR UPDATE OF run_waits, run_checkpoints, workspace_versions
+), bound AS (
+    UPDATE worker_network_slots
+       SET state = 'bound', host_interface_name = $9,
+           guest_address = $10, gateway_address = $11,
+           subnet = $12, tap_name = $13,
+           netns_name = $14, guest_mac = $15,
+           updated_at = now()
+      FROM runtime_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = runtime_authority.runtime_instance_id
+     WHERE worker_network_slots.id = $7
+       AND worker_network_slots.worker_instance_id = $4
+       AND worker_network_slots.worker_epoch = $5
+       AND worker_network_slots.generation = $8
+       AND worker_network_slots.runtime_instance_id = $3
+       AND worker_network_slots.state = 'assigned'
+       AND runtime_authority.runtime_instance_id = worker_network_slots.runtime_instance_id
        AND runtime_instances.worker_instance_id = worker_network_slots.worker_instance_id
        AND runtime_instances.worker_epoch = worker_network_slots.worker_epoch
-       AND runtime_instances.desired_version = $1
-       AND runtime_instances.observed_version = $5
+       AND runtime_instances.desired_version = $2
+       AND runtime_instances.observed_version = $6
        AND runtime_instances.observed_state IN ('allocated','preparing')
+       AND (runtime_instances.runtime_substrate_id IS NULL
+            OR runtime_instances.runtime_substrate_id = $1)
+       AND (
+           runtime_instances.restore_checkpoint_id IS NULL
+           OR EXISTS (
+               SELECT 1 FROM restore_authority
+                WHERE restore_authority.runtime_instance_id = runtime_instances.id
+           )
+       )
     RETURNING worker_network_slots.runtime_instance_id
 )
 UPDATE runtime_instances
-   SET observed_state = 'ready', observed_version = observed_version + 1,
-       observed_desired_version = $1, observed_at = now(),
+   SET runtime_substrate_id = $1,
+       observed_state = 'ready', observed_version = observed_version + 1,
+       observed_desired_version = $2, observed_at = now(),
        preparing_at = COALESCE(preparing_at, now()), ready_at = COALESCE(ready_at, now()),
        updated_at = now()
   FROM bound
- WHERE runtime_instances.id = $2 AND runtime_instances.worker_instance_id = $3
+ WHERE runtime_instances.id = $3 AND runtime_instances.worker_instance_id = $4
    AND bound.runtime_instance_id = runtime_instances.id
-   AND runtime_instances.worker_epoch = $4 AND runtime_instances.desired_version = $1
-   AND runtime_instances.observed_version = $5
+   AND runtime_instances.worker_epoch = $5 AND runtime_instances.desired_version = $2
+   AND runtime_instances.observed_version = $6
    AND runtime_instances.observed_state IN ('allocated', 'preparing')
+   AND (runtime_instances.runtime_substrate_id IS NULL
+        OR runtime_instances.runtime_substrate_id = $1)
 RETURNING runtime_instances.id, runtime_instances.org_id, runtime_instances.worker_group_id, runtime_instances.project_id, runtime_instances.environment_id, runtime_instances.region_id, runtime_instances.worker_instance_id, runtime_instances.runtime_identity_id, runtime_instances.deployment_definition_id, runtime_instances.runtime_substrate_id, runtime_instances.worker_epoch, runtime_instances.network_policy, runtime_instances.reserved_cpu_millis, runtime_instances.reserved_memory_bytes, runtime_instances.reserved_workload_disk_bytes, runtime_instances.reserved_scratch_bytes, runtime_instances.reserved_execution_slots, runtime_instances.workspace_id, runtime_instances.program_deployment_id, runtime_instances.restore_checkpoint_id, runtime_instances.reserved_run_id, runtime_instances.reserved_attempt_number, runtime_instances.reserved_process_id, runtime_instances.reserved_workspace_version_id, runtime_instances.reservation_expires_at, runtime_instances.desired_state, runtime_instances.desired_version, runtime_instances.desired_at, runtime_instances.desired_reason, runtime_instances.observed_state, runtime_instances.observed_version, runtime_instances.observed_desired_version, runtime_instances.observed_at, runtime_instances.allocated_at, runtime_instances.preparing_at, runtime_instances.ready_at, runtime_instances.closing_at, runtime_instances.closed_at, runtime_instances.lost_at, runtime_instances.failed_at, runtime_instances.reclaimed_at, runtime_instances.terminal_at, runtime_instances.terminal_reason_code, runtime_instances.terminal_error, runtime_instances.created_at, runtime_instances.updated_at
 `
 
 type MarkRuntimeInstanceReadyParams struct {
+	RuntimeSubstrateID      pgtype.UUID      `json:"runtime_substrate_id"`
 	DesiredVersion          int64            `json:"desired_version"`
 	ID                      pgtype.UUID      `json:"id"`
 	WorkerInstanceID        pgtype.UUID      `json:"worker_instance_id"`
 	WorkerEpoch             int64            `json:"worker_epoch"`
 	ExpectedObservedVersion int64            `json:"expected_observed_version"`
+	NetworkSlotID           pgtype.UUID      `json:"network_slot_id"`
+	NetworkSlotGeneration   int64            `json:"network_slot_generation"`
 	HostInterfaceName       pgtype.Text      `json:"host_interface_name"`
 	GuestAddress            *netip.Addr      `json:"guest_address"`
 	GatewayAddress          *netip.Addr      `json:"gateway_address"`
@@ -757,17 +948,18 @@ type MarkRuntimeInstanceReadyParams struct {
 	TapName                 pgtype.Text      `json:"tap_name"`
 	NetnsName               pgtype.Text      `json:"netns_name"`
 	GuestMac                net.HardwareAddr `json:"guest_mac"`
-	NetworkSlotID           pgtype.UUID      `json:"network_slot_id"`
-	NetworkSlotGeneration   int64            `json:"network_slot_generation"`
 }
 
 func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeInstanceReadyParams) (RuntimeInstance, error) {
 	row := q.db.QueryRow(ctx, markRuntimeInstanceReady,
+		arg.RuntimeSubstrateID,
 		arg.DesiredVersion,
 		arg.ID,
 		arg.WorkerInstanceID,
 		arg.WorkerEpoch,
 		arg.ExpectedObservedVersion,
+		arg.NetworkSlotID,
+		arg.NetworkSlotGeneration,
 		arg.HostInterfaceName,
 		arg.GuestAddress,
 		arg.GatewayAddress,
@@ -775,8 +967,6 @@ func (q *Queries) MarkRuntimeInstanceReady(ctx context.Context, arg MarkRuntimeI
 		arg.TapName,
 		arg.NetnsName,
 		arg.GuestMac,
-		arg.NetworkSlotID,
-		arg.NetworkSlotGeneration,
 	)
 	var i RuntimeInstance
 	err := row.Scan(
@@ -845,6 +1035,12 @@ UPDATE runtime_instances
    AND runtime_instances.observed_version = $5
    AND runtime_instances.observed_state = 'failed'
    AND runtime_instances.reclaimed_at IS NULL
+   AND NOT EXISTS (
+       SELECT 1
+         FROM run_leases
+        WHERE run_leases.runtime_instance_id = runtime_instances.id
+          AND run_leases.state IN ('assigned', 'starting', 'running')
+   )
    AND worker_network_slots.id = $6
    AND worker_network_slots.worker_instance_id = runtime_instances.worker_instance_id
    AND worker_network_slots.worker_epoch = runtime_instances.worker_epoch

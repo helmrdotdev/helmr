@@ -23,6 +23,7 @@ type runRuntime struct {
 	workerEpoch           int64
 	protocolVersion       string
 	runtimeIdentityID     string
+	runtimeSubstrateID    pgtype.UUID
 	deploymentDefinition  pgtype.UUID
 	programDeployment     pgtype.UUID
 	restoreCheckpoint     pgtype.UUID
@@ -57,7 +58,10 @@ func (d *Authority) prepareRunWorkspace(
 	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockFreshRunAuthority(ctx, tx, candidate)
+	if err := lockRunRestoreSecrets(ctx, tx, candidate); err != nil {
+		return runWorkspaceMount{}, classifyRunCandidateError(err)
+	}
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return runWorkspaceMount{}, classifyRunCandidateError(err)
 	}
@@ -137,7 +141,7 @@ func (d *Authority) prepareRunWorkspace(
 			ReservedExecutionSlots:    authority.resources.executionSlots,
 			WorkspaceID:               authority.workspaceID,
 			ProgramDeploymentID:       authority.deploymentID,
-			RestoreCheckpointID:       pgtype.UUID{},
+			RestoreCheckpointID:       authority.restoreCheckpointID,
 			RunID:                     authority.runID,
 			AttemptNumber: pgtype.Int4{
 				Int32: authority.attemptNumber,
@@ -171,7 +175,7 @@ func (d *Authority) prepareRunWorkspace(
 func (d *Authority) useRunRuntime(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 	runtime runRuntime,
 	observationFreshAfter pgtype.Timestamptz,
 ) (runWorkspaceMount, error) {
@@ -293,6 +297,7 @@ SELECT runtime_instances.id,
        runtime_instances.worker_epoch,
        worker_instances.protocol_version,
        runtime_instances.runtime_identity_id,
+       runtime_instances.runtime_substrate_id,
        runtime_instances.deployment_definition_id,
        runtime_instances.program_deployment_id,
        runtime_instances.restore_checkpoint_id,
@@ -334,6 +339,7 @@ SELECT runtime_instances.id,
        runtime_instances.worker_epoch,
        worker_instances.protocol_version,
        runtime_instances.runtime_identity_id,
+       runtime_instances.runtime_substrate_id,
        runtime_instances.deployment_definition_id,
        runtime_instances.program_deployment_id,
        runtime_instances.restore_checkpoint_id,
@@ -387,6 +393,7 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.workerEpoch,
 		&runtime.protocolVersion,
 		&runtime.runtimeIdentityID,
+		&runtime.runtimeSubstrateID,
 		&runtime.deploymentDefinition,
 		&runtime.programDeployment,
 		&runtime.restoreCheckpoint,
@@ -410,7 +417,7 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 }
 
 func validateRunRuntime(
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 	runtime runRuntime,
 ) error {
 	networkPolicy, err := jsoncanon.Transform(runtime.networkPolicy)
@@ -420,7 +427,7 @@ func validateRunRuntime(
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		!runtime.programDeployment.Valid ||
 		runtime.programDeployment != authority.deploymentID ||
-		runtime.restoreCheckpoint.Valid ||
+		runtime.restoreCheckpoint != authority.restoreCheckpointID ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.workloadDiskBytes != authority.resources.workloadDisk ||
@@ -428,6 +435,11 @@ func validateRunRuntime(
 		runtime.executionSlots != authority.resources.executionSlots ||
 		!bytes.Equal(networkPolicy, authority.networkPolicy) {
 		return errors.New("Workspace runtime does not match Run authority")
+	}
+	if authority.restoreCheckpointID.Valid &&
+		(runtime.runtimeIdentityID != authority.restoreRuntimeIdentityID ||
+			runtime.runtimeSubstrateID != authority.restoreSubstrateID) {
+		return errors.New("Workspace runtime does not match Checkpoint source")
 	}
 	if runtime.reservedRunID.Valid {
 		if runtime.reservedRunID != authority.runID ||
@@ -445,7 +457,7 @@ func validateRunRuntime(
 func getActiveRunMount(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 	runtime runRuntime,
 ) (runWorkspaceMount, error) {
 	var mount runWorkspaceMount
@@ -499,7 +511,7 @@ type runWorker struct {
 func selectRunWorker(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 	observationFreshAfter pgtype.Timestamptz,
 ) (runWorker, error) {
 	var worker runWorker
@@ -521,6 +533,7 @@ SELECT worker_groups.id,
   JOIN runtime_identities
     ON runtime_identities.id = worker_instances.runtime_identity_id
    AND runtime_identities.runtime_arch = $2
+   AND ($8::text = '' OR runtime_identities.id = $8)
   JOIN worker_observations
     ON worker_observations.worker_instance_id = worker_instances.id
    AND worker_observations.worker_epoch = worker_instances.current_epoch
@@ -598,6 +611,9 @@ SELECT worker_groups.id,
    AND worker_instances.certified_memory_bytes - usage.memory_bytes >= $5
    AND worker_instances.certified_workload_disk_bytes - usage.workload_disk_bytes >= $6
    AND worker_instances.certified_scratch_bytes - usage.scratch_bytes >= $7
+   AND ($9::text = '' OR worker_instances.substrate_format = $9)
+   AND ($10::text = '' OR worker_instances.substrate_builder_abi = $10)
+   AND ($11::text = '' OR worker_instances.substrate_layout_abi = $11)
    AND worker_instances.max_vm_slots > (
        SELECT count(*)
          FROM runtime_instances
@@ -628,6 +644,10 @@ SELECT worker_groups.id,
 		authority.resources.memoryBytes,
 		authority.resources.workloadDisk,
 		authority.resources.scratchBytes,
+		authority.restoreRuntimeIdentityID,
+		authority.restoreSubstrateFormat,
+		authority.restoreSubstrateBuilder,
+		authority.restoreSubstrateLayout,
 	).Scan(
 		&worker.groupID,
 		&worker.workerID,
@@ -643,7 +663,7 @@ SELECT worker_groups.id,
 func lockRunWorkerCapacity(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 	worker runWorker,
 ) error {
 	var available bool
@@ -769,7 +789,7 @@ SELECT worker_network_slots.state = 'available'
 func (d *Authority) checkRunPreparationBudget(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 ) error {
 	var active int64
 	var pinnedLimit pgtype.Int8

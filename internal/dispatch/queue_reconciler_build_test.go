@@ -14,6 +14,10 @@ import (
 
 type buildReconcileStoreFake struct{}
 
+func (buildReconcileStoreFake) RecoverExpiredRecreatedRunResumes(context.Context, int32) ([]db.RecoverExpiredRecreatedRunResumesRow, error) {
+	return nil, nil
+}
+
 func (buildReconcileStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
 	return nil, nil
 }
@@ -44,6 +48,10 @@ func TestQueueReconcilerReconstructsBuildReadyIndex(t *testing.T) {
 }
 
 type isolatedQueueStoreFake struct{}
+
+func (isolatedQueueStoreFake) RecoverExpiredRecreatedRunResumes(context.Context, int32) ([]db.RecoverExpiredRecreatedRunResumesRow, error) {
+	return nil, nil
+}
 
 func (isolatedQueueStoreFake) ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error) {
 	return []db.ListQueuedRunCandidateScopesRow{{QueueName: "run"}}, nil

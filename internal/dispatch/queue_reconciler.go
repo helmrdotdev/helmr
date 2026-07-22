@@ -25,6 +25,7 @@ const (
 )
 
 type QueueReconcilerStore interface {
+	RecoverExpiredRecreatedRunResumes(context.Context, int32) ([]db.RecoverExpiredRecreatedRunResumesRow, error)
 	ListQueuedRunCandidateScopes(context.Context, db.ListQueuedRunCandidateScopesParams) ([]db.ListQueuedRunCandidateScopesRow, error)
 }
 
@@ -272,6 +273,12 @@ func (r *QueueReconciler) ReconcileRunsOnce(ctx context.Context) error {
 		defer r.unlockQueueReconcile(ctx, "run", guard)
 	}
 	var problems []error
+	recoveryCtx, recoveryCancel := context.WithTimeout(ctx, r.runQueryTimeout)
+	_, recoveryErr := store.RecoverExpiredRecreatedRunResumes(recoveryCtx, r.runLimit)
+	recoveryCancel()
+	if recoveryErr != nil {
+		return recoveryErr
+	}
 	scanSeed := time.Now().UTC().Format(time.RFC3339Nano)
 	var afterSortKey string
 	var afterRow db.ListQueuedRunCandidateScopesRow

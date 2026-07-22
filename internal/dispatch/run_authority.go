@@ -17,28 +17,37 @@ import (
 
 const mebibyte = int64(1024 * 1024)
 
-type freshRunAuthority struct {
-	runID                 pgtype.UUID
-	orgID                 pgtype.UUID
-	projectID             pgtype.UUID
-	environmentID         pgtype.UUID
-	deploymentID          pgtype.UUID
-	workspaceDefinitionID pgtype.UUID
-	workspaceID           pgtype.UUID
-	baseVersionID         pgtype.UUID
-	attemptNumber         int32
-	stateVersion          int64
-	regionID              string
-	queueName             string
-	concurrencyKey        pgtype.Text
-	queueLimit            pgtype.Int8
-	ownershipGeneration   int64
-	writerGeneration      int64
-	traceID               pgtype.Text
-	rootSpanID            string
-	resources             runResources
-	networkPolicy         []byte
-	architecture          string
+type runPlacementAuthority struct {
+	runID                    pgtype.UUID
+	orgID                    pgtype.UUID
+	projectID                pgtype.UUID
+	environmentID            pgtype.UUID
+	deploymentID             pgtype.UUID
+	workspaceDefinitionID    pgtype.UUID
+	workspaceID              pgtype.UUID
+	baseVersionID            pgtype.UUID
+	restoreCheckpointID      pgtype.UUID
+	resumeRunWaitID          pgtype.UUID
+	resumeRequestVersion     int64
+	restoreRuntimeID         pgtype.UUID
+	restoreRuntimeIdentityID string
+	restoreSubstrateID       pgtype.UUID
+	restoreSubstrateFormat   string
+	restoreSubstrateBuilder  string
+	restoreSubstrateLayout   string
+	attemptNumber            int32
+	stateVersion             int64
+	regionID                 string
+	queueName                string
+	concurrencyKey           pgtype.Text
+	queueLimit               pgtype.Int8
+	ownershipGeneration      int64
+	writerGeneration         int64
+	traceID                  pgtype.Text
+	rootSpanID               string
+	resources                runResources
+	networkPolicy            []byte
+	architecture             string
 }
 
 type runResources struct {
@@ -73,50 +82,91 @@ SELECT environment_id, queue_name, concurrency_key
 	return environmentID, queueName, concurrencyKey, nil
 }
 
-func lockFreshRunAuthority(
+func lockRunPlacementAuthority(
 	ctx context.Context,
 	tx pgx.Tx,
 	candidate ReadyRunCandidate,
-) (freshRunAuthority, error) {
-	var authority freshRunAuthority
+) (runPlacementAuthority, error) {
+	var authority runPlacementAuthority
 	var entrypointDefinitionID pgtype.UUID
 	err := tx.QueryRow(ctx, `
-SELECT id,
-       org_id,
-       project_id,
-       environment_id,
-       deployment_id,
-       deployment_definition_id,
-       workspace_id,
-       current_attempt_number,
-       state_version,
-       queue_name,
-       concurrency_key,
-       queue_concurrency_limit,
-       trace_id,
-       root_span_id
+SELECT runs.id,
+       runs.org_id,
+       runs.project_id,
+       runs.environment_id,
+       runs.deployment_id,
+       runs.deployment_definition_id,
+       runs.workspace_id,
+       runs.current_attempt_number,
+       runs.state_version,
+       runs.queue_name,
+       runs.concurrency_key,
+       runs.queue_concurrency_limit,
+       runs.trace_id,
+       runs.root_span_id,
+       restore_wait.id,
+       coalesce(restore_wait.resume_request_version, 0),
+       restore_wait.suspend_checkpoint_id,
+       restore_checkpoint.private_workspace_version_id
   FROM runs
- WHERE org_id = $1
-   AND id = $2
-   AND state_version = $3
-   AND entrypoint_kind = 'task'
-   AND cause_kind IN ('api', 'manual', 'schedule')
-   AND status = 'queued'
-   AND current_run_lease_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
+  LEFT JOIN LATERAL (
+       SELECT run_waits.id,
+              run_waits.resume_request_version,
+              run_waits.suspend_checkpoint_id,
+              run_waits.attempt_number,
+              run_waits.workspace_id
          FROM run_waits
         WHERE run_waits.run_id = runs.id
-          AND run_waits.suspension_state IN (
-              'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-          )
+          AND run_waits.suspension_state = 'resume_pending'
+          AND run_waits.handoff_runtime_instance_id IS NULL
+          AND run_waits.handoff_workspace_mount_id IS NULL
+          AND run_waits.handoff_resume_checkpoint_id IS NULL
+  ) AS restore_wait ON true
+  LEFT JOIN run_checkpoints AS restore_checkpoint
+    ON restore_checkpoint.id = restore_wait.suspend_checkpoint_id
+   AND restore_checkpoint.kind = 'suspend'
+   AND restore_checkpoint.run_id = runs.id
+   AND restore_checkpoint.attempt_number = restore_wait.attempt_number
+   AND restore_checkpoint.run_wait_id = restore_wait.id
+   AND restore_checkpoint.workspace_id = restore_wait.workspace_id
+   AND restore_checkpoint.state = 'ready'
+   AND (restore_checkpoint.expires_at IS NULL
+        OR restore_checkpoint.expires_at > transaction_timestamp())
+  LEFT JOIN workspace_versions AS restore_version
+    ON restore_version.workspace_id = restore_checkpoint.workspace_id
+   AND restore_version.id = restore_checkpoint.private_workspace_version_id
+   AND restore_version.state = 'private'
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+   AND runs.state_version = $3
+   AND runs.entrypoint_kind = 'task'
+   AND runs.cause_kind IN ('api', 'manual', 'schedule')
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND (
+       (
+           restore_wait.id IS NULL
+           AND NOT EXISTS (
+               SELECT 1
+                 FROM run_waits
+                WHERE run_waits.run_id = runs.id
+                  AND run_waits.suspension_state IN (
+                      'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+                  )
+           )
+       )
+       OR (
+           restore_wait.id IS NOT NULL
+           AND restore_checkpoint.id IS NOT NULL
+           AND restore_version.id IS NOT NULL
+       )
    )
    AND (
-       first_lease_at IS NOT NULL
-       OR queued_expires_at IS NULL
-       OR queued_expires_at > transaction_timestamp()
+       runs.first_lease_at IS NOT NULL
+       OR runs.queued_expires_at IS NULL
+       OR runs.queued_expires_at > transaction_timestamp()
    )
- FOR UPDATE`,
+ FOR UPDATE OF runs`,
 		candidate.OrgID,
 		candidate.RunID,
 		candidate.ExpectedRunStateVersion,
@@ -135,11 +185,14 @@ SELECT id,
 		&authority.queueLimit,
 		&authority.traceID,
 		&authority.rootSpanID,
+		&authority.resumeRunWaitID,
+		&authority.resumeRequestVersion,
+		&authority.restoreCheckpointID,
+		&authority.baseVersionID,
 	)
 	if err != nil {
-		return freshRunAuthority{}, err
+		return runPlacementAuthority{}, err
 	}
-
 	var manifest []byte
 	var workspaceArchitecture pgtype.Text
 	err = tx.QueryRow(ctx, `
@@ -179,9 +232,10 @@ SELECT workspaces.deployment_definition_id,
 		&workspaceArchitecture,
 	)
 	if err != nil {
-		return freshRunAuthority{}, err
+		return runPlacementAuthority{}, err
 	}
 
+	var attemptBaseVersionID pgtype.UUID
 	err = tx.QueryRow(ctx, `
 SELECT run_attempts.base_workspace_version_id
   FROM run_attempts
@@ -197,9 +251,99 @@ SELECT run_attempts.base_workspace_version_id
 		authority.runID,
 		authority.attemptNumber,
 		authority.workspaceID,
-	).Scan(&authority.baseVersionID)
+	).Scan(&attemptBaseVersionID)
 	if err != nil {
-		return freshRunAuthority{}, err
+		return runPlacementAuthority{}, err
+	}
+	if !authority.baseVersionID.Valid {
+		authority.baseVersionID = attemptBaseVersionID
+	}
+	if authority.restoreCheckpointID.Valid {
+		err = tx.QueryRow(ctx, `
+SELECT source_runtime.id,
+       source_runtime.runtime_identity_id,
+       source_runtime.runtime_substrate_id,
+       runtime_substrates.substrate_format,
+       runtime_substrates.builder_abi,
+       runtime_substrates.layout_abi
+  FROM run_waits
+  JOIN run_checkpoints
+    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND run_checkpoints.kind = 'suspend'
+   AND run_checkpoints.run_id = run_waits.run_id
+   AND run_checkpoints.attempt_number = run_waits.attempt_number
+   AND run_checkpoints.run_wait_id = run_waits.id
+   AND run_checkpoints.workspace_id = run_waits.workspace_id
+   AND run_checkpoints.state = 'ready'
+   AND run_checkpoints.base_workspace_version_id = $8
+   AND run_checkpoints.private_workspace_version_id = $5
+   AND (run_checkpoints.expires_at IS NULL
+        OR run_checkpoints.expires_at > transaction_timestamp())
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+   AND workspace_versions.state = 'private'
+  JOIN run_leases AS source_lease
+    ON source_lease.id = run_checkpoints.source_run_lease_id
+   AND source_lease.run_id = run_checkpoints.run_id
+   AND source_lease.attempt_number = run_checkpoints.attempt_number
+   AND source_lease.workspace_id = run_checkpoints.workspace_id
+   AND source_lease.state = 'checkpointed'
+  JOIN workspace_leases AS source_workspace_lease
+    ON source_workspace_lease.id = run_checkpoints.source_workspace_lease_id
+   AND source_workspace_lease.workspace_id = run_checkpoints.workspace_id
+   AND source_workspace_lease.owner_run_lease_id = source_lease.id
+   AND source_workspace_lease.state IN ('released', 'fenced')
+  JOIN runtime_instances AS source_runtime
+    ON source_runtime.id = source_lease.runtime_instance_id
+   AND source_runtime.workspace_id = run_checkpoints.workspace_id
+   AND source_runtime.runtime_identity_id = source_lease.runtime_identity_id
+   AND source_runtime.deployment_definition_id = $9
+   AND source_runtime.program_deployment_id = $10
+   AND source_runtime.reserved_cpu_millis = source_lease.requested_cpu_millis
+   AND source_runtime.reserved_memory_bytes = source_lease.requested_memory_bytes
+   AND source_runtime.reserved_workload_disk_bytes = source_lease.requested_workload_disk_bytes
+   AND source_runtime.reserved_scratch_bytes = source_lease.requested_scratch_bytes
+   AND source_runtime.reserved_execution_slots = source_lease.requested_execution_slots
+  JOIN runtime_substrates
+    ON runtime_substrates.id = source_runtime.runtime_substrate_id
+   AND runtime_substrates.org_id = source_runtime.org_id
+   AND runtime_substrates.project_id = source_runtime.project_id
+   AND runtime_substrates.environment_id = source_runtime.environment_id
+   AND runtime_substrates.deployment_definition_id = source_runtime.deployment_definition_id
+   AND runtime_substrates.retired_at IS NULL
+ WHERE run_waits.id = $1
+   AND run_waits.run_id = $2
+   AND run_waits.attempt_number = $3
+   AND run_waits.workspace_id = $4
+   AND run_waits.suspension_state = 'resume_pending'
+   AND run_waits.resume_request_version = $6
+   AND run_checkpoints.id = $7
+   AND run_waits.handoff_runtime_instance_id IS NULL
+   AND run_waits.handoff_workspace_mount_id IS NULL
+   AND run_waits.handoff_resume_checkpoint_id IS NULL
+ FOR UPDATE OF run_waits, run_checkpoints, workspace_versions`,
+			authority.resumeRunWaitID,
+			authority.runID,
+			authority.attemptNumber,
+			authority.workspaceID,
+			authority.baseVersionID,
+			authority.resumeRequestVersion,
+			authority.restoreCheckpointID,
+			attemptBaseVersionID,
+			authority.workspaceDefinitionID,
+			authority.deploymentID,
+		).Scan(
+			&authority.restoreRuntimeID,
+			&authority.restoreRuntimeIdentityID,
+			&authority.restoreSubstrateID,
+			&authority.restoreSubstrateFormat,
+			&authority.restoreSubstrateBuilder,
+			&authority.restoreSubstrateLayout,
+		)
+		if err != nil {
+			return runPlacementAuthority{}, err
+		}
 	}
 
 	var programArchitecture pgtype.Text
@@ -223,12 +367,12 @@ SELECT deployments.program_architecture
 		entrypointDefinitionID,
 	).Scan(&programArchitecture)
 	if err != nil {
-		return freshRunAuthority{}, err
+		return runPlacementAuthority{}, err
 	}
 	if !workspaceArchitecture.Valid ||
 		!programArchitecture.Valid ||
 		workspaceArchitecture.String != programArchitecture.String {
-		return freshRunAuthority{}, errors.New(
+		return runPlacementAuthority{}, errors.New(
 			"Run Program and Workspace architectures do not match",
 		)
 	}
@@ -236,27 +380,85 @@ SELECT deployments.program_architecture
 	decoder := json.NewDecoder(bytes.NewReader(manifest))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&workspaceManifest); err != nil {
-		return freshRunAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
 	}
 	if err := requireJSONEOF(decoder); err != nil {
-		return freshRunAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("decode Workspace manifest: %w", err)
 	}
 	resources, err := normalizeRunResources(workspaceManifest.Resources)
 	if err != nil {
-		return freshRunAuthority{}, err
+		return runPlacementAuthority{}, err
 	}
 	network, err := json.Marshal(workspaceManifest.Network)
 	if err != nil {
-		return freshRunAuthority{}, fmt.Errorf("encode Workspace network policy: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("encode Workspace network policy: %w", err)
 	}
 	network, err = jsoncanon.Transform(network)
 	if err != nil {
-		return freshRunAuthority{}, fmt.Errorf("canonicalize Workspace network policy: %w", err)
+		return runPlacementAuthority{}, fmt.Errorf("canonicalize Workspace network policy: %w", err)
 	}
 	authority.resources = resources
 	authority.networkPolicy = network
 	authority.architecture = workspaceArchitecture.String
 	return authority, nil
+}
+
+func lockRunRestoreSecrets(
+	ctx context.Context,
+	tx pgx.Tx,
+	candidate ReadyRunCandidate,
+) error {
+	secretRows, err := tx.Query(ctx, `
+SELECT secrets.state = 'active'
+       AND secret_resolutions.id IS NOT NULL
+       AND secret_resolutions.revocation_generation = secrets.revocation_generation
+  FROM runs
+  JOIN run_waits
+    ON run_waits.run_id = runs.id
+   AND run_waits.suspension_state = 'resume_pending'
+   AND run_waits.handoff_runtime_instance_id IS NULL
+   AND run_waits.handoff_workspace_mount_id IS NULL
+   AND run_waits.handoff_resume_checkpoint_id IS NULL
+  JOIN workspace_secrets ON workspace_secrets.workspace_id = runs.workspace_id
+  JOIN secrets ON secrets.id = workspace_secrets.secret_id
+  LEFT JOIN secret_resolutions
+    ON secret_resolutions.workspace_id = workspace_secrets.workspace_id
+   AND secret_resolutions.run_id = runs.id
+   AND secret_resolutions.attempt_number = runs.current_attempt_number
+   AND secret_resolutions.placement_kind = workspace_secrets.placement_kind
+   AND secret_resolutions.placement_target = workspace_secrets.placement_target
+   AND secret_resolutions.secret_id = workspace_secrets.secret_id
+ WHERE runs.org_id = $1
+   AND runs.id = $2
+   AND runs.state_version = $3
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+ ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
+ FOR UPDATE OF secrets`,
+		candidate.OrgID,
+		candidate.RunID,
+		candidate.ExpectedRunStateVersion,
+	)
+	if err != nil {
+		return err
+	}
+	for secretRows.Next() {
+		var valid bool
+		if err := secretRows.Scan(&valid); err != nil {
+			secretRows.Close()
+			return err
+		}
+		if !valid {
+			secretRows.Close()
+			return errors.New("Run restore Secret resolution is revoked or incomplete")
+		}
+	}
+	if err := secretRows.Err(); err != nil {
+		secretRows.Close()
+		return err
+	}
+	secretRows.Close()
+	return nil
 }
 
 func normalizeRunResources(

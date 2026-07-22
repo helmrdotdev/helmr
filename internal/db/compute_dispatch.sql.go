@@ -373,13 +373,37 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND runs.current_run_lease_id IS NULL
    AND workspaces.owner_run_id = runs.id
    AND workspaces.owner_actor_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM run_waits
-        WHERE run_waits.run_id = runs.id
-          AND run_waits.suspension_state IN (
-              'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-          )
+   AND (
+       NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state IN (
+                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+              )
+       )
+       OR EXISTS (
+           SELECT 1
+             FROM run_waits
+             JOIN run_checkpoints
+               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+              AND run_checkpoints.kind = 'suspend'
+              AND run_checkpoints.run_id = run_waits.run_id
+              AND run_checkpoints.attempt_number = run_waits.attempt_number
+              AND run_checkpoints.run_wait_id = run_waits.id
+              AND run_checkpoints.workspace_id = run_waits.workspace_id
+              AND run_checkpoints.state = 'ready'
+              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+             JOIN workspace_versions
+               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+              AND workspace_versions.state = 'private'
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state = 'resume_pending'
+              AND run_waits.handoff_runtime_instance_id IS NULL
+              AND run_waits.handoff_workspace_mount_id IS NULL
+              AND run_waits.handoff_resume_checkpoint_id IS NULL
+       )
    )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
 `
@@ -847,13 +871,37 @@ WITH candidate_scopes AS (
        AND runs.current_run_lease_id IS NULL
        AND workspaces.owner_run_id = runs.id
        AND workspaces.owner_actor_id IS NULL
-       AND NOT EXISTS (
-           SELECT 1
-             FROM run_waits
-            WHERE run_waits.run_id = runs.id
-              AND run_waits.suspension_state IN (
-                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-              )
+       AND (
+           NOT EXISTS (
+               SELECT 1
+                 FROM run_waits
+                WHERE run_waits.run_id = runs.id
+                  AND run_waits.suspension_state IN (
+                      'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+                  )
+           )
+           OR EXISTS (
+               SELECT 1
+                 FROM run_waits
+                 JOIN run_checkpoints
+                   ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+                  AND run_checkpoints.kind = 'suspend'
+                  AND run_checkpoints.run_id = run_waits.run_id
+                  AND run_checkpoints.attempt_number = run_waits.attempt_number
+                  AND run_checkpoints.run_wait_id = run_waits.id
+                  AND run_checkpoints.workspace_id = run_waits.workspace_id
+                  AND run_checkpoints.state = 'ready'
+                  AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+                 JOIN workspace_versions
+                   ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+                  AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+                  AND workspace_versions.state = 'private'
+                WHERE run_waits.run_id = runs.id
+                  AND run_waits.suspension_state = 'resume_pending'
+                  AND run_waits.handoff_runtime_instance_id IS NULL
+                  AND run_waits.handoff_workspace_mount_id IS NULL
+                  AND run_waits.handoff_resume_checkpoint_id IS NULL
+           )
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
@@ -949,13 +997,37 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND runs.current_run_lease_id IS NULL
    AND workspaces.owner_run_id = runs.id
    AND workspaces.owner_actor_id IS NULL
-   AND NOT EXISTS (
-       SELECT 1
-         FROM run_waits
-        WHERE run_waits.run_id = runs.id
-          AND run_waits.suspension_state IN (
-              'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
-          )
+   AND (
+       NOT EXISTS (
+           SELECT 1
+             FROM run_waits
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state IN (
+                  'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
+              )
+       )
+       OR EXISTS (
+           SELECT 1
+             FROM run_waits
+             JOIN run_checkpoints
+               ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+              AND run_checkpoints.kind = 'suspend'
+              AND run_checkpoints.run_id = run_waits.run_id
+              AND run_checkpoints.attempt_number = run_waits.attempt_number
+              AND run_checkpoints.run_wait_id = run_waits.id
+              AND run_checkpoints.workspace_id = run_waits.workspace_id
+              AND run_checkpoints.state = 'ready'
+              AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+             JOIN workspace_versions
+               ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+              AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+              AND workspace_versions.state = 'private'
+            WHERE run_waits.run_id = runs.id
+              AND run_waits.suspension_state = 'resume_pending'
+              AND run_waits.handoff_runtime_instance_id IS NULL
+              AND run_waits.handoff_workspace_mount_id IS NULL
+              AND run_waits.handoff_resume_checkpoint_id IS NULL
+       )
    )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id

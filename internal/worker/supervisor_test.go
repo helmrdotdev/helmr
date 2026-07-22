@@ -17,6 +17,8 @@ type testControl struct {
 	authenticated  atomic.Bool
 	recovered      atomic.Bool
 	activated      atomic.Bool
+	recoveryCalls  atomic.Int32
+	recovery409s   atomic.Int32
 	renewed        atomic.Int32
 	completed      atomic.Int32
 	status         atomic.Value
@@ -48,12 +50,21 @@ func (c *testControl) ActivateWorker(_ context.Context, capabilities api.WorkerC
 }
 
 func (c *testControl) ReportWorkerStartupRecovery(_ context.Context, request api.WorkerStartupRecoveryRequest) error {
+	c.recoveryCalls.Add(1)
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() {
 		return errors.New("incomplete startup recovery proof")
+	}
+	if c.recovery409s.Add(-1) >= 0 {
+		return testHTTPStatusError{status: 409}
 	}
 	c.recovered.Store(true)
 	return nil
 }
+
+type testHTTPStatusError struct{ status int }
+
+func (e testHTTPStatusError) Error() string       { return "test HTTP status" }
+func (e testHTTPStatusError) HTTPStatusCode() int { return e.status }
 func (c *testControl) CompleteWorkerDrain(_ context.Context, request api.WorkerDrainCompletionRequest) (api.WorkerStatusResponse, error) {
 	if !request.InventoryComplete || request.InventoryScope != "worker_runtime_state_roots_v0" || request.ObservedAt.IsZero() || len(request.Inventory) != 0 || len(request.Quarantined) != 0 || len(request.Errors) != 0 {
 		return api.WorkerStatusResponse{}, errors.New("incomplete worker drain proof")
@@ -118,6 +129,39 @@ type successfulRejectionConsumer struct {
 func (c *successfulRejectionConsumer) Claim(context.Context) (Work, bool, error) {
 	c.once.Do(func() { close(c.claimed) })
 	return nil, true, nil
+}
+
+func TestSupervisorRetriesStartupRecoveryConflictWithExactProof(t *testing.T) {
+	control := &testControl{}
+	control.recovery409s.Store(2)
+	s, err := New(Config{Control: control, PollEvery: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- s.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for !control.activated.Load() {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("worker did not activate after startup recovery conflicts cleared")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if calls := control.recoveryCalls.Load(); calls != 3 {
+		cancel()
+		t.Fatalf("startup recovery calls = %d, want 3", calls)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("run error = %v, want context canceled", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("supervisor did not stop")
+	}
 }
 
 func (c *enabledConsumer) Claim(ctx context.Context) (Work, bool, error) {

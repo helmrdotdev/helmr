@@ -97,7 +97,7 @@ func populateRuntimePrepareSource(
 	policy *deployment.BuildPolicy,
 ) error {
 	if !row.BaseWorkspaceVersionID.Valid || !row.WorkspaceEntryCount.Valid {
-		return errors.New("runtime reservation has no committed Workspace version")
+		return errors.New("runtime reservation has no exact Workspace version")
 	}
 	if !row.WorkspaceArchitecture.Valid {
 		return errors.New("runtime reservation has no Workspace architecture")
@@ -222,6 +222,11 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 			writeError(w, badRequest(errors.New("network_facts are required when marking a runtime ready")))
 			return
 		}
+		runtimeSubstrateID, substrateErr := parseWorkspaceUUID("runtime_substrate_id", request.RuntimeSubstrateID)
+		if substrateErr != nil {
+			writeError(w, badRequest(substrateErr))
+			return
+		}
 		facts := request.NetworkFacts
 		guestAddress, guestErr := netip.ParseAddr(strings.TrimSpace(facts.GuestAddress))
 		gatewayAddress, gatewayErr := netip.ParseAddr(strings.TrimSpace(facts.GatewayAddress))
@@ -236,8 +241,8 @@ func (s *Server) workerMarkRuntimeInstance(w http.ResponseWriter, r *http.Reques
 		row, err = s.db.MarkRuntimeInstanceReady(r.Context(), db.MarkRuntimeInstanceReadyParams{
 			DesiredVersion: request.DesiredVersion, ID: id, WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID),
 			WorkerEpoch: worker.WorkerEpoch, NetworkSlotID: slotID, NetworkSlotGeneration: request.NetworkSlotGeneration,
-			ExpectedObservedVersion: request.ExpectedObservedVersion,
-			HostInterfaceName:       pgtype.Text{String: strings.TrimSpace(facts.HostInterfaceName), Valid: true}, GuestAddress: &guestAddress,
+			ExpectedObservedVersion: request.ExpectedObservedVersion, RuntimeSubstrateID: runtimeSubstrateID,
+			HostInterfaceName: pgtype.Text{String: strings.TrimSpace(facts.HostInterfaceName), Valid: true}, GuestAddress: &guestAddress,
 			GatewayAddress: &gatewayAddress, Subnet: &subnet, TapName: pgtype.Text{String: strings.TrimSpace(facts.TapName), Valid: true},
 			NetnsName: pgtype.Text{String: strings.TrimSpace(facts.NetNSName), Valid: true}, GuestMac: guestMAC,
 		})

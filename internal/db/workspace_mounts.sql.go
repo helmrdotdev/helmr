@@ -388,7 +388,10 @@ SELECT $1, runtime_instances.org_id, runtime_instances.project_id,
                    AND run_attempts.workspace_id = runtime_instances.workspace_id
   JOIN workspace_versions ON workspace_versions.workspace_id = runtime_instances.workspace_id
                          AND workspace_versions.id = runtime_instances.reserved_workspace_version_id
-                         AND workspace_versions.state = 'committed'
+                         AND workspace_versions.state = CASE
+                                 WHEN runtime_instances.restore_checkpoint_id IS NULL THEN 'committed'::workspace_version_state
+                                 ELSE 'private'::workspace_version_state
+                             END
  WHERE runtime_instances.org_id = $3
    AND runtime_instances.workspace_id = $4
    AND runtime_instances.id = $5

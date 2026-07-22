@@ -29,7 +29,10 @@ func (d *Authority) grantFreshRun(
 	if err := lockRunQueueScope(ctx, tx, candidate); err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
-	authority, err := lockFreshRunAuthority(ctx, tx, candidate)
+	if err := lockRunRestoreSecrets(ctx, tx, candidate); err != nil {
+		return db.RunLease{}, classifyRunCandidateError(err)
+	}
+	authority, err := lockRunPlacementAuthority(ctx, tx, candidate)
 	if err != nil {
 		return db.RunLease{}, classifyRunCandidateError(err)
 	}
@@ -242,7 +245,7 @@ SELECT transaction_timestamp(),
 			return db.RunLease{}, ErrCapacityUnavailable
 		}
 	}
-	if _, err := q.SetRunCurrentLease(
+	grantedRun, err := q.SetRunCurrentLease(
 		ctx,
 		db.SetRunCurrentLeaseParams{
 			RunLeaseID:           runLeaseID,
@@ -251,8 +254,42 @@ SELECT transaction_timestamp(),
 			ExpectedStateVersion: authority.stateVersion,
 			AttemptNumber:        authority.attemptNumber,
 		},
-	); err != nil {
+	)
+	if err != nil {
 		return db.RunLease{}, fmt.Errorf("set current Run Lease: %w", err)
+	}
+	if authority.resumeRunWaitID.Valid {
+		var boundWaitID pgtype.UUID
+		err = tx.QueryRow(ctx, `
+UPDATE run_waits
+   SET suspension_state = 'resuming',
+       current_run_lease_id = $1,
+       expected_run_state_version = $2,
+       updated_at = transaction_timestamp()
+ WHERE id = $3
+   AND run_id = $4
+   AND attempt_number = $5
+   AND workspace_id = $6
+   AND suspension_state = 'resume_pending'
+   AND current_run_lease_id IS NULL
+   AND suspend_checkpoint_id = $7
+   AND resume_request_version = $8
+   AND handoff_runtime_instance_id IS NULL
+   AND handoff_workspace_mount_id IS NULL
+   AND handoff_resume_checkpoint_id IS NULL
+RETURNING id`,
+			runLeaseID,
+			grantedRun.StateVersion,
+			authority.resumeRunWaitID,
+			authority.runID,
+			authority.attemptNumber,
+			authority.workspaceID,
+			authority.restoreCheckpointID,
+			authority.resumeRequestVersion,
+		).Scan(&boundWaitID)
+		if err != nil {
+			return db.RunLease{}, fmt.Errorf("bind resuming Run Wait: %w", err)
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return db.RunLease{}, fmt.Errorf("commit Run Lease grant: %w", err)
@@ -263,7 +300,7 @@ SELECT transaction_timestamp(),
 func (d *Authority) checkRunLeaseConcurrency(
 	ctx context.Context,
 	tx pgx.Tx,
-	authority freshRunAuthority,
+	authority runPlacementAuthority,
 ) error {
 	var active int64
 	var activeLimit pgtype.Int8

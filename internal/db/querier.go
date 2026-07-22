@@ -365,6 +365,7 @@ type Querier interface {
 	RecordFleetScaleOut(ctx context.Context, arg RecordFleetScaleOutParams) (string, error)
 	RecordWorkerObservation(ctx context.Context, arg RecordWorkerObservationParams) (WorkerObservation, error)
 	RecordWorkerStartupRecovery(ctx context.Context, arg RecordWorkerStartupRecoveryParams) (WorkerInstance, error)
+	RecoverExpiredRecreatedRunResumes(ctx context.Context, limitCount int32) ([]RecoverExpiredRecreatedRunResumesRow, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (RejectDeploymentBuildLeaseRow, error)
 	ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error)
