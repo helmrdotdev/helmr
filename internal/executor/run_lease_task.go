@@ -28,11 +28,13 @@ type RunLeaseControl interface {
 	RenewRunLease(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error)
 	CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error
+	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
 	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
 }
 
 type RunLeaseTaskResult struct {
 	Outcome         api.WorkerTaskOutcome
+	ActorOutcome    *api.WorkerActorOutcome
 	ProgramQuiesced api.WorkerRunQuiescenceProof
 }
 
@@ -213,6 +215,20 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 }
 
 func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
+	if task.program.entrypoint != nil && task.program.entrypoint.GetActor() != nil {
+		outcome, quiesced, err := task.program.awaitActorCompletion(ctx, taskControlEvents{task: task}, task.handleWait)
+		if err != nil {
+			return RunLeaseTaskResult{}, err
+		}
+		converted, err := workerActorOutcome(outcome)
+		if err != nil {
+			return RunLeaseTaskResult{}, err
+		}
+		return RunLeaseTaskResult{
+			ActorOutcome:    &converted,
+			ProgramQuiesced: api.WorkerRunQuiescenceProof{RunID: quiesced.GetRunId(), AttemptNumber: int32(quiesced.GetAttemptNumber()), RunLeaseID: quiesced.GetRunLeaseId()},
+		}, nil
+	}
 	outcome, quiesced, err := task.program.awaitTaskCompletion(ctx, taskControlEvents{task: task}, task.handleWait)
 	if err != nil {
 		return RunLeaseTaskResult{}, err
@@ -229,6 +245,23 @@ func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, er
 			RunLeaseID:    quiesced.GetRunLeaseId(),
 		},
 	}, nil
+}
+
+func workerActorOutcome(outcome *runv0.ActorOutcome) (api.WorkerActorOutcome, error) {
+	if err := validateFreshActorOutcome(outcome); err != nil {
+		return api.WorkerActorOutcome{}, err
+	}
+	converted := api.WorkerActorOutcome{TerminalInputSequence: outcome.GetTerminalInputSequence()}
+	switch value := outcome.GetOutcome().(type) {
+	case *runv0.ActorOutcome_Succeeded:
+		converted.Succeeded = &api.WorkerActorSucceeded{}
+	case *runv0.ActorOutcome_Failed:
+		failure := canonicalTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson)
+		converted.Failed = &failure
+	default:
+		return api.WorkerActorOutcome{}, errors.New("Actor outcome variant is required")
+	}
+	return converted, nil
 }
 
 type taskControlEvents struct {

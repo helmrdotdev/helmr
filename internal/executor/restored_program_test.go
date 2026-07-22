@@ -256,6 +256,9 @@ func (*restoredProgramControl) BeginRunFinalization(context.Context, api.WorkerB
 func (*restoredProgramControl) CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error {
 	return errors.New("unexpected completion")
 }
+func (*restoredProgramControl) CompleteActor(context.Context, api.WorkerCompleteActorRequest) error {
+	return errors.New("unexpected Actor completion")
+}
 func (*restoredProgramControl) AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error {
 	return nil
 }

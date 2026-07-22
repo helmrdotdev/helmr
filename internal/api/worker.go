@@ -479,6 +479,20 @@ type WorkerCompleteTaskRequest struct {
 	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
 }
 
+type WorkerCompleteActorRequest struct {
+	Lease     WorkerRunLeaseReceipt    `json:"lease"`
+	Outcome   WorkerActorOutcome       `json:"outcome"`
+	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
+}
+
+type WorkerActorOutcome struct {
+	TerminalInputSequence int64                 `json:"terminal_input_sequence"`
+	Succeeded             *WorkerActorSucceeded `json:"succeeded,omitempty"`
+	Failed                *WorkerTaskFailure    `json:"failed,omitempty"`
+}
+
+type WorkerActorSucceeded struct{}
+
 type WorkerTaskOutcome struct {
 	Succeeded      *WorkerTaskSucceeded `json:"succeeded,omitempty"`
 	Failed         *WorkerTaskFailure   `json:"failed,omitempty"`

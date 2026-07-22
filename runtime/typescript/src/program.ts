@@ -9,6 +9,8 @@ import {
   type RuntimeOperations,
 } from "@helmr/sdk/internal"
 import type {
+  ActorExecutionContext,
+  ActorSelf,
   JsonValue,
   RunCause,
   TaskExecutionContext,
@@ -160,7 +162,7 @@ export async function runProgram(
     await runTask(start, definition, io, reader)
     return
   }
-  await runActor(start, definition)
+  await runActor(start, definition, io, reader)
 }
 
 async function loadDeclarationLocator(
@@ -266,7 +268,17 @@ function validateEntrypointContract(
   start: runProto.ProgramStart,
   definition: InternalTaskDefinition | InternalActorDefinition,
 ): void {
-  if (definition.kind === "actor") return
+  if (definition.kind === "actor") {
+    if (
+      start.entrypoint.case !== "actor" ||
+      start.entrypoint.value.startInputSequence < 0n ||
+      start.entrypoint.value.inputHighWatermark <
+        start.entrypoint.value.startInputSequence
+    ) {
+      throw new Error("Program-start Actor cursor authority is invalid")
+    }
+    return
+  }
   const payload = start.entrypoint.case === "task"
     ? start.entrypoint.value.payload.case
     : undefined
@@ -525,10 +537,100 @@ function boundedTimerSeconds(seconds: number): number {
 }
 
 async function runActor(
-  _start: runProto.ProgramStart,
-  _definition: InternalActorDefinition,
+  start: runProto.ProgramStart,
+  definition: InternalActorDefinition,
+  io: ProgramIO,
+  reader: FrameReader,
 ): Promise<void> {
-  throw new Error("Actor execution transport is not available")
+  if (start.entrypoint.case !== "actor") {
+    throw new Error("Actor Program-start entrypoint is required")
+  }
+  const terminalInputSequence = start.entrypoint.value.startInputSequence
+  const uninstallRuntime = installRuntimeOperations(
+    programRuntimeOperations(start, io, reader),
+  )
+  try {
+    await definition.handler(unavailableActorSelf(), actorContext(start))
+  } catch (error) {
+    if (error instanceof ActorChannelTransportUnavailableError) throw error
+    await writeActorFailure(
+      io,
+      terminalInputSequence,
+      errorMessage(error),
+    )
+    return
+  } finally {
+    uninstallRuntime()
+  }
+  await writeRunEvent(io, {
+    case: "actorOutcome",
+    value: create(runProto.ActorOutcomeSchema, {
+      terminalInputSequence,
+      outcome: {
+        case: "succeeded",
+        value: create(runProto.ActorSucceededSchema),
+      },
+    }),
+  })
+}
+
+class ActorChannelTransportUnavailableError extends Error {
+  constructor() {
+    super("Actor channel transport is not available")
+    this.name = "ActorChannelTransportUnavailableError"
+  }
+}
+
+function unavailableActorSelf(): ActorSelf {
+  const unavailable = (): never => {
+    throw new ActorChannelTransportUnavailableError()
+  }
+  return Object.freeze({
+    input: Object.freeze({ receive: unavailable }),
+    output: Object.freeze({
+      append: unavailable,
+      pipe: unavailable,
+      writer: unavailable,
+    }),
+  }) as ActorSelf
+}
+
+function actorContext(start: runProto.ProgramStart): ActorExecutionContext {
+  if (start.entrypoint.case !== "actor") {
+    throw new Error("Actor Program-start entrypoint is required")
+  }
+  return Object.freeze({
+    ...taskContext(start),
+    actor: Object.freeze({
+      id: start.entrypoint.value.actorId,
+      ...(start.entrypoint.value.key === undefined
+        ? {}
+        : { key: start.entrypoint.value.key }),
+    }),
+  }) as ActorExecutionContext
+}
+
+async function writeActorFailure(
+  io: ProgramIO,
+  terminalInputSequence: bigint,
+  message: string,
+): Promise<void> {
+  const normalizedMessage = boundedUtf8(
+    message === "" ? "actor failed" : message,
+    MAX_TASK_ERROR_MESSAGE_BYTES,
+  )
+  await writeRunEvent(io, {
+    case: "actorOutcome",
+    value: create(runProto.ActorOutcomeSchema, {
+      terminalInputSequence,
+      outcome: {
+        case: "failed",
+        value: create(runProto.ActorFailedSchema, {
+          message: normalizedMessage,
+        }),
+      },
+    }),
+  })
 }
 
 function taskContext(start: runProto.ProgramStart): TaskExecutionContext {

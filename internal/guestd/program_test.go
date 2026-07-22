@@ -286,6 +286,7 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		context.Background(),
 		guest,
 		testProgramRunRequest(testProgramStartFrame(t)),
+		&runv0.EntrypointIdentity{Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}}},
 		process,
 		&programEventStream{conn: guest},
 		make(chan error, 2),
@@ -338,6 +339,7 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 			context.Background(),
 			guest,
 			request,
+			&runv0.EntrypointIdentity{Kind: &runv0.EntrypointIdentity_Task{Task: &runv0.TaskEntrypoint{}}},
 			process,
 			&programEventStream{conn: guest},
 			make(chan error, 2),
@@ -671,6 +673,28 @@ func TestValidateTaskOutcomeRejectsMalformedClosedShapes(t *testing.T) {
 		},
 	}); err != nil {
 		t.Fatalf("valid JSON null rejected: %v", err)
+	}
+}
+
+func TestValidateActorOutcomeRequiresCursorAndClosedVariant(t *testing.T) {
+	zero := int64(0)
+	negative := int64(-1)
+	for _, outcome := range []*runv0.ActorOutcome{
+		nil,
+		{Outcome: &runv0.ActorOutcome_Succeeded{Succeeded: &runv0.ActorSucceeded{}}},
+		{TerminalInputSequence: &negative, Outcome: &runv0.ActorOutcome_Succeeded{Succeeded: &runv0.ActorSucceeded{}}},
+		{TerminalInputSequence: &zero},
+		{TerminalInputSequence: &zero, Outcome: &runv0.ActorOutcome_Failed{Failed: &runv0.ActorFailed{}}},
+	} {
+		if err := validateActorOutcome(outcome); err == nil {
+			t.Fatalf("validateActorOutcome(%v) error = nil", outcome)
+		}
+	}
+	if err := validateActorOutcome(&runv0.ActorOutcome{
+		TerminalInputSequence: &zero,
+		Outcome:               &runv0.ActorOutcome_Succeeded{Succeeded: &runv0.ActorSucceeded{}},
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
 

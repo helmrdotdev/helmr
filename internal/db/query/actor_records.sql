@@ -141,9 +141,6 @@ SELECT *
 -- name: CommitActorInputCursor :one
 UPDATE actors
    SET committed_input_sequence = sqlc.arg(committed_input_sequence),
-       no_progress_input_sequence = NULL,
-       no_progress_count = 0,
-       last_no_progress_run_id = NULL,
        state_version = state_version + 1,
        updated_at = now()
  WHERE environment_id = sqlc.arg(environment_id)

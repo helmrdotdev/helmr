@@ -1383,14 +1383,11 @@ WITH candidates AS MATERIALIZED (
            run_generation = actors.run_generation + 1,
            state_version = actors.state_version + 1,
            manual_run_cancelled = false,
-           no_progress_input_sequence = NULL,
-           no_progress_count = 0,
-           last_no_progress_run_id = NULL,
-           failure_reason_code = CASE
+           failure_code = CASE
                WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
                ELSE 'platform-failure'
            END,
-           last_failure_run_id = failed_runs.id,
+           failure_run_id = failed_runs.id,
            failed_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
       FROM locked_checkpoints, failed_runs, failed_waits

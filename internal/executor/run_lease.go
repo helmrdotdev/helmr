@@ -67,7 +67,7 @@ func (e Executor) ExecuteRunLease(
 	if err != nil {
 		return fmt.Errorf("create Run finalization operation ID: %w", err)
 	}
-	kind := taskFinalizationKind(result.Outcome)
+	kind := runFinalizationKind(result)
 	beginRequest := api.WorkerBeginRunFinalizationRequest{
 		Lease: current, ProgramQuiesced: result.ProgramQuiesced,
 		OperationID: operationID.String(), Kind: kind,
@@ -115,9 +115,10 @@ func (e Executor) ExecuteRunLease(
 		begun.Lease.ExpiresAt,
 	)
 	defer cancelComplete()
-	completion := api.WorkerCompleteTaskRequest{
-		Lease:   begun.Lease,
-		Outcome: result.Outcome,
+	completion := api.WorkerCompleteTaskRequest{Lease: begun.Lease, Outcome: result.Outcome}
+	actorCompletion := api.WorkerCompleteActorRequest{Lease: begun.Lease}
+	if result.ActorOutcome != nil {
+		actorCompletion.Outcome = *result.ActorOutcome
 	}
 	if kind == api.WorkerRunFinalizationCapture {
 		var capture api.WorkerTaskWorkspaceCapture
@@ -129,6 +130,7 @@ func (e Executor) ExecuteRunLease(
 			return fmt.Errorf("capture Task Workspace: %w", err)
 		}
 		completion.Workspace.Captured = &capture
+		actorCompletion.Workspace.Captured = &capture
 	} else {
 		var rollback api.WorkerTaskWorkspaceRollback
 		if err := retryRunLeaseOperation(stageCtx, func(requestCtx context.Context) error {
@@ -139,8 +141,12 @@ func (e Executor) ExecuteRunLease(
 			return fmt.Errorf("reset Task Workspace: %w", err)
 		}
 		completion.Workspace.RolledBack = &rollback
+		actorCompletion.Workspace.RolledBack = &rollback
 	}
 	if err := retryRunLeaseCompletion(completeCtx, replayTail, func(requestCtx context.Context) error {
+		if result.ActorOutcome != nil {
+			return e.RunLeases.CompleteActor(requestCtx, actorCompletion)
+		}
 		return e.RunLeases.CompleteTask(requestCtx, completion)
 	}); err != nil {
 		return fmt.Errorf("complete Task: %w", err)
@@ -287,8 +293,14 @@ func (e Executor) renewRunLease(
 	return renewed, nil
 }
 
-func taskFinalizationKind(outcome api.WorkerTaskOutcome) api.WorkerRunFinalizationKind {
-	if outcome.Succeeded != nil {
+func runFinalizationKind(result RunLeaseTaskResult) api.WorkerRunFinalizationKind {
+	if result.ActorOutcome != nil {
+		if result.ActorOutcome.Succeeded != nil {
+			return api.WorkerRunFinalizationCapture
+		}
+		return api.WorkerRunFinalizationReset
+	}
+	if result.Outcome.Succeeded != nil {
 		return api.WorkerRunFinalizationCapture
 	}
 	return api.WorkerRunFinalizationReset

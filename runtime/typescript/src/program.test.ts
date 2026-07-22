@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { task, timers } from "@helmr/sdk"
+import { actor, task, timers } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -10,6 +10,70 @@ const locatorURL = new URL(
 )
 
 describe("runProgram", () => {
+  test("reports an Actor return with its terminal cursor", async () => {
+    let actorID = ""
+    const definition = actor({
+      id: "worker",
+      run(_self, ctx) { actorID = ctx.actor.id },
+    })
+    const start = actorStart(0n, 0n)
+    const output: Uint8Array[] = []
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))
+    expect(actorID).toBe("actor-1")
+    const outcome = readEvent(output[1]!).event
+    expect(outcome.case).toBe("actorOutcome")
+    if (outcome.case === "actorOutcome") {
+      expect(outcome.value.terminalInputSequence).toBe(0n)
+      expect(outcome.value.outcome.case).toBe("succeeded")
+    }
+  })
+
+  test("reports an Actor throw as a bounded failure with its cursor", async () => {
+    const definition = actor({ id: "worker", run() { throw new Error("boom") } })
+    const start = actorStart(4n, 7n)
+    const output: Uint8Array[] = []
+    await runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))
+    const outcome = readEvent(output[1]!).event
+    expect(outcome.case).toBe("actorOutcome")
+    if (outcome.case === "actorOutcome") {
+      expect(outcome.value.terminalInputSequence).toBe(4n)
+      expect(outcome.value.outcome.case).toBe("failed")
+    }
+  })
+
+  test("does not report missing Actor channel transport as a user failure", async () => {
+    const definition = actor({
+      id: "worker",
+      async run(self) { await self.input.receive() },
+    })
+    const start = actorStart(0n, 1n)
+    const output: Uint8Array[] = []
+    await expect(runProgram(locatorURL, programIO({
+      input: frames(
+        frameMessage(runProto.ProgramStartSchema, start),
+        frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start)),
+      ),
+      definition,
+      output,
+    }))).rejects.toThrow("Actor channel transport is not available")
+    expect(output).toHaveLength(1)
+    expect(readEvent(output[0]!).event.case).toBe("entrypointReady")
+  })
+
   test("waits for the exact entrypoint release before invoking a payload-free task", async () => {
     let invoked = false
     const definition = task({
@@ -434,6 +498,12 @@ function programIO(options: {
             kind: "task",
             modulePath: "tasks/deploy.ts",
           },
+          {
+            declaredId: "worker",
+            exportName: "definition",
+            kind: "actor",
+            modulePath: "actors/worker.ts",
+          },
         ],
         formatVersion: 0,
       }),
@@ -484,11 +554,43 @@ function taskStart(
   })
 }
 
+function actorStart(start: bigint, highWatermark: bigint): runProto.ProgramStart {
+  return create(runProto.ProgramStartSchema, {
+    entrypointDeclaredId: "worker",
+    runId: "run-1",
+    attemptNumber: 1,
+    cause: create(runProto.RunCauseSchema, {
+      kind: { case: "actorStart", value: create(runProto.ActorStartCauseSchema) },
+    }),
+    deploymentId: "deployment-1",
+    deploymentVersion: "v1",
+    workspaceId: "workspace-1",
+    baseWorkspaceVersionId: "version-1",
+    entrypoint: {
+      case: "actor",
+      value: create(runProto.ActorStartSchema, {
+        actorId: "actor-1",
+        startInputSequence: start,
+        inputHighWatermark: highWatermark,
+      }),
+    },
+  })
+}
+
 function releaseFor(start: runProto.ProgramStart): runProto.EntrypointRelease {
   return create(runProto.EntrypointReleaseSchema, {
     runId: start.runId,
     attemptNumber: start.attemptNumber,
-    entrypoint: taskIdentity(start.entrypointDeclaredId),
+    entrypoint: start.entrypoint.case === "actor"
+      ? actorIdentity(start.entrypointDeclaredId)
+      : taskIdentity(start.entrypointDeclaredId),
+  })
+}
+
+function actorIdentity(declaredId: string): runProto.EntrypointIdentity {
+  return create(runProto.EntrypointIdentitySchema, {
+    declaredId,
+    kind: { case: "actor", value: create(runProto.ActorEntrypointSchema) },
   })
 }
 

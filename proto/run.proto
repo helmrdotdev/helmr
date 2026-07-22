@@ -226,6 +226,7 @@ message RunEvent {
     EntrypointReady entrypoint_ready = 12;
     TaskOutcome task_outcome = 13;
     ProgramQuiesced program_quiesced = 14;
+    ActorOutcome actor_outcome = 15;
   }
 }
 
@@ -247,6 +248,21 @@ message TaskFailed {
 }
 
 message TaskPayloadInvalid {
+  string message = 1;
+  optional string details_json = 2;
+}
+
+message ActorOutcome {
+  optional int64 terminal_input_sequence = 1;
+  oneof outcome {
+    ActorSucceeded succeeded = 2;
+    ActorFailed failed = 3;
+  }
+}
+
+message ActorSucceeded {}
+
+message ActorFailed {
   string message = 1;
   optional string details_json = 2;
 }

@@ -1590,11 +1590,8 @@ CREATE TABLE actors (
     run_generation BIGINT NOT NULL DEFAULT 1 CHECK (run_generation > 0),
     state_version BIGINT NOT NULL DEFAULT 1 CHECK (state_version > 0),
     manual_run_cancelled BOOLEAN NOT NULL DEFAULT false,
-    no_progress_input_sequence BIGINT,
-    no_progress_count INTEGER NOT NULL DEFAULT 0 CHECK (no_progress_count >= 0),
-    last_no_progress_run_id UUID,
-    failure_reason_code TEXT,
-    last_failure_run_id UUID,
+    failure_code TEXT,
+    failure_run_id UUID,
     next_input_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_input_sequence > 0),
     committed_input_sequence BIGINT NOT NULL DEFAULT 0 CHECK (committed_input_sequence >= 0),
     next_output_sequence BIGINT NOT NULL DEFAULT 1 CHECK (next_output_sequence > 0),
@@ -1658,11 +1655,10 @@ CREATE TABLE actors (
     CHECK (output_retention_floor <= next_output_sequence)
     ,
     CHECK (
-        (no_progress_count = 0 AND no_progress_input_sequence IS NULL AND last_no_progress_run_id IS NULL)
+        (state = 'failed' AND failure_code IN ('no-progress', 'run-failed', 'run-expired', 'platform-failure') AND failure_run_id IS NOT NULL)
         OR
-        (no_progress_count > 0 AND no_progress_input_sequence IS NOT NULL AND last_no_progress_run_id IS NOT NULL)
-    ),
-    CHECK (failure_reason_code IS NULL OR btrim(failure_reason_code) <> '')
+        (state <> 'failed' AND failure_code IS NULL AND failure_run_id IS NULL)
+    )
 );
 
 CREATE UNIQUE INDEX actors_environment_declared_id_key_uidx
@@ -2028,14 +2024,8 @@ ALTER TABLE actors
     DEFERRABLE INITIALLY DEFERRED;
 
 ALTER TABLE actors
-    ADD CONSTRAINT actors_last_no_progress_run_fk
-    FOREIGN KEY (id, last_no_progress_run_id)
-    REFERENCES runs(actor_id, id)
-    ON DELETE RESTRICT;
-
-ALTER TABLE actors
-    ADD CONSTRAINT actors_last_failure_run_fk
-    FOREIGN KEY (id, last_failure_run_id)
+    ADD CONSTRAINT actors_failure_run_fk
+    FOREIGN KEY (id, failure_run_id)
     REFERENCES runs(actor_id, id)
     ON DELETE RESTRICT;
 

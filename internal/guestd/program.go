@@ -901,7 +901,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err = relayProgram(ctx, conn, request, process, stream, outputErrors, &outputDone, registry, outputs)
+	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, registry, outputs)
 	completed = err == nil
 	return err
 }
@@ -910,6 +910,7 @@ func relayProgram(
 	ctx context.Context,
 	conn programConnection,
 	request *runv0.ProgramRunRequest,
+	entrypoint *runv0.EntrypointIdentity,
 	process *programProcess,
 	stream *programEventStream,
 	outputErrors <-chan error,
@@ -980,15 +981,26 @@ func relayProgram(
 				pendingWait = waitRequested
 				continue
 			}
-			outcome := event.GetTaskOutcome()
-			if outcome == nil {
-				return errors.New("Program emitted an unsupported post-entrypoint event")
+			var outcomeErr error
+			switch entrypoint.GetKind().(type) {
+			case *runv0.EntrypointIdentity_Task:
+				outcomeErr = validateTaskOutcome(event.GetTaskOutcome())
+				if event.GetActorOutcome() != nil {
+					outcomeErr = errors.New("Task Program emitted an Actor outcome")
+				}
+			case *runv0.EntrypointIdentity_Actor:
+				outcomeErr = validateActorOutcome(event.GetActorOutcome())
+				if event.GetTaskOutcome() != nil {
+					outcomeErr = errors.New("Actor Program emitted a Task outcome")
+				}
+			default:
+				outcomeErr = errors.New("Program entrypoint kind is unsupported")
 			}
 			if outcomeSeen {
-				return errors.New("Program emitted more than one Task outcome")
+				return errors.New("Program emitted more than one outcome")
 			}
-			if err := validateTaskOutcome(outcome); err != nil {
-				return err
+			if outcomeErr != nil {
+				return outcomeErr
 			}
 			outcomeSeen = true
 			if err := stream.write(event); err != nil {
@@ -1047,7 +1059,7 @@ func relayProgram(
 		}
 	}
 	if !outcomeSeen {
-		return errors.New("Program exited without a Task outcome")
+		return errors.New("Program exited without an outcome")
 	}
 	if !quiesced {
 		return errors.New("Program process tree did not quiesce")
@@ -1408,6 +1420,31 @@ func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
 		}
 	default:
 		return errors.New("Task outcome variant is required")
+	}
+	return nil
+}
+
+func validateActorOutcome(outcome *runv0.ActorOutcome) error {
+	if outcome == nil {
+		return errors.New("Actor outcome is required")
+	}
+	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
+		return errors.New("Actor terminal input sequence is negative")
+	}
+	switch value := outcome.GetOutcome().(type) {
+	case *runv0.ActorOutcome_Succeeded:
+		if value.Succeeded == nil {
+			return errors.New("Actor succeeded outcome is empty")
+		}
+	case *runv0.ActorOutcome_Failed:
+		if value.Failed == nil {
+			return errors.New("Actor failed outcome is empty")
+		}
+		if err := validateTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson); err != nil {
+			return fmt.Errorf("invalid Actor failure: %w", err)
+		}
+	default:
+		return errors.New("Actor outcome variant is required")
 	}
 	return nil
 }

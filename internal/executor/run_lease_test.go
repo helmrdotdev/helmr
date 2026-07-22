@@ -113,6 +113,40 @@ func TestExecutorRollsBackFailedRunLeaseTask(t *testing.T) {
 	}
 }
 
+func TestExecutorCompletesSuccessfulActorRunLease(t *testing.T) {
+	trace := &runLeaseTrace{}
+	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	frozen := lease
+	frozen.ExpiresAt = lease.ExpiresAt.Add(20 * time.Minute)
+	task := &testRunLeaseTask{
+		trace:   trace,
+		renewed: lease,
+		result: RunLeaseTaskResult{
+			ActorOutcome: &api.WorkerActorOutcome{
+				TerminalInputSequence: 4,
+				Succeeded:             &api.WorkerActorSucceeded{},
+			},
+			ProgramQuiesced: api.WorkerRunQuiescenceProof{RunID: lease.RunID, AttemptNumber: lease.AttemptNumber, RunLeaseID: lease.ID},
+		},
+	}
+	control := &testRunLeaseControl{
+		trace:   trace,
+		claim:   api.WorkerRunLeaseClaimResponse{Lease: lease},
+		renewed: api.WorkerRunLeaseRenewResponse{Lease: lease},
+		begin:   api.WorkerBeginRunFinalizationResponse{Lease: frozen, Kind: api.WorkerRunFinalizationCapture},
+	}
+	executor := Executor{RunLeases: control, RunLeaseTasks: &testRunLeaseTaskRunner{trace: trace, task: task}}
+	if err := executor.ExecuteRunLease(context.Background(), api.WorkerRunLeaseWork{LeaseID: lease.ID, LeaseSequence: lease.LeaseSequence}); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(trace.calls, []string{"claim", "start", "wait", "renew", "begin", "guest-begin", "capture", "complete-actor"}) {
+		t.Fatalf("calls = %v", trace.calls)
+	}
+	if control.completedActor.Outcome.Succeeded == nil || control.completedActor.Outcome.TerminalInputSequence != 4 || control.completedActor.Workspace.Captured == nil {
+		t.Fatalf("Actor completion = %+v", control.completedActor)
+	}
+}
+
 func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	trace := &runLeaseTrace{}
 	lease := testRunLeaseReceipt(time.Now().Add(time.Minute))
@@ -388,11 +422,12 @@ func (task *testRunLeaseTask) ResetWorkspace(context.Context) (api.WorkerTaskWor
 }
 
 type testRunLeaseControl struct {
-	trace     *runLeaseTrace
-	claim     api.WorkerRunLeaseClaimResponse
-	renewed   api.WorkerRunLeaseRenewResponse
-	begin     api.WorkerBeginRunFinalizationResponse
-	completed api.WorkerCompleteTaskRequest
+	trace          *runLeaseTrace
+	claim          api.WorkerRunLeaseClaimResponse
+	renewed        api.WorkerRunLeaseRenewResponse
+	begin          api.WorkerBeginRunFinalizationResponse
+	completed      api.WorkerCompleteTaskRequest
+	completedActor api.WorkerCompleteActorRequest
 
 	beginFailures     int
 	completeFailures  int
@@ -453,6 +488,19 @@ func (control *testRunLeaseControl) CompleteTask(
 		return errors.New("transient completion failure")
 	}
 	control.completed = request
+	return nil
+}
+
+func (control *testRunLeaseControl) CompleteActor(
+	_ context.Context,
+	request api.WorkerCompleteActorRequest,
+) error {
+	control.trace.add("complete-actor")
+	if control.completeFailures > 0 {
+		control.completeFailures--
+		return errors.New("transient Actor completion failure")
+	}
+	control.completedActor = request
 	return nil
 }
 

@@ -676,6 +676,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/run-renew", s.workerRenewRunLease)
 				r.Post("/leases/finalization/begin", s.workerBeginRunFinalization)
 				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/tasks/complete", s.workerCompleteTask)
+				r.With(limitRequestBody(taskCompletionBodyLimit)).Post("/leases/actors/complete", s.workerCompleteActor)
 				r.Post("/leases/tokens", s.workerCreateToken)
 				r.Post("/leases/run-waits", s.workerCreateRunWait)
 				r.Post("/leases/run-waits/poll", s.workerPollRunWait)

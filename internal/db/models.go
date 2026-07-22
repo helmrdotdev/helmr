@@ -1701,11 +1701,8 @@ type Actor struct {
 	RunGeneration                int64              `json:"run_generation"`
 	StateVersion                 int64              `json:"state_version"`
 	ManualRunCancelled           bool               `json:"manual_run_cancelled"`
-	NoProgressInputSequence      pgtype.Int8        `json:"no_progress_input_sequence"`
-	NoProgressCount              int32              `json:"no_progress_count"`
-	LastNoProgressRunID          pgtype.UUID        `json:"last_no_progress_run_id"`
-	FailureReasonCode            pgtype.Text        `json:"failure_reason_code"`
-	LastFailureRunID             pgtype.UUID        `json:"last_failure_run_id"`
+	FailureCode                  pgtype.Text        `json:"failure_code"`
+	FailureRunID                 pgtype.UUID        `json:"failure_run_id"`
 	NextInputSequence            int64              `json:"next_input_sequence"`
 	CommittedInputSequence       int64              `json:"committed_input_sequence"`
 	NextOutputSequence           int64              `json:"next_output_sequence"`

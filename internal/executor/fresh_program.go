@@ -206,6 +206,95 @@ func (program *freshProgram) awaitTaskCompletion(
 	}
 }
 
+func (program *freshProgram) awaitActorCompletion(
+	ctx context.Context,
+	events freshProgramEventSink,
+	wait func(context.Context, *runv0.RunWaitRequested) error,
+) (*runv0.ActorOutcome, *runv0.ProgramQuiesced, error) {
+	if program == nil || program.session == nil {
+		return nil, nil, errors.New("fresh Program session is required")
+	}
+	defer program.session.Close(context.Background())
+	if events == nil {
+		return nil, nil, errors.New("fresh Program event sink is required")
+	}
+	if program.entrypoint == nil || program.entrypoint.GetActor() == nil {
+		return nil, nil, errors.New("fresh Program entrypoint is not an Actor")
+	}
+	var outcome *runv0.ActorOutcome
+	for {
+		var event runv0.RunEvent
+		if err := readProtoFrameBoundedContext(ctx, program.session, maxFreshOutcomeFrameBytes, &event); err != nil {
+			return nil, nil, fmt.Errorf("read Actor completion event: %w", err)
+		}
+		program.observedEventSeq++
+		switch value := event.Event.(type) {
+		case *runv0.RunEvent_StdoutChunk:
+			if err := events.AppendRunLog(ctx, program.lease, api.WorkerLogStreamStdout, program.observedEventSeq, value.StdoutChunk); err != nil {
+				return nil, nil, fmt.Errorf("append Actor stdout: %w", err)
+			}
+		case *runv0.RunEvent_StderrChunk:
+			if err := events.AppendRunLog(ctx, program.lease, api.WorkerLogStreamStderr, program.observedEventSeq, value.StderrChunk); err != nil {
+				return nil, nil, fmt.Errorf("append Actor stderr: %w", err)
+			}
+		case *runv0.RunEvent_ActorOutcome:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted more than one Actor outcome")
+			}
+			if err := validateFreshActorOutcome(value.ActorOutcome); err != nil {
+				return nil, nil, err
+			}
+			outcome = value.ActorOutcome
+		case *runv0.RunEvent_RunWaitRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a Wait after Actor outcome")
+			}
+			if wait == nil {
+				return nil, nil, errors.New("fresh Program Wait support is required")
+			}
+			if err := wait(ctx, value.RunWaitRequested); err != nil {
+				return nil, nil, err
+			}
+		case *runv0.RunEvent_ProgramQuiesced:
+			if outcome == nil {
+				return nil, nil, errors.New("Program quiesced before emitting an Actor outcome")
+			}
+			proof := value.ProgramQuiesced
+			if proof == nil || proof.GetRunId() != program.lease.RunID || proof.GetAttemptNumber() != uint32(program.lease.AttemptNumber) || proof.GetRunLeaseId() != program.lease.ID {
+				return nil, nil, errors.New("Program quiescence proof does not match Run Lease")
+			}
+			return outcome, proof, nil
+		default:
+			return nil, nil, errors.New("Program emitted an unsupported Actor completion event")
+		}
+	}
+}
+
+func validateFreshActorOutcome(outcome *runv0.ActorOutcome) error {
+	if outcome == nil {
+		return errors.New("Actor outcome is required")
+	}
+	if outcome.TerminalInputSequence == nil || outcome.GetTerminalInputSequence() < 0 {
+		return errors.New("Actor terminal input sequence is negative")
+	}
+	switch value := outcome.GetOutcome().(type) {
+	case *runv0.ActorOutcome_Succeeded:
+		if value.Succeeded == nil {
+			return errors.New("Actor succeeded outcome is empty")
+		}
+	case *runv0.ActorOutcome_Failed:
+		if value.Failed == nil {
+			return errors.New("Actor failed outcome is empty")
+		}
+		if err := validateFreshTaskFailure(value.Failed.GetMessage(), value.Failed.DetailsJson); err != nil {
+			return fmt.Errorf("invalid Actor failure: %w", err)
+		}
+	default:
+		return errors.New("Actor outcome variant is required")
+	}
+	return nil
+}
+
 func validateFreshTaskOutcome(outcome *runv0.TaskOutcome) error {
 	if outcome == nil {
 		return errors.New("Task outcome is required")

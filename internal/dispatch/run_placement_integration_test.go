@@ -948,7 +948,7 @@ UPDATE workspace_leases
 			var terminalCursor pgtype.Int8
 			err = fixture.pool.QueryRow(fixture.ctx, `
 SELECT actors.state, actors.current_run_id, actors.run_generation, actors.state_version,
-       actors.failure_reason_code, workspaces.owner_actor_id, workspaces.ownership_generation,
+       actors.failure_code, workspaces.owner_actor_id, workspaces.ownership_generation,
        run_waits.suspension_state, runs.status, run_attempts.terminal_actor_input_sequence
   FROM actors
   JOIN workspaces ON workspaces.id = actors.workspace_id

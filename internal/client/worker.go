@@ -520,6 +520,13 @@ func (c *Client) CompleteTask(
 	)
 }
 
+func (c *Client) CompleteActor(
+	ctx context.Context,
+	request api.WorkerCompleteActorRequest,
+) error {
+	return c.postWorkerJSON(ctx, "/api/worker/leases/actors/complete", request, nil)
+}
+
 func (c *Client) ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error) {
 	var response api.WorkerReleaseResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/release", api.WorkerReleaseRequest{Lease: lease, Result: result}, &response); err != nil {

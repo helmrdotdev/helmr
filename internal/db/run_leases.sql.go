@@ -1541,7 +1541,7 @@ func (q *Queries) LockRunFinalizationParentRun(ctx context.Context, arg LockRunF
 }
 
 const lockRunLeaseClaimActor = `-- name: LockRunLeaseClaimActor :one
-SELECT id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, no_progress_input_sequence, no_progress_count, last_no_progress_run_id, failure_reason_code, last_failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
+SELECT id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
   FROM actors
  WHERE id = $1
    AND workspace_id = $2
@@ -1571,11 +1571,8 @@ func (q *Queries) LockRunLeaseClaimActor(ctx context.Context, arg LockRunLeaseCl
 		&i.RunGeneration,
 		&i.StateVersion,
 		&i.ManualRunCancelled,
-		&i.NoProgressInputSequence,
-		&i.NoProgressCount,
-		&i.LastNoProgressRunID,
-		&i.FailureReasonCode,
-		&i.LastFailureRunID,
+		&i.FailureCode,
+		&i.FailureRunID,
 		&i.NextInputSequence,
 		&i.CommittedInputSequence,
 		&i.NextOutputSequence,
@@ -3542,14 +3539,11 @@ WITH candidates AS MATERIALIZED (
            run_generation = actors.run_generation + 1,
            state_version = actors.state_version + 1,
            manual_run_cancelled = false,
-           no_progress_input_sequence = NULL,
-           no_progress_count = 0,
-           last_no_progress_run_id = NULL,
-           failure_reason_code = CASE
+           failure_code = CASE
                WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
                ELSE 'platform-failure'
            END,
-           last_failure_run_id = failed_runs.id,
+           failure_run_id = failed_runs.id,
            failed_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
       FROM locked_checkpoints, failed_runs, failed_waits
