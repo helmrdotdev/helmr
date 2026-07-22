@@ -690,8 +690,12 @@ func (c *Connector) validateRestoreIdentity(
 	if identity.RuntimeBackend != "firecracker" {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime backend %q is not supported", identity.RuntimeBackend)
 	}
-	if identity.RuntimeArch != runtime.GOARCH {
-		return manifest, Config{}, fmt.Errorf("checkpoint runtime arch %q does not match worker arch %q", identity.RuntimeArch, runtime.GOARCH)
+	workerArchitecture, err := compute.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		return manifest, Config{}, err
+	}
+	if identity.RuntimeArch != workerArchitecture {
+		return manifest, Config{}, fmt.Errorf("checkpoint runtime arch %q does not match worker arch %q", identity.RuntimeArch, workerArchitecture)
 	}
 	if identity.RuntimeABI != runtimeABI {
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime abi %q does not match worker abi %q", identity.RuntimeABI, runtimeABI)
@@ -721,7 +725,7 @@ func (c *Connector) validateRestoreIdentity(
 		return manifest, Config{}, fmt.Errorf("checkpoint runtime config digest %s does not match checkpoint manifest digest %s", identity.RuntimeConfigDigest, sha256sum.DigestBytes(manifestBytes))
 	}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
-		Arch:            runtime.GOARCH,
+		Arch:            workerArchitecture,
 		ABI:             runtimeABI,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
@@ -2013,8 +2017,13 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	kernelDigest := s.artifacts.Kernel.Digest
 	initramfsDigest := s.artifacts.Initramfs.Digest
 	rootfsDigest := s.artifacts.Rootfs.Digest
+	workerArchitecture, err := compute.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		_ = s.Resume(context.Background())
+		return vm.SnapshotArtifact{}, err
+	}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
-		Arch:            runtime.GOARCH,
+		Arch:            workerArchitecture,
 		ABI:             runtimeABI,
 		KernelDigest:    kernelDigest,
 		InitramfsDigest: initramfsDigest,
@@ -2065,7 +2074,7 @@ func (s *guestSession) CreateSnapshot(ctx context.Context, request vm.SnapshotRe
 	cleanupRawSnapshot = false
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
-		RuntimeArch:         runtime.GOARCH,
+		RuntimeArch:         workerArchitecture,
 		RuntimeABI:          runtimeABI,
 		RuntimeID:           runtimeID,
 		KernelDigest:        kernelDigest,
@@ -2415,6 +2424,10 @@ func validateRuntimeSubstrateTopology(substrate *vm.RuntimeSubstrate) error {
 }
 
 func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointID string, runtimeID string, kernelDigest string, initramfsDigest string, rootfsDigest string, topology vm.RuntimeTopology, readOnlyDrives ...[]vm.ReadOnlyDrive) (string, []byte, error) {
+	workerArchitecture, err := compute.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		return "", nil, err
+	}
 	network := snapshotNetworkConfig(cfg, machine)
 	if network.GuestIPCIDR == "" {
 		return "", nil, errors.New("firecracker CNI guest IP is required for checkpoint restore")
@@ -2444,7 +2457,7 @@ func snapshotRuntimeConfig(cfg Config, machine *firecracker.Machine, checkpointI
 			Runtime: snapshotRuntimeManifest{
 				Backend:         "firecracker",
 				ID:              runtimeID,
-				Arch:            runtime.GOARCH,
+				Arch:            workerArchitecture,
 				ABI:             runtimeABI,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
@@ -2510,8 +2523,12 @@ func validateRuntimeManifest(
 	if runtimeManifest.Backend != "firecracker" {
 		return fmt.Errorf("checkpoint manifest runtime backend %q is not supported", runtimeManifest.Backend)
 	}
-	if runtimeManifest.Arch != runtime.GOARCH {
-		return fmt.Errorf("checkpoint manifest runtime arch %q does not match worker arch %q", runtimeManifest.Arch, runtime.GOARCH)
+	workerArchitecture, err := compute.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	if runtimeManifest.Arch != workerArchitecture {
+		return fmt.Errorf("checkpoint manifest runtime arch %q does not match worker arch %q", runtimeManifest.Arch, workerArchitecture)
 	}
 	if runtimeManifest.ABI != runtimeABI {
 		return fmt.Errorf("checkpoint manifest runtime abi %q does not match worker abi %q", runtimeManifest.ABI, runtimeABI)

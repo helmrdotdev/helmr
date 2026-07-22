@@ -16,19 +16,30 @@ import (
 )
 
 func VerifyArtifact(body io.Reader, artifact WorkspaceArtifact, reportedTree TreeIdentity) error {
+	tree, err := InspectArtifact(body, artifact)
+	if err != nil {
+		return err
+	}
+	if tree != reportedTree {
+		return errors.New("Workspace Artifact tree does not match its receipt")
+	}
+	return nil
+}
+
+func InspectArtifact(body io.Reader, artifact WorkspaceArtifact) (TreeIdentity, error) {
 	if artifact.Digest == "" || artifact.MediaType != ArtifactMediaType || artifact.Encoding != ArtifactEncoding ||
 		artifact.SizeBytes <= 0 || artifact.SizeBytes > MaxArtifactArchiveBytes ||
 		artifact.EntryCount < 0 || artifact.EntryCount > MaxArtifactEntries {
-		return errors.New("Workspace Artifact descriptor is invalid")
+		return TreeIdentity{}, errors.New("Workspace Artifact descriptor is invalid")
 	}
 	verificationRoot, err := os.MkdirTemp("", "helmr-workspace-artifact-*")
 	if err != nil {
-		return fmt.Errorf("create Workspace Artifact verification root: %w", err)
+		return TreeIdentity{}, fmt.Errorf("create Workspace Artifact verification root: %w", err)
 	}
 	defer os.RemoveAll(verificationRoot)
 	archiveFile, err := os.CreateTemp(verificationRoot, "artifact-*.tar")
 	if err != nil {
-		return fmt.Errorf("create Workspace Artifact verification file: %w", err)
+		return TreeIdentity{}, fmt.Errorf("create Workspace Artifact verification file: %w", err)
 	}
 	archivePath := archiveFile.Name()
 	hash := sha256.New()
@@ -37,37 +48,34 @@ func VerifyArtifact(body io.Reader, artifact WorkspaceArtifact, reportedTree Tre
 	extraCount, extraErr := body.Read(extra[:])
 	closeErr := archiveFile.Close()
 	if copyErr != nil || written != artifact.SizeBytes {
-		return errors.New("Workspace Artifact ended before its declared size")
+		return TreeIdentity{}, errors.New("Workspace Artifact ended before its declared size")
 	}
 	if extraErr != io.EOF || extraCount != 0 {
-		return errors.New("Workspace Artifact exceeds its declared size")
+		return TreeIdentity{}, errors.New("Workspace Artifact exceeds its declared size")
 	}
 	if closeErr != nil {
-		return fmt.Errorf("close Workspace Artifact verification file: %w", closeErr)
+		return TreeIdentity{}, fmt.Errorf("close Workspace Artifact verification file: %w", closeErr)
 	}
 	if sha256sum.DigestHash(hash) != artifact.Digest {
-		return errors.New("Workspace Artifact bytes do not match its digest")
+		return TreeIdentity{}, errors.New("Workspace Artifact bytes do not match its digest")
 	}
 
 	file, err := os.Open(archivePath)
 	if err != nil {
-		return fmt.Errorf("open Workspace Artifact verification file: %w", err)
+		return TreeIdentity{}, fmt.Errorf("open Workspace Artifact verification file: %w", err)
 	}
 	tree, inspectErr := inspectArtifactTree(file, artifact.SizeBytes)
 	fileCloseErr := file.Close()
 	if inspectErr != nil {
-		return inspectErr
+		return TreeIdentity{}, inspectErr
 	}
 	if fileCloseErr != nil {
-		return fmt.Errorf("close Workspace Artifact: %w", fileCloseErr)
+		return TreeIdentity{}, fmt.Errorf("close Workspace Artifact: %w", fileCloseErr)
 	}
 	if tree.EntryCount != artifact.EntryCount {
-		return errors.New("Workspace Artifact entry count does not match its descriptor")
+		return TreeIdentity{}, errors.New("Workspace Artifact entry count does not match its descriptor")
 	}
-	if tree != reportedTree {
-		return errors.New("Workspace Artifact tree does not match its receipt")
-	}
-	return nil
+	return tree, nil
 }
 
 func InspectArtifactTree(path string, sizeBytes int64) (TreeIdentity, error) {

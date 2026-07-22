@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"runtime"
 	"sync"
 	"testing"
 
@@ -100,7 +99,7 @@ func TestValidatePreparedRuntimeRestoreExactTupleAndMembership(t *testing.T) {
 	checkpoint := api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
 			ID: "checkpoint-1", RunID: "run-1", AttemptNumber: 2, RunWaitID: "wait-1", CorrelationID: "correlation-1",
-			Runtime: api.WorkerCheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: runtime.GOARCH,
+			Runtime: api.WorkerCheckpointRuntime{Backend: "firecracker", ID: "runtime-shape", Arch: testCheckpointRuntimeArchitecture(),
 				ABI: "abi-1", KernelDigest: "kernel", InitramfsDigest: "initramfs", RootfsDigest: "rootfs", ConfigDigest: "config"},
 		},
 		RuntimeState: api.WorkerCheckpointRuntimeState{
@@ -273,9 +272,6 @@ func (*restoredProgramControl) PollRunWait(context.Context, api.WorkerRunWaitPol
 }
 func (*restoredProgramControl) AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error) {
 	return api.WorkerRunWaitResumeAckResponse{}, errors.New("unexpected old resume")
-}
-func (*restoredProgramControl) CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error) {
-	return api.WorkerRunWaitWorkspaceCaptureResponse{}, errors.New("unexpected capture")
 }
 func (*restoredProgramControl) MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error) {
 	return api.WorkerCheckpointResponse{}, errors.New("unexpected checkpoint")

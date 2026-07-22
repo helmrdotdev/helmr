@@ -52,7 +52,7 @@ func TestSnapshotRuntimeConfigIncludesCNIIdentity(t *testing.T) {
 		},
 	}
 
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestSnapshotRuntimeConfigBindsManagedProgramTopology(t *testing.T) {
 		}},
 	}}
 	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{
-		Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel",
+		Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel",
 		InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs",
 		CNIProfile: cfg.CNIProfile,
 	})
@@ -229,7 +229,7 @@ func TestSnapshotRuntimeConfigIncludesSubstrateIdentity(t *testing.T) {
 		BuilderABI: "builder-v1",
 		LayoutABI:  "layout-v1",
 	}}
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -342,7 +342,7 @@ func (e testWrappedErrors) WrappedErrors() []error {
 
 func TestSnapshotRuntimeConfigRequiresCNIIP(t *testing.T) {
 	cfg := (Config{}).WithDefaults()
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -434,7 +434,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 			Runtime: snapshotRuntimeManifest{
 				Backend:         "firecracker",
 				ID:              runtimeID,
-				Arch:            runtime.GOARCH,
+				Arch:            testCheckpointArchitecture(t),
 				ABI:             runtimeABI,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
@@ -540,7 +540,7 @@ func TestValidateRestoreIdentityRejectsManifestMismatch(t *testing.T) {
 			identity := vm.CheckpointIdentity{
 				RuntimeBackend:      "firecracker",
 				RuntimeID:           runtimeID,
-				RuntimeArch:         runtime.GOARCH,
+				RuntimeArch:         testCheckpointArchitecture(t),
 				RuntimeABI:          runtimeABI,
 				KernelDigest:        kernelDigest,
 				InitramfsDigest:     initramfsDigest,
@@ -2075,12 +2075,21 @@ func testConnector(t *testing.T, cfg Config) *Connector {
 	return &Connector{cfg: cfg, artifacts: artifacts}
 }
 
+func testCheckpointArchitecture(t *testing.T) string {
+	t.Helper()
+	architecture, err := compute.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return architecture
+}
+
 func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID string) ([]byte, vm.CheckpointIdentity) {
 	t.Helper()
 	kernelDigest := testDigest([]byte("kernel"))
 	initramfsDigest := testDigest([]byte("initramfs"))
 	rootfsDigest := testDigest([]byte("rootfs"))
-	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: runtime.GOARCH, ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
+	runtimeID, err := compute.RuntimeIdentityDigest(compute.RuntimeSelector{Arch: testCheckpointArchitecture(t), ABI: runtimeABI, KernelDigest: kernelDigest, InitramfsDigest: initramfsDigest, RootfsDigest: rootfsDigest, CNIProfile: cfg.CNIProfile})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2090,7 +2099,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 			Runtime: snapshotRuntimeManifest{
 				Backend:         "firecracker",
 				ID:              runtimeID,
-				Arch:            runtime.GOARCH,
+				Arch:            testCheckpointArchitecture(t),
 				ABI:             runtimeABI,
 				VCPUCount:       cfg.VCPUCount,
 				MemoryMiB:       cfg.MemoryMiB,
@@ -2128,7 +2137,7 @@ func testRestoreManifestAndIdentity(t *testing.T, cfg Config, checkpointID strin
 	return manifestBytes, vm.CheckpointIdentity{
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           runtimeID,
-		RuntimeArch:         runtime.GOARCH,
+		RuntimeArch:         testCheckpointArchitecture(t),
 		RuntimeABI:          runtimeABI,
 		KernelDigest:        kernelDigest,
 		InitramfsDigest:     initramfsDigest,

@@ -735,6 +735,10 @@ type WorkerRunLeaseProvider interface {
 	CurrentWorkerRunLease() WorkerRunLease
 }
 
+type WorkerRunLeaseReceiptProvider interface {
+	CurrentWorkerRunLeaseReceipt() WorkerRunLeaseReceipt
+}
+
 type WorkerDeploymentBuildLease struct {
 	ID                         string    `json:"id"`
 	OrgID                      string    `json:"org_id"`
@@ -1112,14 +1116,14 @@ const (
 )
 
 type WorkerCreateRunWaitRequest struct {
-	Lease              WorkerRunLease    `json:"lease"`
-	CorrelationID      string            `json:"correlation_id"`
-	Kind               WorkerRunWaitKind `json:"kind"`
-	Params             json.RawMessage   `json:"params,omitempty"`
-	Metadata           json.RawMessage   `json:"metadata,omitempty"`
-	Tags               []string          `json:"tags,omitempty"`
-	TimeoutSeconds     *int32            `json:"timeout_seconds,omitempty"`
-	IdleTimeoutSeconds *int32            `json:"idle_timeout_seconds,omitempty"`
+	Lease              WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID      string                `json:"correlation_id"`
+	Kind               WorkerRunWaitKind     `json:"kind"`
+	Params             json.RawMessage       `json:"params,omitempty"`
+	Metadata           json.RawMessage       `json:"metadata,omitempty"`
+	Tags               []string              `json:"tags,omitempty"`
+	TimeoutSeconds     *int32                `json:"timeout_seconds,omitempty"`
+	IdleTimeoutSeconds *int32                `json:"idle_timeout_seconds,omitempty"`
 }
 
 type WorkerCreateRunWaitResponse struct {
@@ -1135,8 +1139,8 @@ type WorkerCreateRunWaitResponse struct {
 }
 
 type WorkerRunWaitPollRequest struct {
-	Lease     WorkerRunLease `json:"lease"`
-	RunWaitID string         `json:"run_wait_id"`
+	Lease     WorkerRunLeaseReceipt `json:"lease"`
+	RunWaitID string                `json:"run_wait_id"`
 }
 
 type WorkerRunWaitPollStatus string
@@ -1157,12 +1161,13 @@ type WorkerRunWaitPollResponse struct {
 	CaptureWorkspace bool                    `json:"capture_workspace,omitempty"`
 	ResumeKind       string                  `json:"resume_kind,omitempty"`
 	ResumePayload    json.RawMessage         `json:"resume_payload,omitempty"`
+	RequireAck       bool                    `json:"require_ack,omitempty"`
 }
 
 type WorkerRunWaitResumeAckRequest struct {
-	Lease                WorkerRunLease `json:"lease"`
-	RunWaitID            string         `json:"run_wait_id"`
-	ResumeRequestVersion int64          `json:"resume_request_version"`
+	Lease                WorkerRunLeaseReceipt `json:"lease"`
+	RunWaitID            string                `json:"run_wait_id"`
+	ResumeRequestVersion int64                 `json:"resume_request_version"`
 }
 
 type WorkerRunWaitResumeAckResponse struct {
@@ -1172,9 +1177,10 @@ type WorkerRunWaitResumeAckResponse struct {
 }
 
 type WorkerCheckpointResponse struct {
-	RunID        string `json:"run_id"`
-	RunWaitID    string `json:"run_wait_id"`
-	CheckpointID string `json:"checkpoint_id"`
+	RunID              string `json:"run_id"`
+	RunWaitID          string `json:"run_wait_id"`
+	CheckpointID       string `json:"checkpoint_id"`
+	WorkspaceVersionID string `json:"workspace_version_id,omitempty"`
 }
 
 type WorkerCheckpointManifest struct {
@@ -1269,35 +1275,23 @@ type CASObject struct {
 }
 
 type WorkerCheckpointReadyRequest struct {
-	Lease              WorkerRunLease           `json:"lease"`
-	RequestVersion     int64                    `json:"request_version"`
-	RunWaitID          string                   `json:"run_wait_id"`
-	CheckpointID       string                   `json:"checkpoint_id"`
-	Workspace          WorkerWorkspace          `json:"workspace"`
-	WorkspaceVersionID string                   `json:"workspace_version_id"`
-	Manifest           WorkerCheckpointManifest `json:"manifest"`
+	Lease            WorkerRunLeaseReceipt            `json:"lease"`
+	RequestVersion   int64                            `json:"request_version"`
+	RunWaitID        string                           `json:"run_wait_id"`
+	CheckpointID     string                           `json:"checkpoint_id"`
+	WorkspaceCapture WorkerCheckpointWorkspaceCapture `json:"workspace_capture"`
+	Manifest         WorkerCheckpointManifest         `json:"manifest"`
+}
+
+type WorkerCheckpointWorkspaceCapture struct {
+	Tree     WorkerWorkspaceTreeIdentity `json:"tree"`
+	Artifact WorkerWorkspaceArtifact     `json:"artifact"`
 }
 
 type WorkerCheckpointFailedRequest struct {
-	Lease          WorkerRunLease `json:"lease"`
-	RequestVersion int64          `json:"request_version"`
-	RunWaitID      string         `json:"run_wait_id"`
-	CheckpointID   string         `json:"checkpoint_id"`
-	Error          string         `json:"error"`
-}
-
-type WorkerRunWaitWorkspaceCaptureRequest struct {
-	Lease            WorkerRunLease          `json:"lease"`
-	RunWaitID        string                  `json:"run_wait_id"`
-	CheckpointID     string                  `json:"checkpoint_id"`
-	RequestVersion   int64                   `json:"request_version"`
-	Workspace        WorkerWorkspace         `json:"workspace"`
-	WorkspaceCapture WorkerWorkspaceArtifact `json:"workspace_capture"`
-}
-
-type WorkerRunWaitWorkspaceCaptureResponse struct {
-	RunID              string `json:"run_id"`
-	RunWaitID          string `json:"run_wait_id"`
-	CheckpointID       string `json:"checkpoint_id"`
-	WorkspaceVersionID string `json:"workspace_version_id"`
+	Lease          WorkerRunLeaseReceipt `json:"lease"`
+	RequestVersion int64                 `json:"request_version"`
+	RunWaitID      string                `json:"run_wait_id"`
+	CheckpointID   string                `json:"checkpoint_id"`
+	Error          string                `json:"error"`
 }

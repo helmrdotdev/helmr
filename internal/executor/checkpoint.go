@@ -18,6 +18,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
 	"github.com/helmrdotdev/helmr/internal/checkpoint"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -92,8 +93,12 @@ func validateRestoreIdentity(checkpoint api.WorkerCheckpointManifest) error {
 	if runtimeInfo.Backend != "firecracker" {
 		return fmt.Errorf("restore checkpoint recovery_point.runtime.backend %q is not supported", runtimeInfo.Backend)
 	}
-	if runtimeInfo.Arch != runtime.GOARCH {
-		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, runtime.GOARCH)
+	workerArchitecture, err := deployment.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		return err
+	}
+	if runtimeInfo.Arch != string(workerArchitecture) {
+		return fmt.Errorf("restore checkpoint recovery_point.runtime.arch %q does not match worker arch %q", runtimeInfo.Arch, workerArchitecture)
 	}
 	if strings.TrimSpace(runtimeInfo.ABI) == "" {
 		return errors.New("restore checkpoint recovery_point.runtime.abi is required")
@@ -172,7 +177,19 @@ type runtimeCheckpointer struct {
 	runEvent          func(context.Context, *runv0.RunEvent) error
 }
 
-func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (CheckpointResult, error) {
+func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request CheckpointRequest) (result CheckpointResult, err error) {
+	if c.session == nil {
+		return CheckpointResult{}, errors.New("checkpoint source session is required")
+	}
+	sourceReleaseAttempted := false
+	defer func() {
+		if err == nil || sourceReleaseAttempted {
+			return
+		}
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		_ = c.releaseCheckpointSource(cleanupCtx)
+	}()
 	if c.cas == nil {
 		return CheckpointResult{}, errors.New("checkpoint CAS is required")
 	}
@@ -194,14 +211,12 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	recordPhase("suspend_guest", started)
 	started = time.Now()
 	if err := c.stream.Close(); err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, fmt.Errorf("close checkpoint control stream: %w", err)
 	}
 	recordPhase("close_control_stream", started)
 	started = time.Now()
 	artifact, err := c.session.CreateSnapshot(ctx, vm.SnapshotRequest{ID: request.CheckpointID})
 	if err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, err
 	}
 	recordPhase("create_runtime_snapshot", started)
@@ -212,11 +227,11 @@ func (c runtimeCheckpointer) CreateCheckpoint(ctx context.Context, request Check
 	started = time.Now()
 	manifest, err := c.storeSnapshotArtifact(ctx, request, artifact)
 	if err != nil {
-		_ = c.session.Resume(ctx)
 		return CheckpointResult{}, err
 	}
 	recordPhase("store_checkpoint_artifacts", started)
 	started = time.Now()
+	sourceReleaseAttempted = true
 	if err := c.releaseCheckpointSource(ctx); err != nil {
 		return CheckpointResult{}, fmt.Errorf("release checkpoint source: %w", err)
 	}
@@ -232,7 +247,7 @@ func (c runtimeCheckpointer) releaseCheckpointSource(ctx context.Context) error 
 	return c.session.Close(ctx)
 }
 
-func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*workspace.WorkspaceArtifact, error) {
+func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, request CheckpointRequest) (*CheckpointWorkspaceCapture, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -251,7 +266,7 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	}
 	reader := bufio.NewReader(c.stream)
 	pauseCtx, cancelPause := context.WithTimeout(ctx, checkpointSuspendTimeout)
-	ready, workspaceCapture, err := c.readPauseReadyContext(pauseCtx, reader, request)
+	ready, workspaceArtifact, err := c.readPauseReadyContext(pauseCtx, reader, request)
 	cancelPause()
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
@@ -259,10 +274,25 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err := validateCheckpointPauseReady(ready, request); err != nil {
 		return nil, err
 	}
-	if request.CaptureWorkspace && workspaceCapture == nil {
+	if request.CaptureWorkspace && workspaceArtifact == nil {
 		return nil, errors.New("checkpoint pause did not return required workspace capture")
 	}
-	return workspaceCapture, nil
+	if workspaceArtifact == nil {
+		return nil, nil
+	}
+	body, err := c.cas.Get(ctx, workspaceArtifact.Digest)
+	if err != nil {
+		return nil, fmt.Errorf("reopen checkpoint Workspace Artifact: %w", err)
+	}
+	tree, inspectErr := workspace.InspectArtifact(body, *workspaceArtifact)
+	closeErr := body.Close()
+	if inspectErr != nil {
+		return nil, fmt.Errorf("inspect checkpoint Workspace Artifact: %w", inspectErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close checkpoint Workspace Artifact: %w", closeErr)
+	}
+	return &CheckpointWorkspaceCapture{Tree: tree, Artifact: *workspaceArtifact}, nil
 }
 
 func validateCheckpointPauseReady(ready *runv0.CheckpointPauseReady, request CheckpointRequest) error {

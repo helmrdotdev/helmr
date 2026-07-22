@@ -50,6 +50,7 @@ type TokenWaitRegistration struct {
 	OwnershipGeneration     int64
 	WriterGeneration        int64
 	MountFencingGeneration  int64
+	RequestFingerprint      string
 	TimeoutAt               pgtype.Timestamptz
 	IdleTimeoutMS           pgtype.Int8
 	CheckpointDueAt         pgtype.Timestamptz
@@ -98,7 +99,8 @@ func (r *TokenWaitReconciler) RegisterWait(
 	if request.ExpectedRunStateVersion < 0 || request.AttemptNumber <= 0 || request.LeaseSequence <= 0 ||
 		request.WorkerEpoch <= 0 || request.NetworkSlotGeneration <= 0 || request.OwnershipGeneration <= 0 ||
 		request.WriterGeneration <= 0 || request.MountFencingGeneration <= 0 || request.WorkerGroupID == "" ||
-		request.WorkerProtocolVersion == "" || request.RuntimeIdentityID == "" || request.RegionID == "" {
+		request.WorkerProtocolVersion == "" || request.RuntimeIdentityID == "" || request.RegionID == "" ||
+		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
 		return TokenWaitRegistrationResult{}, errors.New("Token Wait registration fences are invalid")
 	}
 	metadata := request.Metadata
@@ -290,15 +292,15 @@ RETURNING state_version`, request.RunID, request.ExpectedRunStateVersion, reques
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, timeout_at,
     idle_timeout_ms, token_id, token_registration_run_state_version,
-    expected_run_state_version, attempt_number, current_run_lease_id,
+    registration_request_fingerprint, expected_run_state_version, attempt_number, current_run_lease_id,
     checkpoint_due_at, resume_attach_id, metadata, tags
 ) VALUES (
-    $1, $2, $3, $4, 'token', $5, $6, $7, $8, $9, $10, $11, $12,
-    $13, $14::jsonb, $15
+    $1, $2, $3, $4, 'token', $5, $6, $7, $8, $9, $10, $11, $12, $13,
+    $14, $15::jsonb, $16
 )`,
 		request.WaitID, request.EnvironmentID, request.RunID, locator.workspaceID,
 		request.TimeoutAt, request.IdleTimeoutMS, request.TokenID,
-		request.ExpectedRunStateVersion, waitingVersion, request.AttemptNumber,
+		request.ExpectedRunStateVersion, request.RequestFingerprint, waitingVersion, request.AttemptNumber,
 		request.CurrentRunLeaseID, request.CheckpointDueAt, request.ResumeAttachID,
 		metadata, tags,
 	)
@@ -374,12 +376,12 @@ SELECT run_waits.id,
     ON runs.environment_id = run_waits.environment_id
    AND runs.id = run_waits.run_id
   JOIN run_leases
-    ON run_leases.id = $10
+    ON run_leases.id = $7
    AND run_leases.run_id = run_waits.run_id
    AND run_leases.attempt_number = run_waits.attempt_number
    AND run_leases.workspace_id = run_waits.workspace_id
   JOIN workspace_leases
-    ON workspace_leases.id = $20
+    ON workspace_leases.id = $17
    AND workspace_leases.owner_run_lease_id = run_leases.id
    AND workspace_leases.workspace_id = run_waits.workspace_id
  WHERE run_waits.id = $1
@@ -388,37 +390,33 @@ SELECT run_waits.id,
    AND run_waits.token_id = $4
    AND run_waits.kind = 'token'
    AND run_waits.resume_attach_id = $5
-   AND run_waits.attempt_number = $6
-   AND run_waits.timeout_at IS NOT DISTINCT FROM $7::timestamptz
-   AND run_waits.idle_timeout_ms IS NOT DISTINCT FROM $8::bigint
-   AND run_waits.checkpoint_due_at IS NOT DISTINCT FROM $9::timestamptz
-   AND (run_waits.current_run_lease_id = $10 OR run_waits.prior_run_lease_id = $10)
-   AND run_waits.metadata = $11::jsonb
-   AND run_waits.tags = $12::text[]
-   AND run_leases.lease_sequence = $13
-   AND run_leases.worker_group_id = $14
-   AND run_leases.worker_instance_id = $15
-   AND run_leases.worker_epoch = $16
-   AND run_leases.worker_protocol_version = $17
-   AND run_leases.runtime_instance_id = $18
-   AND run_leases.runtime_identity_id = $19
-   AND workspace_leases.workspace_mount_id = $21
-   AND workspace_leases.ownership_generation = $22
-   AND workspace_leases.writer_generation = $23
-   AND workspace_leases.mount_fencing_generation = $24
-   AND run_leases.network_slot_id = $25
-   AND run_leases.network_slot_generation = $26
-   AND run_leases.region_id = $27
-   AND run_waits.token_registration_run_state_version = $28`,
+	AND run_waits.attempt_number = $6
+	AND run_waits.registration_request_fingerprint = $8
+	AND (run_waits.current_run_lease_id = $7 OR run_waits.prior_run_lease_id = $7)
+	AND run_waits.metadata = $9::jsonb
+	AND run_waits.tags = $10::text[]
+	AND run_leases.lease_sequence = $11
+	AND run_leases.worker_group_id = $12
+	AND run_leases.worker_instance_id = $13
+	AND run_leases.worker_epoch = $14
+	AND run_leases.worker_protocol_version = $15
+	AND run_leases.runtime_instance_id = $16
+	AND run_leases.runtime_identity_id = $18
+	AND workspace_leases.workspace_mount_id = $19
+	AND workspace_leases.ownership_generation = $20
+	AND workspace_leases.writer_generation = $21
+	AND workspace_leases.mount_fencing_generation = $22
+	AND run_leases.network_slot_id = $23
+	AND run_leases.network_slot_generation = $24
+	AND run_leases.region_id = $25`,
 		request.WaitID, request.EnvironmentID, request.RunID, request.TokenID,
-		request.ResumeAttachID, request.AttemptNumber, request.TimeoutAt, request.IdleTimeoutMS,
-		request.CheckpointDueAt, request.CurrentRunLeaseID, metadata, tags,
+		request.ResumeAttachID, request.AttemptNumber, request.CurrentRunLeaseID, request.RequestFingerprint,
+		metadata, tags,
 		request.LeaseSequence, request.WorkerGroupID, request.WorkerInstanceID,
 		request.WorkerEpoch, request.WorkerProtocolVersion, request.RuntimeInstanceID,
-		request.RuntimeIdentityID, request.WorkspaceLeaseID, request.WorkspaceMountID,
+		request.WorkspaceLeaseID, request.RuntimeIdentityID, request.WorkspaceMountID,
 		request.OwnershipGeneration, request.WriterGeneration, request.MountFencingGeneration,
 		request.NetworkSlotID, request.NetworkSlotGeneration, request.RegionID,
-		request.ExpectedRunStateVersion,
 	).Scan(
 		&result.WaitID, &result.RunStateVersion, &result.ConditionState,
 		&result.SuspensionState, &rawResult, &reason,

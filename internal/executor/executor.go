@@ -74,6 +74,7 @@ type RunWaitAppender interface {
 type WaitRequest struct {
 	Leases             api.WorkerRunLeaseProvider
 	Lease              api.WorkerRunLease
+	LeaseReceipt       api.WorkerRunLeaseReceipt
 	CorrelationID      string
 	ResumeAttachID     string
 	Kind               api.WorkerRunWaitKind
@@ -111,7 +112,12 @@ type CheckpointRequest struct {
 
 type CheckpointResult struct {
 	Manifest         api.WorkerCheckpointManifest
-	WorkspaceCapture *workspace.WorkspaceArtifact
+	WorkspaceCapture *CheckpointWorkspaceCapture
+}
+
+type CheckpointWorkspaceCapture struct {
+	Tree     workspace.TreeIdentity
+	Artifact workspace.WorkspaceArtifact
 }
 
 func (e Executor) Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult {

@@ -56,6 +56,57 @@ func (q *Queries) CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg C
 	return active_elapsed_ms, err
 }
 
+const closeRunActiveIntervalForCheckpointFailure = `-- name: CloseRunActiveIntervalForCheckpointFailure :one
+UPDATE runs
+   SET active_elapsed_ms = LEAST(
+           max_active_duration_ms,
+           active_elapsed_ms
+             + GREATEST(
+                 floor(extract(epoch FROM ($1 - active_started_at)) * 1000)::bigint,
+                 0
+               )
+       ),
+       active_started_at = NULL,
+       updated_at = $1
+ WHERE id = $2
+   AND org_id = $3
+   AND project_id = $4
+   AND environment_id = $5
+   AND workspace_id = $6
+   AND current_attempt_number = $7
+   AND current_run_lease_id = $8
+   AND status = 'waiting'
+   AND active_started_at IS NOT NULL
+RETURNING active_elapsed_ms
+`
+
+type CloseRunActiveIntervalForCheckpointFailureParams struct {
+	FailedAt      pgtype.Timestamptz `json:"failed_at"`
+	ID            pgtype.UUID        `json:"id"`
+	OrgID         pgtype.UUID        `json:"org_id"`
+	ProjectID     pgtype.UUID        `json:"project_id"`
+	EnvironmentID pgtype.UUID        `json:"environment_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AttemptNumber int32              `json:"attempt_number"`
+	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
+}
+
+func (q *Queries) CloseRunActiveIntervalForCheckpointFailure(ctx context.Context, arg CloseRunActiveIntervalForCheckpointFailureParams) (int64, error) {
+	row := q.db.QueryRow(ctx, closeRunActiveIntervalForCheckpointFailure,
+		arg.FailedAt,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var active_elapsed_ms int64
+	err := row.Scan(&active_elapsed_ms)
+	return active_elapsed_ms, err
+}
+
 const createAdmittedRootTaskRun = `-- name: CreateAdmittedRootTaskRun :one
 WITH created_run AS (
     INSERT INTO runs (

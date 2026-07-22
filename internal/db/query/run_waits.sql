@@ -35,13 +35,29 @@ RETURNING *;
 UPDATE run_waits
    SET suspension_state = 'checkpointing',
        checkpoint_request_version = checkpoint_request_version + 1,
-       checkpoint_due_at = sqlc.arg(checkpoint_due_at),
+       suspend_checkpoint_id = sqlc.arg(suspend_checkpoint_id),
        updated_at = now()
  WHERE run_id = sqlc.arg(run_id)
    AND attempt_number = sqlc.arg(attempt_number)
    AND id = sqlc.arg(id)
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
    AND suspension_state = 'hot'
+   AND condition_state = 'pending'
+   AND checkpoint_due_at IS NOT NULL
+   AND checkpoint_due_at <= transaction_timestamp()
+RETURNING *;
+
+-- name: BeginRunLeaseCheckpoint :one
+UPDATE run_leases
+   SET state = 'checkpointing',
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND lease_sequence = sqlc.arg(lease_sequence)
+   AND state = 'running'
+   AND expires_at > transaction_timestamp()
 RETURNING *;
 
 -- name: MarkRunWaitParked :one

@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 )
 
 func TestParseRunLeaseReceipt(t *testing.T) {
@@ -130,5 +131,25 @@ func TestEqualRunLeaseReceipt(t *testing.T) {
 	changedExpiry.ExpiresAt = changedExpiry.ExpiresAt.Add(time.Nanosecond)
 	if equalRunLeaseReceipt(base, changedExpiry) {
 		t.Fatal("changed expiry was accepted")
+	}
+}
+
+func TestEqualCurrentOrPreviousRunLeaseReceipt(t *testing.T) {
+	current := validRunLeaseReceipt(uuid.Must(uuid.NewV7()))
+	previousExpiry := current.ExpiresAt.Add(-30 * time.Second)
+	previous := current
+	previous.ExpiresAt = previousExpiry
+	if !equalCurrentOrPreviousRunLeaseReceipt(current, previous, pgvalue.Timestamptz(previousExpiry)) {
+		t.Fatal("previous renewal expiry was rejected")
+	}
+	stale := previous
+	stale.ExpiresAt = stale.ExpiresAt.Add(-time.Nanosecond)
+	if equalCurrentOrPreviousRunLeaseReceipt(current, stale, pgvalue.Timestamptz(previousExpiry)) {
+		t.Fatal("older renewal expiry was accepted")
+	}
+	changedFence := previous
+	changedFence.WriterGeneration++
+	if equalCurrentOrPreviousRunLeaseReceipt(current, changedFence, pgvalue.Timestamptz(previousExpiry)) {
+		t.Fatal("changed previous-generation fence was accepted")
 	}
 }

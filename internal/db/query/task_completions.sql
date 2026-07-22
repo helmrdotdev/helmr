@@ -210,6 +210,71 @@ UPDATE runs
    AND active_started_at IS NULL
 RETURNING *;
 
+-- name: CreateCheckpointFailureRetryAttempt :one
+INSERT INTO run_attempts (
+    run_id,
+    number,
+    entrypoint_kind,
+    workspace_id,
+    base_workspace_version_id
+)
+SELECT runs.id,
+       sqlc.arg(number),
+       'task',
+       runs.workspace_id,
+       runs.base_workspace_version_id
+  FROM runs
+ WHERE runs.id = sqlc.arg(run_id)
+   AND runs.workspace_id = sqlc.arg(workspace_id)
+   AND runs.entrypoint_kind = 'task'
+   AND runs.actor_id IS NULL
+   AND runs.parent_run_id IS NULL
+   AND runs.status = 'waiting'
+   AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
+   AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+   AND runs.active_started_at IS NULL
+RETURNING *;
+
+-- name: DelayCheckpointFailureRetry :one
+UPDATE runs
+   SET status = 'retry_delayed',
+       state_version = state_version + 1,
+       current_attempt_number = sqlc.arg(next_attempt_number),
+       current_run_lease_id = NULL,
+       retry_at = sqlc.arg(retry_at),
+       updated_at = sqlc.arg(failed_at)
+ WHERE id = sqlc.arg(id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND entrypoint_kind = 'task'
+   AND actor_id IS NULL
+   AND parent_run_id IS NULL
+   AND status = 'waiting'
+   AND current_attempt_number = sqlc.arg(previous_attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND active_started_at IS NULL
+RETURNING *;
+
+-- name: FinishCheckpointFailedTaskRun :one
+UPDATE runs
+   SET status = sqlc.arg(status),
+       terminal_reason_code = sqlc.arg(reason_code),
+       error = sqlc.arg(error)::jsonb,
+       state_version = state_version + 1,
+       current_run_lease_id = NULL,
+       retry_at = NULL,
+       terminal_at = sqlc.arg(failed_at),
+       updated_at = sqlc.arg(failed_at)
+ WHERE id = sqlc.arg(id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND entrypoint_kind = 'task'
+   AND actor_id IS NULL
+   AND parent_run_id IS NULL
+   AND status = 'waiting'
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND active_started_at IS NULL
+RETURNING *;
+
 -- name: ReleaseTaskWorkspaceOwner :one
 UPDATE workspaces
    SET head_version_id = COALESCE(sqlc.narg(new_head_version_id), workspaces.head_version_id),

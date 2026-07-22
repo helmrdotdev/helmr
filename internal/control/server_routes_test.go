@@ -92,6 +92,8 @@ POST /api/worker/enrollment/challenge
 POST /api/worker/fence
 POST /api/worker/leases/actor-turns/commit
 POST /api/worker/leases/actors/complete
+POST /api/worker/leases/checkpoints/failed
+POST /api/worker/leases/checkpoints/ready
 POST /api/worker/leases/claim
 POST /api/worker/leases/discover
 POST /api/worker/leases/entrypoint
@@ -99,6 +101,9 @@ POST /api/worker/leases/finalization/begin
 POST /api/worker/leases/resume-release
 POST /api/worker/leases/run-logs
 POST /api/worker/leases/run-renew
+POST /api/worker/leases/run-waits
+POST /api/worker/leases/run-waits/poll
+POST /api/worker/leases/run-waits/resume-ack
 POST /api/worker/leases/start
 POST /api/worker/leases/tasks/complete
 POST /api/worker/observe

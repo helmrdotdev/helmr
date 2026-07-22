@@ -392,3 +392,26 @@ UPDATE runs
    AND transaction_timestamp() < active_started_at
          + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
 RETURNING active_elapsed_ms;
+
+-- name: CloseRunActiveIntervalForCheckpointFailure :one
+UPDATE runs
+   SET active_elapsed_ms = LEAST(
+           max_active_duration_ms,
+           active_elapsed_ms
+             + GREATEST(
+                 floor(extract(epoch FROM (sqlc.arg(failed_at) - active_started_at)) * 1000)::bigint,
+                 0
+               )
+       ),
+       active_started_at = NULL,
+       updated_at = sqlc.arg(failed_at)
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND status = 'waiting'
+   AND active_started_at IS NOT NULL
+RETURNING active_elapsed_ms;

@@ -3149,13 +3149,15 @@ CREATE TABLE run_checkpoints (
     source_workspace_lease_id UUID NOT NULL,
     workspace_id UUID NOT NULL,
     base_workspace_version_id UUID NOT NULL,
-    private_workspace_version_id UUID NOT NULL,
+    private_workspace_version_id UUID,
     actor_speculative_input_sequence BIGINT CHECK (
         actor_speculative_input_sequence IS NULL
         OR actor_speculative_input_sequence >= 0
     ),
     state run_checkpoint_state NOT NULL DEFAULT 'creating',
     restore_manifest JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ready_request_fingerprint TEXT,
+    failed_request_fingerprint TEXT,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ready_at TIMESTAMPTZ,
@@ -3186,12 +3188,32 @@ CREATE TABLE run_checkpoints (
         AND octet_length(restore_manifest::text) <= 65536
     ),
     CHECK (
+        ready_request_fingerprint IS NULL
+        OR (
+            btrim(ready_request_fingerprint) <> ''
+            AND octet_length(ready_request_fingerprint) <= 128
+        )
+    ),
+    CHECK (
+        failed_request_fingerprint IS NULL
+        OR (
+            btrim(failed_request_fingerprint) <> ''
+            AND octet_length(failed_request_fingerprint) <= 128
+        )
+    ),
+    CHECK (
         (state = 'creating'
+         AND private_workspace_version_id IS NULL
+         AND ready_request_fingerprint IS NULL
+         AND failed_request_fingerprint IS NULL
          AND ready_at IS NULL
          AND invalidated_at IS NULL
          AND invalidation_reason_code IS NULL)
         OR
         (state = 'ready'
+         AND private_workspace_version_id IS NOT NULL
+         AND ready_request_fingerprint IS NOT NULL
+         AND failed_request_fingerprint IS NULL
          AND ready_at IS NOT NULL
          AND restore_manifest <> '{}'::jsonb
          AND invalidated_at IS NULL
@@ -3201,6 +3223,10 @@ CREATE TABLE run_checkpoints (
          AND invalidated_at IS NOT NULL
          AND invalidation_reason_code IS NOT NULL
          AND btrim(invalidation_reason_code) <> '')
+    ),
+    CHECK (
+        failed_request_fingerprint IS NULL
+        OR (state = 'invalid' AND invalidation_reason_code = 'checkpoint_failed')
     )
 );
 
@@ -3351,6 +3377,10 @@ CREATE TABLE run_waits (
     completed_actor_record_direction TEXT GENERATED ALWAYS AS ('input'::text) STORED,
     suspension_state run_wait_state NOT NULL DEFAULT 'hot',
     token_registration_run_state_version BIGINT CHECK (token_registration_run_state_version IS NULL OR token_registration_run_state_version >= 0),
+    registration_request_fingerprint TEXT CHECK (
+        registration_request_fingerprint IS NULL
+        OR (registration_request_fingerprint ~ '^sha256:[0-9a-f]{64}$')
+    ),
     expected_run_state_version BIGINT NOT NULL CHECK (expected_run_state_version >= 0),
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     current_run_lease_id UUID,

@@ -379,7 +379,7 @@ SELECT run_leases.org_id,
    AND runs.workspace_id = run_leases.workspace_id
    AND runs.current_attempt_number = run_leases.attempt_number
    AND runs.current_run_lease_id = run_leases.id
-   AND runs.status = 'running'
+   AND runs.status IN ('running', 'waiting')
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id

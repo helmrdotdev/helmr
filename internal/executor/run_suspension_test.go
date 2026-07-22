@@ -22,9 +22,10 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 		}},
 	}
 	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest()}
+	checkpointer.workspaceCapture = testCheckpointWorkspaceCapture()
 
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindToken,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
 		ActiveDuration: 1500 * time.Millisecond, Checkpointer: checkpointer,
 	})
 	if !errors.Is(err, ErrDetached) {
@@ -55,23 +56,18 @@ func TestControlRunWaitsCapturesWorkspaceForTypedCheckpointIntent(t *testing.T) 
 		}},
 	}
 	checkpointer := &fakeCheckpointer{
-		manifest: testRunCheckpointWaitManifest(),
-		workspaceCapture: &workspace.WorkspaceArtifact{
-			Digest: "sha256:workspace-capture", MediaType: workspace.ArtifactMediaType,
-			Encoding: workspace.ArtifactEncoding, SizeBytes: 42, EntryCount: 2,
-		},
+		manifest:         testRunCheckpointWaitManifest(),
+		workspaceCapture: testCheckpointWorkspaceCapture(),
 	}
 
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindTimer, Checkpointer: checkpointer,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindTimer, Checkpointer: checkpointer,
 	})
 	if !errors.Is(err, ErrDetached) {
 		t.Fatalf("err = %v, want ErrDetached", err)
 	}
-	if client.capture == nil || client.capture.RequestVersion != 2 || client.capture.WorkspaceCapture.Digest != "sha256:workspace-capture" {
-		t.Fatalf("capture request = %+v", client.capture)
-	}
-	if client.ready == nil || client.ready.WorkspaceVersionID != "workspace-version-1" {
+	if client.ready == nil || client.ready.WorkspaceCapture.Artifact.Digest != "sha256:workspace-capture" ||
+		client.ready.WorkspaceCapture.Tree.Digest != "sha256:workspace-tree" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
 }
@@ -81,12 +77,12 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 		created: liveRunWaitResponse(),
 		polls: []api.WorkerRunWaitPollResponse{{
 			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "resume_requested",
-			RequestVersion: 7, ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`),
+			RequestVersion: 7, ResumeKind: "completed", ResumePayload: json.RawMessage(`{"approved":true}`), RequireAck: true,
 		}},
 	}
 	var got WaitResumeDecision
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindStream,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindStream,
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -112,7 +108,7 @@ func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 	}}
 	var got WaitResumeDecision
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindStream,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindStream,
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -137,7 +133,7 @@ func TestControlRunWaitsRejectsMismatchedTypedIntent(t *testing.T) {
 		}},
 	}
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindTimer,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindTimer,
 	})
 	if err == nil || !strings.Contains(err.Error(), "mismatched fence") {
 		t.Fatalf("err = %v, want mismatched fence", err)
@@ -153,14 +149,36 @@ func TestControlRunWaitsRecordsTypedCheckpointFailure(t *testing.T) {
 		}},
 	}
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		Lease: testRunLease(), Kind: api.WorkerRunWaitKindToken,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
 		Checkpointer: &fakeCheckpointer{err: errors.New("snapshot failed")},
 	})
-	if err != nil {
-		t.Fatalf("err = %v, want recorded failure to complete wait handler", err)
+	if !errors.Is(err, ErrDetached) {
+		t.Fatalf("err = %v, want ErrDetached after attempt-fatal checkpoint failure", err)
 	}
 	if client.failed == nil || client.failed.RequestVersion != 5 || client.failed.CheckpointID != "checkpoint-1" {
 		t.Fatalf("failed request = %+v", client.failed)
+	}
+}
+
+func TestControlRunWaitsRetriesExactCheckpointFailureRequest(t *testing.T) {
+	client := &fakeRunWaitClient{
+		created: liveRunWaitResponse(),
+		polls: []api.WorkerRunWaitPollResponse{{
+			RunID: "run-1", RunWaitID: "run-wait-id-1", Status: "checkpoint_requested",
+			RequestVersion: 6, CheckpointID: "checkpoint-1",
+		}},
+		checkpointFailureErrors: []error{errors.New("temporary checkpoint failure transport error"), nil},
+	}
+	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindToken,
+		Checkpointer: &fakeCheckpointer{err: errors.New("snapshot failed")},
+	})
+	if !errors.Is(err, ErrDetached) {
+		t.Fatalf("err = %v, want ErrDetached", err)
+	}
+	if len(client.checkpointFailureRequests) != 2 ||
+		client.checkpointFailureRequests[0] != client.checkpointFailureRequests[1] {
+		t.Fatalf("checkpoint failure retries = %+v, want two exact requests", client.checkpointFailureRequests)
 	}
 }
 
@@ -172,9 +190,9 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 			RequestVersion: 1, CheckpointID: "checkpoint-1",
 		}},
 	}
-	leases := &mutableRunLeaseProvider{lease: testRunLease()}
-	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), onCreate: func() {
-		leases.lease.ID = "lease-2"
+	leases := &mutableRunLeaseProvider{receipt: testWaitRunLeaseReceipt()}
+	checkpointer := &fakeCheckpointer{manifest: testRunCheckpointWaitManifest(), workspaceCapture: testCheckpointWorkspaceCapture(), onCreate: func() {
+		leases.receipt.ID = "lease-2"
 	}}
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
 		Leases: leases, Kind: api.WorkerRunWaitKindTimer, Checkpointer: checkpointer,
@@ -204,15 +222,16 @@ func TestControlRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
 }
 
 type fakeRunWaitClient struct {
-	created        api.WorkerCreateRunWaitResponse
-	polls          []api.WorkerRunWaitPollResponse
-	createdRequest api.WorkerCreateRunWaitRequest
-	pollRequests   []api.WorkerRunWaitPollRequest
-	resumeAck      *api.WorkerRunWaitResumeAckRequest
-	capture        *api.WorkerRunWaitWorkspaceCaptureRequest
-	ready          *api.WorkerCheckpointReadyRequest
-	failed         *api.WorkerCheckpointFailedRequest
-	resumeRelease  *api.WorkerRunResumeReleaseRequest
+	created                   api.WorkerCreateRunWaitResponse
+	polls                     []api.WorkerRunWaitPollResponse
+	createdRequest            api.WorkerCreateRunWaitRequest
+	pollRequests              []api.WorkerRunWaitPollRequest
+	resumeAck                 *api.WorkerRunWaitResumeAckRequest
+	ready                     *api.WorkerCheckpointReadyRequest
+	failed                    *api.WorkerCheckpointFailedRequest
+	checkpointFailureRequests []api.WorkerCheckpointFailedRequest
+	checkpointFailureErrors   []error
+	resumeRelease             *api.WorkerRunResumeReleaseRequest
 }
 
 func (c *fakeRunWaitClient) CreateRunWait(_ context.Context, request api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
@@ -238,14 +257,6 @@ func (c *fakeRunWaitClient) AcknowledgeRunWaitResume(_ context.Context, request 
 	}, nil
 }
 
-func (c *fakeRunWaitClient) CaptureRunWaitWorkspace(_ context.Context, request api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error) {
-	c.capture = &request
-	return api.WorkerRunWaitWorkspaceCaptureResponse{
-		RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
-		WorkspaceVersionID: "workspace-version-1",
-	}, nil
-}
-
 func (c *fakeRunWaitClient) AcknowledgeRestore(_ context.Context, request api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error) {
 	return api.WorkerAcknowledgeRestoreResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
 }
@@ -265,12 +276,20 @@ func (c *fakeRunWaitClient) MarkCheckpointReady(_ context.Context, request api.W
 
 func (c *fakeRunWaitClient) MarkCheckpointFailed(_ context.Context, request api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error) {
 	c.failed = &request
+	c.checkpointFailureRequests = append(c.checkpointFailureRequests, request)
+	if len(c.checkpointFailureErrors) > 0 {
+		err := c.checkpointFailureErrors[0]
+		c.checkpointFailureErrors = c.checkpointFailureErrors[1:]
+		if err != nil {
+			return api.WorkerCheckpointResponse{}, err
+		}
+	}
 	return api.WorkerCheckpointResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
 }
 
 type fakeCheckpointer struct {
 	manifest         api.WorkerCheckpointManifest
-	workspaceCapture *workspace.WorkspaceArtifact
+	workspaceCapture *CheckpointWorkspaceCapture
 	request          CheckpointRequest
 	err              error
 	onCreate         func()
@@ -287,9 +306,14 @@ func (c *fakeCheckpointer) CreateCheckpoint(_ context.Context, request Checkpoin
 	return CheckpointResult{Manifest: c.manifest, WorkspaceCapture: c.workspaceCapture}, nil
 }
 
-type mutableRunLeaseProvider struct{ lease api.WorkerRunLease }
+type mutableRunLeaseProvider struct{ receipt api.WorkerRunLeaseReceipt }
 
-func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease { return p.lease }
+func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease {
+	return workerRunLeaseFromReceipt("", p.receipt)
+}
+func (p *mutableRunLeaseProvider) CurrentWorkerRunLeaseReceipt() api.WorkerRunLeaseReceipt {
+	return p.receipt
+}
 
 func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
 	return api.WorkerCreateRunWaitResponse{
@@ -298,18 +322,28 @@ func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
 	}
 }
 
-func testRunLease() api.WorkerRunLease {
-	return api.WorkerRunLease{
+func testWaitRunLeaseReceipt() api.WorkerRunLeaseReceipt {
+	return api.WorkerRunLeaseReceipt{
 		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "run-us-east-1",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
 		RuntimeInstanceID: "runtime-instance-1", NetworkSlotID: "network-slot-1", NetworkSlotGeneration: 1,
 	}
 }
 
+func testCheckpointWorkspaceCapture() *CheckpointWorkspaceCapture {
+	return &CheckpointWorkspaceCapture{
+		Tree: workspace.TreeIdentity{Digest: "sha256:workspace-tree", SizeBytes: 21, EntryCount: 2},
+		Artifact: workspace.WorkspaceArtifact{
+			Digest: "sha256:workspace-capture", MediaType: workspace.ArtifactMediaType,
+			Encoding: workspace.ArtifactEncoding, SizeBytes: 42, EntryCount: 2,
+		},
+	}
+}
+
 func testRunCheckpointWaitManifest() api.WorkerCheckpointManifest {
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
-			Backend: "firecracker", ID: "sha256:runtime", Arch: "amd64", ABI: "helmr.firecracker.snapshot.v0",
+			Backend: "firecracker", ID: "sha256:runtime", Arch: "x86_64", ABI: "helmr.firecracker.snapshot.v0",
 			KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", ConfigDigest: "sha256:runtime-config",
 		}},
 		RuntimeState: api.WorkerCheckpointRuntimeState{

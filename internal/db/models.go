@@ -2219,6 +2219,8 @@ type RunCheckpoint struct {
 	ActorSpeculativeInputSequence pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	State                         RunCheckpointState `json:"state"`
 	RestoreManifest               []byte             `json:"restore_manifest"`
+	ReadyRequestFingerprint       pgtype.Text        `json:"ready_request_fingerprint"`
+	FailedRequestFingerprint      pgtype.Text        `json:"failed_request_fingerprint"`
 	ExpiresAt                     pgtype.Timestamptz `json:"expires_at"`
 	CreatedAt                     pgtype.Timestamptz `json:"created_at"`
 	ReadyAt                       pgtype.Timestamptz `json:"ready_at"`
@@ -2341,6 +2343,7 @@ type RunWait struct {
 	CompletedActorRecordDirection    pgtype.Text        `json:"completed_actor_record_direction"`
 	SuspensionState                  RunWaitState       `json:"suspension_state"`
 	TokenRegistrationRunStateVersion pgtype.Int8        `json:"token_registration_run_state_version"`
+	RegistrationRequestFingerprint   pgtype.Text        `json:"registration_request_fingerprint"`
 	ExpectedRunStateVersion          int64              `json:"expected_run_state_version"`
 	AttemptNumber                    int32              `json:"attempt_number"`
 	CurrentRunLeaseID                pgtype.UUID        `json:"current_run_lease_id"`

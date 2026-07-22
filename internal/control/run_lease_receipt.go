@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type parsedRunLeaseReceipt struct {
@@ -101,4 +102,23 @@ func equalRunLeaseReceipt(left, right api.WorkerRunLeaseReceipt) bool {
 	return left == right &&
 		leftDeadline.Equal(rightDeadline) &&
 		leftExpiry.Equal(rightExpiry)
+}
+
+// equalCurrentOrPreviousRunLeaseReceipt accepts the one-generation expiry
+// overlap retained by Run Lease renewal. All immutable and fencing fields must
+// still match exactly.
+func equalCurrentOrPreviousRunLeaseReceipt(
+	current api.WorkerRunLeaseReceipt,
+	candidate api.WorkerRunLeaseReceipt,
+	previousExpiry pgtype.Timestamptz,
+) bool {
+	if equalRunLeaseReceipt(current, candidate) {
+		return true
+	}
+	if !previousExpiry.Valid {
+		return false
+	}
+	previous := current
+	previous.ExpiresAt = previousExpiry.Time
+	return equalRunLeaseReceipt(previous, candidate)
 }

@@ -30,7 +30,7 @@ func (s *Server) renewRunLease(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
-		authority, err := lockLiveRunLeaseAuthority(
+		authority, err := lockRenewableRunLeaseAuthority(
 			ctx, work.q, worker, leaseID, request.LeaseSequence, locators,
 		)
 		if err != nil {
@@ -152,6 +152,34 @@ func lockLiveRunLeaseAuthority(
 	leaseSequence int64,
 	locators db.GetLiveRunLeaseLocatorsRow,
 ) (runLeaseClaimAuthority, error) {
+	return lockRunLeaseAuthorityForStatuses(
+		ctx, q, worker, leaseID, leaseSequence, locators, db.RunStatusRunning,
+	)
+}
+
+func lockRenewableRunLeaseAuthority(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	locators db.GetLiveRunLeaseLocatorsRow,
+) (runLeaseClaimAuthority, error) {
+	return lockRunLeaseAuthorityForStatuses(
+		ctx, q, worker, leaseID, leaseSequence, locators,
+		db.RunStatusRunning, db.RunStatusWaiting,
+	)
+}
+
+func lockRunLeaseAuthorityForStatuses(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	locators db.GetLiveRunLeaseLocatorsRow,
+	allowedStatuses ...db.RunStatus,
+) (runLeaseClaimAuthority, error) {
 	var authority runLeaseClaimAuthority
 	var err error
 	authority.run, err = q.LockRunLeaseClaimRun(ctx, db.LockRunLeaseClaimRunParams{
@@ -161,7 +189,11 @@ func lockLiveRunLeaseAuthority(
 	if err != nil {
 		return authority, staleRunLeaseClaim(err)
 	}
-	if authority.run.Status != db.RunStatusRunning ||
+	statusAllowed := false
+	for _, allowed := range allowedStatuses {
+		statusAllowed = statusAllowed || authority.run.Status == allowed
+	}
+	if !statusAllowed ||
 		authority.run.CurrentAttemptNumber != locators.AttemptNumber ||
 		authority.run.CurrentRunLeaseID != leaseID {
 		return authority, errStaleRunLeaseClaim

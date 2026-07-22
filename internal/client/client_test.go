@@ -1127,13 +1127,17 @@ func TestWorkerClientRefreshesTokenAndReplaysBufferedRequestAfterUnauthorized(t 
 }
 
 func TestWorkerRunWaitClient(t *testing.T) {
-	claim := api.WorkerRunLease{
+	claim := api.WorkerRunLeaseReceipt{
 		ID: "00000000-0000-0000-0000-000000000001", RunID: "00000000-0000-0000-0000-000000000002",
 		WorkerGroupID: "run-us-east-1", WorkerInstanceID: "00000000-0000-0000-0000-000000000401",
 		WorkerEpoch: 1, LeaseSequence: 1, RuntimeInstanceID: "00000000-0000-0000-0000-000000000501",
 		NetworkSlotID: "00000000-0000-0000-0000-000000000601", NetworkSlotGeneration: 1,
-		AttemptNumber: 1, ProtocolVersion: api.CurrentWorkerProtocolVersion,
-		ExpiresAt: time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
+		AttemptNumber: 1, WorkerProtocolVersion: api.CurrentWorkerProtocolVersion,
+		WorkspaceID:            "00000000-0000-0000-0000-000000000701",
+		WorkspaceMountID:       "00000000-0000-0000-0000-000000000702",
+		WorkspaceLeaseID:       "00000000-0000-0000-0000-000000000703",
+		BaseWorkspaceVersionID: "00000000-0000-0000-0000-000000000704",
+		ExpiresAt:              time.Date(2026, 5, 8, 12, 5, 0, 0, time.UTC),
 	}
 	kernelDigest := "sha256:kernel"
 	rootfsDigest := "sha256:rootfs"
@@ -1261,7 +1265,12 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("ready = %+v", ready)
 	}
 	acknowledged, err := client.AcknowledgeRestore(context.Background(), api.WorkerAcknowledgeRestoreRequest{
-		Lease:        claim,
+		Lease: api.WorkerRunLease{
+			ID: claim.ID, RunID: claim.RunID, AttemptNumber: claim.AttemptNumber,
+			LeaseSequence: claim.LeaseSequence, WorkerGroupID: claim.WorkerGroupID,
+			WorkerInstanceID: claim.WorkerInstanceID, WorkerEpoch: claim.WorkerEpoch,
+			ProtocolVersion: claim.WorkerProtocolVersion,
+		},
 		RunWaitID:    "run-wait-id-1",
 		CheckpointID: "checkpoint-1",
 	})

@@ -7,14 +7,12 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
-	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
 type RunWaitClient interface {
 	CreateRunWait(context.Context, api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error)
 	PollRunWait(context.Context, api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error)
 	AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error)
-	CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error)
 	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error)
 	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error)
 }
@@ -22,8 +20,6 @@ type RunWaitClient interface {
 type ControlRunWaits struct {
 	Client RunWaitClient
 }
-
-var errCheckpointAttemptRecorded = errors.New("checkpoint attempt failure recorded")
 
 type RestoreAcknowledgement struct {
 	Lease                api.WorkerRunLeaseReceipt
@@ -89,8 +85,12 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	request.ResumeAttachID = opened.ResumeAttachID
 	pollDelay := 100 * time.Millisecond
 	for {
+		lease, err := request.currentLeaseReceipt()
+		if err != nil {
+			return err
+		}
 		intent, pollErr := w.Client.PollRunWait(ctx, api.WorkerRunWaitPollRequest{
-			Lease:     request.currentLease(),
+			Lease:     lease,
 			RunWaitID: opened.RunWaitID,
 		})
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -105,8 +105,8 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 		switch intent.Status {
 		case api.WorkerRunWaitPollStatusWaiting:
 		case api.WorkerRunWaitPollStatusResumeRequested:
-			if intent.RequestVersion <= 0 || intent.ResumeKind == "" {
-				return errors.New("run wait resume request version and kind are required")
+			if intent.ResumeKind == "" || (intent.RequireAck && intent.RequestVersion <= 0) {
+				return errors.New("run wait resume request fence and kind are invalid")
 			}
 			if request.Resume == nil {
 				return errors.New("runtime resume support is required")
@@ -118,20 +118,20 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 			if err := request.Resume(ctx, WaitResumeDecision{Kind: intent.ResumeKind, Data: payload}); err != nil {
 				return err
 			}
-			if _, err := w.Client.AcknowledgeRunWaitResume(ctx, api.WorkerRunWaitResumeAckRequest{
-				Lease:                request.currentLease(),
-				RunWaitID:            opened.RunWaitID,
-				ResumeRequestVersion: intent.RequestVersion,
-			}); err != nil {
-				return fmt.Errorf("acknowledge run wait resume: %w", err)
+			if intent.RequireAck {
+				lease, err := request.currentLeaseReceipt()
+				if err != nil {
+					return err
+				}
+				if _, err := w.Client.AcknowledgeRunWaitResume(ctx, api.WorkerRunWaitResumeAckRequest{
+					Lease: lease, RunWaitID: opened.RunWaitID, ResumeRequestVersion: intent.RequestVersion,
+				}); err != nil {
+					return fmt.Errorf("acknowledge run wait resume: %w", err)
+				}
 			}
 			return nil
 		case api.WorkerRunWaitPollStatusCheckpointRequested:
-			handled := w.handleCheckpointDecision(ctx, request, intent)
-			if errors.Is(handled, errCheckpointAttemptRecorded) {
-				return nil
-			}
-			return handled
+			return w.handleCheckpointDecision(ctx, request, intent)
 		case api.WorkerRunWaitPollStatusTerminal:
 			return errors.New("run wait became terminal before resume")
 		default:
@@ -151,87 +151,86 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		return errors.New("checkpoint request id and version are required")
 	}
 	failCheckpoint := func(err error) error {
-		_, failErr := w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
-			Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
-			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
-		})
-		if failErr != nil {
-			return failErr
+		lease, leaseErr := request.currentLeaseReceipt()
+		if leaseErr != nil {
+			return leaseErr
 		}
-		return errCheckpointAttemptRecorded
+		failedRequest := api.WorkerCheckpointFailedRequest{
+			Lease: lease, RequestVersion: intent.RequestVersion,
+			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
+		}
+		for {
+			if _, failErr := w.Client.MarkCheckpointFailed(ctx, failedRequest); failErr == nil {
+				return ErrDetached
+			} else if !checkpointReadyRetryable(failErr) {
+				return failErr
+			} else if sleepErr := sleepWithContext(ctx, 250*time.Millisecond); sleepErr != nil {
+				return errors.Join(failErr, sleepErr)
+			}
+		}
 	}
 	if request.Checkpointer == nil {
-		err := errors.New("run checkpoint support is required")
-		if failErr := failCheckpoint(err); failErr != nil {
-			return fmt.Errorf("mark checkpoint failed after unsupported checkpoint: %w", failErr)
-		}
-		return nil
+		return failCheckpoint(errors.New("run checkpoint support is required"))
+	}
+	lease, err := request.currentLeaseReceipt()
+	if err != nil {
+		return err
 	}
 	checkpointRequest := CheckpointRequest{
-		RunID:            request.currentLease().RunID,
+		RunID:            lease.RunID,
 		RunWaitID:        intent.RunWaitID,
 		CorrelationID:    request.CorrelationID,
 		CheckpointID:     intent.CheckpointID,
 		CaptureWorkspace: intent.CaptureWorkspace,
 	}
 	if request.ResumeAttachID != "" {
-		checkpointRequest.AttemptNumber = request.currentLease().AttemptNumber
-		checkpointRequest.RunLeaseID = request.currentLease().ID
+		checkpointRequest.AttemptNumber = lease.AttemptNumber
+		checkpointRequest.RunLeaseID = lease.ID
 		checkpointRequest.ResumeAttachID = request.ResumeAttachID
 		checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
 	}
 	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, checkpointRequest)
 	if err != nil {
-		if failErr := failCheckpoint(err); failErr != nil {
-			return fmt.Errorf("mark checkpoint failed after create checkpoint error: %w", failErr)
-		}
-		return errCheckpointAttemptRecorded
+		return failCheckpoint(err)
 	}
-	if intent.CaptureWorkspace {
-		if checkpoint.WorkspaceCapture == nil {
-			err := errors.New("workspace capture is required before parking")
-			if failErr := failCheckpoint(err); failErr != nil {
-				return fmt.Errorf("mark checkpoint failed after missing workspace capture: %w", failErr)
-			}
-			return errCheckpointAttemptRecorded
-		}
-		capture, err := w.Client.CaptureRunWaitWorkspace(ctx, api.WorkerRunWaitWorkspaceCaptureRequest{
-			Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
-			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Workspace: request.Workspace,
-			WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
-		})
-		if err != nil {
-			if failErr := failCheckpoint(err); failErr != nil {
-				return fmt.Errorf("mark checkpoint failed after workspace capture error: %w", failErr)
-			}
-			return errCheckpointAttemptRecorded
-		}
-		request.Workspace.BaseVersionID = capture.WorkspaceVersionID
+	if checkpoint.WorkspaceCapture == nil {
+		err := errors.New("workspace capture is required before parking")
+		return failCheckpoint(err)
 	}
-	if _, err := w.Client.MarkCheckpointReady(ctx, api.WorkerCheckpointReadyRequest{
-		Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
+	lease, err = request.currentLeaseReceipt()
+	if err != nil {
+		return err
+	}
+	readyRequest := api.WorkerCheckpointReadyRequest{
+		Lease: lease, RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
-		Workspace: request.Workspace, WorkspaceVersionID: request.Workspace.BaseVersionID,
-		Manifest: checkpoint.Manifest,
-	}); err != nil {
-		if failErr := failCheckpoint(err); failErr != nil {
-			return fmt.Errorf("mark checkpoint failed after ready error: %w", failErr)
-		}
-		return errCheckpointAttemptRecorded
+		WorkspaceCapture: *workerCheckpointWorkspaceCapture(checkpoint.WorkspaceCapture),
+		Manifest:         checkpoint.Manifest,
 	}
-	return ErrDetached
+	for {
+		if _, err := w.Client.MarkCheckpointReady(ctx, readyRequest); err == nil {
+			return ErrDetached
+		} else if !checkpointReadyRetryable(err) {
+			return fmt.Errorf("mark checkpoint ready: %w", err)
+		} else if err := sleepWithContext(ctx, 250*time.Millisecond); err != nil {
+			return err
+		}
+	}
 }
 
-func workerCheckpointWorkspaceCapture(capture *workspace.WorkspaceArtifact) *api.WorkerWorkspaceArtifact {
+func workerCheckpointWorkspaceCapture(capture *CheckpointWorkspaceCapture) *api.WorkerCheckpointWorkspaceCapture {
 	if capture == nil {
 		return nil
 	}
-	return &api.WorkerWorkspaceArtifact{
-		Digest:     capture.Digest,
-		MediaType:  capture.MediaType,
-		Encoding:   capture.Encoding,
-		SizeBytes:  capture.SizeBytes,
-		EntryCount: int32(capture.EntryCount),
+	return &api.WorkerCheckpointWorkspaceCapture{
+		Tree: api.WorkerWorkspaceTreeIdentity{
+			Digest: capture.Tree.Digest, SizeBytes: capture.Tree.SizeBytes, EntryCount: int32(capture.Tree.EntryCount),
+		},
+		Artifact: api.WorkerWorkspaceArtifact{
+			Digest: capture.Artifact.Digest, MediaType: capture.Artifact.MediaType,
+			Encoding: capture.Artifact.Encoding, SizeBytes: capture.Artifact.SizeBytes,
+			EntryCount: int32(capture.Artifact.EntryCount),
+		},
 	}
 }
 
@@ -239,8 +238,12 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 	if w.Client == nil {
 		return api.WorkerCreateRunWaitResponse{}, errors.New("run wait control client is required")
 	}
+	lease, err := request.currentLeaseReceipt()
+	if err != nil {
+		return api.WorkerCreateRunWaitResponse{}, err
+	}
 	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
-		Lease:              request.currentLease(),
+		Lease:              lease,
 		CorrelationID:      request.CorrelationID,
 		Kind:               request.Kind,
 		Params:             request.Params,
@@ -249,6 +252,29 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 		TimeoutSeconds:     request.TimeoutSeconds,
 		IdleTimeoutSeconds: request.IdleTimeoutSeconds,
 	})
+}
+
+func (request WaitRequest) currentLeaseReceipt() (api.WorkerRunLeaseReceipt, error) {
+	if request.Leases != nil {
+		provider, ok := request.Leases.(api.WorkerRunLeaseReceiptProvider)
+		if !ok {
+			return api.WorkerRunLeaseReceipt{}, errors.New("full Run Lease receipt provider is required for durable waits")
+		}
+		return provider.CurrentWorkerRunLeaseReceipt(), nil
+	}
+	if request.LeaseReceipt.ID == "" {
+		return api.WorkerRunLeaseReceipt{}, errors.New("full Run Lease receipt is required for durable waits")
+	}
+	return request.LeaseReceipt, nil
+}
+
+func checkpointReadyRetryable(err error) bool {
+	var status interface{ HTTPStatusCode() int }
+	if errors.As(err, &status) {
+		code := status.HTTPStatusCode()
+		return code < 400 || code >= 500
+	}
+	return true
 }
 
 func (request WaitRequest) currentLease() api.WorkerRunLease {

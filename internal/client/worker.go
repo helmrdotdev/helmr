@@ -652,14 +652,6 @@ func (c *Client) AcknowledgeRunWaitResume(ctx context.Context, request api.Worke
 	return response, nil
 }
 
-func (c *Client) CaptureRunWaitWorkspace(ctx context.Context, request api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error) {
-	var response api.WorkerRunWaitWorkspaceCaptureResponse
-	if err := c.postWorkerJSON(ctx, "/api/worker/leases/run-waits/workspace-capture", request, &response); err != nil {
-		return api.WorkerRunWaitWorkspaceCaptureResponse{}, err
-	}
-	return response, nil
-}
-
 func (c *Client) MarkCheckpointReady(ctx context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error) {
 	var response api.WorkerCheckpointResponse
 	if err := c.postWorkerJSON(ctx, "/api/worker/leases/checkpoints/ready", request, &response); err != nil {

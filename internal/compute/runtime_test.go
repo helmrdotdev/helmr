@@ -46,3 +46,18 @@ func TestRuntimeIdentityDigestMatchesCASDigest(t *testing.T) {
 		t.Fatalf("runtime identity digest = %q, want %q", got, want)
 	}
 }
+
+func TestRuntimeArchitectureFromGo(t *testing.T) {
+	for goArchitecture, want := range map[string]string{
+		"amd64": "x86_64",
+		"arm64": "aarch64",
+	} {
+		got, err := RuntimeArchitectureFromGo(goArchitecture)
+		if err != nil || got != want {
+			t.Fatalf("RuntimeArchitectureFromGo(%q) = %q, %v; want %q", goArchitecture, got, err, want)
+		}
+	}
+	if _, err := RuntimeArchitectureFromGo("x86_64"); err == nil {
+		t.Fatal("canonical architecture was accepted as a Go architecture")
+	}
+}

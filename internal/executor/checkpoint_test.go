@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/deployment"
 	"github.com/helmrdotdev/helmr/internal/frameio"
 	"github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
@@ -68,7 +70,7 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	scratchPut := checkpointPutByMediaType(t, store, cas.CheckpointScratchDiskMediaType)
 	substratePut := checkpointPutByMediaType(t, store, cas.RuntimeSubstrateMediaType)
 	memoryPut := checkpointPutByMediaType(t, store, cas.CheckpointMemoryMediaType)
-	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "arm64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
+	if manifest.RecoveryPoint.Runtime.Backend != "firecracker" || manifest.RecoveryPoint.Runtime.Arch != "aarch64" || manifest.RecoveryPoint.Runtime.ABI != "helmr.firecracker.snapshot.v0" {
 		t.Fatalf("manifest identity = %+v", manifest)
 	}
 	if manifest.RecoveryPoint.ID != "checkpoint-1" || manifest.RecoveryPoint.RunWaitID != "run-wait-id-1" {
@@ -136,11 +138,38 @@ func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
 	}
 }
 
+func TestRuntimeCheckpointerClosesSourceOnPrePauseConfigurationFailure(t *testing.T) {
+	stream := newCheckpointStream(t, nil)
+	session := &checkpointSession{stream: stream}
+	_, err := runtimeCheckpointer{session: session, stream: stream}.CreateCheckpoint(
+		context.Background(),
+		CheckpointRequest{RunWaitID: "run-wait-id-1", CheckpointID: "checkpoint-1"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "checkpoint CAS is required") {
+		t.Fatalf("err = %v", err)
+	}
+	if session.closeCount != 1 || stream.closed != 1 || session.resumeCount != 0 {
+		t.Fatalf("session close/resume = %d/%d, stream closed = %d", session.closeCount, session.resumeCount, stream.closed)
+	}
+}
+
 func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *testing.T) {
 	var read bytes.Buffer
-	workspaceBody := []byte("workspace tar")
+	workspaceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "result.txt"), []byte("workspace result"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	workspaceArtifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRoot(workspaceRoot, t.TempDir(), workspaceRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	workspaceBody, err := os.ReadFile(workspaceArtifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	workspaceDigest := sha256sum.DigestBytes(workspaceBody)
-	entryCount := 3
+	entryCount := workspaceArtifact.EntryCount
 	if err := wire.WriteStreamFrameHeader(&read, wire.StreamHeader{
 		Type:       wire.StreamTypeWorkspaceArtifact,
 		RunID:      "run-1",
@@ -173,7 +202,7 @@ func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.WorkspaceCapture == nil || result.WorkspaceCapture.Digest != workspaceDigest || result.WorkspaceCapture.EntryCount != entryCount {
+	if result.WorkspaceCapture == nil || result.WorkspaceCapture.Artifact.Digest != workspaceDigest || result.WorkspaceCapture.Artifact.EntryCount != entryCount || result.WorkspaceCapture.Tree.EntryCount != entryCount {
 		t.Fatalf("workspace capture = %+v, want digest=%s entries=%d", result.WorkspaceCapture, workspaceDigest, entryCount)
 	}
 	if result.Manifest.WorkspaceState.Base.ArtifactDigest != "sha256:workspace" {
@@ -245,8 +274,8 @@ func TestRuntimeCheckpointerRejectsPauseReadyMismatch(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `checkpoint pause ready mismatch`) {
 		t.Fatalf("err = %v", err)
 	}
-	if session.resumeCount != 0 || len(session.snapshotRequests) != 0 || stream.closed != 0 {
-		t.Fatalf("resumeCount=%d snapshotRequests=%+v closed=%d", session.resumeCount, session.snapshotRequests, stream.closed)
+	if session.resumeCount != 0 || session.closeCount != 1 || len(session.snapshotRequests) != 0 || stream.closed != 1 {
+		t.Fatalf("resumeCount=%d closeCount=%d snapshotRequests=%+v closed=%d", session.resumeCount, session.closeCount, session.snapshotRequests, stream.closed)
 	}
 	assertSuspendFrame(t, stream.written.Bytes(), "run-wait-id-1", "checkpoint-1")
 }
@@ -275,7 +304,7 @@ func TestRuntimeCheckpointerPauseReadyTimeoutDoesNotCloseSession(t *testing.T) {
 	}
 }
 
-func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
+func TestRuntimeCheckpointerClosesSourceOnFailureAfterPause(t *testing.T) {
 	tests := []struct {
 		name            string
 		closeErr        error
@@ -362,12 +391,8 @@ func TestRuntimeCheckpointerResumesOnFailureAfterPause(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("err = %v, want %q", err, tt.want)
 			}
-			wantResumeCount := 1
-			if tt.name == "source release after durable store" {
-				wantResumeCount = 0
-			}
-			if session.resumeCount != wantResumeCount {
-				t.Fatalf("resumeCount = %d, want %d", session.resumeCount, wantResumeCount)
+			if session.resumeCount != 0 || session.closeCount != 1 {
+				t.Fatalf("resumeCount = %d, closeCount = %d, want 0/1", session.resumeCount, session.closeCount)
 			}
 			if tt.closeErr == nil && stream.closed != 1 {
 				t.Fatalf("stream closed %d times", stream.closed)
@@ -668,8 +693,15 @@ func (c *checkpointCAS) Stat(context.Context, string) (cas.Object, error) {
 	return cas.Object{}, nil
 }
 
-func (c *checkpointCAS) Get(context.Context, string) (io.ReadCloser, error) {
-	return nil, errors.New("not implemented")
+func (c *checkpointCAS) Get(_ context.Context, digest string) (io.ReadCloser, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, put := range c.puts {
+		if put.object.Digest == digest {
+			return io.NopCloser(bytes.NewReader(append([]byte(nil), put.content...))), nil
+		}
+	}
+	return nil, errors.New("not found")
 }
 
 func (c *checkpointCAS) Delete(context.Context, string) error {
@@ -694,7 +726,7 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 	return vm.SnapshotArtifact{
 		RuntimeBackend:      "firecracker",
 		RuntimeID:           "sha256:runtime",
-		RuntimeArch:         "arm64",
+		RuntimeArch:         "aarch64",
 		RuntimeABI:          "helmr.firecracker.snapshot.v0",
 		KernelDigest:        "sha256:kernel",
 		InitramfsDigest:     "sha256:initramfs",
@@ -725,6 +757,14 @@ func checkpointArtifact(t *testing.T) vm.SnapshotArtifact {
 		}},
 		Manifest: []byte(`{"runtime":{"backend":"firecracker"}}`),
 	}
+}
+
+func testCheckpointRuntimeArchitecture() string {
+	architecture, err := deployment.RuntimeArchitectureFromGo(runtime.GOARCH)
+	if err != nil {
+		panic(err)
+	}
+	return string(architecture)
 }
 
 func addCheckpointRuntimeSubstrate(t *testing.T, artifact *vm.SnapshotArtifact) {

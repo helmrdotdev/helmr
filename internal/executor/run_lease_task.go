@@ -158,6 +158,12 @@ func (task *guestRunLeaseTask) CurrentWorkerRunLease() api.WorkerRunLease {
 	return workerRunLeaseFromReceipt(task.orgID, task.lease)
 }
 
+func (task *guestRunLeaseTask) CurrentWorkerRunLeaseReceipt() api.WorkerRunLeaseReceipt {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	return task.lease
+}
+
 func workerRunLeaseFromReceipt(orgID string, receipt api.WorkerRunLeaseReceipt) api.WorkerRunLease {
 	return api.WorkerRunLease{
 		ID: receipt.ID, OrgID: orgID, RunID: receipt.RunID,

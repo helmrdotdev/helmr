@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/helmrdotdev/helmr/internal/api"
+	"github.com/helmrdotdev/helmr/internal/compute"
 	"github.com/helmrdotdev/helmr/internal/jsoncanon"
 )
 
@@ -65,14 +66,8 @@ func RuntimeDescriptorWire(descriptor RuntimeDescriptor) (api.WorkerRuntimeDescr
 }
 
 func RuntimeArchitectureFromGo(value string) (RuntimeArchitecture, error) {
-	switch value {
-	case "arm64":
-		return ArchitectureAArch64, nil
-	case "amd64":
-		return ArchitectureX8664, nil
-	default:
-		return "", fmt.Errorf("unsupported Go architecture %q", value)
-	}
+	architecture, err := compute.RuntimeArchitectureFromGo(value)
+	return RuntimeArchitecture(architecture), err
 }
 
 func RuntimeArchitectureGo(value RuntimeArchitecture) (string, error) {
