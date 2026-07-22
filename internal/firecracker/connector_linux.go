@@ -843,6 +843,14 @@ type restoreCleanupSession struct {
 	paths []string
 }
 
+func (s restoreCleanupSession) NetworkFacts() (vm.NetworkFacts, error) {
+	networkSession, ok := s.CheckpointableSession.(vm.NetworkFactSession)
+	if !ok {
+		return vm.NetworkFacts{}, errors.New("restored firecracker session does not expose CNI network facts")
+	}
+	return networkSession.NetworkFacts()
+}
+
 func (s restoreCleanupSession) Close(ctx context.Context) error {
 	err := s.CheckpointableSession.Close(ctx)
 	removeFiles(s.paths)

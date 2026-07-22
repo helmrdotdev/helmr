@@ -5,6 +5,7 @@ package guestd
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -86,6 +87,20 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	transitionCtx, cancelTransition := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelTransition()
+	if err := cgroup.freeze(transitionCtx); err != nil {
+		t.Fatal(err)
+	}
+	if frozen, populated, err := cgroup.(*linuxProgramCgroup).state(); err != nil || !frozen || !populated {
+		t.Fatalf("Program cgroup frozen=%v populated=%v error=%v", frozen, populated, err)
+	}
+	if err := cgroup.thaw(transitionCtx); err != nil {
+		t.Fatal(err)
+	}
+	if frozen, populated, err := cgroup.(*linuxProgramCgroup).state(); err != nil || frozen || !populated {
+		t.Fatalf("Program cgroup frozen=%v populated=%v after thaw error=%v", frozen, populated, err)
+	}
 
 	if err := cgroup.kill(); err != nil {
 		t.Fatal(err)
@@ -95,6 +110,39 @@ func TestProgramCgroupContainsAndKillsCompleteTree(t *testing.T) {
 	}
 	if err := cmd.Wait(); err == nil {
 		t.Fatal("Program tree exited without cgroup termination")
+	}
+}
+
+func TestParseProgramCgroupState(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		body      string
+		frozen    bool
+		populated bool
+		ok        bool
+	}{
+		{name: "frozen", body: "populated 1\nfrozen 1\n", frozen: true, populated: true, ok: true},
+		{name: "thawed", body: "frozen 0\npopulated 1\n", populated: true, ok: true},
+		{name: "empty", body: "populated 0\nfrozen 1\n", frozen: true, ok: true},
+		{name: "missing frozen", body: "populated 1\n"},
+		{name: "missing populated", body: "frozen 1\n"},
+		{name: "invalid", body: "frozen yes\n"},
+		{name: "duplicate frozen", body: "populated 1\nfrozen 0\nfrozen 1\n"},
+		{name: "duplicate populated", body: "populated 0\npopulated 1\nfrozen 1\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			frozen, populated, err := parseProgramCgroupState([]byte(test.body))
+			if (err == nil) != test.ok || (err == nil && (frozen != test.frozen || populated != test.populated)) {
+				t.Fatalf("parseProgramCgroupState() = %v, %v, %v", frozen, populated, err)
+			}
+		})
+	}
+}
+
+func TestProgramCgroupTransitionRejectsEmptyFrozenCgroup(t *testing.T) {
+	complete, err := programCgroupTransitionComplete(true, false, true)
+	if err == nil || complete {
+		t.Fatalf("programCgroupTransitionComplete() = %v, %v", complete, err)
 	}
 }
 

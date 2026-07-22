@@ -1999,6 +1999,22 @@ func TestRestoreCleanupSessionPreservesCheckpointSupport(t *testing.T) {
 	if !inner.snapshotCalled {
 		t.Fatal("snapshot call did not reach inner session")
 	}
+	wantFacts := vm.NetworkFacts{
+		HostInterfaceName: "veth-host", GuestAddress: "10.0.0.2",
+		GatewayAddress: "10.0.0.1", Subnet: "10.0.0.0/24",
+	}
+	inner.networkFacts = wantFacts
+	networkSession, ok := any(session).(vm.NetworkFactSession)
+	if !ok {
+		t.Fatal("restore cleanup session must preserve network facts")
+	}
+	gotFacts, err := networkSession.NetworkFacts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotFacts != wantFacts {
+		t.Fatalf("network facts = %+v, want %+v", gotFacts, wantFacts)
+	}
 	if err := session.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -2151,6 +2167,7 @@ func testDigest(body []byte) string {
 type checkpointableTestSession struct {
 	closed         bool
 	snapshotCalled bool
+	networkFacts   vm.NetworkFacts
 }
 
 func (s *checkpointableTestSession) Stream() vm.Stream {
@@ -2178,6 +2195,10 @@ func (s *checkpointableTestSession) CreateSnapshot(context.Context, vm.SnapshotR
 
 func (s *checkpointableTestSession) Resume(context.Context) error {
 	return nil
+}
+
+func (s *checkpointableTestSession) NetworkFacts() (vm.NetworkFacts, error) {
+	return s.networkFacts, nil
 }
 
 type readWriteNopCloser struct{}

@@ -874,7 +874,9 @@ type testProgramCgroup struct {
 	onKill func() error
 }
 
-func (*testProgramCgroup) attach(*exec.Cmd) error { return nil }
+func (*testProgramCgroup) attach(*exec.Cmd) error       { return nil }
+func (*testProgramCgroup) freeze(context.Context) error { return nil }
+func (*testProgramCgroup) thaw(context.Context) error   { return nil }
 func (c *testProgramCgroup) kill() error {
 	c.mu.Lock()
 	c.kills++
