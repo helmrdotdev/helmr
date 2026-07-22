@@ -10,9 +10,16 @@ import {
 } from "@helmr/sdk/internal"
 import type {
   ActorExecutionContext,
+  ActorInputResult,
+  ActorOutputRecord,
+  ActorReceive,
   ActorSelf,
   JsonValue,
+  OutputAppendOptions,
+  OutputSequenceOptions,
+  ReceiveOptions,
   RunCause,
+  Serializable,
   TaskExecutionContext,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
@@ -101,6 +108,185 @@ class FrameReader {
   }
 }
 
+class ResumeDecisionRouter {
+  readonly #reader: FrameReader
+  readonly #pending = new Map<string, {
+    readonly resolve: (decision: runProto.ResumeDecision) => void
+    readonly reject: (error: Error) => void
+  }>()
+  #reading = false
+
+  constructor(reader: FrameReader) {
+    this.#reader = reader
+  }
+
+  register(correlationId: string): Promise<runProto.ResumeDecision> {
+    if (this.#pending.has(correlationId)) {
+      return Promise.reject(new Error("duplicate runtime correlation id"))
+    }
+    const result = new Promise<runProto.ResumeDecision>((resolve, reject) => {
+      this.#pending.set(correlationId, { resolve, reject })
+    })
+    this.#pump()
+    return result
+  }
+
+  cancel(correlationId: string): void {
+    this.#pending.delete(correlationId)
+  }
+
+  abandonPending(): void {
+    this.#pending.clear()
+  }
+
+  #pump(): void {
+    if (this.#reading) return
+    this.#reading = true
+    void (async () => {
+      try {
+        while (this.#pending.size > 0) {
+          const decision = fromBinary(
+            runProto.ResumeDecisionSchema,
+            await this.#reader.read(),
+          )
+          const correlationId = decision.correlationId || decision.runWaitId
+          const pending = this.#pending.get(correlationId)
+          if (pending === undefined) {
+            throw new Error("resume decision did not match a pending runtime operation")
+          }
+          this.#pending.delete(correlationId)
+          pending.resolve(decision)
+        }
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error))
+        for (const pending of this.#pending.values()) pending.reject(failure)
+        this.#pending.clear()
+      } finally {
+        this.#reading = false
+        if (this.#pending.size > 0) this.#pump()
+      }
+    })()
+  }
+}
+
+class RuntimeProtocolError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = "RuntimeProtocolError"
+  }
+}
+
+class ActorCancellationError extends Error {
+  readonly code: string
+
+  constructor(reasonCode: string) {
+    super(`Actor execution was cancelled: ${reasonCode}`)
+    this.name = "AbortError"
+    this.code = reasonCode
+  }
+}
+
+class ActorOperationState {
+  readonly controller = new AbortController()
+  #active = 0
+  #protocolFault: RuntimeProtocolError | undefined
+
+  track<T>(operation: () => Promise<T>): Promise<T> {
+    this.#active++
+    const result = (async () => {
+      try {
+        return await operation()
+      } catch (error) {
+        if (error instanceof RuntimeProtocolError && this.#protocolFault === undefined) {
+          this.#protocolFault = error
+        }
+        throw error
+      } finally {
+        this.#active--
+      }
+    })()
+    void result.catch(() => {})
+    return result
+  }
+
+  cancel(reasonCode: string): ActorCancellationError {
+    const error = new ActorCancellationError(reasonCode)
+    if (!this.controller.signal.aborted) this.controller.abort(error)
+    return this.controller.signal.reason as ActorCancellationError
+  }
+
+  assertCanComplete(): void {
+    if (this.#protocolFault !== undefined) throw this.#protocolFault
+    if (this.controller.signal.aborted) {
+      throw this.controller.signal.reason as ActorCancellationError
+    }
+    if (this.#active !== 0) {
+      throw new RuntimeProtocolError("Actor handler returned with runtime operations still pending")
+    }
+  }
+}
+
+class ConsumingWaitGate {
+  #pending = false
+
+  acquire(error: () => Error = () => new Error("only one consuming Wait may be pending")): () => void {
+    if (this.#pending) throw error()
+    this.#pending = true
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      this.#pending = false
+    }
+  }
+}
+
+async function requestRuntimeDecision(
+  io: ProgramIO,
+  decisions: ResumeDecisionRouter,
+  correlationId: string,
+  event: runProto.RunEvent["event"],
+): Promise<runProto.ResumeDecision> {
+  const pending = decisions.register(correlationId)
+  try {
+    await writeRunEvent(io, event)
+  } catch (error) {
+    decisions.cancel(correlationId)
+    throw new RuntimeProtocolError("failed to write runtime operation request", {
+      cause: error,
+    })
+  }
+  try {
+    return await pending
+  } catch (error) {
+    throw new RuntimeProtocolError("failed to read runtime operation decision", {
+      cause: error,
+    })
+  }
+}
+
+async function writeRuntimeProtocolEvent(
+  io: ProgramIO,
+  event: runProto.RunEvent["event"],
+): Promise<void> {
+  try {
+    await writeRunEvent(io, event)
+  } catch (error) {
+    throw new RuntimeProtocolError("failed to write runtime protocol event", {
+      cause: error,
+    })
+  }
+}
+
+function parseRuntimeProtocolValue<T>(label: string, parse: () => T): T {
+  try {
+    return parse()
+  } catch (error) {
+    if (error instanceof RuntimeProtocolError) throw error
+    throw new RuntimeProtocolError(`${label} was invalid`, { cause: error })
+  }
+}
+
 export async function runProgram(
   locatorURL: URL,
   io = defaultProgramIO(),
@@ -157,12 +343,13 @@ export async function runProgram(
     await reader.read(),
   )
   validateEntrypointRelease(release, start, kind)
+  const decisions = new ResumeDecisionRouter(reader)
 
   if (definition.kind === "task") {
-    await runTask(start, definition, io, reader)
+    await runTask(start, definition, io, decisions)
     return
   }
-  await runActor(start, definition, io, reader)
+  await runActor(start, definition, io, decisions)
 }
 
 async function loadDeclarationLocator(
@@ -329,7 +516,7 @@ async function runTask(
   start: runProto.ProgramStart,
   definition: InternalTaskDefinition,
   io: ProgramIO,
-  reader: FrameReader,
+  decisions: ResumeDecisionRouter,
 ): Promise<void> {
   let payload: unknown
   if (definition.hasPayload) {
@@ -370,7 +557,7 @@ async function runTask(
 
   const context = taskContext(start)
 	const uninstallRuntime = installRuntimeOperations(
-		programRuntimeOperations(start, io, reader),
+		programRuntimeOperations(start, io, decisions, new ConsumingWaitGate()),
 	)
   let normalized: Uint8Array
   try {
@@ -387,6 +574,7 @@ async function runTask(
       )
     }
   } catch (error) {
+		if (error instanceof RuntimeProtocolError) throw error
 		await writeTaskFailure(io, "failed", errorMessage(error))
 		return
 	} finally {
@@ -408,20 +596,18 @@ async function runTask(
 function programRuntimeOperations(
   start: runProto.ProgramStart,
   io: ProgramIO,
-  reader: FrameReader,
+  decisions: ResumeDecisionRouter,
+  waitGate: ConsumingWaitGate,
+  actorOperations?: ActorOperationState,
 ): RuntimeOperations {
-  let pending = false
-  const wait = async (
+  const performWait = async (
     params: JsonValue,
     timeoutSeconds: number,
   ): Promise<void> => {
-    if (pending) {
-      throw new Error("only one consuming Wait may be pending")
-    }
-    pending = true
+    const releaseWait = waitGate.acquire()
     const correlationId = randomUUID()
     try {
-      await writeRunEvent(io, {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
         value: create(runProto.RunWaitRequestedSchema, {
           correlationId,
@@ -430,20 +616,16 @@ function programRuntimeOperations(
           timeout: timeoutSeconds,
         }),
       })
-      const decision = fromBinary(
-        runProto.ResumeDecisionSchema,
-        await reader.read(),
-      )
       if (
         (decision.correlationId || decision.runWaitId) !== correlationId ||
         (decision.kind !== "completed" &&
           decision.kind !== "failed" &&
           decision.kind !== "cancelled")
       ) {
-        throw new Error("timer resume decision did not match the pending Wait")
+        throw new RuntimeProtocolError("timer resume decision did not match the pending Wait")
       }
-		if (decision.requireConsumedAck) {
-			await writeRunEvent(io, {
+      if (decision.requireConsumedAck) {
+			await writeRuntimeProtocolEvent(io, {
 				case: "resumeConsumed",
 				value: create(runProto.ResumeConsumedSchema, {
 					runWaitId: decision.runWaitId,
@@ -455,14 +637,28 @@ function programRuntimeOperations(
 				}),
 			})
 		}
+      if (decision.kind === "cancelled" && actorOperations !== undefined) {
+        const failure = parseRuntimeProtocolValue(
+          "Actor timer cancellation decision",
+          () => resumeFailure(decision.dataJson),
+        )
+        throw actorOperations.cancel(failure.reasonCode)
+      }
       if (decision.kind !== "completed") {
-        const failure = resumeFailure(decision.dataJson)
-        throw new Error(`timer Wait ${decision.kind}: ${failure.reasonCode}`)
+        const failure = parseRuntimeProtocolValue(
+          "timer Wait failure decision",
+          () => resumeFailure(decision.dataJson),
+        )
+        throw new RuntimeProtocolError(`timer Wait ${decision.kind}: ${failure.reasonCode}`)
       }
     } finally {
-      pending = false
+      releaseWait()
     }
   }
+  const wait = (params: JsonValue, timeoutSeconds: number): Promise<void> =>
+    actorOperations === undefined
+      ? performWait(params, timeoutSeconds)
+      : actorOperations.track(() => performWait(params, timeoutSeconds))
   return {
     waitFor(duration) {
       const timeoutSeconds = durationSeconds(duration)
@@ -540,22 +736,35 @@ async function runActor(
   start: runProto.ProgramStart,
   definition: InternalActorDefinition,
   io: ProgramIO,
-  reader: FrameReader,
+  decisions: ResumeDecisionRouter,
 ): Promise<void> {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")
   }
-  const terminalInputSequence = start.entrypoint.value.startInputSequence
+  const cursor = { value: start.entrypoint.value.startInputSequence }
+  const waitGate = new ConsumingWaitGate()
+  const actorOperations = new ActorOperationState()
   const uninstallRuntime = installRuntimeOperations(
-    programRuntimeOperations(start, io, reader),
+    programRuntimeOperations(start, io, decisions, waitGate, actorOperations),
   )
   try {
-    await definition.handler(unavailableActorSelf(), actorContext(start))
+    await definition.handler(
+      actorSelf(start, io, decisions, cursor, waitGate, actorOperations),
+      actorContext(start, actorOperations.controller.signal),
+    )
+    try {
+      actorOperations.assertCanComplete()
+    } catch (error) {
+      decisions.abandonPending()
+      throw error
+    }
   } catch (error) {
-    if (error instanceof ActorChannelTransportUnavailableError) throw error
+    if (error instanceof RuntimeProtocolError || error instanceof ActorCancellationError) {
+      throw error
+    }
     await writeActorFailure(
       io,
-      terminalInputSequence,
+      cursor.value,
       errorMessage(error),
     )
     return
@@ -565,7 +774,7 @@ async function runActor(
   await writeRunEvent(io, {
     case: "actorOutcome",
     value: create(runProto.ActorOutcomeSchema, {
-      terminalInputSequence,
+      terminalInputSequence: cursor.value,
       outcome: {
         case: "succeeded",
         value: create(runProto.ActorSucceededSchema),
@@ -574,33 +783,387 @@ async function runActor(
   })
 }
 
-class ActorChannelTransportUnavailableError extends Error {
-  constructor() {
-    super("Actor channel transport is not available")
-    this.name = "ActorChannelTransportUnavailableError"
+function actorSelf(
+  start: runProto.ProgramStart,
+  io: ProgramIO,
+  decisions: ResumeDecisionRouter,
+  cursor: { value: bigint },
+  waitGate: ConsumingWaitGate,
+  actorOperations: ActorOperationState,
+): ActorSelf {
+  if (start.entrypoint.case !== "actor") {
+    throw new Error("Actor Program-start entrypoint is required")
   }
-}
+  const actorStart = start.entrypoint.value
+  let committedBoundary = cursor.value
 
-function unavailableActorSelf(): ActorSelf {
-  const unavailable = (): never => {
-    throw new ActorChannelTransportUnavailableError()
+  const commitPriorTurn = async (): Promise<void> => {
+    if (cursor.value === committedBoundary) return
+    const correlationId = randomUUID()
+    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+      case: "actorTurnCommitRequested",
+      value: create(runProto.ActorTurnCommitRequestedSchema, {
+        correlationId,
+        targetInputSequence: cursor.value,
+      }),
+    })
+    requireActorDecision(decision, correlationId, "committed", "Actor turn commit")
+    committedBoundary = cursor.value
   }
+
+  const performReceive = async (
+    options: ReceiveOptions | undefined,
+    releaseWait: () => void,
+  ): Promise<ActorInputResult> => {
+    try {
+      await commitPriorTurn()
+      const correlationId = randomUUID()
+      const timeout = options?.timeout === undefined
+        ? undefined
+        : durationSeconds(options.timeout)
+      const idleTimeout = options?.idleTimeout === undefined
+        ? undefined
+        : durationSeconds(options.idleTimeout)
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "runWaitRequested",
+        value: create(runProto.RunWaitRequestedSchema, {
+          correlationId,
+          kind: "actor_input",
+          paramsJson: JSON.stringify({
+            actor_id: actorStart.actorId,
+            after_input_sequence: safeActorSequence(cursor.value),
+          }),
+          ...(options?.metadata === undefined
+            ? {}
+            : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) }),
+          ...(timeout === undefined ? {} : { timeout }),
+          ...(idleTimeout === undefined ? {} : { idleTimeout }),
+          tags: options?.tags === undefined ? [] : [...options.tags],
+        }),
+      })
+      if ((decision.correlationId || decision.runWaitId) !== correlationId) {
+        throw new RuntimeProtocolError("Actor input resume decision did not match the pending receive")
+      }
+      if (decision.requireConsumedAck) {
+        await writeRuntimeProtocolEvent(io, {
+          case: "resumeConsumed",
+          value: create(runProto.ResumeConsumedSchema, {
+            runWaitId: decision.runWaitId,
+            checkpointId: decision.checkpointId,
+            resumeAttachId: decision.resumeAttachId,
+            resumeRequestVersion: decision.resumeRequestVersion,
+            runLeaseId: decision.runLeaseId,
+            correlationId: decision.correlationId,
+          }),
+        })
+      }
+      if (decision.kind === "completed") {
+        const delivered = parseRuntimeProtocolValue(
+          "Actor input delivery",
+          () => parseActorInputDelivery(decision.dataJson),
+        )
+        if (BigInt(delivered.record.sequence) !== cursor.value + 1n) {
+          throw new RuntimeProtocolError("Actor input delivery was not the next contiguous record")
+        }
+        cursor.value = BigInt(delivered.record.sequence)
+        return delivered
+      }
+      if (decision.kind === "failed") {
+        const failure = parseRuntimeProtocolValue(
+          "Actor input Wait failure decision",
+          () => resumeFailure(decision.dataJson),
+        )
+        if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "actor_closed") {
+          throw new RuntimeProtocolError(`Actor input Wait failed: ${failure.reasonCode}`)
+        }
+        return Object.freeze({
+          ok: false,
+          error: actorChannelError(failure.reasonCode),
+        })
+      }
+      if (decision.kind === "cancelled") {
+        const failure = parseRuntimeProtocolValue(
+          "Actor input cancellation decision",
+          () => resumeFailure(decision.dataJson),
+        )
+        throw actorOperations.cancel(failure.reasonCode)
+      }
+      throw new RuntimeProtocolError(`Actor input Wait returned unsupported decision ${decision.kind}`)
+    } finally {
+      releaseWait()
+    }
+  }
+
+  const receive = (options?: ReceiveOptions): ActorReceive => {
+    let releaseWait: () => void
+    try {
+      releaseWait = waitGate.acquire(concurrentActorReceiveError)
+    } catch (error) {
+      return actorReceive(Promise.reject(concurrentActorReceiveError()))
+    }
+    return actorReceive(actorOperations.track(() => performReceive(options, releaseWait)))
+  }
+
+  const performAppend = async (
+    value: Serializable,
+    options?: OutputAppendOptions,
+  ): Promise<ActorOutputRecord> => {
+    const normalized = canonicalizeJsonValue(value as JsonValue)
+    const correlationId = randomUUID()
+    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+      case: "actorOutputAppendRequested",
+      value: create(runProto.ActorOutputAppendRequestedSchema, {
+        correlationId,
+        dataJson: new TextDecoder().decode(normalized),
+        contentType: options?.contentType ?? "application/json",
+        ...(options?.idempotencyKey === undefined
+          ? {}
+          : { idempotencyKey: options.idempotencyKey }),
+      }),
+    })
+    requireActorDecision(decision, correlationId, "completed", "Actor output append")
+    return parseRuntimeProtocolValue(
+      "Actor output append result",
+      () => parseActorOutputRecord(decision.dataJson),
+    )
+  }
+
+  const append = (
+    value: Serializable,
+    options?: OutputAppendOptions,
+  ): Promise<ActorOutputRecord> => actorOperations.track(
+    () => performAppend(value, options),
+  )
+
+  const performPipe = async (
+    source: AsyncIterable<Serializable> | Iterable<Serializable>,
+    options?: OutputSequenceOptions,
+  ): Promise<void> => {
+    for await (const value of source) await performAppend(value, options)
+  }
+
+  const pipe = (
+    source: AsyncIterable<Serializable> | Iterable<Serializable>,
+    options?: OutputSequenceOptions,
+  ): Promise<void> => actorOperations.track(() => performPipe(source, options))
+
+  const writer = (options?: OutputSequenceOptions) => {
+    let closed = false
+    return Object.freeze({
+      write(value: Serializable): Promise<ActorOutputRecord> {
+        if (closed) return Promise.reject(new Error("Actor output writer is closed"))
+        return append(value, options)
+      },
+      async close(): Promise<void> { closed = true },
+    })
+  }
+
   return Object.freeze({
-    input: Object.freeze({ receive: unavailable }),
+    input: Object.freeze({ receive }),
     output: Object.freeze({
-      append: unavailable,
-      pipe: unavailable,
-      writer: unavailable,
+      append,
+      pipe,
+      writer,
     }),
-  }) as ActorSelf
+  })
 }
 
-function actorContext(start: runProto.ProgramStart): ActorExecutionContext {
+function actorReceive(result: Promise<ActorInputResult>): ActorReceive {
+  return Object.freeze({
+    then: result.then.bind(result),
+    async unwrap(): Promise<JsonValue> {
+      const resolved = await result
+      if (resolved.ok) return resolved.value
+      throw resolved.error
+    },
+  }) as ActorReceive
+}
+
+function requireActorDecision(
+  decision: runProto.ResumeDecision,
+  correlationId: string,
+  kind: string,
+  operation: string,
+): void {
+  if ((decision.correlationId || decision.runWaitId) !== correlationId || decision.kind !== kind) {
+    throw new RuntimeProtocolError(`${operation} decision did not match the pending operation`)
+  }
+}
+
+function safeActorSequence(value: bigint): number {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Actor input sequence exceeds the JavaScript safe-integer range")
+  }
+  return Number(value)
+}
+
+function parseActorInputDelivery(dataJson: string): Extract<ActorInputResult, { ok: true }> {
+  const value = parseObjectJSON(dataJson, "Actor input delivery")
+  requireExactKeys(value, ["record", "value"], "Actor input delivery")
+  const record = objectField(value, "record", "Actor input delivery")
+  requireExactKeys(record, ["created_at", "id", "sequence", "source"], "Actor input record")
+  const source = objectField(record, "source", "Actor input record")
+  const sourceType = stringField(source, "type", "Actor input source")
+  let parsedSource: { readonly type: "external" } | {
+    readonly type: "run"
+    readonly runId: string
+  }
+  if (sourceType === "external") {
+    requireExactKeys(source, ["type"], "Actor input source")
+    parsedSource = Object.freeze({ type: "external" })
+  } else if (sourceType === "run") {
+    requireExactKeys(source, ["run_id", "type"], "Actor input source")
+    parsedSource = Object.freeze({
+      type: "run",
+      runId: stringField(source, "run_id", "Actor input source"),
+    })
+  } else {
+    throw new Error("Actor input source type is invalid")
+  }
+  const sequence = safeJSONSequence(record["sequence"], "Actor input record.sequence")
+  return Object.freeze({
+    ok: true,
+    value: jsonValueField(value, "value", "Actor input delivery"),
+    record: Object.freeze({
+      id: stringField(record, "id", "Actor input record"),
+      sequence,
+      createdAt: stringField(record, "created_at", "Actor input record"),
+      source: parsedSource,
+    }),
+  })
+}
+
+function parseActorOutputRecord(dataJson: string): ActorOutputRecord {
+  const value = parseObjectJSON(dataJson, "Actor output append result")
+  requireExactKeys(
+    value,
+    ["content_type", "created_at", "data", "id", "provenance", "sequence"],
+    "Actor output append result",
+  )
+  const provenance = objectField(value, "provenance", "Actor output append result")
+  requireExactKeys(
+    provenance,
+    ["attempt_number", "deployment_id", "run_id"],
+    "Actor output provenance",
+  )
+  return Object.freeze({
+    id: stringField(value, "id", "Actor output append result"),
+    sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
+    data: jsonValueField(value, "data", "Actor output append result"),
+    contentType: stringField(value, "content_type", "Actor output append result"),
+    createdAt: stringField(value, "created_at", "Actor output append result"),
+    provenance: Object.freeze({
+      runId: stringField(provenance, "run_id", "Actor output provenance"),
+      attemptNumber: safeJSONSequence(
+        provenance["attempt_number"],
+        "Actor output attempt number",
+      ),
+      deploymentId: stringField(
+        provenance,
+        "deployment_id",
+        "Actor output provenance",
+      ),
+    }),
+  })
+}
+
+function parseObjectJSON(value: string, label: string): Record<string, unknown> {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(value)
+  } catch {
+    throw new Error(`${label} must be valid JSON`)
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be an object`)
+  }
+  return parsed as Record<string, unknown>
+}
+
+function objectField(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): Record<string, unknown> {
+  const nested = value[field]
+  if (nested === null || typeof nested !== "object" || Array.isArray(nested)) {
+    throw new Error(`${label}.${field} must be an object`)
+  }
+  return nested as Record<string, unknown>
+}
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  expected: readonly string[],
+  label: string,
+): void {
+  const actual = Object.keys(value).sort()
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} has unknown or missing fields`)
+  }
+}
+
+function stringField(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): string {
+  const result = value[field]
+  if (typeof result !== "string" || result.trim() === "") {
+    throw new Error(`${label}.${field} must be a non-empty string`)
+  }
+  return result
+}
+
+function jsonValueField(
+  value: Record<string, unknown>,
+  field: string,
+  label: string,
+): JsonValue {
+  const result = value[field]
+  try {
+    canonicalizeJsonValue(result as JsonValue)
+  } catch (error) {
+    throw new Error(`${label}.${field} must be a JSON value`, { cause: error })
+  }
+  return result as JsonValue
+}
+
+function safeJSONSequence(value: unknown, label: string): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`)
+  }
+  return value as number
+}
+
+function actorChannelError(
+  code: "wait_timeout" | "actor_closed",
+): Extract<ActorInputResult, { ok: false }>["error"] {
+  const error = new Error(code === "wait_timeout" ? "Actor input receive timed out" : "Actor is closed") as Error & {
+    code: "wait_timeout" | "actor_closed"
+    retryable: false
+  }
+  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "ActorClosedError"
+  error.code = code
+  error.retryable = false
+  return error as Extract<ActorInputResult, { ok: false }>["error"]
+}
+
+function concurrentActorReceiveError(): Error {
+  const error = new Error("only one Actor input receive may be unresolved")
+  error.name = "ConcurrentActorReceiveError"
+  return error
+}
+
+function actorContext(
+  start: runProto.ProgramStart,
+  signal: AbortSignal,
+): ActorExecutionContext {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required")
   }
   return Object.freeze({
-    ...taskContext(start),
+    ...taskContext(start, signal),
     actor: Object.freeze({
       id: start.entrypoint.value.actorId,
       ...(start.entrypoint.value.key === undefined
@@ -633,9 +1196,12 @@ async function writeActorFailure(
   })
 }
 
-function taskContext(start: runProto.ProgramStart): TaskExecutionContext {
+function taskContext(
+  start: runProto.ProgramStart,
+  signal = new AbortController().signal,
+): TaskExecutionContext {
   return Object.freeze({
-    signal: new AbortController().signal,
+    signal,
     run: Object.freeze({
       id: start.runId,
       attemptNumber: start.attemptNumber,

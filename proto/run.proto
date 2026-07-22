@@ -227,6 +227,8 @@ message RunEvent {
     TaskOutcome task_outcome = 13;
     ProgramQuiesced program_quiesced = 14;
     ActorOutcome actor_outcome = 15;
+    ActorTurnCommitRequested actor_turn_commit_requested = 16;
+    ActorOutputAppendRequested actor_output_append_requested = 17;
   }
 }
 
@@ -265,6 +267,18 @@ message ActorSucceeded {}
 message ActorFailed {
   string message = 1;
   optional string details_json = 2;
+}
+
+message ActorTurnCommitRequested {
+  string correlation_id = 1;
+  int64 target_input_sequence = 2;
+}
+
+message ActorOutputAppendRequested {
+  string correlation_id = 1;
+  string data_json = 2;
+  string content_type = 3;
+  optional string idempotency_key = 4;
 }
 
 message ProgramQuiesced {

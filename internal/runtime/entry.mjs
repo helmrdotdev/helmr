@@ -3309,16 +3309,18 @@ __export(exports_run_pb, {
   CheckpointPauseRequestSchema: () => CheckpointPauseRequestSchema,
   CheckpointPauseReadySchema: () => CheckpointPauseReadySchema,
   ApiCauseSchema: () => ApiCauseSchema,
+  ActorTurnCommitRequestedSchema: () => ActorTurnCommitRequestedSchema,
   ActorSucceededSchema: () => ActorSucceededSchema,
   ActorStartSchema: () => ActorStartSchema,
   ActorStartCauseSchema: () => ActorStartCauseSchema,
+  ActorOutputAppendRequestedSchema: () => ActorOutputAppendRequestedSchema,
   ActorOutcomeSchema: () => ActorOutcomeSchema,
   ActorFailedSchema: () => ActorFailedSchema,
   ActorEntrypointSchema: () => ActorEntrypointSchema,
   ActiveStreamReadResultSchema: () => ActiveStreamReadResultSchema,
   ActiveStreamReadRequestedSchema: () => ActiveStreamReadRequestedSchema
 });
-var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIivgYKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSAASMwoNYWN0b3Jfb3V0Y29tZRgPIAEoCzIaLmhlbG1yLnJ1bi52MC5BY3Rvck91dGNvbWVIAEIHCgVldmVudCKzAQoLVGFza091dGNvbWUSMAoJc3VjY2VlZGVkGAEgASgLMhsuaGVsbXIucnVuLnYwLlRhc2tTdWNjZWVkZWRIABIqCgZmYWlsZWQYAiABKAsyGC5oZWxtci5ydW4udjAuVGFza0ZhaWxlZEgAEjsKD3BheWxvYWRfaW52YWxpZBgDIAEoCzIgLmhlbG1yLnJ1bi52MC5UYXNrUGF5bG9hZEludmFsaWRIAEIJCgdvdXRjb21lIiQKDVRhc2tTdWNjZWVkZWQSEwoLb3V0cHV0X2pzb24YASABKAkiSQoKVGFza0ZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoSVGFza1BheWxvYWRJbnZhbGlkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiK7AQoMQWN0b3JPdXRjb21lEiQKF3Rlcm1pbmFsX2lucHV0X3NlcXVlbmNlGAEgASgDSAGIAQESMQoJc3VjY2VlZGVkGAIgASgLMhwuaGVsbXIucnVuLnYwLkFjdG9yU3VjY2VlZGVkSAASKwoGZmFpbGVkGAMgASgLMhkuaGVsbXIucnVuLnYwLkFjdG9yRmFpbGVkSABCCQoHb3V0Y29tZUIaChhfdGVybWluYWxfaW5wdXRfc2VxdWVuY2UiEAoOQWN0b3JTdWNjZWVkZWQiSgoLQWN0b3JGYWlsZWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIk8KD1Byb2dyYW1RdWllc2NlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIq4BCgpUYXNrUmVzdWx0EhEKCWV4aXRfY29kZRgBIAEoBRIaCg1lcnJvcl9tZXNzYWdlGAIgASgJSACIAQESGAoLb3V0cHV0X2pzb24YAyABKAlIAYgBARIrCgVlcnJvchgEIAEoCzIXLmhlbG1yLnJ1bi52MC5UYXNrRXJyb3JIAogBAUIQCg5fZXJyb3JfbWVzc2FnZUIOCgxfb3V0cHV0X2pzb25CCAoGX2Vycm9yImEKCVRhc2tFcnJvchIMCgR0eXBlGAEgASgJEgwKBGNvZGUYAiABKAkSDwoHbWVzc2FnZRgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSFAoMZGV0YWlsc19qc29uGAUgASgJIuMBChBSdW5XYWl0UmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEwoLcGFyYW1zX2pzb24YAyABKAkSGgoNbWV0YWRhdGFfanNvbhgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARIMCgR0YWdzGAYgAygJEhkKDGlkbGVfdGltZW91dBgJIAEoDUgCiAEBQhAKDl9tZXRhZGF0YV9qc29uQgoKCF90aW1lb3V0Qg8KDV9pZGxlX3RpbWVvdXRKBAgHEAhKBAgIEAkisgEKFFRva2VuQ3JlYXRlUmVxdWVzdGVkEhcKCnRpbWVvdXRfYXQYASABKAlIAIgBARIfChJ0aW1lb3V0X2luX3NlY29uZHMYAiABKA1IAYgBARIMCgR0YWdzGAQgAygJEhoKDW1ldGFkYXRhX2pzb24YBSABKAlIAogBAUINCgtfdGltZW91dF9hdEIVChNfdGltZW91dF9pbl9zZWNvbmRzQhAKDl9tZXRhZGF0YV9qc29uIqECChFUb2tlbkNyZWF0ZVJlc3VsdBIKCgJpZBgBIAEoCRIUCgxjYWxsYmFja191cmwYAiABKAkSIAoTcHVibGljX2FjY2Vzc190b2tlbhgDIAEoCUgAiAEBEhcKCnRpbWVvdXRfYXQYBCABKAlIAYgBARITCgZzdGF0dXMYBSABKAlIAogBARIMCgR0YWdzGAYgAygJEhoKDW1ldGFkYXRhX2pzb24YByABKAlIA4gBARIaCg1lcnJvcl9tZXNzYWdlGAkgASgJSASIAQFCFgoUX3B1YmxpY19hY2Nlc3NfdG9rZW5CDQoLX3RpbWVvdXRfYXRCCQoHX3N0YXR1c0IQCg5fbWV0YWRhdGFfanNvbkIQCg5fZXJyb3JfbWVzc2FnZSLKAQoZQWN0aXZlU3RyZWFtUmVhZFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIOCgZzdHJlYW0YAiABKAkSFgoOYWZ0ZXJfc2VxdWVuY2UYAyABKAMSIgoVcmVjb3JkX2NvcnJlbGF0aW9uX2lkGAQgASgJSACIAQESFAoHdGltZW91dBgFIAEoDUgBiAEBEg0KBWJsb2NrGAYgASgIQhgKFl9yZWNvcmRfY29ycmVsYXRpb25faWRCCgoIX3RpbWVvdXQirAEKDFN0cmVhbVJlY29yZBIKCgJpZBgBIAEoCRIRCglzdHJlYW1faWQYAiABKAkSEAoIc2VxdWVuY2UYAyABKAMSEQoJZGF0YV9qc29uGAQgASgJEhsKDmNvcnJlbGF0aW9uX2lkGAUgASgJSACIAQESFAoMY29udGVudF90eXBlGAYgASgJEhIKCmNyZWF0ZWRfYXQYByABKAlCEQoPX2NvcnJlbGF0aW9uX2lkIq0BChZBY3RpdmVTdHJlYW1SZWFkUmVzdWx0EhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEi8KBnJlY29yZBgCIAEoCzIaLmhlbG1yLnJ1bi52MC5TdHJlYW1SZWNvcmRIAIgBARIRCgl0aW1lZF9vdXQYAyABKAgSGgoNZXJyb3JfbWVzc2FnZRgEIAEoCUgBiAEBQgkKB19yZWNvcmRCEAoOX2Vycm9yX21lc3NhZ2Ui8wEKFkNoZWNrcG9pbnRQYXVzZVJlcXVlc3QSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIZChFjYXB0dXJlX3dvcmtzcGFjZRgDIAEoCBIOCgZydW5faWQYBCABKAkSFgoOYXR0ZW1wdF9udW1iZXIYBSABKA0SFAoMcnVuX2xlYXNlX2lkGAYgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYByABKAkSIgoaY2hlY2twb2ludF9yZXF1ZXN0X3ZlcnNpb24YCCABKAMSFgoOY29ycmVsYXRpb25faWQYCSABKAki1gEKFENoZWNrcG9pbnRQYXVzZVJlYWR5EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSDgoGcnVuX2lkGAMgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAQgASgNEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhYKDmNvcnJlbGF0aW9uX2lkGAggASgJIsoBCgxSZXN1bWVBdHRhY2gSFQoNY2hlY2twb2ludF9pZBgBIAEoCRITCgtydW5fd2FpdF9pZBgCIAEoCRIUCgxydW5fbGVhc2VfaWQYAyABKAkSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhgKEHJlc3VtZV9hdHRhY2hfaWQYBiABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSL2AQoOUmVzdW1lRGVjaXNpb24SEwoLcnVuX3dhaXRfaWQYASABKAkSDAoEa2luZBgCIAEoCRIRCglkYXRhX2pzb24YAyABKAkSHAoUcmVxdWlyZV9jb25zdW1lZF9hY2sYBCABKAgSFQoNY2hlY2twb2ludF9pZBgFIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFAoMcnVuX2xlYXNlX2lkGAggASgJEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJEhEKCW5vX3Jlc3VsdBgKIAEoCCKfAQoJUmVzdW1lQWNrEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSKkAQoOUmVzdW1lQ29uc3VtZWQSEwoLcnVuX3dhaXRfaWQYASABKAkSFQoNY2hlY2twb2ludF9pZBgCIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAMgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YBCABKAMSFAoMcnVuX2xlYXNlX2lkGAUgASgJEhYKDmNvcnJlbGF0aW9uX2lkGAYgASgJImgKFE91dHB1dFN0cmVhbUFwcGVuZGVkEg4KBnN0cmVhbRgBIAEoCRIUCgxwYXlsb2FkX2pzb24YAiABKAkSGQoMY29udGVudF90eXBlGAMgASgJSACIAQFCDwoNX2NvbnRlbnRfdHlwZSKuAQoPTWV0YWRhdGFVcGRhdGVkEhEKCW9wZXJhdGlvbhgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIXCgp2YWx1ZV9qc29uGAMgASgJSAGIAQESFwoKcGF0Y2hfanNvbhgEIAEoCUgCiAEBEhMKBmFtb3VudBgFIAEoAUgDiAEBQgYKBF9rZXlCDQoLX3ZhbHVlX2pzb25CDQoLX3BhdGNoX2pzb25CCQoHX2Ftb3VudEI6WjhnaXRodWIuY29tL2hlbG1yZG90ZGV2L2hlbG1yL2ludGVybmFsL3Byb3RvL3J1bi92MDtydW52MGIGcHJvdG8z");
+var file_run = /* @__PURE__ */ fileDesc("CglydW4ucHJvdG8SDGhlbG1yLnJ1bi52MCLLAgoMUHJvZ3JhbVN0YXJ0Eh4KFmVudHJ5cG9pbnRfZGVjbGFyZWRfaWQYASABKAkSDgoGcnVuX2lkGAIgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAMgASgNEiUKBWNhdXNlGAQgASgLMhYuaGVsbXIucnVuLnYwLlJ1bkNhdXNlEhUKDWRlcGxveW1lbnRfaWQYBSABKAkSGgoSZGVwbG95bWVudF92ZXJzaW9uGAYgASgJEhQKDHdvcmtzcGFjZV9pZBgHIAEoCRIhChliYXNlX3dvcmtzcGFjZV92ZXJzaW9uX2lkGAggASgJEicKBHRhc2sYCSABKAsyFy5oZWxtci5ydW4udjAuVGFza1N0YXJ0SAASKQoFYWN0b3IYCiABKAsyGC5oZWxtci5ydW4udjAuQWN0b3JTdGFydEgAQgwKCmVudHJ5cG9pbnQiXQoJVGFza1N0YXJ0Ei0KCm5vX3BheWxvYWQYASABKAsyFy5oZWxtci5ydW4udjAuTm9QYXlsb2FkSAASFgoMcGF5bG9hZF9qc29uGAIgASgMSABCCQoHcGF5bG9hZCILCglOb1BheWxvYWQidAoKQWN0b3JTdGFydBIQCghhY3Rvcl9pZBgBIAEoCRIQCgNrZXkYAiABKAlIAIgBARIcChRzdGFydF9pbnB1dF9zZXF1ZW5jZRgDIAEoAxIcChRpbnB1dF9oaWdoX3dhdGVybWFyaxgEIAEoA0IGCgRfa2V5IrECCghSdW5DYXVzZRIlCgNhcGkYASABKAsyFi5oZWxtci5ydW4udjAuQXBpQ2F1c2VIABIrCgZtYW51YWwYAiABKAsyGS5oZWxtci5ydW4udjAuTWFudWFsQ2F1c2VIABIpCgVjaGlsZBgDIAEoCzIYLmhlbG1yLnJ1bi52MC5DaGlsZENhdXNlSAASLwoIc2NoZWR1bGUYBCABKAsyGy5oZWxtci5ydW4udjAuU2NoZWR1bGVDYXVzZUgAEjQKC2FjdG9yX3N0YXJ0GAUgASgLMh0uaGVsbXIucnVuLnYwLkFjdG9yU3RhcnRDYXVzZUgAEjcKDGNvbnRpbnVhdGlvbhgGIAEoCzIfLmhlbG1yLnJ1bi52MC5Db250aW51YXRpb25DYXVzZUgAQgYKBGtpbmQiCgoIQXBpQ2F1c2UiDQoLTWFudWFsQ2F1c2UiIwoKQ2hpbGRDYXVzZRIVCg1wYXJlbnRfcnVuX2lkGAEgASgJIqIBCg1TY2hlZHVsZUNhdXNlEhMKC3NjaGVkdWxlX2lkGAEgASgJEhwKFHNjaGVkdWxlZF9hdF91bml4X21zGAIgASgDEioKHXByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zGAMgASgDSACIAQESEAoIdGltZXpvbmUYBCABKAlCIAoeX3ByZXZpb3VzX3NjaGVkdWxlZF9hdF91bml4X21zIhEKD0FjdG9yU3RhcnRDYXVzZSITChFDb250aW51YXRpb25DYXVzZSKkAQoRUHJvZ3JhbVJ1blJlcXVlc3QSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCRIbChNwcm9ncmFtX3N0YXJ0X2ZyYW1lGAQgASgMEhQKDHNlY3JldF9jb3VudBgFIAEoDRIeChZzdGFydF9kZWFkbGluZV91bml4X21zGAYgASgDIkoKDVByb2dyYW1TZWNyZXQSDQoDZW52GAEgASgJSAASDgoEZmlsZRgCIAEoCUgAEg0KBXZhbHVlGAMgASgMQgsKCXBsYWNlbWVudCJsChZQcm9ncmFtU2VjcmV0c0NvbXBsZXRlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRIUCgxydW5fbGVhc2VfaWQYAyABKAkSFAoMc2VjcmV0X2NvdW50GAQgASgNIpoCChhQcm9ncmFtU3VwZXJ2aXNvckNvbW1hbmQSNgoPc2VjcmV0X2RlbGl2ZXJ5GAEgASgLMhsuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRIABJAChBzZWNyZXRzX2NvbXBsZXRlGAIgASgLMiQuaGVsbXIucnVuLnYwLlByb2dyYW1TZWNyZXRzQ29tcGxldGVIABI6Cg1zdGFydF9yZWxlYXNlGAMgASgLMiEuaGVsbXIucnVuLnYwLlByb2dyYW1TdGFydFJlbGVhc2VIABI9ChJlbnRyeXBvaW50X3JlbGVhc2UYBCABKAsyHy5oZWxtci5ydW4udjAuRW50cnlwb2ludFJlbGVhc2VIAEIJCgdjb21tYW5kIlUKFVByb2dyYW1Qcm9jZXNzU3RhcnRlZBIOCgZydW5faWQYASABKAkSFgoOYXR0ZW1wdF9udW1iZXIYAiABKA0SFAoMcnVuX2xlYXNlX2lkGAMgASgJIlMKE1Byb2dyYW1TdGFydFJlbGVhc2USDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKPAQoSRW50cnlwb2ludElkZW50aXR5EhMKC2RlY2xhcmVkX2lkGAEgASgJEiwKBHRhc2sYAiABKAsyHC5oZWxtci5ydW4udjAuVGFza0VudHJ5cG9pbnRIABIuCgVhY3RvchgDIAEoCzIdLmhlbG1yLnJ1bi52MC5BY3RvckVudHJ5cG9pbnRIAEIGCgRraW5kIhAKDlRhc2tFbnRyeXBvaW50IhEKD0FjdG9yRW50cnlwb2ludCJvCg9FbnRyeXBvaW50UmVhZHkSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEjQKCmVudHJ5cG9pbnQYAyABKAsyIC5oZWxtci5ydW4udjAuRW50cnlwb2ludElkZW50aXR5InEKEUVudHJ5cG9pbnRSZWxlYXNlEg4KBnJ1bl9pZBgBIAEoCRIWCg5hdHRlbXB0X251bWJlchgCIAEoDRI0CgplbnRyeXBvaW50GAMgASgLMiAuaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRJZGVudGl0eSJ7ChBSdW5UYXNrV29ya3NwYWNlEgwKBHBhdGgYASABKAkSFAoMcHJvamVjdF9wYXRoGAIgASgJEjEKCGFydGlmYWN0GAMgASgLMh8uaGVsbXIucnVuLnYwLldvcmtzcGFjZUFydGlmYWN0EhAKCHdyaXRhYmxlGAUgASgIInIKEVdvcmtzcGFjZUFydGlmYWN0Eg4KBmRpZ2VzdBgBIAEoCRISCgptZWRpYV90eXBlGAIgASgJEhAKCGVuY29kaW5nGAMgASgJEhIKCnNpemVfYnl0ZXMYBCABKAQSEwoLZW50cnlfY291bnQYBSABKA0i5gIKDlJ1blRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAkSEwoLbW9kdWxlX3BhdGgYAiABKAkSCwoDY3dkGAMgASgJEisKB3NlY3JldHMYBCADKAsyGi5oZWxtci5ydW4udjAuU2VjcmV0SW5qZWN0Eg4KBnJ1bl9pZBgFIAEoCRIUCgxwYXlsb2FkX2pzb24YBiABKAkSMQoJd29ya3NwYWNlGAcgASgLMh4uaGVsbXIucnVuLnYwLlJ1blRhc2tXb3Jrc3BhY2USKQoFdHJhY2UYCCABKAsyGi5oZWxtci5ydW4udjAuVHJhY2VDb250ZXh0EhYKDmF0dGVtcHRfbnVtYmVyGAkgASgNEhQKDHJ1bl9sZWFzZV9pZBgKIAEoCRIYChBzbmFwc2hvdF92ZXJzaW9uGAsgASgEEhIKCnNlc3Npb25faWQYDCABKAkSFAoMcmV0cnlfcmVhc29uGA0gASgJIkYKDFRyYWNlQ29udGV4dBIQCgh0cmFjZV9pZBgBIAEoCRIPCgdzcGFuX2lkGAIgASgJEhMKC3RyYWNlcGFyZW50GAMgASgJIl0KDFNlY3JldEluamVjdBIMCgRuYW1lGAEgASgJEioKCXBsYWNlbWVudBgCIAEoCzIXLmhlbG1yLnJ1bi52MC5QbGFjZW1lbnQSEwoLdmFsdWVfYnl0ZXMYAyABKAwilgEKCVBsYWNlbWVudBIpCgNlbnYYASABKAsyGi5oZWxtci5ydW4udjAuRW52UGxhY2VtZW50SAASKwoEZmlsZRgCIAEoCzIbLmhlbG1yLnJ1bi52MC5GaWxlUGxhY2VtZW50SAASKQoDZGlyGAMgASgLMhouaGVsbXIucnVuLnYwLkRpclBsYWNlbWVudEgAQgYKBGtpbmQiHAoMRW52UGxhY2VtZW50EgwKBG5hbWUYASABKAkiVwoNRmlsZVBsYWNlbWVudBIMCgRwYXRoGAEgASgJEhEKBG1vZGUYAiABKAlIAIgBARISCgVvd25lchgDIAEoCUgBiAEBQgcKBV9tb2RlQggKBl9vd25lciJWCgxEaXJQbGFjZW1lbnQSDAoEcGF0aBgBIAEoCRIRCgRtb2RlGAIgASgJSACIAQESEgoFb3duZXIYAyABKAlIAYgBAUIHCgVfbW9kZUIICgZfb3duZXIi4AcKCFJ1bkV2ZW50EhYKDHN0ZG91dF9jaHVuaxgBIAEoDEgAEhYKDHN0ZGVycl9jaHVuaxgCIAEoDEgAEhMKCWxvZ19lbnRyeRgDIAEoCUgAEi8KC3Rhc2tfcmVzdWx0GAQgASgLMhguaGVsbXIucnVuLnYwLlRhc2tSZXN1bHRIABI8ChJydW5fd2FpdF9yZXF1ZXN0ZWQYBSABKAsyHi5oZWxtci5ydW4udjAuUnVuV2FpdFJlcXVlc3RlZEgAEjkKEG1ldGFkYXRhX3VwZGF0ZWQYByABKAsyHS5oZWxtci5ydW4udjAuTWV0YWRhdGFVcGRhdGVkSAASRAoWdG9rZW5fY3JlYXRlX3JlcXVlc3RlZBgIIAEoCzIiLmhlbG1yLnJ1bi52MC5Ub2tlbkNyZWF0ZVJlcXVlc3RlZEgAEkQKFm91dHB1dF9zdHJlYW1fYXBwZW5kZWQYCSABKAsyIi5oZWxtci5ydW4udjAuT3V0cHV0U3RyZWFtQXBwZW5kZWRIABJPChxhY3RpdmVfc3RyZWFtX3JlYWRfcmVxdWVzdGVkGAogASgLMicuaGVsbXIucnVuLnYwLkFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWRIABI3Cg9yZXN1bWVfY29uc3VtZWQYBiABKAsyHC5oZWxtci5ydW4udjAuUmVzdW1lQ29uc3VtZWRIABJGChdwcm9ncmFtX3Byb2Nlc3Nfc3RhcnRlZBgLIAEoCzIjLmhlbG1yLnJ1bi52MC5Qcm9ncmFtUHJvY2Vzc1N0YXJ0ZWRIABI5ChBlbnRyeXBvaW50X3JlYWR5GAwgASgLMh0uaGVsbXIucnVuLnYwLkVudHJ5cG9pbnRSZWFkeUgAEjEKDHRhc2tfb3V0Y29tZRgNIAEoCzIZLmhlbG1yLnJ1bi52MC5UYXNrT3V0Y29tZUgAEjkKEHByb2dyYW1fcXVpZXNjZWQYDiABKAsyHS5oZWxtci5ydW4udjAuUHJvZ3JhbVF1aWVzY2VkSAASMwoNYWN0b3Jfb3V0Y29tZRgPIAEoCzIaLmhlbG1yLnJ1bi52MC5BY3Rvck91dGNvbWVIABJNChthY3Rvcl90dXJuX2NvbW1pdF9yZXF1ZXN0ZWQYECABKAsyJi5oZWxtci5ydW4udjAuQWN0b3JUdXJuQ29tbWl0UmVxdWVzdGVkSAASUQodYWN0b3Jfb3V0cHV0X2FwcGVuZF9yZXF1ZXN0ZWQYESABKAsyKC5oZWxtci5ydW4udjAuQWN0b3JPdXRwdXRBcHBlbmRSZXF1ZXN0ZWRIAEIHCgVldmVudCKzAQoLVGFza091dGNvbWUSMAoJc3VjY2VlZGVkGAEgASgLMhsuaGVsbXIucnVuLnYwLlRhc2tTdWNjZWVkZWRIABIqCgZmYWlsZWQYAiABKAsyGC5oZWxtci5ydW4udjAuVGFza0ZhaWxlZEgAEjsKD3BheWxvYWRfaW52YWxpZBgDIAEoCzIgLmhlbG1yLnJ1bi52MC5UYXNrUGF5bG9hZEludmFsaWRIAEIJCgdvdXRjb21lIiQKDVRhc2tTdWNjZWVkZWQSEwoLb3V0cHV0X2pzb24YASABKAkiSQoKVGFza0ZhaWxlZBIPCgdtZXNzYWdlGAEgASgJEhkKDGRldGFpbHNfanNvbhgCIAEoCUgAiAEBQg8KDV9kZXRhaWxzX2pzb24iUQoSVGFza1BheWxvYWRJbnZhbGlkEg8KB21lc3NhZ2UYASABKAkSGQoMZGV0YWlsc19qc29uGAIgASgJSACIAQFCDwoNX2RldGFpbHNfanNvbiK7AQoMQWN0b3JPdXRjb21lEiQKF3Rlcm1pbmFsX2lucHV0X3NlcXVlbmNlGAEgASgDSAGIAQESMQoJc3VjY2VlZGVkGAIgASgLMhwuaGVsbXIucnVuLnYwLkFjdG9yU3VjY2VlZGVkSAASKwoGZmFpbGVkGAMgASgLMhkuaGVsbXIucnVuLnYwLkFjdG9yRmFpbGVkSABCCQoHb3V0Y29tZUIaChhfdGVybWluYWxfaW5wdXRfc2VxdWVuY2UiEAoOQWN0b3JTdWNjZWVkZWQiSgoLQWN0b3JGYWlsZWQSDwoHbWVzc2FnZRgBIAEoCRIZCgxkZXRhaWxzX2pzb24YAiABKAlIAIgBAUIPCg1fZGV0YWlsc19qc29uIlEKGEFjdG9yVHVybkNvbW1pdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIdChV0YXJnZXRfaW5wdXRfc2VxdWVuY2UYAiABKAMijwEKGkFjdG9yT3V0cHV0QXBwZW5kUmVxdWVzdGVkEhYKDmNvcnJlbGF0aW9uX2lkGAEgASgJEhEKCWRhdGFfanNvbhgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSHAoPaWRlbXBvdGVuY3lfa2V5GAQgASgJSACIAQFCEgoQX2lkZW1wb3RlbmN5X2tleSJPCg9Qcm9ncmFtUXVpZXNjZWQSDgoGcnVuX2lkGAEgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAIgASgNEhQKDHJ1bl9sZWFzZV9pZBgDIAEoCSKuAQoKVGFza1Jlc3VsdBIRCglleGl0X2NvZGUYASABKAUSGgoNZXJyb3JfbWVzc2FnZRgCIAEoCUgAiAEBEhgKC291dHB1dF9qc29uGAMgASgJSAGIAQESKwoFZXJyb3IYBCABKAsyFy5oZWxtci5ydW4udjAuVGFza0Vycm9ySAKIAQFCEAoOX2Vycm9yX21lc3NhZ2VCDgoMX291dHB1dF9qc29uQggKBl9lcnJvciJhCglUYXNrRXJyb3ISDAoEdHlwZRgBIAEoCRIMCgRjb2RlGAIgASgJEg8KB21lc3NhZ2UYAyABKAkSEQoJcmV0cnlhYmxlGAQgASgIEhQKDGRldGFpbHNfanNvbhgFIAEoCSLjAQoQUnVuV2FpdFJlcXVlc3RlZBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIMCgRraW5kGAIgASgJEhMKC3BhcmFtc19qc29uGAMgASgJEhoKDW1ldGFkYXRhX2pzb24YBCABKAlIAIgBARIUCgd0aW1lb3V0GAUgASgNSAGIAQESDAoEdGFncxgGIAMoCRIZCgxpZGxlX3RpbWVvdXQYCSABKA1IAogBAUIQCg5fbWV0YWRhdGFfanNvbkIKCghfdGltZW91dEIPCg1faWRsZV90aW1lb3V0SgQIBxAISgQICBAJIrIBChRUb2tlbkNyZWF0ZVJlcXVlc3RlZBIXCgp0aW1lb3V0X2F0GAEgASgJSACIAQESHwoSdGltZW91dF9pbl9zZWNvbmRzGAIgASgNSAGIAQESDAoEdGFncxgEIAMoCRIaCg1tZXRhZGF0YV9qc29uGAUgASgJSAKIAQFCDQoLX3RpbWVvdXRfYXRCFQoTX3RpbWVvdXRfaW5fc2Vjb25kc0IQCg5fbWV0YWRhdGFfanNvbiKhAgoRVG9rZW5DcmVhdGVSZXN1bHQSCgoCaWQYASABKAkSFAoMY2FsbGJhY2tfdXJsGAIgASgJEiAKE3B1YmxpY19hY2Nlc3NfdG9rZW4YAyABKAlIAIgBARIXCgp0aW1lb3V0X2F0GAQgASgJSAGIAQESEwoGc3RhdHVzGAUgASgJSAKIAQESDAoEdGFncxgGIAMoCRIaCg1tZXRhZGF0YV9qc29uGAcgASgJSAOIAQESGgoNZXJyb3JfbWVzc2FnZRgJIAEoCUgEiAEBQhYKFF9wdWJsaWNfYWNjZXNzX3Rva2VuQg0KC190aW1lb3V0X2F0QgkKB19zdGF0dXNCEAoOX21ldGFkYXRhX2pzb25CEAoOX2Vycm9yX21lc3NhZ2UiygEKGUFjdGl2ZVN0cmVhbVJlYWRSZXF1ZXN0ZWQSFgoOY29ycmVsYXRpb25faWQYASABKAkSDgoGc3RyZWFtGAIgASgJEhYKDmFmdGVyX3NlcXVlbmNlGAMgASgDEiIKFXJlY29yZF9jb3JyZWxhdGlvbl9pZBgEIAEoCUgAiAEBEhQKB3RpbWVvdXQYBSABKA1IAYgBARINCgVibG9jaxgGIAEoCEIYChZfcmVjb3JkX2NvcnJlbGF0aW9uX2lkQgoKCF90aW1lb3V0IqwBCgxTdHJlYW1SZWNvcmQSCgoCaWQYASABKAkSEQoJc3RyZWFtX2lkGAIgASgJEhAKCHNlcXVlbmNlGAMgASgDEhEKCWRhdGFfanNvbhgEIAEoCRIbCg5jb3JyZWxhdGlvbl9pZBgFIAEoCUgAiAEBEhQKDGNvbnRlbnRfdHlwZRgGIAEoCRISCgpjcmVhdGVkX2F0GAcgASgJQhEKD19jb3JyZWxhdGlvbl9pZCKtAQoWQWN0aXZlU3RyZWFtUmVhZFJlc3VsdBIWCg5jb3JyZWxhdGlvbl9pZBgBIAEoCRIvCgZyZWNvcmQYAiABKAsyGi5oZWxtci5ydW4udjAuU3RyZWFtUmVjb3JkSACIAQESEQoJdGltZWRfb3V0GAMgASgIEhoKDWVycm9yX21lc3NhZ2UYBCABKAlIAYgBAUIJCgdfcmVjb3JkQhAKDl9lcnJvcl9tZXNzYWdlIvMBChZDaGVja3BvaW50UGF1c2VSZXF1ZXN0EhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGQoRY2FwdHVyZV93b3Jrc3BhY2UYAyABKAgSDgoGcnVuX2lkGAQgASgJEhYKDmF0dGVtcHRfbnVtYmVyGAUgASgNEhQKDHJ1bl9sZWFzZV9pZBgGIAEoCRIYChByZXN1bWVfYXR0YWNoX2lkGAcgASgJEiIKGmNoZWNrcG9pbnRfcmVxdWVzdF92ZXJzaW9uGAggASgDEhYKDmNvcnJlbGF0aW9uX2lkGAkgASgJItYBChRDaGVja3BvaW50UGF1c2VSZWFkeRITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEg4KBnJ1bl9pZBgDIAEoCRIWCg5hdHRlbXB0X251bWJlchgEIAEoDRIUCgxydW5fbGVhc2VfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIiChpjaGVja3BvaW50X3JlcXVlc3RfdmVyc2lvbhgHIAEoAxIWCg5jb3JyZWxhdGlvbl9pZBgIIAEoCSLKAQoMUmVzdW1lQXR0YWNoEhUKDWNoZWNrcG9pbnRfaWQYASABKAkSEwoLcnVuX3dhaXRfaWQYAiABKAkSFAoMcnVuX2xlYXNlX2lkGAMgASgJEg4KBnJ1bl9pZBgEIAEoCRIWCg5hdHRlbXB0X251bWJlchgFIAEoDRIYChByZXN1bWVfYXR0YWNoX2lkGAYgASgJEh4KFnJlc3VtZV9yZXF1ZXN0X3ZlcnNpb24YByABKAMSFgoOY29ycmVsYXRpb25faWQYCCABKAki9gEKDlJlc3VtZURlY2lzaW9uEhMKC3J1bl93YWl0X2lkGAEgASgJEgwKBGtpbmQYAiABKAkSEQoJZGF0YV9qc29uGAMgASgJEhwKFHJlcXVpcmVfY29uc3VtZWRfYWNrGAQgASgIEhUKDWNoZWNrcG9pbnRfaWQYBSABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgGIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAcgASgDEhQKDHJ1bl9sZWFzZV9pZBgIIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgJIAEoCRIRCglub19yZXN1bHQYCiABKAginwEKCVJlc3VtZUFjaxITCgtydW5fd2FpdF9pZBgBIAEoCRIVCg1jaGVja3BvaW50X2lkGAIgASgJEhgKEHJlc3VtZV9hdHRhY2hfaWQYAyABKAkSHgoWcmVzdW1lX3JlcXVlc3RfdmVyc2lvbhgEIAEoAxIUCgxydW5fbGVhc2VfaWQYBSABKAkSFgoOY29ycmVsYXRpb25faWQYBiABKAkipAEKDlJlc3VtZUNvbnN1bWVkEhMKC3J1bl93YWl0X2lkGAEgASgJEhUKDWNoZWNrcG9pbnRfaWQYAiABKAkSGAoQcmVzdW1lX2F0dGFjaF9pZBgDIAEoCRIeChZyZXN1bWVfcmVxdWVzdF92ZXJzaW9uGAQgASgDEhQKDHJ1bl9sZWFzZV9pZBgFIAEoCRIWCg5jb3JyZWxhdGlvbl9pZBgGIAEoCSJoChRPdXRwdXRTdHJlYW1BcHBlbmRlZBIOCgZzdHJlYW0YASABKAkSFAoMcGF5bG9hZF9qc29uGAIgASgJEhkKDGNvbnRlbnRfdHlwZRgDIAEoCUgAiAEBQg8KDV9jb250ZW50X3R5cGUirgEKD01ldGFkYXRhVXBkYXRlZBIRCglvcGVyYXRpb24YASABKAkSEAoDa2V5GAIgASgJSACIAQESFwoKdmFsdWVfanNvbhgDIAEoCUgBiAEBEhcKCnBhdGNoX2pzb24YBCABKAlIAogBARITCgZhbW91bnQYBSABKAFIA4gBAUIGCgRfa2V5Qg0KC192YWx1ZV9qc29uQg0KC19wYXRjaF9qc29uQgkKB19hbW91bnRCOlo4Z2l0aHViLmNvbS9oZWxtcmRvdGRldi9oZWxtci9pbnRlcm5hbC9wcm90by9ydW4vdjA7cnVudjBiBnByb3RvMw");
 var ProgramStartSchema = /* @__PURE__ */ messageDesc(file_run, 0);
 var TaskStartSchema = /* @__PURE__ */ messageDesc(file_run, 1);
 var NoPayloadSchema = /* @__PURE__ */ messageDesc(file_run, 2);
@@ -3358,23 +3360,25 @@ var TaskPayloadInvalidSchema = /* @__PURE__ */ messageDesc(file_run, 35);
 var ActorOutcomeSchema = /* @__PURE__ */ messageDesc(file_run, 36);
 var ActorSucceededSchema = /* @__PURE__ */ messageDesc(file_run, 37);
 var ActorFailedSchema = /* @__PURE__ */ messageDesc(file_run, 38);
-var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 39);
-var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 40);
-var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 41);
-var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 42);
-var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 43);
-var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 44);
-var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 45);
-var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 46);
-var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 47);
-var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 48);
-var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 49);
-var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 50);
-var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 51);
-var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 52);
-var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 53);
-var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 54);
-var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 55);
+var ActorTurnCommitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 39);
+var ActorOutputAppendRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 40);
+var ProgramQuiescedSchema = /* @__PURE__ */ messageDesc(file_run, 41);
+var TaskResultSchema = /* @__PURE__ */ messageDesc(file_run, 42);
+var TaskErrorSchema = /* @__PURE__ */ messageDesc(file_run, 43);
+var RunWaitRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 44);
+var TokenCreateRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 45);
+var TokenCreateResultSchema = /* @__PURE__ */ messageDesc(file_run, 46);
+var ActiveStreamReadRequestedSchema = /* @__PURE__ */ messageDesc(file_run, 47);
+var StreamRecordSchema = /* @__PURE__ */ messageDesc(file_run, 48);
+var ActiveStreamReadResultSchema = /* @__PURE__ */ messageDesc(file_run, 49);
+var CheckpointPauseRequestSchema = /* @__PURE__ */ messageDesc(file_run, 50);
+var CheckpointPauseReadySchema = /* @__PURE__ */ messageDesc(file_run, 51);
+var ResumeAttachSchema = /* @__PURE__ */ messageDesc(file_run, 52);
+var ResumeDecisionSchema = /* @__PURE__ */ messageDesc(file_run, 53);
+var ResumeAckSchema = /* @__PURE__ */ messageDesc(file_run, 54);
+var ResumeConsumedSchema = /* @__PURE__ */ messageDesc(file_run, 55);
+var OutputStreamAppendedSchema = /* @__PURE__ */ messageDesc(file_run, 56);
+var MetadataUpdatedSchema = /* @__PURE__ */ messageDesc(file_run, 57);
 // sdk/typescript/src/config.ts
 var configBrand = Symbol.for("helmr.sdk.v0.config");
 // sdk/typescript/src/schema/payload.ts
@@ -3683,6 +3687,166 @@ class FrameReader {
     return result;
   }
 }
+
+class ResumeDecisionRouter {
+  #reader;
+  #pending = new Map;
+  #reading = false;
+  constructor(reader) {
+    this.#reader = reader;
+  }
+  register(correlationId) {
+    if (this.#pending.has(correlationId)) {
+      return Promise.reject(new Error("duplicate runtime correlation id"));
+    }
+    const result = new Promise((resolve, reject) => {
+      this.#pending.set(correlationId, { resolve, reject });
+    });
+    this.#pump();
+    return result;
+  }
+  cancel(correlationId) {
+    this.#pending.delete(correlationId);
+  }
+  abandonPending() {
+    this.#pending.clear();
+  }
+  #pump() {
+    if (this.#reading)
+      return;
+    this.#reading = true;
+    (async () => {
+      try {
+        while (this.#pending.size > 0) {
+          const decision = fromBinary(exports_run_pb.ResumeDecisionSchema, await this.#reader.read());
+          const correlationId = decision.correlationId || decision.runWaitId;
+          const pending = this.#pending.get(correlationId);
+          if (pending === undefined) {
+            throw new Error("resume decision did not match a pending runtime operation");
+          }
+          this.#pending.delete(correlationId);
+          pending.resolve(decision);
+        }
+      } catch (error) {
+        const failure = error instanceof Error ? error : new Error(String(error));
+        for (const pending of this.#pending.values())
+          pending.reject(failure);
+        this.#pending.clear();
+      } finally {
+        this.#reading = false;
+        if (this.#pending.size > 0)
+          this.#pump();
+      }
+    })();
+  }
+}
+
+class RuntimeProtocolError extends Error {
+  constructor(message, options) {
+    super(message, options);
+    this.name = "RuntimeProtocolError";
+  }
+}
+
+class ActorCancellationError extends Error {
+  code;
+  constructor(reasonCode) {
+    super(`Actor execution was cancelled: ${reasonCode}`);
+    this.name = "AbortError";
+    this.code = reasonCode;
+  }
+}
+
+class ActorOperationState {
+  controller = new AbortController;
+  #active = 0;
+  #protocolFault;
+  track(operation) {
+    this.#active++;
+    const result = (async () => {
+      try {
+        return await operation();
+      } catch (error) {
+        if (error instanceof RuntimeProtocolError && this.#protocolFault === undefined) {
+          this.#protocolFault = error;
+        }
+        throw error;
+      } finally {
+        this.#active--;
+      }
+    })();
+    result.catch(() => {});
+    return result;
+  }
+  cancel(reasonCode) {
+    const error = new ActorCancellationError(reasonCode);
+    if (!this.controller.signal.aborted)
+      this.controller.abort(error);
+    return this.controller.signal.reason;
+  }
+  assertCanComplete() {
+    if (this.#protocolFault !== undefined)
+      throw this.#protocolFault;
+    if (this.controller.signal.aborted) {
+      throw this.controller.signal.reason;
+    }
+    if (this.#active !== 0) {
+      throw new RuntimeProtocolError("Actor handler returned with runtime operations still pending");
+    }
+  }
+}
+
+class ConsumingWaitGate {
+  #pending = false;
+  acquire(error = () => new Error("only one consuming Wait may be pending")) {
+    if (this.#pending)
+      throw error();
+    this.#pending = true;
+    let released = false;
+    return () => {
+      if (released)
+        return;
+      released = true;
+      this.#pending = false;
+    };
+  }
+}
+async function requestRuntimeDecision(io, decisions, correlationId, event) {
+  const pending = decisions.register(correlationId);
+  try {
+    await writeRunEvent(io, event);
+  } catch (error) {
+    decisions.cancel(correlationId);
+    throw new RuntimeProtocolError("failed to write runtime operation request", {
+      cause: error
+    });
+  }
+  try {
+    return await pending;
+  } catch (error) {
+    throw new RuntimeProtocolError("failed to read runtime operation decision", {
+      cause: error
+    });
+  }
+}
+async function writeRuntimeProtocolEvent(io, event) {
+  try {
+    await writeRunEvent(io, event);
+  } catch (error) {
+    throw new RuntimeProtocolError("failed to write runtime protocol event", {
+      cause: error
+    });
+  }
+}
+function parseRuntimeProtocolValue(label, parse) {
+  try {
+    return parse();
+  } catch (error) {
+    if (error instanceof RuntimeProtocolError)
+      throw error;
+    throw new RuntimeProtocolError(`${label} was invalid`, { cause: error });
+  }
+}
 async function runProgram(locatorURL, io = defaultProgramIO()) {
   const reader = new FrameReader(io.input);
   const start = fromBinary(exports_run_pb.ProgramStartSchema, await reader.read());
@@ -3715,11 +3879,12 @@ async function runProgram(locatorURL, io = defaultProgramIO()) {
   });
   const release = fromBinary(exports_run_pb.EntrypointReleaseSchema, await reader.read());
   validateEntrypointRelease(release, start, kind);
+  const decisions = new ResumeDecisionRouter(reader);
   if (definition.kind === "task") {
-    await runTask(start, definition, io, reader);
+    await runTask(start, definition, io, decisions);
     return;
   }
-  await runActor(start, definition, io, reader);
+  await runActor(start, definition, io, decisions);
 }
 async function loadDeclarationLocator(url, io) {
   const raw = io.readLocator === undefined ? await fs.readFile(url, "utf8") : await io.readLocator(url);
@@ -3798,7 +3963,7 @@ function validateEntrypointRelease(release, start, kind) {
     throw new Error("entrypoint release does not match Program-start identity");
   }
 }
-async function runTask(start, definition, io, reader) {
+async function runTask(start, definition, io, decisions) {
   let payload;
   if (definition.hasPayload) {
     let failureDetails;
@@ -3824,7 +3989,7 @@ async function runTask(start, definition, io, reader) {
     }
   }
   const context = taskContext(start);
-  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, reader));
+  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, decisions, new ConsumingWaitGate));
   let normalized;
   try {
     let output;
@@ -3838,6 +4003,8 @@ async function runTask(start, definition, io, reader) {
       throw new Error(`task output exceeds ${MAX_TASK_OUTPUT_BYTES} bytes`);
     }
   } catch (error) {
+    if (error instanceof RuntimeProtocolError)
+      throw error;
     await writeTaskFailure(io, "failed", errorMessage(error));
     return;
   } finally {
@@ -3855,16 +4022,12 @@ async function runTask(start, definition, io, reader) {
     })
   });
 }
-function programRuntimeOperations(start, io, reader) {
-  let pending = false;
-  const wait = async (params, timeoutSeconds) => {
-    if (pending) {
-      throw new Error("only one consuming Wait may be pending");
-    }
-    pending = true;
+function programRuntimeOperations(start, io, decisions, waitGate, actorOperations) {
+  const performWait = async (params, timeoutSeconds) => {
+    const releaseWait = waitGate.acquire();
     const correlationId = randomUUID();
     try {
-      await writeRunEvent(io, {
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
         value: create(exports_run_pb.RunWaitRequestedSchema, {
           correlationId,
@@ -3873,12 +4036,11 @@ function programRuntimeOperations(start, io, reader) {
           timeout: timeoutSeconds
         })
       });
-      const decision = fromBinary(exports_run_pb.ResumeDecisionSchema, await reader.read());
       if ((decision.correlationId || decision.runWaitId) !== correlationId || decision.kind !== "completed" && decision.kind !== "failed" && decision.kind !== "cancelled") {
-        throw new Error("timer resume decision did not match the pending Wait");
+        throw new RuntimeProtocolError("timer resume decision did not match the pending Wait");
       }
       if (decision.requireConsumedAck) {
-        await writeRunEvent(io, {
+        await writeRuntimeProtocolEvent(io, {
           case: "resumeConsumed",
           value: create(exports_run_pb.ResumeConsumedSchema, {
             runWaitId: decision.runWaitId,
@@ -3890,14 +4052,19 @@ function programRuntimeOperations(start, io, reader) {
           })
         });
       }
+      if (decision.kind === "cancelled" && actorOperations !== undefined) {
+        const failure = parseRuntimeProtocolValue("Actor timer cancellation decision", () => resumeFailure(decision.dataJson));
+        throw actorOperations.cancel(failure.reasonCode);
+      }
       if (decision.kind !== "completed") {
-        const failure = resumeFailure(decision.dataJson);
-        throw new Error(`timer Wait ${decision.kind}: ${failure.reasonCode}`);
+        const failure = parseRuntimeProtocolValue("timer Wait failure decision", () => resumeFailure(decision.dataJson));
+        throw new RuntimeProtocolError(`timer Wait ${decision.kind}: ${failure.reasonCode}`);
       }
     } finally {
-      pending = false;
+      releaseWait();
     }
   };
+  const wait = (params, timeoutSeconds) => actorOperations === undefined ? performWait(params, timeoutSeconds) : actorOperations.track(() => performWait(params, timeoutSeconds));
   return {
     waitFor(duration) {
       const timeoutSeconds = durationSeconds(duration);
@@ -3951,18 +4118,27 @@ function boundedTimerSeconds(seconds) {
   }
   return seconds;
 }
-async function runActor(start, definition, io, reader) {
+async function runActor(start, definition, io, decisions) {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required");
   }
-  const terminalInputSequence = start.entrypoint.value.startInputSequence;
-  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, reader));
+  const cursor = { value: start.entrypoint.value.startInputSequence };
+  const waitGate = new ConsumingWaitGate;
+  const actorOperations = new ActorOperationState;
+  const uninstallRuntime = installRuntimeOperations(programRuntimeOperations(start, io, decisions, waitGate, actorOperations));
   try {
-    await definition.handler(unavailableActorSelf(), actorContext(start));
-  } catch (error) {
-    if (error instanceof ActorChannelTransportUnavailableError)
+    await definition.handler(actorSelf(start, io, decisions, cursor, waitGate, actorOperations), actorContext(start, actorOperations.controller.signal));
+    try {
+      actorOperations.assertCanComplete();
+    } catch (error) {
+      decisions.abandonPending();
       throw error;
-    await writeActorFailure(io, terminalInputSequence, errorMessage(error));
+    }
+  } catch (error) {
+    if (error instanceof RuntimeProtocolError || error instanceof ActorCancellationError) {
+      throw error;
+    }
+    await writeActorFailure(io, cursor.value, errorMessage(error));
     return;
   } finally {
     uninstallRuntime();
@@ -3970,7 +4146,7 @@ async function runActor(start, definition, io, reader) {
   await writeRunEvent(io, {
     case: "actorOutcome",
     value: create(exports_run_pb.ActorOutcomeSchema, {
-      terminalInputSequence,
+      terminalInputSequence: cursor.value,
       outcome: {
         case: "succeeded",
         value: create(exports_run_pb.ActorSucceededSchema)
@@ -3978,32 +4154,279 @@ async function runActor(start, definition, io, reader) {
     })
   });
 }
-
-class ActorChannelTransportUnavailableError extends Error {
-  constructor() {
-    super("Actor channel transport is not available");
-    this.name = "ActorChannelTransportUnavailableError";
+function actorSelf(start, io, decisions, cursor, waitGate, actorOperations) {
+  if (start.entrypoint.case !== "actor") {
+    throw new Error("Actor Program-start entrypoint is required");
   }
-}
-function unavailableActorSelf() {
-  const unavailable = () => {
-    throw new ActorChannelTransportUnavailableError;
+  const actorStart = start.entrypoint.value;
+  let committedBoundary = cursor.value;
+  const commitPriorTurn = async () => {
+    if (cursor.value === committedBoundary)
+      return;
+    const correlationId = randomUUID();
+    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+      case: "actorTurnCommitRequested",
+      value: create(exports_run_pb.ActorTurnCommitRequestedSchema, {
+        correlationId,
+        targetInputSequence: cursor.value
+      })
+    });
+    requireActorDecision(decision, correlationId, "committed", "Actor turn commit");
+    committedBoundary = cursor.value;
+  };
+  const performReceive = async (options, releaseWait) => {
+    try {
+      await commitPriorTurn();
+      const correlationId = randomUUID();
+      const timeout = options?.timeout === undefined ? undefined : durationSeconds(options.timeout);
+      const idleTimeout = options?.idleTimeout === undefined ? undefined : durationSeconds(options.idleTimeout);
+      const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+        case: "runWaitRequested",
+        value: create(exports_run_pb.RunWaitRequestedSchema, {
+          correlationId,
+          kind: "actor_input",
+          paramsJson: JSON.stringify({
+            actor_id: actorStart.actorId,
+            after_input_sequence: safeActorSequence(cursor.value)
+          }),
+          ...options?.metadata === undefined ? {} : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) },
+          ...timeout === undefined ? {} : { timeout },
+          ...idleTimeout === undefined ? {} : { idleTimeout },
+          tags: options?.tags === undefined ? [] : [...options.tags]
+        })
+      });
+      if ((decision.correlationId || decision.runWaitId) !== correlationId) {
+        throw new RuntimeProtocolError("Actor input resume decision did not match the pending receive");
+      }
+      if (decision.requireConsumedAck) {
+        await writeRuntimeProtocolEvent(io, {
+          case: "resumeConsumed",
+          value: create(exports_run_pb.ResumeConsumedSchema, {
+            runWaitId: decision.runWaitId,
+            checkpointId: decision.checkpointId,
+            resumeAttachId: decision.resumeAttachId,
+            resumeRequestVersion: decision.resumeRequestVersion,
+            runLeaseId: decision.runLeaseId,
+            correlationId: decision.correlationId
+          })
+        });
+      }
+      if (decision.kind === "completed") {
+        const delivered = parseRuntimeProtocolValue("Actor input delivery", () => parseActorInputDelivery(decision.dataJson));
+        if (BigInt(delivered.record.sequence) !== cursor.value + 1n) {
+          throw new RuntimeProtocolError("Actor input delivery was not the next contiguous record");
+        }
+        cursor.value = BigInt(delivered.record.sequence);
+        return delivered;
+      }
+      if (decision.kind === "failed") {
+        const failure = parseRuntimeProtocolValue("Actor input Wait failure decision", () => resumeFailure(decision.dataJson));
+        if (failure.reasonCode !== "wait_timeout" && failure.reasonCode !== "actor_closed") {
+          throw new RuntimeProtocolError(`Actor input Wait failed: ${failure.reasonCode}`);
+        }
+        return Object.freeze({
+          ok: false,
+          error: actorChannelError(failure.reasonCode)
+        });
+      }
+      if (decision.kind === "cancelled") {
+        const failure = parseRuntimeProtocolValue("Actor input cancellation decision", () => resumeFailure(decision.dataJson));
+        throw actorOperations.cancel(failure.reasonCode);
+      }
+      throw new RuntimeProtocolError(`Actor input Wait returned unsupported decision ${decision.kind}`);
+    } finally {
+      releaseWait();
+    }
+  };
+  const receive = (options) => {
+    let releaseWait;
+    try {
+      releaseWait = waitGate.acquire(concurrentActorReceiveError);
+    } catch (error) {
+      return actorReceive(Promise.reject(concurrentActorReceiveError()));
+    }
+    return actorReceive(actorOperations.track(() => performReceive(options, releaseWait)));
+  };
+  const performAppend = async (value, options) => {
+    const normalized = canonicalizeJsonValue(value);
+    const correlationId = randomUUID();
+    const decision = await requestRuntimeDecision(io, decisions, correlationId, {
+      case: "actorOutputAppendRequested",
+      value: create(exports_run_pb.ActorOutputAppendRequestedSchema, {
+        correlationId,
+        dataJson: new TextDecoder().decode(normalized),
+        contentType: options?.contentType ?? "application/json",
+        ...options?.idempotencyKey === undefined ? {} : { idempotencyKey: options.idempotencyKey }
+      })
+    });
+    requireActorDecision(decision, correlationId, "completed", "Actor output append");
+    return parseRuntimeProtocolValue("Actor output append result", () => parseActorOutputRecord(decision.dataJson));
+  };
+  const append = (value, options) => actorOperations.track(() => performAppend(value, options));
+  const performPipe = async (source2, options) => {
+    for await (const value of source2)
+      await performAppend(value, options);
+  };
+  const pipe = (source2, options) => actorOperations.track(() => performPipe(source2, options));
+  const writer = (options) => {
+    let closed = false;
+    return Object.freeze({
+      write(value) {
+        if (closed)
+          return Promise.reject(new Error("Actor output writer is closed"));
+        return append(value, options);
+      },
+      async close() {
+        closed = true;
+      }
+    });
   };
   return Object.freeze({
-    input: Object.freeze({ receive: unavailable }),
+    input: Object.freeze({ receive }),
     output: Object.freeze({
-      append: unavailable,
-      pipe: unavailable,
-      writer: unavailable
+      append,
+      pipe,
+      writer
     })
   });
 }
-function actorContext(start) {
+function actorReceive(result) {
+  return Object.freeze({
+    then: result.then.bind(result),
+    async unwrap() {
+      const resolved = await result;
+      if (resolved.ok)
+        return resolved.value;
+      throw resolved.error;
+    }
+  });
+}
+function requireActorDecision(decision, correlationId, kind, operation) {
+  if ((decision.correlationId || decision.runWaitId) !== correlationId || decision.kind !== kind) {
+    throw new RuntimeProtocolError(`${operation} decision did not match the pending operation`);
+  }
+}
+function safeActorSequence(value) {
+  if (value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error("Actor input sequence exceeds the JavaScript safe-integer range");
+  }
+  return Number(value);
+}
+function parseActorInputDelivery(dataJson) {
+  const value = parseObjectJSON(dataJson, "Actor input delivery");
+  requireExactKeys(value, ["record", "value"], "Actor input delivery");
+  const record = objectField(value, "record", "Actor input delivery");
+  requireExactKeys(record, ["created_at", "id", "sequence", "source"], "Actor input record");
+  const source2 = objectField(record, "source", "Actor input record");
+  const sourceType = stringField(source2, "type", "Actor input source");
+  let parsedSource;
+  if (sourceType === "external") {
+    requireExactKeys(source2, ["type"], "Actor input source");
+    parsedSource = Object.freeze({ type: "external" });
+  } else if (sourceType === "run") {
+    requireExactKeys(source2, ["run_id", "type"], "Actor input source");
+    parsedSource = Object.freeze({
+      type: "run",
+      runId: stringField(source2, "run_id", "Actor input source")
+    });
+  } else {
+    throw new Error("Actor input source type is invalid");
+  }
+  const sequence = safeJSONSequence(record["sequence"], "Actor input record.sequence");
+  return Object.freeze({
+    ok: true,
+    value: jsonValueField(value, "value", "Actor input delivery"),
+    record: Object.freeze({
+      id: stringField(record, "id", "Actor input record"),
+      sequence,
+      createdAt: stringField(record, "created_at", "Actor input record"),
+      source: parsedSource
+    })
+  });
+}
+function parseActorOutputRecord(dataJson) {
+  const value = parseObjectJSON(dataJson, "Actor output append result");
+  requireExactKeys(value, ["content_type", "created_at", "data", "id", "provenance", "sequence"], "Actor output append result");
+  const provenance = objectField(value, "provenance", "Actor output append result");
+  requireExactKeys(provenance, ["attempt_number", "deployment_id", "run_id"], "Actor output provenance");
+  return Object.freeze({
+    id: stringField(value, "id", "Actor output append result"),
+    sequence: safeJSONSequence(value["sequence"], "Actor output sequence"),
+    data: jsonValueField(value, "data", "Actor output append result"),
+    contentType: stringField(value, "content_type", "Actor output append result"),
+    createdAt: stringField(value, "created_at", "Actor output append result"),
+    provenance: Object.freeze({
+      runId: stringField(provenance, "run_id", "Actor output provenance"),
+      attemptNumber: safeJSONSequence(provenance["attempt_number"], "Actor output attempt number"),
+      deploymentId: stringField(provenance, "deployment_id", "Actor output provenance")
+    })
+  });
+}
+function parseObjectJSON(value, label) {
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return parsed;
+}
+function objectField(value, field, label) {
+  const nested = value[field];
+  if (nested === null || typeof nested !== "object" || Array.isArray(nested)) {
+    throw new Error(`${label}.${field} must be an object`);
+  }
+  return nested;
+}
+function requireExactKeys(value, expected, label) {
+  const actual = Object.keys(value).sort();
+  if (actual.length !== expected.length || actual.some((key, index) => key !== expected[index])) {
+    throw new Error(`${label} has unknown or missing fields`);
+  }
+}
+function stringField(value, field, label) {
+  const result = value[field];
+  if (typeof result !== "string" || result.trim() === "") {
+    throw new Error(`${label}.${field} must be a non-empty string`);
+  }
+  return result;
+}
+function jsonValueField(value, field, label) {
+  const result = value[field];
+  try {
+    canonicalizeJsonValue(result);
+  } catch (error) {
+    throw new Error(`${label}.${field} must be a JSON value`, { cause: error });
+  }
+  return result;
+}
+function safeJSONSequence(value, label) {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer`);
+  }
+  return value;
+}
+function actorChannelError(code) {
+  const error = new Error(code === "wait_timeout" ? "Actor input receive timed out" : "Actor is closed");
+  error.name = code === "wait_timeout" ? "WaitTimeoutError" : "ActorClosedError";
+  error.code = code;
+  error.retryable = false;
+  return error;
+}
+function concurrentActorReceiveError() {
+  const error = new Error("only one Actor input receive may be unresolved");
+  error.name = "ConcurrentActorReceiveError";
+  return error;
+}
+function actorContext(start, signal) {
   if (start.entrypoint.case !== "actor") {
     throw new Error("Actor Program-start entrypoint is required");
   }
   return Object.freeze({
-    ...taskContext(start),
+    ...taskContext(start, signal),
     actor: Object.freeze({
       id: start.entrypoint.value.actorId,
       ...start.entrypoint.value.key === undefined ? {} : { key: start.entrypoint.value.key }
@@ -4025,9 +4448,9 @@ async function writeActorFailure(io, terminalInputSequence, message) {
     })
   });
 }
-function taskContext(start) {
+function taskContext(start, signal = new AbortController().signal) {
   return Object.freeze({
-    signal: new AbortController().signal,
+    signal,
     run: Object.freeze({
       id: start.runId,
       attemptNumber: start.attemptNumber,
