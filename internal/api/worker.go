@@ -292,6 +292,17 @@ type WorkerRuntimeSource struct {
 	Network                compute.NetworkPolicy   `json:"network"`
 	RuntimeSubstrate       *WorkerRuntimeSubstrate `json:"runtime_substrate,omitempty"`
 	Program                *WorkerRuntimeProgram   `json:"program,omitempty"`
+	Restore                *WorkerRuntimeRestore   `json:"restore,omitempty"`
+}
+
+type WorkerRuntimeRestore struct {
+	CheckpointID  string                             `json:"checkpoint_id"`
+	RunID         string                             `json:"run_id"`
+	AttemptNumber int32                              `json:"attempt_number"`
+	RunWaitID     string                             `json:"run_wait_id"`
+	Kind          string                             `json:"kind"`
+	Manifest      json.RawMessage                    `json:"manifest"`
+	Artifacts     []WorkerRunLeaseCheckpointArtifact `json:"artifacts"`
 }
 
 type WorkerRuntimeProgram struct {
@@ -844,6 +855,8 @@ type WorkerRestore struct {
 
 type WorkerRestoreRunWait struct {
 	ID                   string          `json:"id"`
+	CorrelationID        string          `json:"correlation_id"`
+	ResumeAttachID       string          `json:"resume_attach_id"`
 	ResumeRequestVersion int64           `json:"resume_request_version"`
 	Kind                 string          `json:"kind"`
 	ResumeKind           string          `json:"resume_kind"`
@@ -1078,6 +1091,7 @@ type WorkerCreateRunWaitRequest struct {
 type WorkerCreateRunWaitResponse struct {
 	RunID              string          `json:"run_id"`
 	RunWaitID          string          `json:"run_wait_id"`
+	ResumeAttachID     string          `json:"resume_attach_id,omitempty"`
 	RuntimeInstanceID  string          `json:"runtime_instance_id,omitempty"`
 	RuntimeEpoch       int64           `json:"runtime_epoch,omitempty"`
 	CheckpointDelayMs  int64           `json:"checkpoint_delay_ms,omitempty"`
@@ -1137,10 +1151,12 @@ type WorkerCheckpointManifest struct {
 }
 
 type WorkerCheckpointRecoveryPoint struct {
-	ID        string                  `json:"id,omitempty"`
-	RunID     string                  `json:"run_id,omitempty"`
-	RunWaitID string                  `json:"run_wait_id,omitempty"`
-	Runtime   WorkerCheckpointRuntime `json:"runtime"`
+	ID            string                  `json:"id,omitempty"`
+	RunID         string                  `json:"run_id,omitempty"`
+	AttemptNumber int32                   `json:"attempt_number,omitempty"`
+	RunWaitID     string                  `json:"run_wait_id,omitempty"`
+	CorrelationID string                  `json:"correlation_id,omitempty"`
+	Runtime       WorkerCheckpointRuntime `json:"runtime"`
 }
 
 type WorkerCheckpointRuntime struct {
@@ -1225,17 +1241,15 @@ type WorkerCheckpointReadyRequest struct {
 	CheckpointID       string                   `json:"checkpoint_id"`
 	Workspace          WorkerWorkspace          `json:"workspace"`
 	WorkspaceVersionID string                   `json:"workspace_version_id"`
-	ActiveDurationMs   int64                    `json:"active_duration_ms"`
 	Manifest           WorkerCheckpointManifest `json:"manifest"`
 }
 
 type WorkerCheckpointFailedRequest struct {
-	Lease            WorkerRunLease `json:"lease"`
-	RequestVersion   int64          `json:"request_version"`
-	RunWaitID        string         `json:"run_wait_id"`
-	CheckpointID     string         `json:"checkpoint_id"`
-	Error            string         `json:"error"`
-	ActiveDurationMs int64          `json:"active_duration_ms"`
+	Lease          WorkerRunLease `json:"lease"`
+	RequestVersion int64          `json:"request_version"`
+	RunWaitID      string         `json:"run_wait_id"`
+	CheckpointID   string         `json:"checkpoint_id"`
+	Error          string         `json:"error"`
 }
 
 type WorkerRunWaitWorkspaceCaptureRequest struct {

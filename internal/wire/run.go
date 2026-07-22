@@ -29,6 +29,25 @@ func WriteCheckpointPauseRequest(w io.Writer, request *runv0.CheckpointPauseRequ
 	return err
 }
 
+func WriteCheckpointPauseReady(w io.Writer, ready *runv0.CheckpointPauseReady) error {
+	if ready == nil {
+		return fmt.Errorf("checkpoint pause ready is required")
+	}
+	body, err := proto.Marshal(ready)
+	if err != nil {
+		return fmt.Errorf("marshal checkpoint pause ready: %w", err)
+	}
+	if err := WriteStreamFrameHeader(w, StreamHeader{
+		Type:         StreamTypeCheckpointPauseReady,
+		RunWaitID:    ready.RunWaitId,
+		CheckpointID: ready.CheckpointId,
+	}, uint64(len(body))); err != nil {
+		return err
+	}
+	_, err = w.Write(body)
+	return err
+}
+
 func WriteResumeDecision(w io.Writer, decision *runv0.ResumeDecision) error {
 	if decision == nil {
 		return fmt.Errorf("resume decision is required")

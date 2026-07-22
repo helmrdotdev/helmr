@@ -546,20 +546,40 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 	}
 	stream := session.Stream()
 	restore := request.Run.Restore
+	lease := currentRunLease(request)
+	if request.LeaseReceipt == nil || request.LeaseReceipt.ID != lease.ID ||
+		request.LeaseReceipt.RunID != lease.RunID || request.LeaseReceipt.AttemptNumber != lease.AttemptNumber {
+		return errors.New("exact restore Run Lease receipt is required")
+	}
+	if restore == nil || strings.TrimSpace(restore.RunWait.CorrelationID) == "" ||
+		strings.TrimSpace(restore.RunWait.ResumeAttachID) == "" ||
+		restore.RunWait.ResumeRequestVersion <= 0 {
+		return errors.New("restore exact resume authority is required")
+	}
 	started := time.Now()
 	if err := frameio.WriteProtoFrame(stream, &runv0.ResumeAttach{
-		CheckpointId: restore.CheckpointID,
-		RunWaitId:    restore.RunWait.ID,
-		RunLeaseId:   currentRunLease(request).ID,
+		CheckpointId:         restore.CheckpointID,
+		RunWaitId:            restore.RunWait.ID,
+		RunLeaseId:           lease.ID,
+		RunId:                lease.RunID,
+		AttemptNumber:        uint32(lease.AttemptNumber),
+		ResumeAttachId:       restore.RunWait.ResumeAttachID,
+		ResumeRequestVersion: restore.RunWait.ResumeRequestVersion,
+		CorrelationId:        restore.RunWait.CorrelationID,
 	}); err != nil {
 		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("write resume attach: %w", err)
 	}
 	if err := frameio.WriteProtoFrame(stream, &runv0.ResumeDecision{
-		RunWaitId:          restore.RunWait.ID,
-		Kind:               restore.RunWait.ResumeKind,
-		DataJson:           string(restore.RunWait.ResumePayloadJSON),
-		RequireConsumedAck: true,
+		RunWaitId:            restore.RunWait.ID,
+		Kind:                 restore.RunWait.ResumeKind,
+		DataJson:             string(restore.RunWait.ResumePayloadJSON),
+		RequireConsumedAck:   true,
+		CheckpointId:         restore.CheckpointID,
+		ResumeAttachId:       restore.RunWait.ResumeAttachID,
+		ResumeRequestVersion: restore.RunWait.ResumeRequestVersion,
+		RunLeaseId:           lease.ID,
+		CorrelationId:        restore.RunWait.CorrelationID,
 	}); err != nil {
 		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("write resume decision: %w", err)
@@ -571,15 +591,20 @@ func (r GuestRunner) attachAndAcknowledgeRestore(ctx context.Context, session vm
 		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: vm.RuntimeErrorClass(err)})
 		return fmt.Errorf("read resume ack: %w", err)
 	}
-	if ack.RunWaitId != restore.RunWait.ID {
+	if ack.RunWaitId != restore.RunWait.ID || ack.CheckpointId != restore.CheckpointID ||
+		ack.ResumeAttachId != restore.RunWait.ResumeAttachID ||
+		ack.ResumeRequestVersion != restore.RunWait.ResumeRequestVersion ||
+		ack.RunLeaseId != lease.ID || ack.CorrelationId != restore.RunWait.CorrelationID {
 		phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started)), ErrorClass: "resume_ack_mismatch"})
-		return fmt.Errorf("resume ack run wait %q did not match expected %q", ack.RunWaitId, restore.RunWait.ID)
+		return errors.New("resume ack did not match exact restore authority")
 	}
 	phases.Record(vm.RuntimePhase{Name: "restore_attach_guest_resume", DurationMs: vm.RuntimeDurationMilliseconds(time.Since(started))})
 	if err := acknowledger.AcknowledgeRestore(ctx, RestoreAcknowledgement{
-		Lease:                currentRunLease(request),
+		Lease:                *request.LeaseReceipt,
 		RunWaitID:            restore.RunWait.ID,
 		CheckpointID:         restore.CheckpointID,
+		ResumeAttachID:       restore.RunWait.ResumeAttachID,
+		CorrelationID:        restore.RunWait.CorrelationID,
 		ResumeRequestVersion: restore.RunWait.ResumeRequestVersion,
 		Phases:               phases.Snapshot(),
 	}); err != nil {

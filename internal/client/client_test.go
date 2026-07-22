@@ -1190,7 +1190,7 @@ func TestWorkerRunWaitClient(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 				t.Fatal(err)
 			}
-			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" || request.ActiveDurationMs != 123 {
+			if request.Lease.ID != claim.ID || request.RequestVersion != 42 || request.RunWaitID != "run-wait-id-1" || request.CheckpointID != "checkpoint-1" {
 				t.Fatalf("checkpoint ready request = %+v", request)
 			}
 			if request.Manifest.RecoveryPoint.Runtime.KernelDigest != kernelDigest || request.Manifest.RecoveryPoint.Runtime.RootfsDigest != rootfsDigest {
@@ -1248,12 +1248,11 @@ func TestWorkerRunWaitClient(t *testing.T) {
 		t.Fatalf("resume ack = %+v, err = %v", resumeAck, err)
 	}
 	ready, err := client.MarkCheckpointReady(context.Background(), api.WorkerCheckpointReadyRequest{
-		Lease:            claim,
-		RequestVersion:   42,
-		RunWaitID:        "run-wait-id-1",
-		CheckpointID:     "checkpoint-1",
-		ActiveDurationMs: 123,
-		Manifest:         testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
+		Lease:          claim,
+		RequestVersion: 42,
+		RunWaitID:      "run-wait-id-1",
+		CheckpointID:   "checkpoint-1",
+		Manifest:       testClientCheckpointManifest(kernelDigest, rootfsDigest, configDigest, manifestDigest, vmStateDigest, scratchDigest, memoryDigest),
 	})
 	if err != nil {
 		t.Fatal(err)

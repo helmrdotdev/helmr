@@ -237,9 +237,15 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 		return nil, err
 	}
 	if err := wire.WriteCheckpointPauseRequest(c.stream, &runv0.CheckpointPauseRequest{
-		RunWaitId:        request.RunWaitID,
-		CheckpointId:     request.CheckpointID,
-		CaptureWorkspace: request.CaptureWorkspace,
+		RunId:                    request.RunID,
+		AttemptNumber:            uint32(request.AttemptNumber),
+		RunLeaseId:               request.RunLeaseID,
+		RunWaitId:                request.RunWaitID,
+		CorrelationId:            request.CorrelationID,
+		CheckpointId:             request.CheckpointID,
+		ResumeAttachId:           request.ResumeAttachID,
+		CheckpointRequestVersion: request.CheckpointRequestVersion,
+		CaptureWorkspace:         request.CaptureWorkspace,
 	}); err != nil {
 		return nil, fmt.Errorf("write checkpoint suspend: %w", err)
 	}
@@ -250,13 +256,34 @@ func (c runtimeCheckpointer) suspendGuestForCheckpoint(ctx context.Context, requ
 	if err != nil {
 		return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
 	}
-	if ready.RunWaitId != request.RunWaitID || ready.CheckpointId != request.CheckpointID {
-		return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", ready.RunWaitId, ready.CheckpointId)
+	if err := validateCheckpointPauseReady(ready, request); err != nil {
+		return nil, err
 	}
 	if request.CaptureWorkspace && workspaceCapture == nil {
 		return nil, errors.New("checkpoint pause did not return required workspace capture")
 	}
 	return workspaceCapture, nil
+}
+
+func validateCheckpointPauseReady(ready *runv0.CheckpointPauseReady, request CheckpointRequest) error {
+	if request.ResumeAttachID == "" {
+		if ready == nil || ready.GetRunWaitId() != request.RunWaitID || ready.GetCheckpointId() != request.CheckpointID {
+			return errors.New("checkpoint pause ready did not match request")
+		}
+		return nil
+	}
+	if ready == nil ||
+		ready.GetRunId() != request.RunID ||
+		ready.GetAttemptNumber() != uint32(request.AttemptNumber) ||
+		ready.GetRunLeaseId() != request.RunLeaseID ||
+		ready.GetRunWaitId() != request.RunWaitID ||
+		ready.GetCorrelationId() != request.CorrelationID ||
+		ready.GetCheckpointId() != request.CheckpointID ||
+		ready.GetResumeAttachId() != request.ResumeAttachID ||
+		ready.GetCheckpointRequestVersion() != request.CheckpointRequestVersion {
+		return errors.New("checkpoint pause ready did not match exact request authority")
+	}
+	return nil
 }
 
 func (c runtimeCheckpointer) readPauseReadyContext(ctx context.Context, reader *bufio.Reader, request CheckpointRequest) (*runv0.CheckpointPauseReady, *workspace.WorkspaceArtifact, error) {
@@ -301,14 +328,23 @@ func (c runtimeCheckpointer) readPauseReady(ctx context.Context, reader *bufio.R
 			}
 			switch header.Type {
 			case wire.StreamTypeCheckpointPauseReady:
-				if bodyLen != 0 {
-					return nil, fmt.Errorf("checkpoint pause ready body length %d must be zero", bodyLen)
-				}
 				if header.RunWaitID != request.RunWaitID || header.CheckpointID != request.CheckpointID {
 					return nil, fmt.Errorf("checkpoint pause ready mismatch: run_wait_id=%q checkpoint_id=%q", header.RunWaitID, header.CheckpointID)
 				}
-				ready.RunWaitId = header.RunWaitID
-				ready.CheckpointId = header.CheckpointID
+				if bodyLen == 0 {
+					ready.RunWaitId = header.RunWaitID
+					ready.CheckpointId = header.CheckpointID
+				} else if bodyLen > uint64(frameio.MaxFrameBytes) {
+					return nil, fmt.Errorf("checkpoint pause ready body length %d exceeds max %d", bodyLen, frameio.MaxFrameBytes)
+				} else if body, err := io.ReadAll(io.LimitReader(reader, int64(bodyLen))); err != nil {
+					return nil, fmt.Errorf("read checkpoint pause ready: %w", err)
+				} else if uint64(len(body)) != bodyLen {
+					return nil, io.ErrUnexpectedEOF
+				} else if err := proto.Unmarshal(body, ready); err != nil {
+					return nil, fmt.Errorf("unmarshal checkpoint pause ready: %w", err)
+				} else if ready.GetRunWaitId() != header.RunWaitID || ready.GetCheckpointId() != header.CheckpointID {
+					return nil, errors.New("checkpoint pause ready header did not match body")
+				}
 				return workspaceCapture, nil
 			case wire.StreamTypeWorkspaceArtifact:
 				if !request.CaptureWorkspace {
@@ -406,9 +442,11 @@ func (c runtimeCheckpointer) storeSnapshotArtifact(ctx context.Context, request 
 	}
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{
-			ID:        request.CheckpointID,
-			RunID:     request.RunID,
-			RunWaitID: request.RunWaitID,
+			ID:            request.CheckpointID,
+			RunID:         request.RunID,
+			AttemptNumber: request.AttemptNumber,
+			RunWaitID:     request.RunWaitID,
+			CorrelationID: request.CorrelationID,
 			Runtime: api.WorkerCheckpointRuntime{
 				Backend:         artifact.RuntimeBackend,
 				ID:              artifact.RuntimeID,

@@ -33,10 +33,12 @@ func TestControlRunWaitsDetachesAfterTypedCheckpointIntent(t *testing.T) {
 	if client.ready == nil || client.ready.RequestVersion != 3 || client.ready.CheckpointID != "checkpoint-1" {
 		t.Fatalf("ready request = %+v", client.ready)
 	}
-	if client.ready.ActiveDurationMs != 1500 {
-		t.Fatalf("active duration ms = %d, want 1500", client.ready.ActiveDurationMs)
-	}
-	if checkpointer.request.CheckpointID != "checkpoint-1" {
+	if checkpointer.request.CheckpointID != "checkpoint-1" ||
+		checkpointer.request.RunID != "run-1" ||
+		checkpointer.request.AttemptNumber != 2 ||
+		checkpointer.request.RunLeaseID != "lease-1" ||
+		checkpointer.request.ResumeAttachID != "resume-attach-1" ||
+		checkpointer.request.CheckpointRequestVersion != 3 {
 		t.Fatalf("checkpoint request = %+v", checkpointer.request)
 	}
 	if client.failed != nil {
@@ -185,6 +187,22 @@ func TestControlRunWaitsUsesCurrentLeaseForCheckpointCompletion(t *testing.T) {
 	}
 }
 
+func TestControlRunWaitsReleasesOnlyExactGuestResumeProof(t *testing.T) {
+	client := &fakeRunWaitClient{}
+	receipt := api.WorkerRunLeaseReceipt{ID: "lease-2", RunID: "run-1", AttemptNumber: 2}
+	err := (ControlRunWaits{Client: client}).AcknowledgeRestore(context.Background(), RestoreAcknowledgement{
+		Lease: receipt, RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
+		ResumeAttachID: "attach-1", ResumeRequestVersion: 4,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if client.resumeRelease == nil || client.resumeRelease.RunLeaseID != "lease-2" ||
+		client.resumeRelease.ResumeAttachID != "attach-1" || client.resumeRelease.ResumeRequestVersion != 4 {
+		t.Fatalf("resume release = %+v", client.resumeRelease)
+	}
+}
+
 type fakeRunWaitClient struct {
 	created        api.WorkerCreateRunWaitResponse
 	polls          []api.WorkerRunWaitPollResponse
@@ -194,6 +212,7 @@ type fakeRunWaitClient struct {
 	capture        *api.WorkerRunWaitWorkspaceCaptureRequest
 	ready          *api.WorkerCheckpointReadyRequest
 	failed         *api.WorkerCheckpointFailedRequest
+	resumeRelease  *api.WorkerRunResumeReleaseRequest
 }
 
 func (c *fakeRunWaitClient) CreateRunWait(_ context.Context, request api.WorkerCreateRunWaitRequest) (api.WorkerCreateRunWaitResponse, error) {
@@ -231,6 +250,14 @@ func (c *fakeRunWaitClient) AcknowledgeRestore(_ context.Context, request api.Wo
 	return api.WorkerAcknowledgeRestoreResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
 }
 
+func (c *fakeRunWaitClient) AcknowledgeRunResumeRelease(_ context.Context, request api.WorkerRunResumeReleaseRequest) (api.WorkerRunResumeReleaseResponse, error) {
+	c.resumeRelease = &request
+	return api.WorkerRunResumeReleaseResponse{
+		Lease: request.Lease, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID,
+		ResumeAttachID: request.ResumeAttachID, ResumeRequestVersion: request.ResumeRequestVersion,
+	}, nil
+}
+
 func (c *fakeRunWaitClient) MarkCheckpointReady(_ context.Context, request api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error) {
 	c.ready = &request
 	return api.WorkerCheckpointResponse{RunID: request.Lease.RunID, RunWaitID: request.RunWaitID, CheckpointID: request.CheckpointID}, nil
@@ -266,13 +293,14 @@ func (p *mutableRunLeaseProvider) CurrentWorkerRunLease() api.WorkerRunLease { r
 
 func liveRunWaitResponse() api.WorkerCreateRunWaitResponse {
 	return api.WorkerCreateRunWaitResponse{
-		RunID: "run-1", RunWaitID: "run-wait-id-1", RuntimeInstanceID: "runtime-instance-1", RuntimeEpoch: 42,
+		RunID: "run-1", RunWaitID: "run-wait-id-1", ResumeAttachID: "resume-attach-1",
+		RuntimeInstanceID: "runtime-instance-1", RuntimeEpoch: 42,
 	}
 }
 
 func testRunLease() api.WorkerRunLease {
 	return api.WorkerRunLease{
-		ID: "lease-1", RunID: "run-1", WorkerGroupID: "run-us-east-1",
+		ID: "lease-1", RunID: "run-1", AttemptNumber: 2, WorkerGroupID: "run-us-east-1",
 		WorkerInstanceID: "worker-1", WorkerEpoch: 42, LeaseSequence: 1,
 		RuntimeInstanceID: "runtime-instance-1", NetworkSlotID: "network-slot-1", NetworkSlotGeneration: 1,
 	}

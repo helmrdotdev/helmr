@@ -54,6 +54,8 @@ func workerRestoreRunWait(payload db.GetClaimedRunRestorePayloadRow) (api.Worker
 	}
 	return api.WorkerRestoreRunWait{
 		ID:                   pgvalue.UUIDString(payload.RunWaitID),
+		CorrelationID:        payload.CorrelationID,
+		ResumeAttachID:       pgvalue.UUIDString(payload.ResumeAttachID),
 		ResumeRequestVersion: payload.ResumeRequestVersion,
 		Kind:                 string(payload.RunWaitKind),
 		ResumeKind:           resumeKind,

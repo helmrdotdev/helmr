@@ -765,7 +765,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 			return "", fmt.Errorf("capture checkpoint workspace: %w", err)
 		}
 	}
-	if err := stream.writeCheckpointPauseReady(suspend.RunWaitId, suspend.CheckpointId); err != nil {
+	if err := stream.writeCheckpointPauseReady(suspend); err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: write pause ready failed: %v\n", err)
 		_ = stream.writeCheckpointDiagnostic(fmt.Sprintf("write checkpoint pause ready: %v", err))
 		return "", fmt.Errorf("write checkpoint pause ready: %w", err)
@@ -773,7 +773,7 @@ func checkpointAndAttachAdapterRun(ctx context.Context, stream *adapterRunStream
 	fmt.Fprintf(os.Stderr, "helmr checkpoint: pause ready written run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	fmt.Fprintf(os.Stderr, "helmr checkpoint: waiting for resume attach run_wait_id=%s checkpoint_id=%s\n", suspend.RunWaitId, suspend.CheckpointId)
 	attachCtx, cancelAttach := context.WithTimeout(ctx, resumeAttachTimeout)
-	attached, err := registration.wait(attachCtx)
+	attached, _, err := registration.wait(attachCtx)
 	cancelAttach()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "helmr checkpoint: wait resume attach failed: %v\n", err)
@@ -848,15 +848,22 @@ func (s *adapterRunStream) connAfterResumeAckGate() (io.ReadWriter, error) {
 	return s.conn, nil
 }
 
-func (s *adapterRunStream) writeCheckpointPauseReady(runWaitID string, checkpointID string) error {
+func (s *adapterRunStream) writeCheckpointPauseReady(suspend *runv0.CheckpointPauseRequest) error {
+	if suspend == nil {
+		return errors.New("checkpoint pause request is required")
+	}
 	conn := s.currentConn()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
-	return wire.WriteStreamFrameHeader(conn, wire.StreamHeader{
-		Type:         wire.StreamTypeCheckpointPauseReady,
-		RunWaitID:    runWaitID,
-		CheckpointID: checkpointID,
-	}, 0)
+	return wire.WriteCheckpointPauseReady(conn, &runv0.CheckpointPauseReady{
+		RunId:                    suspend.GetRunId(),
+		AttemptNumber:            suspend.GetAttemptNumber(),
+		RunLeaseId:               suspend.GetRunLeaseId(),
+		RunWaitId:                suspend.GetRunWaitId(),
+		CheckpointId:             suspend.GetCheckpointId(),
+		ResumeAttachId:           suspend.GetResumeAttachId(),
+		CheckpointRequestVersion: suspend.GetCheckpointRequestVersion(),
+	})
 }
 
 func (s *adapterRunStream) currentConn() io.ReadWriter {

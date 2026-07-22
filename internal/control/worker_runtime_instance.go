@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -66,7 +67,7 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 		RuntimeABI: row.RuntimeABI, Network: network,
 	}
 	if action == api.WorkerRuntimeReconcilePrepare {
-		if err := populateRuntimePrepareSource(&source, row, s.buildPolicy); err != nil {
+		if err := populateRuntimePrepareSource(r.Context(), s.db, &source, row, s.buildPolicy); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -89,6 +90,8 @@ func (s *Server) workerNextRuntimeReconcileTarget(w http.ResponseWriter, r *http
 }
 
 func populateRuntimePrepareSource(
+	ctx context.Context,
+	store db.Querier,
 	source *api.WorkerRuntimeSource,
 	row db.GetNextRuntimeReconcileTargetRow,
 	policy *deployment.BuildPolicy,
@@ -152,6 +155,32 @@ func populateRuntimePrepareSource(
 		return fmt.Errorf("project runtime reservation Program: %w", err)
 	}
 	source.Program = &program
+	if row.RestoreCheckpointID.Valid {
+		if !row.ReservedRunID.Valid || !row.ReservedAttemptNumber.Valid || store == nil {
+			return errors.New("restored runtime reservation authority is incomplete")
+		}
+		checkpoint, err := store.GetReadyRunCheckpoint(ctx, db.GetReadyRunCheckpointParams{
+			RunID: row.ReservedRunID, AttemptNumber: row.ReservedAttemptNumber.Int32,
+			ID: row.RestoreCheckpointID,
+		})
+		if err != nil {
+			return fmt.Errorf("load restored runtime Checkpoint authority: %w", err)
+		}
+		artifacts, err := store.ListRunCheckpointArtifactAuthority(ctx, row.RestoreCheckpointID)
+		if err != nil {
+			return fmt.Errorf("load restored runtime Checkpoint Artifacts: %w", err)
+		}
+		projected, err := projectRunLeaseCheckpoint(checkpoint, artifacts)
+		if err != nil {
+			return fmt.Errorf("project restored runtime Checkpoint: %w", err)
+		}
+		source.Restore = &api.WorkerRuntimeRestore{
+			CheckpointID: pgvalue.UUIDString(row.RestoreCheckpointID),
+			RunID:        pgvalue.UUIDString(checkpoint.RunID), AttemptNumber: checkpoint.AttemptNumber,
+			RunWaitID: pgvalue.UUIDString(checkpoint.RunWaitID),
+			Kind:      projected.Kind, Manifest: projected.Manifest, Artifacts: projected.Artifacts,
+		}
+	}
 	return nil
 }
 

@@ -57,6 +57,78 @@ func renewWorkspaceAuthorityOnSession(ctx context.Context, session vm.Session, r
 	return response.GetFence(), nil
 }
 
+func grantProgramResumeOnSession(
+	ctx context.Context,
+	session vm.Session,
+	request *workspacev0.GrantProgramResumeRequest,
+) error {
+	if session == nil || request == nil || request.GetAuthority() == nil || request.GetAuthority().GetFence() == nil {
+		return errors.New("Program resume grant and Workspace authority are required")
+	}
+	fence := request.GetAuthority().GetFence()
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return fmt.Errorf("open Program resume grant stream: %w", err)
+	}
+	defer stream.Close()
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type: wire.StreamTypeProgramResumeGrant, RunID: fence.GetRunId(),
+		WorkspaceID: fence.GetWorkspaceId(), WorkspaceMountID: fence.GetWorkspaceMountId(),
+	}, 0); err != nil {
+		return err
+	}
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
+		return err
+	}
+	var response workspacev0.GrantProgramResumeResponse
+	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
+		return err
+	}
+	if !proto.Equal(response.GetFence(), fence) ||
+		response.GetRunWaitId() != request.GetRunWaitId() ||
+		response.GetCheckpointId() != request.GetCheckpointId() ||
+		response.GetResumeAttachId() != request.GetResumeAttachId() ||
+		response.GetResumeRequestVersion() != request.GetResumeRequestVersion() ||
+		response.GetCorrelationId() != request.GetCorrelationId() {
+		return errors.New("Program resume grant response did not match exact authority")
+	}
+	return nil
+}
+
+func verifyRestoredProgramOnSession(
+	ctx context.Context,
+	session vm.Session,
+	request *workspacev0.VerifyProgramRestoreRequest,
+) error {
+	if session == nil || request == nil {
+		return errors.New("restored Program verification is required")
+	}
+	stream, err := session.OpenStream(ctx)
+	if err != nil {
+		return fmt.Errorf("open restored Program verification stream: %w", err)
+	}
+	defer stream.Close()
+	if err := wire.WriteStreamFrameHeader(stream, wire.StreamHeader{
+		Type: wire.StreamTypeProgramRestoreVerify, RunID: request.GetRunId(),
+		RunWaitID: request.GetRunWaitId(), CheckpointID: request.GetCheckpointId(),
+	}, 0); err != nil {
+		return err
+	}
+	if err := frameio.WriteProtoFrame(stream, request); err != nil {
+		return err
+	}
+	var response workspacev0.VerifyProgramRestoreResponse
+	if err := readWorkspaceControlResponse(ctx, stream, &response); err != nil {
+		return err
+	}
+	if response.GetRunId() != request.GetRunId() || response.GetAttemptNumber() != request.GetAttemptNumber() ||
+		response.GetRunWaitId() != request.GetRunWaitId() || response.GetCheckpointId() != request.GetCheckpointId() ||
+		response.GetCorrelationId() != request.GetCorrelationId() {
+		return errors.New("restored Program verification response changed its identity")
+	}
+	return nil
+}
+
 func beginWorkspaceFinalizationOnSession(
 	ctx context.Context,
 	session vm.Session,

@@ -332,17 +332,34 @@ message CheckpointPauseRequest {
   string run_wait_id = 1;
   string checkpoint_id = 2;
   bool capture_workspace = 3;
+  string run_id = 4;
+  uint32 attempt_number = 5;
+  string run_lease_id = 6;
+  string resume_attach_id = 7;
+  int64 checkpoint_request_version = 8;
+  string correlation_id = 9;
 }
 
 message CheckpointPauseReady {
   string run_wait_id = 1;
   string checkpoint_id = 2;
+  string run_id = 3;
+  uint32 attempt_number = 4;
+  string run_lease_id = 5;
+  string resume_attach_id = 6;
+  int64 checkpoint_request_version = 7;
+  string correlation_id = 8;
 }
 
 message ResumeAttach {
   string checkpoint_id = 1;
   string run_wait_id = 2;
   string run_lease_id = 3;
+  string run_id = 4;
+  uint32 attempt_number = 5;
+  string resume_attach_id = 6;
+  int64 resume_request_version = 7;
+  string correlation_id = 8;
 }
 
 message ResumeDecision {
@@ -350,14 +367,30 @@ message ResumeDecision {
   string kind = 2;
   string data_json = 3;
   bool require_consumed_ack = 4;
+  string checkpoint_id = 5;
+  string resume_attach_id = 6;
+  int64 resume_request_version = 7;
+  string run_lease_id = 8;
+  string correlation_id = 9;
+  bool no_result = 10;
 }
 
 message ResumeAck {
   string run_wait_id = 1;
+  string checkpoint_id = 2;
+  string resume_attach_id = 3;
+  int64 resume_request_version = 4;
+  string run_lease_id = 5;
+  string correlation_id = 6;
 }
 
 message ResumeConsumed {
   string run_wait_id = 1;
+  string checkpoint_id = 2;
+  string resume_attach_id = 3;
+  int64 resume_request_version = 4;
+  string run_lease_id = 5;
+  string correlation_id = 6;
 }
 
 message OutputStreamAppended {

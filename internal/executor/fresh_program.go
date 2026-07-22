@@ -56,6 +56,7 @@ type freshProgramEventSink interface {
 
 type freshProgram struct {
 	session          vm.Session
+	mount            api.WorkerWorkspaceMount
 	lease            api.WorkerRunLeaseReceipt
 	authority        *workspacev0.WorkspaceRunAuthority
 	entrypoint       *runv0.EntrypointIdentity
@@ -123,6 +124,7 @@ func (state *freshAdmissionState) renew(ctx context.Context) error {
 func (program *freshProgram) awaitTaskCompletion(
 	ctx context.Context,
 	events freshProgramEventSink,
+	wait func(context.Context, *runv0.RunWaitRequested) error,
 ) (*runv0.TaskOutcome, *runv0.ProgramQuiesced, error) {
 	if program == nil || program.session == nil {
 		return nil, nil, errors.New("fresh Program session is required")
@@ -176,6 +178,16 @@ func (program *freshProgram) awaitTaskCompletion(
 				return nil, nil, err
 			}
 			outcome = value.TaskOutcome
+		case *runv0.RunEvent_RunWaitRequested:
+			if outcome != nil {
+				return nil, nil, errors.New("Program emitted a Wait after Task outcome")
+			}
+			if wait == nil {
+				return nil, nil, errors.New("fresh Program Wait support is required")
+			}
+			if err := wait(ctx, value.RunWaitRequested); err != nil {
+				return nil, nil, err
+			}
 		case *runv0.RunEvent_ProgramQuiesced:
 			if outcome == nil {
 				return nil, nil, errors.New("Program quiesced before emitting a Task outcome")
@@ -503,6 +515,7 @@ func (r GuestRunner) startFreshProgram(
 	retainAuthority = true
 	return freshProgram{
 		session:          opened.Session,
+		mount:            opened.Mount,
 		lease:            state.lease,
 		authority:        state.authority,
 		entrypoint:       ready.GetEntrypoint(),

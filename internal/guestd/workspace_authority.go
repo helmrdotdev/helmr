@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -50,6 +51,135 @@ func validateWorkspaceRunAuthority(entry *workspaceMountEntry, authority *worksp
 		return errors.New("Workspace Run authority does not match the mounted runtime")
 	}
 	return nil
+}
+
+func handleProgramResumeGrantConnection(
+	conn programConnection,
+	bodyLen uint64,
+	mounts *workspaceOperationRegistry,
+	waits *waitingRunRegistry,
+	clock func() time.Time,
+) error {
+	if bodyLen != 0 {
+		return errors.New("Program resume grant stream body must be empty")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
+		return fmt.Errorf("bound Program resume grant read: %w", err)
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	var request workspacev0.GrantProgramResumeRequest
+	if err := frameio.ReadProtoFrameBounded(conn, maxProgramControlFrameBytes, &request); err != nil {
+		return fmt.Errorf("read Program resume grant: %w", err)
+	}
+	authority := request.GetAuthority()
+	if authority == nil || authority.GetFence() == nil {
+		return errors.New("Program resume grant authority is required")
+	}
+	fence := authority.GetFence()
+	entry, release, ok := mounts.acquireExact(
+		fence.GetWorkspaceMountId(), fence.GetWorkspaceId(), authority.GetChannelToken(),
+		uint64(fence.GetMountFencingGeneration()),
+	)
+	if !ok {
+		return errors.New("Program resume grant does not match the mounted runtime")
+	}
+	defer release()
+	if clock == nil {
+		clock = time.Now
+	}
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
+	if err := validateWorkspaceRunAuthority(entry, authority, clock()); err != nil {
+		return err
+	}
+	entry.authorityMu.Lock()
+	missing := entry.authority == nil
+	current := workspaceRunAuthoritiesEqual(entry.authority, authority)
+	entry.authorityMu.Unlock()
+	entry.processesMu.Lock()
+	live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if missing && live {
+		if err := entry.installWorkspaceRunAuthorityLocked(authority, clock()); err != nil {
+			return fmt.Errorf("install restored Program authority: %w", err)
+		}
+		current = true
+	}
+	if !current || !live {
+		return errors.New("Program resume grant authority is not installed")
+	}
+	grant := &runv0.ResumeAttach{
+		RunId: fence.GetRunId(), AttemptNumber: fence.GetAttemptNumber(),
+		RunLeaseId: fence.GetRunLeaseId(), RunWaitId: request.GetRunWaitId(),
+		CheckpointId: request.GetCheckpointId(), ResumeAttachId: request.GetResumeAttachId(),
+		ResumeRequestVersion: request.GetResumeRequestVersion(), CorrelationId: request.GetCorrelationId(),
+	}
+	installed := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
+	if err := waits.grantProgramResume(&programResumeGrant{
+		attach: grant,
+		lock:   entry.finalizationMu.Lock,
+		unlock: entry.finalizationMu.Unlock,
+		valid: func(now time.Time) bool {
+			entry.processesMu.Lock()
+			live := entry.authorityState == workspaceAuthorityLive && !entry.recoveryRequired
+			entry.processesMu.Unlock()
+			entry.authorityMu.Lock()
+			current := workspaceRunAuthoritiesEqual(entry.authority, installed)
+			entry.authorityMu.Unlock()
+			return live && current && installed.GetFence().GetExpiresAtUnixNano() > now.UnixNano()
+		},
+	}); err != nil {
+		return err
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
+		return fmt.Errorf("bound Program resume grant response: %w", err)
+	}
+	defer conn.SetWriteDeadline(time.Time{})
+	return frameio.WriteProtoFrame(conn, &workspacev0.GrantProgramResumeResponse{
+		Fence:     proto.Clone(fence).(*workspacev0.WorkspaceAuthorityFence),
+		RunWaitId: request.GetRunWaitId(), CheckpointId: request.GetCheckpointId(),
+		ResumeAttachId: request.GetResumeAttachId(), ResumeRequestVersion: request.GetResumeRequestVersion(),
+		CorrelationId: request.GetCorrelationId(),
+	})
+}
+
+func handleProgramRestoreVerifyConnection(
+	conn programConnection,
+	bodyLen uint64,
+	mounts *workspaceOperationRegistry,
+	waits *waitingRunRegistry,
+) error {
+	if bodyLen != 0 {
+		return errors.New("Program restore verification stream body must be empty")
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
+		return err
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	var request workspacev0.VerifyProgramRestoreRequest
+	if err := frameio.ReadProtoFrameBounded(conn, maxProgramControlFrameBytes, &request); err != nil {
+		return fmt.Errorf("read Program restore verification: %w", err)
+	}
+	if strings.TrimSpace(request.GetRunId()) == "" || request.GetAttemptNumber() == 0 ||
+		strings.TrimSpace(request.GetRunWaitId()) == "" || strings.TrimSpace(request.GetCheckpointId()) == "" ||
+		strings.TrimSpace(request.GetCorrelationId()) == "" || waits == nil || mounts == nil {
+		return errors.New("Program restore verification identity is incomplete")
+	}
+	mounts.mu.Lock()
+	programActive := mounts.programActive && mounts.programEntry != nil
+	mounts.mu.Unlock()
+	if !programActive || !waits.verifyFrozenProgram(&request) {
+		return errors.New("Program restore verification did not match a frozen Program")
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
+		return err
+	}
+	defer conn.SetWriteDeadline(time.Time{})
+	return frameio.WriteProtoFrame(conn, &workspacev0.VerifyProgramRestoreResponse{
+		RunId: request.GetRunId(), AttemptNumber: request.GetAttemptNumber(),
+		RunWaitId: request.GetRunWaitId(), CheckpointId: request.GetCheckpointId(),
+		CorrelationId: request.GetCorrelationId(),
+	})
 }
 
 func (entry *workspaceMountEntry) installWorkspaceRunAuthority(authority *workspacev0.WorkspaceRunAuthority, now time.Time) error {

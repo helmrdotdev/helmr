@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 	"github.com/helmrdotdev/helmr/internal/wire"
@@ -26,6 +27,54 @@ func testWorkspaceOperationFingerprint(t *testing.T, operationKind string, reque
 		t.Fatal(fmt.Errorf("workspace operation fingerprint: %w", err))
 	}
 	return fingerprint
+}
+
+func TestRestoredWorkspaceRebindPreservesFrozenProgramAndReplacesMountAuthority(t *testing.T) {
+	registry := newWorkspaceOperationRegistry()
+	entry := &workspaceMountEntry{
+		workspaceID: "workspace-1", workspaceMountID: "old-mount", channelToken: "old-channel",
+		runtimeInstanceID: "old-runtime", workspaceMount: "/workspace", baseVersionID: "old-version",
+		authority: &workspacev0.WorkspaceRunAuthority{Fence: &workspacev0.WorkspaceAuthorityFence{RunLeaseId: "old-lease"}},
+		processes: map[string]*workspaceProcess{}, authorityState: workspaceAuthorityLive,
+	}
+	entry.setFencingGeneration(3)
+	registry.entries["old-mount"] = entry
+	registry.programActive = true
+	registry.programEntry = entry
+	waits := newWaitingRunRegistry()
+	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 1, RunWaitId: "wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", CheckpointRequestVersion: 2,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := &workspacev0.MaterializeWorkspaceRequest{
+		Envelope: &workspacev0.WorkspaceOperationEnvelope{
+			WorkspaceMountId: "new-mount", WorkspaceId: "workspace-1",
+			ChannelToken: "new-channel", FencingGeneration: 4,
+		},
+		MountPath: "/workspace", BaseVersionId: "private-version", UsePreparedRuntime: true,
+		RuntimeInstanceId: "new-runtime", RestoredCheckpointId: "checkpoint-1",
+	}
+	phases, err := registry.rebindRestoredWorkspaceMount(request, waits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(phases) != 1 || registry.entries["old-mount"] != nil || registry.entries["new-mount"] != entry ||
+		registry.programEntry != entry || !registry.programActive || entry.authority != nil ||
+		entry.workspaceMountID != "new-mount" || entry.channelToken != "new-channel" ||
+		entry.runtimeInstanceID != "new-runtime" || entry.baseVersionID != "private-version" ||
+		entry.currentFencingGeneration() != 4 {
+		t.Fatalf("restored rebind state = entry=%+v phases=%+v", entry, phases)
+	}
+	if replay, err := registry.rebindRestoredWorkspaceMount(request, waits); err != nil ||
+		len(replay) != 1 || replay[0].GetName() != "guest_restore_rebind_replay" {
+		t.Fatalf("restored rebind replay = %+v, %v", replay, err)
+	}
+	request.RestoredCheckpointId = "different-checkpoint"
+	if _, err := registry.rebindRestoredWorkspaceMount(request, waits); err == nil {
+		t.Fatal("mismatched restored Checkpoint was accepted")
+	}
 }
 
 func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *testing.T) {
@@ -55,7 +104,7 @@ func TestWorkspaceMaterializeRestoresArtifactAndAuthorizesPrimitiveOperation(t *
 	defer materializeServer.Close()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry, nil)
 	}()
 	if err := frameio.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
@@ -392,7 +441,7 @@ func TestWorkspaceMaterializeWithoutBaseArtifactInitializesEmptyRoot(t *testing.
 	defer server.Close()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- handleWorkspaceMaterializeConnection(context.Background(), server, slogDiscard(), registry)
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), server, slogDiscard(), registry, nil)
 	}()
 	if err := frameio.WriteProtoFrame(client, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{
@@ -454,7 +503,7 @@ func TestWorkspaceMaterializeReturnsFailureResponse(t *testing.T) {
 	defer materializeServer.Close()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry)
+		errCh <- handleWorkspaceMaterializeConnection(context.Background(), materializeServer, slogDiscard(), registry, nil)
 	}()
 	if err := frameio.WriteProtoFrame(materializeClient, &workspacev0.MaterializeWorkspaceRequest{
 		Envelope: &workspacev0.WorkspaceOperationEnvelope{

@@ -3,8 +3,10 @@ import { runProto } from "@helmr/proto"
 import {
   canonicalizeJsonValue,
   inspectDefinition,
+  installRuntimeOperations,
   type InternalActorDefinition,
   type InternalTaskDefinition,
+  type RuntimeOperations,
 } from "@helmr/sdk/internal"
 import type {
   JsonValue,
@@ -12,6 +14,7 @@ import type {
   TaskExecutionContext,
 } from "@helmr/sdk"
 import { createWriteStream, promises as fs } from "node:fs"
+import { randomUUID } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
@@ -154,7 +157,7 @@ export async function runProgram(
   validateEntrypointRelease(release, start, kind)
 
   if (definition.kind === "task") {
-    await runTask(start, definition, io)
+    await runTask(start, definition, io, reader)
     return
   }
   await runActor(start, definition)
@@ -314,6 +317,7 @@ async function runTask(
   start: runProto.ProgramStart,
   definition: InternalTaskDefinition,
   io: ProgramIO,
+  reader: FrameReader,
 ): Promise<void> {
   let payload: unknown
   if (definition.hasPayload) {
@@ -353,6 +357,9 @@ async function runTask(
   }
 
   const context = taskContext(start)
+	const uninstallRuntime = installRuntimeOperations(
+		programRuntimeOperations(start, io, reader),
+	)
   let normalized: Uint8Array
   try {
     let output: unknown
@@ -368,9 +375,11 @@ async function runTask(
       )
     }
   } catch (error) {
-    await writeTaskFailure(io, "failed", errorMessage(error))
-    return
-  }
+		await writeTaskFailure(io, "failed", errorMessage(error))
+		return
+	} finally {
+		uninstallRuntime()
+	}
   await writeRunEvent(io, {
     case: "taskOutcome",
     value: create(runProto.TaskOutcomeSchema, {
@@ -382,6 +391,137 @@ async function runTask(
       },
     }),
   })
+}
+
+function programRuntimeOperations(
+  start: runProto.ProgramStart,
+  io: ProgramIO,
+  reader: FrameReader,
+): RuntimeOperations {
+  let pending = false
+  const wait = async (
+    params: JsonValue,
+    timeoutSeconds: number,
+  ): Promise<void> => {
+    if (pending) {
+      throw new Error("only one consuming Wait may be pending")
+    }
+    pending = true
+    const correlationId = randomUUID()
+    try {
+      await writeRunEvent(io, {
+        case: "runWaitRequested",
+        value: create(runProto.RunWaitRequestedSchema, {
+          correlationId,
+          kind: "timer",
+          paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
+          timeout: timeoutSeconds,
+        }),
+      })
+      const decision = fromBinary(
+        runProto.ResumeDecisionSchema,
+        await reader.read(),
+      )
+      if (
+        (decision.correlationId || decision.runWaitId) !== correlationId ||
+        (decision.kind !== "completed" &&
+          decision.kind !== "failed" &&
+          decision.kind !== "cancelled")
+      ) {
+        throw new Error("timer resume decision did not match the pending Wait")
+      }
+		if (decision.requireConsumedAck) {
+			await writeRunEvent(io, {
+				case: "resumeConsumed",
+				value: create(runProto.ResumeConsumedSchema, {
+					runWaitId: decision.runWaitId,
+					checkpointId: decision.checkpointId,
+					resumeAttachId: decision.resumeAttachId,
+					resumeRequestVersion: decision.resumeRequestVersion,
+					runLeaseId: decision.runLeaseId,
+					correlationId: decision.correlationId,
+				}),
+			})
+		}
+      if (decision.kind !== "completed") {
+        const failure = resumeFailure(decision.dataJson)
+        throw new Error(`timer Wait ${decision.kind}: ${failure.reasonCode}`)
+      }
+    } finally {
+      pending = false
+    }
+  }
+  return {
+    waitFor(duration) {
+      const timeoutSeconds = durationSeconds(duration)
+      return wait({ duration }, timeoutSeconds)
+    },
+    waitUntil(date) {
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+        return Promise.reject(new Error("timers.waitUntil() requires a valid Date"))
+      }
+      const remainingMs = date.getTime() - Date.now()
+      if (remainingMs <= 0) return Promise.resolve()
+      return wait(
+        { date: date.toISOString() },
+        boundedTimerSeconds(Math.ceil(remainingMs / 1000)),
+      )
+    },
+  }
+}
+
+function resumeFailure(dataJson: string): { readonly reasonCode: string } {
+  let value: unknown
+  try {
+    value = JSON.parse(dataJson)
+  } catch {
+    throw new Error("terminal Wait failure data must be valid JSON")
+  }
+  if (
+    value === null ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    typeof (value as { readonly reason_code?: unknown }).reason_code !== "string" ||
+    (value as { readonly reason_code: string }).reason_code.trim() === ""
+  ) {
+    throw new Error("terminal Wait failure data must contain reason_code")
+  }
+  return { reasonCode: (value as { readonly reason_code: string }).reason_code }
+}
+
+function durationSeconds(duration: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(duration.trim())
+  if (match === null) {
+    throw new Error("timer duration must use ms, s, m, h, or d units")
+  }
+  const amount = Number(match[1])
+  const unit = match[2]
+  const multiplierMs = unit === "ms"
+    ? 1
+    : unit === "s"
+    ? 1000
+    : unit === "m"
+    ? 60_000
+    : unit === "h"
+    ? 3_600_000
+    : 86_400_000
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error("timer duration must be positive")
+  }
+  const milliseconds = amount * multiplierMs
+  const maxMilliseconds = 365 * 24 * 60 * 60 * 1000
+  if (milliseconds < 1 || milliseconds > maxMilliseconds) {
+    throw new Error("timer duration must be between 1ms and 365d")
+  }
+  return boundedTimerSeconds(Math.ceil(milliseconds / 1000))
+}
+
+function boundedTimerSeconds(seconds: number): number {
+  const maxSeconds = 365 * 24 * 60 * 60
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > maxSeconds) {
+    throw new Error("timer duration must be between 1ms and 365d")
+  }
+  return seconds
 }
 
 async function runActor(

@@ -546,7 +546,7 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 	substrateObject := encryptedRuntimeSubstrateObject(t, encryptor, substrate, substrateDigest)
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
-		RunWaitId: "run-wait-id-1",
+		RunWaitId: "run-wait-id-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 1, RunLeaseId: "execution-1",
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
@@ -602,15 +602,16 @@ func TestGuestRunnerRestoresCheckpointAndAttachesRunWait(t *testing.T) {
 		Log:                 slog.New(slog.NewJSONHandler(&logBuffer, nil)),
 		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
-		WaitHandler: waiter,
+		Leases:       staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
+		LeaseReceipt: &api.WorkerRunLeaseReceipt{ID: "execution-1", RunID: "run-1"},
+		WaitHandler:  waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   checkpoint,
 				RunWait: api.WorkerRestoreRunWait{
-					ID:                "run-wait-id-1",
+					ID: "run-wait-id-1", CorrelationID: "correlation-1", ResumeAttachID: "attach-1", ResumeRequestVersion: 1,
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},
@@ -693,7 +694,7 @@ func TestGuestRunnerRestoresCheckpointSubstrateFromLocalCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
-		RunWaitId: "run-wait-id-1",
+		RunWaitId: "run-wait-id-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 1, RunLeaseId: "execution-1",
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_TaskResult{TaskResult: &runv0.TaskResult{ExitCode: 0}},
 	})
@@ -739,15 +740,16 @@ func TestGuestRunnerRestoresCheckpointSubstrateFromLocalCache(t *testing.T) {
 		Substrates:          lookup,
 		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
-		WaitHandler: waiter,
+		Leases:       staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
+		LeaseReceipt: &api.WorkerRunLeaseReceipt{ID: "execution-1", RunID: "run-1"},
+		WaitHandler:  waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   checkpoint,
 				RunWait: api.WorkerRestoreRunWait{
-					ID:                "run-wait-id-1",
+					ID: "run-wait-id-1", CorrelationID: "correlation-1", ResumeAttachID: "attach-1", ResumeRequestVersion: 1,
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},
@@ -912,7 +914,7 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 	memoryObject := encryptedCheckpointObject(t, encryptor, memory, "memory")
 	workspaceBase := testCheckpointWorkspaceBase()
 	stream := newScriptedCheckpointGuestStream(t, &runv0.ResumeAck{
-		RunWaitId: "run-wait-id-1",
+		RunWaitId: "run-wait-id-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 1, RunLeaseId: "execution-1",
 	}, &runv0.RunEvent{
 		Event: &runv0.RunEvent_RunWaitRequested{RunWaitRequested: &runv0.RunWaitRequested{
 			CorrelationId: "next-run wait",
@@ -932,15 +934,16 @@ func TestGuestRunnerRestoredCheckpointCarriesWorkspaceBaseIntoNextCheckpoint(t *
 		TempDir:             t.TempDir(),
 		Capacity:            guestTestCapacity(t),
 	}.Run(context.Background(), Request{
-		Leases:      staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
-		WaitHandler: waiter,
+		Leases:       staticLease(api.WorkerRunLease{ID: "execution-1", RunID: "run-1", WorkerInstanceID: "worker-1", WorkerEpoch: 1, RuntimeInstanceID: "runtime-1"}),
+		LeaseReceipt: &api.WorkerRunLeaseReceipt{ID: "execution-1", RunID: "run-1"},
+		WaitHandler:  waiter,
 		Run: ResolvedRun{
 			RunID: "run-1",
 			Restore: &api.WorkerRestore{
 				CheckpointID: "checkpoint-1",
 				Checkpoint:   testRestoreCheckpointManifest(manifest, manifestObject, stateObject, scratchObject, memoryObject, workspaceBase),
 				RunWait: api.WorkerRestoreRunWait{
-					ID:                "run-wait-id-1",
+					ID: "run-wait-id-1", CorrelationID: "correlation-1", ResumeAttachID: "attach-1", ResumeRequestVersion: 1,
 					ResumeKind:        "completed",
 					ResumePayloadJSON: json.RawMessage(`{"approved":true}`),
 				},

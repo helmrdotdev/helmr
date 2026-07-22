@@ -102,6 +102,48 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	}
 }
 
+func TestCloseRunActiveIntervalForCheckpointUsesDatabaseTimeAndExactFence(t *testing.T) {
+	ctx := context.Background()
+	fixture := newRunLeaseClaimFixture(t, ctx)
+	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
+	locators := fixture.freshRunStartLocators(t, ctx, work)
+	if _, err := fixture.pool.Exec(ctx, `
+		UPDATE runs
+		   SET status = 'waiting',
+		       current_run_lease_id = $1,
+		       active_elapsed_ms = 250,
+		       active_started_at = transaction_timestamp() - interval '2 seconds'
+		 WHERE id = $2
+	`, work.leaseID, work.runID); err != nil {
+		t.Fatal(err)
+	}
+	params := CloseRunActiveIntervalForCheckpointParams{
+		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
+		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
+		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
+		RunLeaseID: workUUID(work.leaseID),
+	}
+	elapsed, err := fixture.queries.CloseRunActiveIntervalForCheckpoint(ctx, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed < 2_000 || elapsed > 5_000 {
+		t.Fatalf("active elapsed = %dms, want database-derived interval near 2250ms", elapsed)
+	}
+	var activeStartedAt pgtype.Timestamptz
+	if err := fixture.pool.QueryRow(ctx,
+		`SELECT active_started_at FROM runs WHERE id = $1`, work.runID,
+	).Scan(&activeStartedAt); err != nil {
+		t.Fatal(err)
+	}
+	if activeStartedAt.Valid {
+		t.Fatalf("active_started_at remained open: %v", activeStartedAt)
+	}
+	if _, err := fixture.queries.CloseRunActiveIntervalForCheckpoint(ctx, params); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("replay error = %v, want no rows", err)
+	}
+}
+
 func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	ctx := context.Background()
 	fixture := newRunLeaseClaimFixture(t, ctx)

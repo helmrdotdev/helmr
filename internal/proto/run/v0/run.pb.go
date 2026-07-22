@@ -3416,12 +3416,18 @@ func (x *ActiveStreamReadResult) GetErrorMessage() string {
 }
 
 type CheckpointPauseRequest struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId        string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	CheckpointId     string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	CaptureWorkspace bool                   `protobuf:"varint,3,opt,name=capture_workspace,json=captureWorkspace,proto3" json:"capture_workspace,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	RunWaitId                string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	CheckpointId             string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	CaptureWorkspace         bool                   `protobuf:"varint,3,opt,name=capture_workspace,json=captureWorkspace,proto3" json:"capture_workspace,omitempty"`
+	RunId                    string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber            uint32                 `protobuf:"varint,5,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunLeaseId               string                 `protobuf:"bytes,6,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	ResumeAttachId           string                 `protobuf:"bytes,7,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	CheckpointRequestVersion int64                  `protobuf:"varint,8,opt,name=checkpoint_request_version,json=checkpointRequestVersion,proto3" json:"checkpoint_request_version,omitempty"`
+	CorrelationId            string                 `protobuf:"bytes,9,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *CheckpointPauseRequest) Reset() {
@@ -3475,12 +3481,60 @@ func (x *CheckpointPauseRequest) GetCaptureWorkspace() bool {
 	return false
 }
 
+func (x *CheckpointPauseRequest) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseRequest) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *CheckpointPauseRequest) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseRequest) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseRequest) GetCheckpointRequestVersion() int64 {
+	if x != nil {
+		return x.CheckpointRequestVersion
+	}
+	return 0
+}
+
+func (x *CheckpointPauseRequest) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
 type CheckpointPauseReady struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId     string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	CheckpointId  string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                    protoimpl.MessageState `protogen:"open.v1"`
+	RunWaitId                string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	CheckpointId             string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	RunId                    string                 `protobuf:"bytes,3,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber            uint32                 `protobuf:"varint,4,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	RunLeaseId               string                 `protobuf:"bytes,5,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	ResumeAttachId           string                 `protobuf:"bytes,6,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	CheckpointRequestVersion int64                  `protobuf:"varint,7,opt,name=checkpoint_request_version,json=checkpointRequestVersion,proto3" json:"checkpoint_request_version,omitempty"`
+	CorrelationId            string                 `protobuf:"bytes,8,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *CheckpointPauseReady) Reset() {
@@ -3527,13 +3581,60 @@ func (x *CheckpointPauseReady) GetCheckpointId() string {
 	return ""
 }
 
+func (x *CheckpointPauseReady) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseReady) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *CheckpointPauseReady) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseReady) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *CheckpointPauseReady) GetCheckpointRequestVersion() int64 {
+	if x != nil {
+		return x.CheckpointRequestVersion
+	}
+	return 0
+}
+
+func (x *CheckpointPauseReady) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
 type ResumeAttach struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CheckpointId  string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
-	RunWaitId     string                 `protobuf:"bytes,2,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	RunLeaseId    string                 `protobuf:"bytes,3,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	CheckpointId         string                 `protobuf:"bytes,1,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	RunWaitId            string                 `protobuf:"bytes,2,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	RunLeaseId           string                 `protobuf:"bytes,3,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	RunId                string                 `protobuf:"bytes,4,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	AttemptNumber        uint32                 `protobuf:"varint,5,opt,name=attempt_number,json=attemptNumber,proto3" json:"attempt_number,omitempty"`
+	ResumeAttachId       string                 `protobuf:"bytes,6,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	ResumeRequestVersion int64                  `protobuf:"varint,7,opt,name=resume_request_version,json=resumeRequestVersion,proto3" json:"resume_request_version,omitempty"`
+	CorrelationId        string                 `protobuf:"bytes,8,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ResumeAttach) Reset() {
@@ -3587,14 +3688,55 @@ func (x *ResumeAttach) GetRunLeaseId() string {
 	return ""
 }
 
+func (x *ResumeAttach) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ResumeAttach) GetAttemptNumber() uint32 {
+	if x != nil {
+		return x.AttemptNumber
+	}
+	return 0
+}
+
+func (x *ResumeAttach) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *ResumeAttach) GetResumeRequestVersion() int64 {
+	if x != nil {
+		return x.ResumeRequestVersion
+	}
+	return 0
+}
+
+func (x *ResumeAttach) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
 type ResumeDecision struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId          string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	Kind               string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	DataJson           string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
-	RequireConsumedAck bool                   `protobuf:"varint,4,opt,name=require_consumed_ack,json=requireConsumedAck,proto3" json:"require_consumed_ack,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	RunWaitId            string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	Kind                 string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	DataJson             string                 `protobuf:"bytes,3,opt,name=data_json,json=dataJson,proto3" json:"data_json,omitempty"`
+	RequireConsumedAck   bool                   `protobuf:"varint,4,opt,name=require_consumed_ack,json=requireConsumedAck,proto3" json:"require_consumed_ack,omitempty"`
+	CheckpointId         string                 `protobuf:"bytes,5,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	ResumeAttachId       string                 `protobuf:"bytes,6,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	ResumeRequestVersion int64                  `protobuf:"varint,7,opt,name=resume_request_version,json=resumeRequestVersion,proto3" json:"resume_request_version,omitempty"`
+	RunLeaseId           string                 `protobuf:"bytes,8,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	CorrelationId        string                 `protobuf:"bytes,9,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	NoResult             bool                   `protobuf:"varint,10,opt,name=no_result,json=noResult,proto3" json:"no_result,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ResumeDecision) Reset() {
@@ -3655,11 +3797,58 @@ func (x *ResumeDecision) GetRequireConsumedAck() bool {
 	return false
 }
 
+func (x *ResumeDecision) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *ResumeDecision) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *ResumeDecision) GetResumeRequestVersion() int64 {
+	if x != nil {
+		return x.ResumeRequestVersion
+	}
+	return 0
+}
+
+func (x *ResumeDecision) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+func (x *ResumeDecision) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
+func (x *ResumeDecision) GetNoResult() bool {
+	if x != nil {
+		return x.NoResult
+	}
+	return false
+}
+
 type ResumeAck struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId     string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	RunWaitId            string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	CheckpointId         string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	ResumeAttachId       string                 `protobuf:"bytes,3,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	ResumeRequestVersion int64                  `protobuf:"varint,4,opt,name=resume_request_version,json=resumeRequestVersion,proto3" json:"resume_request_version,omitempty"`
+	RunLeaseId           string                 `protobuf:"bytes,5,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	CorrelationId        string                 `protobuf:"bytes,6,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ResumeAck) Reset() {
@@ -3699,11 +3888,51 @@ func (x *ResumeAck) GetRunWaitId() string {
 	return ""
 }
 
+func (x *ResumeAck) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *ResumeAck) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *ResumeAck) GetResumeRequestVersion() int64 {
+	if x != nil {
+		return x.ResumeRequestVersion
+	}
+	return 0
+}
+
+func (x *ResumeAck) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+func (x *ResumeAck) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
+	}
+	return ""
+}
+
 type ResumeConsumed struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	RunWaitId     string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	RunWaitId            string                 `protobuf:"bytes,1,opt,name=run_wait_id,json=runWaitId,proto3" json:"run_wait_id,omitempty"`
+	CheckpointId         string                 `protobuf:"bytes,2,opt,name=checkpoint_id,json=checkpointId,proto3" json:"checkpoint_id,omitempty"`
+	ResumeAttachId       string                 `protobuf:"bytes,3,opt,name=resume_attach_id,json=resumeAttachId,proto3" json:"resume_attach_id,omitempty"`
+	ResumeRequestVersion int64                  `protobuf:"varint,4,opt,name=resume_request_version,json=resumeRequestVersion,proto3" json:"resume_request_version,omitempty"`
+	RunLeaseId           string                 `protobuf:"bytes,5,opt,name=run_lease_id,json=runLeaseId,proto3" json:"run_lease_id,omitempty"`
+	CorrelationId        string                 `protobuf:"bytes,6,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *ResumeConsumed) Reset() {
@@ -3739,6 +3968,41 @@ func (*ResumeConsumed) Descriptor() ([]byte, []int) {
 func (x *ResumeConsumed) GetRunWaitId() string {
 	if x != nil {
 		return x.RunWaitId
+	}
+	return ""
+}
+
+func (x *ResumeConsumed) GetCheckpointId() string {
+	if x != nil {
+		return x.CheckpointId
+	}
+	return ""
+}
+
+func (x *ResumeConsumed) GetResumeAttachId() string {
+	if x != nil {
+		return x.ResumeAttachId
+	}
+	return ""
+}
+
+func (x *ResumeConsumed) GetResumeRequestVersion() int64 {
+	if x != nil {
+		return x.ResumeRequestVersion
+	}
+	return 0
+}
+
+func (x *ResumeConsumed) GetRunLeaseId() string {
+	if x != nil {
+		return x.RunLeaseId
+	}
+	return ""
+}
+
+func (x *ResumeConsumed) GetCorrelationId() string {
+	if x != nil {
+		return x.CorrelationId
 	}
 	return ""
 }
@@ -4169,28 +4433,67 @@ const file_run_proto_rawDesc = "" +
 	"\ttimed_out\x18\x03 \x01(\bR\btimedOut\x12(\n" +
 	"\rerror_message\x18\x04 \x01(\tH\x01R\ferrorMessage\x88\x01\x01B\t\n" +
 	"\a_recordB\x10\n" +
-	"\x0e_error_message\"\x8a\x01\n" +
+	"\x0e_error_message\"\xf9\x02\n" +
 	"\x16CheckpointPauseRequest\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
 	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12+\n" +
-	"\x11capture_workspace\x18\x03 \x01(\bR\x10captureWorkspace\"[\n" +
+	"\x11capture_workspace\x18\x03 \x01(\bR\x10captureWorkspace\x12\x15\n" +
+	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12%\n" +
+	"\x0eattempt_number\x18\x05 \x01(\rR\rattemptNumber\x12 \n" +
+	"\frun_lease_id\x18\x06 \x01(\tR\n" +
+	"runLeaseId\x12(\n" +
+	"\x10resume_attach_id\x18\a \x01(\tR\x0eresumeAttachId\x12<\n" +
+	"\x1acheckpoint_request_version\x18\b \x01(\x03R\x18checkpointRequestVersion\x12%\n" +
+	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\"\xca\x02\n" +
 	"\x14CheckpointPauseReady\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
-	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\"u\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12\x15\n" +
+	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12%\n" +
+	"\x0eattempt_number\x18\x04 \x01(\rR\rattemptNumber\x12 \n" +
+	"\frun_lease_id\x18\x05 \x01(\tR\n" +
+	"runLeaseId\x12(\n" +
+	"\x10resume_attach_id\x18\x06 \x01(\tR\x0eresumeAttachId\x12<\n" +
+	"\x1acheckpoint_request_version\x18\a \x01(\x03R\x18checkpointRequestVersion\x12%\n" +
+	"\x0ecorrelation_id\x18\b \x01(\tR\rcorrelationId\"\xba\x02\n" +
 	"\fResumeAttach\x12#\n" +
 	"\rcheckpoint_id\x18\x01 \x01(\tR\fcheckpointId\x12\x1e\n" +
 	"\vrun_wait_id\x18\x02 \x01(\tR\trunWaitId\x12 \n" +
 	"\frun_lease_id\x18\x03 \x01(\tR\n" +
-	"runLeaseId\"\x93\x01\n" +
+	"runLeaseId\x12\x15\n" +
+	"\x06run_id\x18\x04 \x01(\tR\x05runId\x12%\n" +
+	"\x0eattempt_number\x18\x05 \x01(\rR\rattemptNumber\x12(\n" +
+	"\x10resume_attach_id\x18\x06 \x01(\tR\x0eresumeAttachId\x124\n" +
+	"\x16resume_request_version\x18\a \x01(\x03R\x14resumeRequestVersion\x12%\n" +
+	"\x0ecorrelation_id\x18\b \x01(\tR\rcorrelationId\"\xfe\x02\n" +
 	"\x0eResumeDecision\x12\x1e\n" +
 	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1b\n" +
 	"\tdata_json\x18\x03 \x01(\tR\bdataJson\x120\n" +
-	"\x14require_consumed_ack\x18\x04 \x01(\bR\x12requireConsumedAck\"+\n" +
+	"\x14require_consumed_ack\x18\x04 \x01(\bR\x12requireConsumedAck\x12#\n" +
+	"\rcheckpoint_id\x18\x05 \x01(\tR\fcheckpointId\x12(\n" +
+	"\x10resume_attach_id\x18\x06 \x01(\tR\x0eresumeAttachId\x124\n" +
+	"\x16resume_request_version\x18\a \x01(\x03R\x14resumeRequestVersion\x12 \n" +
+	"\frun_lease_id\x18\b \x01(\tR\n" +
+	"runLeaseId\x12%\n" +
+	"\x0ecorrelation_id\x18\t \x01(\tR\rcorrelationId\x12\x1b\n" +
+	"\tno_result\x18\n" +
+	" \x01(\bR\bnoResult\"\xf9\x01\n" +
 	"\tResumeAck\x12\x1e\n" +
-	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\"0\n" +
+	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12(\n" +
+	"\x10resume_attach_id\x18\x03 \x01(\tR\x0eresumeAttachId\x124\n" +
+	"\x16resume_request_version\x18\x04 \x01(\x03R\x14resumeRequestVersion\x12 \n" +
+	"\frun_lease_id\x18\x05 \x01(\tR\n" +
+	"runLeaseId\x12%\n" +
+	"\x0ecorrelation_id\x18\x06 \x01(\tR\rcorrelationId\"\xfe\x01\n" +
 	"\x0eResumeConsumed\x12\x1e\n" +
-	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\"\x8a\x01\n" +
+	"\vrun_wait_id\x18\x01 \x01(\tR\trunWaitId\x12#\n" +
+	"\rcheckpoint_id\x18\x02 \x01(\tR\fcheckpointId\x12(\n" +
+	"\x10resume_attach_id\x18\x03 \x01(\tR\x0eresumeAttachId\x124\n" +
+	"\x16resume_request_version\x18\x04 \x01(\x03R\x14resumeRequestVersion\x12 \n" +
+	"\frun_lease_id\x18\x05 \x01(\tR\n" +
+	"runLeaseId\x12%\n" +
+	"\x0ecorrelation_id\x18\x06 \x01(\tR\rcorrelationId\"\x8a\x01\n" +
 	"\x14OutputStreamAppended\x12\x16\n" +
 	"\x06stream\x18\x01 \x01(\tR\x06stream\x12!\n" +
 	"\fpayload_json\x18\x02 \x01(\tR\vpayloadJson\x12&\n" +

@@ -31,9 +31,10 @@ type WorkspaceMountSessionRegistry interface {
 }
 
 type WorkspaceMountSession struct {
-	Session      vm.Session
-	ChannelToken string
-	Mount        api.WorkerWorkspaceMount
+	Session        vm.Session
+	ControlSession vm.Session
+	ChannelToken   string
+	Mount          api.WorkerWorkspaceMount
 }
 
 type WorkspaceMountSessions struct {
@@ -92,9 +93,10 @@ func (s *WorkspaceMountSessions) OpenWorkspaceMountSession(ctx context.Context, 
 	}
 	endForeground := s.beginForegroundRun()
 	return WorkspaceMountSession{
-		Session:      newBorrowedRunSession(entry.session, stream, endForeground),
-		ChannelToken: entry.channelToken,
-		Mount:        entry.mount,
+		Session:        newBorrowedRunSession(entry.session, stream, endForeground),
+		ControlSession: entry.session,
+		ChannelToken:   entry.channelToken,
+		Mount:          entry.mount,
 	}, nil
 }
 

@@ -4,6 +4,7 @@ export { defineConfig } from "./config"
 export { schedules } from "./schedules"
 export { streams } from "./streams"
 export { queue, task } from "./task"
+export { timers } from "./timers"
 export { workspace, workspaces } from "./workspace"
 
 export type {
@@ -103,6 +104,8 @@ export type {
   ScheduledTaskInput,
   ScheduledTaskPayload,
 } from "./schedules"
+
+export type { Timers } from "./timers"
 
 export type {
   WorkspaceBuilder,

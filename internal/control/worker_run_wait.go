@@ -381,6 +381,7 @@ func (s *Server) createWorkerRunWait(ctx context.Context, scope db.GetWorkerRunW
 		response = api.WorkerCreateRunWaitResponse{
 			RunID:             pgvalue.MustUUIDValue(scope.RunID).String(),
 			RunWaitID:         pgvalue.MustUUIDValue(runWait.ID).String(),
+			ResumeAttachID:    pgvalue.MustUUIDValue(runWait.ResumeAttachID).String(),
 			RuntimeInstanceID: pgvalue.UUIDString(scope.RuntimeInstanceID),
 			RuntimeEpoch:      scope.WorkerEpoch,
 			CheckpointDelayMs: waitPolicy.CheckpointDelay.Milliseconds(),

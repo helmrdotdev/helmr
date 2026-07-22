@@ -540,6 +540,7 @@ func projectRunLeaseCheckpoint(
 	artifacts := make([]api.WorkerRunLeaseCheckpointArtifact, 0, len(rows))
 	priorRank := -1
 	var priorOrdinal int32
+	counts := map[db.RunCheckpointArtifactRole]int{}
 	for index, row := range rows {
 		role := string(row.Role)
 		rank, ok := checkpointArtifactRoleRank(row.Role)
@@ -564,6 +565,16 @@ func projectRunLeaseCheckpoint(
 		})
 		priorRank = rank
 		priorOrdinal = row.Ordinal
+		if row.Ordinal != int32(counts[row.Role]) {
+			return api.WorkerRunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact ordinals are not contiguous")
+		}
+		counts[row.Role]++
+	}
+	if counts[db.RunCheckpointArtifactRoleRuntimeConfig] != 1 ||
+		counts[db.RunCheckpointArtifactRoleVmState] != 1 ||
+		counts[db.RunCheckpointArtifactRoleMemory] != 1 ||
+		counts[db.RunCheckpointArtifactRoleScratchDisk] != 1 {
+		return api.WorkerRunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is incomplete")
 	}
 	return api.WorkerRunLeaseRecreatedRestore{
 		Kind:      string(checkpoint.Kind),

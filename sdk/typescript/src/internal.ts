@@ -33,4 +33,8 @@ export {
   type ProgramDeclaration,
   type RuntimeArchitecture,
 } from "./internal/program"
+export {
+  installRuntimeOperations,
+  type RuntimeOperations,
+} from "./internal/runtime"
 export { validateQueueName } from "./schema/task"

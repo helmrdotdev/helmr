@@ -301,12 +301,23 @@ func (s *Server) workerMarkCheckpointReady(w http.ResponseWriter, r *http.Reques
 			)
 			return errors.New("create run checkpoint artifact rows")
 		}
+		activeElapsedMs, err := work.q.CloseRunActiveIntervalForCheckpoint(r.Context(), db.CloseRunActiveIntervalForCheckpointParams{
+			ID: scope.RunID, OrgID: scope.OrgID, ProjectID: scope.ProjectID,
+			EnvironmentID: scope.EnvironmentID, WorkspaceID: scope.WorkspaceID,
+			AttemptNumber: scope.AttemptNumber, RunLeaseID: pgvalue.UUID(runLeaseID),
+		})
+		if isNoRows(err) {
+			return errReadyCheckpointReplay
+		}
+		if err != nil {
+			return errors.New("close Run active interval for checkpoint")
+		}
 		if _, err := work.q.SetRunWaitWorkspaceVersion(r.Context(), db.SetRunWaitWorkspaceVersionParams{
 			OrgID: scope.OrgID, RunID: pgvalue.UUID(runID), RunWaitID: pgvalue.UUID(runWaitID),
 			RunLeaseID: pgvalue.UUID(runLeaseID), CheckpointRequestVersion: request.RequestVersion,
 			RunCheckpointID: created.ID, ReservedWorkspaceID: workspaceID,
 			ReservedWorkspaceVersionID: workspaceVersionID,
-			ActiveElapsedMsAtPark:      pgtype.Int8{Int64: request.ActiveDurationMs, Valid: true},
+			ActiveElapsedMsAtPark:      pgtype.Int8{Int64: activeElapsedMs, Valid: true},
 		}); isNoRows(err) {
 			return errReadyCheckpointReplay
 		} else if err != nil {
@@ -380,10 +391,6 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 		writeError(w, badRequest(fmt.Errorf("invalid worker run checkpoint failed request JSON: %w", err)))
 		return
 	}
-	if request.ActiveDurationMs < 0 {
-		writeError(w, badRequest(errors.New("active_duration_ms must be non-negative")))
-		return
-	}
 	worker := workerFromContext(r.Context())
 	if request.Lease.WorkerInstanceID != worker.WorkerInstanceID.String() {
 		writeError(w, forbidden(errors.New("worker lease does not belong to this worker")))
@@ -440,7 +447,6 @@ func (s *Server) workerMarkCheckpointFailed(w http.ResponseWriter, r *http.Reque
 			RunLeaseID: pgvalue.UUID(runLeaseID), CheckpointRequestVersion: request.RequestVersion,
 			WorkerInstanceID: pgvalue.UUID(worker.WorkerInstanceID), WorkerEpoch: worker.WorkerEpoch,
 			RunCheckpointID: pgvalue.UUID(runCheckpointID), ErrorMessage: pgvalue.Text(errorMessage),
-			ActiveDurationMs: request.ActiveDurationMs,
 		}); isNoRows(err) {
 			return conflict(errors.New("run wait is not parking for this run lease"))
 		} else if err != nil {

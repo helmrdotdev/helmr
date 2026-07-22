@@ -1598,8 +1598,19 @@ func readCheckpointPauseReadyFrom(t *testing.T, reader *bufio.Reader, runWaitID 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if header.Type != wire.StreamTypeCheckpointPauseReady || header.RunWaitID != runWaitID || header.CheckpointID != checkpointID || bodyLen != 0 {
+			if header.Type != wire.StreamTypeCheckpointPauseReady || header.RunWaitID != runWaitID || header.CheckpointID != checkpointID || bodyLen == 0 || bodyLen > uint64(frameio.MaxFrameBytes) {
 				t.Fatalf("pause ready = %+v bodyLen=%d, want run wait=%s checkpoint=%s", header, bodyLen, runWaitID, checkpointID)
+			}
+			body := make([]byte, bodyLen)
+			if _, err := io.ReadFull(reader, body); err != nil {
+				t.Fatal(err)
+			}
+			var ready runv0.CheckpointPauseReady
+			if err := proto.Unmarshal(body, &ready); err != nil {
+				t.Fatal(err)
+			}
+			if ready.GetRunWaitId() != runWaitID || ready.GetCheckpointId() != checkpointID {
+				t.Fatalf("pause ready body = %+v", ready)
 			}
 			return
 		}

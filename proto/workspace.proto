@@ -60,6 +60,40 @@ message RenewWorkspaceAuthorityResponse {
   string error = 2;
 }
 
+message GrantProgramResumeRequest {
+  WorkspaceRunAuthority authority = 1;
+  string run_wait_id = 2;
+  string checkpoint_id = 3;
+  string resume_attach_id = 4;
+  int64 resume_request_version = 5;
+  string correlation_id = 6;
+}
+
+message GrantProgramResumeResponse {
+  WorkspaceAuthorityFence fence = 1;
+  string run_wait_id = 2;
+  string checkpoint_id = 3;
+  string resume_attach_id = 4;
+  int64 resume_request_version = 5;
+  string correlation_id = 6;
+}
+
+message VerifyProgramRestoreRequest {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_wait_id = 3;
+  string checkpoint_id = 4;
+  string correlation_id = 5;
+}
+
+message VerifyProgramRestoreResponse {
+  string run_id = 1;
+  uint32 attempt_number = 2;
+  string run_wait_id = 3;
+  string checkpoint_id = 4;
+  string correlation_id = 5;
+}
+
 message BeginWorkspaceFinalizationRequest {
   WorkspaceRunAuthority previous = 1;
   int64 finalization_expires_at_unix_nano = 2;
@@ -100,6 +134,7 @@ message MaterializeWorkspaceRequest {
   WorkspaceArtifact workspace_image = 5;
   bool use_prepared_runtime = 6;
   string runtime_instance_id = 7;
+  string restored_checkpoint_id = 8;
 }
 
 message WorkspaceMountPhase {

@@ -374,3 +374,21 @@ UPDATE runs
    AND id = sqlc.arg(id)
    AND status IN ('queued', 'running', 'waiting', 'retry_delayed')
 RETURNING *;
+-- name: CloseRunActiveIntervalForCheckpoint :one
+UPDATE runs
+   SET active_elapsed_ms = active_elapsed_ms
+         + floor(extract(epoch FROM (transaction_timestamp() - active_started_at)) * 1000)::bigint,
+       active_started_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND org_id = sqlc.arg(org_id)
+   AND project_id = sqlc.arg(project_id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND status = 'waiting'
+   AND active_started_at IS NOT NULL
+   AND transaction_timestamp() < active_started_at
+         + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+RETURNING active_elapsed_ms;

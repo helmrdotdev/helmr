@@ -77,6 +77,11 @@ func (m WorkspaceMaterializer) RunWorkspaceMount(ctx context.Context, mount api.
 		_ = m.failWorkspaceMount(client, mount, err)
 		return fmt.Errorf("connect workspace mount guest: %w", err)
 	}
+	if usePreparedRuntime && m.RuntimePool != nil {
+		mount.RestoreCheckpointID = m.RuntimePool.checkedOutRestoreCheckpoint(
+			mount.RuntimeInstanceID, mount.RuntimeEpoch,
+		)
+	}
 	renewal := m.startRenewalLoop(ctx, api.WorkerWorkspaceMountRenewRequest{
 		OrgID: mount.OrgID, WorkspaceMountID: mount.ID,
 	}, client, renewEvery)
@@ -556,7 +561,7 @@ func (m WorkspaceMaterializer) materializeSession(ctx context.Context, mount *ap
 		m.logWorkspaceMountPhase(*mount, "workspace image restored", "duration_ms", time.Since(phaseStarted).Milliseconds(), "size_bytes", mount.WorkspaceImage.SizeBytes, "error", errorString(err))
 		return err
 	})
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
 		group.Go(func() error {
 			phaseStarted := time.Now()
 			path, cleanupFn, err := m.restoreCASObject(ctx, tempDir, "workspace-version", workspaceArtifact)
@@ -953,10 +958,11 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 			Encoding:  "oci-tar",
 			SizeBytes: uint64(mount.WorkspaceImage.SizeBytes),
 		},
-		UsePreparedRuntime: usePreparedRuntime,
-		RuntimeInstanceId:  strings.TrimSpace(runtimeInstanceID),
+		UsePreparedRuntime:   usePreparedRuntime,
+		RuntimeInstanceId:    strings.TrimSpace(runtimeInstanceID),
+		RestoredCheckpointId: strings.TrimSpace(mount.RestoreCheckpointID),
 	}
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
 		request.BaseArtifact = &workspacev0.WorkspaceArtifact{
 			Digest:     strings.TrimSpace(mount.WorkspaceArtifact.Digest),
 			MediaType:  strings.TrimSpace(mount.WorkspaceArtifact.MediaType),
@@ -984,7 +990,7 @@ func (m WorkspaceMaterializer) registerWorkspaceMount(ctx context.Context, sessi
 	} else {
 		m.logWorkspaceMountPhase(mount, "workspace image transfer skipped", "prepared_runtime_hit", true, "runtime_instance_id", runtimeInstanceID, "size_bytes", mount.WorkspaceImage.SizeBytes)
 	}
-	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) {
+	if !workspaceArtifactIsEmpty(mount.WorkspaceArtifact) && strings.TrimSpace(mount.RestoreCheckpointID) == "" {
 		phaseStarted = time.Now()
 		if err := wire.WriteFileFrameWithMetadata(stream, wire.StreamHeader{
 			Type:        wire.StreamTypeWorkspaceArtifact,

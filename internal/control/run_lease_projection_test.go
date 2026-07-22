@@ -94,6 +94,7 @@ func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing
 		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
 		{Role: db.RunCheckpointArtifactRoleVmState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
 		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0, Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example"},
 	}
 	recreated, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRecreated,
@@ -231,15 +232,19 @@ func TestProjectRunLeaseCheckpointRequiresCanonicalArtifactAuthority(t *testing.
 			Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0,
 			Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example",
 		},
+		{
+			Role: db.RunCheckpointArtifactRoleScratchDisk, Ordinal: 0,
+			Digest: validDigest('d'), SizeBytes: 12, MediaType: "application/example",
+		},
 	}
 	projected, err := projectRunLeaseCheckpoint(checkpoint, rows)
 	if err != nil {
 		t.Fatalf("projectRunLeaseCheckpoint: %v", err)
 	}
-	if len(projected.Artifacts) != 3 ||
+	if len(projected.Artifacts) != 4 ||
 		projected.Artifacts[0].Role != "runtime_config" ||
 		projected.Artifacts[1].Role != "vm_state" ||
-		projected.Artifacts[2].Role != "memory" {
+		projected.Artifacts[2].Role != "memory" || projected.Artifacts[3].Role != "scratch_disk" {
 		t.Fatalf("unexpected checkpoint Artifacts: %#v", projected.Artifacts)
 	}
 

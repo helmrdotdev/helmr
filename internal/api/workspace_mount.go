@@ -60,6 +60,7 @@ type WorkerWorkspaceMount struct {
 	DeploymentDefinitionID  string                  `json:"deployment_definition_id"`
 	BaseVersionID           string                  `json:"base_version_id,omitempty"`
 	RuntimeInstanceID       string                  `json:"runtime_instance_id,omitempty"`
+	RestoreCheckpointID     string                  `json:"restore_checkpoint_id,omitempty"`
 	NetworkSlotID           string                  `json:"network_slot_id"`
 	NetworkSlotGeneration   int64                   `json:"network_slot_generation"`
 	RuntimeEpoch            int64                   `json:"runtime_epoch"`

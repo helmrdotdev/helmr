@@ -91,16 +91,17 @@ type PreparedRuntimePool struct {
 	RuntimeArchitecture   deployment.RuntimeArchitecture
 	VerifierCgroupRoot    string
 
-	mu           sync.Mutex
-	closeMu      sync.Mutex
-	entries      map[string][]preparedRuntimeEntry
-	filling      map[string]int
-	checkedOut   map[preparedRuntimeRef]struct{}
-	ctx          context.Context
-	cancel       context.CancelFunc
-	activity     int
-	activityWake chan struct{}
-	closed       bool
+	mu                sync.Mutex
+	closeMu           sync.Mutex
+	entries           map[string][]preparedRuntimeEntry
+	filling           map[string]int
+	checkedOut        map[preparedRuntimeRef]struct{}
+	checkedOutRestore map[preparedRuntimeRef]string
+	ctx               context.Context
+	cancel            context.CancelFunc
+	activity          int
+	activityWake      chan struct{}
+	closed            bool
 }
 
 type preparedRuntimeEntry struct {
@@ -176,16 +177,17 @@ func (s *preparedRuntimeSignal) finished() (error, bool) {
 func NewPreparedRuntimePool(connector vm.Connector, store cas.Store, size int, log *slog.Logger) *PreparedRuntimePool {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &PreparedRuntimePool{
-		Connector:    connector,
-		CAS:          store,
-		Size:         size,
-		Log:          log,
-		entries:      map[string][]preparedRuntimeEntry{},
-		filling:      map[string]int{},
-		checkedOut:   map[preparedRuntimeRef]struct{}{},
-		ctx:          ctx,
-		cancel:       cancel,
-		activityWake: make(chan struct{}),
+		Connector:         connector,
+		CAS:               store,
+		Size:              size,
+		Log:               log,
+		entries:           map[string][]preparedRuntimeEntry{},
+		filling:           map[string]int{},
+		checkedOut:        map[preparedRuntimeRef]struct{}{},
+		checkedOutRestore: map[preparedRuntimeRef]string{},
+		ctx:               ctx,
+		cancel:            cancel,
+		activityWake:      make(chan struct{}),
 	}
 }
 
@@ -280,6 +282,10 @@ func (p *PreparedRuntimePool) Checkout(ctx context.Context, mount api.WorkerWork
 	}
 	p.removeReadyEntryAtLocked(key, entries, index)
 	p.markRuntimeCheckedOutLocked(runtimeInstanceID, mount.RuntimeEpoch)
+	if entry.target.Source.Restore != nil {
+		p.checkedOutRestore[preparedRuntimeRef{id: runtimeInstanceID, epoch: mount.RuntimeEpoch}] =
+			strings.TrimSpace(entry.target.Source.Restore.CheckpointID)
+	}
 	available := p.readyCountLocked()
 	p.mu.Unlock()
 	p.logInfo("prepared runtime pool hit", "runtime_instance_id", runtimeInstanceID, "available", available)
@@ -715,11 +721,6 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		}
 		runtimeSubstrateIDValue = runtimeSubstrateID(registered)
 	}
-	connector, ok := p.Connector.(vm.MaterializingConnector)
-	if !ok {
-		err := errors.New("connector does not support mount")
-		return failInstance(err)
-	}
 	started := time.Now()
 	if err := p.reserveRuntimeCapacity(target); err != nil {
 		if errors.Is(err, errPreparedRuntimeCapacityBusy) {
@@ -729,22 +730,28 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 		return failInstance(err)
 	}
 	materializeAttempted = true
-	session, materializeErr := connector.Materialize(ctx, vm.MaterializeRequest{
-		ID:                 runtimeInstanceID,
-		OwnerKind:          vm.OwnerRuntime,
-		RootfsDigest:       mount.RootfsDigest,
-		WorkspaceMountPath: mount.WorkspaceMountPath,
-		BaseVersionID:      mount.BaseVersionID,
-		Resources: compute.ResourceVector{
-			MilliCPU:  mount.RequestedMilliCPU,
-			MemoryMiB: mount.RequestedMemoryMiB,
-			DiskMiB:   mount.RequestedDiskMiB,
-			Slots:     mount.RequestedExecutionSlots,
-		},
-		Network:        mount.Network,
-		Topology:       topology,
-		ReadOnlyDrives: readOnlyDrives,
-	})
+	var session vm.Session
+	var materializeErr error
+	if target.Source.Restore != nil {
+		phases := &runtimePhaseCollector{}
+		session, materializeErr = p.restorePreparedRuntime(ctx, target, topology, readOnlyDrives, phases.Record)
+		for _, phase := range phases.Snapshot() {
+			p.logInfo("prepared restored runtime phase", "runtime_instance_id", runtimeInstanceID,
+				"phase", phase.Name, "duration_ms", phase.DurationMs, "error_class", phase.ErrorClass)
+		}
+	} else {
+		connector, ok := p.Connector.(vm.MaterializingConnector)
+		if !ok {
+			return failInstance(errors.New("connector does not support mount"))
+		}
+		session, materializeErr = connector.Materialize(ctx, vm.MaterializeRequest{
+			ID: runtimeInstanceID, OwnerKind: vm.OwnerRuntime, RootfsDigest: mount.RootfsDigest,
+			WorkspaceMountPath: mount.WorkspaceMountPath, BaseVersionID: mount.BaseVersionID,
+			Resources: compute.ResourceVector{MilliCPU: mount.RequestedMilliCPU, MemoryMiB: mount.RequestedMemoryMiB,
+				DiskMiB: mount.RequestedDiskMiB, Slots: mount.RequestedExecutionSlots},
+			Network: mount.Network, Topology: topology, ReadOnlyDrives: readOnlyDrives,
+		})
+	}
 	closeProgramErr := closeProgramArtifacts()
 	programArtifactsOpen = false
 	err = errors.Join(materializeErr, closeProgramErr)
@@ -760,9 +767,11 @@ func (p *PreparedRuntimePool) prepareAndStore(ctx context.Context, key string, m
 			}
 		}
 	}()
-	if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath); err != nil {
-		p.logInfo("prepared runtime pool guest prepare failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
-		return failInstance(err)
+	if target.Source.Restore == nil {
+		if err := p.prepareGuestRuntime(ctx, session, key, mount, workspaceImagePath); err != nil {
+			p.logInfo("prepared runtime pool guest prepare failed", "runtime_instance_id", runtimeInstanceID, "error", err.Error())
+			return failInstance(err)
+		}
 	}
 	entry := preparedRuntimeEntry{
 		session:           session,
@@ -1135,6 +1144,15 @@ func (p *PreparedRuntimePool) runtimeCheckedOut(runtimeInstanceID string, runtim
 	return ok
 }
 
+func (p *PreparedRuntimePool) checkedOutRestoreCheckpoint(runtimeInstanceID string, runtimeEpoch int64) string {
+	if p == nil {
+		return ""
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.checkedOutRestore[preparedRuntimeRef{id: strings.TrimSpace(runtimeInstanceID), epoch: runtimeEpoch}]
+}
+
 func (p *PreparedRuntimePool) ReleaseCheckout(runtimeInstanceID string, runtimeEpoch int64) error {
 	if p == nil {
 		return nil
@@ -1151,6 +1169,7 @@ func (p *PreparedRuntimePool) ReleaseCheckout(runtimeInstanceID string, runtimeE
 	}
 	p.mu.Lock()
 	delete(p.checkedOut, ref)
+	delete(p.checkedOutRestore, ref)
 	p.mu.Unlock()
 	return nil
 }
@@ -1413,6 +1432,7 @@ func (p *PreparedRuntimePool) releaseRuntimeAfterPhysicalCleanup(runtimeInstance
 	}
 	p.mu.Lock()
 	delete(p.checkedOut, preparedRuntimeRef{id: strings.TrimSpace(runtimeInstanceID), epoch: runtimeEpoch})
+	delete(p.checkedOutRestore, preparedRuntimeRef{id: strings.TrimSpace(runtimeInstanceID), epoch: runtimeEpoch})
 	p.mu.Unlock()
 	return nil
 }

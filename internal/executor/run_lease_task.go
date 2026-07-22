@@ -13,6 +13,8 @@ import (
 	"github.com/helmrdotdev/helmr/internal/cas"
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
+	"github.com/helmrdotdev/helmr/internal/vm"
+	"github.com/helmrdotdev/helmr/internal/wire"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
 )
@@ -54,11 +56,15 @@ type RunLeaseTaskRunner interface {
 }
 
 type guestRunLeaseTask struct {
-	program     freshProgram
-	mounts      WorkspaceMountSessionRegistry
-	store       cas.Store
-	control     RunLeaseControl
-	resetTarget workspace.ResetTarget
+	program       freshProgram
+	mounts        WorkspaceMountSessionRegistry
+	store         cas.Store
+	control       RunLeaseControl
+	resetTarget   workspace.ResetTarget
+	waits         *ControlRunWaits
+	checkpointer  Checkpointer
+	waitWorkspace api.WorkerWorkspace
+	orgID         string
 
 	mu             sync.Mutex
 	lease          api.WorkerRunLeaseReceipt
@@ -80,13 +86,18 @@ func (r GuestRunner) StartRunLeaseTask(
 	if err != nil {
 		return nil, err
 	}
-	program, err := r.startFreshProgram(ctx, claim, control, control)
+	var program freshProgram
+	if claim != nil && claim.Execution.Restore != nil {
+		program, err = r.startRestoredProgram(ctx, claim, control)
+	} else {
+		program, err = r.startFreshProgram(ctx, claim, control, control)
+	}
 	if err != nil {
 		return nil, err
 	}
 	authority := program.authority
 	program.authority = nil
-	return &guestRunLeaseTask{
+	task := &guestRunLeaseTask{
 		program:     program,
 		mounts:      r.WorkspaceMounts,
 		store:       r.CAS,
@@ -94,11 +105,115 @@ func (r GuestRunner) StartRunLeaseTask(
 		resetTarget: target,
 		lease:       program.lease,
 		authority:   authority,
-	}, nil
+		orgID:       program.mount.OrgID,
+		waitWorkspace: api.WorkerWorkspace{
+			ID:                program.mount.WorkspaceID,
+			WorkspaceMountID:  program.mount.ID,
+			FencingGeneration: program.mount.FencingGeneration,
+			BaseVersionID:     program.mount.BaseVersionID,
+			MountPath:         program.mount.WorkspaceMountPath,
+			Artifact:          &program.mount.WorkspaceArtifact,
+			SubstrateSource: &api.WorkerRuntimeSubstrateSource{
+				DeploymentDefinitionID: program.mount.DeploymentDefinitionID,
+				WorkspaceImage:         program.mount.WorkspaceImage,
+			},
+		},
+	}
+	if waitClient, ok := control.(RunWaitClient); ok {
+		task.waits = &ControlRunWaits{Client: waitClient}
+	}
+	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
+		task.checkpointer = runtimeCheckpointer{
+			session:   checkpointable,
+			cas:       r.CAS,
+			encryptor: r.CheckpointEncryptor,
+			tempDir:   r.tempDir(),
+			stream:    program.session.Stream(),
+			workspace: api.WorkerCheckpointWorkspaceBase{
+				ArtifactDigest:    program.mount.WorkspaceArtifact.Digest,
+				ArtifactSizeBytes: program.mount.WorkspaceArtifact.SizeBytes,
+				ArtifactMediaType: program.mount.WorkspaceArtifact.MediaType,
+				ArtifactEncoding:  program.mount.WorkspaceArtifact.Encoding,
+				MountPath:         program.mount.WorkspaceMountPath,
+			},
+			substrateSource:   task.waitWorkspace.SubstrateSource,
+			runtimeSubstrates: r.RuntimeSubstrates,
+			runEvent:          task.processCheckpointRunEvent,
+		}
+	}
+	return task, nil
+}
+
+func (task *guestRunLeaseTask) CurrentWorkerRunLease() api.WorkerRunLease {
+	task.mu.Lock()
+	defer task.mu.Unlock()
+	return workerRunLeaseFromReceipt(task.orgID, task.lease)
+}
+
+func workerRunLeaseFromReceipt(orgID string, receipt api.WorkerRunLeaseReceipt) api.WorkerRunLease {
+	return api.WorkerRunLease{
+		ID: receipt.ID, OrgID: orgID, RunID: receipt.RunID,
+		WorkerGroupID:         receipt.WorkerGroupID,
+		WorkerInstanceID:      receipt.WorkerInstanceID,
+		WorkerEpoch:           receipt.WorkerEpoch,
+		LeaseSequence:         receipt.LeaseSequence,
+		RuntimeInstanceID:     receipt.RuntimeInstanceID,
+		NetworkSlotID:         receipt.NetworkSlotID,
+		NetworkSlotGeneration: receipt.NetworkSlotGeneration,
+		ProtocolVersion:       receipt.WorkerProtocolVersion,
+		AttemptNumber:         receipt.AttemptNumber,
+		Trace:                 receipt.Trace,
+		ExpiresAt:             receipt.ExpiresAt,
+	}
+}
+
+func (task *guestRunLeaseTask) handleWait(ctx context.Context, wait *runv0.RunWaitRequested) error {
+	if task.waits == nil {
+		return errors.New("Run Lease Task wait control is required")
+	}
+	runtimeWait, err := runtimeWaitRequest(Request{Leases: task}, wait)
+	if err != nil {
+		return err
+	}
+	runtimeWait.Leases = task
+	runtimeWait.Workspace = task.waitWorkspace
+	runtimeWait.Checkpointer = task.checkpointer
+	runtimeWait.Resume = func(resumeCtx context.Context, decision WaitResumeDecision) error {
+		if strings.TrimSpace(decision.Kind) == "" {
+			return errors.New("Program resume kind is required")
+		}
+		if len(decision.Data) == 0 {
+			decision.Data = json.RawMessage(`null`)
+		}
+		if err := wire.WriteResumeDecision(task.program.session.Stream(), &runv0.ResumeDecision{
+			RunWaitId: wait.GetCorrelationId(),
+			Kind:      decision.Kind,
+			DataJson:  string(decision.Data),
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
+	return task.waits.Wait(ctx, runtimeWait)
+}
+
+func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, event *runv0.RunEvent) error {
+	if event == nil {
+		return errors.New("checkpoint Program event is required")
+	}
+	task.program.observedEventSeq++
+	switch value := event.Event.(type) {
+	case *runv0.RunEvent_StdoutChunk:
+		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStdout, task.program.observedEventSeq, value.StdoutChunk)
+	case *runv0.RunEvent_StderrChunk:
+		return taskControlEvents{task: task}.AppendRunLog(ctx, api.WorkerRunLeaseReceipt{}, api.WorkerLogStreamStderr, task.program.observedEventSeq, value.StderrChunk)
+	default:
+		return errors.New("unsupported Program event while checkpoint pause is pending")
+	}
 }
 
 func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
-	outcome, quiesced, err := task.program.awaitTaskCompletion(ctx, taskControlEvents{task: task})
+	outcome, quiesced, err := task.program.awaitTaskCompletion(ctx, taskControlEvents{task: task}, task.handleWait)
 	if err != nil {
 		return RunLeaseTaskResult{}, err
 	}

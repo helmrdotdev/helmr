@@ -415,7 +415,7 @@ func (r *workspaceOperationRegistry) waitForProgramRelease(ctx context.Context, 
 	}
 }
 
-func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {
+func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry, waits *waitingRunRegistry) error {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -442,6 +442,24 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 	}
 	workspaceMountID := strings.TrimSpace(envelope.WorkspaceMountId)
 	workspaceID := strings.TrimSpace(envelope.WorkspaceId)
+	if strings.TrimSpace(request.GetRestoredCheckpointId()) != "" {
+		phases, err := registry.rebindRestoredWorkspaceMount(&request, waits)
+		if err != nil {
+			phases = appendWorkspaceMountFailurePhase(phases, "guest_restore_rebind", totalStarted, err)
+			writeErr := frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{State: "failed", Phases: phases})
+			if writeErr != nil {
+				return errors.Join(err, writeErr)
+			}
+			return err
+		}
+		logger.Info("restored workspace mount rebound", "workspace_id", workspaceID,
+			"workspace_mount_id", workspaceMountID, "checkpoint_id", request.GetRestoredCheckpointId(),
+			"duration_ms", time.Since(totalStarted).Milliseconds())
+		return frameio.WriteProtoFrame(conn, &workspacev0.MaterializeWorkspaceResponse{
+			State: "running", GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
+			Phases: phases,
+		})
+	}
 	entry, phases, err := restoreWorkspaceMount(conn, &request, logger, registry)
 	if err != nil {
 		phases = appendWorkspaceMountFailurePhase(phases, "guest_materialize", totalStarted, err)
@@ -466,6 +484,81 @@ func handleWorkspaceMaterializeConnection(_ context.Context, conn io.ReadWriter,
 		GuestdChannelTokenHash: sha256sum.HexBytes([]byte(strings.TrimSpace(envelope.ChannelToken))),
 		Phases:                 phases,
 	})
+}
+
+func (r *workspaceOperationRegistry) rebindRestoredWorkspaceMount(
+	request *workspacev0.MaterializeWorkspaceRequest,
+	waits *waitingRunRegistry,
+) ([]*workspacev0.WorkspaceMountPhase, error) {
+	started := time.Now()
+	if request == nil || request.GetEnvelope() == nil || !request.GetUsePreparedRuntime() {
+		return nil, errors.New("restored Workspace rebind requires a prepared runtime")
+	}
+	checkpointID := strings.TrimSpace(request.GetRestoredCheckpointId())
+	if waits == nil || !waits.hasFrozenProgramCheckpoint(checkpointID) {
+		return nil, errors.New("restored Workspace rebind did not match a frozen Program Checkpoint")
+	}
+	envelope := request.GetEnvelope()
+	newMountID := strings.TrimSpace(envelope.GetWorkspaceMountId())
+	workspaceID := strings.TrimSpace(envelope.GetWorkspaceId())
+	channelToken := strings.TrimSpace(envelope.GetChannelToken())
+	runtimeInstanceID := strings.TrimSpace(request.GetRuntimeInstanceId())
+	baseVersionID := strings.TrimSpace(request.GetBaseVersionId())
+	mountPath := filepath.Clean(strings.TrimSpace(request.GetMountPath()))
+	if newMountID == "" || workspaceID == "" || channelToken == "" || runtimeInstanceID == "" ||
+		baseVersionID == "" || envelope.GetFencingGeneration() == 0 || mountPath == "." ||
+		mountPath == string(filepath.Separator) || !filepath.IsAbs(mountPath) {
+		return nil, errors.New("restored Workspace rebind authority is incomplete")
+	}
+	r.mu.Lock()
+	entry := r.programEntry
+	r.mu.Unlock()
+	if entry == nil {
+		return nil, errors.New("restored Workspace has no active frozen Program")
+	}
+	entry.finalizationMu.Lock()
+	defer entry.finalizationMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry.processesMu.Lock()
+	unavailable := entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired
+	entry.processesMu.Unlock()
+	if !r.programActive || r.programEntry != entry || unavailable || entry.workspaceID != workspaceID ||
+		filepath.Clean(entry.workspaceMount) != mountPath {
+		return nil, errors.New("restored Workspace rebind did not match the frozen mounted runtime")
+	}
+	currentGeneration := entry.currentFencingGeneration()
+	if envelope.GetFencingGeneration() == currentGeneration && entry.workspaceMountID == newMountID &&
+		entry.channelToken == channelToken && entry.runtimeInstanceID == runtimeInstanceID &&
+		entry.baseVersionID == baseVersionID && r.entries[newMountID] == entry {
+		return []*workspacev0.WorkspaceMountPhase{
+			workspaceMountPhase("guest_restore_rebind_replay", started, 0, 0, nil),
+		}, nil
+	}
+	if envelope.GetFencingGeneration() <= currentGeneration {
+		return nil, errors.New("restored Workspace rebind fencing generation did not advance")
+	}
+	if current := r.entries[newMountID]; current != nil && current != entry {
+		return nil, errors.New("restored Workspace rebind target Mount is already registered")
+	}
+	for id, current := range r.entries {
+		if current == entry {
+			delete(r.entries, id)
+		}
+	}
+	entry.authorityMu.Lock()
+	entry.authority = nil
+	entry.previousExpiry = 0
+	entry.authorityMu.Unlock()
+	entry.workspaceMountID = newMountID
+	entry.channelToken = channelToken
+	entry.runtimeInstanceID = runtimeInstanceID
+	entry.baseVersionID = baseVersionID
+	entry.setFencingGeneration(envelope.GetFencingGeneration())
+	r.entries[newMountID] = entry
+	return []*workspacev0.WorkspaceMountPhase{
+		workspaceMountPhase("guest_restore_rebind", started, 0, 0, nil),
+	}, nil
 }
 
 func handleWorkspaceRuntimePrepareConnection(_ context.Context, conn io.ReadWriter, logger *slog.Logger, registry *workspaceOperationRegistry) error {

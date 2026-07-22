@@ -11,6 +11,51 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const closeRunActiveIntervalForCheckpoint = `-- name: CloseRunActiveIntervalForCheckpoint :one
+UPDATE runs
+   SET active_elapsed_ms = active_elapsed_ms
+         + floor(extract(epoch FROM (transaction_timestamp() - active_started_at)) * 1000)::bigint,
+       active_started_at = NULL,
+       updated_at = transaction_timestamp()
+ WHERE id = $1
+   AND org_id = $2
+   AND project_id = $3
+   AND environment_id = $4
+   AND workspace_id = $5
+   AND current_attempt_number = $6
+   AND current_run_lease_id = $7
+   AND status = 'waiting'
+   AND active_started_at IS NOT NULL
+   AND transaction_timestamp() < active_started_at
+         + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
+RETURNING active_elapsed_ms
+`
+
+type CloseRunActiveIntervalForCheckpointParams struct {
+	ID            pgtype.UUID `json:"id"`
+	OrgID         pgtype.UUID `json:"org_id"`
+	ProjectID     pgtype.UUID `json:"project_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AttemptNumber int32       `json:"attempt_number"`
+	RunLeaseID    pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error) {
+	row := q.db.QueryRow(ctx, closeRunActiveIntervalForCheckpoint,
+		arg.ID,
+		arg.OrgID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.WorkspaceID,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var active_elapsed_ms int64
+	err := row.Scan(&active_elapsed_ms)
+	return active_elapsed_ms, err
+}
+
 const createAdmittedRootTaskRun = `-- name: CreateAdmittedRootTaskRun :one
 WITH created_run AS (
     INSERT INTO runs (

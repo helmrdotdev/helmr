@@ -1,6 +1,7 @@
 package guestd
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -25,6 +26,8 @@ import (
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"github.com/helmrdotdev/helmr/internal/workspace"
+	"golang.org/x/sys/unix"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -40,6 +43,7 @@ const (
 	maxProgramOutcomeFrameBytes    = maxTaskOutputBytes + 64<<10
 	programAdmissionTimeout        = 30 * time.Second
 	programOutputDrainTimeout      = 5 * time.Second
+	programOutputPoll              = 10 * time.Millisecond
 	maxTaskOutputBytes             = 16 << 20
 	maxTaskErrorBytes              = 16 << 10
 	maxTaskErrorMessageBytes       = 1024
@@ -55,6 +59,8 @@ type programProcess struct {
 	proofReader   *os.File
 	proofWriter   *os.File
 	cgroup        programCgroup
+	workspaceRoot string
+	secretPaths   []string
 	waitOnce      sync.Once
 	waitDone      chan struct{}
 	waitErr       error
@@ -65,6 +71,11 @@ type programEventStream struct {
 	conn         programConnection
 	writeTimeout time.Duration
 	mu           sync.Mutex
+	changed      chan struct{}
+	done         chan struct{}
+	rebind       chan programConnection
+	replayCount  int
+	closed       bool
 }
 
 type programConnection interface {
@@ -73,10 +84,35 @@ type programConnection interface {
 	SetWriteDeadline(deadline time.Time) error
 }
 
+type programHostControl struct {
+	pause    *runv0.CheckpointPauseRequest
+	decision *runv0.ResumeDecision
+	err      error
+}
+
+type programOutputPause struct {
+	paused chan<- error
+	resume <-chan struct{}
+}
+
+type programOutputPump struct {
+	file   *os.File
+	event  func([]byte) *runv0.RunEvent
+	stream *programEventStream
+	errors chan<- error
+	pause  chan programOutputPause
+	done   chan struct{}
+}
+
+type programOutputCoordinator struct {
+	pumps []*programOutputPump
+}
+
 func handleProgramRunConnection(
 	ctx context.Context,
 	conn io.ReadWriteCloser,
 	logger *slog.Logger,
+	waitingRegistry *waitingRunRegistry,
 	registry *workspaceOperationRegistry,
 	header wire.StreamHeader,
 	bodyLen uint64,
@@ -182,7 +218,7 @@ func handleProgramRunConnection(
 			"workspace_id", workspaceID,
 		)
 	}
-	return superviseProgram(ctx, programConn, &request, process)
+	return superviseProgram(ctx, programConn, &request, process, waitingRegistry)
 }
 
 func readProgramSecrets(
@@ -547,6 +583,8 @@ func newProgramProcess(
 		proofReader:   proofReader,
 		proofWriter:   proofWriter,
 		cgroup:        cgroup,
+		workspaceRoot: entry.workspaceRoot,
+		secretPaths:   programWorkspaceSecretPaths(entry.workspaceRoot, secrets),
 		waitDone:      make(chan struct{}),
 	}
 	cleanup := func() {
@@ -555,6 +593,26 @@ func newProgramProcess(
 		secretCleanup()
 	}
 	return process, cleanup, nil
+}
+
+func programWorkspaceSecretPaths(workspaceRoot string, secrets []*runv0.ProgramSecret) []string {
+	paths := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		placement, ok := secret.GetPlacement().(*runv0.ProgramSecret_File)
+		if !ok {
+			continue
+		}
+		const workspacePrefix = "/workspace/"
+		if !strings.HasPrefix(placement.File, workspacePrefix) {
+			continue
+		}
+		relative := strings.TrimPrefix(placement.File, workspacePrefix)
+		if relative == "" || filepath.Clean(relative) != relative {
+			continue
+		}
+		paths = append(paths, filepath.Join(workspaceRoot, relative))
+	}
+	return paths
 }
 
 func stageProgramSecrets(
@@ -717,6 +775,7 @@ func superviseProgram(
 	conn programConnection,
 	request *runv0.ProgramRunRequest,
 	process *programProcess,
+	registry *waitingRunRegistry,
 ) error {
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
 	if err := process.start(ctx, deadline); err != nil {
@@ -728,7 +787,12 @@ func superviseProgram(
 			process.terminate()
 		}
 	}()
-	stream := &programEventStream{conn: conn}
+	stream := &programEventStream{
+		conn: conn, changed: make(chan struct{}), done: make(chan struct{}),
+		rebind: make(chan programConnection, 1),
+	}
+	stopStream := context.AfterFunc(ctx, stream.closeCurrentConn)
+	defer stopStream()
 	if err := stream.write(&runv0.RunEvent{
 		Event: &runv0.RunEvent_ProgramProcessStarted{
 			ProgramProcessStarted: &runv0.ProgramProcessStarted{
@@ -742,29 +806,29 @@ func superviseProgram(
 	}
 	outputErrors := make(chan error, 2)
 	var outputDone sync.WaitGroup
-	outputDone.Add(2)
-	go forwardProgramOutput(
+	outputs, err := newProgramOutputCoordinator(
+		stream,
+		outputErrors,
 		process.stdout,
 		func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{
 				Event: &runv0.RunEvent_StdoutChunk{StdoutChunk: chunk},
 			}
 		},
-		stream,
-		outputErrors,
-		&outputDone,
-	)
-	go forwardProgramOutput(
 		process.stderr,
 		func(chunk []byte) *runv0.RunEvent {
 			return &runv0.RunEvent{
 				Event: &runv0.RunEvent_StderrChunk{StderrChunk: chunk},
 			}
 		},
-		stream,
-		outputErrors,
-		&outputDone,
 	)
+	if err != nil {
+		return err
+	}
+	outputDone.Add(len(outputs.pumps))
+	for _, pump := range outputs.pumps {
+		go pump.run(&outputDone)
+	}
 	if err := conn.SetReadDeadline(deadline); err != nil {
 		return err
 	}
@@ -837,7 +901,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err := relayProgram(ctx, conn, request, process, stream, outputErrors, &outputDone)
+	err = relayProgram(ctx, conn, request, process, stream, outputErrors, &outputDone, registry, outputs)
 	completed = err == nil
 	return err
 }
@@ -850,7 +914,10 @@ func relayProgram(
 	stream *programEventStream,
 	outputErrors <-chan error,
 	outputDone *sync.WaitGroup,
+	registry *waitingRunRegistry,
+	outputs *programOutputCoordinator,
 ) error {
+	defer stream.closeCurrentConn()
 	events := make(chan *runv0.RunEvent)
 	controlErrors := make(chan error, 1)
 	readerDone := make(chan struct{})
@@ -874,14 +941,7 @@ func relayProgram(
 			}
 		}
 	}()
-	connectionErrors := make(chan error, 1)
-	go func() {
-		_, err := frameio.ReadMessageFrame(conn)
-		if err == nil {
-			err = errors.New("unexpected Program control frame")
-		}
-		connectionErrors <- err
-	}()
+	hostControls := readProgramHostControl(conn)
 	wait := make(chan error, 1)
 	go func() {
 		wait <- process.wait()
@@ -891,6 +951,7 @@ func relayProgram(
 	controlClosed := false
 	outcomeSeen := false
 	quiesced := false
+	var pendingWait *runv0.RunWaitRequested
 	for !processExited || !controlClosed {
 		select {
 		case event, ok := <-events:
@@ -903,11 +964,24 @@ func relayProgram(
 				}
 				continue
 			}
-			outcome := event.GetTaskOutcome()
-			if outcome == nil {
+			if waitRequested := event.GetRunWaitRequested(); waitRequested != nil {
 				if outcomeSeen {
 					return errors.New("Program emitted a control event after Task outcome")
 				}
+				if pendingWait != nil {
+					return errors.New("Program emitted a concurrent consuming Wait")
+				}
+				if strings.TrimSpace(waitRequested.GetCorrelationId()) == "" || strings.TrimSpace(waitRequested.GetKind()) == "" {
+					return errors.New("Program Wait identity is incomplete")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingWait = waitRequested
+				continue
+			}
+			outcome := event.GetTaskOutcome()
+			if outcome == nil {
 				return errors.New("Program emitted an unsupported post-entrypoint event")
 			}
 			if outcomeSeen {
@@ -927,8 +1001,41 @@ func relayProgram(
 			if err != nil {
 				return err
 			}
-		case err := <-connectionErrors:
-			return fmt.Errorf("Program connection closed: %w", err)
+		case control := <-hostControls:
+			if control.err != nil {
+				if stream.hasResumeReplay() {
+					hostControls = nil
+					continue
+				}
+				return fmt.Errorf("read Program host control: %w", control.err)
+			}
+			if pendingWait == nil {
+				return errors.New("Program host sent Wait control without a pending Wait")
+			}
+			switch {
+			case control.decision != nil:
+				if control.decision.GetRunWaitId() != pendingWait.GetCorrelationId() {
+					return errors.New("immediate resume decision did not match Program Wait")
+				}
+				if err := frameio.WriteProtoFrame(process.stdin, control.decision); err != nil {
+					return fmt.Errorf("write immediate Program resume decision: %w", err)
+				}
+				pendingWait = nil
+				hostControls = readProgramHostControl(conn)
+			case control.pause != nil:
+				resumed, err := pauseAndResumeProgram(ctx, request, pendingWait, control.pause, process, stream, registry, outputs, events, controlErrors)
+				if err != nil {
+					return err
+				}
+				conn = resumed
+				pendingWait = nil
+				hostControls = readProgramHostControl(resumed)
+			default:
+				return errors.New("Program host control is empty")
+			}
+		case rebound := <-stream.rebind:
+			conn = rebound
+			hostControls = readProgramHostControl(rebound)
 		case <-ctx.Done():
 			return ctx.Err()
 		}
@@ -983,6 +1090,284 @@ func relayProgram(
 			},
 		},
 	})
+}
+
+func readProgramHostControl(conn programConnection) <-chan programHostControl {
+	result := make(chan programHostControl, 1)
+	go func() {
+		reader := bufio.NewReader(conn)
+		prefix, err := reader.Peek(4)
+		if err != nil {
+			result <- programHostControl{err: err}
+			return
+		}
+		if !frameio.IsStreamFramePrefix(prefix) {
+			_, err := frameio.ReadMessageFrame(reader)
+			if err == nil {
+				err = errors.New("unexpected Program protobuf control frame")
+			}
+			result <- programHostControl{err: err}
+			return
+		}
+		header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+		if err != nil {
+			result <- programHostControl{err: err}
+			return
+		}
+		switch header.Type {
+		case wire.StreamTypeCheckpointPauseRequest:
+			pause, err := wire.ReadCheckpointPauseRequest(header, reader, bodyLen)
+			result <- programHostControl{pause: pause, err: err}
+		case wire.StreamTypeResumeDecision:
+			decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
+			result <- programHostControl{decision: decision, err: err}
+		default:
+			result <- programHostControl{err: fmt.Errorf("unsupported Program host control %q", header.Type)}
+		}
+	}()
+	return result
+}
+
+func pauseAndResumeProgram(
+	ctx context.Context,
+	run *runv0.ProgramRunRequest,
+	wait *runv0.RunWaitRequested,
+	pause *runv0.CheckpointPauseRequest,
+	process *programProcess,
+	stream *programEventStream,
+	registry *waitingRunRegistry,
+	outputs *programOutputCoordinator,
+	events <-chan *runv0.RunEvent,
+	controlErrors <-chan error,
+) (programConnection, error) {
+	if registry == nil {
+		return nil, errors.New("waiting Run registry is required")
+	}
+	if err := validateProgramCheckpointPause(run, wait, pause); err != nil {
+		return nil, err
+	}
+	registration, err := registry.registerProgram(pause)
+	if err != nil {
+		return nil, err
+	}
+	retainRegistration := false
+	defer func() {
+		if !retainRegistration {
+			registration.unregister()
+		}
+	}()
+	if err := process.cgroup.freeze(ctx); err != nil {
+		return nil, fmt.Errorf("freeze Program cgroup: %w", err)
+	}
+	if outputs == nil {
+		return nil, errors.New("Program output checkpoint coordinator is required")
+	}
+	resumeOutputs, err := outputs.pause(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("pause Program output streams: %w", err)
+	}
+	outputsResumed := false
+	defer func() {
+		if !outputsResumed {
+			resumeOutputs()
+		}
+	}()
+	syscall.Sync()
+	if pause.GetCaptureWorkspace() {
+		if err := stream.writeWorkspaceArtifact(run.GetRunId(), process.workspaceRoot, process.secretPaths); err != nil {
+			return nil, fmt.Errorf("capture checkpoint Workspace: %w", err)
+		}
+	}
+	ready := &runv0.CheckpointPauseReady{
+		RunId:                    pause.GetRunId(),
+		AttemptNumber:            pause.GetAttemptNumber(),
+		RunLeaseId:               pause.GetRunLeaseId(),
+		RunWaitId:                pause.GetRunWaitId(),
+		CheckpointId:             pause.GetCheckpointId(),
+		ResumeAttachId:           pause.GetResumeAttachId(),
+		CheckpointRequestVersion: pause.GetCheckpointRequestVersion(),
+		CorrelationId:            pause.GetCorrelationId(),
+	}
+	if err := stream.writeCheckpointPauseReady(ready); err != nil {
+		return nil, fmt.Errorf("write Program checkpoint pause proof: %w", err)
+	}
+	var resumed programConnection
+	var attach *runv0.ResumeAttach
+	var decision *runv0.ResumeDecision
+	for decision == nil {
+		attached, candidateAttach, err := registration.wait(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("wait for Program resume attach: %w", err)
+		}
+		candidate, ok := attached.(programConnection)
+		if !ok {
+			if closer, ok := attached.(io.Closer); ok {
+				_ = closer.Close()
+			}
+			continue
+		}
+		decisionCtx, cancelDecision := context.WithTimeout(ctx, resumeAttachTimeout)
+		candidateDecision, readErr := readResumeDecision(decisionCtx, candidate)
+		cancelDecision()
+		if readErr != nil {
+			_ = candidate.Close()
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if candidateDecision.GetRunWaitId() != pause.GetRunWaitId() ||
+			candidateDecision.GetCorrelationId() != pause.GetCorrelationId() ||
+			candidateDecision.GetCheckpointId() != pause.GetCheckpointId() ||
+			candidateDecision.GetResumeAttachId() != pause.GetResumeAttachId() ||
+			candidateDecision.GetResumeRequestVersion() != candidateAttach.GetResumeRequestVersion() ||
+			candidateDecision.GetRunLeaseId() != candidateAttach.GetRunLeaseId() ||
+			validateResumeDecisionAuthority(candidateDecision) != nil || !candidateDecision.GetRequireConsumedAck() {
+			_ = candidate.Close()
+			continue
+		}
+		resumed = candidate
+		attach = candidateAttach
+		decision = candidateDecision
+	}
+	adopted := false
+	defer func() {
+		if !adopted {
+			_ = resumed.Close()
+		}
+	}()
+	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
+		return nil, fmt.Errorf("stage Program resume decision: %w", err)
+	}
+	previous, didAdopt := stream.replaceConn(resumed)
+	if !didAdopt {
+		return nil, errors.New("Program event stream closed before resume")
+	}
+	adopted = true
+	if previous != nil && previous != resumed {
+		_ = previous.Close()
+	}
+	if err := process.cgroup.thaw(ctx); err != nil {
+		return nil, fmt.Errorf("thaw Program cgroup: %w", err)
+	}
+	consumed, err := awaitProgramResumeConsumed(ctx, events, controlErrors)
+	if err != nil {
+		return nil, err
+	}
+	if consumed.GetRunWaitId() != pause.GetRunWaitId() ||
+		consumed.GetCheckpointId() != pause.GetCheckpointId() ||
+		consumed.GetResumeAttachId() != pause.GetResumeAttachId() ||
+		consumed.GetResumeRequestVersion() != attach.GetResumeRequestVersion() ||
+		consumed.GetRunLeaseId() != attach.GetRunLeaseId() ||
+		consumed.GetCorrelationId() != pause.GetCorrelationId() {
+		return nil, errors.New("Program resume-consumed proof did not match exact restore authority")
+	}
+	ack := &runv0.ResumeAck{
+		RunWaitId: pause.GetRunWaitId(), CheckpointId: pause.GetCheckpointId(),
+		ResumeAttachId: pause.GetResumeAttachId(), ResumeRequestVersion: attach.GetResumeRequestVersion(),
+		RunLeaseId: attach.GetRunLeaseId(), CorrelationId: pause.GetCorrelationId(),
+	}
+	registration.markApplied(decision, ack)
+	retainRegistration = true
+	stream.retainResumeReplay(ctx, registration, decision, ack)
+	if err := stream.writeResumeAck(ack); err != nil {
+		_ = resumed.Close()
+		select {
+		case resumed = <-stream.rebind:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	resumeOutputs()
+	outputsResumed = true
+	return resumed, nil
+}
+
+func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
+	if decision == nil {
+		return errors.New("Program resume decision is required")
+	}
+	switch decision.GetKind() {
+	case "completed":
+		hasResult := decision.GetDataJson() != ""
+		if decision.GetNoResult() == hasResult {
+			return errors.New("completed Program resume decision must contain exactly one result variant")
+		}
+		if hasResult && !json.Valid([]byte(decision.GetDataJson())) {
+			return errors.New("completed Program resume result is not valid JSON")
+		}
+		return nil
+	case "failed", "cancelled":
+		if decision.GetNoResult() || decision.GetDataJson() == "" {
+			return errors.New("terminal Program resume failure payload is required")
+		}
+		var payload struct {
+			ReasonCode string          `json:"reason_code"`
+			Error      json.RawMessage `json:"error,omitempty"`
+		}
+		decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&payload); err != nil {
+			return fmt.Errorf("decode terminal Program resume failure: %w", err)
+		}
+		if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+			return errors.New("terminal Program resume failure has trailing JSON")
+		}
+		if strings.TrimSpace(payload.ReasonCode) == "" {
+			return errors.New("terminal Program resume failure reason is required")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported Program resume decision kind %q", decision.GetKind())
+	}
+}
+
+func awaitProgramResumeConsumed(
+	ctx context.Context,
+	events <-chan *runv0.RunEvent,
+	controlErrors <-chan error,
+) (*runv0.ResumeConsumed, error) {
+	select {
+	case event, ok := <-events:
+		if !ok {
+			select {
+			case err := <-controlErrors:
+				return nil, fmt.Errorf("read Program resume-consumed proof: %w", err)
+			default:
+				return nil, errors.New("Program control closed before resume-consumed proof")
+			}
+		}
+		consumed := event.GetResumeConsumed()
+		if consumed == nil {
+			return nil, errors.New("Program emitted an event before resume-consumed proof")
+		}
+		return consumed, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (stream *programEventStream) writeResumeAck(ack *runv0.ResumeAck) error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+		return frameio.WriteProtoFrame(conn, ack)
+	})
+}
+
+func validateProgramCheckpointPause(run *runv0.ProgramRunRequest, wait *runv0.RunWaitRequested, pause *runv0.CheckpointPauseRequest) error {
+	if run == nil || wait == nil || pause == nil ||
+		pause.GetRunId() != run.GetRunId() ||
+		pause.GetAttemptNumber() != run.GetAttemptNumber() ||
+		pause.GetRunLeaseId() != run.GetRunLeaseId() ||
+		pause.GetCorrelationId() != wait.GetCorrelationId() ||
+		strings.TrimSpace(pause.GetRunWaitId()) == "" ||
+		strings.TrimSpace(pause.GetCheckpointId()) == "" ||
+		strings.TrimSpace(pause.GetResumeAttachId()) == "" ||
+		pause.GetCheckpointRequestVersion() <= 0 {
+		return errors.New("Program checkpoint pause did not match exact execution and Wait authority")
+	}
+	return nil
 }
 
 func validateTaskOutcome(outcome *runv0.TaskOutcome) error {
@@ -1221,45 +1606,379 @@ func closeProgramFiles(files ...io.Closer) {
 }
 
 func (stream *programEventStream) write(event *runv0.RunEvent) error {
-	stream.mu.Lock()
-	defer stream.mu.Unlock()
-	timeout := stream.writeTimeout
-	if timeout <= 0 {
-		timeout = programOutputDrainTimeout
+	for {
+		stream.mu.Lock()
+		if stream.closed || stream.conn == nil {
+			stream.mu.Unlock()
+			return errors.New("Program event stream is closed")
+		}
+		conn := stream.conn
+		changed := stream.changed
+		timeout := stream.writeTimeout
+		if timeout <= 0 {
+			timeout = programOutputDrainTimeout
+		}
+		err := conn.SetWriteDeadline(time.Now().Add(timeout))
+		if err == nil {
+			err = frameio.WriteProtoFrame(conn, event)
+			_ = conn.SetWriteDeadline(time.Time{})
+		}
+		stream.mu.Unlock()
+		if err == nil {
+			return nil
+		}
+		if changed == nil || stream.done == nil {
+			return err
+		}
+		select {
+		case <-changed:
+			continue
+		case <-stream.done:
+			return err
+		}
 	}
-	if err := stream.conn.SetWriteDeadline(
-		time.Now().Add(timeout),
-	); err != nil {
-		return err
-	}
-	defer stream.conn.SetWriteDeadline(time.Time{})
-	return frameio.WriteProtoFrame(stream.conn, event)
 }
 
-func forwardProgramOutput(
-	reader io.Reader,
-	event func([]byte) *runv0.RunEvent,
-	stream *programEventStream,
-	errorChannel chan<- error,
-	done *sync.WaitGroup,
+func (stream *programEventStream) replaceConn(conn programConnection) (programConnection, bool) {
+	stream.mu.Lock()
+	previous := stream.conn
+	if stream.closed {
+		stream.mu.Unlock()
+		_ = conn.Close()
+		return previous, false
+	}
+	stream.conn = conn
+	if stream.changed != nil {
+		close(stream.changed)
+	}
+	stream.changed = make(chan struct{})
+	stream.mu.Unlock()
+	return previous, true
+}
+
+func (stream *programEventStream) replaceConnWithResumeAck(conn programConnection, ack *runv0.ResumeAck) (programConnection, error) {
+	stream.mu.Lock()
+	if stream.closed || stream.conn == nil {
+		stream.mu.Unlock()
+		_ = conn.Close()
+		return nil, errors.New("Program event stream is closed")
+	}
+	previous := stream.conn
+	stream.conn = conn
+	err := stream.writeLocked(programAdmissionTimeout, func(current programConnection) error {
+		return frameio.WriteProtoFrame(current, ack)
+	})
+	if err != nil {
+		stream.conn = previous
+		stream.mu.Unlock()
+		_ = conn.Close()
+		return previous, err
+	}
+	if stream.changed != nil {
+		close(stream.changed)
+	}
+	stream.changed = make(chan struct{})
+	stream.mu.Unlock()
+	return previous, nil
+}
+
+func (stream *programEventStream) writeLocked(timeout time.Duration, write func(programConnection) error) error {
+	if stream.closed || stream.conn == nil {
+		return errors.New("Program event stream is closed")
+	}
+	if err := stream.conn.SetWriteDeadline(time.Now().Add(timeout)); err != nil {
+		return err
+	}
+	err := write(stream.conn)
+	_ = stream.conn.SetWriteDeadline(time.Time{})
+	return err
+}
+
+func (stream *programEventStream) closeCurrentConn() {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	if stream.closed {
+		return
+	}
+	stream.closed = true
+	if stream.done != nil {
+		close(stream.done)
+	}
+	if stream.changed != nil {
+		close(stream.changed)
+	}
+	if stream.conn != nil {
+		_ = stream.conn.Close()
+		stream.conn = nil
+	}
+}
+
+func (stream *programEventStream) hasResumeReplay() bool {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.replayCount > 0
+}
+
+func (stream *programEventStream) retainResumeReplay(
+	ctx context.Context,
+	registration waitingRunRegistration,
+	decision *runv0.ResumeDecision,
+	ack *runv0.ResumeAck,
 ) {
-	defer done.Done()
-	buffer := make([]byte, 32*1024)
-	for {
-		count, err := reader.Read(buffer)
-		if count > 0 {
-			chunk := append([]byte(nil), buffer[:count]...)
-			if writeErr := stream.write(event(chunk)); writeErr != nil {
-				errorChannel <- writeErr
+	stream.mu.Lock()
+	stream.replayCount++
+	stream.mu.Unlock()
+	go func() {
+		defer registration.unregister()
+		defer func() {
+			stream.mu.Lock()
+			stream.replayCount--
+			stream.mu.Unlock()
+		}()
+		for {
+			attached, attach, err := registration.waitStream(ctx, stream.done)
+			if err != nil {
+				return
+			}
+			resumed, ok := attached.(programConnection)
+			if !ok {
+				continue
+			}
+			replayed, err := readResumeDecisionUntilDone(resumed, stream.done)
+			if err != nil || !proto.Equal(replayed, decision) ||
+				!proto.Equal(attach, registration.slot.accepted) {
+				_ = resumed.Close()
+				continue
+			}
+			previous, err := stream.replaceConnWithResumeAck(resumed, ack)
+			if err != nil {
+				continue
+			}
+			if previous != nil && previous != resumed {
+				_ = previous.Close()
+			}
+			select {
+			case stream.rebind <- resumed:
+			case <-stream.done:
 				return
 			}
 		}
-		if errors.Is(err, io.EOF) {
-			return
+	}()
+}
+
+func readResumeDecisionUntilDone(conn programConnection, done <-chan struct{}) (*runv0.ResumeDecision, error) {
+	type result struct {
+		decision *runv0.ResumeDecision
+		err      error
+	}
+	read := make(chan result, 1)
+	if err := conn.SetReadDeadline(time.Now().Add(resumeAttachTimeout)); err != nil {
+		return nil, err
+	}
+	defer conn.SetReadDeadline(time.Time{})
+	go func() {
+		decision, err := readResumeDecision(context.Background(), conn)
+		read <- result{decision: decision, err: err}
+	}()
+	select {
+	case result := <-read:
+		return result.decision, result.err
+	case <-done:
+		_ = conn.Close()
+		return nil, errors.New("Program event stream closed during resume replay")
+	}
+}
+
+func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.CheckpointPauseReady) error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+		return wire.WriteCheckpointPauseReady(conn, ready)
+	})
+}
+
+func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot string, secretPaths []string) error {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return errors.New("Program Workspace root is required")
+	}
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludes(
+		workspaceRoot,
+		os.TempDir(),
+		workspaceRoot,
+		workspaceSecretExcludePatterns(workspaceRoot, secretPaths),
+	)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+	entryCount := artifact.EntryCount
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+		return wire.WriteFileFrameWithMetadata(conn, wire.StreamHeader{
+			Type:       wire.StreamTypeWorkspaceArtifact,
+			RunID:      runID,
+			EntryCount: &entryCount,
+		}, artifact.Path, artifact.Digest, artifact.SizeBytes)
+	})
+}
+
+func newProgramOutputCoordinator(
+	stream *programEventStream,
+	errorChannel chan<- error,
+	stdout io.ReadCloser,
+	stdoutEvent func([]byte) *runv0.RunEvent,
+	stderr io.ReadCloser,
+	stderrEvent func([]byte) *runv0.RunEvent,
+) (*programOutputCoordinator, error) {
+	readers := []struct {
+		name   string
+		reader io.ReadCloser
+		event  func([]byte) *runv0.RunEvent
+	}{
+		{name: "stdout", reader: stdout, event: stdoutEvent},
+		{name: "stderr", reader: stderr, event: stderrEvent},
+	}
+	coordinator := &programOutputCoordinator{pumps: make([]*programOutputPump, 0, len(readers))}
+	for _, output := range readers {
+		file, ok := output.reader.(*os.File)
+		if !ok || file == nil {
+			return nil, fmt.Errorf("Program %s pipe is not an OS file", output.name)
 		}
+		fd, err := unix.Dup(int(file.Fd()))
 		if err != nil {
-			errorChannel <- err
-			return
+			for _, pump := range coordinator.pumps {
+				_ = pump.file.Close()
+			}
+			return nil, fmt.Errorf("duplicate Program %s pipe: %w", output.name, err)
+		}
+		pumpFile := os.NewFile(uintptr(fd), "helmr-program-"+output.name)
+		if err := unix.SetNonblock(fd, true); err != nil {
+			_ = pumpFile.Close()
+			for _, pump := range coordinator.pumps {
+				_ = pump.file.Close()
+			}
+			return nil, fmt.Errorf("make Program %s nonblocking: %w", output.name, err)
+		}
+		coordinator.pumps = append(coordinator.pumps, &programOutputPump{
+			file: pumpFile, event: output.event, stream: stream,
+			errors: errorChannel, pause: make(chan programOutputPause), done: make(chan struct{}),
+		})
+	}
+	return coordinator, nil
+}
+
+func (coordinator *programOutputCoordinator) pause(ctx context.Context) (func(), error) {
+	if coordinator == nil {
+		return func() {}, errors.New("Program output coordinator is required")
+	}
+	resumeChannels := make([]chan struct{}, 0, len(coordinator.pumps))
+	paused := make(chan error, len(coordinator.pumps))
+	pending := 0
+	resume := func() {
+		for _, channel := range resumeChannels {
+			close(channel)
 		}
 	}
+	for _, pump := range coordinator.pumps {
+		resumeChannel := make(chan struct{})
+		select {
+		case pump.pause <- programOutputPause{paused: paused, resume: resumeChannel}:
+			resumeChannels = append(resumeChannels, resumeChannel)
+			pending++
+		case <-pump.done:
+		case <-ctx.Done():
+			resume()
+			return func() {}, ctx.Err()
+		}
+	}
+	for range pending {
+		select {
+		case err := <-paused:
+			if err != nil {
+				resume()
+				return func() {}, err
+			}
+		case <-ctx.Done():
+			resume()
+			return func() {}, ctx.Err()
+		}
+	}
+	var once sync.Once
+	return func() { once.Do(resume) }, nil
+}
+
+func (pump *programOutputPump) run(done *sync.WaitGroup) {
+	defer done.Done()
+	defer close(pump.done)
+	defer pump.file.Close()
+	buffer := make([]byte, 32*1024)
+	for {
+		select {
+		case request := <-pump.pause:
+			err := pump.drain(buffer)
+			request.paused <- err
+			if err != nil {
+				pump.errors <- err
+				return
+			}
+			<-request.resume
+			continue
+		default:
+		}
+		count, err := unix.Read(int(pump.file.Fd()), buffer)
+		if count > 0 {
+			if writeErr := pump.write(buffer[:count]); writeErr != nil {
+				pump.errors <- writeErr
+				return
+			}
+		}
+		if errors.Is(err, io.EOF) || count == 0 && err == nil {
+			return
+		}
+		if err != nil && !errors.Is(err, unix.EAGAIN) && !errors.Is(err, unix.EWOULDBLOCK) {
+			pump.errors <- err
+			return
+		}
+		if count <= 0 {
+			timer := time.NewTimer(programOutputPoll)
+			select {
+			case request := <-pump.pause:
+				timer.Stop()
+				err := pump.drain(buffer)
+				request.paused <- err
+				if err != nil {
+					pump.errors <- err
+					return
+				}
+				<-request.resume
+			case <-timer.C:
+			}
+		}
+	}
+}
+
+func (pump *programOutputPump) drain(buffer []byte) error {
+	for {
+		count, err := unix.Read(int(pump.file.Fd()), buffer)
+		if count > 0 {
+			if writeErr := pump.write(buffer[:count]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if errors.Is(err, io.EOF) || count == 0 && err == nil {
+			return nil
+		}
+		if errors.Is(err, unix.EAGAIN) || errors.Is(err, unix.EWOULDBLOCK) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
+func (pump *programOutputPump) write(body []byte) error {
+	chunk := append([]byte(nil), body...)
+	return pump.stream.write(pump.event(chunk))
 }

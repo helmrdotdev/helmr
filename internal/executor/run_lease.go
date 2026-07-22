@@ -53,6 +53,9 @@ func (e Executor) ExecuteRunLease(
 	current := claim.Lease
 	result, current, err := e.awaitRunLeaseTask(ctx, task, current)
 	if err != nil {
+		if errors.Is(err, ErrDetached) {
+			return nil
+		}
 		return err
 	}
 	current, err = e.renewRunLease(ctx, task, current)

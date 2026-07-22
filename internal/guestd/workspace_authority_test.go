@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/frameio"
+	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 	"google.golang.org/protobuf/proto"
@@ -37,6 +38,104 @@ func TestWorkspaceRunAuthorityRenewalAndReplay(t *testing.T) {
 	}
 	if !proto.Equal(first, replayed) {
 		t.Fatalf("replay = %+v, want %+v", replayed, first)
+	}
+}
+
+func TestProgramResumeGrantRequiresInstalledWorkspaceAuthority(t *testing.T) {
+	entry, mounts, authority := testWorkspaceFinalizationMount(t)
+	waits := newWaitingRunRegistry()
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "source-lease",
+		RunWaitId: "wait-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+	}
+	if _, err := waits.registerProgram(pause); err != nil {
+		t.Fatal(err)
+	}
+	request := &workspacev0.GrantProgramResumeRequest{
+		Authority: authority, RunWaitId: "wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+	}
+	var requestBytes bytes.Buffer
+	if err := frameio.WriteProtoFrame(&requestBytes, request); err != nil {
+		t.Fatal(err)
+	}
+	stream := &scriptedNetConn{reader: bytes.NewReader(requestBytes.Bytes())}
+	if err := handleProgramResumeGrantConnection(stream, 0, mounts, waits, time.Now); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.GrantProgramResumeResponse
+	if err := frameio.ReadProtoFrame(bytes.NewReader(stream.written.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	attach := &runv0.ResumeAttach{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "run-lease-1",
+		RunWaitId: "wait-1", CorrelationId: "correlation-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+	}
+	entry.processesMu.Lock()
+	entry.authorityState = workspaceAuthorityFinalizing
+	entry.processesMu.Unlock()
+	if err := waits.attachResume(attach, &bytes.Buffer{}); err == nil {
+		t.Fatal("finalizing Workspace authority retained its Program resume grant")
+	}
+	entry.processesMu.Lock()
+	entry.authorityState = workspaceAuthorityLive
+	entry.processesMu.Unlock()
+	if err := waits.attachResume(attach, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	altered := proto.Clone(authority).(*workspacev0.WorkspaceRunAuthority)
+	altered.Fence.RunLeaseId = "substituted-lease"
+	requestBytes.Reset()
+	request.Authority = altered
+	if err := frameio.WriteProtoFrame(&requestBytes, request); err != nil {
+		t.Fatal(err)
+	}
+	stream = &scriptedNetConn{reader: bytes.NewReader(requestBytes.Bytes())}
+	if err := handleProgramResumeGrantConnection(stream, 0, mounts, waits, time.Now); err == nil {
+		t.Fatal("uninstalled restore authority was accepted")
+	}
+}
+
+func TestProgramRestoreVerificationRequiresExactFrozenRegistration(t *testing.T) {
+	mounts := newWorkspaceOperationRegistry()
+	mounts.programActive = true
+	mounts.programEntry = &workspaceMountEntry{}
+	waits := newWaitingRunRegistry()
+	if _, err := waits.registerProgram(&runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunWaitId: "wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := &workspacev0.VerifyProgramRestoreRequest{
+		RunId: "run-1", AttemptNumber: 2, RunWaitId: "wait-1",
+		CheckpointId: "checkpoint-1", CorrelationId: "correlation-1",
+	}
+	var body bytes.Buffer
+	if err := frameio.WriteProtoFrame(&body, request); err != nil {
+		t.Fatal(err)
+	}
+	stream := &scriptedNetConn{reader: bytes.NewReader(body.Bytes())}
+	if err := handleProgramRestoreVerifyConnection(stream, 0, mounts, waits); err != nil {
+		t.Fatal(err)
+	}
+	var response workspacev0.VerifyProgramRestoreResponse
+	if err := frameio.ReadProtoFrame(bytes.NewReader(stream.written.Bytes()), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.GetCheckpointId() != request.GetCheckpointId() || response.GetCorrelationId() != request.GetCorrelationId() {
+		t.Fatalf("verification response = %+v", response)
+	}
+	request.CorrelationId = "different"
+	body.Reset()
+	if err := frameio.WriteProtoFrame(&body, request); err != nil {
+		t.Fatal(err)
+	}
+	stream = &scriptedNetConn{reader: bytes.NewReader(body.Bytes())}
+	if err := handleProgramRestoreVerifyConnection(stream, 0, mounts, waits); err == nil {
+		t.Fatal("mismatched frozen registration was verified")
 	}
 }
 

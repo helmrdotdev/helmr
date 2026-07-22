@@ -29,6 +29,8 @@ const (
 	StreamTypeWorkspaceInput             StreamType = "workspace-input"
 	StreamTypeWorkspaceStop              StreamType = "workspace-stop"
 	StreamTypeWorkspaceAuthorityRenew    StreamType = "workspace-authority-renew"
+	StreamTypeProgramResumeGrant         StreamType = "program-resume-grant"
+	StreamTypeProgramRestoreVerify       StreamType = "program-restore-verify"
 	StreamTypeWorkspaceFinalizationBegin StreamType = "workspace-finalization-begin"
 	StreamTypeWorkspaceCapture           StreamType = "workspace-capture"
 	StreamTypeWorkspaceReset             StreamType = "workspace-reset"

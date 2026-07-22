@@ -1,6 +1,6 @@
 import { create, fromBinary, toBinary, type GenMessage } from "@bufbuild/protobuf"
 import { runProto } from "@helmr/proto"
-import { task } from "@helmr/sdk"
+import { task, timers } from "@helmr/sdk"
 import { describe, expect, test } from "bun:test"
 
 import { runProgram, type ProgramIO } from "./program"
@@ -97,6 +97,69 @@ describe("runProgram", () => {
       if (result.value.outcome.case === "succeeded") {
         expect(result.value.outcome.value.outputJson).toBe("null")
       }
+    }
+  })
+
+  test("emits one timer Wait and consumes only its matching decision", async () => {
+    const definition = task({
+      id: "deploy",
+      async run() {
+        await timers.waitFor("1m")
+        return { resumed: true }
+      },
+    })
+    const start = taskStart("noPayload")
+    const output: Uint8Array[] = []
+    const waitWritten = deferred<void>()
+		let correlationId = ""
+    async function* input(): AsyncIterable<Uint8Array> {
+      yield frameMessage(runProto.ProgramStartSchema, start)
+      yield frameMessage(runProto.EntrypointReleaseSchema, releaseFor(start))
+      await waitWritten.promise
+      const event = readEvent(output[1]!).event
+      expect(event.case).toBe("runWaitRequested")
+      if (event.case !== "runWaitRequested") return
+			correlationId = event.value.correlationId
+      expect(event.value.kind).toBe("timer")
+      expect(event.value.timeout).toBe(60)
+      expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
+      yield frameMessage(runProto.ResumeDecisionSchema, create(
+        runProto.ResumeDecisionSchema,
+        {
+			runWaitId: "durable-wait-1",
+			correlationId: event.value.correlationId,
+          kind: "completed",
+          dataJson: "null",
+			requireConsumedAck: true,
+			checkpointId: "checkpoint-1",
+			resumeAttachId: "attach-1",
+			resumeRequestVersion: 4n,
+			runLeaseId: "lease-2",
+        },
+      ))
+    }
+
+    await runProgram(locatorURL, programIO({
+      input: input(),
+      definition,
+      output,
+      onWrite: () => {
+        if (output.length === 2) waitWritten.resolve()
+      },
+    }))
+
+		const consumed = readEvent(output[2]!).event
+		expect(consumed.case).toBe("resumeConsumed")
+		if (consumed.case === "resumeConsumed") {
+			expect(consumed.value.runWaitId).toBe("durable-wait-1")
+			expect(consumed.value.resumeRequestVersion).toBe(4n)
+			expect(consumed.value.correlationId).toBe(correlationId)
+		}
+
+		const result = readEvent(output[3]!).event
+    expect(result.case).toBe("taskOutcome")
+    if (result.case === "taskOutcome" && result.value.outcome.case === "succeeded") {
+      expect(result.value.outcome.value.outputJson).toBe('{"resumed":true}')
     }
   })
 

@@ -116,6 +116,26 @@ func TestRuntimeCheckpointerCreatesManifestAndCleansSnapshotFiles(t *testing.T) 
 	assertRemoved(t, artifact.Memory[0].Path)
 }
 
+func TestValidateCheckpointPauseReadyRequiresExactAuthority(t *testing.T) {
+	request := CheckpointRequest{
+		RunID: "run-1", AttemptNumber: 2, RunLeaseID: "lease-1",
+		RunWaitID: "wait-1", CheckpointID: "checkpoint-1",
+		ResumeAttachID: "attach-1", CheckpointRequestVersion: 3,
+	}
+	ready := &runv0.CheckpointPauseReady{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+		RunWaitId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+	}
+	if err := validateCheckpointPauseReady(ready, request); err != nil {
+		t.Fatal(err)
+	}
+	ready.ResumeAttachId = "attach-2"
+	if err := validateCheckpointPauseReady(ready, request); err == nil {
+		t.Fatal("mismatched resume attach authority was accepted")
+	}
+}
+
 func TestRuntimeCheckpointerSeparatesWorkspaceCaptureFromRuntimeManifest(t *testing.T) {
 	var read bytes.Buffer
 	workspaceBody := []byte("workspace tar")

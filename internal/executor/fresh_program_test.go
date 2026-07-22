@@ -64,7 +64,7 @@ func TestFreshProgramOrdersAdmissionEntrypointAndTaskCompletion(t *testing.T) {
 		program.observedEventSeq != 4 {
 		t.Fatalf("fresh Program = %+v", program)
 	}
-	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events)
+	outcome, quiesced, err := program.awaitTaskCompletion(context.Background(), events, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +282,7 @@ func TestAwaitTaskCompletionRequiresFinalMatchingQuiescenceProof(t *testing.T) {
 			_, _, err := program.awaitTaskCompletion(
 				context.Background(),
 				&testFreshProgramEventSink{},
+				nil,
 			)
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("awaitTaskCompletion() error = %v", err)

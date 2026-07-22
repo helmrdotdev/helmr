@@ -15,7 +15,6 @@ type RunWaitClient interface {
 	PollRunWait(context.Context, api.WorkerRunWaitPollRequest) (api.WorkerRunWaitPollResponse, error)
 	AcknowledgeRunWaitResume(context.Context, api.WorkerRunWaitResumeAckRequest) (api.WorkerRunWaitResumeAckResponse, error)
 	CaptureRunWaitWorkspace(context.Context, api.WorkerRunWaitWorkspaceCaptureRequest) (api.WorkerRunWaitWorkspaceCaptureResponse, error)
-	AcknowledgeRestore(context.Context, api.WorkerAcknowledgeRestoreRequest) (api.WorkerAcknowledgeRestoreResponse, error)
 	MarkCheckpointReady(context.Context, api.WorkerCheckpointReadyRequest) (api.WorkerCheckpointResponse, error)
 	MarkCheckpointFailed(context.Context, api.WorkerCheckpointFailedRequest) (api.WorkerCheckpointResponse, error)
 }
@@ -27,9 +26,11 @@ type ControlRunWaits struct {
 var errCheckpointAttemptRecorded = errors.New("checkpoint attempt failure recorded")
 
 type RestoreAcknowledgement struct {
-	Lease                api.WorkerRunLease
+	Lease                api.WorkerRunLeaseReceipt
 	RunWaitID            string
 	CheckpointID         string
+	ResumeAttachID       string
+	CorrelationID        string
 	ResumeRequestVersion int64
 	Phases               []api.WorkerCheckpointPhase
 }
@@ -39,17 +40,30 @@ type RestoreAcknowledger interface {
 }
 
 func (w ControlRunWaits) AcknowledgeRestore(ctx context.Context, request RestoreAcknowledgement) error {
-	if w.Client == nil {
-		return errors.New("run wait control client is required")
+	client, ok := w.Client.(interface {
+		AcknowledgeRunResumeRelease(context.Context, api.WorkerRunResumeReleaseRequest) (api.WorkerRunResumeReleaseResponse, error)
+	})
+	if !ok {
+		return errors.New("exact Run resume release client is required")
 	}
-	_, err := w.Client.AcknowledgeRestore(ctx, api.WorkerAcknowledgeRestoreRequest{
+	response, err := client.AcknowledgeRunResumeRelease(ctx, api.WorkerRunResumeReleaseRequest{
 		Lease:                request.Lease,
 		RunWaitID:            request.RunWaitID,
 		CheckpointID:         request.CheckpointID,
+		ResumeAttachID:       request.ResumeAttachID,
 		ResumeRequestVersion: request.ResumeRequestVersion,
-		Phases:               request.Phases,
+		RunLeaseID:           request.Lease.ID,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	if !equalRunLeaseReceipt(response.Lease, request.Lease) ||
+		response.RunWaitID != request.RunWaitID || response.CheckpointID != request.CheckpointID ||
+		response.ResumeAttachID != request.ResumeAttachID ||
+		response.ResumeRequestVersion != request.ResumeRequestVersion {
+		return errors.New("Run resume release response did not match exact guest proof")
+	}
+	return nil
 }
 
 func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
@@ -72,6 +86,7 @@ func (w ControlRunWaits) Wait(ctx context.Context, request WaitRequest) error {
 	if opened.RunWaitID == "" {
 		return errors.New("run wait id is required")
 	}
+	request.ResumeAttachID = opened.ResumeAttachID
 	pollDelay := 100 * time.Millisecond
 	for {
 		intent, pollErr := w.Client.PollRunWait(ctx, api.WorkerRunWaitPollRequest{
@@ -139,7 +154,6 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		_, failErr := w.Client.MarkCheckpointFailed(ctx, api.WorkerCheckpointFailedRequest{
 			Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
 			RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID, Error: err.Error(),
-			ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
 		})
 		if failErr != nil {
 			return failErr
@@ -153,12 +167,20 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		}
 		return nil
 	}
-	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, CheckpointRequest{
+	checkpointRequest := CheckpointRequest{
 		RunID:            request.currentLease().RunID,
 		RunWaitID:        intent.RunWaitID,
+		CorrelationID:    request.CorrelationID,
 		CheckpointID:     intent.CheckpointID,
 		CaptureWorkspace: intent.CaptureWorkspace,
-	})
+	}
+	if request.ResumeAttachID != "" {
+		checkpointRequest.AttemptNumber = request.currentLease().AttemptNumber
+		checkpointRequest.RunLeaseID = request.currentLease().ID
+		checkpointRequest.ResumeAttachID = request.ResumeAttachID
+		checkpointRequest.CheckpointRequestVersion = intent.RequestVersion
+	}
+	checkpoint, err := request.Checkpointer.CreateCheckpoint(ctx, checkpointRequest)
 	if err != nil {
 		if failErr := failCheckpoint(err); failErr != nil {
 			return fmt.Errorf("mark checkpoint failed after create checkpoint error: %w", failErr)
@@ -190,8 +212,7 @@ func (w ControlRunWaits) handleCheckpointDecision(ctx context.Context, request W
 		Lease: request.currentLease(), RequestVersion: intent.RequestVersion,
 		RunWaitID: intent.RunWaitID, CheckpointID: intent.CheckpointID,
 		Workspace: request.Workspace, WorkspaceVersionID: request.Workspace.BaseVersionID,
-		ActiveDurationMs: durationMilliseconds(request.ActiveDuration),
-		Manifest:         checkpoint.Manifest,
+		Manifest: checkpoint.Manifest,
 	}); err != nil {
 		if failErr := failCheckpoint(err); failErr != nil {
 			return fmt.Errorf("mark checkpoint failed after ready error: %w", failErr)

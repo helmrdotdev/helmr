@@ -47,6 +47,7 @@ type Runner interface {
 
 type Request struct {
 	Leases           api.WorkerRunLeaseProvider
+	LeaseReceipt     *api.WorkerRunLeaseReceipt
 	Run              ResolvedRun
 	Artifact         builder.Artifact
 	DeploymentSource builder.Source
@@ -74,6 +75,7 @@ type WaitRequest struct {
 	Leases             api.WorkerRunLeaseProvider
 	Lease              api.WorkerRunLease
 	CorrelationID      string
+	ResumeAttachID     string
 	Kind               api.WorkerRunWaitKind
 	Params             json.RawMessage
 	Metadata           json.RawMessage
@@ -96,10 +98,15 @@ type Checkpointer interface {
 }
 
 type CheckpointRequest struct {
-	RunID            string
-	RunWaitID        string
-	CheckpointID     string
-	CaptureWorkspace bool
+	RunID                    string
+	AttemptNumber            int32
+	RunLeaseID               string
+	RunWaitID                string
+	CorrelationID            string
+	CheckpointID             string
+	ResumeAttachID           string
+	CheckpointRequestVersion int64
+	CaptureWorkspace         bool
 }
 
 type CheckpointResult struct {

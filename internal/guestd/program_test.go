@@ -1,6 +1,7 @@
 package guestd
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -20,6 +22,7 @@ import (
 	runv0 "github.com/helmrdotdev/helmr/internal/proto/run/v0"
 	workspacev0 "github.com/helmrdotdev/helmr/internal/proto/workspace/v0"
 	"github.com/helmrdotdev/helmr/internal/wire"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestProgramRuntimeHelper(t *testing.T) {
@@ -99,6 +102,7 @@ func TestSuperviseProgramOrdersFreshEntrypointGates(t *testing.T) {
 			guest,
 			request,
 			process,
+			newWaitingRunRegistry(),
 		)
 	}()
 
@@ -178,6 +182,7 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 			guest,
 			request,
 			process,
+			newWaitingRunRegistry(),
 		)
 	}()
 	var event runv0.RunEvent
@@ -231,6 +236,7 @@ func TestSuperviseProgramRejectsWrongCommandArmBeforeStart(t *testing.T) {
 					guest,
 					request,
 					process,
+					newWaitingRunRegistry(),
 				)
 			}()
 			var event runv0.RunEvent
@@ -284,6 +290,8 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		&programEventStream{conn: guest},
 		make(chan error, 2),
 		&outputDone,
+		newWaitingRunRegistry(),
+		&programOutputCoordinator{},
 	)
 	if err == nil || !strings.Contains(err.Error(), "control event") {
 		t.Fatalf("relayProgram() error = %v", err)
@@ -334,6 +342,8 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 			&programEventStream{conn: guest},
 			make(chan error, 2),
 			&outputDone,
+			newWaitingRunRegistry(),
+			&programOutputCoordinator{},
 		)
 	}()
 	var event runv0.RunEvent
@@ -354,6 +364,255 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 	}
 	if cgroup.killCount() == 0 || cgroup.waitCount() == 0 {
 		t.Fatal("Program proof preceded cgroup quiescence")
+	}
+}
+
+func TestPauseAndResumeProgramUsesExactFrozenAuthority(t *testing.T) {
+	workspaceRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workspaceRoot, "state.txt"), []byte("durable"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cgroup := &testProgramCgroup{}
+	var programInput bytes.Buffer
+	process := &programProcess{
+		stdin:         nopWriteCloser{Writer: &programInput},
+		cgroup:        cgroup,
+		workspaceRoot: workspaceRoot,
+	}
+	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
+	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+		CaptureWorkspace: true,
+	}
+	registry := newWaitingRunRegistry()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	guest, host := net.Pipe()
+	defer guest.Close()
+	defer host.Close()
+	result := make(chan error, 1)
+	events := make(chan *runv0.RunEvent, 1)
+	controlErrors := make(chan error, 1)
+	go func() {
+		_, err := pauseAndResumeProgram(
+			ctx, run, wait, pause, process,
+			&programEventStream{conn: guest, changed: make(chan struct{}), done: make(chan struct{}), rebind: make(chan programConnection, 1)}, registry,
+			&programOutputCoordinator{}, events, controlErrors,
+		)
+		result <- err
+	}()
+	reader := bufio.NewReader(host)
+	header, bodyLen, err := wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != wire.StreamTypeWorkspaceArtifact || bodyLen == 0 {
+		t.Fatalf("workspace checkpoint frame = %+v body=%d", header, bodyLen)
+	}
+	if _, err := io.CopyN(io.Discard, reader, int64(bodyLen)); err != nil {
+		t.Fatal(err)
+	}
+	header, bodyLen, err = wire.ReadStreamFrameHeader(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if header.Type != wire.StreamTypeCheckpointPauseReady || bodyLen == 0 {
+		t.Fatalf("pause proof frame = %+v body=%d", header, bodyLen)
+	}
+	body := make([]byte, bodyLen)
+	if _, err := io.ReadFull(reader, body); err != nil {
+		t.Fatal(err)
+	}
+	var ready runv0.CheckpointPauseReady
+	if err := proto.Unmarshal(body, &ready); err != nil {
+		t.Fatal(err)
+	}
+	if ready.GetResumeAttachId() != "attach-1" || ready.GetCheckpointRequestVersion() != 3 {
+		t.Fatalf("pause proof = %+v", ready)
+	}
+	if cgroup.freezeCount() != 1 || cgroup.thawCount() != 0 {
+		t.Fatalf("cgroup before resume freeze=%d thaw=%d", cgroup.freezeCount(), cgroup.thawCount())
+	}
+	resumeGuest, resumeHost := net.Pipe()
+	defer resumeGuest.Close()
+	defer resumeHost.Close()
+	attach := &runv0.ResumeAttach{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
+		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+	}
+	if err := registry.grantProgramResume(testProgramResumeGrant(attach)); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.attachResume(attach, resumeGuest); err != nil {
+		t.Fatal(err)
+	}
+	decision := &runv0.ResumeDecision{
+		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", Kind: "completed", NoResult: true, RequireConsumedAck: true,
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1",
+		ResumeRequestVersion: 4, RunLeaseId: "lease-2",
+	}
+	if err := frameio.WriteProtoFrame(resumeHost, decision); err != nil {
+		t.Fatal(err)
+	}
+	events <- &runv0.RunEvent{Event: &runv0.RunEvent_ResumeConsumed{ResumeConsumed: &runv0.ResumeConsumed{
+		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", ResumeRequestVersion: 4, RunLeaseId: "lease-2",
+	}}}
+	var ack runv0.ResumeAck
+	if err := frameio.ReadProtoFrame(resumeHost, &ack); err != nil {
+		t.Fatal(err)
+	}
+	if ack.GetRunWaitId() != "durable-wait-1" || ack.GetCorrelationId() != "wait-1" || ack.GetResumeRequestVersion() != 4 ||
+		ack.GetRunLeaseId() != "lease-2" || cgroup.thawCount() != 1 {
+		t.Fatalf("resume proof=%+v thaw=%d", ack, cgroup.thawCount())
+	}
+	var staged runv0.ResumeDecision
+	if err := frameio.ReadProtoFrame(bytes.NewReader(programInput.Bytes()), &staged); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&staged, decision) {
+		t.Fatalf("staged decision = %+v", staged)
+	}
+	if err := <-result; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestValidateResumeDecisionAuthorityRejectsMalformedResultUnion(t *testing.T) {
+	tests := []struct {
+		name     string
+		decision *runv0.ResumeDecision
+		wantErr  bool
+	}{
+		{name: "completed no result", decision: &runv0.ResumeDecision{Kind: "completed", NoResult: true}},
+		{name: "completed JSON null", decision: &runv0.ResumeDecision{Kind: "completed", DataJson: "null"}},
+		{name: "completed both", decision: &runv0.ResumeDecision{Kind: "completed", NoResult: true, DataJson: "null"}, wantErr: true},
+		{name: "completed neither", decision: &runv0.ResumeDecision{Kind: "completed"}, wantErr: true},
+		{name: "failed reason", decision: &runv0.ResumeDecision{Kind: "failed", DataJson: `{"reason_code":"token_expired"}`}},
+		{name: "failed no result", decision: &runv0.ResumeDecision{Kind: "failed", NoResult: true, DataJson: `{"reason_code":"token_expired"}`}, wantErr: true},
+		{name: "failed missing reason", decision: &runv0.ResumeDecision{Kind: "failed", DataJson: `{}`}, wantErr: true},
+		{name: "legacy fourth state", decision: &runv0.ResumeDecision{Kind: "timed_out", DataJson: "null"}, wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateResumeDecisionAuthority(test.decision)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validate error = %v, want error %v", err, test.wantErr)
+			}
+		})
+	}
+}
+
+func TestProgramOutputPauseTreatsClosedPipesAsAlreadyDrained(t *testing.T) {
+	pump := &programOutputPump{
+		pause: make(chan programOutputPause),
+		done:  make(chan struct{}),
+	}
+	close(pump.done)
+	resume, err := (&programOutputCoordinator{pumps: []*programOutputPump{pump}}).pause(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resume()
+}
+
+func TestProgramResumeReplayReturnsRecordedProofForExactReconnect(t *testing.T) {
+	registry := newWaitingRunRegistry()
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1",
+		RunWaitId: "durable-wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+	}
+	registration, err := registry.registerProgram(pause)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attach := &runv0.ResumeAttach{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
+		RunWaitId: "durable-wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+	}
+	if err := registry.grantProgramResume(testProgramResumeGrant(attach)); err != nil {
+		t.Fatal(err)
+	}
+	initialGuest, initialHost := net.Pipe()
+	if err := registry.attachResume(attach, initialGuest); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := registration.wait(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = initialGuest.Close()
+	_ = initialHost.Close()
+	decision := &runv0.ResumeDecision{
+		RunWaitId: "durable-wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+		RunLeaseId: "lease-2", Kind: "completed", DataJson: "null", RequireConsumedAck: true,
+	}
+	ack := &runv0.ResumeAck{
+		RunWaitId: "durable-wait-1", CorrelationId: "correlation-1",
+		CheckpointId: "checkpoint-1", ResumeAttachId: "attach-1", ResumeRequestVersion: 4,
+		RunLeaseId: "lease-2",
+	}
+	registration.markApplied(decision, ack)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	oldGuest, oldHost := net.Pipe()
+	defer oldHost.Close()
+	stream := &programEventStream{
+		conn: oldGuest, changed: make(chan struct{}), done: make(chan struct{}),
+		rebind: make(chan programConnection, 1),
+	}
+	stream.retainResumeReplay(ctx, registration, decision, ack)
+	replayGuest, replayHost := net.Pipe()
+	defer replayHost.Close()
+	if err := registry.attachResume(proto.Clone(attach).(*runv0.ResumeAttach), replayGuest); err != nil {
+		t.Fatal(err)
+	}
+	if err := frameio.WriteProtoFrame(replayHost, decision); err != nil {
+		t.Fatal(err)
+	}
+	var replayed runv0.ResumeAck
+	if err := frameio.ReadProtoFrame(replayHost, &replayed); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&replayed, ack) {
+		t.Fatalf("replayed ack = %+v", &replayed)
+	}
+	select {
+	case rebound := <-stream.rebind:
+		if rebound != replayGuest {
+			t.Fatal("replay connection was not adopted")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("replay connection was not rebound")
+	}
+	stream.closeCurrentConn()
+}
+
+func testProgramResumeGrant(attach *runv0.ResumeAttach) *programResumeGrant {
+	return &programResumeGrant{
+		attach: attach,
+		lock:   func() {},
+		unlock: func() {},
+		valid:  func(time.Time) bool { return true },
+	}
+}
+
+func TestValidateProgramCheckpointPauseRejectsMismatchedFence(t *testing.T) {
+	run := &runv0.ProgramRunRequest{RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-1"}
+	wait := &runv0.RunWaitRequested{CorrelationId: "wait-1", Kind: "timer"}
+	pause := &runv0.CheckpointPauseRequest{
+		RunId: "run-1", AttemptNumber: 2, RunLeaseId: "lease-2",
+		RunWaitId: "durable-wait-1", CorrelationId: "wait-1", CheckpointId: "checkpoint-1",
+		ResumeAttachId: "attach-1", CheckpointRequestVersion: 3,
+	}
+	if err := validateProgramCheckpointPause(run, wait, pause); err == nil {
+		t.Fatal("mismatched Run Lease fence was accepted")
 	}
 }
 
@@ -468,6 +727,7 @@ func TestProgramAdmissionDoesNotClaimBeforeSecretSequence(t *testing.T) {
 			ctx,
 			guest,
 			nil,
+			newWaitingRunRegistry(),
 			registry,
 			wire.StreamHeader{
 				Type:             wire.StreamTypeProgramRun,
@@ -868,15 +1128,27 @@ func testProgramProcess(t *testing.T, frame []byte) *programProcess {
 }
 
 type testProgramCgroup struct {
-	mu     sync.Mutex
-	kills  int
-	waits  int
-	onKill func() error
+	mu      sync.Mutex
+	freezes int
+	thaws   int
+	kills   int
+	waits   int
+	onKill  func() error
 }
 
-func (*testProgramCgroup) attach(*exec.Cmd) error       { return nil }
-func (*testProgramCgroup) freeze(context.Context) error { return nil }
-func (*testProgramCgroup) thaw(context.Context) error   { return nil }
+func (*testProgramCgroup) attach(*exec.Cmd) error { return nil }
+func (c *testProgramCgroup) freeze(context.Context) error {
+	c.mu.Lock()
+	c.freezes++
+	c.mu.Unlock()
+	return nil
+}
+func (c *testProgramCgroup) thaw(context.Context) error {
+	c.mu.Lock()
+	c.thaws++
+	c.mu.Unlock()
+	return nil
+}
 func (c *testProgramCgroup) kill() error {
 	c.mu.Lock()
 	c.kills++
@@ -906,6 +1178,18 @@ func (c *testProgramCgroup) waitCount() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.waits
+}
+
+func (c *testProgramCgroup) freezeCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.freezes
+}
+
+func (c *testProgramCgroup) thawCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.thaws
 }
 
 type nopWriteCloser struct {

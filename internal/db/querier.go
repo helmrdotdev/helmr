@@ -50,6 +50,7 @@ type Querier interface {
 	ClearCurrentLookupHMACVersion(ctx context.Context) (int64, error)
 	ClearDefaultProject(ctx context.Context, orgID pgtype.UUID) (int64, error)
 	ClearExpiredWorkspaceCreateIdempotency(ctx context.Context, arg ClearExpiredWorkspaceCreateIdempotencyParams) error
+	CloseRunActiveIntervalForCheckpoint(ctx context.Context, arg CloseRunActiveIntervalForCheckpointParams) (int64, error)
 	CloseRunActiveIntervalForFinalization(ctx context.Context, arg CloseRunActiveIntervalForFinalizationParams) (Run, error)
 	CollectRetiredIdempotencyClaims(ctx context.Context, rowLimit int32) ([]IdempotencyClaim, error)
 	CollectWorkspaceProcessRecordPayload(ctx context.Context, id pgtype.UUID) (WorkspaceProcessRecord, error)

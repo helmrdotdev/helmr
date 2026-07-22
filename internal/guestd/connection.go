@@ -79,7 +79,7 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, handleManagerAcquire(conn, start.bodyLen)
 	}
 	if start.attach != nil {
-		if err := registry.attach(start.attach.RunWaitId, start.attach.CheckpointId, conn); err != nil {
+		if err := registry.attachResume(start.attach, conn); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -94,13 +94,13 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 	case wire.StreamTypeRunImage:
 		return false, handleRunConnection(ctx, conn, cfg, logger, registry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceMaterialize:
-		return false, handleWorkspaceMaterializeConnection(ctx, conn, logger, workspaceRegistry)
+		return false, handleWorkspaceMaterializeConnection(ctx, conn, logger, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceRuntimePrepare:
 		return false, handleWorkspaceRuntimePrepareConnection(ctx, conn, logger, workspaceRegistry)
 	case wire.StreamTypeWorkspaceRun:
 		return false, handleWorkspaceRunConnection(ctx, conn, cfg, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeProgramRun:
-		return false, handleProgramRunConnection(ctx, conn, logger, workspaceRegistry, start.streamHeader, start.bodyLen)
+		return false, handleProgramRunConnection(ctx, conn, logger, registry, workspaceRegistry, start.streamHeader, start.bodyLen)
 	case wire.StreamTypeWorkspaceOperation:
 		return false, handleWorkspaceOperationConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceEvents:
@@ -111,6 +111,18 @@ func handleConnection(ctx context.Context, conn io.ReadWriteCloser, cfg Config, 
 		return false, handleWorkspaceStopConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceAuthorityRenew:
 		return false, handleWorkspaceAuthorityRenewConnection(ctx, conn, workspaceRegistry)
+	case wire.StreamTypeProgramResumeGrant:
+		programConn, ok := conn.(programConnection)
+		if !ok {
+			return false, errors.New("Program resume grant connection does not support deadlines")
+		}
+		return false, handleProgramResumeGrantConnection(programConn, start.bodyLen, workspaceRegistry, registry, time.Now)
+	case wire.StreamTypeProgramRestoreVerify:
+		programConn, ok := conn.(programConnection)
+		if !ok {
+			return false, errors.New("Program restore verification connection does not support deadlines")
+		}
+		return false, handleProgramRestoreVerifyConnection(programConn, start.bodyLen, workspaceRegistry, registry)
 	case wire.StreamTypeWorkspaceFinalizationBegin:
 		return false, handleWorkspaceFinalizationBeginConnection(ctx, conn, workspaceRegistry)
 	case wire.StreamTypeWorkspaceCapture:
