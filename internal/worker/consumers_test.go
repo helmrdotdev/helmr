@@ -58,11 +58,10 @@ func (consumerBuildPolicy) Resolve(
 
 type consumerTestClient struct {
 	ControlClient
-	runLease        api.WorkerRunLease
-	run             api.WorkerRun
+	runWork         []api.WorkerRunLeaseWork
 	buildLease      api.WorkerDeploymentBuildLease
 	deployment      api.WorkerDeploymentBuild
-	runStartCalls   atomic.Int32
+	discoveryCalls  atomic.Int32
 	buildStartCalls atomic.Int32
 	buildComplete   atomic.Int32
 	buildDelivery   atomic.Int32
@@ -71,13 +70,9 @@ type consumerTestClient struct {
 	rejectReason    atomic.Value
 }
 
-func (c *consumerTestClient) LeaseRun(context.Context) (api.WorkerRunLeaseResponse, error) {
-	return api.WorkerRunLeaseResponse{Lease: &c.runLease, Run: &c.run}, nil
-}
-
-func (c *consumerTestClient) StartRun(context.Context, api.WorkerRunLease) (api.WorkerStartResponse, error) {
-	c.runStartCalls.Add(1)
-	return api.WorkerStartResponse{Lease: c.runLease}, nil
+func (c *consumerTestClient) DiscoverRunLeases(context.Context) (api.WorkerRunLeaseDiscoveryResponse, error) {
+	c.discoveryCalls.Add(1)
+	return api.WorkerRunLeaseDiscoveryResponse{Items: c.runWork}, nil
 }
 
 func (c *consumerTestClient) LeaseDeploymentBuild(context.Context) (api.WorkerDeploymentBuildLeaseResponse, error) {
@@ -108,9 +103,9 @@ func (c *consumerTestClient) RejectDeploymentBuild(_ context.Context, request ap
 
 type detachedTestExecutor struct{ calls atomic.Int32 }
 
-func (e *detachedTestExecutor) Execute(context.Context, api.WorkerRunLeaseProvider, api.WorkerRun) api.WorkerReleaseResult {
+func (e *detachedTestExecutor) ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error {
 	e.calls.Add(1)
-	return api.WorkerReleaseResult{Kind: "detached"}
+	return nil
 }
 
 type successfulTestBuilder struct{ calls atomic.Int32 }
@@ -170,11 +165,10 @@ func (*canceledBuildTestBuilder) BuildDeployment(context.Context, api.WorkerDepl
 	return api.WorkerDeploymentBuildResult{}, context.Canceled
 }
 
-func TestRunConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
+func TestRunConsumerExecutesDiscoveredLeaseInsideRegisteredWork(t *testing.T) {
 	capabilities := testCapabilities()
 	client := &consumerTestClient{
-		runLease: api.WorkerRunLease{RunID: "run-1", ProtocolVersion: capabilities.ProtocolVersion},
-		run:      api.WorkerRun{WorkerProtocolVersion: capabilities.ProtocolVersion, Requirements: testRequirements()},
+		runWork: []api.WorkerRunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
 	}
 	executor := &detachedTestExecutor{}
 	runner, err := NewRunner(client, executor, capabilities, WithCapacity(testCapacity(t, capabilities)))
@@ -187,17 +181,42 @@ func TestRunConsumerStartsLeaseInsideRegisteredWork(t *testing.T) {
 		t.Fatalf("claim = (%v, %v, %v)", work, ok, err)
 	}
 	cancelClaim()
-	if got := client.runStartCalls.Load(); got != 0 {
-		t.Fatalf("start calls before registered work = %d", got)
+	if got := executor.calls.Load(); got != 0 {
+		t.Fatalf("executor calls before registered work = %d", got)
 	}
 	if err := work(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if got := client.runStartCalls.Load(); got != 1 {
-		t.Fatalf("start calls = %d", got)
-	}
 	if got := executor.calls.Load(); got != 1 {
 		t.Fatalf("executor calls = %d", got)
+	}
+}
+
+func TestRunConsumerDoesNotRediscoverActiveTuple(t *testing.T) {
+	capabilities := testCapabilities()
+	client := &consumerTestClient{
+		runWork: []api.WorkerRunLeaseWork{{LeaseID: "lease-1", LeaseSequence: 1}},
+	}
+	executor := &detachedTestExecutor{}
+	runner, err := NewRunner(client, executor, capabilities, WithCapacity(testCapacity(t, capabilities)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer := NewRunConsumer(runner)
+	first, ok, err := consumer.Claim(context.Background())
+	if err != nil || !ok || first == nil {
+		t.Fatalf("first claim = (%v, %v, %v)", first, ok, err)
+	}
+	second, ok, err := consumer.Claim(context.Background())
+	if err != nil || ok || second != nil {
+		t.Fatalf("duplicate claim = (%v, %v, %v)", second, ok, err)
+	}
+	if err := first(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	third, ok, err := consumer.Claim(context.Background())
+	if err != nil || !ok || third == nil {
+		t.Fatalf("claim after completion = (%v, %v, %v)", third, ok, err)
 	}
 }
 

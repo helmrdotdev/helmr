@@ -5,8 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
 	"time"
 
 	"github.com/helmrdotdev/helmr/internal/api"
@@ -18,6 +16,7 @@ import (
 const defaultDeploymentBuildCompletionGrace = 30 * time.Second
 
 type ControlClient interface {
+	DiscoverRunLeases(ctx context.Context) (api.WorkerRunLeaseDiscoveryResponse, error)
 	LeaseDeploymentBuild(ctx context.Context) (api.WorkerDeploymentBuildLeaseResponse, error)
 	StartDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildStartResponse, error)
 	RenewDeploymentBuild(ctx context.Context, lease api.WorkerDeploymentBuildLease) (api.WorkerDeploymentBuildRenewResponse, error)
@@ -44,15 +43,10 @@ type ControlClient interface {
 	AdvanceWorkspacePtyInputDelivered(ctx context.Context, request api.WorkerWorkspacePtyInputDeliveredRequest) (api.WorkspacePtyEnvelope, error)
 	MarkWorkspacePtyResizeApplied(ctx context.Context, request api.WorkerWorkspacePtyResizeAppliedRequest) (api.WorkspacePtyEnvelope, error)
 	MarkWorkspacePtyClosed(ctx context.Context, request api.WorkerWorkspacePtyClosedRequest) (api.WorkspacePtyEnvelope, error)
-	LeaseRun(ctx context.Context) (api.WorkerRunLeaseResponse, error)
-	RejectRun(ctx context.Context, request api.WorkerRejectRunRequest) error
-	StartRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerStartResponse, error)
-	RenewRun(ctx context.Context, lease api.WorkerRunLease) (api.WorkerRenewResponse, error)
-	ReleaseRun(ctx context.Context, lease api.WorkerRunLease, result api.WorkerReleaseResult) (api.WorkerReleaseResponse, error)
 }
 
-type Executor interface {
-	Execute(ctx context.Context, leases api.WorkerRunLeaseProvider, run api.WorkerRun) api.WorkerReleaseResult
+type RunLeaseExecutor interface {
+	ExecuteRunLease(context.Context, api.WorkerRunLeaseWork) error
 }
 
 type DeploymentBuilder interface {
@@ -67,30 +61,9 @@ type Materializer interface {
 	RunWorkspaceMount(ctx context.Context, mount api.WorkerWorkspaceMount, client api.WorkerWorkspaceMaterializerControlClient) error
 }
 
-type runLeaseState struct {
-	mu    sync.RWMutex
-	lease api.WorkerRunLease
-}
-
-func newRunLeaseState(lease api.WorkerRunLease) *runLeaseState {
-	return &runLeaseState{lease: lease}
-}
-
-func (s *runLeaseState) CurrentWorkerRunLease() api.WorkerRunLease {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.lease
-}
-
-func (s *runLeaseState) set(lease api.WorkerRunLease) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.lease = lease
-}
-
 type Runner struct {
 	client                         ControlClient
-	executor                       Executor
+	runLeaseExecutor               RunLeaseExecutor
 	deploymentBuilder              DeploymentBuilder
 	buildPolicy                    BuildPolicy
 	materializer                   Materializer
@@ -148,7 +121,7 @@ func WithCapacity(resources *capacity.Ledger) Option {
 	}
 }
 
-func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
+func NewRunner(client ControlClient, executor RunLeaseExecutor, capabilities api.WorkerCapabilities, opts ...Option) (*Runner, error) {
 	if client == nil {
 		return nil, errors.New("worker client is required")
 	}
@@ -157,7 +130,7 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 	}
 	runner := &Runner{
 		client:                         client,
-		executor:                       executor,
+		runLeaseExecutor:               executor,
 		capabilities:                   capabilities,
 		pollEvery:                      2 * time.Second,
 		renewEvery:                     10 * time.Second,
@@ -197,90 +170,6 @@ func NewRunner(client ControlClient, executor Executor, capabilities api.WorkerC
 		runner.log = slog.Default()
 	}
 	return runner, nil
-}
-
-func (r *Runner) release(lease api.WorkerRunLease, result api.WorkerReleaseResult) error {
-	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), r.releaseWait)
-	defer cancelRelease()
-	retryEvery := r.renewEvery / 2
-	if retryEvery <= 0 || retryEvery > time.Second {
-		retryEvery = time.Second
-	}
-	var lastErr error
-	for {
-		if _, err := r.client.ReleaseRun(releaseCtx, lease, result); err == nil {
-			return nil
-		} else {
-			lastErr = err
-			if isStaleLease(err) {
-				return err
-			}
-		}
-		timer := time.NewTimer(retryEvery)
-		select {
-		case <-releaseCtx.Done():
-			timer.Stop()
-			if lastErr != nil {
-				return lastErr
-			}
-			return releaseCtx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
-type renewErrorKind int
-
-const (
-	renewFailed renewErrorKind = iota
-	renewStale
-	renewTimeout
-)
-
-type renewError struct {
-	kind renewErrorKind
-	err  error
-}
-
-func (e *renewError) Error() string {
-	return e.err.Error()
-}
-
-func (e *renewError) Unwrap() error {
-	return e.err
-}
-
-func (r *Runner) renewUntilDone(ctx context.Context, leaseState *runLeaseState) *renewError {
-	ticker := time.NewTicker(r.renewEvery)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-			renewCtx, cancelRenew := context.WithTimeout(ctx, r.renewWait)
-			renewed, err := r.client.RenewRun(renewCtx, leaseState.CurrentWorkerRunLease())
-			timedOut := errors.Is(renewCtx.Err(), context.DeadlineExceeded)
-			cancelRenew()
-			if err != nil {
-				if ctx.Err() != nil {
-					return nil
-				}
-				if timedOut || errors.Is(err, context.DeadlineExceeded) {
-					return &renewError{kind: renewTimeout, err: err}
-				}
-				if isStaleLease(err) {
-					return &renewError{kind: renewStale, err: err}
-				}
-				return &renewError{kind: renewFailed, err: err}
-			}
-			if strings.TrimSpace(renewed.Lease.ID) == "" {
-				return &renewError{kind: renewFailed, err: errors.New("renew run response did not include a lease")}
-			}
-			leaseState.set(renewed.Lease)
-		}
-	}
 }
 
 func isStaleLease(err error) bool {

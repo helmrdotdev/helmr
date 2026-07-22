@@ -481,6 +481,23 @@ func run(log *slog.Logger) error {
 		preparedRuntimePool.VerifierCgroupRoot = verifierCgroupRoot
 		log.Info("prepared runtime pool enabled", "pool_size", cfg.PreparedRuntimePoolSize)
 	}
+	runLeaseTasks := executor.GuestRunner{
+		Connector:             runtimeConnector,
+		CAS:                   store,
+		CheckpointEncryptor:   checkpointEncryptor,
+		WorkspaceMounts:       workspaceMountSessions,
+		Events:                controlClient,
+		TempDir:               filepath.Join(workDir, "tmp"),
+		ArtifactCacheDir:      artifactCacheDir,
+		ArtifactCacheMaxBytes: artifactCacheMaxBytes,
+		Substrates:            substrateResolver,
+		RuntimeSubstrates:     controlClient,
+		Log:                   log,
+		Stdout:                os.Stdout,
+		Stderr:                os.Stderr,
+		Capacity:              hostCapacity,
+		RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
+	}
 	runner, err := workerdaemon.NewRunner(
 		controlClient,
 		executor.Executor{
@@ -491,23 +508,9 @@ func run(log *slog.Logger) error {
 			RunWaits: executor.ControlRunWaits{
 				Client: controlClient,
 			},
-			Runner: executor.GuestRunner{
-				Connector:             runtimeConnector,
-				CAS:                   store,
-				CheckpointEncryptor:   checkpointEncryptor,
-				WorkspaceMounts:       workspaceMountSessions,
-				Events:                controlClient,
-				TempDir:               filepath.Join(workDir, "tmp"),
-				ArtifactCacheDir:      artifactCacheDir,
-				ArtifactCacheMaxBytes: artifactCacheMaxBytes,
-				Substrates:            substrateResolver,
-				RuntimeSubstrates:     controlClient,
-				Log:                   log,
-				Stdout:                os.Stdout,
-				Stderr:                os.Stderr,
-				Capacity:              hostCapacity,
-				RuntimeScratchBytes:   workerCapabilities.VMMaxScratchBytes,
-			},
+			Runner:        runLeaseTasks,
+			RunLeases:     controlClient,
+			RunLeaseTasks: runLeaseTasks,
 		},
 		workerCapabilities,
 		workerdaemon.WithCapacity(hostCapacity),

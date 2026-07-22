@@ -3,7 +3,6 @@ package worker
 import (
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/capacity"
-	"github.com/helmrdotdev/helmr/internal/compute"
 )
 
 func testCapacity(t interface {
@@ -34,13 +33,5 @@ func testCapabilities() api.WorkerCapabilities {
 		VMMilliCPU: 2000, VMMemoryMiB: 2048,
 		ScratchBytes: 32768 << 20, VMMaxScratchBytes: 20480 << 20,
 		Network: api.WorkerNetworkCapabilities{Internet: true, BlockInternet: true, DenyCIDRs: true},
-	}
-}
-
-func testRequirements() compute.RunRuntimeRequirements {
-	return compute.RunRuntimeRequirements{
-		Resources: compute.ResourceVector{MilliCPU: 1000, MemoryMiB: 512, DiskMiB: 1024, Slots: 1},
-		Runtime:   compute.RuntimeSelector{ID: "sha256:runtime", Arch: "aarch64", ABI: "helmr.firecracker.snapshot.v0", KernelDigest: "sha256:kernel", InitramfsDigest: "sha256:initramfs", RootfsDigest: "sha256:rootfs", CNIProfile: "helmr/v0"},
-		Network:   compute.DefaultNetworkPolicy(),
 	}
 }

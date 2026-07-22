@@ -16,7 +16,11 @@ import (
 	"github.com/helmrdotdev/helmr/internal/vm"
 )
 
-type runConsumer struct{ runner *Runner }
+type runConsumer struct {
+	runner *Runner
+	mu     sync.Mutex
+	active map[api.WorkerRunLeaseWork]struct{}
+}
 type buildConsumer struct{ runner *Runner }
 type workspaceConsumer struct{ runner *Runner }
 
@@ -45,92 +49,56 @@ func (s *buildLeaseState) set(lease api.WorkerDeploymentBuildLease) {
 	s.mu.Unlock()
 }
 
-func NewRunConsumer(runner *Runner) Consumer   { return runConsumer{runner: runner} }
+func NewRunConsumer(runner *Runner) Consumer {
+	return &runConsumer{runner: runner, active: make(map[api.WorkerRunLeaseWork]struct{})}
+}
 func NewBuildConsumer(runner *Runner) Consumer { return buildConsumer{runner: runner} }
 func NewWorkspaceConsumer(runner *Runner) Consumer {
 	return workspaceConsumer{runner: runner}
 }
 
-func (c runConsumer) Claim(ctx context.Context) (Work, bool, error) {
-	r := c.runner
-	leased, err := r.client.LeaseRun(ctx)
+func (c *runConsumer) Claim(ctx context.Context) (Work, bool, error) {
+	discovered, err := c.runner.client.DiscoverRunLeases(ctx)
 	if err != nil {
-		return nil, false, fmt.Errorf("lease run: %w", err)
+		return nil, false, fmt.Errorf("discover Run Leases: %w", err)
 	}
-	if leased.Lease == nil || leased.Run == nil {
+	c.mu.Lock()
+	var selected api.WorkerRunLeaseWork
+	for _, work := range discovered.Items {
+		if work.LeaseID == "" || work.LeaseSequence <= 0 {
+			c.mu.Unlock()
+			return nil, false, errors.New("discovered Run Lease identity is invalid")
+		}
+		if _, running := c.active[work]; running {
+			continue
+		}
+		selected = work
+		c.active[work] = struct{}{}
+		break
+	}
+	c.mu.Unlock()
+	if selected.LeaseID == "" {
 		return nil, false, nil
 	}
-	lease, run := *leased.Lease, *leased.Run
-	if err := validateLeaseRequirements(r.capabilities, lease, run); err != nil {
-		payload, _ := json.Marshal(map[string]string{"message": err.Error()})
-		if rejectErr := r.client.RejectRun(ctx, api.WorkerRejectRunRequest{Lease: lease, ReasonCode: "requirements_unsupported", Error: payload}); rejectErr != nil && !isStaleLease(rejectErr) {
-			return nil, true, rejectErr
-		}
-		return func(context.Context) error { return nil }, true, nil
-	}
 	return func(workCtx context.Context) error {
-		started, err := r.client.StartRun(workCtx, lease)
-		if err != nil {
+		defer func() {
+			c.mu.Lock()
+			delete(c.active, selected)
+			c.mu.Unlock()
+		}()
+		if err := c.runner.runLeaseExecutor.ExecuteRunLease(workCtx, selected); err != nil {
 			if isStaleLease(err) {
 				return nil
 			}
-			return fmt.Errorf("start run %s: %w", lease.RunID, err)
-		}
-		return r.executeStartedRun(workCtx, started.Lease, run)
-	}, true, nil
-}
-
-func (r *Runner) executeStartedRun(ctx context.Context, lease api.WorkerRunLease, run api.WorkerRun) error {
-	leaseState := newRunLeaseState(lease)
-	execCtx, cancelExec := context.WithCancel(ctx)
-	defer cancelExec()
-	renewDone := make(chan *renewError, 1)
-	go func() { renewDone <- r.renewUntilDone(execCtx, leaseState) }()
-	resultDone := make(chan api.WorkerReleaseResult, 1)
-	go func() { resultDone <- r.executor.Execute(execCtx, leaseState, run) }()
-	var result api.WorkerReleaseResult
-	var renewErr *renewError
-	renewObserved := false
-	select {
-	case result = <-resultDone:
-	case renewErr = <-renewDone:
-		renewObserved = true
-		cancelExec()
-		if renewErr != nil {
-			result = <-resultDone
-			if renewErr.kind == renewStale {
-				return nil
-			}
-			if renewErr.kind == renewTimeout && result.Kind == "" {
-				message := fmt.Sprintf("worker lease renew timed out: %v", renewErr.err)
-				result = api.WorkerReleaseResult{Kind: "failed", Error: &message}
-			}
-			if renewErr.kind == renewFailed {
-				return fmt.Errorf("renew run %s: %w", lease.RunID, renewErr.err)
-			}
-		} else {
-			result = <-resultDone
-		}
-	}
-	if result.Kind == "detached" {
-		cancelExec()
-		if !renewObserved {
-			<-renewDone
+			return fmt.Errorf(
+				"execute Run Lease %s/%d: %w",
+				selected.LeaseID,
+				selected.LeaseSequence,
+				err,
+			)
 		}
 		return nil
-	}
-	if err := r.release(leaseState.CurrentWorkerRunLease(), result); err != nil {
-		cancelExec()
-		if !renewObserved {
-			<-renewDone
-		}
-		return fmt.Errorf("release run %s: %w", lease.RunID, err)
-	}
-	cancelExec()
-	if !renewObserved {
-		<-renewDone
-	}
-	return nil
+	}, true, nil
 }
 
 func (c buildConsumer) Claim(ctx context.Context) (Work, bool, error) {
