@@ -367,7 +367,37 @@ type WorkerRunLeaseClaimResponse struct {
 }
 
 type WorkerRunStartRequest struct {
-	Lease WorkerRunLeaseReceipt `json:"lease"`
+	Lease   WorkerRunLeaseReceipt  `json:"lease"`
+	Fresh   *WorkerRunStartFresh   `json:"fresh,omitempty"`
+	Restore *WorkerRunStartRestore `json:"restore,omitempty"`
+	Attach  *WorkerRunStartAttach  `json:"attach,omitempty"`
+}
+
+type WorkerRunStartFresh struct{}
+
+type WorkerRunStartRestore struct {
+	RunWaitID            string `json:"run_wait_id"`
+	CheckpointID         string `json:"checkpoint_id"`
+	ResumeAttachID       string `json:"resume_attach_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
+}
+
+type WorkerRunStartAttach struct {
+	Child  *WorkerRunStartChildAttach  `json:"child,omitempty"`
+	Parent *WorkerRunStartParentAttach `json:"parent,omitempty"`
+}
+
+type WorkerRunStartChildAttach struct {
+	RunWaitID      string `json:"run_wait_id"`
+	CheckpointID   string `json:"checkpoint_id"`
+	ResumeAttachID string `json:"resume_attach_id"`
+}
+
+type WorkerRunStartParentAttach struct {
+	RunWaitID            string `json:"run_wait_id"`
+	CheckpointID         string `json:"checkpoint_id"`
+	ResumeAttachID       string `json:"resume_attach_id"`
+	ResumeRequestVersion int64  `json:"resume_request_version"`
 }
 
 type WorkerRunStartResponse struct {

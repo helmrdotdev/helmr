@@ -12,8 +12,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
-
 type runLeaseClaimAuthority struct {
 	mode                 runLeaseClaimMode
 	restoreSource        runLeaseRestoreSource

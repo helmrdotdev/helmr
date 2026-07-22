@@ -195,10 +195,10 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 	t.Helper()
 	work := fixture.addWork(t, ctx, "starting", time.Now().Add(-time.Minute))
 	locators := fixture.freshRunStartLocators(t, ctx, work)
-	if _, err := fixture.queries.MarkFreshRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators)); err != nil {
+	if _, err := fixture.queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.MarkFreshRunRunning(ctx, MarkFreshRunRunningParams{
+	if _, err := fixture.queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
 		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
@@ -206,10 +206,10 @@ func (fixture runLeaseClaimFixture) runningRunLogParams(
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.TouchFreshRunWorkspace(ctx, TouchFreshRunWorkspaceParams{
+	if _, err := fixture.queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
 		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1, RunID: workUUID(work.runID),
+		OwnershipGeneration: 1, WriterGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}

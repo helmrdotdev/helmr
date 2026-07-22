@@ -31,11 +31,11 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	queries := New(tx)
-	lease, err := queries.MarkFreshRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators))
+	lease, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators))
 	if err != nil {
 		t.Fatal(err)
 	}
-	run, err := queries.MarkFreshRunRunning(ctx, MarkFreshRunRunningParams{
+	run, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
 		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
@@ -44,10 +44,10 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	workspace, err := queries.TouchFreshRunWorkspace(ctx, TouchFreshRunWorkspaceParams{
+	workspace, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
 		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1, RunID: workUUID(work.runID),
+		OwnershipGeneration: 1, WriterGeneration: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -77,7 +77,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	if replay.RunID != locators.RunID {
 		t.Fatalf("replay Run = %s, want %s", pgvalue.UUIDString(replay.RunID), pgvalue.UUIDString(locators.RunID))
 	}
-	if _, err := fixture.queries.MarkFreshRunLeaseRunning(
+	if _, err := fixture.queries.MarkRunLeaseRunning(
 		ctx,
 		fixture.freshRunLeaseRunningParams(work, replay),
 	); !errors.Is(err, pgx.ErrNoRows) {
@@ -93,7 +93,7 @@ func TestFreshRunStartQueriesCommitAndReplay(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fixture.queries.GetFreshRunLeaseStartLocators(ctx, GetFreshRunLeaseStartLocatorsParams{
+	if _, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
 		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
@@ -113,10 +113,10 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 		t.Fatal(err)
 	}
 	queries := New(tx)
-	if _, err := queries.MarkFreshRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators)); err != nil {
+	if _, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, locators)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkFreshRunRunning(ctx, MarkFreshRunRunningParams{
+	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
 		WorkspaceID: locators.WorkspaceID, ExpectedStateVersion: 1,
@@ -124,10 +124,10 @@ func TestFreshRunStartQueriesRollbackTogether(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchFreshRunWorkspace(ctx, TouchFreshRunWorkspaceParams{
+	if _, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
 		ID: locators.WorkspaceID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 2, RunID: workUUID(work.runID),
+		OwnershipGeneration: 1, WriterGeneration: 2,
 	}); !errors.Is(err, pgx.ErrNoRows) {
 		t.Fatalf("mismatched Workspace fence error = %v, want no rows", err)
 	}
@@ -180,10 +180,10 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 		t.Fatal(err)
 	}
 	queries := New(tx)
-	if _, err := queries.MarkFreshRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, start)); err != nil {
+	if _, err := queries.MarkRunLeaseRunning(ctx, fixture.freshRunLeaseRunningParams(work, start)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.MarkFreshRunRunning(ctx, MarkFreshRunRunningParams{
+	if _, err := queries.MarkRunRunning(ctx, MarkRunRunningParams{
 		ID: workUUID(work.runID), OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
 		WorkspaceID: start.WorkspaceID, ExpectedStateVersion: 1,
@@ -191,10 +191,10 @@ func TestRunEntrypointQueriesCommitOnceAndRejectExpiredLease(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := queries.TouchFreshRunWorkspace(ctx, TouchFreshRunWorkspaceParams{
+	if _, err := queries.TouchRunWorkspaceActivity(ctx, TouchRunWorkspaceActivityParams{
 		ID: start.WorkspaceID, OrgID: workUUID(fixture.orgID),
 		ProjectID: workUUID(fixture.projectID), EnvironmentID: workUUID(fixture.environmentID),
-		OwnershipGeneration: 1, WriterGeneration: 1, RunID: workUUID(work.runID),
+		OwnershipGeneration: 1, WriterGeneration: 1,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -268,9 +268,9 @@ func (fixture runLeaseClaimFixture) freshRunStartLocators(
 	t *testing.T,
 	ctx context.Context,
 	work runLeaseWork,
-) GetFreshRunLeaseStartLocatorsRow {
+) GetRunLeaseStartLocatorsRow {
 	t.Helper()
-	locators, err := fixture.queries.GetFreshRunLeaseStartLocators(ctx, GetFreshRunLeaseStartLocatorsParams{
+	locators, err := fixture.queries.GetRunLeaseStartLocators(ctx, GetRunLeaseStartLocatorsParams{
 		ID: workUUID(work.leaseID), LeaseSequence: 1,
 		WorkerGroupID: runLeaseTestWorkerGroup, WorkerInstanceID: workUUID(fixture.workerID),
 		WorkerEpoch: 1, WorkerProtocolVersion: runLeaseTestProtocol,
@@ -306,9 +306,9 @@ func (fixture runLeaseClaimFixture) runEntrypointLocatorParams(
 
 func (fixture runLeaseClaimFixture) freshRunLeaseRunningParams(
 	work runLeaseWork,
-	locators GetFreshRunLeaseStartLocatorsRow,
-) MarkFreshRunLeaseRunningParams {
-	return MarkFreshRunLeaseRunningParams{
+	locators GetRunLeaseStartLocatorsRow,
+) MarkRunLeaseRunningParams {
+	return MarkRunLeaseRunningParams{
 		ID: workUUID(work.leaseID), RunID: workUUID(work.runID),
 		WorkspaceID: locators.WorkspaceID, AttemptNumber: locators.AttemptNumber,
 		LeaseSequence: 1, WorkerGroupID: runLeaseTestWorkerGroup,

@@ -838,7 +838,8 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 					t.Fatal(err)
 				}
-				if request.Lease != receipt {
+				if request.Lease != receipt || request.Fresh == nil ||
+					request.Restore != nil || request.Attach != nil {
 					t.Fatalf("start request = %+v", request)
 				}
 				_ = json.NewEncoder(w).Encode(
@@ -948,7 +949,7 @@ func TestWorkerRunLeaseClaimProtocolClient(t *testing.T) {
 	}
 	started, err := client.AcknowledgeRunStart(
 		context.Background(),
-		receipt,
+		api.WorkerRunStartRequest{Lease: receipt, Fresh: &api.WorkerRunStartFresh{}},
 	)
 	if err != nil {
 		t.Fatal(err)

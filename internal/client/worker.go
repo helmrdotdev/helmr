@@ -70,13 +70,13 @@ func (c *Client) ClaimRunLease(
 
 func (c *Client) AcknowledgeRunStart(
 	ctx context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	request api.WorkerRunStartRequest,
 ) (api.WorkerRunStartResponse, error) {
 	var response api.WorkerRunStartResponse
 	if err := c.postWorkerJSON(
 		ctx,
 		"/api/worker/leases/start",
-		api.WorkerRunStartRequest{Lease: lease},
+		request,
 		&response,
 	); err != nil {
 		return api.WorkerRunStartResponse{}, err

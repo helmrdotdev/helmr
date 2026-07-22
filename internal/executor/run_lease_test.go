@@ -409,7 +409,7 @@ func (control *testRunLeaseControl) ClaimRunLease(
 
 func (control *testRunLeaseControl) AcknowledgeRunStart(
 	context.Context,
-	api.WorkerRunLeaseReceipt,
+	api.WorkerRunStartRequest,
 ) (api.WorkerRunStartResponse, error) {
 	return api.WorkerRunStartResponse{}, nil
 }

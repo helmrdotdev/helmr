@@ -32,7 +32,7 @@ const (
 type FreshProgramControl interface {
 	AcknowledgeRunStart(
 		context.Context,
-		api.WorkerRunLeaseReceipt,
+		api.WorkerRunStartRequest,
 	) (api.WorkerRunStartResponse, error)
 	AcknowledgeRunEntrypoint(
 		context.Context,
@@ -360,7 +360,10 @@ func (r GuestRunner) startFreshProgram(
 		var requestErr error
 		startResponse, requestErr = control.AcknowledgeRunStart(
 			requestCtx,
-			claim.Lease,
+			api.WorkerRunStartRequest{
+				Lease: claim.Lease,
+				Fresh: &api.WorkerRunStartFresh{},
+			},
 		)
 		return requestErr
 	}); err != nil {

@@ -21,7 +21,7 @@ var errRunLeaseAuthorityLapsed = errors.New("Run Lease authority lapsed")
 
 type RunLeaseControl interface {
 	ClaimRunLease(context.Context, api.WorkerRunLeaseWork) (api.WorkerRunLeaseClaimResponse, error)
-	AcknowledgeRunStart(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunStartResponse, error)
+	AcknowledgeRunStart(context.Context, api.WorkerRunStartRequest) (api.WorkerRunStartResponse, error)
 	AcknowledgeRunEntrypoint(context.Context, api.WorkerRunEntrypointRequest) error
 	RenewRunLease(context.Context, api.WorkerRunLeaseReceipt) (api.WorkerRunLeaseRenewResponse, error)
 	BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error)

@@ -613,12 +613,13 @@ func (s *testFreshProgramEventSink) snapshot() []testFreshProgramLog {
 
 func (c *testFreshProgramControl) AcknowledgeRunStart(
 	_ context.Context,
-	lease api.WorkerRunLeaseReceipt,
+	request api.WorkerRunStartRequest,
 ) (api.WorkerRunStartResponse, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.calls = append(c.calls, "start")
-	if !equalRunLeaseReceipt(lease, c.lease) {
+	if request.Fresh == nil || request.Restore != nil || request.Attach != nil ||
+		!equalRunLeaseReceipt(request.Lease, c.lease) {
 		return api.WorkerRunStartResponse{}, errors.New(
 			"unexpected start receipt",
 		)

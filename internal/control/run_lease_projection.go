@@ -13,15 +13,6 @@ import (
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
-type runLeaseClaimMode string
-
-const (
-	runLeaseClaimFresh        runLeaseClaimMode = "fresh"
-	runLeaseClaimRestore      runLeaseClaimMode = "restore"
-	runLeaseClaimAttachChild  runLeaseClaimMode = "attach_child"
-	runLeaseClaimAttachParent runLeaseClaimMode = "attach_parent"
-)
-
 type runLeaseRestoreSource string
 
 const (

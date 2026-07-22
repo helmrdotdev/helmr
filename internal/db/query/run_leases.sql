@@ -186,7 +186,7 @@ SELECT run_leases.org_id,
    AND run_leases.expires_at > transaction_timestamp()
    AND (run_leases.state = 'starting' OR worker_instances.state = 'active');
 
--- name: GetFreshRunLeaseStartLocators :one
+-- name: GetRunLeaseStartLocators :one
 SELECT run_leases.org_id,
        run_leases.project_id,
        run_leases.environment_id,
@@ -197,17 +197,29 @@ SELECT run_leases.org_id,
        run_leases.runtime_instance_id,
        run_leases.network_slot_id,
        run_leases.network_slot_generation,
+       runs.actor_id,
+       runs.parent_run_id,
        workspace_leases.id AS workspace_lease_id,
-       workspace_leases.workspace_mount_id
+       workspace_leases.workspace_mount_id,
+       run_waits.id AS run_wait_id,
+       CASE
+           WHEN run_waits.condition_state = 'completed'
+               THEN run_waits.handoff_resume_checkpoint_id
+           ELSE run_waits.suspend_checkpoint_id
+       END::uuid AS run_wait_checkpoint_id,
+       run_waits.resume_attach_id,
+       run_waits.resume_request_version,
+       run_waits.child_run_id AS resume_child_run_id,
+       run_waits.child_parent_owned AS resume_child_parent_owned,
+       enclosing_waits.id AS enclosing_wait_id,
+       enclosing_waits.suspend_checkpoint_id AS enclosing_checkpoint_id,
+       enclosing_waits.resume_attach_id AS enclosing_resume_attach_id
   FROM run_leases
   JOIN runs
     ON runs.id = run_leases.run_id
    AND runs.workspace_id = run_leases.workspace_id
    AND runs.current_attempt_number = run_leases.attempt_number
    AND runs.current_run_lease_id = run_leases.id
-   AND runs.entrypoint_kind = 'task'
-   AND runs.actor_id IS NULL
-   AND runs.parent_run_id IS NULL
    AND (
        (run_leases.state = 'starting' AND runs.status = 'queued')
        OR (run_leases.state = 'running' AND runs.status = 'running')
@@ -230,6 +242,25 @@ SELECT run_leases.org_id,
    AND workspace_leases.workspace_id = run_leases.workspace_id
    AND workspace_leases.state = 'active'
    AND workspace_leases.expires_at > transaction_timestamp()
+  LEFT JOIN run_waits
+    ON run_waits.run_id = runs.id
+   AND run_waits.attempt_number = runs.current_attempt_number
+   AND run_waits.workspace_id = runs.workspace_id
+   AND run_waits.current_run_lease_id = run_leases.id
+   AND run_waits.prior_run_lease_id IS NOT NULL
+   AND run_waits.prior_run_lease_id IS DISTINCT FROM run_leases.id
+   AND run_waits.suspension_state IN ('resuming', 'released')
+  LEFT JOIN run_waits AS enclosing_waits
+    ON enclosing_waits.run_id = runs.parent_run_id
+   AND enclosing_waits.workspace_id = runs.workspace_id
+   AND enclosing_waits.child_run_id = runs.id
+   AND enclosing_waits.child_parent_owned IS TRUE
+   AND (
+       (run_leases.state = 'starting'
+        AND enclosing_waits.condition_state = 'pending'
+        AND enclosing_waits.suspension_state = 'parked')
+       OR run_leases.state = 'running'
+   )
  WHERE run_leases.id = sqlc.arg(id)
    AND run_leases.lease_sequence = sqlc.arg(lease_sequence)
    AND run_leases.worker_group_id = sqlc.arg(worker_group_id)
@@ -239,16 +270,7 @@ SELECT run_leases.org_id,
    AND run_leases.state IN ('starting', 'running')
    AND run_leases.expires_at > transaction_timestamp()
    AND (run_leases.state = 'running'
-        OR run_leases.start_deadline_at > transaction_timestamp())
-   AND NOT EXISTS (
-       SELECT 1
-         FROM run_waits
-        WHERE run_waits.run_id = run_leases.run_id
-          AND run_waits.attempt_number = run_leases.attempt_number
-          AND run_waits.workspace_id = run_leases.workspace_id
-          AND run_waits.current_run_lease_id = run_leases.id
-          AND run_waits.suspension_state = 'resuming'
-   );
+        OR run_leases.start_deadline_at > transaction_timestamp());
 
 -- name: GetRunLeaseSecretDeliveryLocators :one
 SELECT run_leases.environment_id,
@@ -481,7 +503,7 @@ SELECT *
    AND expires_at > transaction_timestamp()
  FOR UPDATE;
 
--- name: LockFreshRunStartLease :one
+-- name: LockRunStartLease :one
 SELECT *
   FROM run_leases
  WHERE id = sqlc.arg(id)
@@ -595,6 +617,15 @@ SELECT *
    AND attempt_number = sqlc.arg(attempt_number)
    AND workspace_id = sqlc.arg(workspace_id)
    AND current_run_lease_id = sqlc.arg(current_run_lease_id)
+ FOR UPDATE;
+
+-- name: LockRunStartWait :one
+SELECT *
+  FROM run_waits
+ WHERE id = sqlc.arg(id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND workspace_id = sqlc.arg(workspace_id)
  FOR UPDATE;
 
 -- name: LockSameWorkspaceHandoffWait :one
@@ -721,7 +752,7 @@ UPDATE runs
        + ((max_active_duration_ms - active_elapsed_ms) * interval '1 millisecond')
 RETURNING *;
 
--- name: MarkFreshRunLeaseRunning :one
+-- name: MarkRunLeaseRunning :one
 UPDATE run_leases
    SET state = 'running',
        started_at = transaction_timestamp(),
@@ -744,7 +775,7 @@ UPDATE run_leases
    AND expires_at > transaction_timestamp()
 RETURNING *;
 
--- name: MarkFreshRunRunning :one
+-- name: MarkRunRunning :one
 UPDATE runs
    SET status = 'running',
        started_at = coalesce(started_at, transaction_timestamp()),
@@ -763,7 +794,7 @@ UPDATE runs
    AND active_started_at IS NULL
 RETURNING *;
 
--- name: TouchFreshRunWorkspace :one
+-- name: TouchRunWorkspaceActivity :one
 UPDATE workspaces
    SET last_activity_at = greatest(last_activity_at, transaction_timestamp()),
        updated_at = transaction_timestamp()
@@ -773,8 +804,6 @@ UPDATE workspaces
    AND environment_id = sqlc.arg(environment_id)
    AND ownership_generation = sqlc.arg(ownership_generation)
    AND writer_generation = sqlc.arg(writer_generation)
-   AND owner_run_id = sqlc.arg(run_id)
-   AND owner_actor_id IS NULL
    AND state = 'active'
    AND desired_state = 'active'
 RETURNING *;
