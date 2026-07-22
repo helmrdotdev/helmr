@@ -140,19 +140,24 @@ selected_token AS (
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'completed',
-           condition_result = COALESCE(selected_token.completion_data, 'null'::jsonb),
-           condition_terminal_at = COALESCE(selected_token.completed_at, now()),
-           updated_at = now()
-      FROM selected_token
-     WHERE run_waits.environment_id = selected_token.environment_id
-       AND run_waits.token_id = selected_token.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-       AND selected_token.state = 'completed'
-    RETURNING run_waits.id
+reconciliation_intent AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           completed.id::text,
+           jsonb_build_object(
+               'environmentId', completed.environment_id::text,
+               'tokenId', completed.id::text
+           ),
+           transaction_timestamp()
+      FROM completed
+    RETURNING id
 )
 SELECT selected_token.*,
        (
@@ -164,7 +169,7 @@ SELECT selected_token.*,
            AND selected_token.completion_fingerprint <> COALESCE(sqlc.arg(completion_fingerprint)::text, '')
        )::boolean AS completion_conflict,
        selected_token.is_expired AS completion_expired,
-       (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
+       EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token;
 
 -- name: CancelToken :one
@@ -181,20 +186,26 @@ WITH cancelled AS (
        AND tokens.timeout_at > now()
     RETURNING tokens.*
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'cancelled',
-           condition_terminal_at = now(),
-           condition_reason_code = 'token_cancelled',
-           updated_at = now()
-     FROM cancelled
-     WHERE run_waits.environment_id = cancelled.environment_id
-       AND run_waits.token_id = cancelled.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-    RETURNING run_waits.id
+reconciliation_intent AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           cancelled.id::text,
+           jsonb_build_object(
+               'environmentId', cancelled.environment_id::text,
+               'tokenId', cancelled.id::text
+           ),
+           transaction_timestamp()
+      FROM cancelled
+    RETURNING id
 )
-SELECT cancelled.*, (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
+SELECT cancelled.*, EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM cancelled;
 
 -- name: ExpireDueTokens :many
@@ -208,20 +219,27 @@ WITH expired AS (
        AND tokens.timeout_at <= now()
     RETURNING tokens.*
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'failed',
-           condition_terminal_at = now(),
-           condition_reason_code = 'token_expired',
-           updated_at = now()
+reconciliation_intents AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           expired.id::text,
+           jsonb_build_object(
+               'environmentId', expired.environment_id::text,
+               'tokenId', expired.id::text
+           ),
+           transaction_timestamp()
       FROM expired
-     WHERE run_waits.environment_id = expired.environment_id
-       AND run_waits.token_id = expired.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-    RETURNING run_waits.id
+    RETURNING partition_key
 )
-SELECT *
+SELECT expired.*
   FROM expired
- WHERE (SELECT count(*) FROM matched_wait) >= 0
+  JOIN reconciliation_intents
+    ON reconciliation_intents.partition_key = expired.id::text
  ORDER BY expired.timeout_at ASC, expired.id ASC;

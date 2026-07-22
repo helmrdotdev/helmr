@@ -25,20 +25,26 @@ WITH cancelled AS (
        AND tokens.timeout_at > now()
     RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'cancelled',
-           condition_terminal_at = now(),
-           condition_reason_code = 'token_cancelled',
-           updated_at = now()
-     FROM cancelled
-     WHERE run_waits.environment_id = cancelled.environment_id
-       AND run_waits.token_id = cancelled.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-    RETURNING run_waits.id
+reconciliation_intent AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           cancelled.id::text,
+           jsonb_build_object(
+               'environmentId', cancelled.environment_id::text,
+               'tokenId', cancelled.id::text
+           ),
+           transaction_timestamp()
+      FROM cancelled
+    RETURNING id
 )
-SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
+SELECT cancelled.id, cancelled.public_id, cancelled.org_id, cancelled.project_id, cancelled.environment_id, cancelled.state, cancelled.timeout_at, cancelled.idempotency_key, cancelled.idempotency_key_expires_at, cancelled.create_request_fingerprint, cancelled.callback_key_id, cancelled.callback_secret_fingerprint, cancelled.callback_secret_created_at, cancelled.completion_fingerprint, cancelled.completion_data, cancelled.completion_content_type, cancelled.metadata, cancelled.tags, cancelled.created_at, cancelled.updated_at, cancelled.completed_at, cancelled.expired_at, cancelled.cancelled_at, EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM cancelled
 `
 
@@ -73,7 +79,7 @@ type CancelTokenRow struct {
 	CompletedAt               pgtype.Timestamptz `json:"completed_at"`
 	ExpiredAt                 pgtype.Timestamptz `json:"expired_at"`
 	CancelledAt               pgtype.Timestamptz `json:"cancelled_at"`
-	ResolvedWaitCount         int64              `json:"resolved_wait_count"`
+	ReconciliationEnqueued    bool               `json:"reconciliation_enqueued"`
 }
 
 func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (CancelTokenRow, error) {
@@ -108,7 +114,7 @@ func (q *Queries) CancelToken(ctx context.Context, arg CancelTokenParams) (Cance
 		&i.CompletedAt,
 		&i.ExpiredAt,
 		&i.CancelledAt,
-		&i.ResolvedWaitCount,
+		&i.ReconciliationEnqueued,
 	)
 	return i, err
 }
@@ -149,19 +155,24 @@ selected_token AS (
       FROM target
      WHERE NOT EXISTS (SELECT 1 FROM completed)
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'completed',
-           condition_result = COALESCE(selected_token.completion_data, 'null'::jsonb),
-           condition_terminal_at = COALESCE(selected_token.completed_at, now()),
-           updated_at = now()
-      FROM selected_token
-     WHERE run_waits.environment_id = selected_token.environment_id
-       AND run_waits.token_id = selected_token.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-       AND selected_token.state = 'completed'
-    RETURNING run_waits.id
+reconciliation_intent AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           completed.id::text,
+           jsonb_build_object(
+               'environmentId', completed.environment_id::text,
+               'tokenId', completed.id::text
+           ),
+           transaction_timestamp()
+      FROM completed
+    RETURNING id
 )
 SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selected_token.project_id, selected_token.environment_id, selected_token.state, selected_token.timeout_at, selected_token.idempotency_key, selected_token.idempotency_key_expires_at, selected_token.create_request_fingerprint, selected_token.callback_key_id, selected_token.callback_secret_fingerprint, selected_token.callback_secret_created_at, selected_token.completion_fingerprint, selected_token.completion_data, selected_token.completion_content_type, selected_token.metadata, selected_token.tags, selected_token.created_at, selected_token.updated_at, selected_token.completed_at, selected_token.expired_at, selected_token.cancelled_at, selected_token.was_already_completed, selected_token.is_expired,
        (
@@ -173,7 +184,7 @@ SELECT selected_token.id, selected_token.public_id, selected_token.org_id, selec
            AND selected_token.completion_fingerprint <> COALESCE($1::text, '')
        )::boolean AS completion_conflict,
        selected_token.is_expired AS completion_expired,
-       (SELECT count(*) FROM matched_wait)::bigint AS resolved_wait_count
+       EXISTS (SELECT 1 FROM reconciliation_intent) AS reconciliation_enqueued
   FROM selected_token
 `
 
@@ -216,7 +227,7 @@ type CompleteTokenRow struct {
 	AlreadyCompleted          bool               `json:"already_completed"`
 	CompletionConflict        bool               `json:"completion_conflict"`
 	CompletionExpired         bool               `json:"completion_expired"`
-	ResolvedWaitCount         int64              `json:"resolved_wait_count"`
+	ReconciliationEnqueued    bool               `json:"reconciliation_enqueued"`
 }
 
 func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (CompleteTokenRow, error) {
@@ -259,7 +270,7 @@ func (q *Queries) CompleteToken(ctx context.Context, arg CompleteTokenParams) (C
 		&i.AlreadyCompleted,
 		&i.CompletionConflict,
 		&i.CompletionExpired,
-		&i.ResolvedWaitCount,
+		&i.ReconciliationEnqueued,
 	)
 	return i, err
 }
@@ -428,22 +439,29 @@ WITH expired AS (
        AND tokens.timeout_at <= now()
     RETURNING tokens.id, tokens.public_id, tokens.org_id, tokens.project_id, tokens.environment_id, tokens.state, tokens.timeout_at, tokens.idempotency_key, tokens.idempotency_key_expires_at, tokens.create_request_fingerprint, tokens.callback_key_id, tokens.callback_secret_fingerprint, tokens.callback_secret_created_at, tokens.completion_fingerprint, tokens.completion_data, tokens.completion_content_type, tokens.metadata, tokens.tags, tokens.created_at, tokens.updated_at, tokens.completed_at, tokens.expired_at, tokens.cancelled_at
 ),
-matched_wait AS (
-    UPDATE run_waits
-       SET condition_state = 'failed',
-           condition_terminal_at = now(),
-           condition_reason_code = 'token_expired',
-           updated_at = now()
+reconciliation_intents AS (
+    INSERT INTO outbox_messages (
+        lane,
+        topic,
+        partition_key,
+        payload,
+        available_at
+    )
+    SELECT 'control',
+           'token.reconcile',
+           expired.id::text,
+           jsonb_build_object(
+               'environmentId', expired.environment_id::text,
+               'tokenId', expired.id::text
+           ),
+           transaction_timestamp()
       FROM expired
-     WHERE run_waits.environment_id = expired.environment_id
-       AND run_waits.token_id = expired.id
-       AND run_waits.kind = 'token'
-       AND run_waits.condition_state = 'pending'
-    RETURNING run_waits.id
+    RETURNING partition_key
 )
-SELECT id, public_id, org_id, project_id, environment_id, state, timeout_at, idempotency_key, idempotency_key_expires_at, create_request_fingerprint, callback_key_id, callback_secret_fingerprint, callback_secret_created_at, completion_fingerprint, completion_data, completion_content_type, metadata, tags, created_at, updated_at, completed_at, expired_at, cancelled_at
+SELECT expired.id, expired.public_id, expired.org_id, expired.project_id, expired.environment_id, expired.state, expired.timeout_at, expired.idempotency_key, expired.idempotency_key_expires_at, expired.create_request_fingerprint, expired.callback_key_id, expired.callback_secret_fingerprint, expired.callback_secret_created_at, expired.completion_fingerprint, expired.completion_data, expired.completion_content_type, expired.metadata, expired.tags, expired.created_at, expired.updated_at, expired.completed_at, expired.expired_at, expired.cancelled_at
   FROM expired
- WHERE (SELECT count(*) FROM matched_wait) >= 0
+  JOIN reconciliation_intents
+    ON reconciliation_intents.partition_key = expired.id::text
  ORDER BY expired.timeout_at ASC, expired.id ASC
 `
 
