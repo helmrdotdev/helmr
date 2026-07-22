@@ -286,9 +286,28 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			return err
 		},
+		func(ctx context.Context, environmentID, runID, runWaitID pgtype.UUID, resumeRequestVersion int64) error {
+			_, err := runEnqueuer.EnqueueRunResume(ctx, environmentID, runID, runWaitID, resumeRequestVersion)
+			if errors.Is(err, dispatch.ErrStaleEnqueueHint) {
+				return nil
+			}
+			return err
+		},
 	)
 	if err != nil {
 		return fmt.Errorf("configure Run admission delivery: %w", err)
+	}
+	tokenWaitReconciler, err := db.NewTokenWaitReconciler(pool)
+	if err != nil {
+		return fmt.Errorf("configure Token Wait reconciler: %w", err)
+	}
+	tokenReconcileDelivery, err := runadmission.NewTokenDeliveryWorker(
+		log,
+		queries,
+		tokenWaitReconciler.ReconcileBatch,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Token reconciliation delivery: %w", err)
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
@@ -300,6 +319,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return placementReconciler.Run(runCtx) },
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return runAdmissionDelivery.Run(runCtx) },
+		func() error { return tokenReconcileDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
 	}
 	for _, controller := range fleetControllers {

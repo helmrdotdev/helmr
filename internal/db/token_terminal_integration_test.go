@@ -24,15 +24,7 @@ func TestTokenTerminalQueriesPublishExactlyOneReconciliationIntent(t *testing.T)
 			t.Fatal(err)
 		}
 		waitID := uuid.Must(uuid.NewV7())
-		if _, err := fixture.queries.CreateRunWait(ctx, CreateRunWaitParams{
-			ID: pgvalue.UUID(waitID), EnvironmentID: pgvalue.UUID(fixture.environmentID),
-			RunID: pgvalue.UUID(work.runID), WorkspaceID: pgvalue.UUID(workspaceID),
-			Kind: WaitKindToken, TokenID: pgvalue.UUID(tokenID), ExpectedRunStateVersion: 1,
-			AttemptNumber: 1, CurrentRunLeaseID: pgvalue.UUID(work.leaseID),
-			ResumeAttachID: pgvalue.UUID(uuid.Must(uuid.NewV7())),
-		}); err != nil {
-			t.Fatal(err)
-		}
+		insertTokenWaitFixture(t, ctx, fixture, waitID, work.runID, workspaceID, tokenID, work.leaseID, 1)
 
 		params := tokenCompletionParams(fixture, tokenID, "sha256:first", `{"approved":true}`)
 		completed, err := fixture.queries.CompleteToken(ctx, params)

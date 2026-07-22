@@ -3350,6 +3350,7 @@ CREATE TABLE run_waits (
     completed_actor_record_id UUID,
     completed_actor_record_direction TEXT GENERATED ALWAYS AS ('input'::text) STORED,
     suspension_state run_wait_state NOT NULL DEFAULT 'hot',
+    token_registration_run_state_version BIGINT CHECK (token_registration_run_state_version IS NULL OR token_registration_run_state_version >= 0),
     expected_run_state_version BIGINT NOT NULL CHECK (expected_run_state_version >= 0),
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
     current_run_lease_id UUID,
@@ -3430,6 +3431,7 @@ CREATE TABLE run_waits (
          AND due_at IS NOT NULL
          AND timeout_at IS NULL
          AND token_id IS NULL
+         AND token_registration_run_state_version IS NULL
          AND child_run_id IS NULL
          AND child_parent_owned IS NULL
          AND child_target_declared_id IS NULL
@@ -3441,6 +3443,7 @@ CREATE TABLE run_waits (
         (kind = 'token'
          AND due_at IS NULL
          AND token_id IS NOT NULL
+         AND token_registration_run_state_version IS NOT NULL
          AND child_run_id IS NULL
          AND child_parent_owned IS NULL
          AND child_target_declared_id IS NULL
@@ -3453,6 +3456,7 @@ CREATE TABLE run_waits (
          AND due_at IS NULL
          AND timeout_at IS NULL
          AND token_id IS NULL
+         AND token_registration_run_state_version IS NULL
          AND child_parent_owned IS TRUE
          AND child_target_declared_id IS NOT NULL
          AND btrim(child_target_declared_id) <> ''
@@ -3464,6 +3468,7 @@ CREATE TABLE run_waits (
         (kind = 'actor_input'
          AND due_at IS NULL
          AND token_id IS NULL
+         AND token_registration_run_state_version IS NULL
          AND child_run_id IS NULL
          AND child_parent_owned IS NULL
          AND child_target_declared_id IS NULL
@@ -3616,6 +3621,10 @@ CREATE INDEX run_waits_child_claim_idx
 CREATE INDEX run_waits_condition_timeout_idx
     ON run_waits (timeout_at, id)
     WHERE condition_state = 'pending' AND timeout_at IS NOT NULL;
+
+CREATE INDEX run_waits_token_condition_idx
+    ON run_waits (token_id, condition_state, id)
+    WHERE token_id IS NOT NULL;
 
 CREATE UNIQUE INDEX run_waits_completed_actor_record_active_uidx
     ON run_waits (completed_actor_record_id)

@@ -12,13 +12,66 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-var ErrNoEnqueueCandidate = errors.New("no queue candidate")
+var (
+	ErrNoEnqueueCandidate = errors.New("no queue candidate")
+	ErrStaleEnqueueHint   = errors.New("stale queue hint")
+)
 
 type EnqueuerStore interface {
 	GetQueuedRunReadyHint(context.Context, db.GetQueuedRunReadyHintParams) (db.GetQueuedRunReadyHintRow, error)
+	GetQueuedRunResumeHint(context.Context, db.GetQueuedRunResumeHintParams) (db.GetQueuedRunResumeHintRow, error)
+	GetRunResumeHintAuthority(context.Context, db.GetRunResumeHintAuthorityParams) (db.GetRunResumeHintAuthorityRow, error)
 	ListQueuedRunDispatchCandidatesForScope(context.Context, db.ListQueuedRunDispatchCandidatesForScopeParams) ([]db.ListQueuedRunDispatchCandidatesForScopeRow, error)
 	ListQueuedDeploymentBuildCandidates(context.Context, db.ListQueuedDeploymentBuildCandidatesParams) ([]db.ListQueuedDeploymentBuildCandidatesRow, error)
 	ListQueuedDeploymentBuildRegions(context.Context, int32) ([]string, error)
+}
+
+func (e *Enqueuer) EnqueueRunResume(
+	ctx context.Context,
+	environmentID pgtype.UUID,
+	runID pgtype.UUID,
+	runWaitID pgtype.UUID,
+	resumeRequestVersion int64,
+) (EnqueueResult, error) {
+	row, err := e.store.GetQueuedRunResumeHint(ctx, db.GetQueuedRunResumeHintParams{
+		EnvironmentID:        environmentID,
+		RunID:                runID,
+		RunWaitID:            runWaitID,
+		ResumeRequestVersion: resumeRequestVersion,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		authority, authorityErr := e.store.GetRunResumeHintAuthority(ctx, db.GetRunResumeHintAuthorityParams{
+			EnvironmentID: environmentID,
+			RunID:         runID,
+			RunWaitID:     runWaitID,
+		})
+		if errors.Is(authorityErr, pgx.ErrNoRows) {
+			return EnqueueResult{}, ErrStaleEnqueueHint
+		}
+		if authorityErr != nil {
+			return EnqueueResult{}, authorityErr
+		}
+		if authority.Status == db.RunStatusQueued && !authority.CurrentRunLeaseID.Valid &&
+			authority.ConditionState != db.WaitStatePending &&
+			authority.SuspensionState == db.RunWaitStateResumePending &&
+			authority.ExpectedRunStateVersion == authority.StateVersion &&
+			authority.ResumeRequestVersion == resumeRequestVersion {
+			return EnqueueResult{}, ErrNoEnqueueCandidate
+		}
+		return EnqueueResult{}, ErrStaleEnqueueHint
+	}
+	if err != nil {
+		return EnqueueResult{}, err
+	}
+	message, err := queueResumeMessage(row)
+	if err != nil {
+		return EnqueueResult{}, err
+	}
+	result, err := e.queue.Enqueue(ctx, message)
+	if err != nil {
+		return EnqueueResult{}, err
+	}
+	return result, nil
 }
 
 func (e *Enqueuer) ReconcileBuildReady(ctx context.Context, regionLimit, candidateLimit int32) (QueueReconcileStats, error) {
@@ -179,19 +232,47 @@ func (e *Enqueuer) ReconcileQueueScope(ctx context.Context, scope QueueScope, li
 }
 
 func queueMessage(row db.GetQueuedRunReadyHintRow) (Message, error) {
-	runID, err := pgUUIDString(row.ID)
+	return newQueueMessage(
+		row.ID, row.OrgID, row.ProjectID, row.EnvironmentID, row.RegionID,
+		row.QueueName, row.ConcurrencyKey, row.StateVersion, row.Priority,
+		row.QueueOriginAt.Time, row.QueueScoreAt.Time,
+	)
+}
+
+func queueResumeMessage(row db.GetQueuedRunResumeHintRow) (Message, error) {
+	return newQueueMessage(
+		row.ID, row.OrgID, row.ProjectID, row.EnvironmentID, row.RegionID,
+		row.QueueName, row.ConcurrencyKey, row.StateVersion, row.Priority,
+		row.QueueOriginAt.Time, row.QueueScoreAt.Time,
+	)
+}
+
+func newQueueMessage(
+	runIDValue pgtype.UUID,
+	orgIDValue pgtype.UUID,
+	projectIDValue pgtype.UUID,
+	environmentIDValue pgtype.UUID,
+	regionID string,
+	queueName string,
+	concurrencyKey pgtype.Text,
+	runStateVersion int64,
+	priority int32,
+	queueOriginAt time.Time,
+	queueScoreAt time.Time,
+) (Message, error) {
+	runID, err := pgUUIDString(runIDValue)
 	if err != nil {
 		return Message{}, fmt.Errorf("run id: %w", err)
 	}
-	orgID, err := pgUUIDString(row.OrgID)
+	orgID, err := pgUUIDString(orgIDValue)
 	if err != nil {
 		return Message{}, fmt.Errorf("org id: %w", err)
 	}
-	projectID, err := pgUUIDString(row.ProjectID)
+	projectID, err := pgUUIDString(projectIDValue)
 	if err != nil {
 		return Message{}, fmt.Errorf("project id: %w", err)
 	}
-	environmentID, err := pgUUIDString(row.EnvironmentID)
+	environmentID, err := pgUUIDString(environmentIDValue)
 	if err != nil {
 		return Message{}, fmt.Errorf("environment id: %w", err)
 	}
@@ -199,15 +280,15 @@ func queueMessage(row db.GetQueuedRunReadyHintRow) (Message, error) {
 		WorkKind:        WorkKindRun,
 		RunID:           runID,
 		OrgID:           orgID,
-		RegionID:        row.RegionID,
+		RegionID:        regionID,
 		ProjectID:       projectID,
 		EnvironmentID:   environmentID,
-		QueueName:       row.QueueName,
-		ConcurrencyKey:  row.ConcurrencyKey.String,
-		RunStateVersion: row.StateVersion,
-		Priority:        row.Priority,
-		QueueOriginAt:   row.QueueOriginAt.Time,
-		QueueScoreAt:    row.QueueScoreAt.Time,
+		QueueName:       queueName,
+		ConcurrencyKey:  concurrencyKey.String,
+		RunStateVersion: runStateVersion,
+		Priority:        priority,
+		QueueOriginAt:   queueOriginAt,
+		QueueScoreAt:    queueScoreAt,
 		EnqueuedAt:      time.Now().UTC(),
 	}, nil
 }

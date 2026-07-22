@@ -502,6 +502,141 @@ func (q *Queries) GetQueuedRunReadyHint(ctx context.Context, arg GetQueuedRunRea
 	return i, err
 }
 
+const getQueuedRunResumeHint = `-- name: GetQueuedRunResumeHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.org_id = runs.org_id
+   AND workspaces.project_id = runs.project_id
+   AND workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+   AND run_waits.workspace_id = runs.workspace_id
+   AND run_waits.attempt_number = runs.current_attempt_number
+  JOIN run_checkpoints
+    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND run_checkpoints.kind = 'suspend'
+   AND run_checkpoints.run_id = run_waits.run_id
+   AND run_checkpoints.attempt_number = run_waits.attempt_number
+   AND run_checkpoints.run_wait_id = run_waits.id
+   AND run_checkpoints.workspace_id = run_waits.workspace_id
+   AND run_checkpoints.state = 'ready'
+   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+   AND workspace_versions.state = 'private'
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+   AND runs.parent_run_id IS NULL
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND run_waits.id = $3
+   AND run_waits.condition_state <> 'pending'
+   AND run_waits.suspension_state = 'resume_pending'
+   AND run_waits.expected_run_state_version = runs.state_version
+   AND run_waits.resume_request_version = $4
+   AND run_waits.resume_ack_version < run_waits.resume_request_version
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
+`
+
+type GetQueuedRunResumeHintParams struct {
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	RunWaitID            pgtype.UUID `json:"run_wait_id"`
+	ResumeRequestVersion int64       `json:"resume_request_version"`
+}
+
+type GetQueuedRunResumeHintRow struct {
+	ID             pgtype.UUID        `json:"id"`
+	OrgID          pgtype.UUID        `json:"org_id"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	EnvironmentID  pgtype.UUID        `json:"environment_id"`
+	QueueName      string             `json:"queue_name"`
+	ConcurrencyKey pgtype.Text        `json:"concurrency_key"`
+	StateVersion   int64              `json:"state_version"`
+	Priority       int32              `json:"priority"`
+	QueueOriginAt  pgtype.Timestamptz `json:"queue_origin_at"`
+	QueueScoreAt   pgtype.Timestamptz `json:"queue_score_at"`
+	RegionID       string             `json:"region_id"`
+}
+
+func (q *Queries) GetQueuedRunResumeHint(ctx context.Context, arg GetQueuedRunResumeHintParams) (GetQueuedRunResumeHintRow, error) {
+	row := q.db.QueryRow(ctx, getQueuedRunResumeHint,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.RunWaitID,
+		arg.ResumeRequestVersion,
+	)
+	var i GetQueuedRunResumeHintRow
+	err := row.Scan(
+		&i.ID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.StateVersion,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.RegionID,
+	)
+	return i, err
+}
+
+const getRunResumeHintAuthority = `-- name: GetRunResumeHintAuthority :one
+SELECT runs.status,
+       runs.state_version,
+       runs.current_run_lease_id,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.expected_run_state_version,
+       run_waits.resume_request_version
+  FROM runs
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+   AND run_waits.id = $3
+`
+
+type GetRunResumeHintAuthorityParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	RunWaitID     pgtype.UUID `json:"run_wait_id"`
+}
+
+type GetRunResumeHintAuthorityRow struct {
+	Status                  RunStatus    `json:"status"`
+	StateVersion            int64        `json:"state_version"`
+	CurrentRunLeaseID       pgtype.UUID  `json:"current_run_lease_id"`
+	ConditionState          WaitState    `json:"condition_state"`
+	SuspensionState         RunWaitState `json:"suspension_state"`
+	ExpectedRunStateVersion int64        `json:"expected_run_state_version"`
+	ResumeRequestVersion    int64        `json:"resume_request_version"`
+}
+
+func (q *Queries) GetRunResumeHintAuthority(ctx context.Context, arg GetRunResumeHintAuthorityParams) (GetRunResumeHintAuthorityRow, error) {
+	row := q.db.QueryRow(ctx, getRunResumeHintAuthority, arg.EnvironmentID, arg.RunID, arg.RunWaitID)
+	var i GetRunResumeHintAuthorityRow
+	err := row.Scan(
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentRunLeaseID,
+		&i.ConditionState,
+		&i.SuspensionState,
+		&i.ExpectedRunStateVersion,
+		&i.ResumeRequestVersion,
+	)
+	return i, err
+}
+
 const getWorkerInstanceQueueCapacity = `-- name: GetWorkerInstanceQueueCapacity :one
 SELECT GREATEST(worker_instances.certified_cpu_millis - usage.cpu_millis, 0)::bigint AS available_cpu_millis,
        GREATEST(worker_instances.certified_memory_bytes - usage.memory_bytes, 0)::bigint AS available_memory_bytes,

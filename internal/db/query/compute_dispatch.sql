@@ -412,6 +412,63 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
 
+-- name: GetQueuedRunResumeHint :one
+SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
+       runs.queue_name, runs.concurrency_key, runs.state_version, runs.priority,
+       runs.queue_origin_at, runs.queue_score_at, workspaces.region_id
+  FROM runs
+  JOIN workspaces
+    ON workspaces.org_id = runs.org_id
+   AND workspaces.project_id = runs.project_id
+   AND workspaces.environment_id = runs.environment_id
+   AND workspaces.id = runs.workspace_id
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+   AND run_waits.workspace_id = runs.workspace_id
+   AND run_waits.attempt_number = runs.current_attempt_number
+  JOIN run_checkpoints
+    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+   AND run_checkpoints.kind = 'suspend'
+   AND run_checkpoints.run_id = run_waits.run_id
+   AND run_checkpoints.attempt_number = run_waits.attempt_number
+   AND run_checkpoints.run_wait_id = run_waits.id
+   AND run_checkpoints.workspace_id = run_waits.workspace_id
+   AND run_checkpoints.state = 'ready'
+   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+  JOIN workspace_versions
+    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+   AND workspace_versions.state = 'private'
+ WHERE runs.environment_id = sqlc.arg(environment_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND runs.parent_run_id IS NULL
+   AND runs.status = 'queued'
+   AND runs.current_run_lease_id IS NULL
+   AND run_waits.id = sqlc.arg(run_wait_id)
+   AND run_waits.condition_state <> 'pending'
+   AND run_waits.suspension_state = 'resume_pending'
+   AND run_waits.expected_run_state_version = runs.state_version
+   AND run_waits.resume_request_version = sqlc.arg(resume_request_version)
+   AND run_waits.resume_ack_version < run_waits.resume_request_version
+   AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
+
+-- name: GetRunResumeHintAuthority :one
+SELECT runs.status,
+       runs.state_version,
+       runs.current_run_lease_id,
+       run_waits.condition_state,
+       run_waits.suspension_state,
+       run_waits.expected_run_state_version,
+       run_waits.resume_request_version
+  FROM runs
+  JOIN run_waits
+    ON run_waits.environment_id = runs.environment_id
+   AND run_waits.run_id = runs.id
+ WHERE runs.environment_id = sqlc.arg(environment_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND run_waits.id = sqlc.arg(run_wait_id);
+
 -- name: ListQueuedRunCandidateScopes :many
 WITH candidate_scopes AS (
     SELECT runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,

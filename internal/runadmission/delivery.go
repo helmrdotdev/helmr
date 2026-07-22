@@ -32,11 +32,13 @@ type DeliveryStore interface {
 }
 
 type RunEnqueue func(context.Context, pgtype.UUID, pgtype.UUID) error
+type RunResumeEnqueue func(context.Context, pgtype.UUID, pgtype.UUID, pgtype.UUID, int64) error
 
 type DeliveryWorker struct {
 	log       *slog.Logger
 	store     DeliveryStore
 	enqueue   RunEnqueue
+	resume    RunResumeEnqueue
 	workerID  string
 	interval  time.Duration
 	claimFor  time.Duration
@@ -44,12 +46,20 @@ type DeliveryWorker struct {
 	now       func() time.Time
 }
 
-func NewDeliveryWorker(log *slog.Logger, store DeliveryStore, enqueue RunEnqueue) (*DeliveryWorker, error) {
+func NewDeliveryWorker(
+	log *slog.Logger,
+	store DeliveryStore,
+	enqueue RunEnqueue,
+	resume RunResumeEnqueue,
+) (*DeliveryWorker, error) {
 	if store == nil {
 		return nil, errors.New("Run admission delivery store is required")
 	}
 	if enqueue == nil {
 		return nil, errors.New("Run admission enqueuer is required")
+	}
+	if resume == nil {
+		return nil, errors.New("Run resume enqueuer is required")
 	}
 	if log == nil {
 		log = slog.Default()
@@ -58,6 +68,7 @@ func NewDeliveryWorker(log *slog.Logger, store DeliveryStore, enqueue RunEnqueue
 		log:       log,
 		store:     store,
 		enqueue:   enqueue,
+		resume:    resume,
 		workerID:  uuid.Must(uuid.NewV7()).String(),
 		interval:  deliveryPollInterval,
 		claimFor:  deliveryClaimLease,
@@ -87,7 +98,7 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 		ClaimedBy:      pgtype.Text{String: w.workerID, Valid: true},
 		ClaimExpiresAt: pgvalue.TimestamptzUTCZeroInvalid(now.Add(w.claimFor)),
 		Lane:           "control",
-		Topics:         []string{"run.admit"},
+		Topics:         []string{"run.admit", "run.resume"},
 		RowLimit:       w.claimSize,
 	})
 	if err != nil {
@@ -103,6 +114,17 @@ func (w *DeliveryWorker) tick(ctx context.Context) error {
 }
 
 func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) error {
+	switch message.Topic {
+	case "run.admit":
+		return w.processAdmission(ctx, message)
+	case "run.resume":
+		return w.processResume(ctx, message)
+	default:
+		return w.deadLetter(ctx, message, errors.New("Run delivery topic is unsupported"))
+	}
+}
+
+func (w *DeliveryWorker) processAdmission(ctx context.Context, message db.OutboxMessage) error {
 	payload, err := decodeRunAdmissionPayload(message.Payload)
 	if err != nil {
 		return w.deadLetter(ctx, message, err)
@@ -118,6 +140,31 @@ func (w *DeliveryWorker) process(ctx context.Context, message db.OutboxMessage) 
 		return w.retry(ctx, message, err)
 	}
 	if err := w.enqueue(ctx, run.OrgID, run.ID); err != nil {
+		return w.retry(ctx, message, err)
+	}
+	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
+		ID:           message.ID,
+		ClaimedBy:    message.ClaimedBy,
+		ClaimAttempt: message.Attempts,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	return err
+}
+
+func (w *DeliveryWorker) processResume(ctx context.Context, message db.OutboxMessage) error {
+	payload, err := decodeRunResumePayload(message.Payload)
+	if err != nil {
+		return w.deadLetter(ctx, message, err)
+	}
+	if err := w.resume(
+		ctx,
+		pgvalue.UUID(payload.environmentID),
+		pgvalue.UUID(payload.runID),
+		pgvalue.UUID(payload.runWaitID),
+		payload.ResumeRequestVersion,
+	); err != nil {
 		return w.retry(ctx, message, err)
 	}
 	_, err = w.store.DeliverOutboxMessage(ctx, db.DeliverOutboxMessageParams{
@@ -165,6 +212,16 @@ type runAdmissionPayload struct {
 	runID         uuid.UUID
 }
 
+type runResumePayload struct {
+	EnvironmentID        string `json:"environmentId"`
+	RunID                string `json:"runId"`
+	RunWaitID            string `json:"runWaitId"`
+	ResumeRequestVersion int64  `json:"resumeRequestVersion"`
+	environmentID        uuid.UUID
+	runID                uuid.UUID
+	runWaitID            uuid.UUID
+}
+
 func decodeRunAdmissionPayload(raw []byte) (runAdmissionPayload, error) {
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -185,6 +242,37 @@ func decodeRunAdmissionPayload(raw []byte) (runAdmissionPayload, error) {
 	}
 	payload.environmentID = environmentID
 	payload.runID = runID
+	return payload, nil
+}
+
+func decodeRunResumePayload(raw []byte) (runResumePayload, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	var payload runResumePayload
+	if err := decoder.Decode(&payload); err != nil {
+		return runResumePayload{}, fmt.Errorf("decode Run resume payload: %w", err)
+	}
+	if err := ensureDeliveryEOF(decoder); err != nil {
+		return runResumePayload{}, err
+	}
+	environmentID, err := uuid.Parse(payload.EnvironmentID)
+	if err != nil {
+		return runResumePayload{}, errors.New("Run resume environmentId is invalid")
+	}
+	runID, err := uuid.Parse(payload.RunID)
+	if err != nil {
+		return runResumePayload{}, errors.New("Run resume runId is invalid")
+	}
+	runWaitID, err := uuid.Parse(payload.RunWaitID)
+	if err != nil {
+		return runResumePayload{}, errors.New("Run resume runWaitId is invalid")
+	}
+	if payload.ResumeRequestVersion <= 0 {
+		return runResumePayload{}, errors.New("Run resume resumeRequestVersion must be positive")
+	}
+	payload.environmentID = environmentID
+	payload.runID = runID
+	payload.runWaitID = runWaitID
 	return payload, nil
 }
 
