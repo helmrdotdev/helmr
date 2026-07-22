@@ -1935,7 +1935,9 @@ CREATE TABLE run_attempts (
          AND (
              (entrypoint_kind = 'task' AND terminal_actor_input_sequence IS NULL)
              OR
-             (entrypoint_kind = 'actor' AND terminal_actor_input_sequence IS NOT NULL)
+             (entrypoint_kind = 'actor'
+              AND (terminal_outcome <> 'succeeded'
+                   OR terminal_actor_input_sequence IS NOT NULL))
          ))
     )
 );

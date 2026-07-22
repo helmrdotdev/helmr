@@ -2979,6 +2979,8 @@ func (q *Queries) MarkRunRunning(ctx context.Context, arg MarkRunRunningParams) 
 const recoverExpiredRecreatedRunResumes = `-- name: RecoverExpiredRecreatedRunResumes :many
 WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
+           runs.entrypoint_kind,
+           runs.actor_id,
            run_leases.id AS run_lease_id,
            run_leases.worker_instance_id,
            run_leases.worker_epoch,
@@ -3050,6 +3052,30 @@ WITH candidates AS MATERIALIZED (
             OR worker_network_slots.lost_at <= transaction_timestamp())
      ORDER BY runs.id
      LIMIT $1
+), locked_actor_candidates AS MATERIALIZED (
+    SELECT candidates.run_id, candidates.entrypoint_kind, candidates.actor_id, candidates.run_lease_id, candidates.worker_instance_id, candidates.worker_epoch, candidates.network_slot_id, candidates.network_slot_generation, candidates.runtime_instance_id, candidates.workspace_lease_id, candidates.workspace_mount_id, candidates.run_wait_id, candidates.restore_checkpoint_id,
+           actors.run_generation AS actor_run_generation,
+           actors.committed_input_sequence AS actor_committed_input_sequence,
+           actors.next_input_sequence AS actor_next_input_sequence
+      FROM candidates
+      JOIN actors
+        ON actors.id = candidates.actor_id
+       AND actors.current_run_id = candidates.run_id
+       AND actors.state IN ('open', 'closing')
+     WHERE candidates.entrypoint_kind = 'actor'
+     ORDER BY actors.id
+     FOR UPDATE OF actors SKIP LOCKED
+), placement_candidates AS MATERIALIZED (
+    SELECT candidates.run_id, candidates.entrypoint_kind, candidates.actor_id, candidates.run_lease_id, candidates.worker_instance_id, candidates.worker_epoch, candidates.network_slot_id, candidates.network_slot_generation, candidates.runtime_instance_id, candidates.workspace_lease_id, candidates.workspace_mount_id, candidates.run_wait_id, candidates.restore_checkpoint_id,
+           NULL::bigint AS actor_run_generation,
+           NULL::bigint AS actor_committed_input_sequence,
+           NULL::bigint AS actor_next_input_sequence
+      FROM candidates
+     WHERE candidates.entrypoint_kind = 'task'
+       AND candidates.actor_id IS NULL
+    UNION ALL
+    SELECT locked_actor_candidates.run_id, locked_actor_candidates.entrypoint_kind, locked_actor_candidates.actor_id, locked_actor_candidates.run_lease_id, locked_actor_candidates.worker_instance_id, locked_actor_candidates.worker_epoch, locked_actor_candidates.network_slot_id, locked_actor_candidates.network_slot_generation, locked_actor_candidates.runtime_instance_id, locked_actor_candidates.workspace_lease_id, locked_actor_candidates.workspace_mount_id, locked_actor_candidates.run_wait_id, locked_actor_candidates.restore_checkpoint_id, locked_actor_candidates.actor_run_generation, locked_actor_candidates.actor_committed_input_sequence, locked_actor_candidates.actor_next_input_sequence
+      FROM locked_actor_candidates
 ), locked_runs AS MATERIALIZED (
     SELECT runs.org_id,
            runs.project_id,
@@ -3058,31 +3084,43 @@ WITH candidates AS MATERIALIZED (
            runs.id AS run_id,
            runs.state_version,
            runs.current_attempt_number,
+           runs.actor_start_input_sequence,
+           runs.actor_start_input_high_watermark,
            runs.max_active_duration_ms,
            runs.active_elapsed_ms,
            runs.active_started_at,
-           candidates.run_lease_id,
-           candidates.worker_instance_id,
-           candidates.worker_epoch,
-           candidates.network_slot_id,
-           candidates.network_slot_generation,
-           candidates.runtime_instance_id,
-           candidates.workspace_lease_id,
-           candidates.workspace_mount_id,
-           candidates.run_wait_id,
-           candidates.restore_checkpoint_id
-      FROM candidates
-      JOIN runs ON runs.id = candidates.run_id
-     WHERE runs.entrypoint_kind = 'task'
-       AND runs.actor_id IS NULL
+           placement_candidates.entrypoint_kind,
+           placement_candidates.actor_id,
+           placement_candidates.actor_run_generation,
+           placement_candidates.actor_committed_input_sequence,
+           placement_candidates.actor_next_input_sequence,
+           placement_candidates.run_lease_id,
+           placement_candidates.worker_instance_id,
+           placement_candidates.worker_epoch,
+           placement_candidates.network_slot_id,
+           placement_candidates.network_slot_generation,
+           placement_candidates.runtime_instance_id,
+           placement_candidates.workspace_lease_id,
+           placement_candidates.workspace_mount_id,
+           placement_candidates.run_wait_id,
+           placement_candidates.restore_checkpoint_id
+      FROM placement_candidates
+      JOIN runs ON runs.id = placement_candidates.run_id
+     WHERE ((runs.entrypoint_kind = 'task'
+             AND runs.actor_id IS NULL
+             AND placement_candidates.entrypoint_kind = 'task')
+            OR (runs.entrypoint_kind = 'actor'
+                AND runs.actor_id = placement_candidates.actor_id
+                AND runs.cause_kind IN ('actor_start', 'continuation')
+                AND placement_candidates.entrypoint_kind = 'actor'))
        AND runs.parent_run_id IS NULL
        AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
             OR (runs.status = 'running' AND runs.active_started_at IS NOT NULL))
-       AND runs.current_run_lease_id = candidates.run_lease_id
+       AND runs.current_run_lease_id = placement_candidates.run_lease_id
      ORDER BY runs.id
      FOR UPDATE OF runs SKIP LOCKED
 ), locked_workspaces AS MATERIALIZED (
-    SELECT locked_runs.org_id, locked_runs.project_id, locked_runs.environment_id, locked_runs.workspace_id, locked_runs.run_id, locked_runs.state_version, locked_runs.current_attempt_number, locked_runs.max_active_duration_ms, locked_runs.active_elapsed_ms, locked_runs.active_started_at, locked_runs.run_lease_id, locked_runs.worker_instance_id, locked_runs.worker_epoch, locked_runs.network_slot_id, locked_runs.network_slot_generation, locked_runs.runtime_instance_id, locked_runs.workspace_lease_id, locked_runs.workspace_mount_id, locked_runs.run_wait_id, locked_runs.restore_checkpoint_id,
+    SELECT locked_runs.org_id, locked_runs.project_id, locked_runs.environment_id, locked_runs.workspace_id, locked_runs.run_id, locked_runs.state_version, locked_runs.current_attempt_number, locked_runs.actor_start_input_sequence, locked_runs.actor_start_input_high_watermark, locked_runs.max_active_duration_ms, locked_runs.active_elapsed_ms, locked_runs.active_started_at, locked_runs.entrypoint_kind, locked_runs.actor_id, locked_runs.actor_run_generation, locked_runs.actor_committed_input_sequence, locked_runs.actor_next_input_sequence, locked_runs.run_lease_id, locked_runs.worker_instance_id, locked_runs.worker_epoch, locked_runs.network_slot_id, locked_runs.network_slot_generation, locked_runs.runtime_instance_id, locked_runs.workspace_lease_id, locked_runs.workspace_mount_id, locked_runs.run_wait_id, locked_runs.restore_checkpoint_id,
            workspaces.ownership_generation,
            workspaces.writer_generation
       FROM locked_runs
@@ -3090,26 +3128,39 @@ WITH candidates AS MATERIALIZED (
      WHERE workspaces.org_id = locked_runs.org_id
        AND workspaces.project_id = locked_runs.project_id
        AND workspaces.environment_id = locked_runs.environment_id
-       AND workspaces.owner_run_id = locked_runs.run_id
-       AND workspaces.owner_actor_id IS NULL
+       AND ((locked_runs.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = locked_runs.run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (locked_runs.entrypoint_kind = 'actor'
+                AND workspaces.owner_actor_id = locked_runs.actor_id
+                AND workspaces.owner_run_id IS NULL))
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.dirty_state = 'clean'
      ORDER BY workspaces.id
      FOR UPDATE OF workspaces
 ), locked_attempts AS MATERIALIZED (
-    SELECT locked_workspaces.org_id, locked_workspaces.project_id, locked_workspaces.environment_id, locked_workspaces.workspace_id, locked_workspaces.run_id, locked_workspaces.state_version, locked_workspaces.current_attempt_number, locked_workspaces.max_active_duration_ms, locked_workspaces.active_elapsed_ms, locked_workspaces.active_started_at, locked_workspaces.run_lease_id, locked_workspaces.worker_instance_id, locked_workspaces.worker_epoch, locked_workspaces.network_slot_id, locked_workspaces.network_slot_generation, locked_workspaces.runtime_instance_id, locked_workspaces.workspace_lease_id, locked_workspaces.workspace_mount_id, locked_workspaces.run_wait_id, locked_workspaces.restore_checkpoint_id, locked_workspaces.ownership_generation, locked_workspaces.writer_generation
+    SELECT locked_workspaces.org_id, locked_workspaces.project_id, locked_workspaces.environment_id, locked_workspaces.workspace_id, locked_workspaces.run_id, locked_workspaces.state_version, locked_workspaces.current_attempt_number, locked_workspaces.actor_start_input_sequence, locked_workspaces.actor_start_input_high_watermark, locked_workspaces.max_active_duration_ms, locked_workspaces.active_elapsed_ms, locked_workspaces.active_started_at, locked_workspaces.entrypoint_kind, locked_workspaces.actor_id, locked_workspaces.actor_run_generation, locked_workspaces.actor_committed_input_sequence, locked_workspaces.actor_next_input_sequence, locked_workspaces.run_lease_id, locked_workspaces.worker_instance_id, locked_workspaces.worker_epoch, locked_workspaces.network_slot_id, locked_workspaces.network_slot_generation, locked_workspaces.runtime_instance_id, locked_workspaces.workspace_lease_id, locked_workspaces.workspace_mount_id, locked_workspaces.run_wait_id, locked_workspaces.restore_checkpoint_id, locked_workspaces.ownership_generation, locked_workspaces.writer_generation
       FROM locked_workspaces
       JOIN run_attempts
         ON run_attempts.run_id = locked_workspaces.run_id
        AND run_attempts.number = locked_workspaces.current_attempt_number
        AND run_attempts.workspace_id = locked_workspaces.workspace_id
-       AND run_attempts.entrypoint_kind = 'task'
+       AND run_attempts.entrypoint_kind = locked_workspaces.entrypoint_kind
        AND run_attempts.terminal_at IS NULL
+       AND (locked_workspaces.entrypoint_kind = 'task'
+            OR (run_attempts.actor_start_input_sequence IS NOT NULL
+                AND run_attempts.actor_start_input_sequence = locked_workspaces.actor_start_input_sequence
+                AND locked_workspaces.actor_start_input_sequence
+                    <= locked_workspaces.actor_start_input_high_watermark
+                AND locked_workspaces.actor_committed_input_sequence
+                    >= locked_workspaces.actor_start_input_sequence
+                AND locked_workspaces.actor_committed_input_sequence
+                    < locked_workspaces.actor_next_input_sequence))
      ORDER BY run_attempts.run_id, run_attempts.number
      FOR UPDATE OF run_attempts
 ), locked_workers AS MATERIALIZED (
-    SELECT locked_attempts.org_id, locked_attempts.project_id, locked_attempts.environment_id, locked_attempts.workspace_id, locked_attempts.run_id, locked_attempts.state_version, locked_attempts.current_attempt_number, locked_attempts.max_active_duration_ms, locked_attempts.active_elapsed_ms, locked_attempts.active_started_at, locked_attempts.run_lease_id, locked_attempts.worker_instance_id, locked_attempts.worker_epoch, locked_attempts.network_slot_id, locked_attempts.network_slot_generation, locked_attempts.runtime_instance_id, locked_attempts.workspace_lease_id, locked_attempts.workspace_mount_id, locked_attempts.run_wait_id, locked_attempts.restore_checkpoint_id, locked_attempts.ownership_generation, locked_attempts.writer_generation,
+    SELECT locked_attempts.org_id, locked_attempts.project_id, locked_attempts.environment_id, locked_attempts.workspace_id, locked_attempts.run_id, locked_attempts.state_version, locked_attempts.current_attempt_number, locked_attempts.actor_start_input_sequence, locked_attempts.actor_start_input_high_watermark, locked_attempts.max_active_duration_ms, locked_attempts.active_elapsed_ms, locked_attempts.active_started_at, locked_attempts.entrypoint_kind, locked_attempts.actor_id, locked_attempts.actor_run_generation, locked_attempts.actor_committed_input_sequence, locked_attempts.actor_next_input_sequence, locked_attempts.run_lease_id, locked_attempts.worker_instance_id, locked_attempts.worker_epoch, locked_attempts.network_slot_id, locked_attempts.network_slot_generation, locked_attempts.runtime_instance_id, locked_attempts.workspace_lease_id, locked_attempts.workspace_mount_id, locked_attempts.run_wait_id, locked_attempts.restore_checkpoint_id, locked_attempts.ownership_generation, locked_attempts.writer_generation,
            LEAST(
                COALESCE(worker_instances.lost_at, 'infinity'::timestamptz),
                COALESCE(worker_instances.disabled_at, 'infinity'::timestamptz),
@@ -3125,7 +3176,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY worker_instances.id
      FOR UPDATE OF worker_instances
 ), locked_slots AS MATERIALIZED (
-    SELECT locked_workers.org_id, locked_workers.project_id, locked_workers.environment_id, locked_workers.workspace_id, locked_workers.run_id, locked_workers.state_version, locked_workers.current_attempt_number, locked_workers.max_active_duration_ms, locked_workers.active_elapsed_ms, locked_workers.active_started_at, locked_workers.run_lease_id, locked_workers.worker_instance_id, locked_workers.worker_epoch, locked_workers.network_slot_id, locked_workers.network_slot_generation, locked_workers.runtime_instance_id, locked_workers.workspace_lease_id, locked_workers.workspace_mount_id, locked_workers.run_wait_id, locked_workers.restore_checkpoint_id, locked_workers.ownership_generation, locked_workers.writer_generation, locked_workers.worker_lost_at,
+    SELECT locked_workers.org_id, locked_workers.project_id, locked_workers.environment_id, locked_workers.workspace_id, locked_workers.run_id, locked_workers.state_version, locked_workers.current_attempt_number, locked_workers.actor_start_input_sequence, locked_workers.actor_start_input_high_watermark, locked_workers.max_active_duration_ms, locked_workers.active_elapsed_ms, locked_workers.active_started_at, locked_workers.entrypoint_kind, locked_workers.actor_id, locked_workers.actor_run_generation, locked_workers.actor_committed_input_sequence, locked_workers.actor_next_input_sequence, locked_workers.run_lease_id, locked_workers.worker_instance_id, locked_workers.worker_epoch, locked_workers.network_slot_id, locked_workers.network_slot_generation, locked_workers.runtime_instance_id, locked_workers.workspace_lease_id, locked_workers.workspace_mount_id, locked_workers.run_wait_id, locked_workers.restore_checkpoint_id, locked_workers.ownership_generation, locked_workers.writer_generation, locked_workers.worker_lost_at,
            worker_network_slots.lost_at AS slot_lost_at
       FROM locked_workers
       JOIN worker_network_slots
@@ -3140,7 +3191,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY worker_network_slots.id
      FOR UPDATE OF worker_network_slots
 ), locked_runtimes AS MATERIALIZED (
-    SELECT locked_slots.org_id, locked_slots.project_id, locked_slots.environment_id, locked_slots.workspace_id, locked_slots.run_id, locked_slots.state_version, locked_slots.current_attempt_number, locked_slots.max_active_duration_ms, locked_slots.active_elapsed_ms, locked_slots.active_started_at, locked_slots.run_lease_id, locked_slots.worker_instance_id, locked_slots.worker_epoch, locked_slots.network_slot_id, locked_slots.network_slot_generation, locked_slots.runtime_instance_id, locked_slots.workspace_lease_id, locked_slots.workspace_mount_id, locked_slots.run_wait_id, locked_slots.restore_checkpoint_id, locked_slots.ownership_generation, locked_slots.writer_generation, locked_slots.worker_lost_at, locked_slots.slot_lost_at,
+    SELECT locked_slots.org_id, locked_slots.project_id, locked_slots.environment_id, locked_slots.workspace_id, locked_slots.run_id, locked_slots.state_version, locked_slots.current_attempt_number, locked_slots.actor_start_input_sequence, locked_slots.actor_start_input_high_watermark, locked_slots.max_active_duration_ms, locked_slots.active_elapsed_ms, locked_slots.active_started_at, locked_slots.entrypoint_kind, locked_slots.actor_id, locked_slots.actor_run_generation, locked_slots.actor_committed_input_sequence, locked_slots.actor_next_input_sequence, locked_slots.run_lease_id, locked_slots.worker_instance_id, locked_slots.worker_epoch, locked_slots.network_slot_id, locked_slots.network_slot_generation, locked_slots.runtime_instance_id, locked_slots.workspace_lease_id, locked_slots.workspace_mount_id, locked_slots.run_wait_id, locked_slots.restore_checkpoint_id, locked_slots.ownership_generation, locked_slots.writer_generation, locked_slots.worker_lost_at, locked_slots.slot_lost_at,
            runtime_instances.lost_at AS runtime_lost_at,
            runtime_instances.failed_at AS runtime_failed_at
       FROM locked_slots
@@ -3155,7 +3206,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY runtime_instances.id
      FOR UPDATE OF runtime_instances
 ), locked_run_leases AS MATERIALIZED (
-    SELECT locked_runtimes.org_id, locked_runtimes.project_id, locked_runtimes.environment_id, locked_runtimes.workspace_id, locked_runtimes.run_id, locked_runtimes.state_version, locked_runtimes.current_attempt_number, locked_runtimes.max_active_duration_ms, locked_runtimes.active_elapsed_ms, locked_runtimes.active_started_at, locked_runtimes.run_lease_id, locked_runtimes.worker_instance_id, locked_runtimes.worker_epoch, locked_runtimes.network_slot_id, locked_runtimes.network_slot_generation, locked_runtimes.runtime_instance_id, locked_runtimes.workspace_lease_id, locked_runtimes.workspace_mount_id, locked_runtimes.run_wait_id, locked_runtimes.restore_checkpoint_id, locked_runtimes.ownership_generation, locked_runtimes.writer_generation, locked_runtimes.worker_lost_at, locked_runtimes.slot_lost_at, locked_runtimes.runtime_lost_at, locked_runtimes.runtime_failed_at,
+    SELECT locked_runtimes.org_id, locked_runtimes.project_id, locked_runtimes.environment_id, locked_runtimes.workspace_id, locked_runtimes.run_id, locked_runtimes.state_version, locked_runtimes.current_attempt_number, locked_runtimes.actor_start_input_sequence, locked_runtimes.actor_start_input_high_watermark, locked_runtimes.max_active_duration_ms, locked_runtimes.active_elapsed_ms, locked_runtimes.active_started_at, locked_runtimes.entrypoint_kind, locked_runtimes.actor_id, locked_runtimes.actor_run_generation, locked_runtimes.actor_committed_input_sequence, locked_runtimes.actor_next_input_sequence, locked_runtimes.run_lease_id, locked_runtimes.worker_instance_id, locked_runtimes.worker_epoch, locked_runtimes.network_slot_id, locked_runtimes.network_slot_generation, locked_runtimes.runtime_instance_id, locked_runtimes.workspace_lease_id, locked_runtimes.workspace_mount_id, locked_runtimes.run_wait_id, locked_runtimes.restore_checkpoint_id, locked_runtimes.ownership_generation, locked_runtimes.writer_generation, locked_runtimes.worker_lost_at, locked_runtimes.slot_lost_at, locked_runtimes.runtime_lost_at, locked_runtimes.runtime_failed_at,
            run_leases.state AS run_lease_state,
            run_leases.expires_at AS run_lease_expires_at,
            run_leases.start_deadline_at
@@ -3175,7 +3226,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY run_leases.id
      FOR UPDATE OF run_leases
 ), locked_mounts AS MATERIALIZED (
-    SELECT locked_run_leases.org_id, locked_run_leases.project_id, locked_run_leases.environment_id, locked_run_leases.workspace_id, locked_run_leases.run_id, locked_run_leases.state_version, locked_run_leases.current_attempt_number, locked_run_leases.max_active_duration_ms, locked_run_leases.active_elapsed_ms, locked_run_leases.active_started_at, locked_run_leases.run_lease_id, locked_run_leases.worker_instance_id, locked_run_leases.worker_epoch, locked_run_leases.network_slot_id, locked_run_leases.network_slot_generation, locked_run_leases.runtime_instance_id, locked_run_leases.workspace_lease_id, locked_run_leases.workspace_mount_id, locked_run_leases.run_wait_id, locked_run_leases.restore_checkpoint_id, locked_run_leases.ownership_generation, locked_run_leases.writer_generation, locked_run_leases.worker_lost_at, locked_run_leases.slot_lost_at, locked_run_leases.runtime_lost_at, locked_run_leases.runtime_failed_at, locked_run_leases.run_lease_state, locked_run_leases.run_lease_expires_at, locked_run_leases.start_deadline_at,
+    SELECT locked_run_leases.org_id, locked_run_leases.project_id, locked_run_leases.environment_id, locked_run_leases.workspace_id, locked_run_leases.run_id, locked_run_leases.state_version, locked_run_leases.current_attempt_number, locked_run_leases.actor_start_input_sequence, locked_run_leases.actor_start_input_high_watermark, locked_run_leases.max_active_duration_ms, locked_run_leases.active_elapsed_ms, locked_run_leases.active_started_at, locked_run_leases.entrypoint_kind, locked_run_leases.actor_id, locked_run_leases.actor_run_generation, locked_run_leases.actor_committed_input_sequence, locked_run_leases.actor_next_input_sequence, locked_run_leases.run_lease_id, locked_run_leases.worker_instance_id, locked_run_leases.worker_epoch, locked_run_leases.network_slot_id, locked_run_leases.network_slot_generation, locked_run_leases.runtime_instance_id, locked_run_leases.workspace_lease_id, locked_run_leases.workspace_mount_id, locked_run_leases.run_wait_id, locked_run_leases.restore_checkpoint_id, locked_run_leases.ownership_generation, locked_run_leases.writer_generation, locked_run_leases.worker_lost_at, locked_run_leases.slot_lost_at, locked_run_leases.runtime_lost_at, locked_run_leases.runtime_failed_at, locked_run_leases.run_lease_state, locked_run_leases.run_lease_expires_at, locked_run_leases.start_deadline_at,
            workspace_mounts.lost_at AS mount_lost_at,
            workspace_mounts.failed_at AS mount_failed_at
       FROM locked_run_leases
@@ -3189,7 +3240,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY workspace_mounts.id
      FOR UPDATE OF workspace_mounts
 ), locked_workspace_leases AS MATERIALIZED (
-    SELECT locked_mounts.org_id, locked_mounts.project_id, locked_mounts.environment_id, locked_mounts.workspace_id, locked_mounts.run_id, locked_mounts.state_version, locked_mounts.current_attempt_number, locked_mounts.max_active_duration_ms, locked_mounts.active_elapsed_ms, locked_mounts.active_started_at, locked_mounts.run_lease_id, locked_mounts.worker_instance_id, locked_mounts.worker_epoch, locked_mounts.network_slot_id, locked_mounts.network_slot_generation, locked_mounts.runtime_instance_id, locked_mounts.workspace_lease_id, locked_mounts.workspace_mount_id, locked_mounts.run_wait_id, locked_mounts.restore_checkpoint_id, locked_mounts.ownership_generation, locked_mounts.writer_generation, locked_mounts.worker_lost_at, locked_mounts.slot_lost_at, locked_mounts.runtime_lost_at, locked_mounts.runtime_failed_at, locked_mounts.run_lease_state, locked_mounts.run_lease_expires_at, locked_mounts.start_deadline_at, locked_mounts.mount_lost_at, locked_mounts.mount_failed_at,
+    SELECT locked_mounts.org_id, locked_mounts.project_id, locked_mounts.environment_id, locked_mounts.workspace_id, locked_mounts.run_id, locked_mounts.state_version, locked_mounts.current_attempt_number, locked_mounts.actor_start_input_sequence, locked_mounts.actor_start_input_high_watermark, locked_mounts.max_active_duration_ms, locked_mounts.active_elapsed_ms, locked_mounts.active_started_at, locked_mounts.entrypoint_kind, locked_mounts.actor_id, locked_mounts.actor_run_generation, locked_mounts.actor_committed_input_sequence, locked_mounts.actor_next_input_sequence, locked_mounts.run_lease_id, locked_mounts.worker_instance_id, locked_mounts.worker_epoch, locked_mounts.network_slot_id, locked_mounts.network_slot_generation, locked_mounts.runtime_instance_id, locked_mounts.workspace_lease_id, locked_mounts.workspace_mount_id, locked_mounts.run_wait_id, locked_mounts.restore_checkpoint_id, locked_mounts.ownership_generation, locked_mounts.writer_generation, locked_mounts.worker_lost_at, locked_mounts.slot_lost_at, locked_mounts.runtime_lost_at, locked_mounts.runtime_failed_at, locked_mounts.run_lease_state, locked_mounts.run_lease_expires_at, locked_mounts.start_deadline_at, locked_mounts.mount_lost_at, locked_mounts.mount_failed_at,
            workspace_leases.expires_at AS workspace_lease_expires_at,
            workspace_leases.base_version_id AS restore_workspace_version_id
       FROM locked_mounts
@@ -3206,7 +3257,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY workspace_leases.id
      FOR UPDATE OF workspace_leases
 ), locked_waits AS MATERIALIZED (
-    SELECT locked_workspace_leases.org_id, locked_workspace_leases.project_id, locked_workspace_leases.environment_id, locked_workspace_leases.workspace_id, locked_workspace_leases.run_id, locked_workspace_leases.state_version, locked_workspace_leases.current_attempt_number, locked_workspace_leases.max_active_duration_ms, locked_workspace_leases.active_elapsed_ms, locked_workspace_leases.active_started_at, locked_workspace_leases.run_lease_id, locked_workspace_leases.worker_instance_id, locked_workspace_leases.worker_epoch, locked_workspace_leases.network_slot_id, locked_workspace_leases.network_slot_generation, locked_workspace_leases.runtime_instance_id, locked_workspace_leases.workspace_lease_id, locked_workspace_leases.workspace_mount_id, locked_workspace_leases.run_wait_id, locked_workspace_leases.restore_checkpoint_id, locked_workspace_leases.ownership_generation, locked_workspace_leases.writer_generation, locked_workspace_leases.worker_lost_at, locked_workspace_leases.slot_lost_at, locked_workspace_leases.runtime_lost_at, locked_workspace_leases.runtime_failed_at, locked_workspace_leases.run_lease_state, locked_workspace_leases.run_lease_expires_at, locked_workspace_leases.start_deadline_at, locked_workspace_leases.mount_lost_at, locked_workspace_leases.mount_failed_at, locked_workspace_leases.workspace_lease_expires_at, locked_workspace_leases.restore_workspace_version_id,
+    SELECT locked_workspace_leases.org_id, locked_workspace_leases.project_id, locked_workspace_leases.environment_id, locked_workspace_leases.workspace_id, locked_workspace_leases.run_id, locked_workspace_leases.state_version, locked_workspace_leases.current_attempt_number, locked_workspace_leases.actor_start_input_sequence, locked_workspace_leases.actor_start_input_high_watermark, locked_workspace_leases.max_active_duration_ms, locked_workspace_leases.active_elapsed_ms, locked_workspace_leases.active_started_at, locked_workspace_leases.entrypoint_kind, locked_workspace_leases.actor_id, locked_workspace_leases.actor_run_generation, locked_workspace_leases.actor_committed_input_sequence, locked_workspace_leases.actor_next_input_sequence, locked_workspace_leases.run_lease_id, locked_workspace_leases.worker_instance_id, locked_workspace_leases.worker_epoch, locked_workspace_leases.network_slot_id, locked_workspace_leases.network_slot_generation, locked_workspace_leases.runtime_instance_id, locked_workspace_leases.workspace_lease_id, locked_workspace_leases.workspace_mount_id, locked_workspace_leases.run_wait_id, locked_workspace_leases.restore_checkpoint_id, locked_workspace_leases.ownership_generation, locked_workspace_leases.writer_generation, locked_workspace_leases.worker_lost_at, locked_workspace_leases.slot_lost_at, locked_workspace_leases.runtime_lost_at, locked_workspace_leases.runtime_failed_at, locked_workspace_leases.run_lease_state, locked_workspace_leases.run_lease_expires_at, locked_workspace_leases.start_deadline_at, locked_workspace_leases.mount_lost_at, locked_workspace_leases.mount_failed_at, locked_workspace_leases.workspace_lease_expires_at, locked_workspace_leases.restore_workspace_version_id,
            run_waits.resume_request_version
       FROM locked_workspace_leases
       JOIN run_waits
@@ -3223,7 +3274,7 @@ WITH candidates AS MATERIALIZED (
      ORDER BY run_waits.id
      FOR UPDATE OF run_waits
 ), loss_authority AS MATERIALIZED (
-    SELECT locked_waits.org_id, locked_waits.project_id, locked_waits.environment_id, locked_waits.workspace_id, locked_waits.run_id, locked_waits.state_version, locked_waits.current_attempt_number, locked_waits.max_active_duration_ms, locked_waits.active_elapsed_ms, locked_waits.active_started_at, locked_waits.run_lease_id, locked_waits.worker_instance_id, locked_waits.worker_epoch, locked_waits.network_slot_id, locked_waits.network_slot_generation, locked_waits.runtime_instance_id, locked_waits.workspace_lease_id, locked_waits.workspace_mount_id, locked_waits.run_wait_id, locked_waits.restore_checkpoint_id, locked_waits.ownership_generation, locked_waits.writer_generation, locked_waits.worker_lost_at, locked_waits.slot_lost_at, locked_waits.runtime_lost_at, locked_waits.runtime_failed_at, locked_waits.run_lease_state, locked_waits.run_lease_expires_at, locked_waits.start_deadline_at, locked_waits.mount_lost_at, locked_waits.mount_failed_at, locked_waits.workspace_lease_expires_at, locked_waits.restore_workspace_version_id, locked_waits.resume_request_version,
+    SELECT locked_waits.org_id, locked_waits.project_id, locked_waits.environment_id, locked_waits.workspace_id, locked_waits.run_id, locked_waits.state_version, locked_waits.current_attempt_number, locked_waits.actor_start_input_sequence, locked_waits.actor_start_input_high_watermark, locked_waits.max_active_duration_ms, locked_waits.active_elapsed_ms, locked_waits.active_started_at, locked_waits.entrypoint_kind, locked_waits.actor_id, locked_waits.actor_run_generation, locked_waits.actor_committed_input_sequence, locked_waits.actor_next_input_sequence, locked_waits.run_lease_id, locked_waits.worker_instance_id, locked_waits.worker_epoch, locked_waits.network_slot_id, locked_waits.network_slot_generation, locked_waits.runtime_instance_id, locked_waits.workspace_lease_id, locked_waits.workspace_mount_id, locked_waits.run_wait_id, locked_waits.restore_checkpoint_id, locked_waits.ownership_generation, locked_waits.writer_generation, locked_waits.worker_lost_at, locked_waits.slot_lost_at, locked_waits.runtime_lost_at, locked_waits.runtime_failed_at, locked_waits.run_lease_state, locked_waits.run_lease_expires_at, locked_waits.start_deadline_at, locked_waits.mount_lost_at, locked_waits.mount_failed_at, locked_waits.workspace_lease_expires_at, locked_waits.restore_workspace_version_id, locked_waits.resume_request_version,
            hard_deadline.hard_deadline_at,
            physical_loss.physical_loss_at,
            physical_failure.physical_failure_at,
@@ -3270,7 +3321,7 @@ WITH candidates AS MATERIALIZED (
           ) AS physical_failure_at
       ) AS physical_failure
 ), locked_checkpoints AS MATERIALIZED (
-    SELECT loss_authority.org_id, loss_authority.project_id, loss_authority.environment_id, loss_authority.workspace_id, loss_authority.run_id, loss_authority.state_version, loss_authority.current_attempt_number, loss_authority.max_active_duration_ms, loss_authority.active_elapsed_ms, loss_authority.active_started_at, loss_authority.run_lease_id, loss_authority.worker_instance_id, loss_authority.worker_epoch, loss_authority.network_slot_id, loss_authority.network_slot_generation, loss_authority.runtime_instance_id, loss_authority.workspace_lease_id, loss_authority.workspace_mount_id, loss_authority.run_wait_id, loss_authority.restore_checkpoint_id, loss_authority.ownership_generation, loss_authority.writer_generation, loss_authority.worker_lost_at, loss_authority.slot_lost_at, loss_authority.runtime_lost_at, loss_authority.runtime_failed_at, loss_authority.run_lease_state, loss_authority.run_lease_expires_at, loss_authority.start_deadline_at, loss_authority.mount_lost_at, loss_authority.mount_failed_at, loss_authority.workspace_lease_expires_at, loss_authority.restore_workspace_version_id, loss_authority.resume_request_version, loss_authority.hard_deadline_at, loss_authority.physical_loss_at, loss_authority.physical_failure_at, loss_authority.authority_loss_at,
+    SELECT loss_authority.org_id, loss_authority.project_id, loss_authority.environment_id, loss_authority.workspace_id, loss_authority.run_id, loss_authority.state_version, loss_authority.current_attempt_number, loss_authority.actor_start_input_sequence, loss_authority.actor_start_input_high_watermark, loss_authority.max_active_duration_ms, loss_authority.active_elapsed_ms, loss_authority.active_started_at, loss_authority.entrypoint_kind, loss_authority.actor_id, loss_authority.actor_run_generation, loss_authority.actor_committed_input_sequence, loss_authority.actor_next_input_sequence, loss_authority.run_lease_id, loss_authority.worker_instance_id, loss_authority.worker_epoch, loss_authority.network_slot_id, loss_authority.network_slot_generation, loss_authority.runtime_instance_id, loss_authority.workspace_lease_id, loss_authority.workspace_mount_id, loss_authority.run_wait_id, loss_authority.restore_checkpoint_id, loss_authority.ownership_generation, loss_authority.writer_generation, loss_authority.worker_lost_at, loss_authority.slot_lost_at, loss_authority.runtime_lost_at, loss_authority.runtime_failed_at, loss_authority.run_lease_state, loss_authority.run_lease_expires_at, loss_authority.start_deadline_at, loss_authority.mount_lost_at, loss_authority.mount_failed_at, loss_authority.workspace_lease_expires_at, loss_authority.restore_workspace_version_id, loss_authority.resume_request_version, loss_authority.hard_deadline_at, loss_authority.physical_loss_at, loss_authority.physical_failure_at, loss_authority.authority_loss_at,
            (loss_authority.run_lease_state = 'running'
             AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at) AS active_budget_exhausted,
            (run_checkpoints.state = 'ready'
@@ -3278,6 +3329,12 @@ WITH candidates AS MATERIALIZED (
                  OR run_checkpoints.expires_at > transaction_timestamp())
             AND workspace_versions.state = 'private'
             AND source_run_leases.state = 'checkpointed'
+            AND ((loss_authority.entrypoint_kind = 'task'
+                  AND run_checkpoints.actor_speculative_input_sequence IS NULL)
+                 OR (loss_authority.entrypoint_kind = 'actor'
+                     AND run_checkpoints.actor_speculative_input_sequence
+                         BETWEEN loss_authority.actor_committed_input_sequence
+                             AND loss_authority.actor_next_input_sequence - 1))
             AND NOT (
                 loss_authority.run_lease_state = 'running'
                 AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
@@ -3478,17 +3535,58 @@ WITH candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, failed_runs.id AS run_id
+), failed_actors AS (
+    UPDATE actors
+       SET state = 'failed',
+           current_run_id = NULL,
+           run_generation = actors.run_generation + 1,
+           state_version = actors.state_version + 1,
+           manual_run_cancelled = false,
+           no_progress_input_sequence = NULL,
+           no_progress_count = 0,
+           last_no_progress_run_id = NULL,
+           failure_reason_code = CASE
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
+               ELSE 'platform-failure'
+           END,
+           last_failure_run_id = failed_runs.id,
+           failed_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+      FROM locked_checkpoints, failed_runs, failed_waits
+     WHERE locked_checkpoints.entrypoint_kind = 'actor'
+       AND actors.id = locked_checkpoints.actor_id
+       AND actors.current_run_id = failed_runs.id
+       AND actors.run_generation = locked_checkpoints.actor_run_generation
+       AND actors.state IN ('open', 'closing')
+       AND failed_waits.run_id = failed_runs.id
+    RETURNING actors.id, failed_runs.id AS run_id
 ), released_owners AS (
     UPDATE workspaces
-       SET owner_run_id = NULL,
+       SET owner_run_id = CASE
+               WHEN locked_checkpoints.entrypoint_kind = 'task' THEN NULL
+               ELSE workspaces.owner_run_id
+           END,
+           owner_actor_id = CASE
+               WHEN locked_checkpoints.entrypoint_kind = 'actor' THEN NULL
+               ELSE workspaces.owner_actor_id
+           END,
            ownership_generation = workspaces.ownership_generation + 1,
            state_version = workspaces.state_version + 1,
            last_activity_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
-      FROM locked_checkpoints, failed_waits
+      FROM locked_checkpoints
+      JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
+      LEFT JOIN failed_actors
+        ON failed_actors.run_id = locked_checkpoints.run_id
+       AND failed_actors.id = locked_checkpoints.actor_id
      WHERE workspaces.id = locked_checkpoints.workspace_id
-       AND workspaces.owner_run_id = failed_waits.run_id
-       AND workspaces.owner_actor_id IS NULL
+       AND ((locked_checkpoints.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = failed_waits.run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (locked_checkpoints.entrypoint_kind = 'actor'
+                AND failed_actors.id IS NOT NULL
+                AND workspaces.owner_actor_id = failed_actors.id
+                AND workspaces.owner_run_id IS NULL))
        AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
        AND workspaces.writer_generation = locked_checkpoints.writer_generation
     RETURNING workspaces.id

@@ -316,22 +316,22 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
    AND workspaces.id = runs.workspace_id
  WHERE runs.org_id = sqlc.arg(org_id)
    AND runs.id = sqlc.arg(run_id)
-   AND runs.entrypoint_kind = 'task'
-   AND runs.cause_kind IN ('api', 'manual', 'schedule')
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND workspaces.owner_run_id = runs.id
-   AND workspaces.owner_actor_id IS NULL
    AND (
-       NOT EXISTS (
+       (runs.entrypoint_kind = 'task'
+        AND runs.actor_id IS NULL
+        AND runs.cause_kind IN ('api', 'manual', 'schedule')
+        AND workspaces.owner_run_id = runs.id
+        AND workspaces.owner_actor_id IS NULL
+        AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
             WHERE run_waits.run_id = runs.id
               AND run_waits.suspension_state IN (
                   'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
               )
-       )
-       OR EXISTS (
+        ) OR EXISTS (
            SELECT 1
              FROM run_waits
              JOIN run_checkpoints
@@ -352,7 +352,63 @@ SELECT runs.id, runs.org_id, runs.project_id, runs.environment_id,
               AND run_waits.handoff_runtime_instance_id IS NULL
               AND run_waits.handoff_workspace_mount_id IS NULL
               AND run_waits.handoff_resume_checkpoint_id IS NULL
-       )
+        )))
+       OR
+       (runs.entrypoint_kind = 'actor'
+        AND runs.actor_id IS NOT NULL
+        AND runs.cause_kind IN ('actor_start', 'continuation')
+        AND runs.parent_run_id IS NULL
+        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_run_id IS NULL
+        AND EXISTS (
+            SELECT 1
+              FROM actors
+             WHERE actors.id = runs.actor_id
+               AND actors.workspace_id = runs.workspace_id
+               AND actors.current_run_id = runs.id
+               AND actors.state IN ('open', 'closing')
+        )
+        AND EXISTS (
+            SELECT 1
+              FROM run_waits
+              JOIN run_checkpoints
+                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.kind = 'suspend'
+               AND run_checkpoints.run_id = run_waits.run_id
+               AND run_checkpoints.attempt_number = run_waits.attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = run_waits.workspace_id
+               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+               AND run_checkpoints.state = 'ready'
+               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+              JOIN workspace_versions
+                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.state = 'private'
+              JOIN actors AS restore_actor
+                ON restore_actor.id = runs.actor_id
+               AND restore_actor.workspace_id = runs.workspace_id
+               AND restore_actor.current_run_id = runs.id
+               AND restore_actor.state IN ('open', 'closing')
+              JOIN run_attempts AS restore_attempt
+                ON restore_attempt.run_id = runs.id
+               AND restore_attempt.number = runs.current_attempt_number
+               AND restore_attempt.workspace_id = runs.workspace_id
+               AND restore_attempt.entrypoint_kind = 'actor'
+               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.terminal_at IS NULL
+             WHERE run_waits.run_id = runs.id
+               AND run_waits.suspension_state = 'resume_pending'
+               AND run_waits.handoff_runtime_instance_id IS NULL
+               AND run_waits.handoff_workspace_mount_id IS NULL
+               AND run_waits.handoff_resume_checkpoint_id IS NULL
+               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+               AND run_checkpoints.actor_speculative_input_sequence
+                   BETWEEN restore_actor.committed_input_sequence
+                       AND restore_actor.next_input_sequence - 1
+        ))
    )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now());
 
@@ -368,22 +424,22 @@ WITH candidate_scopes AS (
                      AND workspaces.project_id = runs.project_id
                      AND workspaces.environment_id = runs.environment_id
                      AND workspaces.id = runs.workspace_id
-     WHERE runs.entrypoint_kind = 'task'
-       AND runs.cause_kind IN ('api', 'manual', 'schedule')
-       AND runs.status = 'queued'
+     WHERE runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
-       AND workspaces.owner_run_id = runs.id
-       AND workspaces.owner_actor_id IS NULL
        AND (
-           NOT EXISTS (
+           (runs.entrypoint_kind = 'task'
+            AND runs.actor_id IS NULL
+            AND runs.cause_kind IN ('api', 'manual', 'schedule')
+            AND workspaces.owner_run_id = runs.id
+            AND workspaces.owner_actor_id IS NULL
+            AND (NOT EXISTS (
                SELECT 1
                  FROM run_waits
                 WHERE run_waits.run_id = runs.id
                   AND run_waits.suspension_state IN (
                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
                   )
-           )
-           OR EXISTS (
+            ) OR EXISTS (
                SELECT 1
                  FROM run_waits
                  JOIN run_checkpoints
@@ -404,7 +460,62 @@ WITH candidate_scopes AS (
                   AND run_waits.handoff_runtime_instance_id IS NULL
                   AND run_waits.handoff_workspace_mount_id IS NULL
                   AND run_waits.handoff_resume_checkpoint_id IS NULL
-           )
+            )))
+           OR
+           (runs.entrypoint_kind = 'actor'
+            AND runs.actor_id IS NOT NULL
+            AND runs.cause_kind IN ('actor_start', 'continuation')
+            AND runs.parent_run_id IS NULL
+            AND workspaces.owner_actor_id = runs.actor_id
+            AND workspaces.owner_run_id IS NULL
+            AND EXISTS (
+                SELECT 1 FROM actors
+                 WHERE actors.id = runs.actor_id
+                   AND actors.workspace_id = runs.workspace_id
+                   AND actors.current_run_id = runs.id
+                   AND actors.state IN ('open', 'closing')
+            )
+            AND EXISTS (
+                SELECT 1
+                  FROM run_waits
+                  JOIN run_checkpoints
+                    ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+                   AND run_checkpoints.kind = 'suspend'
+                   AND run_checkpoints.run_id = run_waits.run_id
+                   AND run_checkpoints.attempt_number = run_waits.attempt_number
+                   AND run_checkpoints.run_wait_id = run_waits.id
+                   AND run_checkpoints.workspace_id = run_waits.workspace_id
+                   AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+                   AND run_checkpoints.state = 'ready'
+                   AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+                  JOIN workspace_versions
+                    ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+                   AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+                   AND workspace_versions.state = 'private'
+                  JOIN actors AS restore_actor
+                    ON restore_actor.id = runs.actor_id
+                   AND restore_actor.workspace_id = runs.workspace_id
+                   AND restore_actor.current_run_id = runs.id
+                   AND restore_actor.state IN ('open', 'closing')
+                  JOIN run_attempts AS restore_attempt
+                    ON restore_attempt.run_id = runs.id
+                   AND restore_attempt.number = runs.current_attempt_number
+                   AND restore_attempt.workspace_id = runs.workspace_id
+                   AND restore_attempt.entrypoint_kind = 'actor'
+                   AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+                   AND restore_attempt.terminal_at IS NULL
+                 WHERE run_waits.run_id = runs.id
+                   AND run_waits.suspension_state = 'resume_pending'
+                   AND run_waits.handoff_runtime_instance_id IS NULL
+                   AND run_waits.handoff_workspace_mount_id IS NULL
+                   AND run_waits.handoff_resume_checkpoint_id IS NULL
+                   AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+                   AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+                   AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+                   AND run_checkpoints.actor_speculative_input_sequence
+                       BETWEEN restore_actor.committed_input_sequence
+                           AND restore_actor.next_input_sequence - 1
+            ))
        )
        AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
      GROUP BY runs.org_id, runs.project_id, runs.environment_id, workspaces.region_id,
@@ -433,22 +544,22 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
    AND workspaces.region_id = sqlc.arg(region_id)
    AND runs.concurrency_key IS NOT DISTINCT FROM sqlc.narg(concurrency_key)::text
    AND runs.queue_name = sqlc.arg(queue_name)
-   AND runs.entrypoint_kind = 'task'
-   AND runs.cause_kind IN ('api', 'manual', 'schedule')
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
-   AND workspaces.owner_run_id = runs.id
-   AND workspaces.owner_actor_id IS NULL
    AND (
-       NOT EXISTS (
+       (runs.entrypoint_kind = 'task'
+        AND runs.actor_id IS NULL
+        AND runs.cause_kind IN ('api', 'manual', 'schedule')
+        AND workspaces.owner_run_id = runs.id
+        AND workspaces.owner_actor_id IS NULL
+        AND (NOT EXISTS (
            SELECT 1
              FROM run_waits
             WHERE run_waits.run_id = runs.id
               AND run_waits.suspension_state IN (
                   'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
               )
-       )
-       OR EXISTS (
+        ) OR EXISTS (
            SELECT 1
              FROM run_waits
              JOIN run_checkpoints
@@ -469,7 +580,62 @@ SELECT runs.org_id, runs.id AS run_id, runs.state_version
               AND run_waits.handoff_runtime_instance_id IS NULL
               AND run_waits.handoff_workspace_mount_id IS NULL
               AND run_waits.handoff_resume_checkpoint_id IS NULL
-       )
+        )))
+       OR
+       (runs.entrypoint_kind = 'actor'
+        AND runs.actor_id IS NOT NULL
+        AND runs.cause_kind IN ('actor_start', 'continuation')
+        AND runs.parent_run_id IS NULL
+        AND workspaces.owner_actor_id = runs.actor_id
+        AND workspaces.owner_run_id IS NULL
+        AND EXISTS (
+            SELECT 1 FROM actors
+             WHERE actors.id = runs.actor_id
+               AND actors.workspace_id = runs.workspace_id
+               AND actors.current_run_id = runs.id
+               AND actors.state IN ('open', 'closing')
+        )
+        AND EXISTS (
+            SELECT 1
+              FROM run_waits
+              JOIN run_checkpoints
+                ON run_checkpoints.id = run_waits.suspend_checkpoint_id
+               AND run_checkpoints.kind = 'suspend'
+               AND run_checkpoints.run_id = run_waits.run_id
+               AND run_checkpoints.attempt_number = run_waits.attempt_number
+               AND run_checkpoints.run_wait_id = run_waits.id
+               AND run_checkpoints.workspace_id = run_waits.workspace_id
+               AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+               AND run_checkpoints.state = 'ready'
+               AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > now())
+              JOIN workspace_versions
+                ON workspace_versions.workspace_id = run_checkpoints.workspace_id
+               AND workspace_versions.id = run_checkpoints.private_workspace_version_id
+               AND workspace_versions.state = 'private'
+              JOIN actors AS restore_actor
+                ON restore_actor.id = runs.actor_id
+               AND restore_actor.workspace_id = runs.workspace_id
+               AND restore_actor.current_run_id = runs.id
+               AND restore_actor.state IN ('open', 'closing')
+              JOIN run_attempts AS restore_attempt
+                ON restore_attempt.run_id = runs.id
+               AND restore_attempt.number = runs.current_attempt_number
+               AND restore_attempt.workspace_id = runs.workspace_id
+               AND restore_attempt.entrypoint_kind = 'actor'
+               AND restore_attempt.actor_start_input_sequence = runs.actor_start_input_sequence
+               AND restore_attempt.terminal_at IS NULL
+             WHERE run_waits.run_id = runs.id
+               AND run_waits.suspension_state = 'resume_pending'
+               AND run_waits.handoff_runtime_instance_id IS NULL
+               AND run_waits.handoff_workspace_mount_id IS NULL
+               AND run_waits.handoff_resume_checkpoint_id IS NULL
+               AND runs.actor_start_input_sequence <= runs.actor_start_input_high_watermark
+               AND restore_actor.committed_input_sequence >= runs.actor_start_input_sequence
+               AND restore_actor.committed_input_sequence < restore_actor.next_input_sequence
+               AND run_checkpoints.actor_speculative_input_sequence
+                   BETWEEN restore_actor.committed_input_sequence
+                       AND restore_actor.next_input_sequence - 1
+        ))
    )
    AND (runs.first_lease_at IS NOT NULL OR runs.queued_expires_at IS NULL OR runs.queued_expires_at > now())
  ORDER BY runs.queue_score_at, runs.id

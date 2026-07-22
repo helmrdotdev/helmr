@@ -18,6 +18,8 @@ import (
 const mebibyte = int64(1024 * 1024)
 
 type runPlacementAuthority struct {
+	entrypointKind           string
+	actorID                  pgtype.UUID
 	runID                    pgtype.UUID
 	orgID                    pgtype.UUID
 	projectID                pgtype.UUID
@@ -89,6 +91,47 @@ func lockRunPlacementAuthority(
 ) (runPlacementAuthority, error) {
 	var authority runPlacementAuthority
 	var entrypointDefinitionID pgtype.UUID
+	var actorStartInputSequence pgtype.Int8
+	var actorStartInputHighWatermark pgtype.Int8
+	var actorRunGeneration int64
+	var actorCommittedInputSequence int64
+	var actorNextInputSequence int64
+	if err := tx.QueryRow(ctx, `
+SELECT entrypoint_kind, actor_id
+  FROM runs
+ WHERE org_id = $1
+   AND id = $2
+   AND state_version = $3`,
+		candidate.OrgID,
+		candidate.RunID,
+		candidate.ExpectedRunStateVersion,
+	).Scan(&authority.entrypointKind, &authority.actorID); err != nil {
+		return runPlacementAuthority{}, err
+	}
+	if authority.entrypointKind == "actor" {
+		if !authority.actorID.Valid {
+			return runPlacementAuthority{}, pgx.ErrNoRows
+		}
+		err := tx.QueryRow(ctx, `
+SELECT run_generation, committed_input_sequence, next_input_sequence
+  FROM actors
+ WHERE id = $1
+   AND current_run_id = $2
+   AND state IN ('open', 'closing')
+ FOR UPDATE`, authority.actorID, candidate.RunID).Scan(
+			&actorRunGeneration,
+			&actorCommittedInputSequence,
+			&actorNextInputSequence,
+		)
+		if err != nil {
+			return runPlacementAuthority{}, err
+		}
+		if actorRunGeneration <= 0 {
+			return runPlacementAuthority{}, pgx.ErrNoRows
+		}
+	} else if authority.entrypointKind != "task" || authority.actorID.Valid {
+		return runPlacementAuthority{}, pgx.ErrNoRows
+	}
 	err := tx.QueryRow(ctx, `
 SELECT runs.id,
        runs.org_id,
@@ -107,7 +150,9 @@ SELECT runs.id,
        restore_wait.id,
        coalesce(restore_wait.resume_request_version, 0),
        restore_wait.suspend_checkpoint_id,
-       restore_checkpoint.private_workspace_version_id
+       restore_checkpoint.private_workspace_version_id,
+       runs.actor_start_input_sequence,
+       runs.actor_start_input_high_watermark
   FROM runs
   LEFT JOIN LATERAL (
        SELECT run_waits.id,
@@ -139,12 +184,16 @@ SELECT runs.id,
  WHERE runs.org_id = $1
    AND runs.id = $2
    AND runs.state_version = $3
-   AND runs.entrypoint_kind = 'task'
-   AND runs.cause_kind IN ('api', 'manual', 'schedule')
+   AND runs.entrypoint_kind = $4
+   AND (($4 = 'task' AND runs.actor_id IS NULL
+         AND runs.cause_kind IN ('api', 'manual', 'schedule'))
+        OR ($4 = 'actor' AND runs.actor_id = $5
+            AND runs.cause_kind IN ('actor_start', 'continuation')
+            AND runs.parent_run_id IS NULL))
    AND runs.status = 'queued'
    AND runs.current_run_lease_id IS NULL
    AND (
-       (
+       ($4 = 'task' AND
            restore_wait.id IS NULL
            AND NOT EXISTS (
                SELECT 1
@@ -153,12 +202,12 @@ SELECT runs.id,
                   AND run_waits.suspension_state IN (
                       'hot', 'checkpointing', 'parked', 'resume_pending', 'resuming'
                   )
-           )
-       )
+           ))
        OR (
            restore_wait.id IS NOT NULL
            AND restore_checkpoint.id IS NOT NULL
            AND restore_version.id IS NOT NULL
+           AND ($4 = 'task' OR restore_checkpoint.actor_speculative_input_sequence IS NOT NULL)
        )
    )
    AND (
@@ -170,6 +219,8 @@ SELECT runs.id,
 		candidate.OrgID,
 		candidate.RunID,
 		candidate.ExpectedRunStateVersion,
+		authority.entrypointKind,
+		authority.actorID,
 	).Scan(
 		&authority.runID,
 		&authority.orgID,
@@ -189,13 +240,21 @@ SELECT runs.id,
 		&authority.resumeRequestVersion,
 		&authority.restoreCheckpointID,
 		&authority.baseVersionID,
+		&actorStartInputSequence,
+		&actorStartInputHighWatermark,
 	)
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
 	var manifest []byte
 	var workspaceArchitecture pgtype.Text
-	err = tx.QueryRow(ctx, `
+	workspaceOwnerPredicate := "workspaces.owner_run_id = $5 AND workspaces.owner_actor_id IS NULL"
+	workspaceOwnerID := authority.runID
+	if authority.entrypointKind == "actor" {
+		workspaceOwnerPredicate = "workspaces.owner_actor_id = $5 AND workspaces.owner_run_id IS NULL"
+		workspaceOwnerID = authority.actorID
+	}
+	err = tx.QueryRow(ctx, fmt.Sprintf(`
 SELECT workspaces.deployment_definition_id,
        workspaces.region_id,
        workspaces.ownership_generation,
@@ -215,14 +274,13 @@ SELECT workspaces.deployment_definition_id,
    AND workspaces.state = 'active'
    AND workspaces.desired_state = 'active'
    AND workspaces.dirty_state = 'clean'
-   AND workspaces.owner_run_id = $5
-   AND workspaces.owner_actor_id IS NULL
- FOR UPDATE OF workspaces`,
+   AND %s
+ FOR UPDATE OF workspaces`, workspaceOwnerPredicate),
 		authority.orgID,
 		authority.projectID,
 		authority.environmentID,
 		authority.workspaceID,
-		authority.runID,
+		workspaceOwnerID,
 	).Scan(
 		&authority.workspaceDefinitionID,
 		&authority.regionID,
@@ -236,8 +294,10 @@ SELECT workspaces.deployment_definition_id,
 	}
 
 	var attemptBaseVersionID pgtype.UUID
+	var attemptActorStartInputSequence pgtype.Int8
 	err = tx.QueryRow(ctx, `
-SELECT run_attempts.base_workspace_version_id
+SELECT run_attempts.base_workspace_version_id,
+       run_attempts.actor_start_input_sequence
   FROM run_attempts
   JOIN workspace_versions
     ON workspace_versions.workspace_id = run_attempts.workspace_id
@@ -245,18 +305,28 @@ SELECT run_attempts.base_workspace_version_id
    AND workspace_versions.state = 'committed'
  WHERE run_attempts.run_id = $1
    AND run_attempts.number = $2
-   AND run_attempts.entrypoint_kind = 'task'
+   AND run_attempts.entrypoint_kind = $4
    AND run_attempts.workspace_id = $3
  FOR UPDATE OF run_attempts`,
 		authority.runID,
 		authority.attemptNumber,
 		authority.workspaceID,
-	).Scan(&attemptBaseVersionID)
+		authority.entrypointKind,
+	).Scan(&attemptBaseVersionID, &attemptActorStartInputSequence)
 	if err != nil {
 		return runPlacementAuthority{}, err
 	}
 	if !authority.baseVersionID.Valid {
 		authority.baseVersionID = attemptBaseVersionID
+	}
+	if authority.entrypointKind == "actor" &&
+		(!actorStartInputSequence.Valid || !attemptActorStartInputSequence.Valid ||
+			attemptActorStartInputSequence.Int64 != actorStartInputSequence.Int64 ||
+			!actorStartInputHighWatermark.Valid ||
+			actorStartInputSequence.Int64 > actorStartInputHighWatermark.Int64 ||
+			actorCommittedInputSequence < actorStartInputSequence.Int64 ||
+			actorCommittedInputSequence >= actorNextInputSequence) {
+		return runPlacementAuthority{}, pgx.ErrNoRows
 	}
 	if authority.restoreCheckpointID.Valid {
 		err = tx.QueryRow(ctx, `
@@ -277,6 +347,9 @@ SELECT source_runtime.id,
    AND run_checkpoints.state = 'ready'
    AND run_checkpoints.base_workspace_version_id = $8
    AND run_checkpoints.private_workspace_version_id = $5
+   AND (($11 = 'task' AND run_checkpoints.actor_speculative_input_sequence IS NULL)
+        OR ($11 = 'actor'
+            AND run_checkpoints.actor_speculative_input_sequence BETWEEN $12 AND $13))
    AND (run_checkpoints.expires_at IS NULL
         OR run_checkpoints.expires_at > transaction_timestamp())
   JOIN workspace_versions
@@ -333,6 +406,9 @@ SELECT source_runtime.id,
 			attemptBaseVersionID,
 			authority.workspaceDefinitionID,
 			authority.deploymentID,
+			authority.entrypointKind,
+			actorCommittedInputSequence,
+			actorNextInputSequence-1,
 		).Scan(
 			&authority.restoreRuntimeID,
 			&authority.restoreRuntimeIdentityID,
@@ -354,7 +430,7 @@ SELECT deployments.program_architecture
     ON entrypoint_definitions.environment_id = deployments.environment_id
    AND entrypoint_definitions.deployment_id = deployments.id
    AND entrypoint_definitions.id = $3
-   AND entrypoint_definitions.kind = 'task'
+   AND entrypoint_definitions.kind = $4
  WHERE deployments.environment_id = $1
    AND deployments.id = $2
    AND deployments.status = 'deployed'
@@ -365,6 +441,7 @@ SELECT deployments.program_architecture
 		authority.environmentID,
 		authority.deploymentID,
 		entrypointDefinitionID,
+		authority.entrypointKind,
 	).Scan(&programArchitecture)
 	if err != nil {
 		return runPlacementAuthority{}, err

@@ -809,6 +809,306 @@ func markRunPlacementRuntimeReady(t *testing.T, fixture runPlacementFixture, run
 	}
 }
 
+func TestActorCurrentRunRecreatedRestoreAndRecovery(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		invalidate      bool
+		invalidCursor   bool
+		maxDuration     bool
+		wantRecovered   int
+		wantActorState  string
+		wantActorReason pgtype.Text
+		wantRunStatus   string
+	}{
+		{name: "recoverable checkpoint", wantRecovered: 1, wantActorState: "open", wantRunStatus: "queued"},
+		{name: "unavailable checkpoint", invalidate: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "platform-failure", Valid: true}, wantRunStatus: "system_failed"},
+		{name: "maximum active duration", maxDuration: true, wantActorState: "failed", wantActorReason: pgtype.Text{String: "run-expired", Valid: true}, wantRunStatus: "expired"},
+		{name: "speculative cursor outside Actor bounds", invalidCursor: true, wantActorState: "open", wantRunStatus: "queued"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newRunPlacementFixture(t)
+			actorID, waitID, checkpointID := prepareActorSuspendedRestore(t, fixture)
+			candidate := ReadyRunCandidate{
+				OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
+				ExpectedRunStateVersion: 3,
+			}
+			if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(fixture.ctx, db.GetQueuedRunReadyHintParams{
+				OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
+			}); err != nil {
+				t.Fatalf("Actor restore ready hint: %v", err)
+			}
+			queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+				fixture.ctx,
+				db.ListQueuedRunDispatchCandidatesForScopeParams{
+					OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+					EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+					QueueName: "default", RowLimit: 10,
+				},
+			)
+			if err != nil || len(queued) != 1 || queued[0].RunID != pgvalue.UUID(fixture.runID) {
+				t.Fatalf("Actor restore dispatch candidates = %+v, error = %v", queued, err)
+			}
+			scopes, err := db.New(fixture.pool).ListQueuedRunCandidateScopes(
+				fixture.ctx,
+				db.ListQueuedRunCandidateScopesParams{RowLimit: 10, ScanSeed: "actor-restore"},
+			)
+			if err != nil || len(scopes) != 1 || scopes[0].EnvironmentID != pgvalue.UUID(fixture.environmentID) {
+				t.Fatalf("Actor restore candidate scopes = %+v, error = %v", scopes, err)
+			}
+			freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
+			if tc.invalidCursor {
+				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_checkpoints SET actor_speculative_input_sequence = 2 WHERE id = $1`, checkpointID)
+				if _, err := db.New(fixture.pool).GetQueuedRunReadyHint(fixture.ctx, db.GetQueuedRunReadyHintParams{
+					OrgID: pgvalue.UUID(fixture.orgID), RunID: pgvalue.UUID(fixture.runID),
+				}); !errors.Is(err, pgx.ErrNoRows) {
+					t.Fatalf("out-of-bounds Actor restore ready hint error = %v, want pgx.ErrNoRows", err)
+				}
+				queued, err := db.New(fixture.pool).ListQueuedRunDispatchCandidatesForScope(
+					fixture.ctx,
+					db.ListQueuedRunDispatchCandidatesForScopeParams{
+						OrgID: pgvalue.UUID(fixture.orgID), ProjectID: pgvalue.UUID(fixture.projectID),
+						EnvironmentID: pgvalue.UUID(fixture.environmentID), RegionID: "us-east-1",
+						QueueName: "default", RowLimit: 10,
+					},
+				)
+				if err != nil || len(queued) != 0 {
+					t.Fatalf("out-of-bounds Actor dispatch candidates = %+v, error = %v", queued, err)
+				}
+				if _, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter); !errors.Is(err, ErrCandidateChanged) {
+					t.Fatalf("Actor restore with out-of-bounds cursor error = %v, want ErrCandidateChanged", err)
+				}
+				if _, err := fixture.pool.Exec(fixture.ctx, `
+UPDATE run_attempts
+   SET terminal_outcome = 'succeeded', terminal_reason_code = 'completed',
+       terminal_at = transaction_timestamp()
+ WHERE run_id = $1 AND number = 1`, fixture.runID); err == nil {
+					t.Fatal("successful Actor Attempt accepted a NULL terminal cursor")
+				}
+				return
+			}
+			reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
+			mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			markRunPlacementMountReady(t, fixture, mount.WorkspaceMountID)
+			grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, candidate, freshAfter)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.invalidate {
+				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_checkpoints
+   SET state = 'invalid', ready_at = NULL, invalidated_at = transaction_timestamp(),
+       invalidation_reason_code = 'test_unavailable'
+ WHERE id = $1`, checkpointID)
+			}
+			if tc.maxDuration {
+				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+UPDATE run_leases
+   SET state = 'running', claimed_at = assigned_at, started_at = assigned_at
+ WHERE id = $1`, grant.Lease.ID)
+				mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+UPDATE runs
+   SET status = 'running', max_active_duration_ms = 5000,
+       active_started_at = transaction_timestamp() - interval '10 seconds',
+       started_at = coalesce(started_at, transaction_timestamp() - interval '10 seconds'),
+       state_version = state_version + 1
+ WHERE id = $1`, fixture.runID)
+			}
+			mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+WITH expired AS (
+    UPDATE run_leases
+       SET start_deadline_at = assigned_at + interval '1 millisecond',
+           expires_at = assigned_at + interval '2 milliseconds'
+     WHERE id = $1
+    RETURNING id, expires_at
+)
+UPDATE workspace_leases
+   SET expires_at = expired.expires_at
+  FROM expired
+ WHERE owner_run_lease_id = expired.id`, grant.Lease.ID)
+			recovered, err := db.New(fixture.pool).RecoverExpiredRecreatedRunResumes(fixture.ctx, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(recovered) != tc.wantRecovered {
+				t.Fatalf("recovered %d Actor resumes, want %d", len(recovered), tc.wantRecovered)
+			}
+			var actorState string
+			var currentRunID, ownerActorID pgtype.UUID
+			var runGeneration, actorStateVersion, ownershipGeneration int64
+			var actorReason pgtype.Text
+			var waitState, runStatus string
+			var terminalCursor pgtype.Int8
+			err = fixture.pool.QueryRow(fixture.ctx, `
+SELECT actors.state, actors.current_run_id, actors.run_generation, actors.state_version,
+       actors.failure_reason_code, workspaces.owner_actor_id, workspaces.ownership_generation,
+       run_waits.suspension_state, runs.status, run_attempts.terminal_actor_input_sequence
+  FROM actors
+  JOIN workspaces ON workspaces.id = actors.workspace_id
+  JOIN runs ON runs.id = $2
+  JOIN run_waits ON run_waits.id = $3
+  JOIN run_attempts ON run_attempts.run_id = runs.id AND run_attempts.number = runs.current_attempt_number
+ WHERE actors.id = $1`, actorID, fixture.runID, waitID).Scan(
+				&actorState, &currentRunID, &runGeneration, &actorStateVersion,
+				&actorReason, &ownerActorID, &ownershipGeneration, &waitState, &runStatus, &terminalCursor,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if actorState != tc.wantActorState || actorReason != tc.wantActorReason {
+				t.Fatalf("Actor state/reason = %s/%v, want %s/%v", actorState, actorReason, tc.wantActorState, tc.wantActorReason)
+			}
+			if tc.invalidate || tc.maxDuration {
+				if currentRunID.Valid || ownerActorID.Valid || runGeneration != 2 || actorStateVersion != 2 ||
+					ownershipGeneration != 2 || waitState != "failed" || runStatus != tc.wantRunStatus || terminalCursor.Valid {
+					t.Fatalf("terminal Actor composition run=%s owner=%s generations=%d/%d workspace=%d wait=%s run=%s cursor=%v",
+						pgvalue.UUIDString(currentRunID), pgvalue.UUIDString(ownerActorID), runGeneration,
+						actorStateVersion, ownershipGeneration, waitState, runStatus, terminalCursor)
+				}
+			} else if currentRunID != pgvalue.UUID(fixture.runID) || ownerActorID != pgvalue.UUID(actorID) ||
+				runGeneration != 1 || actorStateVersion != 1 || ownershipGeneration != 1 ||
+				waitState != "resume_pending" || runStatus != "queued" {
+				t.Fatalf("recoverable Actor changed durable identity/state")
+			}
+		})
+	}
+}
+
+func prepareActorSuspendedRestore(t *testing.T, fixture runPlacementFixture) (uuid.UUID, uuid.UUID, uuid.UUID) {
+	t.Helper()
+	freshAfter := pgvalue.Timestamptz(time.Now().Add(-time.Minute))
+	reserved, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementRuntimeReady(t, fixture, reserved.RuntimeInstanceID)
+	mount, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	markRunPlacementMountReady(t, fixture, mount.WorkspaceMountID)
+	grant, err := fixture.authority.PlaceReadyRun(fixture.ctx, fixture.candidate(), freshAfter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sourceWorkspaceLeaseID, baseVersionID pgtype.UUID
+	if err := fixture.pool.QueryRow(fixture.ctx, `
+SELECT id, base_version_id FROM workspace_leases WHERE owner_run_lease_id = $1`, grant.Lease.ID).Scan(
+		&sourceWorkspaceLeaseID, &baseVersionID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	actorID := uuid.Must(uuid.NewV7())
+	actorDefinitionID := uuid.Must(uuid.NewV7())
+	waitID := uuid.Must(uuid.NewV7())
+	checkpointID := uuid.Must(uuid.NewV7())
+	privateVersionID := uuid.Must(uuid.NewV7())
+	privateArtifactID := uuid.Must(uuid.NewV7())
+	privateDigest := "sha256:" + strings.Repeat("6", 64)
+	// This fixture converts the already-granted Task source into an Actor source.
+	// Production Actor creation does not perform that conversion, but deferring
+	// this FK lets the fixture establish the same valid final graph atomically.
+	mustRunPlacementExec(t, fixture.ctx, fixture.pool, `
+ALTER TABLE run_attempts
+ALTER CONSTRAINT run_attempts_run_id_entrypoint_kind_workspace_id_fkey
+DEFERRABLE INITIALLY DEFERRED`)
+	tx, err := fixture.pool.Begin(fixture.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	mustRunPlacementExec(t, fixture.ctx, tx, `SET CONSTRAINTS ALL DEFERRED`)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO deployment_definitions (
+    id, environment_id, deployment_id, kind, declared_id, manifest_version, manifest, manifest_digest
+) VALUES ($1, $2, $3, 'actor', 'test-actor', 0, '{}'::jsonb, decode(repeat('06', 32), 'hex'))`,
+		actorDefinitionID, fixture.environmentID, fixture.deploymentID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO actors (
+    id, public_id, org_id, project_id, environment_id, actor_declared_id,
+    deployment_definition_id, workspace_id, current_run_id,
+    next_input_sequence, committed_input_sequence, managed_queue_name,
+    managed_max_active_duration_ms
+) VALUES ($1, $2, $3, $4, $5, 'test-actor', $6, $7, $8, 2, 1, 'default', 300000)`,
+		actorID, "act_aaaaaaaaaaaaaaaaaaaaaaaaaa", fixture.orgID, fixture.projectID,
+		fixture.environmentID, actorDefinitionID, fixture.workspaceID, fixture.runID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE runs
+   SET deployment_definition_id = $2, entrypoint_kind = 'actor',
+       entrypoint_declared_id = 'test-actor', actor_id = $3,
+       cause_kind = 'actor_start', actor_start_input_sequence = 1,
+       actor_start_input_high_watermark = 1, payload = NULL
+ WHERE id = $1`, fixture.runID, actorDefinitionID, actorID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE run_attempts
+   SET entrypoint_kind = 'actor', actor_start_input_sequence = 1,
+       entrypoint_entered_at = transaction_timestamp()
+ WHERE run_id = $1 AND number = 1`, fixture.runID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE workspaces SET owner_run_id = NULL, owner_actor_id = $2 WHERE id = $1`, fixture.workspaceID, actorID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `INSERT INTO cas_objects (org_id, digest, size_bytes, media_type) VALUES ($1, $2, 1, $3)`,
+		fixture.orgID, privateDigest, workspace.ArtifactMediaType)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO artifacts (id, org_id, project_id, environment_id, digest, kind, size_bytes, media_type)
+VALUES ($1, $2, $3, $4, $5, 'workspace_version', 1, $6)`, privateArtifactID, fixture.orgID,
+		fixture.projectID, fixture.environmentID, privateDigest, workspace.ArtifactMediaType)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO workspace_versions (
+    id, public_id, org_id, project_id, environment_id, workspace_id, parent_version_id,
+    kind, content_digest, state, source_workspace_lease_id, ownership_generation,
+    writer_generation, artifact_id, artifact_kind, entry_count, size_bytes
+) VALUES ($1, $2, $3, $4, $5, $6, $7, 'user', $8, 'private', $9, 1, 1, $10, 'workspace_version', 1, 1)`,
+		privateVersionID, dispatchPublicID(t, publicid.WorkspaceVersion), fixture.orgID, fixture.projectID,
+		fixture.environmentID, fixture.workspaceID, baseVersionID, privateDigest, sourceWorkspaceLeaseID, privateArtifactID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO run_waits (
+    id, environment_id, run_id, workspace_id, kind, due_at, condition_state,
+    condition_result, condition_terminal_at, suspension_state, expected_run_state_version,
+    attempt_number, prior_run_lease_id, resume_attach_id
+) VALUES ($1, $2, $3, $4, 'timer', now() - interval '1 second', 'completed', '{}'::jsonb,
+          now(), 'resume_pending', 3, 1, $5, $6)`, waitID, fixture.environmentID, fixture.runID,
+		fixture.workspaceID, grant.Lease.ID, uuid.Must(uuid.NewV7()))
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+INSERT INTO run_checkpoints (
+    id, kind, run_id, attempt_number, run_wait_id, source_run_lease_id,
+    source_workspace_lease_id, workspace_id, base_workspace_version_id,
+    private_workspace_version_id, actor_speculative_input_sequence,
+    state, restore_manifest, ready_at
+) VALUES ($1, 'suspend', $2, 1, $3, $4, $5, $6, $7, $8, 1, 'ready', '{"kind":"suspend"}'::jsonb, now())`,
+		checkpointID, fixture.runID, waitID, grant.Lease.ID, sourceWorkspaceLeaseID,
+		fixture.workspaceID, baseVersionID, privateVersionID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE run_waits SET suspend_checkpoint_id = $2, resume_request_version = 1 WHERE id = $1`, waitID, checkpointID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE runs SET current_run_lease_id = NULL, state_version = 3 WHERE id = $1`, fixture.runID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE run_leases SET state = 'checkpointed', claimed_at = assigned_at, started_at = assigned_at,
+       checkpointed_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, grant.Lease.ID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE workspace_leases SET state = 'released', released_at = now(), terminal_at = now() WHERE id = $1`, sourceWorkspaceLeaseID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `UPDATE workspace_mounts SET state = 'unmounted', unmounted_at = now(), terminal_at = now(), terminal_reason_code = 'checkpointed' WHERE id = $1`, mount.WorkspaceMountID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE runtime_instances SET desired_state = 'closed', desired_version = desired_version + 1,
+       observed_state = 'closed', observed_desired_version = desired_version + 1,
+       observed_version = observed_version + 1, closing_at = now(), closed_at = now(),
+       terminal_at = now(), terminal_reason_code = 'checkpointed', reclaimed_at = now(),
+       reserved_run_id = NULL, reserved_attempt_number = NULL,
+       reserved_workspace_version_id = NULL, reservation_expires_at = NULL WHERE id = $1`, reserved.RuntimeInstanceID)
+	mustRunPlacementExec(t, fixture.ctx, tx, `
+UPDATE worker_network_slots SET state = 'available', runtime_instance_id = NULL,
+       host_interface_name = NULL, guest_address = NULL, gateway_address = NULL,
+       subnet = NULL, tap_name = NULL, netns_name = NULL, guest_mac = NULL
+ WHERE runtime_instance_id = $1`, reserved.RuntimeInstanceID)
+	if err := tx.Commit(fixture.ctx); err != nil {
+		t.Fatal(err)
+	}
+	return actorID, waitID, checkpointID
+}
+
 func markRunPlacementRuntimeReadyQuery(t *testing.T, fixture runPlacementFixture, runtimeID pgtype.UUID) error {
 	t.Helper()
 	var desiredVersion, observedVersion, workerEpoch, slotGeneration int64

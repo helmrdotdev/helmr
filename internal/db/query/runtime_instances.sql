@@ -149,9 +149,54 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runtime_instances.restore_checkpoint_id IS NOT NULL
      ORDER BY secrets.id, workspace_secrets.placement_kind, workspace_secrets.placement_target
      FOR UPDATE OF secrets
-), restore_run_authority AS MATERIALIZED (
-    SELECT runtime_instances.id AS runtime_instance_id
+), restore_actor_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           actors.id AS actor_id,
+           actors.committed_input_sequence,
+           actors.next_input_sequence
       FROM runtime_instances
+      JOIN runs
+        ON runs.id = runtime_instances.reserved_run_id
+       AND runs.entrypoint_kind = 'actor'
+       AND runs.actor_id IS NOT NULL
+      JOIN actors
+        ON actors.id = runs.actor_id
+       AND actors.workspace_id = runtime_instances.workspace_id
+       AND actors.current_run_id = runs.id
+       AND actors.state IN ('open', 'closing')
+     WHERE runtime_instances.id = sqlc.arg(id)
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+     FOR UPDATE OF actors
+), restore_entrypoint_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           NULL::uuid AS actor_id,
+           NULL::bigint AS committed_input_sequence,
+           NULL::bigint AS next_input_sequence
+      FROM runtime_instances
+      JOIN runs ON runs.id = runtime_instances.reserved_run_id
+     WHERE runtime_instances.id = sqlc.arg(id)
+       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
+       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
+       AND runtime_instances.restore_checkpoint_id IS NOT NULL
+       AND runs.entrypoint_kind = 'task'
+       AND runs.actor_id IS NULL
+       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+    UNION ALL
+    SELECT restore_actor_authority.* FROM restore_actor_authority
+), restore_run_authority AS MATERIALIZED (
+    SELECT runtime_instances.id AS runtime_instance_id,
+           restore_entrypoint_authority.actor_id,
+           restore_entrypoint_authority.committed_input_sequence,
+           restore_entrypoint_authority.next_input_sequence,
+           runs.entrypoint_kind,
+           runs.actor_start_input_sequence,
+           runs.actor_start_input_high_watermark
+      FROM restore_entrypoint_authority
+      JOIN runtime_instances
+        ON runtime_instances.id = restore_entrypoint_authority.runtime_instance_id
       JOIN runs
         ON runs.id = runtime_instances.reserved_run_id
        AND runs.org_id = runtime_instances.org_id
@@ -161,14 +206,16 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND runs.current_attempt_number = runtime_instances.reserved_attempt_number
        AND runs.status = 'queued'
        AND runs.current_run_lease_id IS NULL
-     WHERE runtime_instances.id = sqlc.arg(id)
-       AND runtime_instances.worker_instance_id = sqlc.arg(worker_instance_id)
-       AND runtime_instances.worker_epoch = sqlc.arg(worker_epoch)
-       AND runtime_instances.restore_checkpoint_id IS NOT NULL
-       AND (SELECT count(*) FROM restore_secret_authority) >= 0
+       AND ((runs.entrypoint_kind = 'task'
+             AND runs.actor_id IS NULL
+             AND restore_entrypoint_authority.actor_id IS NULL)
+            OR (runs.entrypoint_kind = 'actor'
+                AND runs.actor_id = restore_entrypoint_authority.actor_id
+                AND runs.cause_kind IN ('actor_start', 'continuation')
+                AND runs.parent_run_id IS NULL))
      FOR UPDATE OF runs
 ), restore_workspace_authority AS MATERIALIZED (
-    SELECT restore_run_authority.runtime_instance_id
+    SELECT restore_run_authority.*
       FROM restore_run_authority
       JOIN runtime_instances
         ON runtime_instances.id = restore_run_authority.runtime_instance_id
@@ -177,14 +224,18 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND workspaces.org_id = runtime_instances.org_id
        AND workspaces.project_id = runtime_instances.project_id
        AND workspaces.environment_id = runtime_instances.environment_id
-       AND workspaces.owner_run_id = runtime_instances.reserved_run_id
-       AND workspaces.owner_actor_id IS NULL
+       AND ((restore_run_authority.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = runtime_instances.reserved_run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (restore_run_authority.entrypoint_kind = 'actor'
+                AND workspaces.owner_actor_id = restore_run_authority.actor_id
+                AND workspaces.owner_run_id IS NULL))
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.dirty_state = 'clean'
      FOR UPDATE OF workspaces
 ), restore_attempt_authority AS MATERIALIZED (
-    SELECT restore_workspace_authority.runtime_instance_id
+    SELECT restore_workspace_authority.*
       FROM restore_workspace_authority
       JOIN runtime_instances
         ON runtime_instances.id = restore_workspace_authority.runtime_instance_id
@@ -192,7 +243,17 @@ WITH restore_secret_authority AS MATERIALIZED (
         ON run_attempts.run_id = runtime_instances.reserved_run_id
        AND run_attempts.number = runtime_instances.reserved_attempt_number
        AND run_attempts.workspace_id = runtime_instances.workspace_id
+       AND run_attempts.entrypoint_kind = restore_workspace_authority.entrypoint_kind
        AND run_attempts.terminal_at IS NULL
+       AND (restore_workspace_authority.entrypoint_kind = 'task'
+            OR (run_attempts.actor_start_input_sequence IS NOT NULL
+                AND run_attempts.actor_start_input_sequence = restore_workspace_authority.actor_start_input_sequence
+                AND restore_workspace_authority.actor_start_input_sequence
+                    <= restore_workspace_authority.actor_start_input_high_watermark
+                AND restore_workspace_authority.actor_start_input_sequence
+                    <= restore_workspace_authority.committed_input_sequence
+                AND restore_workspace_authority.committed_input_sequence
+                    < restore_workspace_authority.next_input_sequence))
      FOR UPDATE OF run_attempts
 ), substrate_authority AS MATERIALIZED (
     SELECT runtime_instances.id AS runtime_instance_id
@@ -255,6 +316,8 @@ WITH restore_secret_authority AS MATERIALIZED (
       FROM runtime_authority
       JOIN runtime_instances
         ON runtime_instances.id = runtime_authority.runtime_instance_id
+      JOIN restore_attempt_authority
+        ON restore_attempt_authority.runtime_instance_id = runtime_instances.id
       JOIN run_waits
         ON run_waits.run_id = runtime_instances.reserved_run_id
        AND run_waits.attempt_number = runtime_instances.reserved_attempt_number
@@ -273,6 +336,12 @@ WITH restore_secret_authority AS MATERIALIZED (
        AND run_checkpoints.workspace_id = runtime_instances.workspace_id
        AND run_checkpoints.private_workspace_version_id = runtime_instances.reserved_workspace_version_id
        AND run_checkpoints.state = 'ready'
+       AND ((restore_attempt_authority.entrypoint_kind = 'task'
+             AND run_checkpoints.actor_speculative_input_sequence IS NULL)
+            OR (restore_attempt_authority.entrypoint_kind = 'actor'
+                AND run_checkpoints.actor_speculative_input_sequence
+                    BETWEEN restore_attempt_authority.committed_input_sequence
+                        AND restore_attempt_authority.next_input_sequence - 1))
        AND (run_checkpoints.expires_at IS NULL OR run_checkpoints.expires_at > transaction_timestamp())
       JOIN run_leases AS source_lease
         ON source_lease.id = run_checkpoints.source_run_lease_id

@@ -820,6 +820,8 @@ RETURNING *;
 -- name: RecoverExpiredRecreatedRunResumes :many
 WITH candidates AS MATERIALIZED (
     SELECT runs.id AS run_id,
+           runs.entrypoint_kind,
+           runs.actor_id,
            run_leases.id AS run_lease_id,
            run_leases.worker_instance_id,
            run_leases.worker_epoch,
@@ -891,6 +893,30 @@ WITH candidates AS MATERIALIZED (
             OR worker_network_slots.lost_at <= transaction_timestamp())
      ORDER BY runs.id
      LIMIT sqlc.arg(limit_count)
+), locked_actor_candidates AS MATERIALIZED (
+    SELECT candidates.*,
+           actors.run_generation AS actor_run_generation,
+           actors.committed_input_sequence AS actor_committed_input_sequence,
+           actors.next_input_sequence AS actor_next_input_sequence
+      FROM candidates
+      JOIN actors
+        ON actors.id = candidates.actor_id
+       AND actors.current_run_id = candidates.run_id
+       AND actors.state IN ('open', 'closing')
+     WHERE candidates.entrypoint_kind = 'actor'
+     ORDER BY actors.id
+     FOR UPDATE OF actors SKIP LOCKED
+), placement_candidates AS MATERIALIZED (
+    SELECT candidates.*,
+           NULL::bigint AS actor_run_generation,
+           NULL::bigint AS actor_committed_input_sequence,
+           NULL::bigint AS actor_next_input_sequence
+      FROM candidates
+     WHERE candidates.entrypoint_kind = 'task'
+       AND candidates.actor_id IS NULL
+    UNION ALL
+    SELECT locked_actor_candidates.*
+      FROM locked_actor_candidates
 ), locked_runs AS MATERIALIZED (
     SELECT runs.org_id,
            runs.project_id,
@@ -899,27 +925,39 @@ WITH candidates AS MATERIALIZED (
            runs.id AS run_id,
            runs.state_version,
            runs.current_attempt_number,
+           runs.actor_start_input_sequence,
+           runs.actor_start_input_high_watermark,
            runs.max_active_duration_ms,
            runs.active_elapsed_ms,
            runs.active_started_at,
-           candidates.run_lease_id,
-           candidates.worker_instance_id,
-           candidates.worker_epoch,
-           candidates.network_slot_id,
-           candidates.network_slot_generation,
-           candidates.runtime_instance_id,
-           candidates.workspace_lease_id,
-           candidates.workspace_mount_id,
-           candidates.run_wait_id,
-           candidates.restore_checkpoint_id
-      FROM candidates
-      JOIN runs ON runs.id = candidates.run_id
-     WHERE runs.entrypoint_kind = 'task'
-       AND runs.actor_id IS NULL
+           placement_candidates.entrypoint_kind,
+           placement_candidates.actor_id,
+           placement_candidates.actor_run_generation,
+           placement_candidates.actor_committed_input_sequence,
+           placement_candidates.actor_next_input_sequence,
+           placement_candidates.run_lease_id,
+           placement_candidates.worker_instance_id,
+           placement_candidates.worker_epoch,
+           placement_candidates.network_slot_id,
+           placement_candidates.network_slot_generation,
+           placement_candidates.runtime_instance_id,
+           placement_candidates.workspace_lease_id,
+           placement_candidates.workspace_mount_id,
+           placement_candidates.run_wait_id,
+           placement_candidates.restore_checkpoint_id
+      FROM placement_candidates
+      JOIN runs ON runs.id = placement_candidates.run_id
+     WHERE ((runs.entrypoint_kind = 'task'
+             AND runs.actor_id IS NULL
+             AND placement_candidates.entrypoint_kind = 'task')
+            OR (runs.entrypoint_kind = 'actor'
+                AND runs.actor_id = placement_candidates.actor_id
+                AND runs.cause_kind IN ('actor_start', 'continuation')
+                AND placement_candidates.entrypoint_kind = 'actor'))
        AND runs.parent_run_id IS NULL
        AND ((runs.status = 'queued' AND runs.active_started_at IS NULL)
             OR (runs.status = 'running' AND runs.active_started_at IS NOT NULL))
-       AND runs.current_run_lease_id = candidates.run_lease_id
+       AND runs.current_run_lease_id = placement_candidates.run_lease_id
      ORDER BY runs.id
      FOR UPDATE OF runs SKIP LOCKED
 ), locked_workspaces AS MATERIALIZED (
@@ -931,8 +969,12 @@ WITH candidates AS MATERIALIZED (
      WHERE workspaces.org_id = locked_runs.org_id
        AND workspaces.project_id = locked_runs.project_id
        AND workspaces.environment_id = locked_runs.environment_id
-       AND workspaces.owner_run_id = locked_runs.run_id
-       AND workspaces.owner_actor_id IS NULL
+       AND ((locked_runs.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = locked_runs.run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (locked_runs.entrypoint_kind = 'actor'
+                AND workspaces.owner_actor_id = locked_runs.actor_id
+                AND workspaces.owner_run_id IS NULL))
        AND workspaces.state = 'active'
        AND workspaces.desired_state = 'active'
        AND workspaces.dirty_state = 'clean'
@@ -945,8 +987,17 @@ WITH candidates AS MATERIALIZED (
         ON run_attempts.run_id = locked_workspaces.run_id
        AND run_attempts.number = locked_workspaces.current_attempt_number
        AND run_attempts.workspace_id = locked_workspaces.workspace_id
-       AND run_attempts.entrypoint_kind = 'task'
+       AND run_attempts.entrypoint_kind = locked_workspaces.entrypoint_kind
        AND run_attempts.terminal_at IS NULL
+       AND (locked_workspaces.entrypoint_kind = 'task'
+            OR (run_attempts.actor_start_input_sequence IS NOT NULL
+                AND run_attempts.actor_start_input_sequence = locked_workspaces.actor_start_input_sequence
+                AND locked_workspaces.actor_start_input_sequence
+                    <= locked_workspaces.actor_start_input_high_watermark
+                AND locked_workspaces.actor_committed_input_sequence
+                    >= locked_workspaces.actor_start_input_sequence
+                AND locked_workspaces.actor_committed_input_sequence
+                    < locked_workspaces.actor_next_input_sequence))
      ORDER BY run_attempts.run_id, run_attempts.number
      FOR UPDATE OF run_attempts
 ), locked_workers AS MATERIALIZED (
@@ -1119,6 +1170,12 @@ WITH candidates AS MATERIALIZED (
                  OR run_checkpoints.expires_at > transaction_timestamp())
             AND workspace_versions.state = 'private'
             AND source_run_leases.state = 'checkpointed'
+            AND ((loss_authority.entrypoint_kind = 'task'
+                  AND run_checkpoints.actor_speculative_input_sequence IS NULL)
+                 OR (loss_authority.entrypoint_kind = 'actor'
+                     AND run_checkpoints.actor_speculative_input_sequence
+                         BETWEEN loss_authority.actor_committed_input_sequence
+                             AND loss_authority.actor_next_input_sequence - 1))
             AND NOT (
                 loss_authority.run_lease_state = 'running'
                 AND loss_authority.authority_loss_at = loss_authority.hard_deadline_at
@@ -1319,17 +1376,58 @@ WITH candidates AS MATERIALIZED (
        AND run_waits.suspension_state = 'resuming'
        AND run_waits.resume_request_version = locked_checkpoints.resume_request_version
     RETURNING run_waits.id, failed_runs.id AS run_id
+), failed_actors AS (
+    UPDATE actors
+       SET state = 'failed',
+           current_run_id = NULL,
+           run_generation = actors.run_generation + 1,
+           state_version = actors.state_version + 1,
+           manual_run_cancelled = false,
+           no_progress_input_sequence = NULL,
+           no_progress_count = 0,
+           last_no_progress_run_id = NULL,
+           failure_reason_code = CASE
+               WHEN locked_checkpoints.active_budget_exhausted THEN 'run-expired'
+               ELSE 'platform-failure'
+           END,
+           last_failure_run_id = failed_runs.id,
+           failed_at = transaction_timestamp(),
+           updated_at = transaction_timestamp()
+      FROM locked_checkpoints, failed_runs, failed_waits
+     WHERE locked_checkpoints.entrypoint_kind = 'actor'
+       AND actors.id = locked_checkpoints.actor_id
+       AND actors.current_run_id = failed_runs.id
+       AND actors.run_generation = locked_checkpoints.actor_run_generation
+       AND actors.state IN ('open', 'closing')
+       AND failed_waits.run_id = failed_runs.id
+    RETURNING actors.id, failed_runs.id AS run_id
 ), released_owners AS (
     UPDATE workspaces
-       SET owner_run_id = NULL,
+       SET owner_run_id = CASE
+               WHEN locked_checkpoints.entrypoint_kind = 'task' THEN NULL
+               ELSE workspaces.owner_run_id
+           END,
+           owner_actor_id = CASE
+               WHEN locked_checkpoints.entrypoint_kind = 'actor' THEN NULL
+               ELSE workspaces.owner_actor_id
+           END,
            ownership_generation = workspaces.ownership_generation + 1,
            state_version = workspaces.state_version + 1,
            last_activity_at = transaction_timestamp(),
            updated_at = transaction_timestamp()
-      FROM locked_checkpoints, failed_waits
+      FROM locked_checkpoints
+      JOIN failed_waits ON failed_waits.run_id = locked_checkpoints.run_id
+      LEFT JOIN failed_actors
+        ON failed_actors.run_id = locked_checkpoints.run_id
+       AND failed_actors.id = locked_checkpoints.actor_id
      WHERE workspaces.id = locked_checkpoints.workspace_id
-       AND workspaces.owner_run_id = failed_waits.run_id
-       AND workspaces.owner_actor_id IS NULL
+       AND ((locked_checkpoints.entrypoint_kind = 'task'
+             AND workspaces.owner_run_id = failed_waits.run_id
+             AND workspaces.owner_actor_id IS NULL)
+            OR (locked_checkpoints.entrypoint_kind = 'actor'
+                AND failed_actors.id IS NOT NULL
+                AND workspaces.owner_actor_id = failed_actors.id
+                AND workspaces.owner_run_id IS NULL))
        AND workspaces.ownership_generation = locked_checkpoints.ownership_generation
        AND workspaces.writer_generation = locked_checkpoints.writer_generation
     RETURNING workspaces.id
