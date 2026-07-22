@@ -1694,4 +1694,3 @@ export type MetadataUpdated = Message<"helmr.run.v0.MetadataUpdated"> & {
  */
 export const MetadataUpdatedSchema: GenMessage<MetadataUpdated> = /*@__PURE__*/
   messageDesc(file_run, 52);
-

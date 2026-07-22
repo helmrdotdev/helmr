@@ -125,6 +125,30 @@ UPDATE run_waits
    AND suspension_state = 'parked'
 RETURNING *;
 
+-- name: ReleaseRunResumeWait :one
+UPDATE run_waits
+   SET suspension_state = 'released',
+       resume_ack_version = sqlc.arg(resume_request_version),
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = sqlc.arg(id)
+   AND environment_id = sqlc.arg(environment_id)
+   AND run_id = sqlc.arg(run_id)
+   AND attempt_number = sqlc.arg(attempt_number)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND current_run_lease_id = sqlc.arg(current_run_lease_id)
+   AND suspension_state = 'resuming'
+   AND CASE
+           WHEN condition_state = 'completed'
+                AND handoff_resume_checkpoint_id IS NOT NULL
+               THEN handoff_resume_checkpoint_id
+           ELSE suspend_checkpoint_id
+       END = sqlc.arg(checkpoint_id)::uuid
+   AND resume_attach_id = sqlc.arg(resume_attach_id)
+   AND resume_request_version = sqlc.arg(resume_request_version)
+   AND resume_ack_version < resume_request_version
+RETURNING *;
+
 -- name: ListPendingRunWaitTimeouts :many
 SELECT *
   FROM run_waits

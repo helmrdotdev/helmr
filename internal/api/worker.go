@@ -404,6 +404,23 @@ type WorkerRunStartResponse struct {
 	Lease WorkerRunLeaseReceipt `json:"lease"`
 }
 
+type WorkerRunResumeReleaseRequest struct {
+	Lease                WorkerRunLeaseReceipt `json:"lease"`
+	RunWaitID            string                `json:"run_wait_id"`
+	CheckpointID         string                `json:"checkpoint_id"`
+	ResumeAttachID       string                `json:"resume_attach_id"`
+	ResumeRequestVersion int64                 `json:"resume_request_version"`
+	RunLeaseID           string                `json:"run_lease_id"`
+}
+
+type WorkerRunResumeReleaseResponse struct {
+	Lease                WorkerRunLeaseReceipt `json:"lease"`
+	RunWaitID            string                `json:"run_wait_id"`
+	CheckpointID         string                `json:"checkpoint_id"`
+	ResumeAttachID       string                `json:"resume_attach_id"`
+	ResumeRequestVersion int64                 `json:"resume_request_version"`
+}
+
 type WorkerRunLeaseRenewRequest struct {
 	Lease WorkerRunLeaseReceipt `json:"lease"`
 }

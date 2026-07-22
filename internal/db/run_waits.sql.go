@@ -695,6 +695,115 @@ func (q *Queries) MarkRunWaitResumePending(ctx context.Context, arg MarkRunWaitR
 	return i, err
 }
 
+const releaseRunResumeWait = `-- name: ReleaseRunResumeWait :one
+UPDATE run_waits
+   SET suspension_state = 'released',
+       resume_ack_version = $1,
+       suspension_terminal_at = transaction_timestamp(),
+       updated_at = transaction_timestamp()
+ WHERE id = $2
+   AND environment_id = $3
+   AND run_id = $4
+   AND attempt_number = $5
+   AND workspace_id = $6
+   AND current_run_lease_id = $7
+   AND suspension_state = 'resuming'
+   AND CASE
+           WHEN condition_state = 'completed'
+                AND handoff_resume_checkpoint_id IS NOT NULL
+               THEN handoff_resume_checkpoint_id
+           ELSE suspend_checkpoint_id
+       END = $8::uuid
+   AND resume_attach_id = $9
+   AND resume_request_version = $1
+   AND resume_ack_version < resume_request_version
+RETURNING id, environment_id, run_id, workspace_id, kind, condition_state, due_at, timeout_at, idle_timeout_ms, token_id, child_run_id, child_parent_owned, child_target_declared_id, child_claim_id, child_request, actor_id, after_input_sequence, condition_result, condition_error, condition_terminal_at, condition_reason_code, completed_actor_record_id, completed_actor_record_direction, suspension_state, expected_run_state_version, attempt_number, current_run_lease_id, prior_run_lease_id, checkpoint_request_version, checkpoint_ack_version, checkpoint_due_at, suspend_checkpoint_id, handoff_resume_checkpoint_id, resume_attach_id, resume_request_version, resume_ack_version, base_workspace_version_id, base_workspace_content_digest, child_result_version_id, resume_workspace_version_id, handoff_runtime_instance_id, handoff_workspace_mount_id, handoff_mount_generation, ownership_generation, parent_writer_generation, child_writer_generation, resume_writer_generation, metadata, tags, suspension_terminal_at, suspension_reason_code, suspension_error, created_at, updated_at
+`
+
+type ReleaseRunResumeWaitParams struct {
+	ResumeRequestVersion int64       `json:"resume_request_version"`
+	ID                   pgtype.UUID `json:"id"`
+	EnvironmentID        pgtype.UUID `json:"environment_id"`
+	RunID                pgtype.UUID `json:"run_id"`
+	AttemptNumber        int32       `json:"attempt_number"`
+	WorkspaceID          pgtype.UUID `json:"workspace_id"`
+	CurrentRunLeaseID    pgtype.UUID `json:"current_run_lease_id"`
+	CheckpointID         pgtype.UUID `json:"checkpoint_id"`
+	ResumeAttachID       pgtype.UUID `json:"resume_attach_id"`
+}
+
+func (q *Queries) ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error) {
+	row := q.db.QueryRow(ctx, releaseRunResumeWait,
+		arg.ResumeRequestVersion,
+		arg.ID,
+		arg.EnvironmentID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.WorkspaceID,
+		arg.CurrentRunLeaseID,
+		arg.CheckpointID,
+		arg.ResumeAttachID,
+	)
+	var i RunWait
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.Kind,
+		&i.ConditionState,
+		&i.DueAt,
+		&i.TimeoutAt,
+		&i.IdleTimeoutMs,
+		&i.TokenID,
+		&i.ChildRunID,
+		&i.ChildParentOwned,
+		&i.ChildTargetDeclaredID,
+		&i.ChildClaimID,
+		&i.ChildRequest,
+		&i.ActorID,
+		&i.AfterInputSequence,
+		&i.ConditionResult,
+		&i.ConditionError,
+		&i.ConditionTerminalAt,
+		&i.ConditionReasonCode,
+		&i.CompletedActorRecordID,
+		&i.CompletedActorRecordDirection,
+		&i.SuspensionState,
+		&i.ExpectedRunStateVersion,
+		&i.AttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.PriorRunLeaseID,
+		&i.CheckpointRequestVersion,
+		&i.CheckpointAckVersion,
+		&i.CheckpointDueAt,
+		&i.SuspendCheckpointID,
+		&i.HandoffResumeCheckpointID,
+		&i.ResumeAttachID,
+		&i.ResumeRequestVersion,
+		&i.ResumeAckVersion,
+		&i.BaseWorkspaceVersionID,
+		&i.BaseWorkspaceContentDigest,
+		&i.ChildResultVersionID,
+		&i.ResumeWorkspaceVersionID,
+		&i.HandoffRuntimeInstanceID,
+		&i.HandoffWorkspaceMountID,
+		&i.HandoffMountGeneration,
+		&i.OwnershipGeneration,
+		&i.ParentWriterGeneration,
+		&i.ChildWriterGeneration,
+		&i.ResumeWriterGeneration,
+		&i.Metadata,
+		&i.Tags,
+		&i.SuspensionTerminalAt,
+		&i.SuspensionReasonCode,
+		&i.SuspensionError,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const requestRunWaitCheckpoint = `-- name: RequestRunWaitCheckpoint :one
 UPDATE run_waits
    SET suspension_state = 'checkpointing',

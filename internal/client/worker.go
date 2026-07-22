@@ -84,6 +84,22 @@ func (c *Client) AcknowledgeRunStart(
 	return response, nil
 }
 
+func (c *Client) AcknowledgeRunResumeRelease(
+	ctx context.Context,
+	request api.WorkerRunResumeReleaseRequest,
+) (api.WorkerRunResumeReleaseResponse, error) {
+	var response api.WorkerRunResumeReleaseResponse
+	if err := c.postWorkerJSON(
+		ctx,
+		"/api/worker/leases/resume-release",
+		request,
+		&response,
+	); err != nil {
+		return api.WorkerRunResumeReleaseResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) AcknowledgeRunEntrypoint(
 	ctx context.Context,
 	request api.WorkerRunEntrypointRequest,

@@ -366,6 +366,7 @@ type Querier interface {
 	RecordWorkerStartupRecovery(ctx context.Context, arg RecordWorkerStartupRecoveryParams) (WorkerInstance, error)
 	RefreshAuthSession(ctx context.Context, arg RefreshAuthSessionParams) error
 	RejectDeploymentBuildLease(ctx context.Context, arg RejectDeploymentBuildLeaseParams) (RejectDeploymentBuildLeaseRow, error)
+	ReleaseRunResumeWait(ctx context.Context, arg ReleaseRunResumeWaitParams) (RunWait, error)
 	ReleaseTaskWorkspaceLease(ctx context.Context, arg ReleaseTaskWorkspaceLeaseParams) (WorkspaceLease, error)
 	ReleaseTaskWorkspaceOwner(ctx context.Context, arg ReleaseTaskWorkspaceOwnerParams) (Workspace, error)
 	RenewDeploymentBuildLease(ctx context.Context, arg RenewDeploymentBuildLeaseParams) (DeploymentBuildLease, error)

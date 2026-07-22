@@ -1123,7 +1123,7 @@ SELECT run_leases.org_id,
   JOIN worker_groups
     ON worker_groups.id = run_leases.worker_group_id
    AND worker_groups.region_id = run_leases.region_id
-   AND worker_groups.state = 'active'
+   AND worker_groups.state IN ('active', 'draining')
    AND worker_groups.allows_run
    AND worker_groups.protocol_version = run_leases.worker_protocol_version
   JOIN worker_instances

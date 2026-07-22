@@ -223,8 +223,7 @@ func lockRunStartAuthority(
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
 	}
-	if authority.workerGroup.State != db.WorkerGroupStateActive ||
-		!authority.workerGroup.AllowsRun || authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
+	if !authority.workerGroup.AllowsRun || authority.workerGroup.ClaimVersion != worker.GroupClaimVersion ||
 		authority.workerGroup.ProtocolVersion != worker.ProtocolVersion {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
@@ -263,6 +262,11 @@ func lockRunStartAuthority(
 	})
 	if err != nil {
 		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	if authority.workerGroup.State != db.WorkerGroupStateActive &&
+		!(authority.workerGroup.State == db.WorkerGroupStateDraining &&
+			authority.runLease.State == db.RunLeaseStateRunning) {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 	if err := validateClaimPhysicalAuthority(worker, authority); err != nil {
 		return runLeaseClaimAuthority{}, err

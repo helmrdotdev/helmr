@@ -672,6 +672,7 @@ func (s *Server) mountWorkerRoutes(r chi.Router) {
 				r.Post("/leases/claim", s.workerClaimRunLease)
 				r.With(func(next http.Handler) http.Handler { return requireActiveWorkerRole(auth.WorkerRoleRun, next) }).Post("/leases/lease", s.workerLease)
 				r.Post("/leases/start", s.workerStart)
+				r.Post("/leases/resume-release", s.workerAcknowledgeRunResumeRelease)
 				r.Post("/leases/entrypoint", s.workerEnterRunEntrypoint)
 				r.Post("/leases/reject", s.workerRejectRun)
 				r.Post("/leases/renew", s.workerRenew)

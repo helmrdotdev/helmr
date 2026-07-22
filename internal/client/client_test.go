@@ -1290,6 +1290,72 @@ func TestWorkerRunWaitClient(t *testing.T) {
 	}
 }
 
+func TestAcknowledgeRunResumeRelease(t *testing.T) {
+	lease := api.WorkerRunLeaseReceipt{ID: "lease-1", RunID: "run-1", LeaseSequence: 3}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/worker/auth/token":
+			_ = json.NewEncoder(w).Encode(api.WorkerTokenResponse{
+				Token: "worker-token", ExpiresInSeconds: int64(time.Hour / time.Second),
+			})
+		case "/api/worker/leases/resume-release":
+			if got := r.Header.Get("authorization"); got != "Bearer worker-token" {
+				t.Fatalf("worker auth = %q", got)
+			}
+			var request api.WorkerRunResumeReleaseRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Lease.ID != lease.ID ||
+				request.RunWaitID != "wait-1" ||
+				request.CheckpointID != "checkpoint-1" ||
+				request.ResumeAttachID != "attach-1" ||
+				request.ResumeRequestVersion != 7 ||
+				request.RunLeaseID != lease.ID {
+				t.Fatalf("resume release request = %+v", request)
+			}
+			_ = json.NewEncoder(w).Encode(api.WorkerRunResumeReleaseResponse{
+				Lease:                lease,
+				RunWaitID:            request.RunWaitID,
+				CheckpointID:         request.CheckpointID,
+				ResumeAttachID:       request.ResumeAttachID,
+				ResumeRequestVersion: request.ResumeRequestVersion,
+			})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client, err := New(
+		server.URL,
+		WithHTTPClient(server.Client()),
+		WithWorkerAuth("worker-1", "worker-secret"),
+		WithWorkerService("service-1", api.CurrentWorkerProtocolVersion, true, false),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := client.AcknowledgeRunResumeRelease(context.Background(), api.WorkerRunResumeReleaseRequest{
+		Lease:                lease,
+		RunWaitID:            "wait-1",
+		CheckpointID:         "checkpoint-1",
+		ResumeAttachID:       "attach-1",
+		ResumeRequestVersion: 7,
+		RunLeaseID:           lease.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Lease.ID != lease.ID ||
+		response.RunWaitID != "wait-1" ||
+		response.CheckpointID != "checkpoint-1" ||
+		response.ResumeAttachID != "attach-1" ||
+		response.ResumeRequestVersion != 7 {
+		t.Fatalf("resume release response = %+v", response)
+	}
+}
+
 func testClientCheckpointManifest(kernelDigest string, rootfsDigest string, configDigest string, manifestDigest string, vmStateDigest string, scratchDigest string, memoryDigest string) api.WorkerCheckpointManifest {
 	return api.WorkerCheckpointManifest{
 		RecoveryPoint: api.WorkerCheckpointRecoveryPoint{Runtime: api.WorkerCheckpointRuntime{
