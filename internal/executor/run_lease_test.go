@@ -195,6 +195,26 @@ func TestExecutorReplaysFinalizationWithStableAuthority(t *testing.T) {
 	}
 }
 
+func TestExecutorRenewalAcceptsCommittedActorWorkspaceFrontier(t *testing.T) {
+	trace := &runLeaseTrace{}
+	current := testRunLeaseReceipt(time.Now().Add(time.Minute))
+	current.BaseWorkspaceVersionID = "version-1"
+	previous := current
+	previous.BaseWorkspaceVersionID = "version-2"
+	previous.ExpiresAt = current.ExpiresAt.Add(30 * time.Second)
+	renewed := previous
+	renewed.ExpiresAt = previous.ExpiresAt.Add(time.Minute)
+	task := &testRunLeaseTask{trace: trace, previous: previous, renewed: renewed}
+
+	got, err := (Executor{}).renewRunLease(context.Background(), task, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !equalRunLeaseReceipt(got, renewed) {
+		t.Fatalf("renewed Lease = %+v, want %+v", got, renewed)
+	}
+}
+
 func TestRenewRunLeaseAuthorityInstallsCommittedRenewalAfterCallerCancellation(t *testing.T) {
 	previous := testRunLeaseReceipt(time.Now().Add(time.Minute))
 	renewed := previous
@@ -363,16 +383,20 @@ type testRunLeaseTaskRunner struct {
 
 func (runner *testRunLeaseTaskRunner) StartRunLeaseTask(
 	_ context.Context,
-	_ *api.WorkerRunLeaseClaimResponse,
+	claim *api.WorkerRunLeaseClaimResponse,
 	_ RunLeaseControl,
 ) (RunLeaseTask, error) {
 	runner.trace.add("start")
+	if task, ok := runner.task.(*testRunLeaseTask); ok && claim != nil {
+		task.previous = claim.Lease
+	}
 	return runner.task, nil
 }
 
 type testRunLeaseTask struct {
 	trace           *runLeaseTrace
 	result          RunLeaseTaskResult
+	previous        api.WorkerRunLeaseReceipt
 	renewed         api.WorkerRunLeaseReceipt
 	beginFailures   int
 	captureFailures int
@@ -387,9 +411,9 @@ func (task *testRunLeaseTask) Wait(context.Context) (RunLeaseTaskResult, error) 
 
 func (task *testRunLeaseTask) RenewRunLease(
 	context.Context,
-) (api.WorkerRunLeaseReceipt, error) {
+) (RunLeaseTaskRenewal, error) {
 	task.trace.add("renew")
-	return task.renewed, nil
+	return RunLeaseTaskRenewal{Previous: task.previous, Lease: task.renewed}, nil
 }
 
 func (task *testRunLeaseTask) BeginWorkspaceFinalization(
@@ -502,6 +526,13 @@ func (control *testRunLeaseControl) CompleteActor(
 	}
 	control.completedActor = request
 	return nil
+}
+
+func (control *testRunLeaseControl) CommitActorTurn(
+	context.Context,
+	api.WorkerCommitActorTurnRequest,
+) (api.WorkerCommitActorTurnResponse, error) {
+	return api.WorkerCommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
 }
 
 func (control *testRunLeaseControl) AppendRunLog(

@@ -29,6 +29,7 @@ type RunLeaseControl interface {
 	BeginRunFinalization(context.Context, api.WorkerBeginRunFinalizationRequest) (api.WorkerBeginRunFinalizationResponse, error)
 	CompleteTask(context.Context, api.WorkerCompleteTaskRequest) error
 	CompleteActor(context.Context, api.WorkerCompleteActorRequest) error
+	CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error)
 	AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error
 }
 
@@ -38,10 +39,15 @@ type RunLeaseTaskResult struct {
 	ProgramQuiesced api.WorkerRunQuiescenceProof
 }
 
+type RunLeaseTaskRenewal struct {
+	Previous api.WorkerRunLeaseReceipt
+	Lease    api.WorkerRunLeaseReceipt
+}
+
 type RunLeaseTask interface {
 	Close()
 	Wait(context.Context) (RunLeaseTaskResult, error)
-	RenewRunLease(context.Context) (api.WorkerRunLeaseReceipt, error)
+	RenewRunLease(context.Context) (RunLeaseTaskRenewal, error)
 	BeginWorkspaceFinalization(context.Context, api.WorkerRunLeaseReceipt, api.WorkerRunLeaseReceipt, string, api.WorkerRunFinalizationKind) error
 	CaptureWorkspace(context.Context) (api.WorkerTaskWorkspaceCapture, error)
 	ResetWorkspace(context.Context) (api.WorkerTaskWorkspaceRollback, error)
@@ -125,7 +131,7 @@ func (r GuestRunner) StartRunLeaseTask(
 		task.waits = &ControlRunWaits{Client: waitClient}
 	}
 	if checkpointable, ok := program.session.(vm.CheckpointableSession); ok {
-		task.checkpointer = runtimeCheckpointer{
+		task.checkpointer = &runtimeCheckpointer{
 			session:   checkpointable,
 			cas:       r.CAS,
 			encryptor: r.CheckpointEncryptor,
@@ -216,7 +222,7 @@ func (task *guestRunLeaseTask) processCheckpointRunEvent(ctx context.Context, ev
 
 func (task *guestRunLeaseTask) Wait(ctx context.Context) (RunLeaseTaskResult, error) {
 	if task.program.entrypoint != nil && task.program.entrypoint.GetActor() != nil {
-		outcome, quiesced, err := task.program.awaitActorCompletion(ctx, taskControlEvents{task: task}, task.handleWait)
+		outcome, quiesced, err := task.program.awaitActorCompletion(ctx, taskControlEvents{task: task}, task.handleWait, task.handleActorTurnCommit)
 		if err != nil {
 			return RunLeaseTaskResult{}, err
 		}
@@ -288,12 +294,13 @@ func (events taskControlEvents) AppendRunLog(
 
 func (task *guestRunLeaseTask) RenewRunLease(
 	ctx context.Context,
-) (api.WorkerRunLeaseReceipt, error) {
+) (RunLeaseTaskRenewal, error) {
 	task.mu.Lock()
 	defer task.mu.Unlock()
 	if task.finished || task.finalizingKind != "" {
-		return api.WorkerRunLeaseReceipt{}, errors.New("Run Lease Task is not renewable")
+		return RunLeaseTaskRenewal{}, errors.New("Run Lease Task is not renewable")
 	}
+	previous := task.lease
 	renewed, fence, err := renewRunLeaseAuthority(
 		ctx,
 		task.control,
@@ -302,13 +309,13 @@ func (task *guestRunLeaseTask) RenewRunLease(
 		task.authority,
 	)
 	if err != nil {
-		return api.WorkerRunLeaseReceipt{}, err
+		return RunLeaseTaskRenewal{}, err
 	}
 	if fence != nil {
 		task.authority.Fence = fence
 	}
 	task.lease = renewed
-	return renewed, nil
+	return RunLeaseTaskRenewal{Previous: previous, Lease: renewed}, nil
 }
 
 func renewRunLeaseAuthority(

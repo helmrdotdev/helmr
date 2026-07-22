@@ -13,6 +13,8 @@ import (
 type Querier interface {
 	AcceptInvitation(ctx context.Context, arg AcceptInvitationParams) (int64, error)
 	AddRunCheckpointArtifact(ctx context.Context, arg AddRunCheckpointArtifactParams) (RunCheckpointArtifact, error)
+	AdvanceActorTurnCursor(ctx context.Context, arg AdvanceActorTurnCursorParams) (Actor, error)
+	AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, arg AdvanceActorTurnWorkspaceLeaseFrontierParams) (WorkspaceLease, error)
 	AdvanceActorWorkspaceHead(ctx context.Context, arg AdvanceActorWorkspaceHeadParams) (Workspace, error)
 	AdvanceRunWorkspaceMountFence(ctx context.Context, arg AdvanceRunWorkspaceMountFenceParams) (WorkspaceMount, error)
 	AdvanceRunWorkspaceWriter(ctx context.Context, arg AdvanceRunWorkspaceWriterParams) (Workspace, error)

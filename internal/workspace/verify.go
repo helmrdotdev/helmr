@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -69,16 +70,42 @@ func VerifyArtifact(body io.Reader, artifact WorkspaceArtifact, reportedTree Tre
 	return nil
 }
 
+func InspectArtifactTree(path string, sizeBytes int64) (TreeIdentity, error) {
+	return InspectArtifactTreeContext(context.Background(), path, sizeBytes)
+}
+
+func InspectArtifactTreeContext(ctx context.Context, path string, sizeBytes int64) (TreeIdentity, error) {
+	if err := ctx.Err(); err != nil {
+		return TreeIdentity{}, err
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return TreeIdentity{}, fmt.Errorf("open Workspace Artifact: %w", err)
+	}
+	defer file.Close()
+	return inspectArtifactTreeContext(ctx, file, sizeBytes)
+}
+
 func inspectArtifactTree(file *os.File, archiveSize int64) (TreeIdentity, error) {
-	reader := tar.NewReader(file)
+	return inspectArtifactTreeContext(context.Background(), file, archiveSize)
+}
+
+func inspectArtifactTreeContext(ctx context.Context, file *os.File, archiveSize int64) (TreeIdentity, error) {
+	reader := tar.NewReader(contextReader{ctx: ctx, reader: file})
 	digest := sha256.New()
 	_, _ = io.WriteString(digest, TreeDigestDomain)
 	identity := TreeIdentity{}
 	previousPath := ""
 	directories := make(map[string]struct{})
 	for {
+		if err := ctx.Err(); err != nil {
+			return TreeIdentity{}, err
+		}
 		header, err := reader.Next()
 		if errors.Is(err, io.EOF) {
+			if err := ctx.Err(); err != nil {
+				return TreeIdentity{}, err
+			}
 			position, seekErr := file.Seek(0, io.SeekCurrent)
 			if seekErr != nil {
 				return TreeIdentity{}, fmt.Errorf("inspect Workspace Artifact envelope: %w", seekErr)
@@ -171,4 +198,16 @@ func inspectArtifactTree(file *os.File, archiveSize int64) (TreeIdentity, error)
 			}
 		}
 	}
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }

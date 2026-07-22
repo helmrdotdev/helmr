@@ -283,14 +283,19 @@ func (e Executor) renewRunLease(
 	task RunLeaseTask,
 	current api.WorkerRunLeaseReceipt,
 ) (api.WorkerRunLeaseReceipt, error) {
-	renewed, err := task.RenewRunLease(ctx)
+	renewal, err := task.RenewRunLease(ctx)
 	if err != nil {
 		return current, err
 	}
-	if err := validateReceiptExpiryAdvance(current, renewed); err != nil {
+	currentAtRenewal := current
+	currentAtRenewal.BaseWorkspaceVersionID = renewal.Previous.BaseWorkspaceVersionID
+	if err := validateReceiptExpiryAdvance(currentAtRenewal, renewal.Previous); err != nil {
+		return current, fmt.Errorf("Run Lease Task changed authority outside an Actor Workspace frontier: %w", err)
+	}
+	if err := validateReceiptExpiryAdvance(renewal.Previous, renewal.Lease); err != nil {
 		return current, err
 	}
-	return renewed, nil
+	return renewal.Lease, nil
 }
 
 func runFinalizationKind(result RunLeaseTaskResult) api.WorkerRunFinalizationKind {

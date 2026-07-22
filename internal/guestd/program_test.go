@@ -103,6 +103,7 @@ func TestSuperviseProgramOrdersFreshEntrypointGates(t *testing.T) {
 			request,
 			process,
 			newWaitingRunRegistry(),
+			nil,
 		)
 	}()
 
@@ -183,6 +184,7 @@ func TestSuperviseProgramRejectsMismatchedStartRelease(t *testing.T) {
 			request,
 			process,
 			newWaitingRunRegistry(),
+			nil,
 		)
 	}()
 	var event runv0.RunEvent
@@ -237,6 +239,7 @@ func TestSuperviseProgramRejectsWrongCommandArmBeforeStart(t *testing.T) {
 					request,
 					process,
 					newWaitingRunRegistry(),
+					nil,
 				)
 			}()
 			var event runv0.RunEvent
@@ -293,6 +296,7 @@ func TestRelayProgramPropagatesControlDecodeFailure(t *testing.T) {
 		&outputDone,
 		newWaitingRunRegistry(),
 		&programOutputCoordinator{},
+		nil,
 	)
 	if err == nil || !strings.Contains(err.Error(), "control event") {
 		t.Fatalf("relayProgram() error = %v", err)
@@ -346,6 +350,7 @@ func TestRelayProgramQuiescesDescendantHeldControlBeforeEOF(t *testing.T) {
 			&outputDone,
 			newWaitingRunRegistry(),
 			&programOutputCoordinator{},
+			nil,
 		)
 	}()
 	var event runv0.RunEvent

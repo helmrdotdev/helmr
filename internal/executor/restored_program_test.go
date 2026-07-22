@@ -259,6 +259,9 @@ func (*restoredProgramControl) CompleteTask(context.Context, api.WorkerCompleteT
 func (*restoredProgramControl) CompleteActor(context.Context, api.WorkerCompleteActorRequest) error {
 	return errors.New("unexpected Actor completion")
 }
+func (*restoredProgramControl) CommitActorTurn(context.Context, api.WorkerCommitActorTurnRequest) (api.WorkerCommitActorTurnResponse, error) {
+	return api.WorkerCommitActorTurnResponse{}, errors.New("unexpected Actor turn commit")
+}
 func (*restoredProgramControl) AppendRunLog(context.Context, api.WorkerRunLeaseReceipt, api.WorkerLogStream, uint64, []byte) error {
 	return nil
 }

@@ -2,12 +2,31 @@ package workspace
 
 import (
 	"archive/tar"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestCreateWorkspaceArtifactHonorsCancelledContext(t *testing.T) {
+	trustedRoot := t.TempDir()
+	root := filepath.Join(trustedRoot, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, cleanup, err := CreateWorkspaceArtifactFromRootWithExcludesContext(
+		ctx, root, t.TempDir(), trustedRoot, nil,
+	)
+	cleanup()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("create cancelled Workspace Artifact error = %v", err)
+	}
+}
 
 func TestCreateWorkspaceArtifactIncludesGitDirectory(t *testing.T) {
 	root := t.TempDir()

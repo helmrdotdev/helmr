@@ -3,13 +3,35 @@ package workspace
 import (
 	"archive/tar"
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/helmrdotdev/helmr/internal/sha256sum"
 )
+
+func TestInspectArtifactTreeHonorsCancelledContext(t *testing.T) {
+	trustedRoot := t.TempDir()
+	root := filepath.Join(trustedRoot, "workspace")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact, cleanup, err := CreateWorkspaceArtifactFromRoot(root, t.TempDir(), trustedRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err = InspectArtifactTreeContext(ctx, artifact.Path, artifact.SizeBytes)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("inspect cancelled Workspace Artifact error = %v", err)
+	}
+}
 
 func TestVerifyArtifactRecomputesCanonicalTreeAndPackaging(t *testing.T) {
 	trustedRoot := t.TempDir()

@@ -508,6 +508,17 @@ func (c *Client) BeginRunFinalization(
 	return response, nil
 }
 
+func (c *Client) CommitActorTurn(
+	ctx context.Context,
+	request api.WorkerCommitActorTurnRequest,
+) (api.WorkerCommitActorTurnResponse, error) {
+	var response api.WorkerCommitActorTurnResponse
+	if err := c.postWorkerJSON(ctx, "/api/worker/leases/actor-turns/commit", request, &response); err != nil {
+		return api.WorkerCommitActorTurnResponse{}, err
+	}
+	return response, nil
+}
+
 func (c *Client) CompleteTask(
 	ctx context.Context,
 	request api.WorkerCompleteTaskRequest,

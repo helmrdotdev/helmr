@@ -73,6 +73,7 @@ type workspaceMountEntry struct {
 	finalizationKind  string
 	recoveryRequired  bool
 	processAdmissions int
+	turnCommitBlocked bool
 }
 
 type preparedWorkspaceRuntime struct {

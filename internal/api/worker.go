@@ -485,6 +485,26 @@ type WorkerCompleteActorRequest struct {
 	Workspace WorkerTaskWorkspaceProof `json:"workspace"`
 }
 
+type WorkerCommitActorTurnRequest struct {
+	Lease                  WorkerRunLeaseReceipt       `json:"lease"`
+	CorrelationID          string                      `json:"correlation_id"`
+	TargetInputSequence    int64                       `json:"target_input_sequence"`
+	BaseWorkspaceVersionID string                      `json:"base_workspace_version_id"`
+	Tree                   WorkerWorkspaceTreeIdentity `json:"tree"`
+	Artifact               *WorkerWorkspaceArtifact    `json:"artifact,omitempty"`
+}
+
+type WorkerCommitActorTurnResponse struct {
+	Lease                  WorkerRunLeaseReceipt       `json:"lease"`
+	RunID                  string                      `json:"run_id"`
+	AttemptNumber          int32                       `json:"attempt_number"`
+	RunLeaseID             string                      `json:"run_lease_id"`
+	CorrelationID          string                      `json:"correlation_id"`
+	CommittedInputSequence int64                       `json:"committed_input_sequence"`
+	WorkspaceVersionID     string                      `json:"workspace_version_id"`
+	Tree                   WorkerWorkspaceTreeIdentity `json:"tree"`
+}
+
 type WorkerActorOutcome struct {
 	TerminalInputSequence int64                 `json:"terminal_input_sequence"`
 	Succeeded             *WorkerActorSucceeded `json:"succeeded,omitempty"`

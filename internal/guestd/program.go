@@ -85,9 +85,10 @@ type programConnection interface {
 }
 
 type programHostControl struct {
-	pause    *runv0.CheckpointPauseRequest
-	decision *runv0.ResumeDecision
-	err      error
+	pause      *runv0.CheckpointPauseRequest
+	turnCommit *runv0.ActorTurnCommitPauseRequest
+	decision   *runv0.ResumeDecision
+	err        error
 }
 
 type programOutputPause struct {
@@ -218,7 +219,7 @@ func handleProgramRunConnection(
 			"workspace_id", workspaceID,
 		)
 	}
-	return superviseProgram(ctx, programConn, &request, process, waitingRegistry)
+	return superviseProgram(ctx, programConn, &request, process, waitingRegistry, entry)
 }
 
 func readProgramSecrets(
@@ -776,6 +777,7 @@ func superviseProgram(
 	request *runv0.ProgramRunRequest,
 	process *programProcess,
 	registry *waitingRunRegistry,
+	workspaceEntry *workspaceMountEntry,
 ) error {
 	deadline := time.UnixMilli(request.GetStartDeadlineUnixMs())
 	if err := process.start(ctx, deadline); err != nil {
@@ -901,7 +903,7 @@ func superviseProgram(
 	if err := conn.SetReadDeadline(time.Time{}); err != nil {
 		return err
 	}
-	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, registry, outputs)
+	err = relayProgram(ctx, conn, request, ready.GetEntrypoint(), process, stream, outputErrors, &outputDone, registry, outputs, workspaceEntry)
 	completed = err == nil
 	return err
 }
@@ -917,6 +919,7 @@ func relayProgram(
 	outputDone *sync.WaitGroup,
 	registry *waitingRunRegistry,
 	outputs *programOutputCoordinator,
+	workspaceEntry *workspaceMountEntry,
 ) error {
 	defer stream.closeCurrentConn()
 	events := make(chan *runv0.RunEvent)
@@ -953,6 +956,7 @@ func relayProgram(
 	outcomeSeen := false
 	quiesced := false
 	var pendingWait *runv0.RunWaitRequested
+	var pendingTurnCommit *runv0.ActorTurnCommitRequested
 	for !processExited || !controlClosed {
 		select {
 		case event, ok := <-events:
@@ -969,7 +973,7 @@ func relayProgram(
 				if outcomeSeen {
 					return errors.New("Program emitted a control event after Task outcome")
 				}
-				if pendingWait != nil {
+				if pendingWait != nil || pendingTurnCommit != nil {
 					return errors.New("Program emitted a concurrent consuming Wait")
 				}
 				if strings.TrimSpace(waitRequested.GetCorrelationId()) == "" || strings.TrimSpace(waitRequested.GetKind()) == "" {
@@ -979,6 +983,22 @@ func relayProgram(
 					return err
 				}
 				pendingWait = waitRequested
+				continue
+			}
+			if turnCommit := event.GetActorTurnCommitRequested(); turnCommit != nil {
+				if outcomeSeen || entrypoint.GetActor() == nil {
+					return errors.New("Program emitted an Actor turn commit outside live Actor execution")
+				}
+				if pendingWait != nil || pendingTurnCommit != nil {
+					return errors.New("Program emitted a concurrent Actor turn commit")
+				}
+				if strings.TrimSpace(turnCommit.GetCorrelationId()) == "" || turnCommit.GetTargetInputSequence() <= 0 {
+					return errors.New("Actor turn commit identity is incomplete")
+				}
+				if err := stream.write(event); err != nil {
+					return err
+				}
+				pendingTurnCommit = turnCommit
 				continue
 			}
 			var outcomeErr error
@@ -1020,6 +1040,17 @@ func relayProgram(
 					continue
 				}
 				return fmt.Errorf("read Program host control: %w", control.err)
+			}
+			if pendingTurnCommit != nil {
+				if control.turnCommit == nil {
+					return errors.New("Program host sent non-commit control during Actor turn commit")
+				}
+				if err := pauseActorTurnCommit(ctx, conn, request, pendingTurnCommit, control.turnCommit, process, stream, outputs, workspaceEntry); err != nil {
+					return err
+				}
+				pendingTurnCommit = nil
+				hostControls = readProgramHostControl(conn)
+				continue
 			}
 			if pendingWait == nil {
 				return errors.New("Program host sent Wait control without a pending Wait")
@@ -1133,6 +1164,9 @@ func readProgramHostControl(conn programConnection) <-chan programHostControl {
 		case wire.StreamTypeResumeDecision:
 			decision, err := wire.ReadResumeDecision(header, reader, bodyLen)
 			result <- programHostControl{decision: decision, err: err}
+		case wire.StreamTypeActorTurnCommitPause:
+			request, err := wire.ReadActorTurnCommitPauseRequest(header, reader, bodyLen)
+			result <- programHostControl{turnCommit: request, err: err}
 		default:
 			result <- programHostControl{err: fmt.Errorf("unsupported Program host control %q", header.Type)}
 		}
@@ -1293,6 +1327,127 @@ func pauseAndResumeProgram(
 	resumeOutputs()
 	outputsResumed = true
 	return resumed, nil
+}
+
+func pauseActorTurnCommit(
+	ctx context.Context,
+	conn programConnection,
+	run *runv0.ProgramRunRequest,
+	requested *runv0.ActorTurnCommitRequested,
+	pause *runv0.ActorTurnCommitPauseRequest,
+	process *programProcess,
+	stream *programEventStream,
+	outputs *programOutputCoordinator,
+	entry *workspaceMountEntry,
+) error {
+	if requested == nil || pause == nil ||
+		pause.GetCorrelationId() != requested.GetCorrelationId() ||
+		pause.GetTargetInputSequence() != requested.GetTargetInputSequence() {
+		return errors.New("Actor turn commit pause does not match the Program request")
+	}
+	expectedTree := workspace.TreeIdentity{
+		Digest: pause.GetExpectedTreeDigest(), SizeBytes: pause.GetExpectedTreeSizeBytes(),
+		EntryCount: int(pause.GetExpectedTreeEntryCount()),
+	}
+	if err := workspace.ValidateTreeIdentity(expectedTree); err != nil {
+		return fmt.Errorf("validate Actor turn commit expected tree: %w", err)
+	}
+	if strings.TrimSpace(pause.GetExpectedBaseWorkspaceVersionId()) == "" {
+		return errors.New("Actor turn commit expected Workspace version is required")
+	}
+	releaseBarrier, authorityExpiresAt, err := entry.acquireActorTurnCommit(run, pause)
+	if err != nil {
+		return err
+	}
+	defer releaseBarrier()
+	turnCtx, cancelTurn := context.WithDeadline(ctx, authorityExpiresAt)
+	defer cancelTurn()
+	if err := process.cgroup.freeze(turnCtx); err != nil {
+		return fmt.Errorf("freeze Actor Program cgroup: %w", err)
+	}
+	frozen := true
+	defer func() {
+		if frozen {
+			_ = process.cgroup.thaw(context.Background())
+		}
+	}()
+	resumeOutputs, err := outputs.pause(turnCtx)
+	if err != nil {
+		return fmt.Errorf("pause Actor Program output streams: %w", err)
+	}
+	outputsPaused := true
+	defer func() {
+		if outputsPaused {
+			resumeOutputs()
+		}
+	}()
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRootWithExcludesContext(
+		turnCtx,
+		process.workspaceRoot,
+		os.TempDir(),
+		process.workspaceRoot,
+		workspaceSecretExcludePatterns(process.workspaceRoot, process.secretPaths),
+	)
+	if err != nil {
+		return fmt.Errorf("capture Actor turn Workspace: %w", err)
+	}
+	defer cleanup()
+	tree, err := workspace.InspectArtifactTreeContext(turnCtx, artifact.Path, artifact.SizeBytes)
+	if err != nil {
+		return fmt.Errorf("inspect Actor turn Workspace capture: %w", err)
+	}
+	changed := tree != expectedTree
+	if changed {
+		if err := stream.writeWorkspaceArtifactFile(run.GetRunId(), artifact); err != nil {
+			return fmt.Errorf("write Actor turn Workspace capture: %w", err)
+		}
+	}
+	ready := &runv0.ActorTurnCommitPauseReady{
+		CorrelationId: pause.GetCorrelationId(), TargetInputSequence: pause.GetTargetInputSequence(),
+		RunId: pause.GetRunId(), AttemptNumber: pause.GetAttemptNumber(), RunLeaseId: pause.GetRunLeaseId(),
+		TreeDigest: tree.Digest, TreeSizeBytes: tree.SizeBytes,
+		TreeEntryCount: uint32(tree.EntryCount), WorkspaceChanged: changed,
+	}
+	if err := stream.writeActorTurnCommitPauseReady(ready); err != nil {
+		return fmt.Errorf("write Actor turn commit pause proof: %w", err)
+	}
+	decision, err := readResumeDecision(turnCtx, conn)
+	if err != nil {
+		return fmt.Errorf("read Actor turn commit decision: %w", err)
+	}
+	if (decision.GetCorrelationId() != pause.GetCorrelationId() && decision.GetRunWaitId() != pause.GetCorrelationId()) ||
+		decision.GetKind() != "committed" {
+		return errors.New("Actor turn commit decision did not match the paused Program")
+	}
+	var committed struct {
+		WorkspaceVersionID string `json:"workspace_version_id"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(decision.GetDataJson()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&committed); err != nil {
+		return fmt.Errorf("decode Actor turn commit decision: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return errors.New("Actor turn commit decision has trailing JSON")
+	}
+	if strings.TrimSpace(committed.WorkspaceVersionID) == "" {
+		return errors.New("Actor turn commit decision Workspace version is required")
+	}
+	if err := entry.advanceActorTurnWorkspaceFrontierLocked(
+		pause.GetExpectedBaseWorkspaceVersionId(), committed.WorkspaceVersionID,
+	); err != nil {
+		return err
+	}
+	if err := process.cgroup.thaw(turnCtx); err != nil {
+		return fmt.Errorf("thaw Actor Program cgroup: %w", err)
+	}
+	frozen = false
+	resumeOutputs()
+	outputsPaused = false
+	if err := frameio.WriteProtoFrame(process.stdin, decision); err != nil {
+		return fmt.Errorf("write Actor turn commit decision: %w", err)
+	}
+	return nil
 }
 
 func validateResumeDecisionAuthority(decision *runv0.ResumeDecision) error {
@@ -1834,6 +1989,14 @@ func (stream *programEventStream) writeCheckpointPauseReady(ready *runv0.Checkpo
 	})
 }
 
+func (stream *programEventStream) writeActorTurnCommitPauseReady(ready *runv0.ActorTurnCommitPauseReady) error {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+	return stream.writeLocked(programAdmissionTimeout, func(conn programConnection) error {
+		return wire.WriteActorTurnCommitPauseReady(conn, ready)
+	})
+}
+
 func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot string, secretPaths []string) error {
 	if strings.TrimSpace(workspaceRoot) == "" {
 		return errors.New("Program Workspace root is required")
@@ -1848,6 +2011,10 @@ func (stream *programEventStream) writeWorkspaceArtifact(runID, workspaceRoot st
 		return err
 	}
 	defer cleanup()
+	return stream.writeWorkspaceArtifactFile(runID, artifact)
+}
+
+func (stream *programEventStream) writeWorkspaceArtifactFile(runID string, artifact workspace.WorkspaceArtifact) error {
 	entryCount := artifact.EntryCount
 	stream.mu.Lock()
 	defer stream.mu.Unlock()

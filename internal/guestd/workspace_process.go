@@ -501,7 +501,7 @@ func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspacePro
 	if entry.processes == nil {
 		entry.processes = map[string]*workspaceProcess{}
 	}
-	if entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired {
+	if entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired || entry.turnCommitBlocked {
 		return errors.New("Workspace is unavailable for process admission")
 	}
 	key := workspaceProcessKey(process.resourceKind, process.resourceID)
@@ -514,7 +514,7 @@ func (entry *workspaceMountEntry) registerWorkspaceProcess(process *workspacePro
 
 func (entry *workspaceMountEntry) beginWorkspaceProcessAdmission() (func(), error) {
 	entry.processesMu.Lock()
-	if entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired {
+	if entry.authorityState == workspaceAuthorityFinalizing || entry.recoveryRequired || entry.turnCommitBlocked {
 		entry.processesMu.Unlock()
 		return func() {}, errors.New("Workspace is unavailable for process admission")
 	}

@@ -97,6 +97,14 @@ func ValidateResetTarget(target ResetTarget) error {
 	return nil
 }
 
+func ValidateTreeIdentity(tree TreeIdentity) error {
+	if !validDigest(tree.Digest) || tree.SizeBytes < 0 || tree.SizeBytes > MaxArtifactExtractedBytes ||
+		tree.EntryCount < 0 || tree.EntryCount > MaxArtifactEntries {
+		return errors.New("Workspace tree identity is invalid")
+	}
+	return nil
+}
+
 func ResetTargetsEqual(left, right ResetTarget) bool {
 	if left.Kind != right.Kind || left.BaseVersionID != right.BaseVersionID || left.Tree != right.Tree {
 		return false

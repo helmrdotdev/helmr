@@ -2,6 +2,7 @@ package archive
 
 import (
 	"archive/tar"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -52,6 +53,13 @@ func CreateTar(root, tempDir string) (Tar, func(), error) {
 }
 
 func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func(), error) {
+	return CreateTarWithOptionsContext(context.Background(), root, tempDir, options)
+}
+
+func CreateTarWithOptionsContext(ctx context.Context, root, tempDir string, options TarOptions) (Tar, func(), error) {
+	if err := ctx.Err(); err != nil {
+		return Tar{}, func() {}, err
+	}
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return Tar{}, func() {}, errors.New("archive root is required")
@@ -74,7 +82,13 @@ func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func()
 	hash := sha256.New()
 	writer := tar.NewWriter(io.MultiWriter(file, hash))
 	stats := tarStats{}
-	if err := appendTree(writer, root, excludeMatchers, options, &stats); err != nil {
+	if err := appendTree(ctx, writer, root, excludeMatchers, options, &stats); err != nil {
+		_ = writer.Close()
+		_ = file.Close()
+		cleanup()
+		return Tar{}, func() {}, err
+	}
+	if err := ctx.Err(); err != nil {
 		_ = writer.Close()
 		_ = file.Close()
 		cleanup()
@@ -89,10 +103,18 @@ func CreateTarWithOptions(root, tempDir string, options TarOptions) (Tar, func()
 		cleanup()
 		return Tar{}, func() {}, fmt.Errorf("close tar archive: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		cleanup()
+		return Tar{}, func() {}, err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		cleanup()
 		return Tar{}, func() {}, fmt.Errorf("stat tar archive: %w", err)
+	}
+	if err := ctx.Err(); err != nil {
+		cleanup()
+		return Tar{}, func() {}, err
 	}
 	return Tar{
 		Path:       path,
@@ -247,8 +269,11 @@ type tarStats struct {
 	bytes   int64
 }
 
-func appendTree(writer *tar.Writer, root string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
+func appendTree(ctx context.Context, writer *tar.Writer, root string, excludeMatchers []*regexp.Regexp, options TarOptions, stats *tarStats) error {
 	return filepath.WalkDir(root, func(pathname string, entry os.DirEntry, walkErr error) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return walkErr
 		}
@@ -301,13 +326,25 @@ func appendTree(writer *tar.Writer, root string, excludeMatchers []*regexp.Regex
 		if err != nil {
 			return err
 		}
-		_, copyErr := io.Copy(writer, file)
+		_, copyErr := io.Copy(writer, contextReader{ctx: ctx, reader: file})
 		closeErr := file.Close()
 		if copyErr != nil {
 			return copyErr
 		}
 		return closeErr
 	})
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (reader contextReader) Read(buffer []byte) (int, error) {
+	if err := reader.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return reader.reader.Read(buffer)
 }
 
 func validateAppendSize(name string, size int64, maxBytes int64, stats *tarStats) error {
