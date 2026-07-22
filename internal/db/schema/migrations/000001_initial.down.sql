@@ -124,6 +124,8 @@ DROP TABLE IF EXISTS meter_events;
 DROP TABLE IF EXISTS run_checkpoint_artifacts;
 ALTER TABLE run_leases DROP CONSTRAINT IF EXISTS run_leases_restore_run_checkpoint_id_fkey;
 ALTER TABLE runs DROP CONSTRAINT IF EXISTS runs_latest_run_checkpoint_id_fkey;
+ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_workspace_fkey;
+ALTER TABLE runtime_instances DROP CONSTRAINT IF EXISTS runtime_instances_restore_checkpoint_execution_fkey;
 DROP TABLE IF EXISTS run_checkpoints;
 DROP TYPE IF EXISTS run_checkpoint_artifact_role;
 DROP TYPE IF EXISTS run_checkpoint_state;

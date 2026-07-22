@@ -19,6 +19,7 @@ WITH created_runtime AS (
         reserved_execution_slots,
         workspace_id,
         program_deployment_id,
+        restore_checkpoint_id,
         reserved_run_id,
         reserved_attempt_number,
         reserved_workspace_version_id,
@@ -43,6 +44,7 @@ WITH created_runtime AS (
         sqlc.arg(reserved_execution_slots),
         sqlc.arg(workspace_id),
         sqlc.arg(program_deployment_id),
+        sqlc.narg(restore_checkpoint_id),
         sqlc.arg(run_id),
         sqlc.arg(attempt_number),
         sqlc.arg(base_workspace_version_id),
@@ -222,6 +224,7 @@ UPDATE runtime_instances
    AND reserved_run_id = sqlc.arg(run_id)
    AND reserved_attempt_number = sqlc.arg(attempt_number)
    AND reserved_workspace_version_id = sqlc.arg(base_workspace_version_id)
+   AND restore_checkpoint_id IS NOT DISTINCT FROM sqlc.narg(restore_checkpoint_id)
    AND reservation_expires_at > transaction_timestamp();
 
 -- name: SetRunCurrentLease :one

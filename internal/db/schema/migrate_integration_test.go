@@ -120,8 +120,10 @@ func testUpWithPostgres(t *testing.T, ctx context.Context, dsn string, verifyDow
 func assertExecutionAttachmentConstraints(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	t.Helper()
 	constraints := map[string]string{
-		"run_leases_network_slot_id_fkey":     "FOREIGN KEY (network_slot_id) REFERENCES worker_network_slots(id)",
-		"workspace_leases_owner_run_lease_fk": "FOREIGN KEY (workspace_id, runtime_instance_id, owner_run_lease_id) REFERENCES run_leases(workspace_id, runtime_instance_id, id)",
+		"run_leases_network_slot_id_fkey":                     "FOREIGN KEY (network_slot_id) REFERENCES worker_network_slots(id)",
+		"workspace_leases_owner_run_lease_fk":                 "FOREIGN KEY (workspace_id, runtime_instance_id, owner_run_lease_id) REFERENCES run_leases(workspace_id, runtime_instance_id, id)",
+		"runtime_instances_restore_checkpoint_workspace_fkey": "FOREIGN KEY (restore_checkpoint_id, workspace_id) REFERENCES run_checkpoints(id, workspace_id)",
+		"runtime_instances_restore_checkpoint_execution_fkey": "FOREIGN KEY (restore_checkpoint_id, reserved_run_id, reserved_attempt_number, workspace_id) REFERENCES run_checkpoints(id, run_id, attempt_number, workspace_id)",
 	}
 	for name, want := range constraints {
 		var got string
@@ -135,6 +137,22 @@ SELECT pg_get_constraintdef(oid)
 		if !strings.Contains(got, want) {
 			t.Fatalf("%s = %q, want to contain %q", name, got, want)
 		}
+	}
+	var processFence bool
+	if err := pool.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+     FROM pg_constraint
+     WHERE conrelid = 'runtime_instances'::regclass
+       AND contype = 'c'
+       AND pg_get_constraintdef(oid) LIKE '%restore_checkpoint_id IS NULL%'
+       AND pg_get_constraintdef(oid) LIKE '%reserved_process_id IS NULL%'
+)
+`).Scan(&processFence); err != nil {
+		t.Fatal(err)
+	}
+	if !processFence {
+		t.Fatal("runtime restore provenance does not fence direct Process reservation")
 	}
 }
 
@@ -1182,6 +1200,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 		"runtime_instances_workspace_active_uidx",
 		"runtime_instances_reserved_run_uidx",
 		"runtime_instances_reserved_process_uidx",
+		"runtime_instances_restore_checkpoint_idx",
 		"network_slots_runtime_active_uidx",
 		"workspace_mounts_workspace_active_uidx",
 		"workspace_mounts_runtime_active_uidx",
@@ -1207,6 +1226,7 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	`, []string{
 		"workspace_id",
 		"program_deployment_id",
+		"restore_checkpoint_id",
 		"reserved_run_id",
 		"reserved_attempt_number",
 		"reserved_process_id",
@@ -1215,8 +1235,8 @@ func assertWorkerSchema(t *testing.T, ctx context.Context, pool *pgxpool.Pool) {
 	}).Scan(&placementColumns); err != nil {
 		t.Fatal(err)
 	}
-	if placementColumns != 7 {
-		t.Fatalf("runtime placement columns = %d, want 7", placementColumns)
+	if placementColumns != 8 {
+		t.Fatalf("runtime placement columns = %d, want 8", placementColumns)
 	}
 
 	var obsoleteLeaseColumns int

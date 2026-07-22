@@ -56,6 +56,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 	}
 	responseAuthority := runLeaseClaimResponseAuthority{
 		mode:           authority.mode,
+		restoreSource:  authority.restoreSource,
 		actor:          authority.actor,
 		childRun:       authority.childRun,
 		run:            authority.run,
@@ -66,6 +67,7 @@ func (s *Server) workerClaimRunLease(w http.ResponseWriter, r *http.Request) {
 		workspace:      authority.workspace,
 		workspaceMount: authority.workspaceMount,
 		workspaceLease: authority.workspaceLease,
+		enclosingWait:  authority.enclosingWait,
 		runWait:        authority.runWait,
 		checkpoint:     authority.checkpoint,
 	}

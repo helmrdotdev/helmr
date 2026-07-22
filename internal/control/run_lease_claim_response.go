@@ -24,6 +24,7 @@ type runLeaseClaimProjection struct {
 
 type runLeaseClaimResponseAuthority struct {
 	mode           runLeaseClaimMode
+	restoreSource  runLeaseRestoreSource
 	actor          db.Actor
 	childRun       db.Run
 	run            db.Run
@@ -34,6 +35,7 @@ type runLeaseClaimResponseAuthority struct {
 	workspace      db.Workspace
 	workspaceMount db.WorkspaceMount
 	workspaceLease db.WorkspaceLease
+	enclosingWait  db.RunWait
 	runWait        db.RunWait
 	checkpoint     db.RunCheckpoint
 }
@@ -78,7 +80,7 @@ func loadRunLeaseClaimProjection(
 	if err != nil {
 		return runLeaseClaimProjection{}, fmt.Errorf("load Run Lease Workspace Reset target authority: %w", err)
 	}
-	if authority.mode == runLeaseClaimRestore {
+	if authority.restoreSource == runLeaseRestoreRecreated {
 		projection.checkpointArtifacts, err = store.ListRunCheckpointArtifactAuthority(
 			ctx,
 			authority.checkpoint.ID,
@@ -98,9 +100,6 @@ func projectRunLeaseClaimResponse(
 	secretDelivery SecretDeliveryOpener,
 	fencingKeys workspace.FencingKeys,
 ) (api.WorkerRunLeaseClaimResponse, error) {
-	if secretDelivery == nil {
-		return api.WorkerRunLeaseClaimResponse{}, errors.New("Secret delivery opener is not configured")
-	}
 	physical := runLeaseProjectionAuthority{
 		run:            authority.run,
 		attempt:        authority.attempt,
@@ -129,11 +128,15 @@ func projectRunLeaseClaimResponse(
 	}
 	execution, err := projectRunLeaseExecution(runLeaseExecutionProjection{
 		mode:                authority.mode,
+		restoreSource:       authority.restoreSource,
 		run:                 authority.run,
 		attempt:             authority.attempt,
 		actor:               actor,
 		definition:          projection.definition,
 		deploymentVersion:   projection.program.DeploymentVersion,
+		runtime:             authority.runtime,
+		workspaceMount:      authority.workspaceMount,
+		enclosingWait:       authority.enclosingWait,
 		runWait:             authority.runWait,
 		checkpoint:          authority.checkpoint,
 		childRun:            authority.childRun,
@@ -150,17 +153,23 @@ func projectRunLeaseClaimResponse(
 	if err != nil {
 		return api.WorkerRunLeaseClaimResponse{}, err
 	}
-	environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
-	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, errors.New("Run Lease Environment ID is invalid")
-	}
-	materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
-	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, fmt.Errorf("open Run Lease Secret delivery: %w", err)
-	}
-	secrets, err := projectSecretDeliveries(materials)
-	if err != nil {
-		return api.WorkerRunLeaseClaimResponse{}, err
+	secrets := make([]api.WorkerSecretDelivery, 0)
+	if authority.mode == runLeaseClaimFresh || authority.mode == runLeaseClaimAttachChild {
+		if secretDelivery == nil {
+			return api.WorkerRunLeaseClaimResponse{}, errors.New("Secret delivery opener is not configured")
+		}
+		environmentID, err := pgvalue.UUIDValue(authority.run.EnvironmentID)
+		if err != nil {
+			return api.WorkerRunLeaseClaimResponse{}, errors.New("Run Lease Environment ID is invalid")
+		}
+		materials, err := secretDelivery.OpenDeliveries(environmentID, envelopes)
+		if err != nil {
+			return api.WorkerRunLeaseClaimResponse{}, fmt.Errorf("open Run Lease Secret delivery: %w", err)
+		}
+		secrets, err = projectSecretDeliveries(materials)
+		if err != nil {
+			return api.WorkerRunLeaseClaimResponse{}, err
+		}
 	}
 	return api.WorkerRunLeaseClaimResponse{
 		Lease:     lease,

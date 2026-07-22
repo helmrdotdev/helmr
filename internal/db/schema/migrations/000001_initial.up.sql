@@ -3172,6 +3172,8 @@ CREATE TABLE run_checkpoints (
     UNIQUE (run_id, id),
     UNIQUE (run_id, attempt_number, id),
     UNIQUE (run_id, attempt_number, workspace_id, id),
+    UNIQUE (id, workspace_id),
+    UNIQUE (id, run_id, attempt_number, workspace_id),
     FOREIGN KEY (run_id, attempt_number, workspace_id)
         REFERENCES run_attempts(run_id, number, workspace_id)
         ON DELETE RESTRICT,
@@ -3679,6 +3681,7 @@ CREATE TABLE runtime_instances (
     reserved_execution_slots INTEGER NOT NULL CHECK (reserved_execution_slots > 0),
     workspace_id UUID NOT NULL,
     program_deployment_id UUID,
+    restore_checkpoint_id UUID,
     reserved_run_id UUID,
     reserved_attempt_number INTEGER CHECK (reserved_attempt_number IS NULL OR reserved_attempt_number > 0),
     reserved_process_id UUID,
@@ -3726,6 +3729,14 @@ CREATE TABLE runtime_instances (
     FOREIGN KEY (environment_id, program_deployment_id)
         REFERENCES deployments(environment_id, id)
         ON DELETE RESTRICT,
+    CONSTRAINT runtime_instances_restore_checkpoint_workspace_fkey
+    FOREIGN KEY (restore_checkpoint_id, workspace_id)
+        REFERENCES run_checkpoints(id, workspace_id)
+        ON DELETE RESTRICT,
+    CONSTRAINT runtime_instances_restore_checkpoint_execution_fkey
+    FOREIGN KEY (restore_checkpoint_id, reserved_run_id, reserved_attempt_number, workspace_id)
+        REFERENCES run_checkpoints(id, run_id, attempt_number, workspace_id)
+        ON DELETE RESTRICT,
     FOREIGN KEY (reserved_run_id, reserved_attempt_number, workspace_id)
         REFERENCES run_attempts(run_id, number, workspace_id)
         ON DELETE RESTRICT,
@@ -3763,6 +3774,7 @@ CREATE TABLE runtime_instances (
     ),
     CHECK (jsonb_typeof(network_policy) = 'object' AND octet_length(network_policy::text) <= 16384),
     CHECK (reserved_workspace_version_id IS NULL OR observed_state IN ('allocated', 'preparing', 'ready')),
+    CHECK (restore_checkpoint_id IS NULL OR reserved_process_id IS NULL),
     CHECK (desired_state <> 'closed' OR desired_version > 1),
     CHECK (observed_desired_version < desired_version OR desired_state <> 'closed' OR observed_state IN ('closing', 'closed', 'failed', 'lost')),
     CHECK (preparing_at IS NULL OR preparing_at >= allocated_at),
@@ -3903,6 +3915,10 @@ CREATE UNIQUE INDEX runtime_instances_reserved_run_uidx
 CREATE UNIQUE INDEX runtime_instances_reserved_process_uidx
     ON runtime_instances (reserved_process_id)
     WHERE reserved_process_id IS NOT NULL;
+
+CREATE INDEX runtime_instances_restore_checkpoint_idx
+    ON runtime_instances (restore_checkpoint_id)
+    WHERE restore_checkpoint_id IS NOT NULL;
 
 CREATE INDEX runtime_instances_desired_replay_idx
     ON runtime_instances (worker_instance_id, worker_epoch, desired_version, id)

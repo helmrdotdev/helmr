@@ -555,10 +555,23 @@ type WorkerRunLeaseFresh struct {
 }
 
 type WorkerRunLeaseRestore struct {
-	Checkpoint           WorkerRunLeaseCheckpoint `json:"checkpoint"`
-	RunWaitID            string                   `json:"run_wait_id"`
-	ResumeRequestVersion int64                    `json:"resume_request_version"`
-	Decision             WorkerRunLeaseDecision   `json:"decision"`
+	RunWaitID            string                          `json:"run_wait_id"`
+	CheckpointID         string                          `json:"checkpoint_id"`
+	ResumeAttachID       string                          `json:"resume_attach_id"`
+	ResumeRequestVersion int64                           `json:"resume_request_version"`
+	Recreated            *WorkerRunLeaseRecreatedRestore `json:"recreated,omitempty"`
+	Retained             *WorkerRunLeaseRetainedRestore  `json:"retained,omitempty"`
+	Decision             WorkerRunLeaseDecision          `json:"decision"`
+}
+
+type WorkerRunLeaseRecreatedRestore struct {
+	Kind      string                             `json:"kind"`
+	Manifest  json.RawMessage                    `json:"manifest"`
+	Artifacts []WorkerRunLeaseCheckpointArtifact `json:"artifacts"`
+}
+
+type WorkerRunLeaseRetainedRestore struct {
+	EnclosingRunWaitID string `json:"enclosing_run_wait_id"`
 }
 
 type WorkerRunLeaseAttach struct {
@@ -579,13 +592,6 @@ type WorkerRunLeaseParentAttach struct {
 	ResumeAttachID       string                 `json:"resume_attach_id"`
 	ResumeRequestVersion int64                  `json:"resume_request_version"`
 	Decision             WorkerRunLeaseDecision `json:"decision"`
-}
-
-type WorkerRunLeaseCheckpoint struct {
-	ID        string                             `json:"id"`
-	Kind      string                             `json:"kind"`
-	Manifest  json.RawMessage                    `json:"manifest"`
-	Artifacts []WorkerRunLeaseCheckpointArtifact `json:"artifacts"`
 }
 
 type WorkerRunLeaseCheckpointArtifact struct {

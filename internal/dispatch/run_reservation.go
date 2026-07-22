@@ -25,6 +25,7 @@ type runRuntime struct {
 	runtimeIdentityID     string
 	deploymentDefinition  pgtype.UUID
 	programDeployment     pgtype.UUID
+	restoreCheckpoint     pgtype.UUID
 	reservedRunID         pgtype.UUID
 	reservedAttempt       pgtype.Int4
 	reservedVersionID     pgtype.UUID
@@ -136,6 +137,7 @@ func (d *Authority) prepareRunWorkspace(
 			ReservedExecutionSlots:    authority.resources.executionSlots,
 			WorkspaceID:               authority.workspaceID,
 			ProgramDeploymentID:       authority.deploymentID,
+			RestoreCheckpointID:       pgtype.UUID{},
 			RunID:                     authority.runID,
 			AttemptNumber: pgtype.Int4{
 				Int32: authority.attemptNumber,
@@ -293,6 +295,7 @@ SELECT runtime_instances.id,
        runtime_instances.runtime_identity_id,
        runtime_instances.deployment_definition_id,
        runtime_instances.program_deployment_id,
+       runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.reserved_attempt_number,
        runtime_instances.reserved_workspace_version_id,
@@ -333,6 +336,7 @@ SELECT runtime_instances.id,
        runtime_instances.runtime_identity_id,
        runtime_instances.deployment_definition_id,
        runtime_instances.program_deployment_id,
+       runtime_instances.restore_checkpoint_id,
        runtime_instances.reserved_run_id,
        runtime_instances.reserved_attempt_number,
        runtime_instances.reserved_workspace_version_id,
@@ -385,6 +389,7 @@ func scanRunRuntime(row rowScanner) (runRuntime, error) {
 		&runtime.runtimeIdentityID,
 		&runtime.deploymentDefinition,
 		&runtime.programDeployment,
+		&runtime.restoreCheckpoint,
 		&runtime.reservedRunID,
 		&runtime.reservedAttempt,
 		&runtime.reservedVersionID,
@@ -415,6 +420,7 @@ func validateRunRuntime(
 	if runtime.deploymentDefinition != authority.workspaceDefinitionID ||
 		!runtime.programDeployment.Valid ||
 		runtime.programDeployment != authority.deploymentID ||
+		runtime.restoreCheckpoint.Valid ||
 		runtime.cpuMillis != authority.resources.cpuMillis ||
 		runtime.memoryBytes != authority.resources.memoryBytes ||
 		runtime.workloadDiskBytes != authority.resources.workloadDisk ||

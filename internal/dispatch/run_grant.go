@@ -232,6 +232,7 @@ SELECT transaction_timestamp(),
 					Valid: true,
 				},
 				BaseWorkspaceVersionID: authority.baseVersionID,
+				RestoreCheckpointID:    runtime.restoreCheckpoint,
 			},
 		)
 		if err != nil {

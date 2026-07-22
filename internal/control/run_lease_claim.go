@@ -16,6 +16,7 @@ var errStaleRunLeaseClaim = errors.New("run lease claim is stale")
 
 type runLeaseClaimAuthority struct {
 	mode                 runLeaseClaimMode
+	restoreSource        runLeaseRestoreSource
 	actor                db.Actor
 	parentRun            db.Run
 	childRun             db.Run
@@ -174,7 +175,7 @@ func claimFreshTaskRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	return claimRunLeasePhysicalInTx(
+	authority, err = claimRunLeasePhysicalInTx(
 		ctx,
 		q,
 		worker,
@@ -184,6 +185,13 @@ func claimFreshTaskRunLeaseInTx(
 		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
+	if err != nil {
+		return runLeaseClaimAuthority{}, err
+	}
+	if authority.runtime.RestoreCheckpointID.Valid {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
 func claimActorRunLeaseInTx(
@@ -279,7 +287,7 @@ func claimActorRunLeaseInTx(
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
 
-	return claimRunLeasePhysicalInTx(
+	authority, err = claimRunLeasePhysicalInTx(
 		ctx,
 		q,
 		worker,
@@ -289,6 +297,13 @@ func claimActorRunLeaseInTx(
 		authority.attempt.BaseWorkspaceVersionID,
 		authority,
 	)
+	if err != nil {
+		return runLeaseClaimAuthority{}, err
+	}
+	if authority.runtime.RestoreCheckpointID.Valid {
+		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+	}
+	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
 func claimSameWorkspaceChildRunLeaseInTx(
@@ -565,7 +580,7 @@ func claimSameWorkspaceChildRunLeaseInTx(
 		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	return authority, nil
+	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
 func claimSameWorkspaceParentResumeRunLeaseInTx(
@@ -861,7 +876,7 @@ func claimSameWorkspaceParentResumeRunLeaseInTx(
 		authority.sourceWorkspaceLease.WriterGeneration != authority.runWait.ParentWriterGeneration.Int64 {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	return authority, nil
+	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
 func claimCheckpointRestoreRunLeaseInTx(
@@ -1106,7 +1121,15 @@ func claimCheckpointRestoreRunLeaseInTx(
 			authority.sourceWorkspaceLease.MountFencingGeneration != authority.workspaceMount.FencingGeneration) {
 		return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
 	}
-	return authority, nil
+	if hasEnclosingWait {
+		authority.restoreSource = runLeaseRestoreRetained
+	} else {
+		if authority.runtime.RestoreCheckpointID != authority.checkpoint.ID {
+			return runLeaseClaimAuthority{}, errStaleRunLeaseClaim
+		}
+		authority.restoreSource = runLeaseRestoreRecreated
+	}
+	return markRunLeaseStartingInTx(ctx, q, worker, leaseID, leaseSequence, authority)
 }
 
 func claimRunLeasePhysicalInTx(
@@ -1225,19 +1248,32 @@ func claimRunLeasePhysicalInTx(
 		return runLeaseClaimAuthority{}, err
 	}
 
-	if authority.runLease.State == db.RunLeaseStateAssigned {
-		authority.runLease, err = q.MarkRunLeaseStarting(ctx, db.MarkRunLeaseStartingParams{
-			ID:                    leaseID,
-			LeaseSequence:         leaseSequence,
-			WorkerGroupID:         worker.WorkerGroupID,
-			WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
-			WorkerEpoch:           worker.WorkerEpoch,
-			WorkerProtocolVersion: worker.ProtocolVersion,
-		})
-		if err != nil {
-			return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
-		}
+	return authority, nil
+}
+
+func markRunLeaseStartingInTx(
+	ctx context.Context,
+	q db.Querier,
+	worker workerActor,
+	leaseID pgtype.UUID,
+	leaseSequence int64,
+	authority runLeaseClaimAuthority,
+) (runLeaseClaimAuthority, error) {
+	if authority.runLease.State != db.RunLeaseStateAssigned {
+		return authority, nil
 	}
+	runLease, err := q.MarkRunLeaseStarting(ctx, db.MarkRunLeaseStartingParams{
+		ID:                    leaseID,
+		LeaseSequence:         leaseSequence,
+		WorkerGroupID:         worker.WorkerGroupID,
+		WorkerInstanceID:      pgvalue.UUID(worker.WorkerInstanceID),
+		WorkerEpoch:           worker.WorkerEpoch,
+		WorkerProtocolVersion: worker.ProtocolVersion,
+	})
+	if err != nil {
+		return runLeaseClaimAuthority{}, staleRunLeaseClaim(err)
+	}
+	authority.runLease = runLease
 	return authority, nil
 }
 

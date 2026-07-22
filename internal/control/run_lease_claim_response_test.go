@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/db"
@@ -11,6 +12,7 @@ import (
 	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/secret"
 	"github.com/helmrdotdev/helmr/internal/workspace"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestProjectRunLeaseClaimResponseOpensSecretsAfterVerifyingCapability(t *testing.T) {
@@ -97,6 +99,70 @@ func TestRunLeaseClaimResponseKeepsWorkspaceAuthorityInReceipt(t *testing.T) {
 	if len(decoded.Workspace) != 2 || decoded.Workspace["write_capability"] == nil ||
 		decoded.Workspace["reset_target"] == nil {
 		t.Fatalf("workspace attachment = %s", raw)
+	}
+}
+
+func TestRestoreRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
+	authority, projection, keys := validRunLeaseClaimResponse(t)
+	authority.mode = runLeaseClaimRestore
+	authority.restoreSource = runLeaseRestoreRecreated
+	authority.attempt.EntrypointEnteredAt.Valid = true
+	authority.runWait = db.RunWait{
+		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
+		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
+	}
+	authority.checkpoint = db.RunCheckpoint{
+		ID: pgvalue.UUID(uuid.New()), Kind: db.RunCheckpointKindSuspend,
+		State: db.RunCheckpointStateReady, RestoreManifest: []byte(`{"version":0}`),
+	}
+	authority.runtime.RestoreCheckpointID = authority.checkpoint.ID
+	projection.checkpointArtifacts = []db.ListRunCheckpointArtifactAuthorityRow{
+		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleVmState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
+	}
+	response, err := projectRunLeaseClaimResponse(
+		authority,
+		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
+		projection,
+		claimResponseBuildPolicy(),
+		nil,
+		keys,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Secrets == nil || len(response.Secrets) != 0 || response.Execution.Restore == nil {
+		t.Fatalf("response = %#v", response)
+	}
+}
+
+func TestParentAttachRunLeaseClaimDoesNotOpenSecrets(t *testing.T) {
+	authority, projection, keys := validRunLeaseClaimResponse(t)
+	authority.mode = runLeaseClaimAttachParent
+	authority.attempt.EntrypointEnteredAt.Valid = true
+	authority.runWait = db.RunWait{
+		ID: pgvalue.UUID(uuid.New()), ConditionState: db.WaitStateCompleted,
+		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ResumeAttachID:      pgvalue.UUID(uuid.New()), ResumeRequestVersion: 2,
+	}
+	authority.checkpoint = db.RunCheckpoint{ID: pgvalue.UUID(uuid.New())}
+	authority.childRun = db.Run{ID: pgvalue.UUID(uuid.New())}
+	response, err := projectRunLeaseClaimResponse(
+		authority,
+		[]secret.DeliveryEnvelope{{PlacementKind: "env", PlacementTarget: "TOKEN"}},
+		projection,
+		claimResponseBuildPolicy(),
+		nil,
+		keys,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Secrets == nil || len(response.Secrets) != 0 ||
+		response.Execution.Attach == nil || response.Execution.Attach.Parent == nil {
+		t.Fatalf("response = %#v", response)
 	}
 }
 

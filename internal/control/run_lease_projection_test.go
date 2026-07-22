@@ -73,6 +73,97 @@ func TestProjectRunLeaseExecutionKeepsFreshAndParentAttachClosed(t *testing.T) {
 	}
 }
 
+func TestProjectRunLeaseExecutionSeparatesRecreatedAndRetainedRestore(t *testing.T) {
+	run, attempt, definition := validTaskProgramStart(t, "none")
+	attempt.EntrypointEnteredAt = pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	waitID := pgvalue.UUID(uuid.New())
+	checkpointID := pgvalue.UUID(uuid.New())
+	attachID := pgvalue.UUID(uuid.New())
+	runtimeID := pgvalue.UUID(uuid.New())
+	mountID := pgvalue.UUID(uuid.New())
+	wait := db.RunWait{
+		ID: waitID, ConditionState: db.WaitStateCompleted,
+		ConditionTerminalAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
+		ResumeAttachID:      attachID, ResumeRequestVersion: 2,
+	}
+	checkpoint := db.RunCheckpoint{
+		ID: checkpointID, Kind: db.RunCheckpointKindSuspend,
+		State: db.RunCheckpointStateReady, RestoreManifest: []byte(`{"version":0}`),
+	}
+	artifacts := []db.ListRunCheckpointArtifactAuthorityRow{
+		{Role: db.RunCheckpointArtifactRoleRuntimeConfig, Ordinal: 0, Digest: validDigest('a'), SizeBytes: 8, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleVmState, Ordinal: 0, Digest: validDigest('b'), SizeBytes: 4, MediaType: "application/example"},
+		{Role: db.RunCheckpointArtifactRoleMemory, Ordinal: 0, Digest: validDigest('c'), SizeBytes: 16, MediaType: "application/example"},
+	}
+	recreated, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRecreated,
+		run: run, attempt: attempt, definition: definition,
+		runtime: db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
+		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
+	})
+	if err != nil {
+		t.Fatalf("project recreated restore: %v", err)
+	}
+	if recreated.Restore == nil || recreated.Restore.Recreated == nil ||
+		recreated.Restore.Retained != nil || recreated.Restore.ResumeAttachID != pgvalue.UUIDString(attachID) {
+		t.Fatalf("unexpected recreated restore: %#v", recreated)
+	}
+
+	enclosingWaitID := pgvalue.UUID(uuid.New())
+	retained, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRetained,
+		run: run, attempt: attempt, definition: definition,
+		runtime:        db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: pgvalue.UUID(uuid.New())},
+		workspaceMount: db.WorkspaceMount{ID: mountID, FencingGeneration: 7},
+		enclosingWait: db.RunWait{
+			ID: enclosingWaitID, HandoffRuntimeInstanceID: runtimeID,
+			HandoffWorkspaceMountID: mountID,
+			HandoffMountGeneration:  pgtype.Int8{Int64: 7, Valid: true},
+		},
+		runWait: wait, checkpoint: checkpoint,
+	})
+	if err != nil {
+		t.Fatalf("project retained restore: %v", err)
+	}
+	if retained.Restore == nil || retained.Restore.Retained == nil ||
+		retained.Restore.Recreated != nil ||
+		retained.Restore.Retained.EnclosingRunWaitID != pgvalue.UUIDString(enclosingWaitID) ||
+		retained.Restore.CheckpointID != pgvalue.UUIDString(checkpointID) {
+		t.Fatalf("unexpected retained restore: %#v", retained)
+	}
+	if _, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimRestore, restoreSource: runLeaseRestoreRetained,
+		run: run, attempt: attempt, runtime: db.RuntimeInstance{ID: runtimeID},
+		workspaceMount: db.WorkspaceMount{ID: mountID, FencingGeneration: 7},
+		enclosingWait: db.RunWait{
+			ID: enclosingWaitID, HandoffRuntimeInstanceID: runtimeID,
+			HandoffWorkspaceMountID: mountID,
+			HandoffMountGeneration:  pgtype.Int8{Int64: 7, Valid: true},
+		},
+		runWait: wait, checkpoint: checkpoint, checkpointArtifacts: artifacts,
+	}); err == nil {
+		t.Fatal("retained restore accepted Checkpoint members")
+	}
+	if _, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimRestore, run: run, attempt: attempt,
+		runtime: db.RuntimeInstance{ID: runtimeID, RestoreCheckpointID: checkpointID},
+		runWait: wait, checkpoint: checkpoint,
+	}); err == nil {
+		t.Fatal("restore without a source was accepted")
+	}
+}
+
+func TestProjectFreshRunLeaseRejectsRestoreProvenance(t *testing.T) {
+	run, attempt, definition := validTaskProgramStart(t, "none")
+	_, err := projectRunLeaseExecution(runLeaseExecutionProjection{
+		mode: runLeaseClaimFresh, run: run, attempt: attempt, definition: definition,
+		runtime: db.RuntimeInstance{RestoreCheckpointID: pgvalue.UUID(uuid.New())},
+	})
+	if err == nil {
+		t.Fatal("fresh execution accepted restore provenance")
+	}
+}
+
 func TestProjectRunWaitDecisionDistinguishesAbsentAndJSONNull(t *testing.T) {
 	terminalAt := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	absent, err := projectRunWaitDecision(db.RunWait{

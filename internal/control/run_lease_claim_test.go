@@ -472,10 +472,10 @@ func TestClaimCheckpointRestoreRunLeaseInTxUsesCheckpointBase(t *testing.T) {
 		"run_lease",
 		"workspace_mount",
 		"workspace_lease",
-		"mark_starting",
 		"run_wait",
 		"checkpoint",
 		"checkpoint_source",
+		"mark_starting",
 	}
 	if !slices.Equal(store.calls, wantOrder) {
 		t.Fatalf("lock order = %v, want %v", store.calls, wantOrder)
@@ -485,6 +485,46 @@ func TestClaimCheckpointRestoreRunLeaseInTxUsesCheckpointBase(t *testing.T) {
 	}
 	if claimed.workspaceLease.BaseVersionID != claimed.checkpoint.PrivateWorkspaceVersionID {
 		t.Fatal("restore Workspace base does not match Checkpoint private version")
+	}
+}
+
+func TestClaimFreshRunLeasesRejectRestoreProvenance(t *testing.T) {
+	t.Run("task", func(t *testing.T) {
+		worker, locators, authority := validRunLeaseClaimFixture()
+		authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
+		store := &runLeaseClaimStore{authority: authority}
+		_, err := claimFreshTaskRunLeaseInTx(
+			context.Background(), store, worker, authority.runLease.ID,
+			authority.runLease.LeaseSequence, locators,
+		)
+		if !errors.Is(err, errStaleRunLeaseClaim) || slices.Contains(store.calls, "mark_starting") {
+			t.Fatalf("error = %v, calls = %v", err, store.calls)
+		}
+	})
+	t.Run("actor", func(t *testing.T) {
+		worker, locators, authority := validActorRunLeaseClaimFixture()
+		authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
+		store := &runLeaseClaimStore{authority: authority}
+		_, err := claimActorRunLeaseInTx(
+			context.Background(), store, worker, authority.runLease.ID,
+			authority.runLease.LeaseSequence, locators,
+		)
+		if !errors.Is(err, errStaleRunLeaseClaim) || slices.Contains(store.calls, "mark_starting") {
+			t.Fatalf("error = %v, calls = %v", err, store.calls)
+		}
+	})
+}
+
+func TestClaimCheckpointRestoreRejectsDifferentRuntimeProvenance(t *testing.T) {
+	worker, locators, authority := validCheckpointRestoreRunLeaseClaimFixture(false)
+	authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
+	store := &runLeaseClaimStore{authority: authority}
+	_, err := claimCheckpointRestoreRunLeaseInTx(
+		context.Background(), store, worker, authority.runLease.ID,
+		authority.runLease.LeaseSequence, locators,
+	)
+	if !errors.Is(err, errStaleRunLeaseClaim) || slices.Contains(store.calls, "mark_starting") {
+		t.Fatalf("error = %v, calls = %v", err, store.calls)
 	}
 }
 
@@ -655,10 +695,10 @@ func TestClaimSameWorkspaceChildRunLeaseInTxLocksParentBeforeChild(t *testing.T)
 			"run_lease",
 			"workspace_mount",
 			"workspace_lease",
-			"mark_starting",
 			"handoff_wait",
 			"checkpoint",
 			"checkpoint_source",
+			"mark_starting",
 		}
 		if actorParent {
 			wantOrder = append([]string{"actor"}, wantOrder...)
@@ -798,8 +838,8 @@ func TestClaimSameWorkspaceChildRunLeaseInTxExtendsEnclosingHandoff(t *testing.T
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "parent_attempt", "attempt",
 		"worker_group", "worker", "network_slot", "runtime", "run_lease",
-		"workspace_mount", "workspace_lease", "mark_starting",
-		"enclosing_wait", "handoff_wait", "checkpoint", "checkpoint_source",
+		"workspace_mount", "workspace_lease", "enclosing_wait", "handoff_wait",
+		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
 		t.Fatalf("lock order = %v", store.calls)
 	}
@@ -867,10 +907,10 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUsesHandoffCheckpoint(t *test
 			"run_lease",
 			"workspace_mount",
 			"workspace_lease",
-			"mark_starting",
 			"run_wait",
 			"checkpoint",
 			"checkpoint_source",
+			"mark_starting",
 		}
 		if actorParent {
 			wantOrder = append([]string{"actor"}, wantOrder...)
@@ -925,8 +965,8 @@ func TestClaimSameWorkspaceParentResumeRunLeaseInTxUpdatesEnclosingAuthority(t *
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "child_run", "workspace", "attempt", "child_attempt",
 		"worker_group", "worker", "network_slot", "runtime", "run_lease",
-		"workspace_mount", "workspace_lease", "mark_starting",
-		"enclosing_wait", "run_wait", "checkpoint", "checkpoint_source",
+		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
+		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
 		t.Fatalf("lock order = %v", store.calls)
 	}
@@ -973,6 +1013,7 @@ func TestClaimCheckpointRestoreRunLeaseInTxPreservesEnclosingHandoff(t *testing.
 	authority.sourceRunLease.RuntimeInstanceID = authority.runtime.ID
 	authority.sourceWorkspaceLease.WorkspaceMountID = authority.workspaceMount.ID
 	authority.sourceWorkspaceLease.MountFencingGeneration = authority.workspaceMount.FencingGeneration
+	authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.New())
 	locators.ParentRunID = attachmentOwnerRunID
 	locators.ParentOwnsLifecycle = pgtype.Bool{Bool: true, Valid: true}
 	locators.ParentAttemptNumber = 1
@@ -987,21 +1028,26 @@ func TestClaimCheckpointRestoreRunLeaseInTxPreservesEnclosingHandoff(t *testing.
 	setEnclosingLocator(&locators, authority.enclosingWait)
 	store := &runLeaseClaimStore{authority: authority}
 
-	if _, err := claimCheckpointRestoreRunLeaseInTx(
+	claimed, err := claimCheckpointRestoreRunLeaseInTx(
 		context.Background(),
 		store,
 		worker,
 		authority.runLease.ID,
 		authority.runLease.LeaseSequence,
 		locators,
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("%v after %v", err, store.calls)
+	}
+	if claimed.restoreSource != runLeaseRestoreRetained ||
+		claimed.runtime.RestoreCheckpointID != authority.runtime.RestoreCheckpointID {
+		t.Fatalf("retained restore changed provenance: %#v", claimed)
 	}
 	if !slices.Equal(store.calls, []string{
 		"parent_run", "run", "workspace", "attempt",
 		"worker_group", "worker", "network_slot", "runtime", "run_lease",
-		"workspace_mount", "workspace_lease", "mark_starting",
-		"enclosing_wait", "run_wait", "checkpoint", "checkpoint_source",
+		"workspace_mount", "workspace_lease", "enclosing_wait", "run_wait",
+		"checkpoint", "checkpoint_source", "mark_starting",
 	}) {
 		t.Fatalf("lock order = %v", store.calls)
 	}
@@ -1543,6 +1589,7 @@ func validCheckpointRestoreRunLeaseClaimFixture(actor bool) (workerActor, db.Get
 		PrivateWorkspaceVersionID: privateVersionID,
 		State:                     db.RunCheckpointStateReady,
 	}
+	authority.runtime.RestoreCheckpointID = checkpointID
 	if actor {
 		authority.checkpoint.ActorSpeculativeInputSequence = pgtype.Int8{Int64: 2, Valid: true}
 	}

@@ -22,13 +22,24 @@ const (
 	runLeaseClaimAttachParent runLeaseClaimMode = "attach_parent"
 )
 
+type runLeaseRestoreSource string
+
+const (
+	runLeaseRestoreRecreated runLeaseRestoreSource = "recreated"
+	runLeaseRestoreRetained  runLeaseRestoreSource = "retained"
+)
+
 type runLeaseExecutionProjection struct {
 	mode                runLeaseClaimMode
+	restoreSource       runLeaseRestoreSource
 	run                 db.Run
 	attempt             db.RunAttempt
 	actor               *db.Actor
 	definition          db.DeploymentDefinition
 	deploymentVersion   string
+	runtime             db.RuntimeInstance
+	workspaceMount      db.WorkspaceMount
+	enclosingWait       db.RunWait
 	runWait             db.RunWait
 	checkpoint          db.RunCheckpoint
 	childRun            db.Run
@@ -43,6 +54,7 @@ func projectRunLeaseExecution(
 		if authority.runWait.ID.Valid ||
 			authority.checkpoint.ID.Valid ||
 			authority.childRun.ID.Valid ||
+			authority.runtime.RestoreCheckpointID.Valid ||
 			len(authority.checkpointArtifacts) != 0 {
 			return api.WorkerRunLeaseExecution{}, errors.New("fresh Run Lease contains resume authority")
 		}
@@ -71,10 +83,7 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
-		checkpoint, err := projectRunLeaseCheckpoint(
-			authority.checkpoint,
-			authority.checkpointArtifacts,
-		)
+		attachID, err := requiredClaimUUIDString("resume attach ID", authority.runWait.ResumeAttachID)
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
@@ -82,13 +91,50 @@ func projectRunLeaseExecution(
 		if err != nil {
 			return api.WorkerRunLeaseExecution{}, err
 		}
+		checkpointID, err := requiredClaimUUIDString("Run Checkpoint ID", authority.checkpoint.ID)
+		if err != nil {
+			return api.WorkerRunLeaseExecution{}, err
+		}
+		restore := api.WorkerRunLeaseRestore{
+			RunWaitID:            waitID,
+			CheckpointID:         checkpointID,
+			ResumeAttachID:       attachID,
+			ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
+			Decision:             decision,
+		}
+		switch authority.restoreSource {
+		case runLeaseRestoreRetained:
+			if len(authority.checkpointArtifacts) != 0 ||
+				authority.enclosingWait.HandoffRuntimeInstanceID != authority.runtime.ID ||
+				authority.enclosingWait.HandoffWorkspaceMountID != authority.workspaceMount.ID ||
+				!authority.enclosingWait.HandoffMountGeneration.Valid ||
+				authority.enclosingWait.HandoffMountGeneration.Int64 != authority.workspaceMount.FencingGeneration {
+				return api.WorkerRunLeaseExecution{}, errors.New("retained restore authority is incomplete")
+			}
+			enclosingWaitID, err := requiredClaimUUIDString("enclosing Run Wait ID", authority.enclosingWait.ID)
+			if err != nil {
+				return api.WorkerRunLeaseExecution{}, err
+			}
+			restore.Retained = &api.WorkerRunLeaseRetainedRestore{
+				EnclosingRunWaitID: enclosingWaitID,
+			}
+		case runLeaseRestoreRecreated:
+			if authority.runtime.RestoreCheckpointID != authority.checkpoint.ID {
+				return api.WorkerRunLeaseExecution{}, errors.New("recreated restore runtime provenance is incomplete")
+			}
+			checkpoint, err := projectRunLeaseCheckpoint(
+				authority.checkpoint,
+				authority.checkpointArtifacts,
+			)
+			if err != nil {
+				return api.WorkerRunLeaseExecution{}, err
+			}
+			restore.Recreated = &checkpoint
+		default:
+			return api.WorkerRunLeaseExecution{}, errors.New("restore source is required")
+		}
 		return api.WorkerRunLeaseExecution{
-			Restore: &api.WorkerRunLeaseRestore{
-				Checkpoint:           checkpoint,
-				RunWaitID:            waitID,
-				ResumeRequestVersion: authority.runWait.ResumeRequestVersion,
-				Decision:             decision,
-			},
+			Restore: &restore,
 		}, nil
 	case runLeaseClaimAttachChild:
 		if !authority.runWait.ID.Valid ||
@@ -493,16 +539,12 @@ func projectRunLeaseFailure(wait db.RunWait) (runLeaseFailure, error) {
 func projectRunLeaseCheckpoint(
 	checkpoint db.RunCheckpoint,
 	rows []db.ListRunCheckpointArtifactAuthorityRow,
-) (api.WorkerRunLeaseCheckpoint, error) {
-	id, err := requiredClaimUUIDString("Run Checkpoint ID", checkpoint.ID)
-	if err != nil {
-		return api.WorkerRunLeaseCheckpoint{}, err
-	}
+) (api.WorkerRunLeaseRecreatedRestore, error) {
 	if checkpoint.State != db.RunCheckpointStateReady ||
 		(checkpoint.Kind != db.RunCheckpointKindSuspend &&
 			checkpoint.Kind != db.RunCheckpointKindHandoffResume) ||
 		!json.Valid(checkpoint.RestoreManifest) {
-		return api.WorkerRunLeaseCheckpoint{}, errors.New("Run Checkpoint authority is invalid")
+		return api.WorkerRunLeaseRecreatedRestore{}, errors.New("Run Checkpoint authority is invalid")
 	}
 	artifacts := make([]api.WorkerRunLeaseCheckpointArtifact, 0, len(rows))
 	priorRank := -1
@@ -511,11 +553,11 @@ func projectRunLeaseCheckpoint(
 		role := string(row.Role)
 		rank, ok := checkpointArtifactRoleRank(row.Role)
 		if !ok || row.Ordinal < 0 {
-			return api.WorkerRunLeaseCheckpoint{}, errors.New("Run Checkpoint Artifact membership is invalid")
+			return api.WorkerRunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is invalid")
 		}
 		if index > 0 &&
 			(rank < priorRank || (rank == priorRank && row.Ordinal <= priorOrdinal)) {
-			return api.WorkerRunLeaseCheckpoint{}, errors.New("Run Checkpoint Artifact membership is not canonically ordered")
+			return api.WorkerRunLeaseRecreatedRestore{}, errors.New("Run Checkpoint Artifact membership is not canonically ordered")
 		}
 		object, err := projectCASObject(
 			row.Digest,
@@ -524,7 +566,7 @@ func projectRunLeaseCheckpoint(
 			"Run Checkpoint Artifact",
 		)
 		if err != nil {
-			return api.WorkerRunLeaseCheckpoint{}, err
+			return api.WorkerRunLeaseRecreatedRestore{}, err
 		}
 		artifacts = append(artifacts, api.WorkerRunLeaseCheckpointArtifact{
 			Role: role, Ordinal: row.Ordinal, Object: object,
@@ -532,8 +574,7 @@ func projectRunLeaseCheckpoint(
 		priorRank = rank
 		priorOrdinal = row.Ordinal
 	}
-	return api.WorkerRunLeaseCheckpoint{
-		ID:        id,
+	return api.WorkerRunLeaseRecreatedRestore{
 		Kind:      string(checkpoint.Kind),
 		Manifest:  append(json.RawMessage(nil), checkpoint.RestoreManifest...),
 		Artifacts: artifacts,

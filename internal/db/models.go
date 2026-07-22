@@ -2407,6 +2407,7 @@ type RuntimeInstance struct {
 	ReservedExecutionSlots     int32                `json:"reserved_execution_slots"`
 	WorkspaceID                pgtype.UUID          `json:"workspace_id"`
 	ProgramDeploymentID        pgtype.UUID          `json:"program_deployment_id"`
+	RestoreCheckpointID        pgtype.UUID          `json:"restore_checkpoint_id"`
 	ReservedRunID              pgtype.UUID          `json:"reserved_run_id"`
 	ReservedAttemptNumber      pgtype.Int4          `json:"reserved_attempt_number"`
 	ReservedProcessID          pgtype.UUID          `json:"reserved_process_id"`
