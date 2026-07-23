@@ -72,21 +72,22 @@ type RunWaitAppender interface {
 }
 
 type WaitRequest struct {
-	Leases             api.WorkerRunLeaseProvider
-	Lease              api.WorkerRunLease
-	LeaseReceipt       api.WorkerRunLeaseReceipt
-	CorrelationID      string
-	ResumeAttachID     string
-	Kind               api.WorkerRunWaitKind
-	Params             json.RawMessage
-	Metadata           json.RawMessage
-	Tags               []string
-	TimeoutSeconds     *int32
-	IdleTimeoutSeconds *int32
-	ActiveDuration     time.Duration
-	Workspace          api.WorkerWorkspace
-	Checkpointer       Checkpointer
-	Resume             func(context.Context, WaitResumeDecision) error
+	Leases                        api.WorkerRunLeaseProvider
+	Lease                         api.WorkerRunLease
+	LeaseReceipt                  api.WorkerRunLeaseReceipt
+	CorrelationID                 string
+	ResumeAttachID                string
+	Kind                          api.WorkerRunWaitKind
+	Params                        json.RawMessage
+	Metadata                      json.RawMessage
+	Tags                          []string
+	TimeoutSeconds                *int32
+	IdleTimeoutSeconds            *int32
+	ActorSpeculativeInputSequence *int64
+	ActiveDuration                time.Duration
+	Workspace                     api.WorkerWorkspace
+	Checkpointer                  Checkpointer
+	Resume                        func(context.Context, WaitResumeDecision) error
 }
 
 type WaitResumeDecision struct {

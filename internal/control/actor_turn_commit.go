@@ -123,7 +123,7 @@ func (s *Server) commitActorTurn(
 		}
 		if authority.actor.CommittedInputSequence+1 != commit.targetInputSequence ||
 			commit.targetInputSequence >= authority.actor.NextInputSequence ||
-			authority.workspace.HeadVersionID != pgvalue.UUID(commit.baseVersionID) {
+			authority.workspaceLease.BaseVersionID != pgvalue.UUID(commit.baseVersionID) {
 			return errStaleActorTurnCommit
 		}
 		currentReceipt, err := projectActorTurnLease(authority)
@@ -133,9 +133,16 @@ func (s *Server) commitActorTurn(
 		if !equalRunLeaseReceipt(currentReceipt, request.Lease) {
 			return errStaleActorTurnCommit
 		}
-		base, err := getActorTurnVersion(ctx, work.q, authority, authority.workspace.HeadVersionID)
+		base, err := getActorTurnVersion(ctx, work.q, authority, authority.workspaceLease.BaseVersionID)
 		if err != nil {
 			return staleActorTurnCommit(err)
+		}
+		restoredBase := authority.workspaceLease.BaseVersionID != authority.workspace.HeadVersionID
+		if restoredBase && (base.ParentVersionID != authority.workspace.HeadVersionID ||
+			base.OwnershipGeneration != authority.workspace.OwnershipGeneration ||
+			base.WriterGeneration != authority.workspace.WriterGeneration ||
+			!authority.runtime.RestoreCheckpointID.Valid) {
+			return errStaleActorTurnCommit
 		}
 		changed := commit.tree.Digest != base.ContentDigest ||
 			commit.tree.SizeBytes != base.LogicalSizeBytes || commit.tree.EntryCount != int(base.EntryCount)
@@ -153,8 +160,21 @@ func (s *Server) commitActorTurn(
 			!committedAt.Time.Before(authority.workspaceLease.ExpiresAt.Time) {
 			return errStaleActorTurnCommit
 		}
+		if restoredBase {
+			if _, err := work.q.InvalidateRestoredActorCheckpoint(
+				ctx, db.InvalidateRestoredActorCheckpointParams{
+					CommittedAt: committedAt, RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
+					RunID: authority.run.ID, AttemptNumber: authority.attempt.Number,
+					WorkspaceID:               authority.workspace.ID,
+					PrivateWorkspaceVersionID: authority.workspaceLease.BaseVersionID,
+					TargetInputSequence:       commit.targetInputSequence,
+				},
+			); err != nil {
+				return staleActorTurnCommit(err)
+			}
+		}
 
-		versionID := authority.workspace.HeadVersionID
+		versionID := authority.workspaceLease.BaseVersionID
 		if changed {
 			versionID, err = recordTaskWorkspaceVersion(
 				ctx, work.q, worker, authority,
@@ -163,17 +183,35 @@ func (s *Server) commitActorTurn(
 			if err != nil {
 				return err
 			}
+		} else if restoredBase {
+			if _, err := work.q.PublishRestoredActorCheckpointWorkspaceVersion(
+				ctx, db.PublishRestoredActorCheckpointWorkspaceVersionParams{
+					CommittedAt: committedAt, VersionID: authority.workspaceLease.BaseVersionID,
+					WorkspaceID: authority.workspace.ID, ExpectedParentVersionID: authority.workspace.HeadVersionID,
+					OwnershipGeneration: authority.workspace.OwnershipGeneration,
+					WriterGeneration:    authority.workspace.WriterGeneration,
+					RestoreCheckpointID: authority.runtime.RestoreCheckpointID,
+					RunID:               authority.run.ID, AttemptNumber: authority.attempt.Number,
+				},
+			); err != nil {
+				return staleActorTurnCommit(err)
+			}
+		}
+		if versionID != authority.workspace.HeadVersionID {
+			previousHeadVersionID := authority.workspace.HeadVersionID
 			authority.workspace, err = work.q.AdvanceActorWorkspaceHead(ctx, db.AdvanceActorWorkspaceHeadParams{
 				NewHeadVersionID: versionID, CompletedAt: committedAt, ID: authority.workspace.ID,
 				OrgID: authority.run.OrgID, ProjectID: authority.run.ProjectID,
 				EnvironmentID: authority.run.EnvironmentID, ActorID: authority.actor.ID,
 				OwnershipGeneration:   authority.workspace.OwnershipGeneration,
 				WriterGeneration:      authority.workspace.WriterGeneration,
-				ExpectedHeadVersionID: pgvalue.UUID(commit.baseVersionID),
+				ExpectedHeadVersionID: previousHeadVersionID,
 			})
 			if err != nil {
 				return staleActorTurnCommit(err)
 			}
+		}
+		if changed {
 			authority.workspaceMount.MaterializedVersionID = versionID
 			authority.workspaceLease, err = work.q.AdvanceActorTurnWorkspaceLeaseFrontier(
 				ctx, db.AdvanceActorTurnWorkspaceLeaseFrontierParams{
@@ -243,8 +281,7 @@ func replayActorTurnCommit(
 	authority runLeaseClaimAuthority,
 ) (api.WorkerCommitActorTurnResponse, bool, error) {
 	if authority.actor.CommittedInputSequence != commit.targetInputSequence ||
-		authority.workspace.HeadVersionID != authority.workspaceMount.MaterializedVersionID ||
-		authority.workspace.HeadVersionID != authority.workspaceLease.BaseVersionID {
+		authority.workspaceMount.MaterializedVersionID != authority.workspaceLease.BaseVersionID {
 		return api.WorkerCommitActorTurnResponse{}, false, nil
 	}
 	currentReceipt, err := projectActorTurnLease(authority)

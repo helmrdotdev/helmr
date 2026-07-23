@@ -1414,14 +1414,15 @@ func runtimeWaitRequest(request Request, wait *runv0.RunWaitRequested) (WaitRequ
 		return WaitRequest{}, err
 	}
 	return WaitRequest{
-		Lease:              currentRunLease(request),
-		CorrelationID:      correlationID,
-		Kind:               kind,
-		Params:             []byte(paramsJSON),
-		Metadata:           []byte(metadataJSON),
-		Tags:               tags,
-		TimeoutSeconds:     timeout,
-		IdleTimeoutSeconds: idleTimeout,
+		Lease:                         currentRunLease(request),
+		CorrelationID:                 correlationID,
+		Kind:                          kind,
+		Params:                        []byte(paramsJSON),
+		Metadata:                      []byte(metadataJSON),
+		Tags:                          tags,
+		TimeoutSeconds:                timeout,
+		IdleTimeoutSeconds:            idleTimeout,
+		ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
 	}, nil
 }
 

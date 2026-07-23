@@ -152,6 +152,76 @@ func (q *Queries) CompleteActorAttempt(ctx context.Context, arg CompleteActorAtt
 	return i, err
 }
 
+const createActorCheckpointFailureRetryAttempt = `-- name: CreateActorCheckpointFailureRetryAttempt :one
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id,
+    actor_start_input_sequence, base_workspace_version_id
+)
+SELECT runs.id,
+       $1,
+       'actor',
+       runs.workspace_id,
+       actors.committed_input_sequence,
+       workspaces.head_version_id
+  FROM runs
+  JOIN actors
+    ON actors.id = runs.actor_id
+   AND actors.workspace_id = runs.workspace_id
+   AND actors.current_run_id = runs.id
+   AND actors.run_generation = $2
+   AND actors.state IN ('open', 'closing')
+  JOIN workspaces
+    ON workspaces.id = runs.workspace_id
+   AND workspaces.owner_actor_id = actors.id
+   AND workspaces.owner_run_id IS NULL
+   AND workspaces.head_version_id IS NOT NULL
+ WHERE runs.id = $3
+   AND runs.workspace_id = $4
+   AND runs.entrypoint_kind = 'actor'
+   AND runs.current_attempt_number = $5
+   AND runs.current_run_lease_id = $6
+   AND runs.status = 'waiting'
+   AND runs.active_started_at IS NULL
+RETURNING run_id, number, entrypoint_kind, workspace_id, entrypoint_entered_at, actor_start_input_sequence, base_workspace_version_id, terminal_actor_input_sequence, terminal_outcome, terminal_reason_code, terminal_error, created_at, terminal_at
+`
+
+type CreateActorCheckpointFailureRetryAttemptParams struct {
+	Number                int32       `json:"number"`
+	ExpectedRunGeneration int64       `json:"expected_run_generation"`
+	RunID                 pgtype.UUID `json:"run_id"`
+	WorkspaceID           pgtype.UUID `json:"workspace_id"`
+	PreviousAttemptNumber int32       `json:"previous_attempt_number"`
+	RunLeaseID            pgtype.UUID `json:"run_lease_id"`
+}
+
+func (q *Queries) CreateActorCheckpointFailureRetryAttempt(ctx context.Context, arg CreateActorCheckpointFailureRetryAttemptParams) (RunAttempt, error) {
+	row := q.db.QueryRow(ctx, createActorCheckpointFailureRetryAttempt,
+		arg.Number,
+		arg.ExpectedRunGeneration,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.PreviousAttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i RunAttempt
+	err := row.Scan(
+		&i.RunID,
+		&i.Number,
+		&i.EntrypointKind,
+		&i.WorkspaceID,
+		&i.EntrypointEnteredAt,
+		&i.ActorStartInputSequence,
+		&i.BaseWorkspaceVersionID,
+		&i.TerminalActorInputSequence,
+		&i.TerminalOutcome,
+		&i.TerminalReasonCode,
+		&i.TerminalError,
+		&i.CreatedAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const createActorContinuationRun = `-- name: CreateActorContinuationRun :one
 WITH created_run AS (
     INSERT INTO runs (
@@ -431,6 +501,105 @@ func (q *Queries) CreateActorRetryAttempt(ctx context.Context, arg CreateActorRe
 	return i, err
 }
 
+const delayActorCheckpointFailureRetry = `-- name: DelayActorCheckpointFailureRetry :one
+UPDATE runs
+   SET status = 'retry_delayed',
+       state_version = state_version + 1,
+       current_attempt_number = $1,
+       current_run_lease_id = NULL,
+       retry_at = $2,
+       updated_at = $3
+ WHERE id = $4
+   AND workspace_id = $5
+   AND entrypoint_kind = 'actor'
+   AND actor_id = $6
+   AND status = 'waiting'
+   AND current_attempt_number = $7
+   AND current_run_lease_id = $8
+   AND active_started_at IS NULL
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+`
+
+type DelayActorCheckpointFailureRetryParams struct {
+	NextAttemptNumber     int32              `json:"next_attempt_number"`
+	RetryAt               pgtype.Timestamptz `json:"retry_at"`
+	FailedAt              pgtype.Timestamptz `json:"failed_at"`
+	ID                    pgtype.UUID        `json:"id"`
+	WorkspaceID           pgtype.UUID        `json:"workspace_id"`
+	ActorID               pgtype.UUID        `json:"actor_id"`
+	PreviousAttemptNumber int32              `json:"previous_attempt_number"`
+	RunLeaseID            pgtype.UUID        `json:"run_lease_id"`
+}
+
+func (q *Queries) DelayActorCheckpointFailureRetry(ctx context.Context, arg DelayActorCheckpointFailureRetryParams) (Run, error) {
+	row := q.db.QueryRow(ctx, delayActorCheckpointFailureRetry,
+		arg.NextAttemptNumber,
+		arg.RetryAt,
+		arg.FailedAt,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActorID,
+		arg.PreviousAttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
 const delayActorRunRetry = `-- name: DelayActorRunRetry :one
 UPDATE runs
    SET status = 'retry_delayed',
@@ -570,6 +739,110 @@ func (q *Queries) FinishActorRun(ctx context.Context, arg FinishActorRunParams) 
 		arg.ReasonCode,
 		arg.Error,
 		arg.CompletedAt,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.ActorID,
+		arg.AttemptNumber,
+		arg.RunLeaseID,
+	)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
+}
+
+const finishCheckpointFailedActorRun = `-- name: FinishCheckpointFailedActorRun :one
+UPDATE runs
+   SET status = $1,
+       output = NULL,
+       terminal_reason_code = $2,
+       error = $3,
+       state_version = state_version + 1,
+       current_run_lease_id = NULL,
+       retry_at = NULL,
+       terminal_at = $4,
+       updated_at = $4
+ WHERE id = $5
+   AND workspace_id = $6
+   AND entrypoint_kind = 'actor'
+   AND actor_id = $7
+   AND status = 'waiting'
+   AND current_attempt_number = $8
+   AND current_run_lease_id = $9
+   AND active_started_at IS NULL
+RETURNING id, public_id, org_id, project_id, environment_id, deployment_id, deployment_definition_id, entrypoint_kind, entrypoint_declared_id, actor_id, cause_kind, schedule_id, schedule_generation, scheduled_at, previous_scheduled_at, schedule_timezone, parent_run_id, parent_owns_lifecycle, workspace_id, base_workspace_version_id, actor_start_input_sequence, actor_start_input_high_watermark, payload, output, terminal_reason_code, error, status, state_version, current_attempt_number, current_run_lease_id, metadata, tags, queue_name, concurrency_key, queue_concurrency_limit, priority, queue_origin_at, queue_score_at, queued_expires_at, max_active_duration_ms, retry_policy, active_elapsed_ms, active_started_at, trace_id, root_span_id, claim_id, created_at, updated_at, first_lease_at, started_at, retry_at, terminal_at
+`
+
+type FinishCheckpointFailedActorRunParams struct {
+	Status        RunStatus          `json:"status"`
+	ReasonCode    pgtype.Text        `json:"reason_code"`
+	Error         []byte             `json:"error"`
+	FailedAt      pgtype.Timestamptz `json:"failed_at"`
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ActorID       pgtype.UUID        `json:"actor_id"`
+	AttemptNumber int32              `json:"attempt_number"`
+	RunLeaseID    pgtype.UUID        `json:"run_lease_id"`
+}
+
+func (q *Queries) FinishCheckpointFailedActorRun(ctx context.Context, arg FinishCheckpointFailedActorRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, finishCheckpointFailedActorRun,
+		arg.Status,
+		arg.ReasonCode,
+		arg.Error,
+		arg.FailedAt,
 		arg.ID,
 		arg.WorkspaceID,
 		arg.ActorID,

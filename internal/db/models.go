@@ -2346,6 +2346,7 @@ type RunWait struct {
 	RegistrationRequestFingerprint   pgtype.Text        `json:"registration_request_fingerprint"`
 	ExpectedRunStateVersion          int64              `json:"expected_run_state_version"`
 	AttemptNumber                    int32              `json:"attempt_number"`
+	ActorSpeculativeInputSequence    pgtype.Int8        `json:"actor_speculative_input_sequence"`
 	CurrentRunLeaseID                pgtype.UUID        `json:"current_run_lease_id"`
 	PriorRunLeaseID                  pgtype.UUID        `json:"prior_run_lease_id"`
 	CheckpointRequestVersion         int64              `json:"checkpoint_request_version"`

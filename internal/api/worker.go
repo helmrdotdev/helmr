@@ -1116,14 +1116,15 @@ const (
 )
 
 type WorkerCreateRunWaitRequest struct {
-	Lease              WorkerRunLeaseReceipt `json:"lease"`
-	CorrelationID      string                `json:"correlation_id"`
-	Kind               WorkerRunWaitKind     `json:"kind"`
-	Params             json.RawMessage       `json:"params,omitempty"`
-	Metadata           json.RawMessage       `json:"metadata,omitempty"`
-	Tags               []string              `json:"tags,omitempty"`
-	TimeoutSeconds     *int32                `json:"timeout_seconds,omitempty"`
-	IdleTimeoutSeconds *int32                `json:"idle_timeout_seconds,omitempty"`
+	Lease                         WorkerRunLeaseReceipt `json:"lease"`
+	CorrelationID                 string                `json:"correlation_id"`
+	Kind                          WorkerRunWaitKind     `json:"kind"`
+	Params                        json.RawMessage       `json:"params,omitempty"`
+	Metadata                      json.RawMessage       `json:"metadata,omitempty"`
+	Tags                          []string              `json:"tags,omitempty"`
+	TimeoutSeconds                *int32                `json:"timeout_seconds,omitempty"`
+	IdleTimeoutSeconds            *int32                `json:"idle_timeout_seconds,omitempty"`
+	ActorSpeculativeInputSequence *int64                `json:"actor_speculative_input_sequence,omitempty"`
 }
 
 type WorkerCreateRunWaitResponse struct {

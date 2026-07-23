@@ -243,14 +243,15 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 		return api.WorkerCreateRunWaitResponse{}, err
 	}
 	return w.Client.CreateRunWait(ctx, api.WorkerCreateRunWaitRequest{
-		Lease:              lease,
-		CorrelationID:      request.CorrelationID,
-		Kind:               request.Kind,
-		Params:             request.Params,
-		Metadata:           request.Metadata,
-		Tags:               request.Tags,
-		TimeoutSeconds:     request.TimeoutSeconds,
-		IdleTimeoutSeconds: request.IdleTimeoutSeconds,
+		Lease:                         lease,
+		CorrelationID:                 request.CorrelationID,
+		Kind:                          request.Kind,
+		Params:                        request.Params,
+		Metadata:                      request.Metadata,
+		Tags:                          request.Tags,
+		TimeoutSeconds:                request.TimeoutSeconds,
+		IdleTimeoutSeconds:            request.IdleTimeoutSeconds,
+		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 	})
 }
 

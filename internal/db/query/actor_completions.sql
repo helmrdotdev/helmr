@@ -114,6 +114,77 @@ UPDATE runs
    AND active_started_at IS NULL
 RETURNING *;
 
+-- name: CreateActorCheckpointFailureRetryAttempt :one
+INSERT INTO run_attempts (
+    run_id, number, entrypoint_kind, workspace_id,
+    actor_start_input_sequence, base_workspace_version_id
+)
+SELECT runs.id,
+       sqlc.arg(number),
+       'actor',
+       runs.workspace_id,
+       actors.committed_input_sequence,
+       workspaces.head_version_id
+  FROM runs
+  JOIN actors
+    ON actors.id = runs.actor_id
+   AND actors.workspace_id = runs.workspace_id
+   AND actors.current_run_id = runs.id
+   AND actors.run_generation = sqlc.arg(expected_run_generation)
+   AND actors.state IN ('open', 'closing')
+  JOIN workspaces
+    ON workspaces.id = runs.workspace_id
+   AND workspaces.owner_actor_id = actors.id
+   AND workspaces.owner_run_id IS NULL
+   AND workspaces.head_version_id IS NOT NULL
+ WHERE runs.id = sqlc.arg(run_id)
+   AND runs.workspace_id = sqlc.arg(workspace_id)
+   AND runs.entrypoint_kind = 'actor'
+   AND runs.current_attempt_number = sqlc.arg(previous_attempt_number)
+   AND runs.current_run_lease_id = sqlc.arg(run_lease_id)
+   AND runs.status = 'waiting'
+   AND runs.active_started_at IS NULL
+RETURNING *;
+
+-- name: DelayActorCheckpointFailureRetry :one
+UPDATE runs
+   SET status = 'retry_delayed',
+       state_version = state_version + 1,
+       current_attempt_number = sqlc.arg(next_attempt_number),
+       current_run_lease_id = NULL,
+       retry_at = sqlc.arg(retry_at),
+       updated_at = sqlc.arg(failed_at)
+ WHERE id = sqlc.arg(id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND entrypoint_kind = 'actor'
+   AND actor_id = sqlc.arg(actor_id)
+   AND status = 'waiting'
+   AND current_attempt_number = sqlc.arg(previous_attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND active_started_at IS NULL
+RETURNING *;
+
+-- name: FinishCheckpointFailedActorRun :one
+UPDATE runs
+   SET status = sqlc.arg(status),
+       output = NULL,
+       terminal_reason_code = sqlc.narg(reason_code),
+       error = sqlc.narg(error),
+       state_version = state_version + 1,
+       current_run_lease_id = NULL,
+       retry_at = NULL,
+       terminal_at = sqlc.arg(failed_at),
+       updated_at = sqlc.arg(failed_at)
+ WHERE id = sqlc.arg(id)
+   AND workspace_id = sqlc.arg(workspace_id)
+   AND entrypoint_kind = 'actor'
+   AND actor_id = sqlc.arg(actor_id)
+   AND status = 'waiting'
+   AND current_attempt_number = sqlc.arg(attempt_number)
+   AND current_run_lease_id = sqlc.arg(run_lease_id)
+   AND active_started_at IS NULL
+RETURNING *;
+
 -- name: FinishActorRun :one
 UPDATE runs
    SET status = sqlc.arg(status),

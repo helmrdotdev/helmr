@@ -271,7 +271,19 @@ RETURNING *;
 
 -- name: FailCheckpointRunWait :one
 UPDATE run_waits
-   SET suspension_state = 'failed',
+   SET condition_state = CASE
+           WHEN condition_state = 'pending' THEN 'cancelled'::wait_state
+           ELSE condition_state
+       END,
+       condition_terminal_at = CASE
+           WHEN condition_state = 'pending' THEN sqlc.arg(failed_at)
+           ELSE condition_terminal_at
+       END,
+       condition_reason_code = CASE
+           WHEN condition_state = 'pending' THEN 'run_checkpoint_failed'
+           ELSE condition_reason_code
+       END,
+       suspension_state = 'failed',
        checkpoint_ack_version = sqlc.arg(checkpoint_request_version),
        prior_run_lease_id = current_run_lease_id,
        current_run_lease_id = NULL,

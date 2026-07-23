@@ -77,6 +77,7 @@ describe("runProgram", () => {
       if (first.case !== "runWaitRequested") return
       expect(first.value.kind).toBe("actor_input")
       expect(JSON.parse(first.value.paramsJson).after_input_sequence).toBe(0)
+      expect(first.value.actorSpeculativeInputSequence).toBe(0n)
       yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"))
 
       await events[1]!.promise
@@ -91,6 +92,7 @@ describe("runProgram", () => {
       expect(second.case).toBe("runWaitRequested")
       if (second.case !== "runWaitRequested") return
       expect(JSON.parse(second.value.paramsJson).after_input_sequence).toBe(1)
+      expect(second.value.actorSpeculativeInputSequence).toBe(1n)
       yield actorDecision(second.value.correlationId, "completed", actorInput(2, "two"))
     }
     await runProgram(locatorURL, programIO({

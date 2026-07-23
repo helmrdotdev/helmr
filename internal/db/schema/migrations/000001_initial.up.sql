@@ -3383,6 +3383,10 @@ CREATE TABLE run_waits (
     ),
     expected_run_state_version BIGINT NOT NULL CHECK (expected_run_state_version >= 0),
     attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+    actor_speculative_input_sequence BIGINT CHECK (
+        actor_speculative_input_sequence IS NULL
+        OR actor_speculative_input_sequence >= 0
+    ),
     current_run_lease_id UUID,
     prior_run_lease_id UUID,
     checkpoint_request_version BIGINT NOT NULL DEFAULT 0 CHECK (checkpoint_request_version >= 0),

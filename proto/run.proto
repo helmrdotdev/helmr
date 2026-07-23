@@ -336,6 +336,7 @@ message RunWaitRequested {
   optional uint32 timeout = 5;
   repeated string tags = 6;
   optional uint32 idle_timeout = 9;
+  optional int64 actor_speculative_input_sequence = 10;
 }
 
 message TokenCreateRequested {

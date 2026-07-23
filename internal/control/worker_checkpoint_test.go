@@ -9,7 +9,9 @@ import (
 	"github.com/google/uuid"
 	"github.com/helmrdotdev/helmr/internal/api"
 	"github.com/helmrdotdev/helmr/internal/cas"
+	"github.com/helmrdotdev/helmr/internal/db"
 	"github.com/helmrdotdev/helmr/internal/deployment"
+	"github.com/helmrdotdev/helmr/internal/pgvalue"
 	"github.com/helmrdotdev/helmr/internal/workspace"
 )
 
@@ -79,6 +81,34 @@ func TestTokenWaitDecisionMapsExpiredTokenFailureToTimeout(t *testing.T) {
 	kind, payload, err := tokenWaitDecision("failed", nil, "token_expired")
 	if err != nil || kind != "timed_out" || string(payload) != "null" {
 		t.Fatalf("decision = %q %s, err=%v", kind, payload, err)
+	}
+}
+
+func TestDecideActorCheckpointFailureStopsAtActorOrRunExpiry(t *testing.T) {
+	failedAt := time.Date(2026, time.July, 23, 12, 0, 0, 0, time.UTC)
+	authority := runLeaseClaimAuthority{
+		run: db.Run{
+			MaxActiveDurationMs: 300_000,
+			RetryPolicy:         []byte(`{"enabled":true,"maxAttempts":3,"backoff":{"minMs":1,"maxMs":1,"factor":1,"jitter":"none"}}`),
+		},
+		attempt: db.RunAttempt{Number: 1},
+		actor:   db.Actor{ExpiresAt: pgvalue.Timestamptz(failedAt)},
+	}
+	decision, err := decideActorCheckpointFailure(authority, failedAt, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.retry || !decision.actorExpired || decision.reason != "checkpoint_failed" {
+		t.Fatalf("Actor expiry decision = %+v", decision)
+	}
+
+	authority.actor.ExpiresAt = pgvalue.Timestamptz(failedAt.Add(time.Hour))
+	decision, err = decideActorCheckpointFailure(authority, failedAt, authority.run.MaxActiveDurationMs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if decision.retry || decision.actorExpired || decision.reason != "max_active_duration_exceeded" {
+		t.Fatalf("Run duration decision = %+v", decision)
 	}
 }
 

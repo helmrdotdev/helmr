@@ -63,6 +63,114 @@ func TestCommitActorTurnRejectsSkippedInputSequence(t *testing.T) {
 	}
 }
 
+func TestCommitActorTurnPublishesUnchangedRestoredCheckpointBase(t *testing.T) {
+	server, store, worker, request, _ := newActorTurnCommitFixture(t)
+	oldHead := store.authority.workspace.HeadVersionID
+	restoredBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store.restoredCheckpointCursor = 2
+	store.authority.workspaceMount.MaterializedVersionID = restoredBase
+	store.authority.workspaceLease.BaseVersionID = restoredBase
+	store.resetTarget.VersionID = restoredBase
+	store.resetTarget.ParentVersionID = oldHead
+	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
+	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
+	receipt, err := projectActorTurnLease(store.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Lease = receipt
+	request.BaseWorkspaceVersionID = receipt.BaseWorkspaceVersionID
+	commit, err := parseActorTurnCommitRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	response, err := server.commitActorTurn(context.Background(), worker, request, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.restoredInvalidations != 1 || store.restoredPublishes != 1 || store.headWrites != 1 || store.versionWrites != 0 {
+		t.Fatalf("restore writes: invalidate=%d publish=%d head=%d version=%d",
+			store.restoredInvalidations, store.restoredPublishes, store.headWrites, store.versionWrites)
+	}
+	if store.authority.workspace.HeadVersionID != restoredBase ||
+		store.authority.workspaceMount.MaterializedVersionID != restoredBase ||
+		store.authority.workspaceLease.BaseVersionID != restoredBase {
+		t.Fatal("restored Actor turn did not converge the Workspace frontier")
+	}
+	if response.WorkspaceVersionID != pgvalue.UUIDString(restoredBase) || response.CommittedInputSequence != 2 {
+		t.Fatalf("response = %+v", response)
+	}
+}
+
+func TestCommitActorTurnInvalidatesRestoredCheckpointBeforePublishingChangedTurn(t *testing.T) {
+	server, store, worker, request, _ := newActorTurnCommitFixture(t)
+	oldHead := store.authority.workspace.HeadVersionID
+	restoredBase := pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store.authority.runtime.RestoreCheckpointID = pgvalue.UUID(uuid.Must(uuid.NewV7()))
+	store.restoredCheckpointCursor = 1
+	store.authority.workspaceMount.MaterializedVersionID = restoredBase
+	store.authority.workspaceLease.BaseVersionID = restoredBase
+	store.resetTarget.VersionID = restoredBase
+	store.resetTarget.ParentVersionID = oldHead
+	store.resetTarget.OwnershipGeneration = store.authority.workspace.OwnershipGeneration
+	store.resetTarget.WriterGeneration = store.authority.workspace.WriterGeneration
+	receipt, err := projectActorTurnLease(store.authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Lease = receipt
+	request.BaseWorkspaceVersionID = receipt.BaseWorkspaceVersionID
+
+	root := t.TempDir()
+	if err := os.WriteFile(root+"/state.txt", []byte("updated after restore"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := workspace.InspectTree(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifact, cleanup, err := workspace.CreateWorkspaceArtifactFromRoot(root, t.TempDir(), root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(cleanup)
+	body, err := os.ReadFile(artifact.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Tree = api.WorkerWorkspaceTreeIdentity{
+		Digest: tree.Digest, SizeBytes: tree.SizeBytes, EntryCount: int32(tree.EntryCount),
+	}
+	request.Artifact = &api.WorkerWorkspaceArtifact{
+		Digest: artifact.Digest, MediaType: artifact.MediaType, Encoding: artifact.Encoding,
+		SizeBytes: artifact.SizeBytes, EntryCount: int32(artifact.EntryCount),
+	}
+	commit, err := parseActorTurnCommitRequest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server.cas = actorTurnCAS{object: cas.Object{
+		Digest: artifact.Digest, MediaType: artifact.MediaType, SizeBytes: artifact.SizeBytes,
+	}, body: body}
+
+	response, err := server.commitActorTurn(context.Background(), worker, request, commit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.restoredInvalidations != 1 || store.restoredPublishes != 0 || store.versionWrites != 1 ||
+		store.headWrites != 1 || store.leaseFrontierWrites != 1 || store.cursorWrites != 1 {
+		t.Fatalf("changed restore writes: invalidate=%d publish=%d version=%d head=%d lease=%d cursor=%d",
+			store.restoredInvalidations, store.restoredPublishes, store.versionWrites,
+			store.headWrites, store.leaseFrontierWrites, store.cursorWrites)
+	}
+	if response.WorkspaceVersionID == pgvalue.UUIDString(restoredBase) ||
+		response.WorkspaceVersionID != pgvalue.UUIDString(store.authority.workspace.HeadVersionID) {
+		t.Fatalf("response = %+v, head=%s", response, pgvalue.UUIDString(store.authority.workspace.HeadVersionID))
+	}
+}
+
 func TestCommitActorTurnRollsBackChangedWorkspaceWhenCursorAdvanceFails(t *testing.T) {
 	server, store, worker, request, _ := newActorTurnCommitFixture(t)
 	root := t.TempDir()
@@ -120,15 +228,18 @@ func TestCommitActorTurnRollsBackChangedWorkspaceWhenCursorAdvanceFails(t *testi
 
 type actorTurnCommitStore struct {
 	*runLeaseClaimStore
-	committedAt         pgtype.Timestamptz
-	cursor              db.AdvanceActorTurnCursorParams
-	cursorErr           error
-	cursorWrites        int
-	versionWrites       int
-	headWrites          int
-	leaseFrontierWrites int
-	commits             int
-	rollbacks           int
+	committedAt              pgtype.Timestamptz
+	cursor                   db.AdvanceActorTurnCursorParams
+	cursorErr                error
+	cursorWrites             int
+	versionWrites            int
+	headWrites               int
+	leaseFrontierWrites      int
+	restoredPublishes        int
+	restoredInvalidations    int
+	restoredCheckpointCursor int64
+	commits                  int
+	rollbacks                int
 }
 
 func (s *actorTurnCommitStore) BeginQuerier(context.Context) (db.Querier, controlTransaction, error) {
@@ -138,6 +249,8 @@ func (s *actorTurnCommitStore) BeginQuerier(context.Context) (db.Querier, contro
 		runLeaseClaimStore: &base, committedAt: s.committedAt, cursor: s.cursor,
 		cursorErr: s.cursorErr, cursorWrites: s.cursorWrites, versionWrites: s.versionWrites,
 		headWrites: s.headWrites, leaseFrontierWrites: s.leaseFrontierWrites,
+		restoredPublishes: s.restoredPublishes, restoredInvalidations: s.restoredInvalidations,
+		restoredCheckpointCursor: s.restoredCheckpointCursor,
 	}
 	return staged, actorTurnCommitTransaction{parent: s, staged: staged}, nil
 }
@@ -201,6 +314,33 @@ func (s *actorTurnCommitStore) AdvanceActorTurnWorkspaceLeaseFrontier(
 	return s.authority.workspaceLease, nil
 }
 
+func (s *actorTurnCommitStore) PublishRestoredActorCheckpointWorkspaceVersion(
+	_ context.Context,
+	params db.PublishRestoredActorCheckpointWorkspaceVersionParams,
+) (db.WorkspaceVersion, error) {
+	if params.VersionID != s.authority.workspaceLease.BaseVersionID ||
+		params.ExpectedParentVersionID != s.authority.workspace.HeadVersionID {
+		return db.WorkspaceVersion{}, errors.New("restored checkpoint publish fence mismatch")
+	}
+	s.restoredPublishes++
+	return db.WorkspaceVersion{ID: params.VersionID}, nil
+}
+
+func (s *actorTurnCommitStore) InvalidateRestoredActorCheckpoint(
+	_ context.Context,
+	params db.InvalidateRestoredActorCheckpointParams,
+) (db.RunCheckpoint, error) {
+	if params.RestoreCheckpointID != s.authority.runtime.RestoreCheckpointID ||
+		params.PrivateWorkspaceVersionID != s.authority.workspaceLease.BaseVersionID ||
+		params.TargetInputSequence != s.authority.actor.CommittedInputSequence+1 ||
+		(s.restoredCheckpointCursor != s.authority.actor.CommittedInputSequence &&
+			s.restoredCheckpointCursor != params.TargetInputSequence) {
+		return db.RunCheckpoint{}, errors.New("restored checkpoint invalidation fence mismatch")
+	}
+	s.restoredInvalidations++
+	return db.RunCheckpoint{ID: params.RestoreCheckpointID, State: db.RunCheckpointStateInvalid}, nil
+}
+
 type actorTurnCommitTransaction struct {
 	parent *actorTurnCommitStore
 	staged *actorTurnCommitStore
@@ -217,6 +357,9 @@ func (tx actorTurnCommitTransaction) Commit(context.Context) error {
 	tx.parent.versionWrites = tx.staged.versionWrites
 	tx.parent.headWrites = tx.staged.headWrites
 	tx.parent.leaseFrontierWrites = tx.staged.leaseFrontierWrites
+	tx.parent.restoredPublishes = tx.staged.restoredPublishes
+	tx.parent.restoredInvalidations = tx.staged.restoredInvalidations
+	tx.parent.restoredCheckpointCursor = tx.staged.restoredCheckpointCursor
 	tx.parent.commits = parentCommits
 	tx.parent.rollbacks = parentRollbacks
 	return nil

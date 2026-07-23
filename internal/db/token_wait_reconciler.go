@@ -27,35 +27,36 @@ type TokenWaitReconcileBatch struct {
 }
 
 type TokenWaitRegistration struct {
-	EnvironmentID           uuid.UUID
-	RunID                   uuid.UUID
-	TokenID                 uuid.UUID
-	WaitID                  uuid.UUID
-	ResumeAttachID          uuid.UUID
-	ExpectedRunStateVersion int64
-	AttemptNumber           int32
-	CurrentRunLeaseID       uuid.UUID
-	LeaseSequence           int64
-	WorkerGroupID           string
-	WorkerInstanceID        uuid.UUID
-	WorkerEpoch             int64
-	WorkerProtocolVersion   string
-	RuntimeInstanceID       uuid.UUID
-	RuntimeIdentityID       string
-	RegionID                string
-	NetworkSlotID           uuid.UUID
-	NetworkSlotGeneration   int64
-	WorkspaceMountID        uuid.UUID
-	WorkspaceLeaseID        uuid.UUID
-	OwnershipGeneration     int64
-	WriterGeneration        int64
-	MountFencingGeneration  int64
-	RequestFingerprint      string
-	TimeoutAt               pgtype.Timestamptz
-	IdleTimeoutMS           pgtype.Int8
-	CheckpointDueAt         pgtype.Timestamptz
-	Metadata                json.RawMessage
-	Tags                    []string
+	EnvironmentID                 uuid.UUID
+	RunID                         uuid.UUID
+	TokenID                       uuid.UUID
+	WaitID                        uuid.UUID
+	ResumeAttachID                uuid.UUID
+	ExpectedRunStateVersion       int64
+	AttemptNumber                 int32
+	CurrentRunLeaseID             uuid.UUID
+	LeaseSequence                 int64
+	WorkerGroupID                 string
+	WorkerInstanceID              uuid.UUID
+	WorkerEpoch                   int64
+	WorkerProtocolVersion         string
+	RuntimeInstanceID             uuid.UUID
+	RuntimeIdentityID             string
+	RegionID                      string
+	NetworkSlotID                 uuid.UUID
+	NetworkSlotGeneration         int64
+	WorkspaceMountID              uuid.UUID
+	WorkspaceLeaseID              uuid.UUID
+	OwnershipGeneration           int64
+	WriterGeneration              int64
+	MountFencingGeneration        int64
+	RequestFingerprint            string
+	ActorSpeculativeInputSequence pgtype.Int8
+	TimeoutAt                     pgtype.Timestamptz
+	IdleTimeoutMS                 pgtype.Int8
+	CheckpointDueAt               pgtype.Timestamptz
+	Metadata                      json.RawMessage
+	Tags                          []string
 }
 
 type TokenWaitRegistrationResult struct {
@@ -103,6 +104,9 @@ func (r *TokenWaitReconciler) RegisterWait(
 		len(request.RequestFingerprint) != 71 || request.RequestFingerprint[:7] != "sha256:" {
 		return TokenWaitRegistrationResult{}, errors.New("Token Wait registration fences are invalid")
 	}
+	if request.ActorSpeculativeInputSequence.Valid && request.ActorSpeculativeInputSequence.Int64 < 0 {
+		return TokenWaitRegistrationResult{}, errors.New("Token Wait Actor speculative cursor is invalid")
+	}
 	metadata := request.Metadata
 	if len(metadata) == 0 {
 		metadata = json.RawMessage(`{}`)
@@ -140,13 +144,17 @@ SELECT pg_advisory_xact_lock(
 		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError("load Token Wait registration locator", err)
 	}
 	var lockedActorCurrentRunID pgtype.UUID
+	var lockedActorCommittedInputSequence, lockedActorNextInputSequence int64
 	if locator.ownerActorID.Valid {
 		var actorState string
 		if err := tx.QueryRow(ctx, `
-SELECT state, current_run_id
+SELECT state, current_run_id, committed_input_sequence, next_input_sequence
   FROM actors
  WHERE id = $1
- FOR UPDATE`, locator.ownerActorID).Scan(&actorState, &lockedActorCurrentRunID); err != nil {
+ FOR UPDATE`, locator.ownerActorID).Scan(
+			&actorState, &lockedActorCurrentRunID,
+			&lockedActorCommittedInputSequence, &lockedActorNextInputSequence,
+		); err != nil {
 			return TokenWaitRegistrationResult{}, tokenWaitAuthorityError("lock owning Actor", err)
 		}
 		if actorState != "open" && actorState != "closing" {
@@ -170,15 +178,26 @@ SELECT state, current_run_id
 	if err := validateAndLockTokenWaitWorkspace(ctx, tx, request.EnvironmentID, locator, lineage, lockedActorCurrentRunID); err != nil {
 		return TokenWaitRegistrationResult{}, err
 	}
+	var attemptEntrypointKind string
+	var attemptActorStartInputSequence pgtype.Int8
 	var attemptTerminalAt pgtype.Timestamptz
 	if err := tx.QueryRow(ctx, `
-SELECT terminal_at
+SELECT entrypoint_kind, actor_start_input_sequence, terminal_at
   FROM run_attempts
  WHERE run_id = $1
    AND number = $2
    AND workspace_id = $3
- FOR UPDATE`, request.RunID, request.AttemptNumber, locator.workspaceID).Scan(&attemptTerminalAt); err != nil || attemptTerminalAt.Valid {
+ FOR UPDATE`, request.RunID, request.AttemptNumber, locator.workspaceID).Scan(
+		&attemptEntrypointKind, &attemptActorStartInputSequence, &attemptTerminalAt,
+	); err != nil || attemptTerminalAt.Valid {
 		return TokenWaitRegistrationResult{}, tokenWaitAuthorityError("lock current Run Attempt", err)
+	}
+	if err := validateTokenWaitActorCursor(
+		request.ActorSpeculativeInputSequence, locator.ownerActorID, lockedActorCurrentRunID,
+		lockedActorCommittedInputSequence, lockedActorNextInputSequence,
+		run, attemptEntrypointKind, attemptActorStartInputSequence,
+	); err != nil {
+		return TokenWaitRegistrationResult{}, err
 	}
 	q := New(tx)
 	workerGroup, err := q.LockRunLeaseClaimWorkerGroup(ctx, LockRunLeaseClaimWorkerGroupParams{
@@ -292,16 +311,17 @@ RETURNING state_version`, request.RunID, request.ExpectedRunStateVersion, reques
 INSERT INTO run_waits (
     id, environment_id, run_id, workspace_id, kind, timeout_at,
     idle_timeout_ms, token_id, token_registration_run_state_version,
-    registration_request_fingerprint, expected_run_state_version, attempt_number, current_run_lease_id,
+    registration_request_fingerprint, expected_run_state_version, attempt_number,
+    actor_speculative_input_sequence, current_run_lease_id,
     checkpoint_due_at, resume_attach_id, metadata, tags
 ) VALUES (
     $1, $2, $3, $4, 'token', $5, $6, $7, $8, $9, $10, $11, $12, $13,
-    $14, $15::jsonb, $16
+    $14, $15, $16::jsonb, $17
 )`,
 		request.WaitID, request.EnvironmentID, request.RunID, locator.workspaceID,
 		request.TimeoutAt, request.IdleTimeoutMS, request.TokenID,
 		request.ExpectedRunStateVersion, request.RequestFingerprint, waitingVersion, request.AttemptNumber,
-		request.CurrentRunLeaseID, request.CheckpointDueAt, request.ResumeAttachID,
+		request.ActorSpeculativeInputSequence, request.CurrentRunLeaseID, request.CheckpointDueAt, request.ResumeAttachID,
 		metadata, tags,
 	)
 	if err != nil || command.RowsAffected() != 1 {
@@ -408,7 +428,8 @@ SELECT run_waits.id,
 	AND workspace_leases.mount_fencing_generation = $22
 	AND run_leases.network_slot_id = $23
 	AND run_leases.network_slot_generation = $24
-	AND run_leases.region_id = $25`,
+	AND run_leases.region_id = $25
+	AND run_waits.actor_speculative_input_sequence IS NOT DISTINCT FROM $26`,
 		request.WaitID, request.EnvironmentID, request.RunID, request.TokenID,
 		request.ResumeAttachID, request.AttemptNumber, request.CurrentRunLeaseID, request.RequestFingerprint,
 		metadata, tags,
@@ -417,6 +438,7 @@ SELECT run_waits.id,
 		request.WorkspaceLeaseID, request.RuntimeIdentityID, request.WorkspaceMountID,
 		request.OwnershipGeneration, request.WriterGeneration, request.MountFencingGeneration,
 		request.NetworkSlotID, request.NetworkSlotGeneration, request.RegionID,
+		request.ActorSpeculativeInputSequence,
 	).Scan(
 		&result.WaitID, &result.RunStateVersion, &result.ConditionState,
 		&result.SuspensionState, &rawResult, &reason,
@@ -576,11 +598,44 @@ SELECT owner_actor_id, owner_run_id, state, desired_state
 	return nil
 }
 
+func validateTokenWaitActorCursor(
+	cursor pgtype.Int8,
+	ownerActorID pgtype.UUID,
+	actorCurrentRunID pgtype.UUID,
+	actorCommittedInputSequence int64,
+	actorNextInputSequence int64,
+	run tokenWaitLockedRun,
+	attemptEntrypointKind string,
+	attemptActorStartInputSequence pgtype.Int8,
+) error {
+	switch run.entrypointKind {
+	case "task":
+		if run.actorID.Valid || ownerActorID.Valid || cursor.Valid || attemptEntrypointKind != "task" ||
+			attemptActorStartInputSequence.Valid {
+			return tokenWaitAuthorityError("Task Token Wait carries Actor authority", nil)
+		}
+	case "actor":
+		if !run.actorID.Valid || run.actorID != ownerActorID || !actorCurrentRunID.Valid ||
+			uuid.UUID(actorCurrentRunID.Bytes) != run.id || attemptEntrypointKind != "actor" ||
+			!attemptActorStartInputSequence.Valid || !cursor.Valid ||
+			attemptActorStartInputSequence.Int64 > actorCommittedInputSequence ||
+			cursor.Int64 < actorCommittedInputSequence ||
+			cursor.Int64 > actorCommittedInputSequence+1 ||
+			cursor.Int64 >= actorNextInputSequence {
+			return tokenWaitAuthorityError("Actor Token Wait cursor authority does not match", nil)
+		}
+	default:
+		return tokenWaitAuthorityError("Token Wait entrypoint kind is invalid", nil)
+	}
+	return nil
+}
+
 type tokenWaitLockedRun struct {
 	id                uuid.UUID
 	parentRunID       pgtype.UUID
 	workspaceID       uuid.UUID
 	actorID           pgtype.UUID
+	entrypointKind    string
 	status            RunStatus
 	stateVersion      int64
 	currentAttempt    int32
@@ -835,6 +890,7 @@ SELECT runs.id,
        runs.parent_run_id,
        runs.workspace_id,
        runs.actor_id,
+	   runs.entrypoint_kind,
        runs.status,
        runs.state_version,
 	       runs.current_attempt_number,
@@ -860,6 +916,7 @@ SELECT runs.id,
 			&row.parentRunID,
 			&row.workspaceID,
 			&row.actorID,
+			&row.entrypointKind,
 			&row.status,
 			&row.stateVersion,
 			&row.currentAttempt,

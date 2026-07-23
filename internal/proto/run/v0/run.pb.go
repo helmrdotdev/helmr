@@ -3474,16 +3474,17 @@ func (x *TaskError) GetDetailsJson() string {
 }
 
 type RunWaitRequested struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CorrelationId string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	ParamsJson    string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
-	MetadataJson  *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
-	Timeout       *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
-	Tags          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
-	IdleTimeout   *uint32                `protobuf:"varint,9,opt,name=idle_timeout,json=idleTimeout,proto3,oneof" json:"idle_timeout,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                         protoimpl.MessageState `protogen:"open.v1"`
+	CorrelationId                 string                 `protobuf:"bytes,1,opt,name=correlation_id,json=correlationId,proto3" json:"correlation_id,omitempty"`
+	Kind                          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	ParamsJson                    string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
+	MetadataJson                  *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
+	Timeout                       *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	Tags                          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	IdleTimeout                   *uint32                `protobuf:"varint,9,opt,name=idle_timeout,json=idleTimeout,proto3,oneof" json:"idle_timeout,omitempty"`
+	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *RunWaitRequested) Reset() {
@@ -3561,6 +3562,13 @@ func (x *RunWaitRequested) GetTags() []string {
 func (x *RunWaitRequested) GetIdleTimeout() uint32 {
 	if x != nil && x.IdleTimeout != nil {
 		return *x.IdleTimeout
+	}
+	return 0
+}
+
+func (x *RunWaitRequested) GetActorSpeculativeInputSequence() int64 {
+	if x != nil && x.ActorSpeculativeInputSequence != nil {
+		return *x.ActorSpeculativeInputSequence
 	}
 	return 0
 }
@@ -4978,7 +4986,7 @@ const file_run_proto_rawDesc = "" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x12!\n" +
-	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xae\x02\n" +
+	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xa1\x03\n" +
 	"\x10RunWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
@@ -4987,11 +4995,14 @@ const file_run_proto_rawDesc = "" +
 	"\rmetadata_json\x18\x04 \x01(\tH\x00R\fmetadataJson\x88\x01\x01\x12\x1d\n" +
 	"\atimeout\x18\x05 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x12\n" +
 	"\x04tags\x18\x06 \x03(\tR\x04tags\x12&\n" +
-	"\fidle_timeout\x18\t \x01(\rH\x02R\vidleTimeout\x88\x01\x01B\x10\n" +
+	"\fidle_timeout\x18\t \x01(\rH\x02R\vidleTimeout\x88\x01\x01\x12L\n" +
+	" actor_speculative_input_sequence\x18\n" +
+	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x10\n" +
 	"\x0e_metadata_jsonB\n" +
 	"\n" +
 	"\b_timeoutB\x0f\n" +
-	"\r_idle_timeoutJ\x04\b\a\x10\bJ\x04\b\b\x10\t\"\xe3\x01\n" +
+	"\r_idle_timeoutB#\n" +
+	"!_actor_speculative_input_sequenceJ\x04\b\a\x10\bJ\x04\b\b\x10\t\"\xe3\x01\n" +
 	"\x14TokenCreateRequested\x12\"\n" +
 	"\n" +
 	"timeout_at\x18\x01 \x01(\tH\x00R\ttimeoutAt\x88\x01\x01\x121\n" +

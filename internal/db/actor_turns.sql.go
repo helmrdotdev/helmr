@@ -188,3 +188,140 @@ func (q *Queries) AdvanceActorTurnWorkspaceLeaseFrontier(ctx context.Context, ar
 	)
 	return i, err
 }
+
+const invalidateRestoredActorCheckpoint = `-- name: InvalidateRestoredActorCheckpoint :one
+UPDATE run_checkpoints
+   SET state = 'invalid',
+       invalidated_at = $1,
+       invalidation_reason_code = 'actor_turn_committed'
+ WHERE id = $2
+   AND run_id = $3
+   AND attempt_number = $4
+   AND workspace_id = $5
+   AND private_workspace_version_id = $6
+   AND actor_speculative_input_sequence BETWEEN $7::bigint - 1
+                                            AND $7::bigint
+   AND state = 'ready'
+RETURNING run_checkpoints.id, run_checkpoints.kind, run_checkpoints.run_id, run_checkpoints.attempt_number, run_checkpoints.run_wait_id, run_checkpoints.source_run_lease_id, run_checkpoints.source_workspace_lease_id, run_checkpoints.workspace_id, run_checkpoints.base_workspace_version_id, run_checkpoints.private_workspace_version_id, run_checkpoints.actor_speculative_input_sequence, run_checkpoints.state, run_checkpoints.restore_manifest, run_checkpoints.ready_request_fingerprint, run_checkpoints.failed_request_fingerprint, run_checkpoints.expires_at, run_checkpoints.created_at, run_checkpoints.ready_at, run_checkpoints.invalidated_at, run_checkpoints.invalidation_reason_code
+`
+
+type InvalidateRestoredActorCheckpointParams struct {
+	CommittedAt               pgtype.Timestamptz `json:"committed_at"`
+	RestoreCheckpointID       pgtype.UUID        `json:"restore_checkpoint_id"`
+	RunID                     pgtype.UUID        `json:"run_id"`
+	AttemptNumber             int32              `json:"attempt_number"`
+	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
+	PrivateWorkspaceVersionID pgtype.UUID        `json:"private_workspace_version_id"`
+	TargetInputSequence       int64              `json:"target_input_sequence"`
+}
+
+func (q *Queries) InvalidateRestoredActorCheckpoint(ctx context.Context, arg InvalidateRestoredActorCheckpointParams) (RunCheckpoint, error) {
+	row := q.db.QueryRow(ctx, invalidateRestoredActorCheckpoint,
+		arg.CommittedAt,
+		arg.RestoreCheckpointID,
+		arg.RunID,
+		arg.AttemptNumber,
+		arg.WorkspaceID,
+		arg.PrivateWorkspaceVersionID,
+		arg.TargetInputSequence,
+	)
+	var i RunCheckpoint
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.RunID,
+		&i.AttemptNumber,
+		&i.RunWaitID,
+		&i.SourceRunLeaseID,
+		&i.SourceWorkspaceLeaseID,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.PrivateWorkspaceVersionID,
+		&i.ActorSpeculativeInputSequence,
+		&i.State,
+		&i.RestoreManifest,
+		&i.ReadyRequestFingerprint,
+		&i.FailedRequestFingerprint,
+		&i.ExpiresAt,
+		&i.CreatedAt,
+		&i.ReadyAt,
+		&i.InvalidatedAt,
+		&i.InvalidationReasonCode,
+	)
+	return i, err
+}
+
+const publishRestoredActorCheckpointWorkspaceVersion = `-- name: PublishRestoredActorCheckpointWorkspaceVersion :one
+UPDATE workspace_versions
+   SET state = 'committed',
+       published_at = $1
+ WHERE workspace_versions.id = $2
+   AND workspace_versions.workspace_id = $3
+   AND workspace_versions.parent_version_id = $4
+   AND workspace_versions.state = 'private'
+   AND workspace_versions.ownership_generation = $5
+   AND workspace_versions.writer_generation = $6
+   AND EXISTS (
+       SELECT 1
+         FROM run_checkpoints
+        WHERE run_checkpoints.id = $7
+          AND run_checkpoints.run_id = $8
+          AND run_checkpoints.attempt_number = $9
+          AND run_checkpoints.workspace_id = workspace_versions.workspace_id
+          AND run_checkpoints.private_workspace_version_id = workspace_versions.id
+          AND run_checkpoints.actor_speculative_input_sequence IS NOT NULL
+          AND run_checkpoints.state = 'invalid'
+          AND run_checkpoints.invalidation_reason_code = 'actor_turn_committed'
+   )
+RETURNING workspace_versions.id, workspace_versions.public_id, workspace_versions.org_id, workspace_versions.project_id, workspace_versions.environment_id, workspace_versions.workspace_id, workspace_versions.parent_version_id, workspace_versions.artifact_id, workspace_versions.artifact_kind, workspace_versions.kind, workspace_versions.content_digest, workspace_versions.size_bytes, workspace_versions.entry_count, workspace_versions.state, workspace_versions.source_workspace_lease_id, workspace_versions.ownership_generation, workspace_versions.writer_generation, workspace_versions.created_at, workspace_versions.published_at, workspace_versions.discarded_at
+`
+
+type PublishRestoredActorCheckpointWorkspaceVersionParams struct {
+	CommittedAt             pgtype.Timestamptz `json:"committed_at"`
+	VersionID               pgtype.UUID        `json:"version_id"`
+	WorkspaceID             pgtype.UUID        `json:"workspace_id"`
+	ExpectedParentVersionID pgtype.UUID        `json:"expected_parent_version_id"`
+	OwnershipGeneration     int64              `json:"ownership_generation"`
+	WriterGeneration        int64              `json:"writer_generation"`
+	RestoreCheckpointID     pgtype.UUID        `json:"restore_checkpoint_id"`
+	RunID                   pgtype.UUID        `json:"run_id"`
+	AttemptNumber           int32              `json:"attempt_number"`
+}
+
+func (q *Queries) PublishRestoredActorCheckpointWorkspaceVersion(ctx context.Context, arg PublishRestoredActorCheckpointWorkspaceVersionParams) (WorkspaceVersion, error) {
+	row := q.db.QueryRow(ctx, publishRestoredActorCheckpointWorkspaceVersion,
+		arg.CommittedAt,
+		arg.VersionID,
+		arg.WorkspaceID,
+		arg.ExpectedParentVersionID,
+		arg.OwnershipGeneration,
+		arg.WriterGeneration,
+		arg.RestoreCheckpointID,
+		arg.RunID,
+		arg.AttemptNumber,
+	)
+	var i WorkspaceVersion
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.WorkspaceID,
+		&i.ParentVersionID,
+		&i.ArtifactID,
+		&i.ArtifactKind,
+		&i.Kind,
+		&i.ContentDigest,
+		&i.SizeBytes,
+		&i.EntryCount,
+		&i.State,
+		&i.SourceWorkspaceLeaseID,
+		&i.OwnershipGeneration,
+		&i.WriterGeneration,
+		&i.CreatedAt,
+		&i.PublishedAt,
+		&i.DiscardedAt,
+	)
+	return i, err
+}

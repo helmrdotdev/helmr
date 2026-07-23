@@ -599,6 +599,7 @@ function programRuntimeOperations(
   decisions: ResumeDecisionRouter,
   waitGate: ConsumingWaitGate,
   actorOperations?: ActorOperationState,
+  actorCursor?: { readonly value: bigint },
 ): RuntimeOperations {
   const performWait = async (
     params: JsonValue,
@@ -614,6 +615,9 @@ function programRuntimeOperations(
           kind: "timer",
           paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
           timeout: timeoutSeconds,
+          ...(actorCursor === undefined
+            ? {}
+            : { actorSpeculativeInputSequence: actorCursor.value }),
         }),
       })
       if (
@@ -745,7 +749,7 @@ async function runActor(
   const waitGate = new ConsumingWaitGate()
   const actorOperations = new ActorOperationState()
   const uninstallRuntime = installRuntimeOperations(
-    programRuntimeOperations(start, io, decisions, waitGate, actorOperations),
+    programRuntimeOperations(start, io, decisions, waitGate, actorOperations, cursor),
   )
   try {
     await definition.handler(
@@ -839,6 +843,7 @@ function actorSelf(
           ...(timeout === undefined ? {} : { timeout }),
           ...(idleTimeout === undefined ? {} : { idleTimeout }),
           tags: options?.tags === undefined ? [] : [...options.tags],
+          actorSpeculativeInputSequence: cursor.value,
         }),
       })
       if ((decision.correlationId || decision.runWaitId) !== correlationId) {

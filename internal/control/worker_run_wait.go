@@ -85,8 +85,8 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	waitID := derivedRunWaitID(parsed.runID, correlationID, "wait")
-	resumeAttachID := derivedRunWaitID(parsed.runID, correlationID, "resume-attach")
+	waitID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "wait")
+	resumeAttachID := derivedRunWaitID(parsed.runID, request.Lease.AttemptNumber, correlationID, "resume-attach")
 	reconcileDB, ok := s.tx.(db.TokenWaitReconcileDB)
 	if !ok {
 		writeError(w, unavailable(errors.New("durable Token Wait storage is not configured")))
@@ -96,6 +96,10 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, unavailable(err))
 		return
+	}
+	actorCursor := pgtype.Int8{}
+	if request.ActorSpeculativeInputSequence != nil {
+		actorCursor = pgtype.Int8{Int64: *request.ActorSpeculativeInputSequence, Valid: true}
 	}
 	registered, err := reconciler.RegisterWait(r.Context(), db.TokenWaitRegistration{
 		EnvironmentID: uuid.UUID(locators.EnvironmentID.Bytes), RunID: parsed.runID,
@@ -109,9 +113,10 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		NetworkSlotGeneration: request.Lease.NetworkSlotGeneration,
 		WorkspaceMountID:      parsed.workspaceMountID, WorkspaceLeaseID: parsed.workspaceLeaseID,
 		OwnershipGeneration: request.Lease.OwnershipGeneration, WriterGeneration: request.Lease.WriterGeneration,
-		MountFencingGeneration: request.Lease.MountFencingGeneration,
-		RequestFingerprint:     fingerprint,
-		TimeoutAt:              timeoutAt, IdleTimeoutMS: idleTimeout, CheckpointDueAt: checkpointDueAt,
+		MountFencingGeneration:        request.Lease.MountFencingGeneration,
+		RequestFingerprint:            fingerprint,
+		ActorSpeculativeInputSequence: actorCursor,
+		TimeoutAt:                     timeoutAt, IdleTimeoutMS: idleTimeout, CheckpointDueAt: checkpointDueAt,
 		Metadata: metadata, Tags: tags,
 	})
 	if errors.Is(err, db.ErrTokenWaitReconcileAuthority) {
@@ -258,14 +263,19 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
+		owner, err := lockRunFinalizationOwner(ctx, work.q, locators)
+		if err != nil {
+			return err
+		}
 		authority, err := lockRenewableRunLeaseAuthority(
 			ctx, work.q, worker, pgvalue.UUID(parsed.leaseID), receipt.LeaseSequence, locators,
 		)
 		if err != nil {
 			return err
 		}
-		if authority.run.Status != db.RunStatusWaiting || authority.run.EntrypointKind != "task" ||
-			authority.run.ParentRunID.Valid || authority.run.ActorID.Valid || authority.runLease.State != db.RunLeaseStateRunning {
+		authority.actor = owner.actor
+		if authority.run.Status != db.RunStatusWaiting || authority.run.ParentRunID.Valid ||
+			authority.runLease.State != db.RunLeaseStateRunning {
 			return errStaleRunLeaseClaim
 		}
 		current, err := projectRunLeaseReceipt(runLeaseProjectionAuthority{
@@ -284,6 +294,9 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 		if err != nil {
 			return staleRunLeaseClaim(err)
 		}
+		if err := validateRootRunWaitActorCursor(authority, wait); err != nil {
+			return err
+		}
 		if wait.SuspensionState == db.RunWaitStateCheckpointing && wait.SuspendCheckpointID.Valid {
 			updated = wait
 			return nil
@@ -298,7 +311,8 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			AttemptNumber: authority.attempt.Number, RunWaitID: wait.ID,
 			SourceRunLeaseID: authority.runLease.ID, SourceWorkspaceLeaseID: authority.workspaceLease.ID,
 			WorkspaceID: authority.workspace.ID, BaseWorkspaceVersionID: authority.workspaceLease.BaseVersionID,
-			RestoreManifest: []byte(`{}`),
+			ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
+			RestoreManifest:               []byte(`{}`),
 		}); err != nil {
 			return fmt.Errorf("create Run checkpoint intent: %w", err)
 		}
@@ -326,14 +340,40 @@ func (s *Server) loadRunWaitRegistrationAuthority(
 		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, err
 	}
 	run, err := s.db.GetRun(ctx, db.GetRunParams{EnvironmentID: locators.EnvironmentID, ID: locators.RunID})
-	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) || run.EntrypointKind != "task" ||
-		run.ParentRunID.Valid || run.ActorID.Valid || run.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) {
+	if err != nil || (run.Status != db.RunStatusRunning && run.Status != db.RunStatusWaiting) ||
+		(run.EntrypointKind != "task" && run.EntrypointKind != "actor") || run.ParentRunID.Valid ||
+		(run.EntrypointKind == "task") != !run.ActorID.Valid || run.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) {
 		if err == nil {
-			err = errors.New("Run is not an active root Task")
+			err = errors.New("run is not an active root Task or Actor")
 		}
 		return parsedRunLeaseReceipt{}, workerActor{}, db.GetLiveRunLeaseLocatorsRow{}, db.Run{}, conflict(err)
 	}
 	return parsed, worker, locators, run, nil
+}
+
+func validateRootRunWaitActorCursor(authority runLeaseClaimAuthority, wait db.RunWait) error {
+	switch authority.run.EntrypointKind {
+	case "task":
+		if authority.run.ActorID.Valid || wait.ActorSpeculativeInputSequence.Valid {
+			return errStaleRunLeaseClaim
+		}
+	case "actor":
+		cursor := wait.ActorSpeculativeInputSequence
+		if !authority.run.ActorID.Valid || authority.run.ActorID != authority.actor.ID ||
+			!authority.actor.CurrentRunID.Valid || authority.actor.CurrentRunID != authority.run.ID ||
+			(authority.actor.State != "open" && authority.actor.State != "closing") ||
+			!authority.attempt.ActorStartInputSequence.Valid || !cursor.Valid ||
+			authority.attempt.ActorStartInputSequence.Int64 > authority.actor.CommittedInputSequence ||
+			cursor.Int64 < authority.actor.CommittedInputSequence ||
+			cursor.Int64 > authority.actor.CommittedInputSequence+1 ||
+			cursor.Int64 >= authority.actor.NextInputSequence ||
+			authority.workspace.OwnerActorID != authority.actor.ID || authority.workspace.OwnerRunID.Valid {
+			return errStaleRunLeaseClaim
+		}
+	default:
+		return errStaleRunLeaseClaim
+	}
+	return nil
 }
 
 func (s *Server) loadRunWaitLeaseAuthority(
@@ -369,8 +409,10 @@ func (s *Server) loadRunWaitLeaseAuthority(
 	return parsed, worker, locators, nil
 }
 
-func derivedRunWaitID(runID uuid.UUID, correlationID uuid.UUID, role string) uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("helmr.run-wait.v0:"+role+":"+runID.String()+":"+correlationID.String()))
+func derivedRunWaitID(runID uuid.UUID, attemptNumber int32, correlationID uuid.UUID, role string) uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte(fmt.Sprintf(
+		"helmr.run-wait.v1:%s:%s:%d:%s", role, runID, attemptNumber, correlationID,
+	)))
 }
 
 func runWaitDeadlines(request api.WorkerCreateRunWaitRequest) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {

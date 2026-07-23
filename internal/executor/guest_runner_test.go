@@ -422,6 +422,24 @@ func TestRuntimeWaitRequestPreservesIdleTimeout(t *testing.T) {
 	}
 }
 
+func TestRuntimeWaitRequestPreservesActorSpeculativeCursor(t *testing.T) {
+	cursor := int64(7)
+	request, err := runtimeWaitRequest(Request{
+		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
+	}, &runv0.RunWaitRequested{
+		CorrelationId:                 "approval-1",
+		Kind:                          "token",
+		ParamsJson:                    `{}`,
+		ActorSpeculativeInputSequence: &cursor,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if request.ActorSpeculativeInputSequence == nil || *request.ActorSpeculativeInputSequence != cursor {
+		t.Fatalf("Actor speculative cursor = %v, want %d", request.ActorSpeculativeInputSequence, cursor)
+	}
+}
+
 func TestRuntimeWaitRequestRejectsOversizedMetadataJSON(t *testing.T) {
 	_, err := runtimeWaitRequest(Request{}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
