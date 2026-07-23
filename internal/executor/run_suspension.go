@@ -249,8 +249,8 @@ func (w ControlRunWaits) AddRunWait(ctx context.Context, request WaitRequest) (a
 		Params:                        request.Params,
 		Metadata:                      request.Metadata,
 		Tags:                          request.Tags,
-		TimeoutSeconds:                request.TimeoutSeconds,
-		IdleTimeoutSeconds:            request.IdleTimeoutSeconds,
+		TimeoutMS:                     request.TimeoutMS,
+		IdleTimeoutMS:                 request.IdleTimeoutMS,
 		ActorSpeculativeInputSequence: request.ActorSpeculativeInputSequence,
 	})
 }

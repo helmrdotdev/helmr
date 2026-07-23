@@ -1,6 +1,8 @@
 package control
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -13,7 +15,7 @@ import (
 
 func TestRunWaitDeadlinesApplyTokenDefaults(t *testing.T) {
 	before := time.Now().UTC()
-	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(api.WorkerCreateRunWaitRequest{})
+	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(api.WorkerCreateRunWaitRequest{}, defaultTokenWaitIdleTimeout)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -27,6 +29,50 @@ func TestRunWaitDeadlinesApplyTokenDefaults(t *testing.T) {
 	if delay != defaultTokenWaitIdleTimeout || !checkpointDueAt.Valid ||
 		checkpointDueAt.Time.Before(before.Add(delay)) || checkpointDueAt.Time.After(after.Add(delay)) {
 		t.Fatalf("checkpoint deadline = %s delay=%s, want registration time + default idle", checkpointDueAt.Time, delay)
+	}
+}
+
+func TestRunWaitDeadlinesPreserveMillisecondPrecision(t *testing.T) {
+	timeoutMS := int64(1)
+	idleTimeoutMS := int64(1501)
+	before := time.Now().UTC()
+	timeoutAt, idleTimeout, checkpointDueAt, delay, err := runWaitDeadlines(api.WorkerCreateRunWaitRequest{
+		TimeoutMS: &timeoutMS, IdleTimeoutMS: &idleTimeoutMS,
+	}, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after := time.Now().UTC()
+	if !timeoutAt.Valid || timeoutAt.Time.Before(before.Add(time.Millisecond)) || timeoutAt.Time.After(after.Add(time.Millisecond)) {
+		t.Fatalf("timeout_at = %s, want registration time + 1ms", timeoutAt.Time)
+	}
+	expectedDelay := time.Millisecond + shortWaitGrace
+	if !idleTimeout.Valid || idleTimeout.Int64 != idleTimeoutMS || delay != expectedDelay ||
+		!checkpointDueAt.Valid || checkpointDueAt.Time.Before(before.Add(delay)) || checkpointDueAt.Time.After(after.Add(delay)) {
+		t.Fatalf("idle/checkpoint = %+v/%s/%s", idleTimeout, delay, checkpointDueAt.Time)
+	}
+}
+
+func TestActorInputWaitIdleTimeoutReadsFullImmutableManifest(t *testing.T) {
+	idleTimeout, err := actorInputWaitIdleTimeout([]byte(`{
+		"run":{"queue":"default","retry":{"enabled":false}},
+		"idleTimeoutMs":1501
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if idleTimeout != 1501*time.Millisecond {
+		t.Fatalf("idle timeout = %s", idleTimeout)
+	}
+	for _, raw := range []json.RawMessage{
+		[]byte(`{"idleTimeoutMs":0}`),
+		[]byte(`{"idleTimeoutMs":3600001}`),
+		[]byte(`{"idleTimeoutMs":9223372036854775807}`),
+		[]byte(`{"idleTimeoutMs":"30s"}`),
+	} {
+		if _, err := actorInputWaitIdleTimeout(raw); err == nil {
+			t.Fatalf("invalid manifest accepted: %s", raw)
+		}
 	}
 }
 
@@ -76,19 +122,23 @@ func TestValidateRootRunWaitActorCursor(t *testing.T) {
 }
 
 func TestRunWaitDeadlinesEnforceTokenBounds(t *testing.T) {
-	timeoutTooLong := int32(maxTokenWaitTimeout/time.Second) + 1
-	idleTooLong := int32(maxTokenWaitIdleTimeout/time.Second) + 1
+	timeoutTooLong := maxTokenWaitTimeout.Milliseconds() + 1
+	idleTooLong := maxTokenWaitIdleTimeout.Milliseconds() + 1
 	for _, test := range []struct {
 		name    string
 		request api.WorkerCreateRunWaitRequest
 	}{
-		{name: "timeout", request: api.WorkerCreateRunWaitRequest{TimeoutSeconds: &timeoutTooLong}},
-		{name: "idle timeout", request: api.WorkerCreateRunWaitRequest{IdleTimeoutSeconds: &idleTooLong}},
+		{name: "timeout", request: api.WorkerCreateRunWaitRequest{TimeoutMS: &timeoutTooLong}},
+		{name: "idle timeout", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: &idleTooLong}},
+		{name: "timeout overflow", request: api.WorkerCreateRunWaitRequest{TimeoutMS: int64Pointer(math.MaxInt64)}},
+		{name: "idle timeout overflow", request: api.WorkerCreateRunWaitRequest{IdleTimeoutMS: int64Pointer(math.MaxInt64)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if _, _, _, _, err := runWaitDeadlines(test.request); err == nil {
+			if _, _, _, _, err := runWaitDeadlines(test.request, defaultTokenWaitIdleTimeout); err == nil {
 				t.Fatal("out-of-range Token Wait deadline was accepted")
 			}
 		})
 	}
 }
+
+func int64Pointer(value int64) *int64 { return &value }

@@ -907,7 +907,8 @@ func (s *Server) commitCheckpointReady(
 			AttemptNumber: authority.attempt.Number, WorkspaceID: authority.workspace.ID,
 			CurrentRunLeaseID: authority.runLease.ID,
 		})
-		if err != nil || wait.Kind != db.WaitKindToken || wait.SuspensionState != db.RunWaitStateCheckpointing ||
+		if err != nil || (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+			wait.SuspensionState != db.RunWaitStateCheckpointing ||
 			wait.CheckpointRequestVersion != request.RequestVersion || wait.SuspendCheckpointID != pgvalue.UUID(ready.checkpointID) {
 			return staleRunLeaseClaim(err)
 		}

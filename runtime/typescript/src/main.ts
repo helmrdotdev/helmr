@@ -449,13 +449,13 @@ interface RuntimeWaitRequest {
   readonly paramsJson: string
   readonly metadataJson?: string
   readonly tags?: string[]
-  readonly timeout?: number
-  readonly idleTimeout?: number
+  readonly timeoutMs?: number
+  readonly idleTimeoutMs?: number
 }
 
 interface RuntimeWaitOptions {
-  readonly timeout?: number
-  readonly idleTimeout?: number
+  readonly timeoutMs?: number
+  readonly idleTimeoutMs?: number
   readonly metadata?: { readonly [key: string]: WaitJson }
   readonly tags?: string | readonly string[]
 }
@@ -701,11 +701,11 @@ async function waitFor(
   waitGate: WaitGate,
   input: DurationInput,
 ): Promise<void> {
-  const seconds = waitDurationSeconds(input)
+  const timeoutMs = waitDurationMilliseconds(input)
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
     "timer",
     normalizeDurationInput(input),
-    { timeout: seconds },
+    { timeoutMs },
   ))
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected wait.for resume decision kind ${JSON.stringify(decision.kind)}`)
@@ -721,14 +721,14 @@ async function waitUntil(
   input: UntilInput,
 ): Promise<void> {
   const until = waitUntilInputDate(input)
-  const seconds = Math.ceil((until.getTime() - Date.now()) / 1000)
-  if (seconds <= 0) {
+  const timeoutMs = Math.ceil(until.getTime() - Date.now())
+  if (timeoutMs <= 0) {
     return
   }
   const decision = await waitGenericDecision(responses, control, mintCorrelationId, waitGate, waitRequest(
     "timer",
     normalizeUntilInput(input),
-    { timeout: seconds },
+    { timeoutMs },
   ))
   if (!(decision.kind === "timed_out" || decision.kind === "completed")) {
     throw new Error(`unexpected wait.until resume decision kind ${JSON.stringify(decision.kind)}`)
@@ -876,8 +876,8 @@ function waitOptionsToRequest(opts: {
   readonly tags?: string | readonly string[]
 } | undefined): RuntimeWaitOptions {
   return {
-    ...(opts?.timeout === undefined ? {} : { timeout: waitDurationSeconds(opts.timeout) }),
-    ...(opts?.idleTimeout === undefined ? {} : { idleTimeout: waitDurationSeconds(opts.idleTimeout) }),
+    ...(opts?.timeout === undefined ? {} : { timeoutMs: waitDurationMilliseconds(opts.timeout) }),
+    ...(opts?.idleTimeout === undefined ? {} : { idleTimeoutMs: waitDurationMilliseconds(opts.idleTimeout) }),
     ...(opts?.metadata === undefined ? {} : { metadata: opts.metadata }),
     ...(opts?.tags === undefined ? {} : { tags: opts.tags }),
   }
@@ -885,13 +885,13 @@ function waitOptionsToRequest(opts: {
 
 function waitRequest(kind: string, data: WaitJson, opts?: RuntimeWaitOptions): RuntimeWaitRequest {
   const normalizedKind = normalizeWaitKind(kind)
-  const timeout = opts?.timeout
-  if (timeout !== undefined) {
-    validateWaitTimeout(timeout)
+  const timeoutMs = opts?.timeoutMs
+  if (timeoutMs !== undefined) {
+    validateWaitTimeout(timeoutMs)
   }
-  const idleTimeout = opts?.idleTimeout
-  if (idleTimeout !== undefined) {
-    validateWaitTimeout(idleTimeout)
+  const idleTimeoutMs = opts?.idleTimeoutMs
+  if (idleTimeoutMs !== undefined) {
+    validateWaitTimeout(idleTimeoutMs)
   }
   const tags = normalizeWaitTags(opts?.tags)
   return {
@@ -899,8 +899,8 @@ function waitRequest(kind: string, data: WaitJson, opts?: RuntimeWaitOptions): R
     paramsJson: JSON.stringify(data),
     ...(opts?.metadata === undefined ? {} : { metadataJson: JSON.stringify(normalizeWaitMetadata(opts.metadata)) }),
     ...(tags === undefined ? {} : { tags }),
-    ...(timeout === undefined ? {} : { timeout }),
-    ...(idleTimeout === undefined ? {} : { idleTimeout }),
+    ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs }),
   }
 }
 
@@ -921,8 +921,8 @@ function runWaitRequestedValue(request: RuntimeWaitRequest & { readonly correlat
     paramsJson: request.paramsJson,
     ...(request.metadataJson === undefined ? {} : { metadataJson: request.metadataJson }),
     ...(request.tags === undefined ? {} : { tags: request.tags }),
-    ...(request.timeout === undefined ? {} : { timeout: request.timeout }),
-    ...(request.idleTimeout === undefined ? {} : { idleTimeout: request.idleTimeout }),
+    ...(request.timeoutMs === undefined ? {} : { timeoutMs: BigInt(request.timeoutMs) }),
+    ...(request.idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(request.idleTimeoutMs) }),
   })
 }
 
@@ -994,6 +994,53 @@ function waitDurationSeconds(input: DurationInput): number {
     return parseDurationSeconds(duration, "wait duration")
   }
   throw new Error("wait duration requires seconds, milliseconds, minutes, hours, or duration")
+}
+
+function waitDurationMilliseconds(input: DurationInput): number {
+  if (typeof input === "number") {
+    return positiveDelayMilliseconds(input * 1000)
+  }
+  if (typeof input === "string") {
+    return parseDurationMilliseconds(input, "wait duration")
+  }
+  if (input.seconds !== undefined) {
+    return positiveDelayMilliseconds(input.seconds * 1000)
+  }
+  if (input.milliseconds !== undefined) {
+    return positiveDelayMilliseconds(input.milliseconds)
+  }
+  if (input.minutes !== undefined) {
+    return positiveDelayMilliseconds(input.minutes * 60_000)
+  }
+  if (input.hours !== undefined) {
+    return positiveDelayMilliseconds(input.hours * 3_600_000)
+  }
+  if (input.duration !== undefined) {
+    return parseDurationMilliseconds(input.duration, "wait duration")
+  }
+  throw new Error("wait duration requires seconds, milliseconds, minutes, hours, or duration")
+}
+
+function parseDurationMilliseconds(value: string, label: string): number {
+  const match = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/.exec(value.trim())
+  if (match === null) {
+    throw new Error(`${label} must use ms, s, m, or h units`)
+  }
+  const amount = Number(match[1])
+  const unit = match[2]
+  const multiplier = unit === "ms" ? 1 : unit === "s" ? 1000 : unit === "m" ? 60_000 : 3_600_000
+  return positiveDelayMilliseconds(amount * multiplier)
+}
+
+function positiveDelayMilliseconds(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(`invalid wait timeout: ${value}`)
+  }
+  const milliseconds = Math.ceil(value)
+  if (!Number.isSafeInteger(milliseconds)) {
+    throw new Error(`invalid wait timeout: ${value}`)
+  }
+  return milliseconds
 }
 
 function parseDurationSeconds(value: string, label: string): number {

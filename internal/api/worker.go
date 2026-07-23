@@ -1110,9 +1110,9 @@ type WorkerCreateTokenRequest struct {
 type WorkerRunWaitKind string
 
 const (
-	WorkerRunWaitKindToken  WorkerRunWaitKind = "token"
-	WorkerRunWaitKindTimer  WorkerRunWaitKind = "timer"
-	WorkerRunWaitKindStream WorkerRunWaitKind = "stream"
+	WorkerRunWaitKindToken      WorkerRunWaitKind = "token"
+	WorkerRunWaitKindTimer      WorkerRunWaitKind = "timer"
+	WorkerRunWaitKindActorInput WorkerRunWaitKind = "actor_input"
 )
 
 type WorkerCreateRunWaitRequest struct {
@@ -1122,8 +1122,8 @@ type WorkerCreateRunWaitRequest struct {
 	Params                        json.RawMessage       `json:"params,omitempty"`
 	Metadata                      json.RawMessage       `json:"metadata,omitempty"`
 	Tags                          []string              `json:"tags,omitempty"`
-	TimeoutSeconds                *int32                `json:"timeout_seconds,omitempty"`
-	IdleTimeoutSeconds            *int32                `json:"idle_timeout_seconds,omitempty"`
+	TimeoutMS                     *int64                `json:"timeout_ms,omitempty"`
+	IdleTimeoutMS                 *int64                `json:"idle_timeout_ms,omitempty"`
 	ActorSpeculativeInputSequence *int64                `json:"actor_speculative_input_sequence,omitempty"`
 }
 

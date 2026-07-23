@@ -82,7 +82,7 @@ func TestControlRunWaitsResumesAndAcknowledgesTypedVersion(t *testing.T) {
 	}
 	var got WaitResumeDecision
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindStream,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindActorInput,
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil
@@ -108,7 +108,7 @@ func TestControlRunWaitsReturnsImmediateResumeDecision(t *testing.T) {
 	}}
 	var got WaitResumeDecision
 	err := ControlRunWaits{Client: client}.Wait(context.Background(), WaitRequest{
-		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindStream,
+		LeaseReceipt: testWaitRunLeaseReceipt(), Kind: api.WorkerRunWaitKindActorInput,
 		Resume: func(_ context.Context, decision WaitResumeDecision) error {
 			got = decision
 			return nil

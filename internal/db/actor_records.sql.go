@@ -46,6 +46,7 @@ WITH selected_claim AS MATERIALIZED (
 ), allocated AS (
     UPDATE actors
        SET next_input_sequence = actors.next_input_sequence + 1,
+           manual_run_cancelled = false,
            updated_at = now()
       FROM locked_actor
      WHERE actors.id = locked_actor.id
@@ -76,12 +77,13 @@ WITH selected_claim AS MATERIALIZED (
       FROM allocated
     RETURNING actor_records.id, actor_records.environment_id, actor_records.actor_id, actor_records.direction, actor_records.sequence, actor_records.data, actor_records.content_type, actor_records.source_kind, actor_records.source_run_id, actor_records.producer_run_id, actor_records.producer_attempt_number, actor_records.claim_id, actor_records.created_at
 )
-SELECT inserted_record.id, inserted_record.environment_id, inserted_record.actor_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_kind, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch
+SELECT inserted_record.id, inserted_record.environment_id, inserted_record.actor_id, inserted_record.direction, inserted_record.sequence, inserted_record.data, inserted_record.content_type, inserted_record.source_kind, inserted_record.source_run_id, inserted_record.producer_run_id, inserted_record.producer_attempt_number, inserted_record.claim_id, inserted_record.created_at, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
   FROM inserted_record
 UNION ALL
 SELECT existing_record.id, existing_record.environment_id, existing_record.actor_id, existing_record.direction, existing_record.sequence, existing_record.data, existing_record.content_type, existing_record.source_kind, existing_record.source_run_id, existing_record.producer_run_id, existing_record.producer_attempt_number, existing_record.claim_id, existing_record.created_at,
        (selected_claim.request_fingerprint <> $4)::boolean
-           AS claim_fingerprint_mismatch
+           AS claim_fingerprint_mismatch,
+       false::boolean AS appended
   FROM existing_record
   JOIN selected_claim ON selected_claim.id = existing_record.claim_id
 `
@@ -112,6 +114,7 @@ type AppendActorInputRecordRow struct {
 	ClaimID                  pgtype.UUID        `json:"claim_id"`
 	CreatedAt                pgtype.Timestamptz `json:"created_at"`
 	ClaimFingerprintMismatch bool               `json:"claim_fingerprint_mismatch"`
+	Appended                 bool               `json:"appended"`
 }
 
 func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInputRecordParams) (AppendActorInputRecordRow, error) {
@@ -141,6 +144,7 @@ func (q *Queries) AppendActorInputRecord(ctx context.Context, arg AppendActorInp
 		&i.ClaimID,
 		&i.CreatedAt,
 		&i.ClaimFingerprintMismatch,
+		&i.Appended,
 	)
 	return i, err
 }
@@ -311,6 +315,173 @@ func (q *Queries) CommitActorInputCursor(ctx context.Context, arg CommitActorInp
 	return i, err
 }
 
+const completeActorInputClaim = `-- name: CompleteActorInputClaim :one
+UPDATE idempotency_claims
+   SET state = 'completed',
+       receipt = jsonb_build_object(
+           'recordId', actor_records.id::text,
+           'sequence', actor_records.sequence
+       ),
+       completed_at = transaction_timestamp()
+  FROM actor_records
+ WHERE idempotency_claims.environment_id = $1::uuid
+   AND idempotency_claims.id = $2
+   AND idempotency_claims.operation = 'actor.input.send'
+   AND idempotency_claims.request_fingerprint = $3
+   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.retired_at IS NULL
+   AND actor_records.environment_id = idempotency_claims.environment_id
+   AND actor_records.actor_id = $4
+   AND actor_records.id = $5
+   AND actor_records.direction = 'input'
+   AND actor_records.claim_id = idempotency_claims.id
+RETURNING idempotency_claims.id, idempotency_claims.environment_id, idempotency_claims.operation, idempotency_claims.scope_hash, idempotency_claims.key_hash, idempotency_claims.hash_key_version, idempotency_claims.generation, idempotency_claims.request_fingerprint, idempotency_claims.state, idempotency_claims.receipt, idempotency_claims.accepted_at, idempotency_claims.expires_at, idempotency_claims.retired_at, idempotency_claims.completed_at
+`
+
+type CompleteActorInputClaimParams struct {
+	EnvironmentID      pgtype.UUID `json:"environment_id"`
+	ClaimID            pgtype.UUID `json:"claim_id"`
+	RequestFingerprint []byte      `json:"request_fingerprint"`
+	ActorID            pgtype.UUID `json:"actor_id"`
+	RecordID           pgtype.UUID `json:"record_id"`
+}
+
+func (q *Queries) CompleteActorInputClaim(ctx context.Context, arg CompleteActorInputClaimParams) (IdempotencyClaim, error) {
+	row := q.db.QueryRow(ctx, completeActorInputClaim,
+		arg.EnvironmentID,
+		arg.ClaimID,
+		arg.RequestFingerprint,
+		arg.ActorID,
+		arg.RecordID,
+	)
+	var i IdempotencyClaim
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Operation,
+		&i.ScopeHash,
+		&i.KeyHash,
+		&i.HashKeyVersion,
+		&i.Generation,
+		&i.RequestFingerprint,
+		&i.State,
+		&i.Receipt,
+		&i.AcceptedAt,
+		&i.ExpiresAt,
+		&i.RetiredAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const createActorInputReconcileOutbox = `-- name: CreateActorInputReconcileOutbox :exec
+INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
+VALUES (
+    $1,
+    'control',
+    'actor.input.reconcile',
+    $2::uuid::text,
+    jsonb_build_object(
+        'environmentId', $3::uuid::text,
+        'actorId', $2::uuid::text,
+        'recordId', $4::uuid::text
+    ),
+    transaction_timestamp()
+)
+ON CONFLICT (id) DO NOTHING
+`
+
+type CreateActorInputReconcileOutboxParams struct {
+	ID            pgtype.UUID `json:"id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RecordID      pgtype.UUID `json:"record_id"`
+}
+
+func (q *Queries) CreateActorInputReconcileOutbox(ctx context.Context, arg CreateActorInputReconcileOutboxParams) error {
+	_, err := q.db.Exec(ctx, createActorInputReconcileOutbox,
+		arg.ID,
+		arg.ActorID,
+		arg.EnvironmentID,
+		arg.RecordID,
+	)
+	return err
+}
+
+const getActorInputRecordAtSequenceForUpdate = `-- name: GetActorInputRecordAtSequenceForUpdate :one
+SELECT id, environment_id, actor_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+  FROM actor_records
+ WHERE environment_id = $1
+   AND actor_id = $2
+   AND direction = 'input'
+   AND sequence = $3
+ FOR UPDATE
+`
+
+type GetActorInputRecordAtSequenceForUpdateParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	Sequence      int64       `json:"sequence"`
+}
+
+func (q *Queries) GetActorInputRecordAtSequenceForUpdate(ctx context.Context, arg GetActorInputRecordAtSequenceForUpdateParams) (ActorRecord, error) {
+	row := q.db.QueryRow(ctx, getActorInputRecordAtSequenceForUpdate, arg.EnvironmentID, arg.ActorID, arg.Sequence)
+	var i ActorRecord
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorID,
+		&i.Direction,
+		&i.Sequence,
+		&i.Data,
+		&i.ContentType,
+		&i.SourceKind,
+		&i.SourceRunID,
+		&i.ProducerRunID,
+		&i.ProducerAttemptNumber,
+		&i.ClaimID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getActorInputRecordByIDForUpdate = `-- name: GetActorInputRecordByIDForUpdate :one
+SELECT id, environment_id, actor_id, direction, sequence, data, content_type, source_kind, source_run_id, producer_run_id, producer_attempt_number, claim_id, created_at
+  FROM actor_records
+ WHERE environment_id = $1
+   AND actor_id = $2
+   AND id = $3
+   AND direction = 'input'
+ FOR UPDATE
+`
+
+type GetActorInputRecordByIDForUpdateParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetActorInputRecordByIDForUpdate(ctx context.Context, arg GetActorInputRecordByIDForUpdateParams) (ActorRecord, error) {
+	row := q.db.QueryRow(ctx, getActorInputRecordByIDForUpdate, arg.EnvironmentID, arg.ActorID, arg.ID)
+	var i ActorRecord
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.ActorID,
+		&i.Direction,
+		&i.Sequence,
+		&i.Data,
+		&i.ContentType,
+		&i.SourceKind,
+		&i.SourceRunID,
+		&i.ProducerRunID,
+		&i.ProducerAttemptNumber,
+		&i.ClaimID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const getActorWakeupRecord = `-- name: GetActorWakeupRecord :one
 SELECT actor_records.id, actor_records.environment_id, actor_records.actor_id, actor_records.direction, actor_records.sequence, actor_records.data, actor_records.content_type, actor_records.source_kind, actor_records.source_run_id, actor_records.producer_run_id, actor_records.producer_attempt_number, actor_records.claim_id, actor_records.created_at
   FROM actors
@@ -322,7 +493,7 @@ SELECT actor_records.id, actor_records.environment_id, actor_records.actor_id, a
    AND actors.id = $2
    AND actors.state = 'open'
  ORDER BY actor_records.sequence, actor_records.id
- LIMIT 1
+LIMIT 1
 `
 
 type GetActorWakeupRecordParams struct {
@@ -449,4 +620,179 @@ func (q *Queries) ListActorOutputRecords(ctx context.Context, arg ListActorOutpu
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockActorForInputReconcile = `-- name: LockActorForInputReconcile :one
+SELECT id, public_id, org_id, project_id, environment_id, declaration_kind, actor_declared_id, deployment_definition_id, workspace_id, key, current_run_id, run_generation, state_version, manual_run_cancelled, failure_code, failure_run_id, next_input_sequence, committed_input_sequence, next_output_sequence, input_retention_floor, output_retention_floor, managed_queue_name, managed_concurrency_key, managed_queue_concurrency_limit, managed_priority, managed_queued_ttl_ms, managed_max_active_duration_ms, managed_retry_policy_version, managed_retry_policy, managed_run_metadata, managed_run_tags, state, close_sequence, expires_at, metadata, tags, created_at, updated_at, closed_at, cancelled_at, failed_at, expired_at
+  FROM actors
+ WHERE environment_id = $1
+   AND id = $2
+ FOR UPDATE
+`
+
+type LockActorForInputReconcileParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+}
+
+func (q *Queries) LockActorForInputReconcile(ctx context.Context, arg LockActorForInputReconcileParams) (Actor, error) {
+	row := q.db.QueryRow(ctx, lockActorForInputReconcile, arg.EnvironmentID, arg.ActorID)
+	var i Actor
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeclarationKind,
+		&i.ActorDeclaredID,
+		&i.DeploymentDefinitionID,
+		&i.WorkspaceID,
+		&i.Key,
+		&i.CurrentRunID,
+		&i.RunGeneration,
+		&i.StateVersion,
+		&i.ManualRunCancelled,
+		&i.FailureCode,
+		&i.FailureRunID,
+		&i.NextInputSequence,
+		&i.CommittedInputSequence,
+		&i.NextOutputSequence,
+		&i.InputRetentionFloor,
+		&i.OutputRetentionFloor,
+		&i.ManagedQueueName,
+		&i.ManagedConcurrencyKey,
+		&i.ManagedQueueConcurrencyLimit,
+		&i.ManagedPriority,
+		&i.ManagedQueuedTtlMs,
+		&i.ManagedMaxActiveDurationMs,
+		&i.ManagedRetryPolicyVersion,
+		&i.ManagedRetryPolicy,
+		&i.ManagedRunMetadata,
+		&i.ManagedRunTags,
+		&i.State,
+		&i.CloseSequence,
+		&i.ExpiresAt,
+		&i.Metadata,
+		&i.Tags,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+		&i.CancelledAt,
+		&i.FailedAt,
+		&i.ExpiredAt,
+	)
+	return i, err
+}
+
+const lockActorInputClaim = `-- name: LockActorInputClaim :one
+SELECT id, environment_id, operation, scope_hash, key_hash, hash_key_version, generation, request_fingerprint, state, receipt, accepted_at, expires_at, retired_at, completed_at
+  FROM idempotency_claims
+ WHERE environment_id = $1
+   AND id = $2
+   AND operation = 'actor.input.send'
+   AND retired_at IS NULL
+ FOR UPDATE
+`
+
+type LockActorInputClaimParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	ID            pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) LockActorInputClaim(ctx context.Context, arg LockActorInputClaimParams) (IdempotencyClaim, error) {
+	row := q.db.QueryRow(ctx, lockActorInputClaim, arg.EnvironmentID, arg.ID)
+	var i IdempotencyClaim
+	err := row.Scan(
+		&i.ID,
+		&i.EnvironmentID,
+		&i.Operation,
+		&i.ScopeHash,
+		&i.KeyHash,
+		&i.HashKeyVersion,
+		&i.Generation,
+		&i.RequestFingerprint,
+		&i.State,
+		&i.Receipt,
+		&i.AcceptedAt,
+		&i.ExpiresAt,
+		&i.RetiredAt,
+		&i.CompletedAt,
+	)
+	return i, err
+}
+
+const lockActorInputCurrentRun = `-- name: LockActorInputCurrentRun :one
+SELECT runs.id, runs.public_id, runs.org_id, runs.project_id, runs.environment_id, runs.deployment_id, runs.deployment_definition_id, runs.entrypoint_kind, runs.entrypoint_declared_id, runs.actor_id, runs.cause_kind, runs.schedule_id, runs.schedule_generation, runs.scheduled_at, runs.previous_scheduled_at, runs.schedule_timezone, runs.parent_run_id, runs.parent_owns_lifecycle, runs.workspace_id, runs.base_workspace_version_id, runs.actor_start_input_sequence, runs.actor_start_input_high_watermark, runs.payload, runs.output, runs.terminal_reason_code, runs.error, runs.status, runs.state_version, runs.current_attempt_number, runs.current_run_lease_id, runs.metadata, runs.tags, runs.queue_name, runs.concurrency_key, runs.queue_concurrency_limit, runs.priority, runs.queue_origin_at, runs.queue_score_at, runs.queued_expires_at, runs.max_active_duration_ms, runs.retry_policy, runs.active_elapsed_ms, runs.active_started_at, runs.trace_id, runs.root_span_id, runs.claim_id, runs.created_at, runs.updated_at, runs.first_lease_at, runs.started_at, runs.retry_at, runs.terminal_at
+  FROM runs
+ WHERE runs.environment_id = $1
+   AND runs.id = $2
+   AND runs.actor_id = $3
+ FOR UPDATE
+`
+
+type LockActorInputCurrentRunParams struct {
+	EnvironmentID pgtype.UUID `json:"environment_id"`
+	RunID         pgtype.UUID `json:"run_id"`
+	ActorID       pgtype.UUID `json:"actor_id"`
+}
+
+func (q *Queries) LockActorInputCurrentRun(ctx context.Context, arg LockActorInputCurrentRunParams) (Run, error) {
+	row := q.db.QueryRow(ctx, lockActorInputCurrentRun, arg.EnvironmentID, arg.RunID, arg.ActorID)
+	var i Run
+	err := row.Scan(
+		&i.ID,
+		&i.PublicID,
+		&i.OrgID,
+		&i.ProjectID,
+		&i.EnvironmentID,
+		&i.DeploymentID,
+		&i.DeploymentDefinitionID,
+		&i.EntrypointKind,
+		&i.EntrypointDeclaredID,
+		&i.ActorID,
+		&i.CauseKind,
+		&i.ScheduleID,
+		&i.ScheduleGeneration,
+		&i.ScheduledAt,
+		&i.PreviousScheduledAt,
+		&i.ScheduleTimezone,
+		&i.ParentRunID,
+		&i.ParentOwnsLifecycle,
+		&i.WorkspaceID,
+		&i.BaseWorkspaceVersionID,
+		&i.ActorStartInputSequence,
+		&i.ActorStartInputHighWatermark,
+		&i.Payload,
+		&i.Output,
+		&i.TerminalReasonCode,
+		&i.Error,
+		&i.Status,
+		&i.StateVersion,
+		&i.CurrentAttemptNumber,
+		&i.CurrentRunLeaseID,
+		&i.Metadata,
+		&i.Tags,
+		&i.QueueName,
+		&i.ConcurrencyKey,
+		&i.QueueConcurrencyLimit,
+		&i.Priority,
+		&i.QueueOriginAt,
+		&i.QueueScoreAt,
+		&i.QueuedExpiresAt,
+		&i.MaxActiveDurationMs,
+		&i.RetryPolicy,
+		&i.ActiveElapsedMs,
+		&i.ActiveStartedAt,
+		&i.TraceID,
+		&i.RootSpanID,
+		&i.ClaimID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.FirstLeaseAt,
+		&i.StartedAt,
+		&i.RetryAt,
+		&i.TerminalAt,
+	)
+	return i, err
 }

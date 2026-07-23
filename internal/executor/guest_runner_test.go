@@ -400,25 +400,25 @@ func TestRuntimeWaitRequestRejectsInvalidMetadataJSON(t *testing.T) {
 }
 
 func TestRuntimeWaitRequestPreservesIdleTimeout(t *testing.T) {
-	timeout := uint32(60)
-	idleTimeout := uint32(10)
+	timeout := uint64(60_000)
+	idleTimeout := uint64(10_000)
 	request, err := runtimeWaitRequest(Request{
 		Leases: staticLease(api.WorkerRunLease{RunID: "run-1", WorkerInstanceID: "worker-1"}),
 	}, &runv0.RunWaitRequested{
 		CorrelationId: "approval-1",
 		Kind:          "token",
 		ParamsJson:    `{}`,
-		Timeout:       &timeout,
-		IdleTimeout:   &idleTimeout,
+		TimeoutMs:     &timeout,
+		IdleTimeoutMs: &idleTimeout,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if request.TimeoutSeconds == nil || *request.TimeoutSeconds != 60 {
-		t.Fatalf("timeout = %v, want 60", request.TimeoutSeconds)
+	if request.TimeoutMS == nil || *request.TimeoutMS != 60_000 {
+		t.Fatalf("timeout = %v, want 60000", request.TimeoutMS)
 	}
-	if request.IdleTimeoutSeconds == nil || *request.IdleTimeoutSeconds != 10 {
-		t.Fatalf("idle timeout = %v, want 10", request.IdleTimeoutSeconds)
+	if request.IdleTimeoutMS == nil || *request.IdleTimeoutMS != 10_000 {
+		t.Fatalf("idle timeout = %v, want 10000", request.IdleTimeoutMS)
 	}
 }
 

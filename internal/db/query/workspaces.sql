@@ -229,6 +229,15 @@ SELECT workspaces.*,
  WHERE workspaces.environment_id = sqlc.arg(environment_id)
    AND workspaces.id = sqlc.arg(id);
 
+-- name: LockActorInputWorkspace :one
+SELECT *
+  FROM workspaces
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND owner_actor_id = sqlc.arg(actor_id)
+   AND owner_run_id IS NULL
+ FOR UPDATE;
+
 -- name: ReserveWorkspaceForRun :one
 UPDATE workspaces
    SET owner_run_id = sqlc.arg(run_id),

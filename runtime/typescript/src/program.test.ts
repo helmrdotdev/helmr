@@ -60,7 +60,7 @@ describe("runProgram", () => {
     const definition = actor({
       id: "worker",
       async run(self) {
-        received.push(await self.input.receive().unwrap())
+        received.push(await self.input.receive({ timeout: "1ms", idleTimeout: "1501ms" }).unwrap())
         received.push(await self.input.receive().unwrap())
       },
     })
@@ -78,6 +78,8 @@ describe("runProgram", () => {
       expect(first.value.kind).toBe("actor_input")
       expect(JSON.parse(first.value.paramsJson).after_input_sequence).toBe(0)
       expect(first.value.actorSpeculativeInputSequence).toBe(0n)
+      expect(first.value.timeoutMs).toBe(1n)
+      expect(first.value.idleTimeoutMs).toBe(1501n)
       yield actorDecision(first.value.correlationId, "completed", actorInput(1, "one"))
 
       await events[1]!.promise
@@ -626,7 +628,7 @@ describe("runProgram", () => {
       if (event.case !== "runWaitRequested") return
 			correlationId = event.value.correlationId
       expect(event.value.kind).toBe("timer")
-      expect(event.value.timeout).toBe(60)
+      expect(event.value.timeoutMs).toBe(60_000n)
       expect(JSON.parse(event.value.paramsJson)).toEqual({ duration: "1m" })
       yield frameMessage(runProto.ResumeDecisionSchema, create(
         runProto.ResumeDecisionSchema,

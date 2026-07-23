@@ -36,10 +36,17 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait JSON: %w", err)))
 		return
 	}
-	if request.Kind != api.WorkerRunWaitKindToken {
+	switch request.Kind {
+	case api.WorkerRunWaitKindToken:
+		s.workerCreateTokenRunWait(w, r, request)
+	case api.WorkerRunWaitKindActorInput:
+		s.workerCreateActorInputRunWait(w, r, request)
+	default:
 		writeError(w, badRequest(fmt.Errorf("Run Wait kind %q is not implemented by the durable runtime", request.Kind)))
-		return
 	}
+}
+
+func (s *Server) workerCreateTokenRunWait(w http.ResponseWriter, r *http.Request, request api.WorkerCreateRunWaitRequest) {
 	correlationID, err := parseCanonicalUUID("correlation_id", request.CorrelationID)
 	if err != nil {
 		writeError(w, badRequest(err))
@@ -60,7 +67,7 @@ func (s *Server) workerCreateRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, badRequest(err))
 		return
 	}
-	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(request)
+	timeoutAt, idleTimeout, checkpointDueAt, checkpointDelay, err := runWaitDeadlines(request, defaultTokenWaitIdleTimeout)
 	if err != nil {
 		writeError(w, badRequest(err))
 		return
@@ -173,7 +180,8 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 		writeError(w, errors.New("load worker Run Wait"))
 		return
 	}
-	if wait.Kind != db.WaitKindToken || wait.AttemptNumber != request.Lease.AttemptNumber ||
+	if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+		wait.AttemptNumber != request.Lease.AttemptNumber ||
 		wait.WorkspaceID != locators.WorkspaceID ||
 		(wait.CurrentRunLeaseID != pgvalue.UUID(parsed.leaseID) && wait.PriorRunLeaseID != pgvalue.UUID(parsed.leaseID)) {
 		writeError(w, conflict(errors.New("worker Run Wait fence is stale")))
@@ -183,9 +191,13 @@ func (s *Server) workerPollRunWait(w http.ResponseWriter, r *http.Request) {
 	switch wait.SuspensionState {
 	case db.RunWaitStateReleased:
 		response.Status = api.WorkerRunWaitPollStatusResumeRequested
-		response.ResumeKind, response.ResumePayload, err = tokenWaitDecision(
-			wait.ConditionState, wait.ConditionResult, pgvalue.TextValue(wait.ConditionReasonCode),
-		)
+		if wait.Kind == db.WaitKindActorInput {
+			response.ResumeKind, response.ResumePayload, err = actorInputWaitDecision(wait)
+		} else {
+			response.ResumeKind, response.ResumePayload, err = tokenWaitDecision(
+				wait.ConditionState, wait.ConditionResult, pgvalue.TextValue(wait.ConditionReasonCode),
+			)
+		}
 		if err != nil {
 			writeError(w, conflict(err))
 			return
@@ -240,7 +252,7 @@ func (s *Server) workerAcknowledgeRunWaitResume(w http.ResponseWriter, r *http.R
 		writeError(w, badRequest(fmt.Errorf("invalid worker Run Wait resume acknowledgement JSON: %w", err)))
 		return
 	}
-	writeError(w, conflict(errors.New("hot Token Wait decisions do not require acknowledgement")))
+	writeError(w, conflict(errors.New("hot Run Wait decisions do not require acknowledgement")))
 }
 
 func (s *Server) requestWorkerRunWaitCheckpoint(
@@ -301,7 +313,8 @@ func (s *Server) requestWorkerRunWaitCheckpoint(
 			updated = wait
 			return nil
 		}
-		if wait.Kind != db.WaitKindToken || wait.ConditionState != db.WaitStatePending ||
+		if (wait.Kind != db.WaitKindToken && wait.Kind != db.WaitKindActorInput) ||
+			wait.ConditionState != db.WaitStatePending ||
 			wait.SuspensionState != db.RunWaitStateHot || !wait.CheckpointDueAt.Valid {
 			return errStaleRunLeaseClaim
 		}
@@ -415,28 +428,28 @@ func derivedRunWaitID(runID uuid.UUID, attemptNumber int32, correlationID uuid.U
 	)))
 }
 
-func runWaitDeadlines(request api.WorkerCreateRunWaitRequest) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
+func runWaitDeadlines(request api.WorkerCreateRunWaitRequest, defaultIdleTimeout time.Duration) (pgtype.Timestamptz, pgtype.Int8, pgtype.Timestamptz, time.Duration, error) {
 	now := time.Now().UTC()
 	checkpointDelay := rootTokenWaitHotWindow
 	var timeoutAt pgtype.Timestamptz
-	if request.TimeoutSeconds != nil {
-		if *request.TimeoutSeconds <= 0 || time.Duration(*request.TimeoutSeconds)*time.Second > maxTokenWaitTimeout {
+	if request.TimeoutMS != nil {
+		if *request.TimeoutMS <= 0 || *request.TimeoutMS > maxTokenWaitTimeout.Milliseconds() {
 			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-				fmt.Errorf("timeout_seconds must be between 1 and %d", int64(maxTokenWaitTimeout/time.Second))
+				fmt.Errorf("timeout_ms must be between 1 and %d", maxTokenWaitTimeout.Milliseconds())
 		}
-		duration := time.Duration(*request.TimeoutSeconds) * time.Second
+		duration := time.Duration(*request.TimeoutMS) * time.Millisecond
 		timeoutAt = pgvalue.Timestamptz(now.Add(duration))
 		if duration <= checkpointDelay {
 			checkpointDelay = duration + shortWaitGrace
 		}
 	}
-	idleDuration := defaultTokenWaitIdleTimeout
-	if request.IdleTimeoutSeconds != nil {
-		idleDuration = time.Duration(*request.IdleTimeoutSeconds) * time.Second
-		if *request.IdleTimeoutSeconds <= 0 || idleDuration > maxTokenWaitIdleTimeout {
+	idleDuration := defaultIdleTimeout
+	if request.IdleTimeoutMS != nil {
+		if *request.IdleTimeoutMS <= 0 || *request.IdleTimeoutMS > maxTokenWaitIdleTimeout.Milliseconds() {
 			return pgtype.Timestamptz{}, pgtype.Int8{}, pgtype.Timestamptz{}, 0,
-				fmt.Errorf("idle_timeout_seconds must be between 1 and %d", int64(maxTokenWaitIdleTimeout/time.Second))
+				fmt.Errorf("idle_timeout_ms must be between 1 and %d", maxTokenWaitIdleTimeout.Milliseconds())
 		}
+		idleDuration = time.Duration(*request.IdleTimeoutMS) * time.Millisecond
 	}
 	idleTimeout := pgtype.Int8{Int64: idleDuration.Milliseconds(), Valid: true}
 	if idleDuration < checkpointDelay {

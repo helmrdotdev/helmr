@@ -3479,9 +3479,9 @@ type RunWaitRequested struct {
 	Kind                          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
 	ParamsJson                    string                 `protobuf:"bytes,3,opt,name=params_json,json=paramsJson,proto3" json:"params_json,omitempty"`
 	MetadataJson                  *string                `protobuf:"bytes,4,opt,name=metadata_json,json=metadataJson,proto3,oneof" json:"metadata_json,omitempty"`
-	Timeout                       *uint32                `protobuf:"varint,5,opt,name=timeout,proto3,oneof" json:"timeout,omitempty"`
+	TimeoutMs                     *uint64                `protobuf:"varint,5,opt,name=timeout_ms,json=timeoutMs,proto3,oneof" json:"timeout_ms,omitempty"`
 	Tags                          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
-	IdleTimeout                   *uint32                `protobuf:"varint,9,opt,name=idle_timeout,json=idleTimeout,proto3,oneof" json:"idle_timeout,omitempty"`
+	IdleTimeoutMs                 *uint64                `protobuf:"varint,9,opt,name=idle_timeout_ms,json=idleTimeoutMs,proto3,oneof" json:"idle_timeout_ms,omitempty"`
 	ActorSpeculativeInputSequence *int64                 `protobuf:"varint,10,opt,name=actor_speculative_input_sequence,json=actorSpeculativeInputSequence,proto3,oneof" json:"actor_speculative_input_sequence,omitempty"`
 	unknownFields                 protoimpl.UnknownFields
 	sizeCache                     protoimpl.SizeCache
@@ -3545,9 +3545,9 @@ func (x *RunWaitRequested) GetMetadataJson() string {
 	return ""
 }
 
-func (x *RunWaitRequested) GetTimeout() uint32 {
-	if x != nil && x.Timeout != nil {
-		return *x.Timeout
+func (x *RunWaitRequested) GetTimeoutMs() uint64 {
+	if x != nil && x.TimeoutMs != nil {
+		return *x.TimeoutMs
 	}
 	return 0
 }
@@ -3559,9 +3559,9 @@ func (x *RunWaitRequested) GetTags() []string {
 	return nil
 }
 
-func (x *RunWaitRequested) GetIdleTimeout() uint32 {
-	if x != nil && x.IdleTimeout != nil {
-		return *x.IdleTimeout
+func (x *RunWaitRequested) GetIdleTimeoutMs() uint64 {
+	if x != nil && x.IdleTimeoutMs != nil {
+		return *x.IdleTimeoutMs
 	}
 	return 0
 }
@@ -4986,22 +4986,22 @@ const file_run_proto_rawDesc = "" +
 	"\x04code\x18\x02 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x03 \x01(\tR\amessage\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x12!\n" +
-	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xa1\x03\n" +
+	"\fdetails_json\x18\x05 \x01(\tR\vdetailsJson\"\xb1\x03\n" +
 	"\x10RunWaitRequested\x12%\n" +
 	"\x0ecorrelation_id\x18\x01 \x01(\tR\rcorrelationId\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x12\x1f\n" +
 	"\vparams_json\x18\x03 \x01(\tR\n" +
 	"paramsJson\x12(\n" +
-	"\rmetadata_json\x18\x04 \x01(\tH\x00R\fmetadataJson\x88\x01\x01\x12\x1d\n" +
-	"\atimeout\x18\x05 \x01(\rH\x01R\atimeout\x88\x01\x01\x12\x12\n" +
-	"\x04tags\x18\x06 \x03(\tR\x04tags\x12&\n" +
-	"\fidle_timeout\x18\t \x01(\rH\x02R\vidleTimeout\x88\x01\x01\x12L\n" +
+	"\rmetadata_json\x18\x04 \x01(\tH\x00R\fmetadataJson\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"timeout_ms\x18\x05 \x01(\x04H\x01R\ttimeoutMs\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\x12+\n" +
+	"\x0fidle_timeout_ms\x18\t \x01(\x04H\x02R\ridleTimeoutMs\x88\x01\x01\x12L\n" +
 	" actor_speculative_input_sequence\x18\n" +
 	" \x01(\x03H\x03R\x1dactorSpeculativeInputSequence\x88\x01\x01B\x10\n" +
-	"\x0e_metadata_jsonB\n" +
-	"\n" +
-	"\b_timeoutB\x0f\n" +
-	"\r_idle_timeoutB#\n" +
+	"\x0e_metadata_jsonB\r\n" +
+	"\v_timeout_msB\x12\n" +
+	"\x10_idle_timeout_msB#\n" +
 	"!_actor_speculative_input_sequenceJ\x04\b\a\x10\bJ\x04\b\b\x10\t\"\xe3\x01\n" +
 	"\x14TokenCreateRequested\x12\"\n" +
 	"\n" +

@@ -1405,11 +1405,11 @@ func runtimeWaitRequest(request Request, wait *runv0.RunWaitRequested) (WaitRequ
 	if err != nil {
 		return WaitRequest{}, err
 	}
-	timeout, err := waitTimeoutSeconds(wait.Timeout)
+	timeout, err := waitTimeoutMilliseconds(wait.TimeoutMs)
 	if err != nil {
 		return WaitRequest{}, err
 	}
-	idleTimeout, err := waitTimeoutSeconds(wait.IdleTimeout)
+	idleTimeout, err := waitTimeoutMilliseconds(wait.IdleTimeoutMs)
 	if err != nil {
 		return WaitRequest{}, err
 	}
@@ -1420,8 +1420,8 @@ func runtimeWaitRequest(request Request, wait *runv0.RunWaitRequested) (WaitRequ
 		Params:                        []byte(paramsJSON),
 		Metadata:                      []byte(metadataJSON),
 		Tags:                          tags,
-		TimeoutSeconds:                timeout,
-		IdleTimeoutSeconds:            idleTimeout,
+		TimeoutMS:                     timeout,
+		IdleTimeoutMS:                 idleTimeout,
 		ActorSpeculativeInputSequence: wait.ActorSpeculativeInputSequence,
 	}, nil
 }
@@ -1452,14 +1452,14 @@ func waitMetadataJSONObject(value []byte) bool {
 	return decoded != nil
 }
 
-func waitTimeoutSeconds(value *uint32) (*int32, error) {
+func waitTimeoutMilliseconds(value *uint64) (*int64, error) {
 	if value == nil {
 		return nil, nil
 	}
-	if *value > math.MaxInt32 {
-		return nil, fmt.Errorf("wait timeout %d exceeds max %d", *value, int64(math.MaxInt32))
+	if *value > math.MaxInt64 {
+		return nil, fmt.Errorf("wait timeout %d exceeds max %d", *value, int64(math.MaxInt64))
 	}
-	timeout := int32(*value)
+	timeout := int64(*value)
 	return &timeout, nil
 }
 

@@ -603,7 +603,7 @@ function programRuntimeOperations(
 ): RuntimeOperations {
   const performWait = async (
     params: JsonValue,
-    timeoutSeconds: number,
+    timeoutMs: number,
   ): Promise<void> => {
     const releaseWait = waitGate.acquire()
     const correlationId = randomUUID()
@@ -614,7 +614,7 @@ function programRuntimeOperations(
           correlationId,
           kind: "timer",
           paramsJson: new TextDecoder().decode(canonicalizeJsonValue(params)),
-          timeout: timeoutSeconds,
+          timeoutMs: BigInt(timeoutMs),
           ...(actorCursor === undefined
             ? {}
             : { actorSpeculativeInputSequence: actorCursor.value }),
@@ -659,14 +659,13 @@ function programRuntimeOperations(
       releaseWait()
     }
   }
-  const wait = (params: JsonValue, timeoutSeconds: number): Promise<void> =>
+  const wait = (params: JsonValue, timeoutMs: number): Promise<void> =>
     actorOperations === undefined
-      ? performWait(params, timeoutSeconds)
-      : actorOperations.track(() => performWait(params, timeoutSeconds))
+      ? performWait(params, timeoutMs)
+      : actorOperations.track(() => performWait(params, timeoutMs))
   return {
     waitFor(duration) {
-      const timeoutSeconds = durationSeconds(duration)
-      return wait({ duration }, timeoutSeconds)
+      return wait({ duration }, durationMilliseconds(duration))
     },
     waitUntil(date) {
       if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
@@ -676,7 +675,7 @@ function programRuntimeOperations(
       if (remainingMs <= 0) return Promise.resolve()
       return wait(
         { date: date.toISOString() },
-        boundedTimerSeconds(Math.ceil(remainingMs / 1000)),
+        boundedTimerMilliseconds(Math.ceil(remainingMs)),
       )
     },
   }
@@ -701,7 +700,7 @@ function resumeFailure(dataJson: string): { readonly reasonCode: string } {
   return { reasonCode: (value as { readonly reason_code: string }).reason_code }
 }
 
-function durationSeconds(duration: string): number {
+function durationMilliseconds(duration: string): number {
   const match = /^(\d+(?:\.\d+)?)(ms|s|m|h|d)$/.exec(duration.trim())
   if (match === null) {
     throw new Error("timer duration must use ms, s, m, h, or d units")
@@ -725,15 +724,15 @@ function durationSeconds(duration: string): number {
   if (milliseconds < 1 || milliseconds > maxMilliseconds) {
     throw new Error("timer duration must be between 1ms and 365d")
   }
-  return boundedTimerSeconds(Math.ceil(milliseconds / 1000))
+  return boundedTimerMilliseconds(Math.ceil(milliseconds))
 }
 
-function boundedTimerSeconds(seconds: number): number {
-  const maxSeconds = 365 * 24 * 60 * 60
-  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > maxSeconds) {
+function boundedTimerMilliseconds(milliseconds: number): number {
+  const maxMilliseconds = 365 * 24 * 60 * 60 * 1000
+  if (!Number.isSafeInteger(milliseconds) || milliseconds < 1 || milliseconds > maxMilliseconds) {
     throw new Error("timer duration must be between 1ms and 365d")
   }
-  return seconds
+  return milliseconds
 }
 
 async function runActor(
@@ -822,12 +821,12 @@ function actorSelf(
     try {
       await commitPriorTurn()
       const correlationId = randomUUID()
-      const timeout = options?.timeout === undefined
+      const timeoutMs = options?.timeout === undefined
         ? undefined
-        : durationSeconds(options.timeout)
-      const idleTimeout = options?.idleTimeout === undefined
+        : durationMilliseconds(options.timeout)
+      const idleTimeoutMs = options?.idleTimeout === undefined
         ? undefined
-        : durationSeconds(options.idleTimeout)
+        : durationMilliseconds(options.idleTimeout)
       const decision = await requestRuntimeDecision(io, decisions, correlationId, {
         case: "runWaitRequested",
         value: create(runProto.RunWaitRequestedSchema, {
@@ -840,8 +839,8 @@ function actorSelf(
           ...(options?.metadata === undefined
             ? {}
             : { metadataJson: new TextDecoder().decode(canonicalizeJsonValue(options.metadata)) }),
-          ...(timeout === undefined ? {} : { timeout }),
-          ...(idleTimeout === undefined ? {} : { idleTimeout }),
+          ...(timeoutMs === undefined ? {} : { timeoutMs: BigInt(timeoutMs) }),
+          ...(idleTimeoutMs === undefined ? {} : { idleTimeoutMs: BigInt(idleTimeoutMs) }),
           tags: options?.tags === undefined ? [] : [...options.tags],
           actorSpeculativeInputSequence: cursor.value,
         }),

@@ -1,3 +1,12 @@
+-- name: LockActorInputClaim :one
+SELECT *
+  FROM idempotency_claims
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(id)
+   AND operation = 'actor.input.send'
+   AND retired_at IS NULL
+ FOR UPDATE;
+
 -- name: AppendActorInputRecord :one
 WITH selected_claim AS MATERIALIZED (
     SELECT id, state, request_fingerprint
@@ -33,6 +42,7 @@ WITH selected_claim AS MATERIALIZED (
 ), allocated AS (
     UPDATE actors
        SET next_input_sequence = actors.next_input_sequence + 1,
+           manual_run_cancelled = false,
            updated_at = now()
       FROM locked_actor
      WHERE actors.id = locked_actor.id
@@ -63,14 +73,37 @@ WITH selected_claim AS MATERIALIZED (
       FROM allocated
     RETURNING actor_records.*
 )
-SELECT inserted_record.*, false::boolean AS claim_fingerprint_mismatch
+SELECT inserted_record.*, false::boolean AS claim_fingerprint_mismatch, true::boolean AS appended
   FROM inserted_record
 UNION ALL
 SELECT existing_record.*,
        (selected_claim.request_fingerprint <> sqlc.narg(expected_request_fingerprint))::boolean
-           AS claim_fingerprint_mismatch
+           AS claim_fingerprint_mismatch,
+       false::boolean AS appended
   FROM existing_record
   JOIN selected_claim ON selected_claim.id = existing_record.claim_id;
+
+-- name: CompleteActorInputClaim :one
+UPDATE idempotency_claims
+   SET state = 'completed',
+       receipt = jsonb_build_object(
+           'recordId', actor_records.id::text,
+           'sequence', actor_records.sequence
+       ),
+       completed_at = transaction_timestamp()
+  FROM actor_records
+ WHERE idempotency_claims.environment_id = sqlc.arg(environment_id)::uuid
+   AND idempotency_claims.id = sqlc.arg(claim_id)
+   AND idempotency_claims.operation = 'actor.input.send'
+   AND idempotency_claims.request_fingerprint = sqlc.arg(request_fingerprint)
+   AND idempotency_claims.state = 'pending'
+   AND idempotency_claims.retired_at IS NULL
+   AND actor_records.environment_id = idempotency_claims.environment_id
+   AND actor_records.actor_id = sqlc.arg(actor_id)
+   AND actor_records.id = sqlc.arg(record_id)
+   AND actor_records.direction = 'input'
+   AND actor_records.claim_id = idempotency_claims.id
+RETURNING idempotency_claims.*;
 
 -- name: AppendActorOutputRecord :one
 WITH locked_actor AS MATERIALIZED (
@@ -162,4 +195,53 @@ SELECT actor_records.*
    AND actors.id = sqlc.arg(actor_id)
    AND actors.state = 'open'
  ORDER BY actor_records.sequence, actor_records.id
- LIMIT 1;
+LIMIT 1;
+
+-- name: GetActorInputRecordAtSequenceForUpdate :one
+SELECT *
+  FROM actor_records
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_id = sqlc.arg(actor_id)
+   AND direction = 'input'
+   AND sequence = sqlc.arg(sequence)
+ FOR UPDATE;
+
+-- name: GetActorInputRecordByIDForUpdate :one
+SELECT *
+  FROM actor_records
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND actor_id = sqlc.arg(actor_id)
+   AND id = sqlc.arg(id)
+   AND direction = 'input'
+ FOR UPDATE;
+
+-- name: CreateActorInputReconcileOutbox :exec
+INSERT INTO outbox_messages (id, lane, topic, partition_key, payload, available_at)
+VALUES (
+    sqlc.arg(id),
+    'control',
+    'actor.input.reconcile',
+    sqlc.arg(actor_id)::uuid::text,
+    jsonb_build_object(
+        'environmentId', sqlc.arg(environment_id)::uuid::text,
+        'actorId', sqlc.arg(actor_id)::uuid::text,
+        'recordId', sqlc.arg(record_id)::uuid::text
+    ),
+    transaction_timestamp()
+)
+ON CONFLICT (id) DO NOTHING;
+
+-- name: LockActorForInputReconcile :one
+SELECT *
+  FROM actors
+ WHERE environment_id = sqlc.arg(environment_id)
+   AND id = sqlc.arg(actor_id)
+ FOR UPDATE;
+
+-- name: LockActorInputCurrentRun :one
+SELECT runs.*
+  FROM runs
+ WHERE runs.environment_id = sqlc.arg(environment_id)
+   AND runs.id = sqlc.arg(run_id)
+   AND runs.actor_id = sqlc.arg(actor_id)
+ FOR UPDATE;

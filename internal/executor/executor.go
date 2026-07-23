@@ -81,8 +81,8 @@ type WaitRequest struct {
 	Params                        json.RawMessage
 	Metadata                      json.RawMessage
 	Tags                          []string
-	TimeoutSeconds                *int32
-	IdleTimeoutSeconds            *int32
+	TimeoutMS                     *int64
+	IdleTimeoutMS                 *int64
 	ActorSpeculativeInputSequence *int64
 	ActiveDuration                time.Duration
 	Workspace                     api.WorkerWorkspace

@@ -309,6 +309,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("configure Token reconciliation delivery: %w", err)
 	}
+	actorInputReconciler, err := runadmission.NewActorInputReconciler(pool)
+	if err != nil {
+		return fmt.Errorf("configure Actor input reconciler: %w", err)
+	}
+	actorInputDelivery, err := runadmission.NewActorInputDeliveryWorker(
+		log,
+		queries,
+		actorInputReconciler.Reconcile,
+		actorInputReconciler.ReconcileTimeouts,
+	)
+	if err != nil {
+		return fmt.Errorf("configure Actor input reconciliation delivery: %w", err)
+	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -320,6 +333,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		func() error { return scheduleWorker.Run(runCtx) },
 		func() error { return runAdmissionDelivery.Run(runCtx) },
 		func() error { return tokenReconcileDelivery.Run(runCtx) },
+		func() error { return actorInputDelivery.Run(runCtx) },
 		func() error { return telemetryIngestor.Run(runCtx) },
 	}
 	for _, controller := range fleetControllers {

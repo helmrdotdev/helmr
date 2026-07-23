@@ -277,10 +277,10 @@ WITH created_run AS (
            actors.managed_run_metadata, actors.managed_run_tags,
            actors.managed_queue_name, actors.managed_concurrency_key,
            actors.managed_queue_concurrency_limit, actors.managed_priority,
-           sqlc.arg(queue_origin_at),
-           sqlc.arg(queue_origin_at) - (actors.managed_priority::double precision * interval '1 second'),
+           sqlc.arg(queue_origin_at)::timestamptz,
+           sqlc.arg(queue_origin_at)::timestamptz - (actors.managed_priority::double precision * interval '1 second'),
            CASE WHEN actors.managed_queued_ttl_ms IS NULL THEN NULL
-                ELSE sqlc.arg(queue_origin_at) + (actors.managed_queued_ttl_ms::double precision * interval '1 millisecond') END,
+                ELSE sqlc.arg(queue_origin_at)::timestamptz + (actors.managed_queued_ttl_ms::double precision * interval '1 millisecond') END,
            actors.managed_max_active_duration_ms, actors.managed_retry_policy,
            sqlc.narg(trace_id), sqlc.arg(root_span_id)
       FROM actors
@@ -301,8 +301,20 @@ WITH created_run AS (
        AND actors.run_generation = sqlc.arg(expected_run_generation)
        AND actors.state IN ('open', 'closing')
        AND actors.manual_run_cancelled = false
-       AND (actors.expires_at IS NULL OR actors.expires_at > sqlc.arg(queue_origin_at))
+       AND (actors.expires_at IS NULL OR actors.expires_at > sqlc.arg(queue_origin_at)::timestamptz)
        AND actors.committed_input_sequence < actors.next_input_sequence - 1
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_leases
+            WHERE workspace_leases.workspace_id = workspaces.id
+              AND workspace_leases.state IN ('active', 'releasing')
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM workspace_processes
+            WHERE workspace_processes.workspace_id = workspaces.id
+              AND workspace_processes.state IN ('pending', 'starting', 'running', 'exit_requested')
+       )
     RETURNING *
 ), created_attempt AS (
     INSERT INTO run_attempts (

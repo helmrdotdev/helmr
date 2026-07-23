@@ -333,9 +333,9 @@ message RunWaitRequested {
   string kind = 2;
   string params_json = 3;
   optional string metadata_json = 4;
-  optional uint32 timeout = 5;
+  optional uint64 timeout_ms = 5;
   repeated string tags = 6;
-  optional uint32 idle_timeout = 9;
+  optional uint64 idle_timeout_ms = 9;
   optional int64 actor_speculative_input_sequence = 10;
 }
 
